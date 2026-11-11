@@ -1,6 +1,6 @@
 # Foxxi content intelligence, administration: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 74 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 75 affordances.
 
 ## `foxxi.read_intervention_methods`
 
@@ -726,6 +726,19 @@ POST to /registrations on SCORM Cloud; the returned registration ID becomes the 
 | `learner_first_name` | string | no | Given name of the learner, forwarded to the SCORM Cloud registration record. |
 | `learner_last_name` | string | no | Family name of the learner, forwarded to the SCORM Cloud registration record. |
 | `learner_email` | string | no | Email address of the learner; SCORM Cloud keys the registration on it. |
+
+## `foxxi.remove_hosted_package`
+
+**Take a hosted package down**
+
+Take a package hosted on this bridge down, by its sha-256: an operator's upload or one a signer brought with foxxi.host_package_signed. Its bytes and what describes it are removed from the tenant pod and from this bridge, and its course is forgotten, so it is no longer listed at /scorm/packages, launched or served. What learners already recorded of it stays in their own records. Admin or delegated admin only.
+
+- Action: `urn:iep:action:foxxi:remove-hosted-package`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/foxxi/remove_hosted_package`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `package_sha256` | string | yes | The sha-256 the package is listed under at /scorm/packages, 64 hex characters. |
 
 ## `foxxi.upload_scorm_package`
 

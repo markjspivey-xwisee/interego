@@ -16,8 +16,11 @@
  *   - one switch that closes it (FOXXI_OPEN_HOSTING=off), leaving the operator's upload as it was.
  * The upload's own receipt names the signer as the uploader, so what is kept can be traced to a key.
  *
- * Not here: a cumulative storage budget that survives a restart, and a way to take a package down
- * other than removing its two resources from the pod.
+ * What is brought can be taken down: an admin removes a package by its sha-256 with
+ * foxxi.remove_hosted_package (HostedPackages.remove).
+ *
+ * Not here: a cumulative storage budget that survives a restart, and a takedown by whoever brought
+ * the package.
  */
 
 /** What the open hosting route is allowed to take, read once from the environment. */

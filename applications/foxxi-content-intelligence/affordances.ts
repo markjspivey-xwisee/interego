@@ -2858,6 +2858,18 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
     ],
   },
   {
+    action: 'urn:iep:action:foxxi:remove-hosted-package' as IRI,
+    toolName: 'foxxi.remove_hosted_package',
+    title: 'Take a hosted package down',
+    description: 'Take a package hosted on this bridge down, by its sha-256: an operator\'s upload or one a signer brought with foxxi.host_package_signed. Its bytes and what describes it are removed from the tenant pod and from this bridge, and its course is forgotten, so it is no longer listed at /scorm/packages, launched or served. What learners already recorded of it stays in their own records. Admin or delegated admin only.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/remove_hosted_package',
+    annotations: { title: 'Take a hosted package down', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'package_sha256', type: 'string', required: true, description: 'The sha-256 the package is listed under at /scorm/packages, 64 hex characters.' },
+    ],
+  },
+  {
     action: 'urn:iep:action:foxxi:upload-scorm-package' as IRI,
     toolName: 'foxxi.upload_scorm_package',
     title: 'Upload a SCORM zip package for ingestion',

@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi-admin
-description: "Foxxi content intelligence, administration as Interego affordances: 74 tools (read-intervention-methods, review-method-evidence, ingest-content-package, publish-authoring-policy, connect-lms, assign-audience, and more). Use when administering a Foxxi tenant: ingesting SCORM, cmi5 or xAPI packages, assigning audiences, publishing policies and ontologies, running coverage and audit queries, issuing credentials, judging and confirming content claims, or connecting an LMS."
+description: "Foxxi content intelligence, administration as Interego affordances: 75 tools (read-intervention-methods, review-method-evidence, ingest-content-package, publish-authoring-policy, connect-lms, assign-audience, and more). Use when administering a Foxxi tenant: ingesting SCORM, cmi5 or xAPI packages, assigning audiences, publishing policies and ontologies, running coverage and audit queries, issuing credentials, judging and confirming content claims, or connecting an LMS."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 74
+  affordances: 75
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -73,6 +73,7 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.bootstrap_tenant` | Publish tenant-metadata + emit env-var configuration so the bridge can switch over to a new tenant. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/bootstrap_tenant` |
 | `foxxi.scorm_cloud_pull` | Use SCORM Cloud Application API v2 to list courses + project them as fxs:CourseCatalog stub entries on the tenant pod. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/scorm_cloud_pull` |
 | `foxxi.scorm_cloud_register` | POST to /registrations on SCORM Cloud; the returned registration ID becomes the cmi5 sessionId. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/scorm_cloud_register` |
+| `foxxi.remove_hosted_package` | Take a package hosted on this bridge down, by its sha-256: an operator's upload or one a signer brought with foxxi.host_package_signed. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/remove_hosted_package` |
 | `foxxi.upload_scorm_package` | Upload a SCORM / cmi5 .zip. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/upload_scorm_package` |
 | `foxxi.derive_adaptive_policy` | Build an AdaptiveSequencingPolicy document from supplied cohort intelligence. | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/derive_adaptive_policy` |
 | `foxxi.schedule_spaced_repetition` | Compute reminder dates from supplied completion timestamps and prerequisite edges: 1, 7 and 30 days, plus an earlier foundation reminder when at least three co… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/schedule_spaced_repetition` |

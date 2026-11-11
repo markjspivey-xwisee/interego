@@ -468,7 +468,7 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { readyStatementStore } from '../src/statement-store.js';
 import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
@@ -5120,6 +5120,22 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         email: args.learner_email as string | undefined,
       },
     }, { appId, secretKey });
+  },
+
+  'foxxi.remove_hosted_package': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    // Anyone who signs may bring a package (POST /agent/scorm/host), so an operator must be able
+    // to take one down: it is served from this host to anyone.
+    if (!isAdminEquivalent(ctx.role)) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — taking a hosted package down requires an admin or delegated admin (caller role: ${ctx.role})` };
+    const sha = typeof args.package_sha256 === 'string' ? args.package_sha256.trim().toLowerCase() : '';
+    if (!PACKAGE_SHA.test(sha)) return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': 'the request names no package', error: 'package_sha256 is required: the sha-256 a hosted package is listed under at /scorm/packages' };
+    const taken = await hostedPackages.remove(sha);
+    // Its course goes whether or not the pod took the delete: nothing should launch a package being taken down.
+    const courseForgotten = unregisterCmi5Course(DEFAULT_TENANT, `${bridgeBaseUrl}/scorm/packages/${sha}`);
+    if (!taken.removed) return { kind: 'refusal' as const, 'iep:refusalStatus': 502, 'iep:refusalReason': 'the pod did not remove the package', error: taken.why ?? 'the pod did not remove the package', packageSha256: sha, courseForgotten };
+    return { removed: true, packageSha256: sha, courseForgotten, removedBy: ctx.webId, note: 'The package and what described it are gone from the pod and from this bridge: it is no longer listed, launched or served. What learners already recorded of it stays in their own records.' };
   },
 
   'foxxi.upload_scorm_package': async (args) => {

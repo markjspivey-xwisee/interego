@@ -15,11 +15,18 @@ packages per signer per hour and twenty per address, each changeable in the
 environment, and `FOXXI_OPEN_HOSTING=off` closes it. A value the bridge cannot
 honor stops it at startup.
 
+Since strangers' content is then served from the bridge's own host, an admin
+can take a hosted package down by its sha-256 with
+`foxxi.remove_hosted_package`: the package and what describes it leave the
+tenant pod and the bridge, and its course is forgotten, so it is no longer
+listed, launched or served. What learners already recorded of it stays in
+their own records.
+
 Not covered: the per-signer count is kept in the running process, so a restart
-clears it, and no cumulative storage budget is kept. There is no route to take
-a package down; an operator removes its two resources from the tenant pod. A
-hosted package still earns no credential, since it grades itself. The route
-was not exercised against the live bridge.
+clears it, and no cumulative storage budget is kept. Only an admin can take a
+package down; whoever brought it cannot. A hosted package still earns no
+credential, since it grades itself. Neither route was exercised against the
+live bridge.
 
 ## 2026-11-10 — I2IDL-X workbench: the stale-directory check opens a row before counting its controls
 

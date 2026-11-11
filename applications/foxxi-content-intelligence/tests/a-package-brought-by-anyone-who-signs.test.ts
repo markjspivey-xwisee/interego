@@ -116,3 +116,84 @@ describe('the route and what it advertises', () => {
     expect(operator).toContain('if (!isAdminEquivalent(ctx.role)) return {');
   });
 });
+
+describe('taking a hosted package down', () => {
+  const SHA = 'b'.repeat(64);
+  /** A pod that keeps what is PUT and answers DELETE as `del` says. */
+  const pod = (del: (url: string) => number) => {
+    const kept = new Map<string, Uint8Array>();
+    const calls: string[] = [];
+    const fetchFn = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      const url = String(input), method = init?.method ?? 'GET';
+      calls.push(`${method} ${url}`);
+      if (method === 'PUT') { kept.set(url, new Uint8Array(await new Response(init?.body as BodyInit).arrayBuffer())); return new Response(null, { status: 201 }); }
+      if (method === 'DELETE') { const status = del(url); if (status < 300) kept.delete(url); return new Response(null, { status }); }
+      const body = kept.get(url);
+      return body ? new Response(new Blob([new Uint8Array(body)]), { status: 200 }) : new Response(null, { status: 404 });
+    }) as typeof fetch;
+    return { kept, calls, fetchFn };
+  };
+
+  it('removes the package and what describes it from the pod, and nothing of it stays in hand', async () => {
+    const { HostedPackages } = await import('../src/scorm-hosting.js');
+    const AdmZip = (await import('adm-zip')).default;
+    const zip = new AdmZip(); zip.addFile('index.html', Buffer.from('<p>hi</p>'));
+    const bytes = zip.toBuffer();
+    const p = pod(() => 204);
+    const packages = new HostedPackages({ podUrl: 'https://pod.example/t/', fetch: p.fetchFn });
+    const { sha256 } = await packages.keep(bytes, { title: 'T', launchable: ['index.html'] });
+    expect(await packages.list()).toEqual([sha256]);
+    expect(await packages.about(sha256)).toMatchObject({ title: 'T' });
+
+    expect(await packages.remove(sha256)).toEqual({ removed: true });
+    expect(p.kept.has(packages.urlOf(sha256))).toBe(false);
+    expect(p.kept.has(packages.aboutUrlOf(sha256))).toBe(false);
+    expect(await packages.open(sha256)).toBeNull();
+    expect(await packages.about(sha256)).toBeNull();
+    // Taking down what is already gone is not a failure.
+    const gone = pod(() => 404);
+    expect(await new HostedPackages({ podUrl: 'https://pod.example/t/', fetch: gone.fetchFn }).remove(SHA)).toEqual({ removed: true });
+  });
+
+  it('says so when the pod refuses, and still drops the package from memory', async () => {
+    const { HostedPackages } = await import('../src/scorm-hosting.js');
+    const AdmZip = (await import('adm-zip')).default;
+    const zip = new AdmZip(); zip.addFile('index.html', Buffer.from('<p>hi</p>'));
+    const p = pod(() => 403);
+    const packages = new HostedPackages({ podUrl: 'https://pod.example/t/', fetch: p.fetchFn });
+    const { sha256 } = await packages.keep(zip.toBuffer(), { title: 'T', launchable: ['index.html'] });
+    expect(await packages.remove(sha256)).toEqual({ removed: false, why: 'the pod did not remove the package (HTTP 403)' });
+    // Not in hand any more: the next read goes to the pod, which still keeps it.
+    expect(p.calls.filter(c => c === `GET ${packages.urlOf(sha256)}`)).toHaveLength(0);
+    expect(await packages.open(sha256)).not.toBeNull();
+    expect(p.calls.filter(c => c === `GET ${packages.urlOf(sha256)}`)).toHaveLength(1);
+  });
+
+  it('refuses an id that is not a package id without asking the pod', async () => {
+    const { HostedPackages } = await import('../src/scorm-hosting.js');
+    const p = pod(() => 204);
+    const packages = new HostedPackages({ podUrl: 'https://pod.example/t/', fetch: p.fetchFn });
+    expect((await packages.remove('../auth-methods.jsonld')).removed).toBe(false);
+    expect((await packages.remove('B'.repeat(64))).removed).toBe(false);
+    expect(p.calls).toEqual([]);
+  });
+
+  it('is an admin\'s tool: role-gated, named by sha-256, and forgets the course', () => {
+    const server = read('../bridge/server.ts');
+    const handler = server.slice(server.indexOf("'foxxi.remove_hosted_package': async (args) => {"), server.indexOf("'foxxi.upload_scorm_package': async (args) => {"));
+    const order = ['resolveCaller(args)', 'isAdminEquivalent(ctx.role)', 'PACKAGE_SHA.test(sha)', 'hostedPackages.remove(sha)'].map(m => handler.indexOf(m));
+    expect(order.every(i => i > 0)).toBe(true);
+    expect([...order].sort((x, y) => x - y)).toEqual(order);
+    expect(handler).toContain('unregisterCmi5Course(DEFAULT_TENANT, `${bridgeBaseUrl}/scorm/packages/${sha}`)');
+  });
+
+  it('forgets a course, and says whether there was one', async () => {
+    const { registerCmi5Course, getCmi5Course, unregisterCmi5Course } = await import('../src/cmi5-lms.js');
+    const id = 'https://b.example/scorm/packages/' + SHA;
+    registerCmi5Course('takedown-test', { id, title: 'T', structure: [] } as never);
+    expect(getCmi5Course('takedown-test', id)).toBeDefined();
+    expect(unregisterCmi5Course('takedown-test', id)).toBe(true);
+    expect(getCmi5Course('takedown-test', id)).toBeUndefined();
+    expect(unregisterCmi5Course('takedown-test', id)).toBe(false);
+  });
+});
