@@ -1483,7 +1483,7 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(p.errors).toEqual([]);
   }, SLOW);
 
-  it('a quote found in more than one line says which line is highlighted: the one it was saved in, which need not be the first', async () => {
+  it('a quote found in more than one line says which line is highlighted: the one it was saved in, which need not be the first; with the text deleted, nothing is called highlighted', async () => {
     // A world of its own: one pod, the roles a judging needs, and an ended session whose first and second lines share words.
     const own = inMemoryPod();
     const h = createPevHandlers({ ...base, fetchFn: own.fetchFn, holderFetchFn: own.fetchFn, model: scriptedPracticeModel(), demoSigner: demoSignerOf(W) }) as Handlers;
@@ -1542,6 +1542,20 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
       ['3', 'specific-observation', 'agree a new date today'],
       ['5', 'agrees-next-step', 'write it down before Friday'],
     ]);
+    // Once the learner deletes the conversation text, the page draws no highlight: the note names the line the quote was saved from, and calls nothing highlighted.
+    const v = await direct(h, 'pev.get_attempt', W.learner, PEV_ACTION.getAttempt, { attemptIri });
+    const red = await direct(h, 'pev.redact_attempt', W.learner, PEV_ACTION.redactAttempt, { attemptIri, target: v['currentTarget'], why: 'The learner deleted the words of their practice.' });
+    expect(red['state']).toBe('redacted');
+    p.w.location.hash = '#/mine';
+    await p.until(() => p.text('#view h1') === 'My practice', 'my practice');
+    p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri)}`;
+    await p.until(() => p.text('#state') === 'Conversation text deleted' && p.all('.judgments .quote.ok').length === 3, 'the session, its text deleted');
+    expect(p.all('.transcript mark')).toEqual([]);
+    expect(p.all('.judgments .quote.ok q').map((x) => x.textContent)).toEqual(Array(3).fill('(deleted with the conversation text)'));
+    expect(note('specific-observation')).toBe('Found 2 times; it was saved from line 3.');
+    expect(note('asks-their-view')).toBe('Found 2 times; it was saved from line 1. The AI named line 5; it was found in line 1.');
+    expect(note('agrees-next-step')).toBeNull();
+    expect(p.text('.judgments')).not.toContain('highlighted');
     expect(p.errors).toEqual([]);
   }, SLOW);
 });

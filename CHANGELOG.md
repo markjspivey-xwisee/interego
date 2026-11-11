@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-11-11 — Practice Evidence: a repeated quote's note calls nothing highlighted once the text is deleted
+
+A review of the previous entry found its note on a quote found more than once
+still untrue in one case. Once the learner deletes the conversation text, the
+session page draws no highlight: each line reads "(text deleted)" and each quote
+"(deleted with the conversation text)", because a line's highlights are drawn
+only over its tidied text, which a deleted conversation no longer has. A quote's
+place and count are kept, so the note went on saying "Found N times; the one
+highlighted is in line T." Now the note says which line is highlighted only when
+the page draws that line's highlights, the same test the conversation panel
+uses; otherwise it says "Found N times; it was saved from line T." The note on
+the line the AI named is unchanged, as it never spoke of a highlight. The
+README's sentence on the note says the same.
+
+Tests: in the web app, driven in a DOM, the session of the previous entry's test
+is deleted by the learner and opened again. It draws no highlight; the quote
+found in lines 1 and 3 and saved in line 3 says "Found 2 times; it was saved
+from line 3.", the one saved in line 1 says so beside the note on the line the
+AI named, the quote found once has no note, and nothing in the feedback is
+called highlighted. The two notes fail without the change.
+
+Not covered: the session page still shows no number beside a line, so once the
+text is deleted the line a note names is found only by counting the
+conversation's lines from 0, the other person's opening line first, as the
+judge packet numbers them.
+
 ## 2026-11-11 — Practice Evidence: a repeated quote says which place is highlighted, and counts every place it shows
 
 The previous entry left two gaps in how a quote found more than once is shown.
