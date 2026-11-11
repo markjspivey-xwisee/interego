@@ -21,6 +21,11 @@ the launcher's message. No test is skipped or changed.
 The two workflows that install Chromium through Python's Playwright
 (`i2idlx-ui-oracle.yml`, `i2idlx-v93-release.yml`) are unchanged.
 
+Also corrected: `deploy/identity/PROVISIONAL-PLAY.md` said Foxxi's dashboard
+guest signs in through SIWE and gets a `u-eth-` account. It does not: the
+tab-made wallet signs requests to the Foxxi bridge as `did:ethr:<address>` and
+calls neither identity nor the relay.
+
 `MIN_FILES` in `tools/lint-gate.mjs` goes from 670 to 673, the number the gate
 named when the new files took the linted count past its slack.
 
