@@ -218,6 +218,13 @@ with sync_playwright() as playwright:
     page.goto("http://app.test/i2idlx/#agents-directory")
     page.wait_for_function("document.querySelector('#directory').textContent.includes('Directory returned HTTP 503')")
     assert "Build snapshot · live status unverified" in page.inner_text("#directory")
+    # A row's body is built when the row opens, so with every row closed there is no control to
+    # count. Open one and require its control to exist and be disabled before counting enabled ones.
+    fallback = page.locator("#directory details.port[data-action-iri]").first
+    fallback.locator("summary").first.click()
+    validate = fallback.locator('button[aria-label^="Validate inputs"]')
+    expect(validate).to_have_count(1)
+    expect(validate).to_be_disabled()
     assert page.locator('#directory button[aria-label^="Validate inputs"]:not([disabled])').count() == 0, "stale fallback cannot run requests"
     context.close()
     browser.close()
