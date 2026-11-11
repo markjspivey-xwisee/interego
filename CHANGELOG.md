@@ -1,5 +1,138 @@
 # Changelog
 
+## 2026-11-11 — I2IDL-X UI oracle: a pull request merged during its build keeps its build runs
+
+The UI oracle tied each build run to its pull request through the run's
+`pull_requests` list. GitHub fills that list only with open pull requests whose
+head matches the run, so once a pull request is merged or closed, every build
+run of its head lists none. That is what failed Actions run 42951589971: PR #827
+was merged at 03:16:04 UTC, two seconds after the selection step started, and
+when the native run finished at 03:22:16 it named no pull request, so the step
+failed at its next check. The entry below corrects its own account of that run.
+
+In a pull request, a build run now belongs to it when its event is
+`pull_request`, its head branch is the pull request's head branch, and its head
+commit and head repository match, as before. None of these change when the pull
+request closes. The `pull_requests` list still counts when it is not empty: a
+run that names only other pull requests is still excluded. This loosens one
+thing on purpose: an empty or missing list no longer excludes a run by itself.
+It tightens another: a run of the same commit on another branch, which GitHub
+can list with this pull request because their head commits match, is now
+excluded by `head_branch`. Replayed with the times and fields GitHub reports,
+run 42951589971 would have chosen native run 42951590127 at the first check
+after it finished, where master's script failed; the change in the entry below
+would have failed at the end of the wait. The checks now run in the order
+`name`, `path`, `repository`, `head_repository`, `head_sha`, `event`,
+`head_branch`, `pull_requests`, `status`, `conclusion`, then `artifact`. A run
+named by hand has no pull request, so `event`, `head_branch` and
+`pull_requests` are not checked for it, as before.
+
+Two failures now say so sooner or more plainly. A pull request whose head is in
+another repository, a fork, fails at once with "This pull request's head
+repository is <repository>, not <this repository>. The UI oracle uses build
+outputs only from heads in <this repository>, so a retry will not help.", or
+"missing" when the fork was deleted, because every build run of such a head
+fails `head_repository`. When the eight-minute wait ends and every run found
+failed an identity check (`name`, `path`, `repository`, `head_repository`,
+`head_sha`, `event`, `head_branch` or `pull_requests`), the error says
+"Retrying only this UI job will not help: every run found fails an identity
+check." in place of "Retry only this UI job after native outputs are
+uploaded.", which it keeps when any run was passed over for `status`,
+`conclusion` or `artifact`. Such heads, for example ones whose only runs are on
+another branch, still wait the full eight minutes (17 checks) before failing.
+
+CI: `i2idlx-typescript.yml`, whose units job runs `ui-oracle-selection.test.ts`,
+now also starts when `.github/workflows/i2idlx-ui-oracle.yml` changes, so a pull
+request that edits only the selector script runs the test that executes it.
+
+Tests: `ui-oracle-selection.test.ts` still runs the workflow's own script
+against a stand-in GitHub API, whose runs and pull request payload now carry
+the event, head branch and head repository. Added: run 42951589971's timeline
+replayed; a merged pull request's runs with an empty list and with none; runs on
+another branch at the same commit and runs of another event, never chosen,
+during the wait and in the final validation; a payload with no head branch,
+which binds no run; a fork's head, also a deleted one, failing before any call
+to GitHub; the identity-only wording, and the mixed cases that keep the retry
+advice; the capped error with 11-digit run ids, the longest check name and the
+longer advice (570 characters, held under 600); the `Selected run 101 excluded
+by conclusion: failure, expected success.` line; and that
+`i2idlx-typescript.yml` starts on a change to the UI workflow. Two earlier tests
+that treated an empty list as excluding a run now use a list naming another
+pull request, or another branch. Ten of the eighteen tests fail on the script
+before this change; all pass on it.
+
+Not covered: not exercised against GitHub itself; the replay uses the times and
+fields GitHub reports for runs 42951589971, 42951590127 and 42951589975. The
+branch binding relies on GitHub reporting a pull request run's head branch as
+the pull request's head branch, as it does for those runs. Only the first
+failing check of a run is reported.
+
+## 2026-11-11 — I2IDL-X UI oracle: each build run is checked in full before it is chosen
+
+The UI oracle's first step picks a completed native or golden build of the pull
+request's exact head and its retained artifact. It took the first completed run
+of the exact head (native runs: successful) that had a matching unexpired
+artifact, and only then checked the run's path, repository, head repository and
+association with the pull request. A peer review run through Interego, on the
+final head of #827, found the case this breaks: when that first run fails one
+of those later checks, the step fails with "Selected build run does not belong
+to the expected repository, workflow and source head" and never tries a later
+run that meets every check.
+
+Actions run 42951589971, the run that review read, failed that way, but this
+change alone would not have passed it. PR #827 was merged two seconds after the
+step started, and GitHub lists only open pull requests on a run, so from then
+on neither build run of that head named the pull request. The native run
+finished six minutes later with no association; the golden run had not
+finished, and had none either. Replayed with the times GitHub reports, this
+change fails that run at the end of the eight-minute wait, excluding both runs
+by `pull_requests`. What it does is make a later eligible run reachable and say
+why each run was passed over. The entry above changes the association check,
+and with it that run would have passed.
+
+Each run is now checked in full while the candidates are read, native runs
+first and golden runs after them, as before. A run excluded by its own fields
+has no artifact listing read. The final validation of the chosen run, or of a
+run named by hand, still runs after the choice with the same checks, through
+the same function, so the two cannot drift apart, and the artifact receipt is
+still checked. No check was loosened, and the error messages for a named run
+are unchanged.
+
+Reading the new log lines: each poll writes one line per native or golden run
+on that head that was passed over, as `Candidate run <id> (<workflow name>)
+excluded by <check>: <detail>.` The check is the first that failed, in the
+order `name`, `path`, `repository`, `head_repository`, `head_sha`,
+`pull_requests`, `status`, `conclusion`, `artifact`. The detail is usually
+`<found>, expected <wanted>`; for `artifact` it reads `no unexpired <artifact
+name>`, and for `name` `<name> is neither build workflow`. A run that fails one
+of these checks, other than `artifact`, in the final validation is logged the
+same way as `Selected run <id> excluded by …` before its error; the "names a
+different build workflow" error and the missing-artifact error write no such
+line. When the eight-minute wait ends with nothing chosen, the error keeps its
+first two sentences and adds `Last check excluded run <id> by <check>, …` for
+up to ten runs, then how many more, or says that no native or golden build run
+was found for the head.
+
+Tests: `ui-oracle-selection.test.ts` still runs the workflow's own script
+against a stand-in GitHub API. It now covers the peer review's case, with no
+association and with one for another pull request; a run excluded by each
+check, never chosen, with its log line; the error after the wait, its cap and
+the empty case; and the strict checks and unchanged messages for a run named
+by hand. The first three fail on the old script and pass on the new one. The
+fourth passes on both. The earlier tests pass unchanged, waiting included.
+
+Not covered: only the first failing check of a run is reported. A head whose
+build runs all fail an identity check, such as a fork's head or a pull request
+merged before the choice, used to fail as soon as a native run finished, with
+"does not belong". It now fails only at the end of the eight-minute wait (17
+checks), with the no-outputs error and its `Last check excluded run <id> by
+<check>` reason, and the retry advice in that error does not help when the
+reason is an identity check. The entry above keeps a merged pull request's
+runs eligible, fails a fork's head at once again, and words that error for the
+cases left. Not exercised against GitHub itself. The workflow that runs this
+test, `i2idlx-typescript.yml`, was not started by a change to
+`i2idlx-ui-oracle.yml` alone; the entry above adds it.
+
 ## 2026-11-11 — Foxxi dashboard: bring a package from the Learn page
 
 Anyone who signs may bring a SCORM or cmi5 package to the bridge, but only by
