@@ -92,6 +92,17 @@ with, which can be lower; nothing counts them again. The session page shows no
 number beside a line, so the line the note names is found by its highlight, as
 with the note on the line the AI named.
 
+## 2026-11-10 — I2IDL-X workbench: the stale-directory check opens a row before counting its controls
+
+Since a capability's details are built when its row opens, the check that a
+directory shown from its build snapshot cannot run requests counted enabled
+Validate buttons while every row was closed, so it found none whatever the
+rows would have held. It now opens one row first and requires that row's
+Validate button to be there and disabled, then counts as before. Found in peer
+review of the change that defers the details.
+
+Not covered: only the first row is opened, so a snapshot row further down that
+enabled its button would not be seen.
 ## 2026-11-10 — Practice Evidence: a quote is checked in the turn the judge named before a match elsewhere
 
 A peer review, run on fictional data, found that the turn a judge names for a
