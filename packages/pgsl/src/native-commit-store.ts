@@ -100,6 +100,18 @@ export interface NativeCommitStoreOptions {
   readonly cacheImmutableReads?: boolean;
   /** Opt-in immediate-child prefetch. One limiter is shared by this client's full-index materializations. */
   readonly indexReadConcurrency?: number;
+  /** Opt-in reuse of decoded index nodes within this client, bounded by the
+   * total number of entries retained (least recently used nodes leave first).
+   * An index node is immutable and content addressed: it is kept only after it
+   * was fetched, digest-checked, decrypted and validated under the exact
+   * reference and hash prefix it is later asked for, so a hit proves the same
+   * content. The head itself is never cached: every read fetches and verifies
+   * the current head, and only nodes it shares with an earlier verified index
+   * are reused, so a changed head costs the changed paths, not the whole index.
+   * Concurrent reads of one node share a single fetch. What a hit no longer
+   * shows is that the pod still serves that artifact, so integrity-audit
+   * callers leave this off (the default). */
+  readonly indexNodeCacheEntries?: number;
   readonly onHeadRead?: (event: NativeHeadReadDiagnostic) => void;
   /** Already resolved and authorized through the adapter's capability/Type Index contract. */
   readonly scope: NativeCommitScope;
@@ -142,6 +154,19 @@ function recordSelection(keys: readonly string[]): readonly string[] {
   const selected = new Set<string>();
   for (const key of keys) { bounded(key, 4096, 'record selection key'); selected.add(key); }
   return Object.freeze([...selected].sort(compareStrings));
+}
+/** Ordered results from at most `limit` tasks in flight; no task starts after a failure. */
+async function mapBounded<T, R>(items: readonly T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0, failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < items.length) {
+      const position = next++;
+      try { results[position] = await task(items[position]!); } catch (error) { failed = true; throw error; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 function hashKey(key: string): string { return createHash('sha256').update(key).digest('hex'); }
 function fail(message: string, status = 503): never { throw new NativeCommitError(message, status); }
@@ -188,6 +213,12 @@ function valueOrNull(artifact: NativeArtifact, id: IRI | undefined): string | nu
   return node && node.kind === 'Atom' && typeof node.value === 'string' ? node.value : null;
 }
 
+/** Whether `part` is exactly the run of `whole` starting at `offset` that omits one item. */
+function sameItems(part: readonly string[], whole: readonly string[], offset: 0 | 1): boolean {
+  if (part.length !== whole.length - 1) return false;
+  for (let i = 0; i < part.length; i++) if (part[i] !== whole[i + offset]) return false;
+  return true;
+}
 /** Validate content addresses and complete acyclic closure; unrelated nodes are not published. */
 export function validateNativeArtifact(artifact: NativeArtifact): NativeArtifact {
   bounded(artifact.topUri, 4096, 'top URI');
@@ -216,8 +247,9 @@ export function validateNativeArtifact(artifact: NativeArtifact): NativeArtifact
         if (!node.left || !node.right) fail('Native fragment lacks constituents.');
         visit(node.left, depth + 1); visit(node.right, depth + 1);
         const left = artifact.nodes.get(node.left), right = artifact.nodes.get(node.right);
-        if (left?.kind !== 'Fragment' || right?.kind !== 'Fragment' || canonical(left.items) !== canonical(node.items.slice(0, -1))
-          || canonical(right.items) !== canonical(node.items.slice(1)) || node.height !== Math.max(left.height, right.height) + 1) fail('Native fragment constituents do not match its content.');
+        // Both constituents were visited above, so their items are arrays of strings.
+        if (left?.kind !== 'Fragment' || right?.kind !== 'Fragment' || !sameItems(left.items, node.items, 0)
+          || !sameItems(right.items, node.items, 1) || node.height !== Math.max(left.height, right.height) + 1) fail('Native fragment constituents do not match its content.');
       }
     } else fail('Unknown native node kind.');
     active.delete(id); output.set(id, node);
@@ -253,7 +285,13 @@ export class NativeCommitStore implements NativeCommitClient {
   private indexReadsActive = 0;
   private readonly indexReadQueue: IndexReadJob[] = [];
   private headReadSequence = 0;
+  private readonly indexNodeCacheLimit: number;
+  private readonly verifiedIndexNodes = new Map<string, { node: IndexNode; weight: number }>();
+  private verifiedIndexNodeWeight = 0;
+  private readonly indexNodeReads = new Map<string, Promise<IndexNode>>();
   constructor(private readonly options: NativeCommitStoreOptions) {
+    this.indexNodeCacheLimit = options.indexNodeCacheEntries ?? 0;
+    if (!Number.isSafeInteger(this.indexNodeCacheLimit) || this.indexNodeCacheLimit < 0 || this.indexNodeCacheLimit > 4_000_000) fail('Invalid native index node cache capacity.', 400);
     this.indexReadConcurrency = options.indexReadConcurrency ?? 1;
     if (!Number.isSafeInteger(this.indexReadConcurrency) || this.indexReadConcurrency < 1 || this.indexReadConcurrency > 8) fail('Invalid native index read concurrency.', 400);
     const pod = uri(options.scope.pod), head = uri(options.scope.headUrl), container = uri(options.scope.artifactContainer);
@@ -409,7 +447,41 @@ export class NativeCommitStore implements NativeCommitClient {
     this.checkReference(reference);
     return { key: value(artifact, row[1]), reference };
   }
+  private indexNodeKey(reference: NativeArtifactReference, prefix: string): string {
+    // Every binding and the hash prefix the node was validated under are part
+    // of the key: an alias cannot borrow another reference's verification.
+    return JSON.stringify([reference.resourceUrl, reference.bodyDigest, reference.plaintextDigest, reference.topUri, prefix]);
+  }
+  private rememberIndexNode(key: string, node: IndexNode): void {
+    if (!this.indexNodeCacheLimit) return;
+    const entries = node.kind === 'leaf' ? node.entries : node.children;
+    // Snapshots hand these references to callers; a cached one must not change.
+    for (const reference of entries.values()) Object.freeze(reference);
+    const old = this.verifiedIndexNodes.get(key);
+    if (old) { this.verifiedIndexNodes.delete(key); this.verifiedIndexNodeWeight -= old.weight; }
+    const weight = entries.size + 1;
+    if (weight > this.indexNodeCacheLimit) return;
+    this.verifiedIndexNodes.set(key, { node, weight }); this.verifiedIndexNodeWeight += weight;
+    while (this.verifiedIndexNodeWeight > this.indexNodeCacheLimit) {
+      const oldest = this.verifiedIndexNodes.keys().next().value!;
+      this.verifiedIndexNodeWeight -= this.verifiedIndexNodes.get(oldest)!.weight; this.verifiedIndexNodes.delete(oldest);
+    }
+  }
+  /** Nodes returned here are shared and never mutated: writers copy before changing. */
   private async indexNode(reference: NativeArtifactReference, prefix: string): Promise<IndexNode> {
+    if (!this.indexNodeCacheLimit) return this.readIndexNode(reference, prefix);
+    this.checkReference(reference);
+    const key = this.indexNodeKey(reference, prefix), cached = this.verifiedIndexNodes.get(key);
+    if (cached) { this.verifiedIndexNodes.delete(key); this.verifiedIndexNodes.set(key, cached); return cached.node; }
+    const pending = this.indexNodeReads.get(key);
+    if (pending) return pending;
+    const read = this.readIndexNode(reference, prefix).then(node => {
+      this.indexNodeReads.delete(key); this.rememberIndexNode(key, node); return node;
+    }, (error: unknown) => { this.indexNodeReads.delete(key); throw error; });
+    this.indexNodeReads.set(key, read);
+    return read;
+  }
+  private async readIndexNode(reference: NativeArtifactReference, prefix: string): Promise<IndexNode> {
     const artifact = await this.readArtifact(reference), row = fields(artifact, artifact.topUri), tag = value(artifact, row[0]);
     if (row.length < 2 || row.length > LEAF_SIZE + 1) fail('Native index node exceeds its bounded fanout.');
     if (tag === LEAF) {
@@ -430,16 +502,20 @@ export class NativeCommitStore implements NativeCommitClient {
     }
     return { kind: 'branch', children };
   }
-  private async saveIndex(node: IndexNode): Promise<NativeArtifactReference> {
+  private async saveIndex(node: IndexNode, prefix: string): Promise<NativeArtifactReference> {
     const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
     const entries = node.kind === 'leaf' ? node.entries : node.children;
     const rows = [...entries].sort(([a], [b]) => compareStrings(a, b)).map(([key, reference]) => this.referenceTuple(pgsl, ENTRY, key, reference));
     const topUri = ingest(pgsl, [literal(pgsl, node.kind === 'leaf' ? LEAF : BRANCH), ...rows]);
-    return this.persist({ pgsl, topUri });
+    const reference = await this.persist({ pgsl, topUri });
+    // Staging read this exact node back and decrypted it; the next head read
+    // after this client's own commit need not fetch what it has just verified.
+    this.rememberIndexNode(this.indexNodeKey(reference, prefix), node);
+    return reference;
   }
   private async buildIndex(entries: Map<string, NativeArtifactReference>, prefix: string): Promise<NativeArtifactReference | null> {
     if (!entries.size) return null;
-    if (entries.size <= LEAF_SIZE) return this.saveIndex({ kind: 'leaf', entries });
+    if (entries.size <= LEAF_SIZE) return this.saveIndex({ kind: 'leaf', entries }, prefix);
     if (prefix.length >= 64) return fail('Native index hash collision; existing state was not changed.');
     const groups = new Map<string, Map<string, NativeArtifactReference>>();
     for (const [key, value] of entries) {
@@ -449,7 +525,7 @@ export class NativeCommitStore implements NativeCommitClient {
     }
     const children = new Map<string, NativeArtifactReference>();
     for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) children.set(nibble, (await this.buildIndex(group, prefix + nibble))!);
-    return this.saveIndex({ kind: 'branch', children });
+    return this.saveIndex({ kind: 'branch', children }, prefix);
   }
   private async updateIndex(root: NativeArtifactReference | null, changes: Map<string, NativeArtifactReference | null>, prefix = ''): Promise<NativeArtifactReference | null> {
     const node: IndexNode = root ? await this.indexNode(root, prefix) : { kind: 'leaf', entries: new Map() };
@@ -468,7 +544,7 @@ export class NativeCommitStore implements NativeCommitClient {
       const child = await this.updateIndex(children.get(nibble) ?? null, group, prefix + nibble);
       if (child) children.set(nibble, child); else children.delete(nibble);
     }
-    return children.size ? this.saveIndex({ kind: 'branch', children }) : null;
+    return children.size ? this.saveIndex({ kind: 'branch', children }, prefix) : null;
   }
   private async lookup(root: NativeArtifactReference | null, key: string): Promise<NativeArtifactReference | null> {
     let reference = root, prefix = '';
@@ -680,10 +756,9 @@ export class NativeCommitStore implements NativeCommitClient {
    * does not validate branches outside the explicitly returned selection. */
   private async selected(head: DecodedHead, keys: readonly string[]): Promise<DecodedHead> {
     const records = new Map<string, NativeArtifactReference>();
-    for (const key of keys) {
-      const reference = await this.lookup(head.index, 'record:' + key);
-      if (reference) records.set(key, reference);
-    }
+    // Independent paths under one already verified head: bounded, not serial.
+    const found = await mapBounded(keys, this.indexReadConcurrency, key => this.lookup(head.index, 'record:' + key));
+    keys.forEach((key, position) => { const reference = found[position]; if (reference) records.set(key, reference); });
     return { ...head, records, selectedRecordKeys: keys };
   }
   async readHeadRecords(keys: readonly string[]): Promise<NativeSnapshot> {

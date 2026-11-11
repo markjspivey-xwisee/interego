@@ -1,5 +1,64 @@
 # Changelog
 
+## 2026-11-11 — Native LRS: a head is materialized once, and re-read only where it changed
+
+On 2026-11-11 the Foxxi bridge's native xAPI LRS stopped answering. Its head
+then indexed about 4,300 nodes, a complete read of it took about 560 s, and
+every query, count and listing started its own. Nothing was shared between
+requests in flight and nothing was kept between requests. Point writes already
+read selected index paths only, and still do; they queued behind those reads.
+
+Three changes, one per layer.
+
+**Foxxi adapter** (`native-lrs-store.ts`). A complete read now first reads and
+verifies the pod's current head without its index. If that is the head this
+process last materialized, the verified snapshot is returned. Otherwise the
+callers that found the same head await one materialization. A caller never
+joins a read begun for a different head, so a request that has just written is
+not answered from before its own write. The snapshot is not a source of truth:
+it is used only while the pod still names the same commit, and a head that has
+changed is verified again. `getAttachment` reads its one index path where it
+used to read the whole index.
+
+**`@interego/pgsl` `NativeCommitStore`**. New opt-in `indexNodeCacheEntries`
+keeps decoded index nodes, each only after it was fetched, digest-checked,
+decrypted and validated under the exact reference it is later asked for. The
+head is still fetched and verified on every read. Because index nodes are
+immutable and content addressed, a head changed by one commit shares almost all
+of its nodes with the one before, so reading it fetches the changed paths only.
+Concurrent reads of one node share one fetch, the nodes a commit writes are
+kept as it writes them, and selected paths are looked up in parallel within the
+client's existing read limit. Off by default: a hit does not show that the pod
+still serves that artifact, which an integrity audit wants to see. The Foxxi
+bridge turns it on.
+
+**`@interego/core` envelope encryption**. Profiling a cold read with no network
+showed most of the time was not the index walk or the cipher. `tweetnacl-util`
+picks its implementation by whether `atob` exists, Node has one, and so base64
+and UTF-8 went through a per-byte path written for old browsers on every
+envelope sealed or opened. `encryption.ts` now converts with `Buffer` and
+`TextEncoder`/`TextDecoder` and hands anything they do not plainly accept to
+`tweetnacl-util`, so the same inputs are accepted and refused with the same
+errors. The native artifact validator also compared fragment constituents by
+serializing them; it now compares the items.
+
+Measured in process, with no network, on 3,000 records in 481 index nodes:
+
+| | before | after |
+| --- | --- | --- |
+| complete read, nothing cached | 8.3 s | 3.8 s |
+| complete read of an unchanged head | 8.3 s, 483 fetches | about 10 ms, 2 fetches |
+| complete read after this client's own write | 8.3 s, 483 fetches | about 12 ms, 2 fetches |
+| complete read after another client's write | 483 fetches | at most 12 index fetches |
+| one-statement write, counting the read-back of what it stages | 24 reads | 13 reads |
+
+Not covered: nothing here was run against the production pod, so the 560 s
+figure is not re-measured. A first complete read after a restart is still one
+read per index node; at the production head that was about 4,300 nodes. Staging
+a commit's new artifacts is still serial. The 81,165 test artifacts under the
+old location are untouched, and the bridge still points at the fresh location
+set on 2026-11-11.
+
 ## 2026-11-11 — Foxxi dashboard: bring a package from the Learn page
 
 Anyone who signs may bring a SCORM or cmi5 package to the bridge, but only by

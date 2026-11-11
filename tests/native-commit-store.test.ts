@@ -937,3 +937,131 @@ describe('explicit bounded native rolling checkpoints', () => {
     expect(transport.headWrites()).toBe(1);
   });
 });
+
+describe('native index reads at scale', () => {
+  const RECORDS = 3000;
+  let seeded: NativeTransport, total: number, complete: Awaited<ReturnType<NativeCommitStore['readHead']>>;
+  const artifactGets = (transport: NativeTransport, from = 0): string[] => transport.methods.slice(from)
+    .filter(method => /^GET .*\/artifact-[a-f0-9]{64}\.json$/.test(method)).map(method => method.slice(4));
+  const copy = (): NativeTransport => {
+    const transport = new NativeTransport();
+    for (const [url, row] of seeded.rows) transport.rows.set(url, { bytes: Uint8Array.from(row.bytes), revision: row.revision });
+    return transport;
+  };
+  beforeAll(async () => {
+    seeded = new NativeTransport();
+    const client = seeded.client({ indexNodeCacheEntries: 100_000 }), shared = artifact('same payload');
+    for (let batch = 0; batch < RECORDS / 1000; batch++) {
+      await client.commit({ operationId: 'seed-' + batch, expected: await client.readHeadRecords([]), resultRecordKeys: [],
+        changes: Array.from({ length: 1000 }, (_, i) => ({ key: 'row:' + (batch * 1000 + i), artifact: shared })) });
+    }
+    const events: NativeHeadReadDiagnostic[] = [];
+    complete = await copy().client({ onHeadRead: event => events.push(event) }).readHead();
+    total = events.at(-1)!.indexNodes;
+    expect(complete.records.size).toBe(RECORDS);
+    expect(total).toBeGreaterThan(200);
+  }, 120_000);
+
+  it.each([0, 100_000])('writes one record without reading the whole index (node cache entries: %i)', async indexNodeCacheEntries => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries, indexReadConcurrency: 8 });
+    const before = new Set(transport.rows.keys());
+    const expected = await client.readHeadRecords(['row:new']);
+    expect(expected.records.size).toBe(0);
+    await client.commit({ operationId: 'one-write', expected, changes: [{ key: 'row:new', artifact: artifact('new') }], resultRecordKeys: ['row:new'] });
+    // Index nodes that existed before this write and were fetched during it.
+    const existingReads = artifactGets(transport).filter(url => before.has(url));
+    expect(existingReads.length).toBeGreaterThan(0);
+    expect(existingReads.length).toBeLessThanOrEqual(16);
+    expect(existingReads.length).toBeLessThan(total / 10);
+    if (indexNodeCacheEntries) expect(new Set(existingReads).size).toBe(existingReads.length);
+    const after = await transport.client().readHead();
+    expect(after.records.size).toBe(RECORDS + 1);
+    expect(after.records.has('row:new')).toBe(true);
+  }, 60_000);
+
+  it('reuses verified index nodes for an unchanged head and still verifies that head on every read', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 100_000, indexReadConcurrency: 8 });
+    expect(await client.readHead()).toEqual(complete);
+    expect(artifactGets(transport)).toHaveLength(total);
+    const warm = transport.methods.length;
+    const again = await client.readHead();
+    expect(again).toEqual(complete);
+    expect([...again.records]).toEqual([...complete.records]);
+    // Callers get their own map: one caller cannot change what another reads.
+    (again.records as Map<string, NativeArtifactReference>).clear();
+    expect((await client.readHead()).records.size).toBe(RECORDS);
+    expect(artifactGets(transport, warm)).toEqual([]);
+    expect(transport.methods.slice(warm).filter(method => method === 'GET ' + scope.headUrl)).toHaveLength(2);
+    expect(transport.methods.slice(warm).filter(method => method === 'GET ' + complete.reference!.commitUrl)).toHaveLength(2);
+  }, 60_000);
+
+  it('re-reads only the changed paths when another client moves the head', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 100_000, indexReadConcurrency: 8 });
+    await client.readHead();
+    const writer = transport.client();
+    await writer.commit({ operationId: 'elsewhere', expected: await writer.readHeadRecords([]), resultRecordKeys: [],
+      changes: [{ key: 'row:elsewhere', artifact: artifact('elsewhere') }, { key: 'row:7', artifact: null }] });
+    const moved = transport.methods.length;
+    const changed = await client.readHead();
+    const fetched = artifactGets(transport, moved);
+    expect(fetched.length).toBeGreaterThan(0);
+    expect(fetched.length).toBeLessThanOrEqual(12);
+    expect(changed.revision).not.toBe(complete.revision);
+    expect(changed).toEqual(await transport.client().readHead());
+    expect(changed.records.has('row:elsewhere')).toBe(true);
+    expect(changed.records.has('row:7')).toBe(false);
+    expect(changed.records.size).toBe(RECORDS);
+  }, 60_000);
+
+  it('does not fetch the index again after its own commit', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 100_000 });
+    await client.readHead();
+    await client.commit({ operationId: 'own', expected: await client.readHeadRecords([]), resultRecordKeys: [],
+      changes: [{ key: 'row:own', artifact: artifact('own') }] });
+    const committed = transport.methods.length;
+    const own = await client.readHead();
+    expect(artifactGets(transport, committed)).toEqual([]);
+    expect(own).toEqual(await transport.client().readHead());
+    expect(own.records.size).toBe(RECORDS + 1);
+  }, 60_000);
+
+  it('shares one fetch per index node between concurrent complete reads', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 100_000, indexReadConcurrency: 8 });
+    const snapshots = await Promise.all(Array.from({ length: 6 }, () => client.readHead()));
+    for (const snapshot of snapshots) expect(snapshot).toEqual(complete);
+    expect(artifactGets(transport)).toHaveLength(total);
+    expect(new Set(artifactGets(transport)).size).toBe(total);
+    expect(transport.methods.filter(method => method === 'GET ' + scope.headUrl)).toHaveLength(6);
+  }, 60_000);
+
+  it('keeps no failed or unverified node and verifies a node it has not seen', async () => {
+    const transport = copy();
+    let failures = 1, corrupt = false;
+    const client = transport.client({ indexNodeCacheEntries: 100_000, fetch: async (input, init) => {
+      const url = String(input);
+      if ((init?.method ?? 'GET') === 'GET' && /\/artifact-/.test(url)) {
+        if (failures-- > 0) return new Response(null, { status: 503 });
+        if (corrupt) { corrupt = false; const response = await transport.fetch(input, init); return new Response('{}', { headers: response.headers }); }
+      }
+      return transport.fetch(input, init);
+    } });
+    await expect(client.readHead()).rejects.toThrow('Native resource is unreadable');
+    expect(await client.readHead()).toEqual(complete);
+    const writer = transport.client();
+    await writer.commit({ operationId: 'unseen', expected: await writer.readHeadRecords([]), resultRecordKeys: [],
+      changes: [{ key: 'row:unseen', artifact: artifact('unseen') }] });
+    corrupt = true;
+    await expect(client.readHead()).rejects.toThrow('Native read metadata is not bound to its representation.');
+    expect((await client.readHead()).records.has('row:unseen')).toBe(true);
+  }, 60_000);
+
+  it('evicts least recently used nodes at its entry bound and rejects an invalid bound', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 64 });
+    expect(await client.readHead()).toEqual(complete);
+    const warm = transport.methods.length;
+    expect(await client.readHead()).toEqual(complete);
+    // Too small to hold the index: correct, with most nodes fetched again.
+    expect(artifactGets(transport, warm).length).toBeGreaterThan(total / 2);
+    for (const indexNodeCacheEntries of [-1, 1.5, 4_000_001]) expect(() => transport.client({ indexNodeCacheEntries })).toThrow('Invalid native index node cache capacity.');
+  }, 60_000);
+});
