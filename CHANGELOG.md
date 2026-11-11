@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-11 — Foxxi bridge: the ontologies it loads at start no longer hold 2.5 GB
+
+The bridge composes eighteen ontologies into its in-memory lattice when it
+starts. Each has one sub-holon per subject, and all of them went into one final
+sequence, hundreds of items wide; the lattice builds about n²/2 fragments over a
+sequence of n. Measured with the memory figures the bridge now reports: 100 MB
+before that step, 2,557 MB after it, in production and in a local run alike.
+
+Past eight sub-holons, a holon is now composed of holons of holons until few
+enough remain. The same local run settles at about 300 MB, and `/ns/<module>`
+serves the same ontologies. A holon of eight or fewer sub-holons is composed as
+before, so a published memory keeps its address.
+
+Not changed: the bridge's heap limit and its Railway memory floor, which were
+sized for the old figure and can come down once this is seen in production.
+
 ## 2026-11-11 — Foxxi dashboard: bring a package from the Learn page
 
 Anyone who signs may bring a SCORM or cmi5 package to the bridge, but only by
