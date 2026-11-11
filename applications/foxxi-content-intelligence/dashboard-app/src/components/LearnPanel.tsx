@@ -19,6 +19,7 @@ import { readRecents, recentsKey, type RecentComposition } from '../learn/recent
 import type { AuthoredComposition, Mine, PlayedComposition } from '../learn/play.js';
 import { HostedPackagesCard } from './HostedPackagesCard.js';
 import { GuestKeyNotice } from './GuestKeyNotice.js';
+import { BringPackageCard } from './BringPackageCard.js';
 
 const row: React.CSSProperties = {
   display: 'flex', gap: 10, alignItems: 'center', flexWrap: 'wrap', padding: '8px 10px',
@@ -42,6 +43,7 @@ export function LearnPanel({ session }: { session: FoxxiSession }) {
   const { entry, error: entryError } = useHypermedia();
   const mine = useAffordance('foxxi.content_mine');
   const asks = signerAsks(session);
+  const [brought, setBrought] = useState(0);
   const [paste, setPaste] = useState('');
   const [pasteWhy, setPasteWhy] = useState<string | null>(null);
   const [recents, setRecents] = useState<RecentComposition[]>(() => {
@@ -146,7 +148,9 @@ export function LearnPanel({ session }: { session: FoxxiSession }) {
         )}
       </Card>
 
-      <HostedPackagesCard session={session} />
+      <BringPackageCard session={session} onHosted={() => setBrought(n => n + 1)} />
+
+      <HostedPackagesCard session={session} refresh={brought} />
 
       <div style={{ color: 'var(--text-dim)', fontSize: 12 }}>
         An agent finds the same list with <code>foxxi.content_mine</code>, signed as itself, and the hosted packages at the entry point's <code>scorm-packages</code> link.
