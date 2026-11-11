@@ -224,12 +224,14 @@ export const SERVICES = {
  *
  *   relay        below 1.0 CPU / 2 GiB: OOM-killed, surfacing as generic 502s with
  *                EMPTY logs (the process is gone before it writes anything).
- *   foxxi-bridge below 2 CPU / 4 GiB: surfaces as a bogus "issuer seed unset". The
- *                4 GiB is arithmetic, not taste — this service runs with
- *                NODE_OPTIONS=--max-old-space-size=3072 (read off the live service on
- *                2026-08-03), so V8 is licensed to grow old-space to 3 GiB and will not
- *                GC defensively to stay under a smaller cgroup cap. 3 GiB heap +
- *                off-heap (buffers, code, stacks) needs the 4th GiB.
+ *   foxxi-bridge below 2 CPU / 2 GiB: surfaces as a bogus "issuer seed unset". The
+ *                2 GiB is arithmetic, not taste — this service runs with
+ *                NODE_OPTIONS=--max-old-space-size=1536 (set on the live service on
+ *                2026-11-11, down from 3072, after the boot-time lattice stopped
+ *                holding 2.5 GiB and the process settled at about 350 MiB), so V8 is
+ *                licensed to grow old-space to 1.5 GiB and will not GC defensively to
+ *                stay under a smaller cgroup cap. 1.5 GiB heap + off-heap (buffers,
+ *                code, stacks) needs the rest.
  *                ★ Change that NODE_OPTIONS and this number is wrong.
  *
  * ── WHY THIS TABLE IS SAFE TO WRITE DOWN AND THE IMAGE TAG WAS NOT ──────────
@@ -253,7 +255,7 @@ export const SERVICES = {
  */
 export const LIMIT_FLOORS = {
   relay: { cpu: 1, memoryBytes: 2 * 1024 * 1024 * 1024 },
-  'foxxi-bridge': { cpu: 2, memoryBytes: 4 * 1024 * 1024 * 1024 },
+  'foxxi-bridge': { cpu: 2, memoryBytes: 2 * 1024 * 1024 * 1024 },
 };
 
 /**

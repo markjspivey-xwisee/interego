@@ -132,5 +132,11 @@
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
     "ws": "^8.20.0"
+  },
+  "overrides": {
+    "@zed-industries/claude-code-acp": {
+      "@modelcontextprotocol/sdk": "1.32.2",
+      "minimatch": "10.2.6"
+    }
   }
 }

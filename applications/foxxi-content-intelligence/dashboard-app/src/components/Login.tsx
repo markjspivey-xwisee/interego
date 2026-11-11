@@ -7,6 +7,9 @@ import {
 import { walletExtension } from '../auth/signer.js';
 import { SAMPLE_TENANT_POD_URL } from '../sample/data.js';
 
+/** The bridge this dashboard talks to; its /start page says what can be done here. */
+const BRIDGE_BASE = ((import.meta.env.VITE_FOXXI_BRIDGE_URL as string | undefined) ?? 'https://foxxi-bridge.interego.xwisee.com').replace(/\/$/, '');
+
 export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
   const [role, setRole] = useState<SessionRole>('learner');
   const [keyInput, setKeyInput] = useState('');
@@ -41,6 +44,9 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
           finally { setGuestBusy(false); }
         })(); }}>{guestBusy ? 'Making your key…' : 'Start as a guest'}</Button>
         {guestErr && <div style={{ color: 'var(--bad)', fontSize: 12, marginTop: 6 }}>✗ {guestErr}</div>}
+        <div style={{ fontSize: 12, marginTop: 10 }}>
+          <a href={`${BRIDGE_BASE}/start`} target="_blank" rel="noreferrer">What can I do here?</a>
+        </div>
       </Card>
 
       <Card title="Choose an audience">

@@ -122,6 +122,7 @@ import { authorXapiCourse, xapiCourseArtifact, xapiCourseLinks } from '../src/xa
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 import { frontDoor, frontDoorHtml } from '../src/front-door.js';
+import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
  * THE ONE DECLARATION of an affordance, looked up by its action IRI.
@@ -5948,6 +5949,8 @@ const app = createVerticalBridge({
     { label: 'Guidance', href: `${bridgeBaseUrl}/guidance?format=markdown`, rel: 'help', type: 'text/markdown' },
   ],
   middleware: (a) => {
+    // First, so every route's answer passes through it (src/compress-linked-data.ts).
+    a.use(compressLinkedData());
     // CORS for the browser dashboard. The vertical owns its CORS
     // policy; the substrate-side vertical-bridge factory stays
     // CORS-agnostic so other deployments (server-to-server, MCP

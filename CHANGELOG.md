@@ -44,6 +44,140 @@ Not in this change: Foxxi is not configured as an application, no production
 variable is set, and Foxxi's learner sign-in still refuses provisional
 accounts. Its dashboard guest remains the tab-made wallet account.
 
+## 2026-11-11 — Foxxi bridge: linked-data answers are compressed, and its memory floor follows its heap
+
+The edge in front of the bridge compresses JSON and HTML but not JSON-LD or
+Turtle, which are the bridge's largest answers. The bridge now compresses those
+itself, with brotli or gzip as the client accepts: the entry point goes from
+269 KB to 60 KB, the Turtle affordance manifest from 652 KB to 80 KB and an
+ontology from 122 KB to 14 KB (measured on a local run). Each encoding has its
+own ETag and the answer varies on `Accept-Encoding`. Streams, files, small
+answers, plain JSON and `no-transform` answers are left as they are.
+
+The bridge's heap setting on the live service was lowered from 3072 MiB to
+1536 MiB on 2026-11-11, after the process settled at about 350 MiB. The
+recorded memory floor for `foxxi-bridge` in `tools/railway-services.mjs`
+follows it: 2 GiB, from 4 GiB. No limit override is set on the service, so this
+changes what the guard would flag, not what the service is given.
+
+The dashboard's sign-in card links to the bridge's `/start` page.
+
+Not covered: the workbench page at `/i2idlx/` (2.1 MB, 514 KB as the edge
+gzips it) is served as a file and is not touched by this.
+## 2026-11-11 — Dependencies: fixed releases of the MCP SDK and minimatch under claude-code-acp, by an npm override
+
+`@zed-industries/claude-code-acp` 0.16.2, a root dev dependency and its newest
+release, pins `@modelcontextprotocol/sdk` 1.26.0 and minimatch 10.2.1 exactly.
+Both versions carry high-severity advisories, and the only fix `npm audit`
+offered was going back to 0.12.6. The root `package.json` now has an
+`overrides` block, scoped to that one package, that sets
+`@modelcontextprotocol/sdk` to 1.32.2 and minimatch to 10.2.6, the newest
+releases in the majors it pins. The package itself stays at 0.16.2.
+
+The root lockfile changes in exactly two entries: `@modelcontextprotocol/sdk`
+moves from 1.26.0 to 1.32.2, and the minimatch nested under claude-code-acp
+from 10.2.1 to 10.2.6. No package is added or removed, and no other version
+moves. claude-code-acp is the only package in the tree that depends on the v1
+SDK, so the hoisted copy belongs to it alone. 1.32.2 also accepts
+`@hono/node-server` 2.x, and the locked 1.19.17 still satisfies it; 10.2.6 asks
+for brace-expansion 5.0.8 or later, and the locked 5.0.12 satisfies that. npm
+10.9.4, which regenerated the lockfile here, also dropped the `libc` fields on
+the four Linux packages of the Claude Code CLI and rewrote the flags on the
+`applications/foxxi-content-intelligence` entry. Those lines are kept as they
+are on master, because a newer npm wrote them and they have nothing to do with
+this change.
+
+No service imports either package, so nothing changes at run time. The
+packages are not only on developer machines, though. The images built from
+`deploy/Dockerfile.{foxxi,pev,wrd,agp,wsp,jev-harness}-bridge`,
+`deploy/Dockerfile.discord` and `deploy/Dockerfile.interego-bridge` run a plain
+`npm ci` against the root lockfile and keep its dev dependencies, so they carry
+claude-code-acp, the v1 SDK and its minimatch, unused. Auto-deploy counts the
+root manifests as an input to every image that installs from them
+(`tools/deploy-bundle-scope.ts`), so the deployed ones are rebuilt from the new
+lockfile once this lands, and the high-severity SDK leaves them with it. The
+relay's runtime image does not carry them: its build stage installs the root
+tree, but the image ships only the `node_modules` installed from the relay's
+own manifest. The dashboard and PGSL browser images are built the same way,
+and identity and the validator install from their own lockfiles.
+
+The agent-development-practice reject-always-probe adapter launches
+claude-code-acp by hand against a live agent, and
+`tools/probe-sse-mcp-handshake-live.ts`, a live probe also run by hand, imports
+the hoisted v1 SDK. The relay uses SDK v2 and still imports nothing from v1
+(`deploy/mcp-relay/tests/no-frozen-dependency.test.ts`). The holodeck shim's
+comment (`examples/holodeck/lib/mcp-shim.mjs`) that the v1 SDK "is no longer
+installed anywhere in this repo" is out of date. No workspace declares v1, but
+it is installed, hoisted to the root `node_modules` as claude-code-acp's
+dependency, so a v1 import anywhere in the repo still resolves. The shim itself
+uses v2.
+
+Compatibility was read from the published packages. claude-code-acp's code
+imports only `McpServer` from `@modelcontextprotocol/sdk/server/mcp.js` and
+`minimatch` from `minimatch`. In 1.32.2 the same subpath exports exist, and the
+file is still there. The bodies of `registerTool` and `connect` are unchanged,
+and so are the members of the transport interface, but `McpServer` behaves
+differently in four ways that claude-code-acp's own use reaches, and none of
+them breaks it. It installs its tool handlers at construction when the options
+declare tools, which claude-code-acp's call does
+(`{ capabilities: { tools: {} } }`), so `tools/list` answers with an empty list
+instead of "method not found" when no tool gets registered. It throws at registration on
+an `inputSchema` it does not recognise; claude-code-acp passes objects of zod
+fields, which it does. It parses missing tool arguments as an empty object. And
+a failed validation reports every issue with its path, not only the first
+message. It also gains an optional limit on tool-input size, off unless set.
+The agent SDK claude-code-acp hands that server to only calls `connect()` with
+its own in-process transport. The probe's `Client`, `SSEClientTransport` and
+`StreamableHTTPClientTransport` keep their exports and the options it passes.
+The transports gain a `redirectPolicy` option whose default no longer follows a
+redirect to another origin, while the probe's raw leg uses plain `fetch`, which
+does. The probe connects straight to the relay, so its legs still agree; its
+header now says what a relay address that redirects to another origin would do
+to them. minimatch 10.2.6 has the same exports and still takes the three options
+claude-code-acp passes (`dot`, `matchBase`, `nocase`). It adds two optional
+recursion limits. `@anthropic-ai/claude-agent-sdk` 0.2.44, another of its
+dependencies, depends on neither package (its only npm dependencies are
+optional image libraries), so the lockfile holds no copy of either under it.
+Its bundled code carries compiled-in MCP SDK code of its own, and no sign of
+minimatch.
+
+`npm audit` on the root lockfile, before: 24 vulnerable packages, 3 high and 21
+moderate. After: 23, none high and 23 moderate. `@modelcontextprotocol/sdk`,
+rated high for six advisories (four high, two moderate) in OAuth handling,
+request and body size limits, task ownership, token audience checks and
+redirects, is no longer listed. minimatch drops from high to moderate: its two
+high advisories, slow matching on some crafted patterns, are fixed in 10.2.3.
+claude-code-acp, flagged through both, drops from high to moderate.
+
+Checks: the `tsconfig.check.json` typecheck, the lint gate,
+`no-frozen-dependency.test.ts`, the editor-witness tests and the holodeck shim
+boot test pass. The local `node_modules` still holds 1.26.0 and 10.2.1, so these
+ran against the old versions, with one exception: the typecheck was run again
+with the probe's SDK imports pointed at the 1.32.2 declarations. All three
+imports resolved to them, and it reported no errors, as it does against 1.26.0.
+Neither claude-code-acp nor the probe was run. CI installs from the lockfile
+and runs the rest on the new versions.
+
+Not covered: `@zed-industries/claude-code-acp` is deprecated, renamed
+`@agentclientprotocol/claude-agent-acp`. Moving to it waits because the
+successor renames the permission-menu option ids, and the
+agent-development-practice editor witness
+(`adapters/editor-witness/src/measure.ts`) tells a mode switch from a grant by
+matching the chosen option id against the new mode id. With other ids it would
+miscount without saying so. minimatch keeps one moderate advisory, fixed only
+in 11.0.1, a major release that the override does not reach. The agent SDK's
+compiled-in MCP code is not a lockfile entry, so `npm audit` does not see it
+and an override cannot change it. The other moderate advisories are unchanged:
+the eslint, electron-builder and Solid server chains, and `@hono/node-server`,
+which the relay's v2 MCP transport also uses. The overrides pin exact
+versions, so a later fixed 1.x or 10.x release reaches this copy only when
+someone edits the block; `npm update` and `npm audit fix` leave an exact
+override where it is. The block goes in the same change that replaces
+claude-code-acp, because npm says nothing about an override whose package has
+left the tree. The holodeck shim's out-of-date comment, and its README's line
+listing `@modelcontextprotocol/sdk` as a prerequisite where the shim needs the
+v2 packages, are not corrected here.
+
 ## 2026-11-11 — Native LRS: a head is materialized once, and re-read only where it changed
 
 On 2026-11-11 the Foxxi bridge's native xAPI LRS stopped answering. Its head
@@ -279,8 +413,10 @@ This lands Dependabot's #817 with the changelog entry its checks needed.
 - **Nothing in this repository runs it.** No workflow calls the CLI. The shared
   workspace's desktop shell looks for a CLI the user installed globally, and the
   agent-development-practice probe drives `@zed-industries/claude-code-acp`, not
-  this package. So the change reaches only a developer who runs the CLI from
-  this checkout.
+  this package. So no one runs it except a developer who runs the CLI from
+  this checkout. Correction, from the entry on the claude-code-acp override
+  above: the bridge images that run `npm ci` on the root lockfile keep its dev
+  dependencies, so they carry the CLI too, unused.
 - **Node:** 2.1.251 declares Node 22 or later. The repository asks for Node 20
   or later and some CI jobs run Node 20. npm only warns about an engine it does
   not match here (no `engine-strict`), and since nothing runs the CLI, those jobs
