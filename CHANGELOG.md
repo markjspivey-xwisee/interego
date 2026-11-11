@@ -11,6 +11,43 @@ review of the change that defers the details.
 
 Not covered: only the first row is opened, so a snapshot row further down that
 enabled its button would not be seen.
+## 2026-11-10 — Practice Evidence: a quote is checked in the turn the judge named before a match elsewhere
+
+A peer review, run on fictional data, found that the turn a judge names for a
+quote was not always where the quote was saved. One of the learner's lines held
+a rubric fingerprint, which every view shows as its stand-in; an earlier line
+held that stand-in written out, copied from an earlier view of the same
+scenario version, so both lines showed the same stretch. A judge who copied the
+stretch from the later line and named its turn had the quote saved, and
+highlighted, in the earlier line, as sent, with a note of the turn it had
+named. The quote as sent was checked first, and a match in any turn ended the
+check before the stretch in the named turn was read back. Without the earlier
+line, the same quote was read back and saved in the named turn. The README and
+the docstrings already said the named turn comes first. The as-sent check has
+come first since quotes were first read back, so this is not new.
+
+Now a check that checks out in the named turn, as sent or read back, is kept
+ahead of one that checks out only in another turn. Among checks that check out
+only elsewhere the order is as before: the quote as sent, then each stretch
+read back by its place, then the quote with every stand-in read back. With no
+turn named, or no answer that shows a line otherwise than stored, nothing
+changed. A quote is still never saved as a stretch that did not check out. The
+README and the docstrings now state the order.
+
+Tests: the peer review's case as a unit test, with the judge naming the line
+that holds the fingerprint (read back and saved there), the line with the
+stand-in written out (saved there as sent), no line (as before), and a turn
+where it checks out in no view (saved as sent where it does, as before).
+Through the bridge, a judge's chat quotes the fingerprint's line from the
+packet and names it: the judge's saved answer, the web app's quote and every
+highlight are on that line. Both fail without the change; the other cases pass
+with and without it.
+
+Not covered: the web app's note on a quote found more than once still says the
+first place is highlighted, which has not been so since the named turn was
+preferred; it is unchanged. A quote read back in the named turn counts how
+often the stored words occur, so a copy written out in another line, which
+reads differently as stored, is not counted.
 
 ## 2026-11-10 — I2IDL-X workbench: a capability's details are built when its row is opened
 
