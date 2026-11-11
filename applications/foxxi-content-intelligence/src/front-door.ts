@@ -11,6 +11,7 @@
  * names only what the bridge it is served from offers, so a step whose affordance is absent or
  * whose route is closed is left out rather than promised.
  */
+import { htmlEscape } from './lti-player.js';
 
 export interface FrontDoorOptions {
   /** This bridge's public base URL, without a trailing slash. */
@@ -96,22 +97,19 @@ export function frontDoor(o: FrontDoorOptions): FrontDoor {
   };
 }
 
-function esc(s: string): string {
-  return s.replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]!));
-}
 
 /** The same description as a page a person reads. No script, no outside resource. */
 export function frontDoorHtml(d: FrontDoor): string {
   const step = (s: FrontDoorStep, i: number): string => `
     <li>
-      <h2><span class="n">${i + 1}</span>${esc(s.title)}</h2>
-      <p>${esc(s.forPeople)}</p>
-      ${s.link ? `<p><a class="go" href="${esc(s.link.href)}">${esc(s.link.label)}</a></p>` : ''}
-      ${s.forAgents ? `<p class="agent">For an agent: <code>${esc(s.forAgents.affordance)}</code>, ${esc(s.forAgents.method)} <code>${esc(s.forAgents.target)}</code> (<a href="${esc(s.forAgents.contract)}">what to send</a>)</p>` : ''}
+      <h2><span class="n">${i + 1}</span>${htmlEscape(s.title)}</h2>
+      <p>${htmlEscape(s.forPeople)}</p>
+      ${s.link ? `<p><a class="go" href="${htmlEscape(s.link.href)}">${htmlEscape(s.link.label)}</a></p>` : ''}
+      ${s.forAgents ? `<p class="agent">For an agent: <code>${htmlEscape(s.forAgents.affordance)}</code>, ${htmlEscape(s.forAgents.method)} <code>${htmlEscape(s.forAgents.target)}</code> (<a href="${htmlEscape(s.forAgents.contract)}">what to send</a>)</p>` : ''}
     </li>`;
   return `<!doctype html>
 <html lang="en"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1">
-<title>${esc(d.title)}</title>
+<title>${htmlEscape(d.title)}</title>
 <style>
 :root{--bg:#fbfaf7;--fg:#1d1c1a;--mute:#5f5c55;--line:#dedbd3;--accent:#1f5fbf;--card:#fff}
 @media (prefers-color-scheme:dark){:root{--bg:#161614;--fg:#eceae4;--mute:#a5a199;--line:#33312d;--accent:#8ab4f8;--card:#1e1e1b}}
@@ -125,15 +123,15 @@ p{margin:.4rem 0}a{color:var(--accent)}.go{font-weight:600}.agent{color:var(--mu
 code{font:.85em ui-monospace,monospace;overflow-wrap:anywhere}section{margin-top:2rem}h3{font-size:1rem;margin:0 0 .4rem}
 dl{margin:0}dt{font:600 .85rem ui-monospace,monospace;margin-top:.5rem}dd{margin:0;color:var(--mute)}
 </style></head><body><main>
-<h1>${esc(d.title)}</h1>
-<p class="lead">${esc(d.summary)}</p>
+<h1>${htmlEscape(d.title)}</h1>
+<p class="lead">${htmlEscape(d.summary)}</p>
 <ol>${d.steps.map(step).join('')}
 </ol>
 <section><h3>For an agent with only a key</h3>
-<p>${esc(d.signing.summary)}</p>
-<dl>${Object.entries(d.signing.envelope).map(([k, v]) => `<dt>${esc(k)}</dt><dd>${esc(v)}</dd>`).join('')}</dl>
+<p>${htmlEscape(d.signing.summary)}</p>
+<dl>${Object.entries(d.signing.envelope).map(([k, v]) => `<dt>${htmlEscape(k)}</dt><dd>${htmlEscape(v)}</dd>`).join('')}</dl>
 <p>Ask for this page as JSON (<code>Accept: application/json</code>) to read the same steps as data.</p></section>
 <section><h3>Everything this bridge offers</h3>
-<p><a href="${esc(d.everything.entryPoint)}">Entry point</a> · <a href="${esc(d.everything.affordances)}">Affordances</a> · <a href="${esc(d.everything.guidance)}">Guidance</a> · MCP at <code>${esc(d.everything.mcp)}</code></p></section>
+<p><a href="${htmlEscape(d.everything.entryPoint)}">Entry point</a> · <a href="${htmlEscape(d.everything.affordances)}">Affordances</a> · <a href="${htmlEscape(d.everything.guidance)}">Guidance</a> · MCP at <code>${htmlEscape(d.everything.mcp)}</code></p></section>
 </main></body></html>`;
 }
