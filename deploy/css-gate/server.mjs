@@ -347,7 +347,7 @@ export function corsHeadersFor(originHeader) {
     'Access-Control-Expose-Headers':
       'Link, ETag, Accept-Post, Accept-Patch, Accept-Put, Location, WAC-Allow, '
       + 'Last-Modified, Content-Type, Allow, Updates-Via, '
-      + 'Interego-Native-Commit, Interego-Revision, Interego-Body-Digest, '
+      + 'Interego-Native-Commit, Interego-Native-Stage, Interego-Revision, Interego-Body-Digest, '
       + 'Interego-Provisional-Bytes-Remaining, Interego-Provisional-Writes-Remaining, Interego-Provisional-Expires-At, '
       + 'Interego-Play-Budget-Exhausted',
     'Vary': 'Origin',

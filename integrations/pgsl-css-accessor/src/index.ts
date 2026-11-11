@@ -17,6 +17,7 @@
 export { PgslDataAccessorFactory } from './PgslDataAccessorFactory.js';
 export { NativeETagHandler } from './NativeETagHandler.js';
 export { NativePutOperationHandler } from './NativePutOperationHandler.js';
+export { NativeStageOperationHandler } from './NativeStageOperationHandler.js';
 export { NativeGetOperationHandler } from './NativeGetOperationHandler.js';
 export { NativeDeleteOperationHandler } from './NativeDeleteOperationHandler.js';
 export { NativeConditionsParser } from './NativeConditionsParser.js';

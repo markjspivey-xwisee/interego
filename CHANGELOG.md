@@ -1,5 +1,78 @@
 # Changelog
 
+## 2026-11-11 — Native commits: a commit's immutable representations are staged in one receipted request
+
+A native commit stages each changed record, the previous operation's record,
+every index node on the changed paths and the commit object before the one head
+compare-and-set. Each was a conditional PUT and a GET read-back, one after
+another, so a single small write cost 15 to 39 requests to the pod server.
+
+**Why staging them concurrently failed (the closed attempt).** The pod server
+answered some of the concurrent PUTs `500 native resource changed repeatedly
+during replacement`, the client then read back a 404 and reported `Native
+immutable artifact could not be read back unchanged`. CSS locks only the
+document a PUT targets. For every document created in a container it also
+writes the missing ancestor containers and rewrites the container's modified
+date, with no lock on the container, and `LdpStore` did each of those as an
+optimistic replacement that gave up after eight attempts. A loss means another
+writer's replacement committed, so one of N writers can lose N - 1 times in a
+row: eight documents created together in a new container reproduce it every
+time against Postgres. The document itself never conflicted with anything.
+
+**What changed.**
+
+- `packages/pgsl-store`: `LdpStore`'s unconditional replacements (container
+  markers, metadata) now retry up to 64 times with a short random pause instead
+  of 8 times in lock-step. Concurrent native PUTs into one container are all
+  confirmed (16 at once, across two server processes, in the contract test).
+- `integrations/pgsl-css-accessor`: a new operation,
+  `POST <container>/` with `Content-Type:
+  application/vnd.interego.native-stage+json` and
+  `{version: 1, items: [{name, contentType, bodyBase64}]}` (at most 64 items and
+  8 MiB of representations). Each item is the same create-if-absent native
+  commit a conditional PUT would be, through the same authorized ResourceStore
+  path, one after another. The answer is `{version: 1, receipts: [...]}`, one
+  per item in order: `{name, status: "staged", created, revision, bodyDigest,
+  contentType, size}`. A name must be `<label>-<sha256 of its bytes>` with an
+  optional extension, so the operation cannot name an auxiliary resource, a
+  nested path or any document not derived from the bytes given. A name that
+  already holds the identical representation is read back and confirmed
+  (`created: false`); one that holds anything else answers 409. The items are
+  independent commits, not a transaction. Advertised on `OPTIONS` as
+  `Interego-Native-Stage: 1`. Both server configurations use it; ordinary POST
+  is unchanged. The css-gate needs no change to carry it (it is an authorized
+  write to the container) and now lists the header for cross-origin clients.
+- `packages/pgsl`: `NativeCommitStore.commit` reads that header from the
+  `OPTIONS` probe it already makes and, when present, sends everything the
+  commit stages in one request (several for a large commit: 64 items or 4 MiB
+  each) before the head compare-and-set. Every receipt must name its item and
+  state the digest, size and type of the submitted bytes; a missing, extra,
+  reordered or mismatched receipt refuses the commit with the head untouched.
+  A batch that is not answered (transport failure, any non-2xx) falls back to
+  the per-representation PUT and read-back. The head compare-and-set, its
+  read-back and its conflict and lost-acknowledgement handling are the same
+  requests as before. New option `stageIndividually: true` keeps the old
+  staging against a server that offers the batch. Index nodes a commit built
+  are remembered as verified only after their receipt.
+
+**Measured** (single-statement `PUT /xapi/statements`, the LRS over the actual
+pod server, gate and Postgres 16 on one machine, 20 writes after 3 warm-ups):
+
+| | pod requests per write | loopback | +100 ms per pod request |
+|---|---|---|---|
+| before | 21 median (15 to 39) | 305 ms median (211 to 539) | 2471 ms median (1759 to 4065) |
+| after | 8 (always) | 242 ms median (185 to 322) | 1081 ms median (1022 to 1174) |
+
+The 100 ms column delays each request the LRS makes to the pod, as a stand-in
+for the bridge → gate → pod distance in production, where a read takes 0.1 to
+0.3 s; it is not a production measurement. The eight that remain are three
+head reads, two commit-object reads, the `OPTIONS` probe, the staging request
+and the head write.
+
+**Deploy order.** The pod server first, then clients; either order is safe. An
+old client never sends the new request, and a new client against an old server
+sees no header and stages as before.
+
 ## 2026-11-11 — Provisional Play: a guest's write surface is per application, not Hallowmarch's
 
 Provisional Play was already keyed by application origin
