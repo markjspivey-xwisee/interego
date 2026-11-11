@@ -465,7 +465,7 @@ import {
   type AccessDecisionTrace,
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
-import { readyStatementStore } from '../src/statement-store.js';
+import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
 import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
@@ -5988,10 +5988,10 @@ const app = createVerticalBridge({
     // ingress's allowed-IP-ranges in production.
     a.get('/metrics', (_req, res) => {
       res.type('text/plain; version=0.0.4');
-      res.send(renderMetrics());
+      res.send(renderMetrics() + '\n' + residentStatementMetricLines().join('\n') + '\n');
     });
     a.get('/metrics.json', (_req, res) => {
-      res.json(metricsJson());
+      res.json({ ...metricsJson(), lrsResidentStatements: residentStatementCount(), lrsResidentStatementsBudget: residentStatementBudget() });
     });
 
     // Prepare only a requested wallet-authenticated surface's directory, before its

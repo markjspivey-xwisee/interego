@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-11-11 — Foxxi: the bridge reports what memory it holds
+
+The deployed bridge sits near 3 GB of memory from the moment it starts, on a
+host that bills for memory held. Started with no pod behind it, the same code
+needs about 210 MB. Nothing the bridge reported could say what the rest is.
+`GET /metrics` and `/metrics.json` now carry the process's resident memory,
+its JavaScript heap in use and reserved, and memory held outside the heap, and,
+where the process runs in a container, what the container is charged for and
+how much of that is the processes' own memory, file cache or shared memory.
+Those tell live data from a heap left grown and from memory that is not the
+process's.
+
+They also carry how many xAPI statements the bridge holds in memory and the
+budget it may hold before evicting, at about 1 KiB a statement.
+
+Not covered: this measures and changes nothing else. The figures are read when
+asked for; no history is kept. Read against the deployed bridge only after it
+is deployed.
 ## 2026-11-11 — Foxxi: anyone who signs may bring a package to be hosted
 
 Only an admin could host a SCORM or cmi5 package on the bridge. A person or an
