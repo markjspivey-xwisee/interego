@@ -2,7 +2,7 @@ import { createHash } from 'node:crypto';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { deriveEncryptionKeyPair, mintNodeId, type IRI } from '@interego/core';
 import {
-  NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE,
+  NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, NATIVE_STAGE_MEDIA_TYPE,
   createNativeByteArtifact, readNativeByteArtifact, validateNativeArtifact,
   type NativeArtifactInput, type NativeArtifactReference, type NativeCommitScope, type NativeSnapshotReference,
   type NativeHeadReadDiagnostic,
@@ -27,6 +27,11 @@ class NativeTransport {
   readonly methods: string[] = [];
   readonly writes: Array<{ url: string; body: string }> = [];
   optionsAvailable = true;
+  /** Batched staging is modelled only when a test turns it on; every other test sees a server without it. */
+  stageAvailable = false;
+  failBatch = false;
+  batchTransform: ((receipts: Record<string, unknown>[]) => unknown) | undefined;
+  readonly batches: string[][] = [];
   failStage = false;
   loseStageAck = false;
   failHead = false;
@@ -42,7 +47,8 @@ class NativeTransport {
     const method = init?.method ?? 'GET';
     this.methods.push(method + ' ' + url);
     if (method === 'OPTIONS') return new Response(null, { status: 204, headers: this.optionsAvailable
-      ? { 'Accept-Put': NATIVE_COMMIT_MEDIA_TYPE, 'Interego-Native-Commit': '1' } : {} });
+      ? { 'Accept-Put': NATIVE_COMMIT_MEDIA_TYPE, 'Interego-Native-Commit': '1', ...(this.stageAvailable ? { 'Interego-Native-Stage': '1' } : {}) } : {} });
+    if (method === 'POST') return this.stageBatch(url, init);
     if (method === 'GET') {
       const row = this.rows.get(url); if (!row) return new Response(null, { status: 404 });
       const headers: Record<string, string> = { 'Content-Type': 'application/json',
@@ -90,6 +96,25 @@ class NativeTransport {
     }
     return new Response(JSON.stringify(receipt), { headers: { 'Content-Type': 'application/json', ETag: '"' + revision + '-json"' } });
   };
+  /** Create-if-absent per item, named by the digest of its bytes; identical bytes are confirmed, not rewritten. */
+  private stageBatch(url: string, init: RequestInit | undefined): Response {
+    expect(this.stageAvailable).toBe(true); // never sent to a server that did not advertise it
+    expect(url).toBe(scope.artifactContainer); expect(init?.redirect).toBe('manual');
+    expect(new Headers(init?.headers).get('Content-Type')).toBe(NATIVE_STAGE_MEDIA_TYPE);
+    const command = JSON.parse(String(init?.body)) as { version: number; items: Array<{ name: string; contentType: string; bodyBase64: string }> };
+    expect(command.version).toBe(1); expect(command.items.length).toBeGreaterThan(0); expect(command.items.length).toBeLessThanOrEqual(64);
+    this.batches.push(command.items.map(item => item.name));
+    if (this.failBatch) return new Response(null, { status: 503 });
+    const receipts = command.items.map(item => {
+      const bytes = Buffer.from(item.bodyBase64, 'base64'), target = url + item.name, old = this.rows.get(target);
+      expect(item.name).toMatch(new RegExp('^(artifact|commit)-' + sha(bytes).slice(7) + '\\.json$')); expect(item.contentType).toBe('application/json');
+      if (old && !Buffer.from(old.bytes).equals(bytes)) throw new Error('model: a content-named resource changed');
+      const revision = old?.revision ?? sha(target + ':' + (++this.sequence) + ':' + sha(bytes));
+      if (!old) { this.rows.set(target, { bytes, revision }); this.writes.push({ url: target, body: bytes.toString('utf8') }); }
+      return { name: item.name, status: 'staged', created: !old, revision, bodyDigest: sha(bytes), contentType: 'application/json', size: bytes.length } as Record<string, unknown>;
+    });
+    return new Response(JSON.stringify(this.batchTransform ? this.batchTransform(receipts) : { version: 1, receipts }), { headers: { 'Content-Type': 'application/json' } });
+  }
   client(overrides: Partial<ConstructorParameters<typeof NativeCommitStore>[0]> = {}): NativeCommitStore {
     return new NativeCommitStore({ scope, fetch: this.fetch, senderKeyPair: bridge,
       ownerPublicKey: owner.publicKey, recipientPublicKeys: [owner.publicKey, bridge.publicKey], ...overrides });
@@ -1064,4 +1089,123 @@ describe('native index reads at scale', () => {
     expect(artifactGets(transport, warm).length).toBeGreaterThan(total / 2);
     for (const indexNodeCacheEntries of [-1, 1.5, 4_000_001]) expect(() => transport.client({ indexNodeCacheEntries })).toThrow('Invalid native index node cache capacity.');
   }, 60_000);
+});
+
+describe('batched staging of a commit\'s immutable representations', () => {
+  const stagingRequests = (transport: NativeTransport, from = 0): string[] => transport.methods.slice(from)
+    .filter(m => !m.endsWith(' ' + scope.headUrl) && !m.startsWith('OPTIONS ') && !m.startsWith('GET '));
+  const commitTwo = (client: NativeCommitStore, id: string) => client.readHead().then(expected => client.commit({ operationId: id, expected, changes: [
+    { key: 'statement:' + id, artifact: artifact('statement ' + id) }, { key: 'state:' + id, artifact: artifact('state ' + id) },
+  ] }));
+
+  it('stages everything a commit refers to in one request, before the head, and reads none of it back', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client();
+    await commitTwo(client, 'first');
+    const from = transport.methods.length, result = await commitTwo(client, 'second');
+    const during = transport.methods.slice(from), post = during.indexOf('POST ' + scope.artifactContainer);
+    // Two records, the previous operation's record, the index leaf and the commit object: one request.
+    expect(stagingRequests(transport, from)).toEqual(['POST ' + scope.artifactContainer]);
+    expect(transport.batches.at(-1)).toHaveLength(5);
+    expect(transport.batches.at(-1)!.filter(name => name.startsWith('commit-'))).toHaveLength(1);
+    expect(post).toBeGreaterThan(-1); expect(post).toBeLessThan(during.indexOf('PUT ' + scope.headUrl));
+    const staged = new Set(transport.batches.at(-1)!.map(name => scope.artifactContainer + name));
+    expect(during.slice(0, during.indexOf('PUT ' + scope.headUrl)).filter(m => m.startsWith('GET ') && staged.has(m.slice(4)))).toEqual([]);
+    // The head compare-and-set and its read-back are the same requests as without batching.
+    expect(during.filter(m => m === 'PUT ' + scope.headUrl)).toHaveLength(1);
+    expect(result.resourceReceipt?.resource).toBe(scope.headUrl);
+    // A client that never batches reads exactly what was published.
+    const reader = await transport.client({ stageIndividually: true }).readHead();
+    expect(await textAt(transport, reader, 'statement:second')).toBe('statement second');
+    expect(await textAt(transport, reader, 'state:first')).toBe('state first');
+  });
+
+  it('writes the same resources as individual staging, with far fewer requests', async () => {
+    const batched = new NativeTransport(), individual = new NativeTransport(); batched.stageAvailable = true;
+    for (const transport of [batched, individual]) { const client = transport.client(); await commitTwo(client, 'a'); await commitTwo(client, 'b'); }
+    const kinds = (transport: NativeTransport): string[] => transport.writes.map(w => w.url === scope.headUrl ? 'head' : w.url.includes('/commit-') ? 'commit' : 'artifact').sort();
+    expect(kinds(batched)).toEqual(kinds(individual));
+    expect(stagingRequests(batched)).toHaveLength(2);
+    expect(stagingRequests(individual).length).toBe(individual.writes.length - 2);
+    expect(individual.methods.filter(m => m.startsWith('POST '))).toEqual([]);
+  });
+
+  it('stages individually when the server does not advertise it or the client opts out', async () => {
+    const silent = new NativeTransport(); await commitTwo(silent.client(), 'silent');
+    expect(silent.batches).toEqual([]);
+    const declined = new NativeTransport(); declined.stageAvailable = true;
+    await commitTwo(declined.client({ stageIndividually: true }), 'declined');
+    expect(declined.batches).toEqual([]);
+    expect(declined.methods.filter(m => m.startsWith('PUT ') && m.includes('/artifact-')).length).toBeGreaterThan(0);
+  });
+
+  it('falls back to a confirmed write and read-back of each representation when the batch is not answered', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true; transport.failBatch = true;
+    const from = transport.methods.length, result = await commitTwo(transport.client(), 'fallback');
+    expect(transport.batches).toHaveLength(1);
+    const during = transport.methods.slice(from), head = during.indexOf('PUT ' + scope.headUrl);
+    for (const name of transport.batches[0]!) {
+      const put = during.indexOf('PUT ' + scope.artifactContainer + name), get = during.indexOf('GET ' + scope.artifactContainer + name, put);
+      expect(put).toBeGreaterThan(-1); expect(get).toBeGreaterThan(put); expect(get).toBeLessThan(head);
+    }
+    expect(await textAt(transport, result.snapshot, 'statement:fallback')).toBe('statement fallback');
+    // Nothing is staged and nothing confirms it: the head is not published.
+    const dead = new NativeTransport(); dead.stageAvailable = true; dead.failBatch = true; dead.failStage = true;
+    await expect(commitTwo(dead.client(), 'dead')).rejects.toThrow(); expect(dead.headWrites()).toBe(0);
+  });
+
+  it.each<[string, (receipts: Record<string, unknown>[]) => unknown]>([
+    ['a receipt for different bytes', receipts => { receipts[1]!.bodyDigest = sha('other'); return { version: 1, receipts }; }],
+    ['a receipt for another name', receipts => { receipts[0]!.name = receipts[1]!.name; return { version: 1, receipts }; }],
+    ['a receipt with another size', receipts => { receipts[2]!.size = Number(receipts[2]!.size) + 1; return { version: 1, receipts }; }],
+    ['a receipt that is not a confirmation', receipts => { receipts[0]!.status = 'pending'; return { version: 1, receipts }; }],
+    ['a receipt without a native revision', receipts => { delete receipts[0]!.revision; return { version: 1, receipts }; }],
+    ['a missing receipt', receipts => ({ version: 1, receipts: receipts.slice(1) })],
+    ['an extra receipt', receipts => ({ version: 1, receipts: [...receipts, receipts[0]] })],
+    ['reordered receipts', receipts => ({ version: 1, receipts: [...receipts].reverse() })],
+    ['an unknown answer version', receipts => ({ version: 2, receipts })],
+    ['an answer that is not receipts', () => ({ ok: true })],
+  ])('does not publish a head after %s', async (_name, batchTransform) => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client({ indexNodeCacheEntries: 1000 });
+    await commitTwo(client, 'good');
+    const head = transport.rows.get(scope.headUrl)!.revision;
+    transport.batchTransform = batchTransform;
+    await expect(commitTwo(client, 'refused')).rejects.toThrow(/staging/i);
+    expect(transport.rows.get(scope.headUrl)!.revision).toBe(head); expect(transport.headWrites()).toBe(1);
+    // Nothing from the refused commit was kept as verified: the same client still reads the published state.
+    transport.batchTransform = undefined;
+    const after = await client.readHead();
+    expect([...after.records.keys()].sort()).toEqual(['state:good', 'statement:good']);
+    expect(after).toEqual(await transport.client().readHead());
+  });
+
+  it('splits a large commit into bounded requests and confirms every one before the head', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client(), changes = Array.from({ length: 150 }, (_, i) => ({ key: 'row:' + i, artifact: artifact('row ' + i) }));
+    const result = await client.commit({ operationId: 'large', expected: await client.readHead(), changes });
+    expect(transport.batches.length).toBeGreaterThan(2);
+    for (const batch of transport.batches) expect(batch.length).toBeLessThanOrEqual(64);
+    const names = transport.batches.flat();
+    expect(new Set(names).size).toBe(names.length);
+    expect(transport.methods.lastIndexOf('POST ' + scope.artifactContainer)).toBeLessThan(transport.methods.indexOf('PUT ' + scope.headUrl));
+    expect(result.snapshot.records.size).toBe(150);
+    expect((await transport.client().readHead()).records.size).toBe(150);
+    expect(transport.methods.filter(m => m.startsWith('PUT ') && !m.endsWith(scope.headUrl))).toEqual([]);
+  }, 60_000);
+
+  it('confirms identical representations that are already there and keeps replay and conflict handling', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const left = transport.client(), right = transport.client(), expected = await left.readHead();
+    const won = await left.commit({ operationId: 'left', expected, changes: [{ key: 'k', artifact: artifact('left') }] });
+    await expect(right.commit({ operationId: 'right', expected, changes: [{ key: 'k', artifact: artifact('right') }] })).rejects.toBeInstanceOf(NativeCommitConflictError);
+    const writes = transport.writes.length;
+    const replay = await right.commit({ operationId: 'left', expected, changes: [{ key: 'k', artifact: artifact('left') }] });
+    expect(replay.replayed).toBe(true); expect(replay.head).toEqual(won.head); expect(transport.writes.length).toBe(writes);
+    // A rival wins the head after this commit has staged: the staged batch is abandoned, the conflict surfaces.
+    const stale = await left.readHead();
+    transport.beforeHead = async () => { await right.commit({ operationId: 'rival', expected: await right.readHead(), changes: [{ key: 'r', artifact: artifact('rival') }] }); };
+    await expect(left.commit({ operationId: 'loser', expected: stale, changes: [{ key: 'l', artifact: artifact('loser') }] })).rejects.toBeInstanceOf(NativeCommitConflictError);
+    expect([...(await transport.client().readHead()).records.keys()].sort()).toEqual(['k', 'r']);
+  });
 });

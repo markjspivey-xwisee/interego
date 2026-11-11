@@ -72,6 +72,20 @@ const bareCt = (ct: string): string => ct.split(';')[0]!.trim();
 const containerPrefix = (containerPath: string): string =>
   containerPath === '' || containerPath.endsWith('/') ? containerPath : `${containerPath}/`;
 
+/**
+ * How often an unconditional replacement re-reads the head and tries again after losing its
+ * compare-and-set. A loss means another writer's replacement of the same resource committed, so
+ * the writers together always progress, but one of N writers can lose N - 1 times in a row. An
+ * LDP server rewrites a container's marker and its modified date for every document created in
+ * it, without a lock on the container, so documents written into one container together all
+ * replace that one resource: eight were enough to exhaust the eight attempts this used to have,
+ * and each failure refused a document write that never conflicted with anything.
+ */
+const REPLACEMENT_ATTEMPTS = 64;
+/** A short random wait before a retry, so writers that lost together do not all retry together. */
+const contentionPause = (attempt: number): Promise<void> =>
+  new Promise((resolve) => { setTimeout(resolve, Math.random() * Math.min(attempt, 8) * 2); });
+
 export class LdpStore {
   constructor(
     private readonly store: PgslStore,
@@ -127,7 +141,8 @@ export class LdpStore {
 
   /** Legacy unconditional LDP writes retain replacement semantics, atomically. */
   private async replacePrepared(pod: string, path: string, nodes: StoredNode[], record: ResourceRecord): Promise<void> {
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < REPLACEMENT_ATTEMPTS; attempt++) {
+      if (attempt) await contentionPause(attempt);
       const head = await this.store.resourceHead(pod, path);
       const result = await this.store.commitResource(nodes, {
         pod, resource: path, record, expectedRevision: head?.revision ?? null, legacy: true,
@@ -243,7 +258,8 @@ export class LdpStore {
 
   /** Update only the metadata quads of an existing (or newly minimal) resource. */
   async setMeta(pod: string, path: string, meta: string | undefined, contentType?: string): Promise<void> {
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < REPLACEMENT_ATTEMPTS; attempt++) {
+      if (attempt) await contentionPause(attempt);
       const head = await this.store.resourceHead(pod, path);
       if (head?.record.nativeManaged) throw new NativeResourceManagedError();
       let bodyDigest = head?.record.bodyDigest;
