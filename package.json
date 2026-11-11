@@ -93,7 +93,7 @@
     "node": ">=20.0.0"
   },
   "devDependencies": {
-    "@anthropic-ai/claude-code": "^2.1.179",
+    "@anthropic-ai/claude-code": "^2.1.251",
     "@anthropic-ai/sdk": "^0.91.1",
     "@eslint/js": "^9.39.5",
     "@types/express": "^5.0.6",

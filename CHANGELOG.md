@@ -133,6 +133,36 @@ cases left. Not exercised against GitHub itself. The workflow that runs this
 test, `i2idlx-typescript.yml`, was not started by a change to
 `i2idlx-ui-oracle.yml` alone; the entry above adds it.
 
+## 2026-11-11 — Dependencies: the Claude Code CLI 2.1.251 as a dev dependency, in place of Dependabot's #817
+
+This lands Dependabot's #817 with the changelog entry its checks needed.
+
+- **Root lockfile:** the dev dependency `@anthropic-ai/claude-code` moves from
+  `^2.1.179` to `^2.1.251`, with its eight platform packages. 2.1.251 fixes a
+  high-severity advisory in the CLI's file-edit tool, the only high one
+  `npm audit` reported for this package. No other entry in the lockfile changes.
+- **Nothing in this repository runs it.** No workflow calls the CLI. The shared
+  workspace's desktop shell looks for a CLI the user installed globally, and the
+  agent-development-practice probe drives `@zed-industries/claude-code-acp`, not
+  this package. So the change reaches only a developer who runs the CLI from
+  this checkout.
+- **Node:** 2.1.251 declares Node 22 or later. The repository asks for Node 20
+  or later and some CI jobs run Node 20. npm only warns about an engine it does
+  not match here (no `engine-strict`), and since nothing runs the CLI, those jobs
+  are unaffected. A developer running it from this checkout needs Node 22.
+- **#817's own checks:** its test-selection job failed because its bridge could
+  not start without the repository's secrets, which a Dependabot run does not
+  get. The I2IDL-X oracle job failed waiting for build outputs. Neither touches
+  this change; this branch runs both with the usual secrets.
+
+Not covered: the other high advisories `npm audit` reports are in
+`@zed-industries/claude-code-acp`'s own copies of `@modelcontextprotocol/sdk`
+and `minimatch`, also dev-only. They need a newer release of that package:
+the only fix `npm audit` offers is going back to 0.12.6. The moderate ones are in the
+eslint, electron-builder and Solid server chains, and in `@hono/node-server`
+under the relay's MCP transport. The relay never calls that module's static
+file server, which is where the advisory lies.
+
 ## 2026-11-11 — Practice Evidence: a repeated quote's note calls nothing highlighted once the text is deleted
 
 A review of the previous entry found its note on a quote found more than once
