@@ -37,7 +37,9 @@ time against Postgres. The document itself never conflicted with anything.
   optional extension, so the operation cannot name an auxiliary resource, a
   nested path or any document not derived from the bytes given. A name that
   already holds the identical representation is read back and confirmed
-  (`created: false`); one that holds anything else answers 409. The items are
+  (`created: false`); one that holds anything else answers 409. Identical
+  means the bytes and the whole media type, parameters included: the same
+  bytes under another charset are another representation. The items are
   independent commits, not a transaction. Advertised on `OPTIONS` as
   `Interego-Native-Stage: 1`. Both server configurations use it; ordinary POST
   is unchanged. The css-gate needs no change to carry it (it is an authorized
