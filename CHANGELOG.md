@@ -44,6 +44,38 @@ Not in this change: Foxxi is not configured as an application, no production
 variable is set, and Foxxi's learner sign-in still refuses provisional
 accounts. Its dashboard guest remains the tab-made wallet account.
 
+## 2026-11-11 — Deploy gate: a fleet audit run no longer counts as a check on the commit it lands on
+
+The auto-deploy gate (`tools/ci-green-for-sha.mjs`) reads every workflow run
+GitHub files under the commit being deployed. It leaves out only its own run,
+the post-deploy live signature check and Dependabot's updater. The Railway fleet
+audit (`railway-fleet-audit.yml`) says in its own header that nothing in it gates
+a deploy. It runs on a daily schedule or when dispatched by hand, and GitHub
+files either run under whatever master's head is at that moment. So the gate
+counted it anyway.
+
+On 2026-11-11 a scheduled audit run, filed under 3d974242 at 14:53, failed
+because the services were five commits behind master (and one Railway service is
+not in the repository's service table). The gate then refused that commit's
+deploy, which was the rollout that would have brought the services up to master:
+the drift the audit reported blocked its own fix. That deploy was already late:
+on 86eb7389, the identity tests' Chromium job had failed three times installing
+system packages, because the runner could not resolve Ubuntu's package mirror.
+That failure is outside this repository and is still counted, as it should be.
+
+`FLEET_AUDIT_WORKFLOWS` (`Railway fleet audit`) now joins the post-deploy check
+in `NON_GATING_WORKFLOWS`, the gate's default ignore list. A test checks that
+the name matches the workflow's own `name:`, and that the workflow still runs
+only on its schedule or by hand. A push or pull_request trigger there would make
+it a check on that commit, which must gate it. Another test checks that a failed
+test workflow on the same commit still refuses the deploy. The three new tests
+fail on the old gate.
+
+Not covered: the audit's own findings are unchanged and still need acting on,
+in the Actions tab. They are services behind master until the next deploy, and
+a Railway service missing from `tools/railway-services.mjs`, which is the
+owner's to add or remove.
+
 ## 2026-11-11 — Foxxi bridge: linked-data answers are compressed, and its memory floor follows its heap
 
 The edge in front of the bridge compresses JSON and HTML but not JSON-LD or
