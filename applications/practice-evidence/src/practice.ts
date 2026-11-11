@@ -625,9 +625,10 @@ export interface QuoteCheck {
   readonly declaredTurnIndex?: number;
   readonly why?: string;
   /**
-   * Set when the quote as sent was not found and was checked as read back (`verifyQuoteAsShown`):
-   * `text` is then the stored words it was copied from, not the words the judge's signed request
-   * held, which showed a stand-in where the stored line holds a fingerprint.
+   * Set when the quote as sent was not found in the turn the judge named (anywhere, when none was
+   * named) and was checked as read back (`verifyQuoteAsShown`): `text` is then the stored words it was
+   * copied from, not the words the judge's signed request held, which showed a stand-in where the
+   * stored line holds a fingerprint.
    */
   readonly readBack?: true;
 }
@@ -735,34 +736,37 @@ export type QuoteReader = (quote: string, turnIndex?: number) => string | QuoteR
 /**
  * Check a quote a judge may have copied from a view of the transcript that shows some of its text
  * otherwise than stored (an answer that replaced a fingerprint in a line with a stand-in, say):
- * `asStored` reads such a quote back as the stored text it stands for. The quote is checked as sent
- * first; when it is not found, it is checked as read back, and that check is kept, its text the
- * stored text and marked `readBack`, so a recorded quote is always one of the stored lines' own and
- * says when it is not the text the judge sent. Each stretch `asStored` matched is checked in turn
- * (`QuoteReadings.matched`), then the quote with every stand-in read back (`otherwise`, or the one
- * reading): the first that checks out in the turn the judge named is kept, else the first that checks
- * out, else the check of `otherwise`. So a quote no reading finds is saved with every stand-in read
- * back and says why, never as a stretch that did not check out. Without `asStored`, exactly
- * `verifyQuote`.
+ * `asStored` reads such a quote back as the stored text it stands for. A check of it as read back
+ * keeps the stored text, marked `readBack`, so a recorded quote is always one of the stored lines' own
+ * and says when it is not the text the judge sent. The checks, in order: the quote as sent, each
+ * stretch `asStored` matched (`QuoteReadings.matched`), then the quote with every stand-in read back
+ * (`otherwise`, or the one reading). The first that checks out in the turn the judge named is kept,
+ * whether as sent or read back, so the same words written out in another turn do not take the place
+ * of the stretch the judge named; else the first that checks out in another turn; else the check of
+ * `otherwise`. With no turn named, the first that checks out anywhere, so a quote found as sent is
+ * kept as sent. A quote no check finds is saved with every stand-in read back and says why, never as
+ * a stretch that did not check out. Without `asStored`, exactly `verifyQuote`.
  */
 export function verifyQuoteAsShown(
   q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[], asStored?: QuoteReader,
 ): QuoteCheck {
+  // Checked out in the turn the judge named, or anywhere when none was named (`verifyQuote` then sets no `declaredTurnIndex`).
+  const inNamedTurn = (c: QuoteCheck): boolean => c.verified && c.declaredTurnIndex === undefined;
   const sent = verifyQuote(q, turns);
-  if (sent.verified || asStored === undefined) return sent;
+  if (inNamedTurn(sent) || asStored === undefined) return sent;
   const read = asStored(q.text, q.turnIndex);
   const { matched, otherwise } = typeof read === 'string' ? { matched: [] as readonly string[], otherwise: read } : read;
-  let elsewhere: QuoteCheck | undefined;
+  // The first check that checked out only in another turn: the quote as sent, else the first reading that did.
+  let elsewhere: QuoteCheck | undefined = sent.verified ? sent : undefined;
   for (const text of matched) {
     if (text === q.text) continue;
-    const c = verifyQuote({ ...q, text }, turns);
-    if (!c.verified) continue;
-    if (c.declaredTurnIndex === undefined) return { ...c, readBack: true };
-    elsewhere ??= c;
+    const c: QuoteCheck = { ...verifyQuote({ ...q, text }, turns), readBack: true };
+    if (inNamedTurn(c)) return c;
+    if (c.verified) elsewhere ??= c;
   }
   const last = otherwise === q.text ? sent : { ...verifyQuote({ ...q, text: otherwise }, turns), readBack: true as const };
-  if (last.verified && last.declaredTurnIndex === undefined) return last;
-  return elsewhere === undefined ? last : { ...elsewhere, readBack: true };
+  if (inNamedTurn(last)) return last;
+  return elsewhere ?? last;
 }
 
 export type CriterionStatus = 'verified' | 'unverified' | 'no-quote-needed';
