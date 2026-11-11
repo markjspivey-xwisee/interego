@@ -11,6 +11,12 @@ export declare const REQUIRED_RUNS: readonly string[];
 /** Workflows dispatched after a deploy, about it; never waited for by the gate. */
 export declare const POST_DEPLOY_WORKFLOWS: readonly string[];
 
+/** Workflows that audit the fleet on a schedule or by hand; never a gate on the commit they land on. */
+export declare const FLEET_AUDIT_WORKFLOWS: readonly string[];
+
+/** POST_DEPLOY_WORKFLOWS and FLEET_AUDIT_WORKFLOWS: what runsForSha leaves out by default. */
+export declare const NON_GATING_WORKFLOWS: readonly string[];
+
 /** One workflow run's state, as this gate reads it. */
 export interface RunSnapshot {
   readonly name: string;
@@ -20,7 +26,7 @@ export interface RunSnapshot {
   readonly url?: string;
 }
 
-/** Workflow runs for `sha`, excluding the calling workflow's own run and the post-deploy checks it dispatches. */
+/** Workflow runs for `sha`, excluding the calling workflow's own run, the post-deploy checks it dispatches and the fleet audit. */
 export declare function runsForSha(
   sha: string,
   opts: { repo: string; token: string; self: string; ignore?: readonly string[]; fetchFn?: typeof fetch },
