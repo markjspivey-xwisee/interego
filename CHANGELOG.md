@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-11 — Foxxi: the bridge reports what memory it holds
+
+The deployed bridge sits near 3 GB of memory from the moment it starts, on a
+host that bills for memory held. Started with no pod behind it, the same code
+needs about 210 MB. Nothing the bridge reported could say what the rest is.
+`GET /metrics` and `/metrics.json` now carry the process's resident memory,
+its JavaScript heap in use and reserved, and memory held outside the heap, and,
+where the process runs in a container, what the container is charged for and
+how much of that is the processes' own memory, file cache or shared memory.
+Those tell live data from a heap left grown and from memory that is not the
+process's.
+
+Not covered: this measures and changes nothing else. The figures are read when
+asked for; no history is kept. Read against the deployed bridge only after it
+is deployed.
+
 ## 2026-11-10 — I2IDL-X workbench: the stale-directory check opens a row before counting its controls
 
 Since a capability's details are built when its row opens, the check that a
