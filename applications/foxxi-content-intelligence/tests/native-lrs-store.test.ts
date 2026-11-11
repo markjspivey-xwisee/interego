@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, createNativeByteArtifact, validateNativeArtifact,
+  NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, createNativeByteArtifact, readNativeByteArtifact, validateNativeArtifact,
   type NativeArtifact, type NativeArtifactReference, type NativeCommitClient,
   type NativeCommitReceipt, type NativeCommitRequest, type NativeCommitScope,
   type NativeSnapshot, type NativeSnapshotReference,
@@ -1131,4 +1131,39 @@ describe.skipIf(!fixtureInputs && !optionalPod)('LRS adapter over actual native 
       expect(await recovered.listTenants()).toEqual(['synthetic-alice']);
     } finally { await recovered.close(); }
   }, 120000);
+  it('stages a whole commit in one receipted request on the actual server, and the published state reads back exactly', async () => {
+    const pod = process.env.TEST_NATIVE_POD_URL!, id = randomUUID(), keys = deriveEncryptionKeyPair(privateKey, serviceOwner);
+    const nativeScope: NativeCommitScope = { pod, owner: serviceOwner,
+      headUrl: new URL('foxxi/lrs/native/staged-' + id + '/head', pod).href,
+      artifactContainer: new URL('foxxi/lrs/native/staged-' + id + '/artifacts/', pod).href };
+    const requests: Array<{ method: string; url: string; status: number }> = [];
+    const transport: typeof globalThis.fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set('Authorization', 'Bearer ' + (fixture ? NATIVE_CSS_FIXTURE_CAPABILITY : process.env.TEST_NATIVE_CAPABILITY));
+      const response = await fetch(input, { ...init, headers });
+      requests.push({ method: init?.method ?? 'GET', url: String(input), status: response.status });
+      return response;
+    };
+    const client = (stageIndividually?: boolean) => new NativeCommitStore({ scope: nativeScope, fetch: transport, senderKeyPair: keys,
+      ownerPublicKey: keys.publicKey, recipientPublicKeys: [keys.publicKey], stageIndividually });
+    const bytes = (text: string) => createNativeByteArtifact({ owner: serviceOwner, contentType: 'application/octet-stream', bytes: Buffer.from(text) });
+    const batched = client();
+    await batched.commit({ operationId: 'first-' + id, expected: await batched.readHead(), changes: [{ key: 'a', artifact: bytes('a') }] });
+    const from = requests.length;
+    const receipt = await batched.commit({ operationId: 'second-' + id, expected: await batched.readHead(),
+      changes: [{ key: 'b', artifact: bytes('b') }, { key: 'c', artifact: bytes('c') }] });
+    const during = requests.slice(from), immutable = during.filter(row => row.url.startsWith(nativeScope.artifactContainer));
+    // The server accepted the batch itself: a refused one would fall back to a PUT and a GET per representation.
+    expect(immutable.filter(row => row.method !== 'GET')).toEqual([{ method: 'POST', url: nativeScope.artifactContainer, status: 200 }]);
+    expect(during.filter(row => row.method === 'PUT').map(row => row.url)).toEqual([nativeScope.headUrl]);
+    expect(receipt.resourceReceipt?.resource).toBe(nativeScope.headUrl);
+    // A client that stages one at a time, and reads everything from the pod, sees the same state and extends it.
+    const individual = client(true), read = await individual.readHead();
+    expect([...read.records.keys()].sort()).toEqual(['a', 'b', 'c']);
+    for (const [key, reference] of read.records) expect(Buffer.from(readNativeByteArtifact(await individual.readArtifact(reference)).bytes).toString()).toBe(key);
+    const before = requests.length;
+    await individual.commit({ operationId: 'third-' + id, expected: read, changes: [{ key: 'd', artifact: bytes('d') }] });
+    expect(requests.slice(before).filter(row => row.method === 'POST')).toEqual([]);
+    expect([...(await batched.readHead()).records.keys()].sort()).toEqual(['a', 'b', 'c', 'd']);
+  }, 60000);
 });

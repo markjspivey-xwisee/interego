@@ -10,7 +10,10 @@ import type { PGSLInstance, Node, NodeProvenance } from './types.js';
 import { immutableArtifactCache } from './immutable-artifact-cache.js';
 
 export const NATIVE_COMMIT_MEDIA_TYPE = 'application/vnd.interego.native-commit+json';
+/** One request that stages several immutable representations into a container, a receipt each. */
+export const NATIVE_STAGE_MEDIA_TYPE = 'application/vnd.interego.native-stage+json';
 const JSON_TYPE = 'application/json';
+const STAGE_BATCH_ITEMS = 64, STAGE_BATCH_BYTES = 4 * 1024 * 1024;
 const PREFIX = 'urn:interego:native-commit:v1:';
 const HEAD = PREFIX + 'head', ENTRY = PREFIX + 'entry', LEAF = PREFIX + 'leaf';
 const BRANCH = PREFIX + 'branch', EMPTY = PREFIX + 'empty', PREVIOUS = PREFIX + 'previous';
@@ -100,6 +103,15 @@ export interface NativeCommitStoreOptions {
   readonly cacheImmutableReads?: boolean;
   /** Opt-in immediate-child prefetch. One limiter is shared by this client's full-index materializations. */
   readonly indexReadConcurrency?: number;
+  /** Opt-out of batched staging. A commit stages its changed records, the previous operation's
+   * record, the index nodes on the changed paths and the commit object before the head
+   * compare-and-set. When the server advertises `Interego-Native-Stage: 1`, they go in one
+   * request (several for a large commit) and each is confirmed by a receipt that names it and
+   * states the digest, size and type of the bytes it now holds; a missing, extra or mismatched
+   * receipt refuses the commit before the head is touched. `true` here, a server that does not
+   * advertise the operation, or a batch request that is not answered all stage each
+   * representation with its own conditional write and read-back, as before. */
+  readonly stageIndividually?: boolean;
   /** Opt-in reuse of decoded index nodes within this client, bounded by the
    * total number of entries retained (least recently used nodes leave first).
    * An index node is immutable and content addressed: it is kept only after it
@@ -129,6 +141,14 @@ export interface NativeAtomicCheckpoint {
   readonly artifact: NativeArtifact | null;
 }
 interface Representation { bytes: Uint8Array; revision: string; }
+/** One commit's representations awaiting a batched staging request. */
+interface StagePlan {
+  readonly pending: { url: string; bytes: Uint8Array; topUri: IRI }[];
+  readonly urls: Set<string>;
+  /** Run once everything added so far is confirmed staged. */
+  readonly confirmed: (() => void)[];
+  bytes: number;
+}
 interface DecodedHead extends NativeSnapshot {
   logicalDigest: string; createdAt: string; previous: NativeSnapshotReference | null;
   index: NativeArtifactReference | null;
@@ -306,12 +326,15 @@ export class NativeCommitStore implements NativeCommitClient {
     if (!Number.isSafeInteger(this.limit) || this.limit < 1024 || this.limit > DEFAULT_LIMIT) fail('Invalid native capacity.', 400);
   }
   /** Capability discovery only; a verified no-op CAS is the adapter's write-authority check. */
-  async ready(): Promise<void> {
+  async ready(): Promise<void> { await this.discover(); }
+  /** The same single probe; also whether the server stages several representations in one request. */
+  private async discover(): Promise<{ batchedStaging: boolean }> {
     let response: Response;
     try { response = await this.options.fetch(this.scope.headUrl, { method: 'OPTIONS', redirect: 'manual' }); }
     catch { return fail('Native atomic resource commits are unavailable.'); }
     if (!response.ok || response.headers.get('Interego-Native-Commit') !== '1'
       || !response.headers.get('Accept-Put')?.split(',').map(s => s.trim()).includes(NATIVE_COMMIT_MEDIA_TYPE)) fail('Native atomic resource commits are unavailable.');
+    return { batchedStaging: response.headers.get('Interego-Native-Stage') === '1' };
   }
   private target(url: string): URL {
     const parsed = uri(url), pod = uri(this.scope.pod);
@@ -405,20 +428,67 @@ export class NativeCommitStore implements NativeCommitClient {
     try { receipt = JSON.parse(Buffer.from(await this.bytes(response, 32_768)).toString('utf8')); } catch { return fail('Native commit acknowledgement is unreadable.'); }
     return this.receipt(receipt, response, url, bytes, expectedRevision);
   }
-  /** Every immutable representation is independently native CP-rooted before publication. */
-  private async stage(url: string, bytes: Uint8Array, topUri: IRI): Promise<void> {
+  /** Every immutable representation is independently native CP-rooted before publication:
+   * written and read back here, or, with a plan, confirmed by receipt in flushStaged(). */
+  private async stage(url: string, bytes: Uint8Array, topUri: IRI, plan?: StagePlan): Promise<void> {
+    if (!plan) return this.stageNow(url, bytes, topUri);
+    if (plan.urls.has(url)) return;
+    // What a commit holds unstaged is bounded by one request, not by the size of the commit.
+    if (plan.pending.length && (plan.pending.length >= STAGE_BATCH_ITEMS || plan.bytes + bytes.length > STAGE_BATCH_BYTES)) await this.flushStaged(plan);
+    plan.urls.add(url); plan.pending.push({ url, bytes, topUri }); plan.bytes += bytes.length;
+  }
+  private async stageNow(url: string, bytes: Uint8Array, topUri: IRI): Promise<void> {
     try { await this.put(url, bytes, null); } catch (error) { if (!(error instanceof NativeCommitConflictError)) throw error; }
     const existing = await this.readRepresentation(url);
     if (!existing || !Buffer.from(existing.bytes).equals(Buffer.from(bytes))) fail('Native immutable artifact could not be read back unchanged.');
     this.decrypt(existing.bytes, topUri);
   }
-  private async persist(artifact: NativeArtifactInput): Promise<NativeArtifactReference> {
-    return this.persistPlaintext(artifact.topUri, serializeArtifact({ topUri: artifact.topUri, nodes: artifact.pgsl.nodes }));
+  /** Returns only when everything the plan holds is confirmed staged; the caller publishes
+   * the head after that and not before. */
+  private async flushStaged(plan: StagePlan): Promise<void> {
+    const items = plan.pending.splice(0); plan.bytes = 0;
+    if (items.length && !await this.stageTogether(items)) {
+      // Not answered: each representation is confirmed by its own write and read-back instead.
+      for (const item of items) await this.stageNow(item.url, item.bytes, item.topUri);
+    }
+    for (const confirmed of plan.confirmed.splice(0)) confirmed();
   }
-  private async persistPlaintext(topUri: IRI, plaintext: Uint8Array): Promise<NativeArtifactReference> {
+  /** One request for all of `items`. False when the server did not answer it (nothing is
+   * assumed staged). An answer that does not confirm exactly these representations is refused. */
+  private async stageTogether(items: readonly { url: string; bytes: Uint8Array; topUri: IRI }[]): Promise<boolean> {
+    const container = this.scope.artifactContainer;
+    const named = items.map(item => {
+      this.target(item.url);
+      const name = item.url.slice(container.length);
+      if (!item.url.startsWith(container) || !name || name.includes('/')) fail('Native immutable reference is not content bound.');
+      return { name, contentType: JSON_TYPE, bodyBase64: Buffer.from(item.bytes).toString('base64') };
+    });
+    let response: Response;
+    try {
+      response = await this.options.fetch(container, { method: 'POST', redirect: 'manual',
+        headers: { 'Content-Type': NATIVE_STAGE_MEDIA_TYPE, Accept: JSON_TYPE }, body: JSON.stringify({ version: 1, items: named }) });
+    } catch { return false; }
+    if (!response.ok) { try { await response.body?.cancel(); } catch { /* already closed */ } return false; }
+    let answer: unknown;
+    try { answer = JSON.parse(Buffer.from(await this.bytes(response, 65_536)).toString('utf8')); } catch { return fail('Native staging acknowledgement is unreadable.'); }
+    if (!object(answer) || answer.version !== 1 || !Array.isArray(answer.receipts) || answer.receipts.length !== items.length) return fail('Native staging receipts do not cover the submitted representations.');
+    items.forEach((item, position) => {
+      const receipt: unknown = (answer.receipts as unknown[])[position];
+      if (!object(receipt) || receipt.name !== named[position]!.name || receipt.status !== 'staged' || typeof receipt.created !== 'boolean'
+        || receipt.bodyDigest !== digest(item.bytes) || receipt.size !== item.bytes.length || receipt.contentType !== JSON_TYPE
+        || typeof receipt.revision !== 'string' || !REVISION.test(receipt.revision)) fail('Native staging receipt is not bound to the submitted representation.');
+      // The same check a read-back gets: what was confirmed opens to the expected holon.
+      this.decrypt(item.bytes, item.topUri);
+    });
+    return true;
+  }
+  private async persist(artifact: NativeArtifactInput, plan?: StagePlan): Promise<NativeArtifactReference> {
+    return this.persistPlaintext(artifact.topUri, serializeArtifact({ topUri: artifact.topUri, nodes: artifact.pgsl.nodes }), plan);
+  }
+  private async persistPlaintext(topUri: IRI, plaintext: Uint8Array, plan?: StagePlan): Promise<NativeArtifactReference> {
     const bytes = this.encryptPlaintext(plaintext), bodyDigest = digest(bytes);
     const reference = { resourceUrl: this.resourceUrl('artifact', bodyDigest), bodyDigest, plaintextDigest: digest(plaintext), topUri };
-    await this.stage(reference.resourceUrl, bytes, reference.topUri);
+    await this.stage(reference.resourceUrl, bytes, reference.topUri, plan);
     return reference;
   }
   async readArtifact(reference: NativeArtifactReference): Promise<NativeArtifact> {
@@ -502,20 +572,22 @@ export class NativeCommitStore implements NativeCommitClient {
     }
     return { kind: 'branch', children };
   }
-  private async saveIndex(node: IndexNode, prefix: string): Promise<NativeArtifactReference> {
+  private async saveIndex(node: IndexNode, prefix: string, plan?: StagePlan): Promise<NativeArtifactReference> {
     const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
     const entries = node.kind === 'leaf' ? node.entries : node.children;
     const rows = [...entries].sort(([a], [b]) => compareStrings(a, b)).map(([key, reference]) => this.referenceTuple(pgsl, ENTRY, key, reference));
     const topUri = ingest(pgsl, [literal(pgsl, node.kind === 'leaf' ? LEAF : BRANCH), ...rows]);
-    const reference = await this.persist({ pgsl, topUri });
-    // Staging read this exact node back and decrypted it; the next head read
+    const reference = await this.persist({ pgsl, topUri }, plan);
+    // Staging confirmed this exact node and decrypted it; the next head read
     // after this client's own commit need not fetch what it has just verified.
-    this.rememberIndexNode(this.indexNodeKey(reference, prefix), node);
+    // With a plan that has not happened yet, so the node is kept only once it has.
+    const remember = (): void => this.rememberIndexNode(this.indexNodeKey(reference, prefix), node);
+    if (plan) plan.confirmed.push(remember); else remember();
     return reference;
   }
-  private async buildIndex(entries: Map<string, NativeArtifactReference>, prefix: string): Promise<NativeArtifactReference | null> {
+  private async buildIndex(entries: Map<string, NativeArtifactReference>, prefix: string, plan?: StagePlan): Promise<NativeArtifactReference | null> {
     if (!entries.size) return null;
-    if (entries.size <= LEAF_SIZE) return this.saveIndex({ kind: 'leaf', entries }, prefix);
+    if (entries.size <= LEAF_SIZE) return this.saveIndex({ kind: 'leaf', entries }, prefix, plan);
     if (prefix.length >= 64) return fail('Native index hash collision; existing state was not changed.');
     const groups = new Map<string, Map<string, NativeArtifactReference>>();
     for (const [key, value] of entries) {
@@ -524,15 +596,15 @@ export class NativeCommitStore implements NativeCommitClient {
       groups.get(nibble)!.set(key, value);
     }
     const children = new Map<string, NativeArtifactReference>();
-    for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) children.set(nibble, (await this.buildIndex(group, prefix + nibble))!);
-    return this.saveIndex({ kind: 'branch', children }, prefix);
+    for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) children.set(nibble, (await this.buildIndex(group, prefix + nibble, plan))!);
+    return this.saveIndex({ kind: 'branch', children }, prefix, plan);
   }
-  private async updateIndex(root: NativeArtifactReference | null, changes: Map<string, NativeArtifactReference | null>, prefix = ''): Promise<NativeArtifactReference | null> {
+  private async updateIndex(root: NativeArtifactReference | null, changes: Map<string, NativeArtifactReference | null>, prefix = '', plan?: StagePlan): Promise<NativeArtifactReference | null> {
     const node: IndexNode = root ? await this.indexNode(root, prefix) : { kind: 'leaf', entries: new Map() };
     if (node.kind === 'leaf') {
       const entries = new Map(node.entries);
       for (const [key, value] of changes) { if (!hashKey(key).startsWith(prefix)) fail('Native index mutation escaped its branch.'); if (value) entries.set(key, value); else entries.delete(key); }
-      return this.buildIndex(entries, prefix);
+      return this.buildIndex(entries, prefix, plan);
     }
     const children = new Map(node.children), groups = new Map<string, Map<string, NativeArtifactReference | null>>();
     for (const [key, value] of changes) {
@@ -541,10 +613,10 @@ export class NativeCommitStore implements NativeCommitClient {
       if (!groups.has(nibble)) groups.set(nibble, new Map()); groups.get(nibble)!.set(key, value);
     }
     for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) {
-      const child = await this.updateIndex(children.get(nibble) ?? null, group, prefix + nibble);
+      const child = await this.updateIndex(children.get(nibble) ?? null, group, prefix + nibble, plan);
       if (child) children.set(nibble, child); else children.delete(nibble);
     }
-    return children.size ? this.saveIndex({ kind: 'branch', children }, prefix) : null;
+    return children.size ? this.saveIndex({ kind: 'branch', children }, prefix, plan) : null;
   }
   private async lookup(root: NativeArtifactReference | null, key: string): Promise<NativeArtifactReference | null> {
     let reference = root, prefix = '';
@@ -811,7 +883,9 @@ export class NativeCommitStore implements NativeCommitClient {
     const current = await this.current(), prior = await this.operation(request.operationId, current);
     if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null, selectedRecordKeys); }
     if (current.revision !== request.expected.revision || canonical(current.reference) !== canonical(request.expected.reference)) throw new NativeCommitConflictError();
-    await this.ready();
+    const { batchedStaging } = await this.discover();
+    const plan: StagePlan | undefined = batchedStaging && this.options.stageIndividually !== true
+      ? { pending: [], urls: new Set(), confirmed: [], bytes: 0 } : undefined;
     const indexChanges = new Map<string, NativeArtifactReference | null>();
     // Digest reuse is local to this commit's fixed scope, encryption keys and recipients.
     const staged = new Map<string, NativeArtifactReference>();
@@ -820,7 +894,7 @@ export class NativeCommitStore implements NativeCommitClient {
       if (change.artifact) {
         const plaintext = serializeArtifact(change.artifact);
         if (digest(plaintext) !== change.artifact.plaintextDigest) fail('Native artifact changed during commit.', 400);
-        reference = staged.get(change.artifact.plaintextDigest) ?? await this.persistPlaintext(change.artifact.topUri, plaintext);
+        reference = staged.get(change.artifact.plaintextDigest) ?? await this.persistPlaintext(change.artifact.topUri, plaintext, plan);
         staged.set(change.artifact.plaintextDigest, reference);
       }
       indexChanges.set('record:' + change.key, reference);
@@ -828,16 +902,18 @@ export class NativeCommitStore implements NativeCommitClient {
     if (current.reference) {
       const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
       const topUri = tuple(pgsl, [OPERATION, current.operationId!, current.logicalDigest, current.reference.revision, current.reference.commitUrl, current.reference.topUri]);
-      indexChanges.set('operation:' + current.operationId!, await this.persist({ pgsl, topUri }));
+      indexChanges.set('operation:' + current.operationId!, await this.persist({ pgsl, topUri }, plan));
     }
-    const index = indexChanges.size ? await this.updateIndex(current.index, indexChanges) : current.index;
+    const index = indexChanges.size ? await this.updateIndex(current.index, indexChanges, '', plan) : current.index;
     const createdAt = new Date().toISOString(), pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: createdAt });
     const previous = current.reference ? tuple(pgsl, [PREVIOUS, current.reference.revision, current.reference.commitUrl, current.reference.topUri]) : literal(pgsl, EMPTY);
     const indexTuple = index ? this.referenceTuple(pgsl, REFERENCE, 'index', index) : literal(pgsl, EMPTY);
     const topUri = ingest(pgsl, [literal(pgsl, HEAD), literal(pgsl, this.scope.pod), literal(pgsl, this.scope.owner), literal(pgsl, this.scope.headUrl),
       literal(pgsl, request.operationId), literal(pgsl, logicalDigest), literal(pgsl, createdAt), previous, indexTuple]);
     const bytes = this.encrypt({ topUri, nodes: pgsl.nodes }), commitUrl = this.resourceUrl('commit', digest(bytes));
-    await this.stage(commitUrl, bytes, topUri);
+    await this.stage(commitUrl, bytes, topUri, plan);
+    // Nothing below runs until every representation this head refers to is confirmed staged.
+    if (plan) await this.flushStaged(plan);
     let receipt: NativeResourceReceipt | null;
     try { receipt = await this.put(this.scope.headUrl, bytes, current.revision); }
     catch (error) {

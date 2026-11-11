@@ -279,7 +279,120 @@ async function expectNativeOptions(worker: Worker, resource: string): Promise<vo
   assert.ok(putTypes.includes(mediaType), 'OPTIONS Accept-Put must include the native commit media type');
   assert.equal(response.headers['interego-native-commit'], '1', 'OPTIONS must advertise native commit version 1 explicitly');
   assert.equal(response.headers['interego-native-delete'], '1', 'OPTIONS must advertise native delete version 1 explicitly');
+  assert.equal(response.headers['interego-native-stage'], '1', 'OPTIONS must advertise batched native staging version 1 explicitly');
   assert.equal((await wire(worker, resource)).status, 404, 'OPTIONS must not create the probed resource');
+}
+
+const stageType = 'application/vnd.interego.native-stage+json';
+interface StageItem { name: string; contentType: string; bodyBase64: string; bytes: Buffer; }
+interface StageReceipt { name: string; status: string; created: boolean; revision: string; bodyDigest: string; contentType: string; size: number; }
+function stageItem(label: string, bytes: Buffer = Buffer.from(JSON.stringify({ label, nonce: randomUUID() }))): StageItem {
+  return { name: `${label}-${createHash('sha256').update(bytes).digest('hex')}.json`, contentType: 'application/json', bodyBase64: bytes.toString('base64'), bytes };
+}
+function stageRequest(worker: Worker, container: string, items: readonly Record<string, unknown>[]): Promise<WireResponse> {
+  return wire(worker, container, 'POST', { 'content-type': stageType },
+    Buffer.from(JSON.stringify({ version: 1, items: items.map(({ bytes: _bytes, ...item }) => item) })));
+}
+function stageReceipts(response: WireResponse, items: readonly StageItem[], created: readonly boolean[]): StageReceipt[] {
+  assert.equal(response.status, 200, 'a batched staging request answers 200 with its receipts');
+  assert.match(String(response.headers['content-type']), /^application\/json(?:;|$)/i);
+  const answer = JSON.parse(response.body.toString('utf8')) as { version: number; receipts: StageReceipt[] };
+  assert.equal(answer.version, 1);
+  assert.equal(answer.receipts.length, items.length, 'one receipt per submitted item');
+  answer.receipts.forEach((value, position) => {
+    const item = items[position]!;
+    assert.deepEqual(Object.keys(value).sort(), ['bodyDigest', 'contentType', 'created', 'name', 'revision', 'size', 'status']);
+    assert.equal(value.name, item.name, 'receipts keep the order of the items');
+    assert.equal(value.status, 'staged');
+    assert.equal(value.created, created[position]);
+    assert.equal(value.bodyDigest, `sha256:${createHash('sha256').update(item.bytes).digest('hex')}`, 'a receipt states the digest of the bytes it confirms');
+    assert.equal(value.size, item.bytes.length);
+    assert.equal(value.contentType, item.contentType);
+    assert.match(value.revision, revisionPattern);
+  });
+  return answer.receipts;
+}
+/** What a staging receipt confirms is what an ordinary native GET then reads, on either server. */
+async function readStaged(worker: Worker, container: string, item: StageItem, value: StageReceipt): Promise<void> {
+  const response = await wire(worker, container + item.name, 'GET', { accept: 'application/json' });
+  assert.equal(response.status, 200);
+  assert.deepEqual(response.body, item.bytes);
+  assert.equal(response.headers['interego-revision'], value.revision);
+  assert.equal(response.headers['interego-body-digest'], value.bodyDigest);
+}
+
+/**
+ * Batched staging, and the concurrent conditional PUTs it replaces, against two servers that
+ * share no CSS lock.
+ */
+async function batchedStagingContract(left: Worker, right: Worker, baseUrl: string, prefix: string): Promise<void> {
+  // Sixteen documents created at once in a container that does not exist yet. Each request also
+  // creates the missing ancestors and rewrites the container's modified date, all without a lock
+  // on the container; that contention used to exhaust the store's retries and answer 500 for
+  // documents that conflicted with nothing.
+  const crowded = `${baseUrl}${prefix}-crowded/${randomUUID()}/artifacts/`;
+  const crowd = Array.from({ length: 16 }, (_, position) => stageItem('artifact', Buffer.from(`crowded ${position} ${randomUUID()}`)));
+  const crowdedWrites = await Promise.all(crowd.map((item, position) => commit(position % 2 ? left : right, crowded + item.name, null, item.bytes)));
+  assert.deepEqual(crowdedWrites.map(response => response.status), crowd.map(() => 200), 'independent documents created together in one new container must all commit');
+  for (const [position, item] of crowd.entries()) {
+    const stored = await wire(position % 2 ? right : left, crowded + item.name, 'GET', { accept: binaryType });
+    assert.equal(stored.status, 200); assert.deepEqual(stored.body, item.bytes);
+  }
+
+  const container = `${baseUrl}${prefix}-staged/${randomUUID()}/artifacts/`;
+  const items = [stageItem('artifact'), stageItem('artifact'), stageItem('artifact'), stageItem('commit'), stageItem('artifact', Buffer.from([0, 255, 13, 10]))];
+  const first = stageReceipts(await stageRequest(left, container, items), items, items.map(() => true));
+  for (const [position, item] of items.entries()) await readStaged(position % 2 ? left : right, container, item, first[position]!);
+  // Staged documents are native-managed heads: no ordinary write replaces one.
+  assert.equal((await wire(right, container + items[0]!.name, 'PUT', { 'content-type': 'application/json' }, Buffer.from('{}'))).status, 409);
+
+  // Identical representations already there are read back and confirmed, never rewritten.
+  const added = stageItem('artifact'), again = [items[1]!, added, items[3]!];
+  const second = stageReceipts(await stageRequest(right, container, again), again, [false, true, false]);
+  assert.equal(second[0]!.revision, first[1]!.revision); assert.equal(second[2]!.revision, first[3]!.revision);
+  await readStaged(left, container, added, second[1]!);
+
+  // Two servers staging the same representations at once: each name is created exactly once.
+  const shared = [stageItem('artifact'), stageItem('artifact'), stageItem('commit')];
+  const raced = await Promise.all([stageRequest(left, container, shared), stageRequest(right, container, shared)]);
+  const racedReceipts = raced.map(response => { assert.equal(response.status, 200); return (JSON.parse(response.body.toString('utf8')) as { receipts: StageReceipt[] }).receipts; });
+  shared.forEach((item, position) => {
+    const [one, two] = [racedReceipts[0]![position]!, racedReceipts[1]![position]!];
+    assert.equal(one.name, item.name); assert.equal(one.revision, two.revision, 'both servers confirm the one committed revision');
+    assert.equal(Number(one.created) + Number(two.created), 1, 'exactly one request created the representation');
+  });
+  for (const [position, item] of shared.entries()) await readStaged(left, container, item, racedReceipts[0]![position]!);
+
+  // Refusals. A name is derived from its bytes, so nothing else in the container can be named.
+  const good = stageItem('artifact');
+  const refused = async (target: string, request: readonly Record<string, unknown>[], status: number, why: string): Promise<void> => {
+    assert.equal((await stageRequest(left, target, request)).status, status, why);
+  };
+  await refused(container, [{ ...good, name: items[0]!.name }], 400, 'a name that carries another digest');
+  await refused(container, [{ ...good, name: 'head' }], 400, 'a name without a digest');
+  await refused(container, [{ ...good, name: `${good.name}.acl` }], 400, 'an auxiliary resource name');
+  await refused(container, [{ ...good, name: `nested/${good.name}` }], 400, 'a nested path');
+  await refused(container, [good, good], 400, 'a repeated name');
+  await refused(container, [{ ...good, contentType: mediaType }], 400, 'a native protocol media type as the representation type');
+  await refused(container, [{ ...good, extra: true }], 400, 'an unknown item field');
+  await refused(container, [], 400, 'an empty batch');
+  await refused(container, Array.from({ length: 65 }, () => stageItem('artifact')), 400, 'more items than one request may stage');
+  await refused(container + 'document', [good], 400, 'a target that is not a container');
+  await refused(container, [{ ...items[0]!, contentType: 'text/plain' }], 409, 'a taken name under another media type');
+  // Parameters are part of the media type: the same bytes under another charset are not confirmed.
+  const text = { ...stageItem('artifact', Buffer.from('caf\u00e9')), contentType: 'text/plain; charset=utf-8' };
+  stageReceipts(await stageRequest(left, container, [text]), [text], [true]).forEach(value => assert.equal(value.contentType, 'text/plain; charset=utf-8'));
+  assert.equal((await stageRequest(right, container, [text])).status, 200, 'the identical parameterized type is confirmed');
+  await refused(container, [{ ...text, contentType: 'text/plain; charset=iso-8859-1' }], 409, 'a taken name under another charset');
+  await refused(container, [{ ...text, contentType: 'text/plain' }], 409, 'a taken name without its parameters');
+  for (const name of [good.name, 'head', `${good.name}.acl`]) assert.equal((await wire(right, container + name)).status, 404, 'a refused request stages nothing it refused');
+  // A request refused part-way keeps what it had already confirmed; it is not a transaction.
+  const before = stageItem('artifact');
+  await refused(container, [before, { ...items[0]!, contentType: 'text/plain' }], 409, 'a later item that conflicts');
+  assert.equal((await wire(right, container + before.name, 'GET', { accept: 'application/json' })).status, 200);
+  // An ordinary POST to the same container is still CSS's own.
+  const ordinary = await wire(left, container, 'POST', { 'content-type': 'text/plain', slug: 'note' }, Buffer.from('plain'));
+  assert.equal(ordinary.status, 201);
 }
 
 /** Every response must bind bytes and metadata from ONE committed native revision. */
@@ -493,6 +606,8 @@ async function main(): Promise<void> {
     for (const worker of [left, right]) assert.equal((await wire(worker, baseUrl, 'GET', { accept: 'application/json,text/turtle;q=0.9' })).status, 200);
     beginPhase('native-discovery');
     for (const worker of [left, right]) await expectNativeOptions(worker, invalidResource);
+    beginPhase('batched-staging');
+    await batchedStagingContract(left, right, baseUrl, prefix);
 
     beginPhase('reject-missing-condition');
     const missingHeader = await commit(left, invalidResource, null, bodyA, {});
@@ -667,7 +782,7 @@ async function main(): Promise<void> {
 
     // Native-managed heads deliberately reject ordinary deletion. This isolated
     // CI database owns cleanup; random resource names prevent cross-run collisions.
-    console.log('CSS native commit HTTP: native-delete accessor contract, exact-target OPTIONS, shared-PG multiwriter CAS, native delete guards and auxiliaries, coherent GET metadata/bytes, same-clock ABA, and process-death recovery ALL PASS');
+    console.log('CSS native commit HTTP: native-delete accessor contract, exact-target OPTIONS, batched digest-bound staging and concurrent creation in one container, shared-PG multiwriter CAS, native delete guards and auxiliaries, coherent GET metadata/bytes, same-clock ABA, and process-death recovery ALL PASS');
   } catch (error) {
     await reportFixtureDatabaseWaits();
     throw error;

@@ -66,6 +66,21 @@ describe('pgsl-store: LDP resource CRUD over the PGSL store (S2 core, no CSS)', 
     expect(children).toEqual(['ctx/a.ttl', 'ctx/b.ttl', 'ctx/sub/']); // one level deep only
   });
 
+  it('lets many writers replace one resource at once: a lost compare-and-set is retried, not refused', async () => {
+    // What an LDP server does to a container when documents are created in it together: every
+    // request rewrites the container's marker and its metadata, with no lock on the container.
+    // One of N such writers can lose N - 1 times in a row; eight used to exhaust the retries.
+    const { ldp } = setup();
+    const writers = Array.from({ length: 24 }, (_, i) => i);
+    await Promise.all(writers.flatMap(i => [
+      ldp.writeResource(POD, 'shared/', new Uint8Array(0), 'internal/container', {}, `<urn:writer> <urn:n> "${i}" .`),
+      ldp.setMeta(POD, 'shared/', `<urn:meta> <urn:n> "${i}" .`, 'internal/container'),
+    ]));
+    const marker = await ldp.stat(POD, 'shared/');
+    expect(marker?.contentType).toBe('internal/container');
+    expect(marker?.meta).toMatch(/^<urn:(writer|meta)> <urn:n> "\d+" \.$/);
+  });
+
   it('survives restart: a fresh LdpStore over the same backing still reads', async () => {
     const fdb = new InMemoryFdb();
     const codecs = new CodecRegistry().register(rdfCodec);
