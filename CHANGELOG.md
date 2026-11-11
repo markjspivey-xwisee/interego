@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-11 — Railway: health-bridge is a tracked service
+
+The fleet audit reported `health-bridge` as a service nobody knows about, and its
+resource cap as one with no recorded minimum. It is meant to be there. It is now
+a row in `tools/railway-services.mjs`, marked as built by Railway from source
+rather than as an image this repository publishes, so the image tools refuse to
+repoint it, and its cap as set on the live service (0.25 CPU, 500000000 bytes)
+is recorded as its floor.
+
+Not covered: the audit compares image pins to master, and this service has
+neither; its running commit is not checked by anything here.
+
 ## 2026-11-11 — Deploy gate: a fleet audit run no longer counts as a check on the commit it lands on
 
 The auto-deploy gate (`tools/ci-green-for-sha.mjs`) reads every workflow run
