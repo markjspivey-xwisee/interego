@@ -82,6 +82,25 @@ Each step changes a live service. None is done by merging this code.
    an account.
 4. **Register the service's agent with the relay** on the service's own pod, so the relay holds a
    delegation credential anchored to its signing key.
+
+   `tools/setup-play-service.mjs` does steps 3 and 4. With no flag it changes nothing and reports
+   what it found; each change needs its own flag, and it never agrees to identity's terms itself:
+
+   ```bash
+   FOXXI_PLAY_SERVICE_PRIVATE_KEY=0x... node tools/setup-play-service.mjs
+   ```
+
+   ```bash
+   FOXXI_PLAY_SERVICE_PRIVATE_KEY=0x... node tools/setup-play-service.mjs --create-account --accept-terms=<version it printed>
+   ```
+
+   ```bash
+   FOXXI_PLAY_SERVICE_PRIVATE_KEY=0x... node tools/setup-play-service.mjs --register-agent --audience=https://<dashboard origin>
+   ```
+
+   The key is read from the environment only and is never printed, nor is any token. When the
+   relay signs for the agent, the script prints the `PROVISIONAL_PLAY_CLIENTS` entry for step 6.
+   It sets nothing on the bridge or on identity.
 5. **Set the two variables on the bridge** and restart it. Open `GET /play/status`.
    - `service` names the `agentDid` and `podUrl` the relay signs this service as
      (`asSignedByRelay: true`). These are the two values identity compares exactly.
@@ -110,9 +129,14 @@ paths, native-commit and sealed-envelope requirements.
 
 Not exercised, because it needs the live services:
 
-- Steps 3 and 4. No script for them is included: one written here could not be run against the
-  real identity and relay, and step 3 creates an account. `/play/status` is the check that they
-  worked.
+- Steps 3 and 4. `tools/setup-play-service.mjs` has run only against stand-ins for identity's
+  accounts and the relay's registry, written from reading their handlers; identity's own ERC-4361
+  reader does check each sign-in message it builds. Two things in particular are unconfirmed:
+  whether the relay's `register_agent`, called over REST with an identity token, succeeds on a pod
+  nothing has bootstrapped yet (the relay bootstraps a pod on its OAuth and `/mcp` paths, not on
+  `/tool`), and what identity's token names as the agent for a wallet-created account. The script
+  stops and prints the relay's or identity's own answer when a step is refused, and both it and
+  `/play/status` report what the relay actually signs as.
 - The relay's `POST /tool/sign_request` with the service's identity token, and the exact
   `agent_id` and `subject_pod_url` it signs. The grant service checks what comes back and refuses
   a mismatch, and `/play/status` shows the values, but the request has only been made to a
