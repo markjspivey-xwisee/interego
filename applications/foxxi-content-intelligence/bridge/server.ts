@@ -533,6 +533,7 @@ import type { PublishedKind } from '../src/ns/published.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
 import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
+import { validateAgainstSuppliedProfile, whyNotAProfile } from '../src/xapi-profile-supplied.js';
 import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 /** Credential-format models registered as DATA (not bespoke handlers): the generic
  *  /ns/<module> loop mounts GET/shapes/validate/term + composes them into the lattice,
@@ -6540,6 +6541,21 @@ const app = createVerticalBridge({
     // "profile-conformant" verifiable, not just declared.
     a.post('/xapi/profile/validate', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
+      // With a `profile` beside the statement, the check is against that profile's templates
+      // (src/xapi-profile-supplied.ts): the caller's own xAPI Profile, read from the request and
+      // neither stored nor fetched. Without one it is Foxxi's own profile, as before.
+      const supplied = (req.body && typeof req.body === 'object') ? (req.body as Record<string, unknown>).profile : undefined;
+      if (supplied !== undefined) {
+        const why = whyNotAProfile(supplied);
+        if (why) { res.status(400).json({ ok: false, error: why }); return; }
+        const body = req.body as Record<string, unknown>;
+        const statement = (body.instance ?? body.statement) as unknown;
+        if (!statement || typeof statement !== 'object' || Array.isArray(statement)) { res.status(400).json({ ok: false, error: 'send the statement as `instance` (or `statement`) beside `profile`' }); return; }
+        const s = validateAgainstSuppliedProfile(statement as Record<string, unknown>, supplied as Record<string, unknown>);
+        const verdict = !s.applicable ? (s.verbDeclared ? 'no-applicable-template' : 'unknown-verb') : (s.matchedTemplates.length ? 'conformant' : 'non-conformant');
+        res.json({ ok: true, profileSource: 'supplied', ...s, verdict, conforms: s.matchedTemplates.length > 0 });
+        return;
+      }
       const r = validateAgainstProfileTemplates(readInstance(req));
       // conforms is only meaningful when a template applied. An unknown or
       // template-less verb is reported honestly, never as a bare conforms:true.

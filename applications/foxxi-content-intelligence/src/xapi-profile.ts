@@ -691,7 +691,7 @@ interface TemplateRule { location: string; presence?: string; any?: unknown[]; a
 
 /** Resolve an xAPI Profile rule `location` (a JSONPath subset: dot segments,
  *  ["quoted keys"], and [*] over arrays) to the array of values it selects. */
-function resolveLocation(root: unknown, location: string): unknown[] {
+export function resolveLocation(root: unknown, location: string): unknown[] {
   const tokens: string[] = [];
   const re = /\[\s*(?:"([^"]*)"|'([^']*)'|(\*))\s*\]|([^.[\]]+)/g;
   let m: RegExpExecArray | null;
