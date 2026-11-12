@@ -83,6 +83,9 @@ describe('a statement is checked against a profile you bring', () => {
       rules: [{ location: '$.result.extensions', selector: '$.x', all: ['expected'] }] }] };
     const selected = validateAgainstSuppliedProfile(statement('closing', { result: { extensions: { x: 'expected' } } }), selecting);
     expect(selected.violations).toEqual([]);
+    // Its only rule was not evaluated, so following it is not established: not a match.
+    expect(selected.matchedTemplates).toEqual([]);
+    expect(selected.partiallyCheckedTemplates).toEqual([`${P}/templates/s`]);
     expect(selected.notChecked.some(n => n.includes('selector'))).toBe(true);
     const filtered = { ...profile, templates: [{ id: `${P}/templates/f`, verb: `${P}/verbs/scored`,
       rules: [{ location: '$.context.contextActivities.parent[?(@.id)]', presence: 'included' }] }] };
@@ -91,6 +94,22 @@ describe('a statement is checked against a profile you bring', () => {
     expect(f.notChecked.some(n => n.includes('JSONPath form'))).toBe(true);
     expect(r.notChecked.some(n => n.includes('objectStatementRefTemplate'))).toBe(true);
     expect(r.notChecked.some(n => n.startsWith('patterns'))).toBe(true);
+  });
+
+  it('keeps a fully checked match when another template or a pattern is not evaluated', () => {
+    const mixed = { ...profile, templates: [...profile.templates, { id: `${P}/templates/selector-only`, verb: `${P}/verbs/scored`,
+      rules: [{ location: '$.result', selector: '$.x', presence: 'included' }] }] };
+    const r = validateAgainstSuppliedProfile(statement('greeting'), mixed);
+    expect(r.matchedTemplates).toEqual([`${P}/templates/criterion-greeting`]);
+    expect(r.partiallyCheckedTemplates).toEqual([`${P}/templates/selector-only`]);
+    expect(r.notChecked.some(n => n.startsWith('patterns'))).toBe(true);
+    // And a partially checked template that does show a violation is a violation, not a partial match.
+    const broken = { ...profile, patterns: [], templates: [{ id: `${P}/templates/b`, verb: `${P}/verbs/scored`,
+      rules: [{ location: '$.result', selector: '$.x', presence: 'included' }, { location: '$.result.missing', presence: 'included' }] }] };
+    const b = validateAgainstSuppliedProfile(statement('greeting'), broken);
+    expect(b.matchedTemplates).toEqual([]);
+    expect(b.partiallyCheckedTemplates).toEqual([]);
+    expect(b.violations).toHaveLength(1);
   });
 
   it('does not let an absent location satisfy any or all', () => {
