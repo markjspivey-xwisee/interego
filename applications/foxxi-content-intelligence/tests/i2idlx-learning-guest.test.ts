@@ -68,11 +68,13 @@ async function fixture(options: { guests?: boolean; termsVersion?: string; signe
     return identity(u.pathname, JSON.parse(String(init.body)) as Row);
   };
   const app = express(); app.set('trust proxy', false);
-  // `foreignParser`: a global JSON parser that consumes the request and sets req.body WITHOUT body-parser 1's
-  // `_body` mark, as the bridge's (from another Express major) does.
+  // `foreignParser`: what the live bridge puts in front of these routes. A global JSON parser that consumes the
+  // request and sets req.body WITHOUT body-parser 1's `_body` mark (it is another Express major's), and the
+  // bridge's decoration of every JSON body with `__client_ip` and, given a bearer, `__caller_token`.
   if (options.foreignParser) app.use((req, _res, next) => {
     const chunks: Buffer[] = []; req.on('data', chunk => chunks.push(chunk as Buffer));
-    req.on('end', () => { const text = Buffer.concat(chunks).toString('utf8'); req.body = text ? JSON.parse(text) as unknown : {}; next(); });
+    req.on('end', () => { const text = Buffer.concat(chunks).toString('utf8'); req.body = text ? JSON.parse(text) as unknown : {};
+      (req.body as Row).__client_ip = '203.0.113.7'; if (req.get('Authorization')) (req.body as Row).__caller_token = 'some-agent-bearer'; next(); });
   });
   else app.use(express.json());
   attachLearningRoutes(app, { baseUrl: BASE, relayOrigin: RELAY, identityOrigin: IDENTITY, podOrigin: POD, repository, fetch: transport, now: () => now,
@@ -245,6 +247,10 @@ describe('provisional guest learner sign-in', () => {
     const f = await fixture({ foreignParser: true }), b = f.browser(); await b.signIn();
     assert.equal((await b.status()).guest, true);
     assert.equal((await b.call(API, { operation: 'my-links' })).status, 200);
+    // The decorations are the only extra fields let through, and a bearer changes nothing.
+    const post = (body: Row, headers: Record<string, string> = {}) => fetch(f.local + PREFIX + '/guest/challenge', { method: 'POST', headers: { 'Content-Type': 'application/json', Origin: BASE, ...headers }, body: JSON.stringify(body) });
+    assert.equal((await post({}, { Authorization: 'Bearer anything' })).status, 200);
+    assert.equal((await post({ extra: 'x' })).status, 400);
   });
 
   it('is its own application: its own service key and origin, never the dashboard\'s', () => {
