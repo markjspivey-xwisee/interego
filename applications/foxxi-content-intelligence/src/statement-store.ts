@@ -624,6 +624,10 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
     // ones means a head changed by one write is re-read along that write's
     // paths only; the head itself is still fetched and verified on every read.
     cacheImmutableReads: true, indexReadConcurrency: 8, indexNodeCacheEntries: 262_144,
+    // A write reads the head once and commits from that verified snapshot; the head
+    // compare-and-set still decides. The immutable commit object behind a head is fetched
+    // once, and the capability probe is repeated every five minutes, not before each write.
+    reuseBackingCommits: true, commitFromExpectedSnapshot: true, capabilityProbeTtlMs: 300_000,
     onHeadRead: event => {
       // Numeric projection only; operation/event/phase/outcome codes are documented
       // by NativeHeadReadDiagnostic. No scope, URL, record, query or error text.
