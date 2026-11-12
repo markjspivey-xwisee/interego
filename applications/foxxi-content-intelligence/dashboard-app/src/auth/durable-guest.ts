@@ -337,13 +337,21 @@ export function indexedDbGuestStore(factory: IDBFactory = indexedDB): GuestStore
     request.onsuccess = () => resolve(request.result);
     request.onerror = () => reject(request.error ?? new Error('IndexedDB is unavailable'));
   });
+  /**
+   * One request in one transaction, answered only once the transaction has committed. A request's
+   * own success comes before the commit, and a commit can still fail (the disk is full, the browser
+   * evicts the origin): resolving on the request told a guest they were kept when the record that
+   * brings them back had not been stored.
+   */
   const run = async <T>(mode: IDBTransactionMode, work: (store: IDBObjectStore) => IDBRequest<T>): Promise<T> => {
     const database = await db();
     try {
       return await new Promise<T>((resolve, reject) => {
-        const request = work(database.transaction(STORE, mode).objectStore(STORE));
-        request.onsuccess = () => resolve(request.result);
-        request.onerror = () => reject(request.error ?? new Error('IndexedDB request failed'));
+        const transaction = database.transaction(STORE, mode);
+        const request = work(transaction.objectStore(STORE));
+        transaction.oncomplete = () => resolve(request.result);
+        transaction.onabort = () => reject(transaction.error ?? request.error ?? new Error('IndexedDB transaction aborted'));
+        transaction.onerror = () => reject(transaction.error ?? request.error ?? new Error('IndexedDB transaction failed'));
       });
     } finally { database.close(); }
   };

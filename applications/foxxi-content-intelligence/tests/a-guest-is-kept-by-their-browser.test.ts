@@ -21,7 +21,7 @@ import { webcrypto } from 'node:crypto';
 import { Readable } from 'node:stream';
 import { ethers } from 'ethers';
 import {
-  DurableGuestError, durableGuestOffer, forgetKeptGuest, guestCheckpointUrl, keepGuest, keptGuest, openKeptGuest,
+  DurableGuestError, durableGuestOffer, forgetKeptGuest, guestCheckpointUrl, indexedDbGuestStore, keepGuest, keptGuest, openKeptGuest,
   type DurableGuestDeps, type StoredGuest,
 } from '../dashboard-app/src/auth/durable-guest.js';
 import { connectAsGuest } from '../dashboard-app/src/auth/session.js';
@@ -330,5 +330,72 @@ describe('the bridge\'s grant service', () => {
       expect(out).not.toContain(SERVICE_KEY.slice(2));
       expect(out).not.toContain('cg2_service');
     }
+  });
+});
+
+describe('the browser\'s record', () => {
+  /**
+   * An IndexedDB whose one transaction settles as `outcome` says, after its request has succeeded:
+   * the order a real one keeps (the request's success event comes before the commit).
+   */
+  function indexedDb(outcome: 'complete' | 'abort') {
+    const events: string[] = [];
+    const held = new Map<string, unknown>();
+    const factory = {
+      open: () => {
+        const open: Record<string, unknown> = {};
+        const database = {
+          createObjectStore: () => undefined, close: () => { events.push('close'); },
+          transaction: () => {
+            const transaction: Record<string, unknown> = { error: outcome === 'abort' ? new Error('QuotaExceededError') : null };
+            const request: Record<string, unknown> = { result: undefined, error: null };
+            const settle = (act: () => void) => {
+              queueMicrotask(() => {
+                act(); events.push('request success');
+                (request['onsuccess'] as (() => void) | undefined)?.();
+                queueMicrotask(() => {
+                  events.push(`transaction ${outcome}`);
+                  (transaction[outcome === 'complete' ? 'oncomplete' : 'onabort'] as (() => void) | undefined)?.();
+                });
+              });
+              return request;
+            };
+            transaction['objectStore'] = () => ({
+              get: (key: string) => settle(() => { request['result'] = held.get(key); }),
+              put: (value: unknown, key: string) => settle(() => { if (outcome === 'complete') held.set(key, value); }),
+              delete: (key: string) => settle(() => { if (outcome === 'complete') held.delete(key); }),
+            });
+            return transaction;
+          },
+        };
+        queueMicrotask(() => { open['result'] = database; (open['onsuccess'] as (() => void) | undefined)?.(); });
+        return open;
+      },
+    } as unknown as IDBFactory;
+    return { factory, events, held };
+  }
+  const guest = { version: 1, address: '0xabc' } as unknown as StoredGuest;
+
+  it('is stored only once its transaction has committed, and read back after one', async () => {
+    const db = indexedDb('complete');
+    const store = indexedDbGuestStore(db.factory);
+    await store.put(guest);
+    expect(db.events.slice(0, 2)).toEqual(['request success', 'transaction complete']);
+    expect(await store.get()).toEqual(guest);
+    await store.delete();
+    expect(await store.get()).toBeUndefined();
+  });
+
+  it('a write whose request succeeded but whose transaction aborted is a failure, so no guest is told they are kept', async () => {
+    const db = indexedDb('abort');
+    await expect(indexedDbGuestStore(db.factory).put(guest)).rejects.toThrow(/QuotaExceededError/);
+    expect(db.events).toEqual(['request success', 'transaction abort', 'close']);
+    expect(db.held.size).toBe(0);
+
+    // And keeping a guest on such a browser fails as a whole: keepGuest throws, the caller signs in the tab-only guest.
+    const d = deployment({ namespace: 'foxxi' });
+    const offer = await durableGuestOffer(BRIDGE, d.deps);
+    await expect(keepGuest({ bridgeUrl: BRIDGE, offer: offer!, phrase: PHRASE, address: guestWallet.address },
+      { ...d.deps, store: indexedDbGuestStore(db.factory) })).rejects.toThrow(/QuotaExceededError/);
   });
 });
