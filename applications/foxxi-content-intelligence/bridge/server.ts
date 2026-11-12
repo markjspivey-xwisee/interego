@@ -122,6 +122,7 @@ import { authorXapiCourse, xapiCourseArtifact, xapiCourseLinks } from '../src/xa
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 import { frontDoor, frontDoorHtml } from '../src/front-door.js';
+import { PlayGrantError, PlayGrantService, playGrantConfig } from '../src/play-grant.js';
 import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
@@ -11155,6 +11156,48 @@ app.get('/start', (req, res) => {
     return;
   }
   res.json(door);
+});
+
+// ── A guest their browser keeps (src/play-grant.ts, DURABLE-GUEST.md) ───────────────────────
+// Off unless FOXXI_PLAY_SERVICE_PRIVATE_KEY and FOXXI_PLAY_AUDIENCE are both set. /play/guest says
+// which, so the dashboard asks for nothing it will be refused; /play/grant hands the one browser key
+// a request names the relay-signed grant identity admits a provisional owner on; /play/status is
+// the operator's check of the setup. None of the three takes or returns a credential.
+const playGrantSettings = playGrantConfig(process.env);
+const playGrants = playGrantSettings ? new PlayGrantService(playGrantSettings) : null;
+const playGrantRateLimit = rateLimit({
+  windowMs: 3_600_000, limit: 10, ipv6Subnet: 56, identifier: 'play-grant',
+  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+});
+const playStatusRateLimit = rateLimit({
+  windowMs: 60_000, limit: 6, ipv6Subnet: 56, identifier: 'play-status',
+  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+});
+app.get('/play/guest', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(playGrantSettings
+    ? { enabled: true, audience: playGrantSettings.audience, identityUrl: playGrantSettings.identityUrl }
+    : { enabled: false });
+});
+app.post('/play/grant', playGrantRateLimit, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!playGrants || !playGrantSettings) { res.status(404).json({ error: 'durable_guest_disabled' }); return; }
+  // Only the page identity is configured to admit guests for is handed a grant. A browser sets
+  // Origin itself, so this keeps another site's page from spending this application's admissions;
+  // it is no defence against a client that is not a browser, which the rate limit and identity's
+  // own caps bound.
+  if (req.headers.origin !== playGrantSettings.audience) { res.status(403).json({ error: 'play_grant_origin' }); return; }
+  try { res.json(await playGrants.grant(req.body)); }
+  catch (error) {
+    if (error instanceof PlayGrantError) { res.status(error.status).json({ error: error.code }); return; }
+    res.status(503).json({ error: 'play_grant_unavailable' });
+  }
+});
+app.get('/play/status', playStatusRateLimit, async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!playGrants) { res.json({ enabled: false }); return; }
+  try { res.json(await playGrants.status()); }
+  catch { res.status(503).json({ enabled: true, ready: false, problem: 'status unavailable' }); }
 });
 
 app.post('/agent/scorm/host', openHostingRateLimit, async (req, res) => {
