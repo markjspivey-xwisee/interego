@@ -3,7 +3,7 @@
  * checked against the templates of a profile sent with it, and what is not evaluated is named.
  */
 import { describe, it, expect } from 'vitest';
-import { validateAgainstSuppliedProfile, whyNotAProfile } from '../src/xapi-profile-supplied.js';
+import { selectLocation, validateAgainstSuppliedProfile, whyNotAProfile } from '../src/xapi-profile-supplied.js';
 
 const P = 'https://example.org/profiles/phone-roleplay';
 const profile = {
@@ -78,8 +78,43 @@ describe('a statement is checked against a profile you bring', () => {
       rules: [{ location: '$.object.definition.extensions', selector: '$.x', presence: 'included' }] }] };
     const r = validateAgainstSuppliedProfile(statement('closing'), withSelector);
     expect(r.notChecked.some(n => n.includes('selector'))).toBe(true);
+    // The rule with a selector is not judged at all: its location alone selects other values.
+    const selecting = { ...profile, templates: [{ id: `${P}/templates/s`, verb: `${P}/verbs/scored`,
+      rules: [{ location: '$.result.extensions', selector: '$.x', all: ['expected'] }] }] };
+    const selected = validateAgainstSuppliedProfile(statement('closing', { result: { extensions: { x: 'expected' } } }), selecting);
+    expect(selected.violations).toEqual([]);
+    expect(selected.notChecked.some(n => n.includes('selector'))).toBe(true);
+    const filtered = { ...profile, templates: [{ id: `${P}/templates/f`, verb: `${P}/verbs/scored`,
+      rules: [{ location: '$.context.contextActivities.parent[?(@.id)]', presence: 'included' }] }] };
+    const f = validateAgainstSuppliedProfile(statement('closing'), filtered);
+    expect(f.violations).toEqual([]);
+    expect(f.notChecked.some(n => n.includes('JSONPath form'))).toBe(true);
     expect(r.notChecked.some(n => n.includes('objectStatementRefTemplate'))).toBe(true);
     expect(r.notChecked.some(n => n.startsWith('patterns'))).toBe(true);
+  });
+
+  it('does not let an absent location satisfy any or all', () => {
+    const asking = (rule: Record<string, unknown>) => ({ ...profile, patterns: [], templates: [{ id: `${P}/templates/a`, verb: `${P}/verbs/scored`, rules: [rule] }] });
+    const without = statement('greeting', { result: {} });
+    expect(validateAgainstSuppliedProfile(without, asking({ location: '$.result.success', any: [true] })).matchedTemplates).toEqual([]);
+    expect(validateAgainstSuppliedProfile(without, asking({ location: '$.result.success', all: [true] })).matchedTemplates).toEqual([]);
+    // recommended makes the value check apply only when there is a value; none is met by absence.
+    expect(validateAgainstSuppliedProfile(without, asking({ location: '$.result.success', presence: 'recommended', any: [true] })).matchedTemplates).toHaveLength(1);
+    expect(validateAgainstSuppliedProfile(without, asking({ location: '$.result.success', none: [false] })).matchedTemplates).toHaveLength(1);
+    expect(validateAgainstSuppliedProfile(statement('greeting', { result: { success: true } }), asking({ location: '$.result.success', any: [true] })).matchedTemplates).toHaveLength(1);
+  });
+
+  it('reads indices, unions and alternatives in a location, and declines what it cannot', () => {
+    const s = { context: { contextActivities: { parent: [{ id: 'p0' }, { id: 'p1' }], grouping: [{ id: 'g0' }] } }, result: { score: { raw: 4, max: 5 } } };
+    expect(selectLocation(s, '$.context.contextActivities.parent[0].id')).toEqual(['p0']);
+    expect(selectLocation(s, '$.context.contextActivities.parent[-1].id')).toEqual(['p1']);
+    expect(selectLocation(s, '$.context.contextActivities.parent[*].id')).toEqual(['p0', 'p1']);
+    expect(selectLocation(s, "$.result.score['raw','max']")).toEqual([4, 5]);
+    expect(selectLocation(s, '$.context.contextActivities.parent[0,1].id')).toEqual(['p0', 'p1']);
+    expect(selectLocation(s, '$.context.contextActivities.parent[*].id | $.context.contextActivities.grouping[*].id')).toEqual(['p0', 'p1', 'g0']);
+    expect(selectLocation(s, '$.result.missing')).toEqual([]);
+    for (const unread of ['$..id', '$.context.contextActivities.parent[?(@.id)]', '$.context.contextActivities.parent[0:1]', 'result.score.raw'])
+      expect(selectLocation(s, unread), unread).toBeNull();
   });
 
   it('refuses a document that is not a usable profile', () => {

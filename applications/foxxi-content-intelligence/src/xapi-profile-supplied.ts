@@ -13,11 +13,11 @@
  * the profile when it carries every determining property of at least one template and breaks
  * none of that template's rules.
  *
- * Not read, and reported as not checked rather than passed: a rule's `selector`,
+ * Not read, and reported as not checked rather than passed or failed: a rule that has a
+ * `selector`, a rule whose location uses a JSONPath form outside the ones selectLocation reads,
  * objectStatementRefTemplate and contextStatementRefTemplate, and patterns (a pattern is a
  * property of a sequence of statements, not of one).
  */
-import { resolveLocation } from './xapi-profile.js';
 
 const MAX_TEMPLATES = 500;
 const MAX_RULES = 200;
@@ -85,18 +85,74 @@ function determiningMisses(stmt: Json, t: Json): SuppliedProfileViolation[] {
   return out;
 }
 
+/**
+ * The values a rule's location selects in a statement, or null when the expression uses a form
+ * this reader does not evaluate. Read: `$`, dotted names, ['quoted'] or ["quoted"] names, [*],
+ * numeric indices [0], unions of names or indices ([0,1], ['a','b']) and alternatives joined by
+ * `|`. Not read (null, so the rule is reported as not checked and never judged from a wrong
+ * selection): recursive descent `..`, filters `?(…)`, script expressions and slices.
+ */
+export function selectLocation(root: unknown, location: string): unknown[] | null {
+  const out: unknown[] = [];
+  for (const alternative of location.split('|').map(a => a.trim())) {
+    if (!alternative.startsWith('$') || alternative.includes('..') || /[?()]/.test(alternative)) return null;
+    let current: unknown[] = [root], rest = alternative.slice(1);
+    while (rest.length) {
+      let keys: Array<string | number> | '*';
+      const dotted = /^\.([A-Za-z_][\w-]*)/.exec(rest), wildcard = /^(?:\.\*|\[\s*\*\s*\])/.exec(rest), bracket = /^\[([^\]]*)\]/.exec(rest);
+      if (wildcard) { keys = '*'; rest = rest.slice(wildcard[0].length); }
+      else if (dotted) { keys = [dotted[1]!]; rest = rest.slice(dotted[0].length); }
+      else if (bracket) {
+        const parts = bracket[1]!.match(/'[^']*'|"[^"]*"|[^,]+/g)?.map(x => x.trim()) ?? [];
+        if (!parts.length) return null;
+        keys = [];
+        for (const part of parts) {
+          if (/^-?\d+$/.test(part)) keys.push(Number(part));
+          else if (/^'[^']*'$|^"[^"]*"$/.test(part)) keys.push(part.slice(1, -1));
+          else return null;
+        }
+        rest = rest.slice(bracket[0].length);
+      } else return null;
+      const next: unknown[] = [];
+      for (const value of current) {
+        if (value === null || typeof value !== 'object') continue;
+        if (keys === '*') { next.push(...(Array.isArray(value) ? value : Object.values(value as Json))); continue; }
+        for (const key of keys) {
+          const found = typeof key === 'number'
+            ? (Array.isArray(value) ? value[key < 0 ? value.length + key : key] : undefined)
+            : (Array.isArray(value) ? undefined : (value as Json)[key]);
+          if (found !== undefined) next.push(found);
+        }
+      }
+      current = next;
+    }
+    out.push(...current);
+  }
+  return out;
+}
+
 function ruleViolations(stmt: Json, t: Json, notChecked: Set<string>): SuppliedProfileViolation[] {
   const id = t.id as string, out: SuppliedProfileViolation[] = [];
   for (const rule of ((t.rules as Json[] | undefined) ?? [])) {
-    if (typeof rule.selector === 'string') { notChecked.add(`${id}: a rule's selector (${rule.selector})`); if (typeof rule.location !== 'string') continue; }
+    // A selector replaces the values the location selects, so nothing about this rule can be
+    // judged from the location alone: the whole rule is reported, not half of it evaluated.
+    if (typeof rule.selector === 'string') { notChecked.add(`${id}: a rule with a selector (${rule.selector})`); continue; }
     const location = rule.location as string;
-    // A profile writes a location as JSONPath from the statement root ($.context.registration).
-    const values = resolveLocation(stmt, location.replace(/^\$\.?/, '')).filter(v => v !== undefined && v !== null);
+    const selected = selectLocation(stmt, location);
+    if (selected === null) { notChecked.add(`${id}: a rule whose location uses a JSONPath form not evaluated here (${location})`); continue; }
+    const values = selected.filter(v => v !== undefined && v !== null);
     const present = values.length > 0;
-    if (rule.presence === 'included' && !present) out.push({ template: id, location, message: 'required location is absent' });
-    if (rule.presence === 'excluded' && present) out.push({ template: id, location, message: 'location must be absent' });
-    if (!present) continue;
+    if (rule.presence === 'included' && !present) { out.push({ template: id, location, message: 'required location is absent' }); continue; }
+    if (rule.presence === 'excluded') { if (present) out.push({ template: id, location, message: 'location must be absent' }); continue; }
+    // `recommended` makes the value checks apply only when there is a value. With no presence
+    // stated, `any` and `all` still need a value to hold: an absent location does not satisfy them.
+    if (!present && rule.presence === 'recommended') continue;
     const any = Array.isArray(rule.any) ? rule.any : null, all = Array.isArray(rule.all) ? rule.all : null, none = Array.isArray(rule.none) ? rule.none : null;
+    if (!present) {
+      if (any) out.push({ template: id, location, message: `location is absent, so no value is one of ${JSON.stringify(any)}` });
+      if (all) out.push({ template: id, location, message: `location is absent, so there is no value to be one of ${JSON.stringify(all)}` });
+      continue;
+    }
     if (any && !values.some(v => any.some(a => same(a, v)))) out.push({ template: id, location, message: `no value is one of ${JSON.stringify(any)}` });
     if (all && !values.every(v => all.some(a => same(a, v)))) out.push({ template: id, location, message: `a value is not one of ${JSON.stringify(all)}` });
     if (none && values.some(v => none.some(a => same(a, v)))) out.push({ template: id, location, message: `a value is one of ${JSON.stringify(none)}, which the rule excludes` });
