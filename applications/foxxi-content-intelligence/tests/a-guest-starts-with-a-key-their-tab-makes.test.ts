@@ -70,7 +70,12 @@ describe('the pages', () => {
   const learn = read('../dashboard-app/src/components/LearnPanel.tsx');
 
   it('offer the guest start first, before any roster or wallet', () => {
-    expect(login).toContain('onSignIn(await connectAsGuest(SAMPLE_TENANT_POD_URL))');
+    // The guest is made first, by the tab alone. Keeping it in the browser (auth/durable-guest.ts)
+    // comes after and is best effort: whether or not that worked, this guest is who signs in.
+    expect(login).toContain('const guest = await connectAsGuest(SAMPLE_TENANT_POD_URL);');
+    expect(login).toContain('onSignIn(keptUntil ? { ...guest, guestKeptUntil: keptUntil } : guest);');
+    expect(login.indexOf('const guest = await connectAsGuest(SAMPLE_TENANT_POD_URL);')).toBeLessThan(login.indexOf('await keepGuest('));
+    expect(login).toContain('} catch { keptUntil = undefined; }');
     expect(login.indexOf('Start now, with no account')).toBeGreaterThan(0);
     expect(login.indexOf('Start now, with no account')).toBeLessThan(login.indexOf('Choose an audience'));
   });

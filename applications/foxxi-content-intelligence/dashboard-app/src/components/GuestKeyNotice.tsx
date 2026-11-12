@@ -18,8 +18,15 @@ export function GuestKeyNotice({ session }: { session: FoxxiSession }) {
       <div style={{ fontSize: 13, marginBottom: 8 }}>
         You are signed in as <code>{session.webId}</code>, a key this tab made. What you play and bring is recorded as yours.
       </div>
+      {session.guestKeptUntil && (
+        <div data-testid="guest-kept-until" style={{ fontSize: 12, marginBottom: 8 }}>
+          This browser keeps this guest until {new Date(session.guestKeptUntil).toLocaleString()}. Until then the sign-in page
+          on this browser offers to continue as it. On another browser, or after that, the recovery phrase below is the
+          only way back.
+        </div>
+      )}
       <div style={{ color: 'var(--text-dim)', fontSize: 12, marginBottom: 10 }}>
-        The key is kept in this tab only. Close or reload it and the key is gone. To come back as yourself, write down
+        {session.guestKeptUntil ? 'The key itself is held in this tab.' : 'The key is kept in this tab only. Close or reload it and the key is gone.'} To come back as yourself, write down
         your recovery phrase and paste it into <em>connect a self-sovereign identity</em> on the sign-in page. Anyone
         who has the phrase is you, so keep it to yourself.
       </div>

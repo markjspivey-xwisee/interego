@@ -54,6 +54,11 @@ export interface FoxxiSession {
    * be written down. Held in memory beside `connectedPrivateKey` and, like it, never stored.
    */
   guestRecoveryPhrase?: string;
+  /**
+   * For a guest this browser keeps (auth/durable-guest.ts): the ISO time until which the sign-in
+   * page can bring it back on this browser. Not a secret; absent for a guest kept in the tab only.
+   */
+  guestKeptUntil?: string;
 }
 
 export interface SessionOption {
