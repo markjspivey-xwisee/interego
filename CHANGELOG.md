@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-12 — Foxxi: the grant route answered every browser 400
+
+The first run of kept guests against the live services found that
+`POST /play/grant` refused every request with `invalid_play_grant_request`, so
+each guest was silently the tab-only guest. The bridge's request middleware
+writes `__client_ip` (and `__caller_token` where a bearer was sent) into every
+JSON body before a route sees it, and the grant service refuses a body with any
+key but its two. The tests called the grant service directly and never carried
+what the route receives.
+
+The route now takes those two names off first (`playGrantRequestBody`); any
+other key a caller adds is still refused, and neither value reaches what the
+relay signs. A test reproduces the refusal with the body as routed, and another
+fails if the middleware starts adding a name the helper does not know.
+
+
 ## 2026-11-12 — Native commits: a write reads the head once and skips three repeat requests (opt-in)
 
 After batched staging, a single-statement LRS write still made eight sequential
