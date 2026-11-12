@@ -5,7 +5,7 @@ import {
   NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, NATIVE_STAGE_MEDIA_TYPE,
   createNativeByteArtifact, readNativeByteArtifact, validateNativeArtifact,
   type NativeArtifactInput, type NativeArtifactReference, type NativeCommitScope, type NativeSnapshotReference,
-  type NativeHeadReadDiagnostic,
+  type NativeHeadReadDiagnostic, type NativeCommitDiagnostic,
 } from '@interego/pgsl';
 
 const owner = deriveEncryptionKeyPair('a'.repeat(64));
@@ -1411,4 +1411,50 @@ describe('opt-in compact index nodes', () => {
     expect(await textAt(transport, head, 'row:149')).toBe('row 149');
     expect(transport.methods.filter(m => m.startsWith('PUT ') && !m.endsWith(scope.headUrl))).toEqual([]);
   }, 60_000);
+});
+
+describe('numeric commit diagnostics', () => {
+  const numeric = (event: NativeCommitDiagnostic): void => { for (const value of Object.values(event)) expect(typeof value).toBe('number'); };
+
+  it('reports phases, requests and bytes for batched and individual staging, and never values', async () => {
+    for (const batched of [true, false]) {
+      const transport = new NativeTransport(), events: NativeCommitDiagnostic[] = []; transport.stageAvailable = batched;
+      const client = transport.client({ onCommit: event => { events.push(event); }, commitFromExpectedSnapshot: true });
+      await client.commit({ operationId: 'first', expected: await client.readHead(), changes: [{ key: 'a', artifact: artifact('a') }] });
+      const from = transport.writes.length;
+      await client.commit({ operationId: 'second', expected: await client.readHead(), changes: [{ key: 'b', artifact: artifact('b') }, { key: 'c', artifact: artifact('c') }] });
+      const second = events[1]!, staged = transport.writes.slice(from).filter(w => w.url !== scope.headUrl);
+      numeric(second);
+      expect(second).toMatchObject({ commitNumber: 2, outcome: 0, batched: batched ? 1 : 0, fromExpected: 1, changes: 2, stagedItems: staged.length,
+        stageRequests: batched ? 1 : staged.length * 2, stagedBytes: staged.reduce((sum, w) => sum + Buffer.byteLength(w.body), 0) });
+      expect(second.elapsedMs).toBeGreaterThanOrEqual(second.stageMs);
+      expect(Object.isFrozen(second)).toBe(true);
+      // The same resources as a client that is not observed.
+      const plain = new NativeTransport(); plain.stageAvailable = batched;
+      const unobserved = plain.client({ commitFromExpectedSnapshot: true });
+      await unobserved.commit({ operationId: 'first', expected: await unobserved.readHead(), changes: [{ key: 'a', artifact: artifact('a') }] });
+      await unobserved.commit({ operationId: 'second', expected: await unobserved.readHead(), changes: [{ key: 'b', artifact: artifact('b') }, { key: 'c', artifact: artifact('c') }] });
+      expect(plain.methods.map(m => m.replace(/-[a-f0-9]{64}/, ''))).toEqual(transport.methods.map(m => m.replace(/-[a-f0-9]{64}/, '')));
+    }
+  });
+
+  it('reports replays, conflicts and errors, and an observer that throws or rejects changes nothing', async () => {
+    const transport = new NativeTransport(), events: NativeCommitDiagnostic[] = [];
+    let mode: 'record' | 'throw' | 'reject' = 'record';
+    const client = transport.client({ onCommit: event => { events.push(event); if (mode === 'throw') throw new Error('observer'); if (mode === 'reject') return Promise.reject(new Error('observer')) as never; } });
+    const expected = await client.readHead(), change = [{ key: 'k', artifact: artifact('v') }];
+    await client.commit({ operationId: 'one', expected, changes: change });
+    await client.commit({ operationId: 'one', expected, changes: change });
+    await expect(client.commit({ operationId: 'stale', expected, changes: [{ key: 'k', artifact: artifact('other') }] })).rejects.toBeInstanceOf(NativeCommitConflictError);
+    transport.failStage = true;
+    await expect(client.commit({ operationId: 'broken', expected: await client.readHead(), changes: [{ key: 'x', artifact: artifact('x') }] })).rejects.toThrow();
+    transport.failStage = false;
+    expect(events.map(event => event.outcome)).toEqual([0, 1, 2, 3]);
+    events.forEach(numeric);
+    for (mode of ['throw', 'reject'] as const) {
+      const receipt = await client.commit({ operationId: 'observed-' + mode, expected: await client.readHead(), changes: [{ key: mode, artifact: artifact(mode) }] });
+      expect(receipt.replayed).toBe(false);
+    }
+    expect((await transport.client().readHead()).records.size).toBe(3);
+  });
 });

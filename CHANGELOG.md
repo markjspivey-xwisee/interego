@@ -1,5 +1,31 @@
 # Changelog
 
+## 2026-11-12 — Native commits and the Foxxi LRS: numeric timing of every write
+
+Two changes that were faster locally (fewer round trips, compact index nodes)
+did not move the live bridge: a single-statement write still takes about
+0.76 s at the edge (median of 24, 2026-11-12), against 139 ms for the same
+write on one machine. A third of live writes take 1.1 to 1.5 s. Where that time
+goes is not known, and a local profile has now mispredicted production twice.
+This adds the measurement, and changes no behaviour.
+
+- `packages/pgsl`: `NativeCommitStore` option `onCommit` receives one
+  `NativeCommitDiagnostic` per commit: outcome (committed, replayed, conflict,
+  error), whether staging was batched and whether the commit started from the
+  caller's snapshot, and the milliseconds spent reading the head, probing,
+  building (serializing, encrypting, index work), staging, writing the head,
+  reading it back and assembling the result, with the staging request count,
+  item count and bytes. Numbers only. An observer that throws or rejects does
+  not affect the commit, and a client without an observer makes exactly the
+  requests it made before.
+- `applications/foxxi-content-intelligence`: the native LRS store reports each
+  write transaction (`onWrite`: attempts, so a retried head conflict is
+  visible, and the time reading the head, preparing and committing), and the
+  xAPI routes report each write request's method, a resource name from a fixed
+  list, status and total milliseconds. The bridge logs all three as
+  `[foxxi-lrs] native-commit`, `native-write` and `xapi-write`. The difference
+  between `xapi-write` and `native-write` is what the handler spends outside
+  the store. No tenant, key, statement, URL or error text is logged.
 ## 2026-11-12 — Foxxi LRS: check a statement against an xAPI Profile you bring
 
 `POST /xapi/profile/validate` checked a statement against Foxxi's own profile

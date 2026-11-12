@@ -49,6 +49,23 @@ export interface NativeInteregoLrsOptions {
   /** Optional, value-free diagnostics for range queries taking at least five seconds.
    * Observer failures (including asynchronous rejection) never affect the query. */
   onSlowQuery?: (event: NativeLrsQueryDiagnostic) => void;
+  /** Optional, value-free timing of every write transaction. Observer failures never affect it. */
+  onWrite?: (event: NativeLrsWriteDiagnostic) => void;
+}
+/** Durations and counts only: no tenant, key, record or error text. */
+export interface NativeLrsWriteDiagnostic {
+  /** 0=committed, 1=nothing to write, 2=contention limit, 3=other error. */
+  readonly outcome: 0 | 1 | 2 | 3;
+  /** Head read, prepare and commit rounds; more than 1 means a head conflict was retried. */
+  readonly attempts: number;
+  readonly changes: number;
+  readonly elapsedMs: number;
+  readonly readyMs: number;
+  /** Reading the head for each attempt, summed. */
+  readonly readMs: number;
+  /** The caller's own work between the read and the commit, summed. */
+  readonly prepareMs: number;
+  readonly commitMs: number;
 }
 type NativeChange = Parameters<NativeCommitClient['commit']>[0]['changes'][number];
 type ByteArtifact = ReturnType<typeof createNativeByteArtifact>;
@@ -342,23 +359,42 @@ export class NativeInteregoLrsDatabase {
     try { await pending; } catch (error) { if (pending === this.readiness) this.readiness = undefined; throw error; }
   }
   async transaction<R>(prepare: (mutation: NativeMutation) => Promise<R>, readKeys?: readonly string[]): Promise<R> {
-    await this.ready();
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const mutation = new NativeMutation(this, await this.readHead(readKeys));
-      const result = await prepare(mutation);
-      if (!mutation.changes.size) return result;
-      try {
-        // The verified native receipt is still awaited. No caller here uses its
-        // returned record map, so reconstructing the entire global index would
-        // add unrelated network reads after an already committed point write.
-        await this.client.commit({ operationId: randomUUID(), expected: mutation.snapshot, changes: [...mutation.changes.values()], resultRecordKeys: [] });
-        return result;
-      } catch (error) {
-        if (!(error instanceof NativeCommitConflictError)) throw error;
-        if (attempt === 7) throw new Error('native LRS commit contention limit reached');
+    const observe = this.options.onWrite, started = performance.now();
+    let outcome: NativeLrsWriteDiagnostic['outcome'] = 3, attempts = 0, changes = 0, readyMs = 0, readMs = 0, prepareMs = 0, commitMs = 0;
+    try {
+      await this.ready();
+      readyMs = performance.now() - started;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        attempts = attempt + 1;
+        const reading = performance.now();
+        const mutation = new NativeMutation(this, await this.readHead(readKeys));
+        const preparing = performance.now(); readMs += preparing - reading;
+        const result = await prepare(mutation);
+        const committing = performance.now(); prepareMs += committing - preparing;
+        changes = mutation.changes.size;
+        if (!mutation.changes.size) { outcome = 1; return result; }
+        try {
+          // The verified native receipt is still awaited. No caller here uses its
+          // returned record map, so reconstructing the entire global index would
+          // add unrelated network reads after an already committed point write.
+          await this.client.commit({ operationId: randomUUID(), expected: mutation.snapshot, changes: [...mutation.changes.values()], resultRecordKeys: [] });
+          commitMs += performance.now() - committing; outcome = 0;
+          return result;
+        } catch (error) {
+          commitMs += performance.now() - committing;
+          if (!(error instanceof NativeCommitConflictError)) throw error;
+          if (attempt === 7) { outcome = 2; throw new Error('native LRS commit contention limit reached'); }
+        }
+      }
+      outcome = 2;
+      throw new Error('native LRS commit contention limit reached');
+    } finally {
+      if (observe) {
+        const round = Math.round, event: NativeLrsWriteDiagnostic = Object.freeze({ outcome, attempts, changes, elapsedMs: round(performance.now() - started),
+          readyMs: round(readyMs), readMs: round(readMs), prepareMs: round(prepareMs), commitMs: round(commitMs) });
+        try { void Promise.resolve(observe(event)).catch(() => {}); } catch { /* Observation is never write authority. */ }
       }
     }
-    throw new Error('native LRS commit contention limit reached');
   }
   forTenant(tenant: string): NativeInteregoLrsStore { bounded(tenant, 'tenant', 8192); return new NativeInteregoLrsStore(this, tenant); }
   async listTenants(): Promise<string[]> {

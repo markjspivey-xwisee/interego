@@ -1036,13 +1036,17 @@ describe('native LRS slow-query diagnostics', () => {
     db.client.readHead = async () => { await gate.wait(); return read(); };
     fakeClock(); const pending = store.query(filter); await gate.waiting; await vi.advanceTimersByTimeAsync(5000);
     gate.release(); expect((await pending).statements).toEqual([row]);
-    expect(stderr).toHaveBeenCalledTimes(2); expect(fetch).not.toHaveBeenCalled();
-    for (const [line] of stderr.mock.calls) {
-      expect(typeof line).toBe('string'); expect(line).toMatch(/^\[foxxi-lrs\] slow-query /);
-      const event = JSON.parse(String(line).slice('[foxxi-lrs] slow-query '.length)) as Record<string, unknown>;
-      expect(Object.keys(event).sort()).toEqual(keys);
-      for (const value of [capability, privateKey, owner, scope.pod, row.id, 'private-tenant-sentinel']) expect(String(line)).not.toContain(value);
-    }
+    expect(fetch).not.toHaveBeenCalled();
+    const lines = stderr.mock.calls.map(([line]) => { expect(typeof line).toBe('string'); return String(line); });
+    const slow = lines.filter(line => line.startsWith('[foxxi-lrs] slow-query ')), writes = lines.filter(line => line.startsWith('[foxxi-lrs] native-write '));
+    // Two slow-query lines for the paused query and one write line for the put; nothing else.
+    expect(slow).toHaveLength(2); expect(writes).toHaveLength(1); expect(lines).toHaveLength(3);
+    for (const line of slow) expect(Object.keys(JSON.parse(line.slice('[foxxi-lrs] slow-query '.length)) as Record<string, unknown>).sort()).toEqual(keys);
+    const written = JSON.parse(writes[0]!.slice('[foxxi-lrs] native-write '.length)) as Record<string, unknown>;
+    expect(Object.keys(written).sort()).toEqual(['attempts', 'changes', 'commitMs', 'elapsedMs', 'outcome', 'prepareMs', 'readMs', 'readyMs']);
+    for (const value of Object.values(written)) expect(typeof value).toBe('number');
+    expect(written).toMatchObject({ outcome: 0, attempts: 1 });
+    for (const line of lines) for (const value of [capability, privateKey, owner, scope.pod, row.id, 'private-tenant-sentinel']) expect(line).not.toContain(value);
     expect(vi.getTimerCount()).toBe(0); await db.close();
   });
   it('isolates asynchronous errors from the configured logger captured writable', async () => {

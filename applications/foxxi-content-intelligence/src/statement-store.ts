@@ -631,6 +631,15 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
     // Index nodes as small byte holons, not wide tuples: a write rewrote about a megabyte of
     // index for a few kilobytes of references. This bridge is the store's only reader.
     compactIndexNodes: true,
+    onCommit: event => {
+      // Numbers only: phase durations, request and byte counts. See NativeCommitDiagnostic.
+      queryDiagnostics.warn('[foxxi-lrs] native-commit ' + JSON.stringify({
+        commitNumber: event.commitNumber, outcome: event.outcome, batched: event.batched, fromExpected: event.fromExpected,
+        changes: event.changes, elapsedMs: event.elapsedMs, headMs: event.headMs, probeMs: event.probeMs, buildMs: event.buildMs,
+        stageMs: event.stageMs, stageRequests: event.stageRequests, stagedItems: event.stagedItems, stagedBytes: event.stagedBytes,
+        headWriteMs: event.headWriteMs, headReadMs: event.headReadMs, resultMs: event.resultMs,
+      }));
+    },
     onHeadRead: event => {
       // Numeric projection only; operation/event/phase/outcome codes are documented
       // by NativeHeadReadDiagnostic. No scope, URL, record, query or error text.
@@ -645,6 +654,10 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
   return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
     scopeIdentity: JSON.stringify(config.scope),
     cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner),
+    onWrite: event => {
+      queryDiagnostics.warn('[foxxi-lrs] native-write ' + JSON.stringify({ outcome: event.outcome, attempts: event.attempts, changes: event.changes,
+        elapsedMs: event.elapsedMs, readyMs: event.readyMs, readMs: event.readMs, prepareMs: event.prepareMs, commitMs: event.commitMs }));
+    },
     onSlowQuery: event => {
       // Explicit projection keeps future diagnostics from leaking query values.
       queryDiagnostics.warn('[foxxi-lrs] slow-query ' + JSON.stringify({ event: event.event, phase: event.phase, outcome: event.outcome,

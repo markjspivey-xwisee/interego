@@ -96,7 +96,38 @@ export interface NativeHeadReadDiagnostic {
   readonly peakIndexReads: number;
   readonly indexReadConcurrency: number;
 }
+/** Value-free observations of one commit: durations, counts and sizes only. Never a head,
+ * scope, reference, record key or error text. */
+export interface NativeCommitDiagnostic {
+  readonly commitNumber: number;
+  /** 0=committed, 1=answered from an earlier identical operation, 2=head conflict, 3=other error. */
+  readonly outcome: 0 | 1 | 2 | 3;
+  /** 1 when the representations were staged through batched requests. */
+  readonly batched: 0 | 1;
+  /** 1 when the commit started from the caller's verified snapshot instead of reading the head. */
+  readonly fromExpected: 0 | 1;
+  readonly changes: number;
+  readonly elapsedMs: number;
+  /** Reading and verifying the head, and looking the operation up in it. */
+  readonly headMs: number;
+  /** The capability probe; 0 when a recent one was relied on. */
+  readonly probeMs: number;
+  /** Serializing, encrypting and index building, including reads of index nodes not yet
+   * held; everything between the probe and the head write that is not a staging request. */
+  readonly buildMs: number;
+  readonly stageMs: number;
+  readonly stageRequests: number;
+  readonly stagedItems: number;
+  readonly stagedBytes: number;
+  readonly headWriteMs: number;
+  readonly headReadMs: number;
+  /** Assembling the returned snapshot after the head is published. */
+  readonly resultMs: number;
+}
 export interface NativeCommitStoreOptions {
+  /** Optional numeric observation of every commit. Observer failures, including
+   * asynchronous rejection, never affect the commit. */
+  readonly onCommit?: (event: NativeCommitDiagnostic) => void;
   /** Explicit opt-in for an application's bounded rolling checkpoint format.
    * Existing immutable clients refuse this format after a CAS migration. */
   readonly atomicCheckpoint?: boolean;
@@ -182,6 +213,14 @@ interface StagePlan {
   /** Run once everything added so far is confirmed staged. */
   readonly confirmed: (() => void)[];
   bytes: number;
+  /** False: each representation is written and read back at once; the plan only meters it. */
+  readonly batched: boolean;
+  stageMs: number; requests: number; items: number; stagedBytes: number;
+}
+interface CommitMeter {
+  outcome: 0 | 1 | 2 | 3; batched: 0 | 1; fromExpected: 0 | 1; changes: number;
+  headMs: number; probeMs: number; buildMs: number; headWriteMs: number; headReadMs: number;
+  resultAt?: number; plan?: StagePlan;
 }
 interface DecodedHead extends NativeSnapshot {
   logicalDigest: string; createdAt: string; previous: NativeSnapshotReference | null;
@@ -339,6 +378,7 @@ export class NativeCommitStore implements NativeCommitClient {
   private indexReadsActive = 0;
   private readonly indexReadQueue: IndexReadJob[] = [];
   private headReadSequence = 0;
+  private commitSequence = 0;
   private readonly indexNodeCacheLimit: number;
   private readonly verifiedIndexNodes = new Map<string, { node: IndexNode; weight: number }>();
   private verifiedIndexNodeWeight = 0;
@@ -480,6 +520,11 @@ export class NativeCommitStore implements NativeCommitClient {
    * written and read back here, or, with a plan, confirmed by receipt in flushStaged(). */
   private async stage(url: string, bytes: Uint8Array, topUri: IRI, plan?: StagePlan): Promise<void> {
     if (!plan) return this.stageNow(url, bytes, topUri);
+    if (!plan.batched) {
+      const started = performance.now();
+      try { return await this.stageNow(url, bytes, topUri); }
+      finally { plan.stageMs += performance.now() - started; plan.requests += 2; plan.items++; plan.stagedBytes += bytes.length; }
+    }
     if (plan.urls.has(url)) return;
     // What a commit holds unstaged is bounded by one request, not by the size of the commit.
     if (plan.pending.length && (plan.pending.length >= STAGE_BATCH_ITEMS || plan.bytes + bytes.length > STAGE_BATCH_BYTES)) await this.flushStaged(plan);
@@ -494,10 +539,16 @@ export class NativeCommitStore implements NativeCommitClient {
   /** Returns only when everything the plan holds is confirmed staged; the caller publishes
    * the head after that and not before. */
   private async flushStaged(plan: StagePlan): Promise<void> {
-    const items = plan.pending.splice(0); plan.bytes = 0;
-    if (items.length && !await this.stageTogether(items)) {
-      // Not answered: each representation is confirmed by its own write and read-back instead.
-      for (const item of items) await this.stageNow(item.url, item.bytes, item.topUri);
+    const items = plan.pending.splice(0), started = performance.now(); plan.bytes = 0;
+    try {
+      if (items.length) plan.requests++;
+      if (items.length && !await this.stageTogether(items)) {
+        // Not answered: each representation is confirmed by its own write and read-back instead.
+        for (const item of items) { plan.requests += 2; await this.stageNow(item.url, item.bytes, item.topUri); }
+      }
+    } finally {
+      plan.stageMs += performance.now() - started; plan.items += items.length;
+      for (const item of items) plan.stagedBytes += item.bytes.length;
     }
     for (const confirmed of plan.confirmed.splice(0)) confirmed();
   }
@@ -664,7 +715,7 @@ export class NativeCommitStore implements NativeCommitClient {
     // after this client's own commit need not fetch what it has just verified.
     // With a plan that has not happened yet, so the node is kept only once it has.
     const remember = (): void => this.rememberIndexNode(this.indexNodeKey(reference, prefix), node);
-    if (plan) plan.confirmed.push(remember); else remember();
+    if (plan?.batched) plan.confirmed.push(remember); else remember();
     return reference;
   }
   private async buildIndex(entries: Map<string, NativeArtifactReference>, prefix: string, plan?: StagePlan): Promise<NativeArtifactReference | null> {
@@ -957,6 +1008,22 @@ export class NativeCommitStore implements NativeCommitClient {
       replayed, snapshot: selectedRecordKeys === undefined ? await this.complete(head) : await this.selected(head, selectedRecordKeys), resourceReceipt: receipt };
   }
   async commit(request: NativeCommitRequest): Promise<NativeCommitReceipt> {
+    if (!this.options.onCommit) return this.commitMeasured(request, undefined);
+    const meter: CommitMeter = { outcome: 3, batched: 0, fromExpected: 0, changes: 0, headMs: 0, probeMs: 0, buildMs: 0, headWriteMs: 0, headReadMs: 0 };
+    const started = performance.now(), commitNumber = ++this.commitSequence;
+    try { return await this.commitMeasured(request, meter); }
+    catch (error) { meter.outcome = error instanceof NativeCommitConflictError ? 2 : 3; throw error; }
+    finally {
+      const ended = performance.now(), plan = meter.plan, round = Math.round;
+      const event: NativeCommitDiagnostic = Object.freeze({ commitNumber, outcome: meter.outcome, batched: meter.batched, fromExpected: meter.fromExpected,
+        changes: meter.changes, elapsedMs: round(ended - started), headMs: round(meter.headMs), probeMs: round(meter.probeMs), buildMs: round(meter.buildMs),
+        stageMs: round(plan?.stageMs ?? 0), stageRequests: plan?.requests ?? 0, stagedItems: plan?.items ?? 0, stagedBytes: plan?.stagedBytes ?? 0,
+        headWriteMs: round(meter.headWriteMs), headReadMs: round(meter.headReadMs), resultMs: meter.resultAt === undefined ? 0 : round(ended - meter.resultAt) });
+      try { void Promise.resolve(this.options.onCommit(event)).catch(() => {}); } catch { /* Observation is never commit authority. */ }
+    }
+  }
+  private async commitMeasured(request: NativeCommitRequest, meter: CommitMeter | undefined): Promise<NativeCommitReceipt> {
+    const began = performance.now();
     // Detach caller selection before the first await, including its absence.
     const selectedRecordKeys = request.resultRecordKeys === undefined ? undefined : recordSelection(request.resultRecordKeys);
     bounded(request.operationId, 200, 'operation ID');
@@ -975,11 +1042,20 @@ export class NativeCommitStore implements NativeCommitClient {
     // Only an object this client returned is trusted as a verified head; a copy reads again.
     const known = this.options.commitFromExpectedSnapshot === true ? this.snapshotHeads.get(request.expected) : undefined;
     const current = known ?? await this.current(), prior = await this.operation(request.operationId, current);
-    if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null, selectedRecordKeys); }
+    if (meter) { meter.changes = changes.length; meter.fromExpected = known ? 1 : 0; meter.headMs = performance.now() - began; }
+    if (prior) {
+      if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409);
+      if (meter) { meter.outcome = 1; meter.resultAt = performance.now(); }
+      return this.result(prior, true, null, selectedRecordKeys);
+    }
     if (current.revision !== request.expected.revision || canonical(current.reference) !== canonical(request.expected.reference)) throw new NativeCommitConflictError();
+    const probing = performance.now();
     const { batchedStaging } = this.probed && Date.now() - this.probed.at < this.probeTtl ? this.probed : await this.discover();
-    const plan: StagePlan | undefined = batchedStaging && this.options.stageIndividually !== true
-      ? { pending: [], urls: new Set(), confirmed: [], bytes: 0 } : undefined;
+    const batched = batchedStaging && this.options.stageIndividually !== true, building = performance.now();
+    // Without batching and without an observer there is no plan, exactly as before.
+    const plan: StagePlan | undefined = batched || meter
+      ? { pending: [], urls: new Set(), confirmed: [], bytes: 0, batched, stageMs: 0, requests: 0, items: 0, stagedBytes: 0 } : undefined;
+    if (meter) { meter.probeMs = building - probing; meter.batched = batched ? 1 : 0; meter.plan = plan; }
     const indexChanges = new Map<string, NativeArtifactReference | null>();
     // Digest reuse is local to this commit's fixed scope, encryption keys and recipients.
     const staged = new Map<string, NativeArtifactReference>();
@@ -1007,28 +1083,39 @@ export class NativeCommitStore implements NativeCommitClient {
     const bytes = this.encrypt({ topUri, nodes: pgsl.nodes }), commitUrl = this.resourceUrl('commit', digest(bytes));
     await this.stage(commitUrl, bytes, topUri, plan);
     // Nothing below runs until every representation this head refers to is confirmed staged.
-    if (plan) await this.flushStaged(plan);
+    if (plan?.batched) await this.flushStaged(plan);
     // Confirmed staged, by receipt or read-back: the head about to be published is backed by it.
     this.rememberBackingCommit(commitUrl, bytes);
+    const writing = performance.now();
+    if (meter) meter.buildMs = writing - building - (plan?.stageMs ?? 0);
     let receipt: NativeResourceReceipt | null;
     try { receipt = await this.put(this.scope.headUrl, bytes, current.revision); }
     catch (error) {
+      if (meter) meter.headWriteMs = performance.now() - writing;
       if (!(error instanceof NativeCommitConflictError)) throw error;
       const winner = await this.operation(request.operationId, await this.current());
-      if (winner && winner.logicalDigest === logicalDigest) return this.result(winner, true, null, selectedRecordKeys);
+      if (winner && winner.logicalDigest === logicalDigest) {
+        if (meter) { meter.outcome = 1; meter.resultAt = performance.now(); }
+        return this.result(winner, true, null, selectedRecordKeys);
+      }
       throw error;
     }
+    const reading = performance.now();
+    if (meter) meter.headWriteMs = reading - writing;
     if (!receipt) {
       const recovered = await this.operation(request.operationId, await this.current());
       if (!recovered || recovered.logicalDigest !== logicalDigest) return fail('Native head acknowledgement is uncertain; retry the same operation ID.');
+      if (meter) { meter.outcome = 1; meter.resultAt = performance.now(); }
       return this.result(recovered, true, null, selectedRecordKeys);
     }
     const committed = this.decodeHead(bytes, receipt.revision, topUri), actual = await this.readRepresentation(this.scope.headUrl);
+    if (meter) meter.headReadMs = performance.now() - reading;
     if (!actual || actual.revision !== receipt.revision || !Buffer.from(actual.bytes).equals(Buffer.from(bytes))) {
       const ancestor = await this.operation(request.operationId, await this.current());
       if (!ancestor || ancestor.reference?.revision !== receipt.revision || ancestor.reference.topUri !== topUri || ancestor.logicalDigest !== logicalDigest) return fail('Native committed head could not be verified unchanged.');
     }
     this.decrypt(bytes, topUri);
+    if (meter) { meter.outcome = 0; meter.resultAt = performance.now(); }
     return this.result(committed, false, receipt, selectedRecordKeys);
   }
 }
