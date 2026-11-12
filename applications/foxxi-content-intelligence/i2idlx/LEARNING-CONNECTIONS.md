@@ -79,6 +79,53 @@ revokes future access; it cannot erase an already delivered client transcript.
 Connector removal first confirms cleanup of its generated LTI resources. Failed
 remote cleanup keeps the credential for an explicit retry.
 
+## Guest learners (off unless a grant signer is configured)
+
+A learner can also arrive as a provisional guest (`deploy/identity/PROVISIONAL-PLAY.md`): an owner
+the identity service creates for a P-256 key this browser generates, cannot export, and keeps in
+IndexedDB. Possession of that key is all a guest proves. It does not identify a person.
+
+Guest sign-in exists only where the workbench is given a `guestGrant` signer, which signs grants as
+Foxxi's registered service agent. The bridge wires none today, so `/i2idlx/learning/session` offers
+no `guest_sign_in`, the three guest routes answer `503 learning_guest_unavailable`, and nothing
+below is reachable in production. Turning it on also needs Foxxi's origin, service agent and pod in
+identity's `PROVISIONAL_PLAY_CLIENTS`; both are operator steps.
+
+The flow, all under `/i2idlx/learning/guest/`, each requiring the workbench's own `Origin`:
+
+1. `POST grant` with `{publicKeyThumbprint}` returns a grant for that key, which the browser signs
+   and posts to identity's `/play/provisional` itself. The identity token in that answer is never
+   read or stored; only the attestation (public proof material) is kept beside the key.
+2. `POST challenge` returns a single-use challenge, valid two minutes.
+3. `POST session` with `{attestation, challenge, proof}`: the workbench consumes the challenge, asks
+   identity's `/play/provisional/verify` whether this is a live guest of this application, checks
+   every canonical field of the answer again (issuer, audience, `u-try-play-` owner, DID, WebID, pod),
+   and sets the same HttpOnly session cookie as a normal sign-in.
+
+The workbench holds no relay or identity credential for a guest. It keeps the proof it was shown and
+repeats the identity check when a request arrives more than 30 seconds after the last one, so a
+guest that was deleted, expired or claimed away stops within that window; the session also ends at
+the guest's fixed deadline and never lasts more than an hour. A returning guest signs in again with
+its stored attestation and a fresh proof, without spending a new grant.
+
+A guest is a learner and nothing else. `auth.resolve()` refuses a guest session unless the route
+opts in, so a route nobody decided about is closed to guests. What is open:
+
+| Open to a guest | Closed to a guest (`403 learning_guest_refused`) |
+|---|---|
+| `request-link`, `discover`, `my-links`, `confirm-link`, `revoke-link` (its own) | creating or revoking a connector, policies, course maps, `pending-links`, `approve-link`, LTI setup |
+| `courses`, `progress`, `course-readiness`, `quiz-review` | progress notifications (a subscription would outlive the guest) |
+| `/i2idlx/api/learning/launch` | `/i2idlx/api/learning/context` (needs a paired agent, which a guest cannot register) |
+
+An administrator still decides whether a guest is a learner at all: a link is `pending-admin` until
+the connection's owner matches it to an actual registration, and the owner sees the requesting
+account's `u-try-play-` WebID when doing so. A link belongs to the guest's owner DID, so a guest
+that later adds a passkey or wallet to the same owner keeps its links and signs in the normal way.
+
+This is separate from the dashboard's "Start as a guest", which makes a secp256k1 wallet in the tab
+and signs requests to the Foxxi bridge as `did:ethr:`; that guest has no identity account and no
+learning account, and cannot use these routes.
+
 ## Course readiness and released quiz review
 
 Select a course and explicitly check its readiness. This verifies current
