@@ -1209,3 +1209,116 @@ describe('batched staging of a commit\'s immutable representations', () => {
     expect([...(await transport.client().readHead()).records.keys()].sort()).toEqual(['k', 'r']);
   });
 });
+
+describe('opt-in fewer round trips per commit', () => {
+  // Index nodes are kept in both configurations, so the requests that differ are the ones these options remove.
+  const indexed = { indexNodeCacheEntries: 10_000 } as const;
+  const fast = { ...indexed, reuseBackingCommits: true, commitFromExpectedSnapshot: true, capabilityProbeTtlMs: 60_000 } as const;
+  const write = async (client: NativeCommitStore, id: string) => client.commit({ operationId: id, expected: await client.readHeadRecords([]),
+    resultRecordKeys: [], changes: [{ key: 'row:' + id, artifact: artifact(id) }] });
+  const requests = (transport: NativeTransport, from: number): string[] => transport.methods.slice(from)
+    .map(m => m.replace(/(artifact|commit)-[a-f0-9]{64}\.json$/, '$1')).map(m => m.replace(scope.headUrl, 'head').replace(scope.artifactContainer, ''));
+
+  it('a steady write is one head read, one staging request, the head compare-and-set and its read-back', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client(fast);
+    await write(client, 'one'); await write(client, 'two');
+    const from = transport.methods.length; await write(client, 'three');
+    expect(requests(transport, from)).toEqual(['GET head', 'POST ', 'PUT head', 'GET head']);
+    // The same writes without the options: the probe, the second head read and both commit reads are there.
+    const plain = new NativeTransport(); plain.stageAvailable = true;
+    const slow = plain.client(indexed); await write(slow, 'one'); await write(slow, 'two');
+    const before = plain.methods.length; await write(slow, 'three');
+    expect(requests(plain, before)).toEqual(['GET head', 'GET commit', 'GET head', 'GET commit', 'OPTIONS head', 'POST ', 'PUT head', 'GET head']);
+    expect([...(await plain.client().readHead()).records.keys()].sort()).toEqual([...(await transport.client().readHead()).records.keys()].sort());
+  });
+
+  it('still fetches and verifies the head on every read, and a commit object it has not seen', async () => {
+    const transport = new NativeTransport(), client = transport.client(fast), other = transport.client();
+    await write(client, 'mine');
+    let from = transport.methods.length; await client.readHeadRecords([]);
+    expect(requests(transport, from)).toEqual(['GET head']);
+    await write(other, 'theirs');
+    from = transport.methods.length; const seen = await client.readHead();
+    expect(requests(transport, from).slice(0, 2)).toEqual(['GET head', 'GET commit']);
+    expect([...seen.records.keys()].sort()).toEqual(['row:mine', 'row:theirs']);
+    transport.corruptHeadRead = true;
+    await expect(client.readHeadRecords([])).rejects.toThrow(); transport.corruptHeadRead = false;
+  });
+
+  it('refuses a kept commit object that does not match the head it is asked to back', async () => {
+    const transport = new NativeTransport(), client = transport.client(fast);
+    await write(client, 'first');
+    const first = transport.rows.get(scope.headUrl)!;
+    await write(client, 'second');
+    // The pod now serves the earlier head's bytes under the head URL, with a new revision.
+    transport.rows.set(scope.headUrl, { bytes: first.bytes, revision: sha('rolled-back') });
+    const rolled = await client.readHeadRecords(['row:first', 'row:second']);
+    // That earlier head is still backed by its own (kept) commit object, and is read as what it is.
+    expect([...rolled.records.keys()]).toEqual(['row:first']);
+    const forged = transport.rows.get(scope.headUrl)!.bytes.slice(); forged[forged.length - 20] = forged[forged.length - 20]! ^ 1;
+    transport.rows.set(scope.headUrl, { bytes: forged, revision: sha('forged') });
+    await expect(client.readHeadRecords([])).rejects.toThrow();
+  });
+
+  it('a head that moved since the expected snapshot is a conflict at the compare-and-set, and nothing is published', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client(fast), rival = transport.client();
+    await write(client, 'base');
+    const stale = await client.readHeadRecords([]);
+    await write(rival, 'rival');
+    const heads = transport.headWrites();
+    await expect(client.commit({ operationId: 'late', expected: stale, changes: [{ key: 'row:late', artifact: artifact('late') }] }))
+      .rejects.toBeInstanceOf(NativeCommitConflictError);
+    expect(transport.headWrites()).toBe(heads);
+    expect([...(await transport.client().readHead()).records.keys()].sort()).toEqual(['row:base', 'row:rival']);
+    // Retrying from a fresh head commits, as a caller's conflict loop does.
+    await client.commit({ operationId: 'late', expected: await client.readHeadRecords([]), changes: [{ key: 'row:late', artifact: artifact('late') }] });
+    expect((await transport.client().readHead()).records.size).toBe(3);
+  });
+
+  it('replays an operation that committed after the expected snapshot, and keeps the content check', async () => {
+    const transport = new NativeTransport(), client = transport.client(fast), rival = transport.client(fast);
+    await write(client, 'base');
+    const stale = await client.readHeadRecords([]), change = [{ key: 'row:once', artifact: artifact('once') }];
+    const won = await rival.commit({ operationId: 'once', expected: await rival.readHeadRecords([]), changes: change });
+    const heads = transport.headWrites();
+    const replay = await client.commit({ operationId: 'once', expected: stale, changes: change });
+    expect(replay.replayed).toBe(true); expect(replay.head).toEqual(won.head); expect(transport.headWrites()).toBe(heads);
+    await expect(client.commit({ operationId: 'once', expected: await client.readHeadRecords([]), changes: [{ key: 'row:once', artifact: artifact('other') }] }))
+      .rejects.toThrow('different content');
+  });
+
+  it('reads the head first for an expected snapshot it did not hand out, and by default', async () => {
+    const transport = new NativeTransport(), client = transport.client(fast);
+    await write(client, 'base');
+    const copy = { ...(await client.readHeadRecords([])) };
+    let from = transport.methods.length;
+    await client.commit({ operationId: 'copy', expected: copy, changes: [] });
+    expect(requests(transport, from)[0]).toBe('GET head');
+    const stale = await client.readHeadRecords([]);
+    await write(transport.client(), 'rival');
+    from = transport.writes.length;
+    await expect(transport.client().commit({ operationId: 'default', expected: stale, changes: [{ key: 'k', artifact: artifact('v') }] }))
+      .rejects.toBeInstanceOf(NativeCommitConflictError);
+    expect(transport.writes.length).toBe(from); // refused before staging, as before
+  });
+
+  it('probes again after the period, on ready(), and when the last probe failed; a vanished capability refuses the commit', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const transport = new NativeTransport(), client = transport.client(fast);
+      const probes = (): number => transport.methods.filter(m => m.startsWith('OPTIONS ')).length;
+      await write(client, 'a'); await write(client, 'b'); expect(probes()).toBe(1);
+      await client.ready(); expect(probes()).toBe(2);
+      vi.setSystemTime(Date.now() + 60_001);
+      await write(client, 'c'); expect(probes()).toBe(3);
+      vi.setSystemTime(Date.now() + 60_001); transport.optionsAvailable = false;
+      await expect(write(client, 'd')).rejects.toThrow('unavailable'); expect(probes()).toBe(4);
+      transport.optionsAvailable = true;
+      await write(client, 'd'); expect(probes()).toBe(5);
+      expect(() => transport.client({ capabilityProbeTtlMs: -1 })).toThrow('probe period');
+      expect(() => transport.client({ capabilityProbeTtlMs: 3_600_001 })).toThrow('probe period');
+    } finally { vi.useRealTimers(); }
+  });
+});
