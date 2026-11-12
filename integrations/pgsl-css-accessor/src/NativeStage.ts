@@ -55,7 +55,9 @@ export async function readNativeStageCommand(stream: Readable): Promise<NativeSt
       || !/^[A-Za-z0-9!#$%&'*+.^_|~-]+\/[A-Za-z0-9!#$%&'*+.^_|~-]+(?:;[^\r\n]*)?$/.test(item.contentType)
       || item.contentType.split(';', 1)[0]!.trim().toLowerCase().startsWith('application/vnd.interego.native-')
       || item.contentType === 'internal/container'
-      || typeof item.bodyBase64 !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(item.bodyBase64)) invalid();
+      || typeof item.bodyBase64 !== 'string' || item.bodyBase64.length % 4 !== 0) invalid();
+    // The alphabet and padding are proven by the exact re-encoding below. A pattern match over the
+    // whole body said the same thing first, at many times the cost on a megabyte.
     const name = item.name as string, bodyBase64 = item.bodyBase64 as string, bytes = Buffer.from(bodyBase64, 'base64');
     total += bytes.length;
     if (total > NATIVE_STAGE_MAX_BYTES) throw new HttpError(413, 'PayloadTooLargeHttpError', 'Native stage representations exceed their size limit');

@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-11-12 — Native commits: index nodes as compact byte holons (opt-in), and a cheaper base64 check
+
+Halving a write's round trips (the entry of the same date below) did not make the
+live bridge faster: 0.94 s median before, 1.09 to 1.26 s after, on 12 writes
+each. Pod requests there cost about 40 ms, not the 100 ms the estimate assumed.
+Profiling the write found the cost: **a single-statement write uploaded about
+1.3 MB**, nearly all of it index.
+
+An index node holds up to sixteen references. Stored as one wide PGSL tuple,
+each reference and every contiguous run of them is a node of its own: sixteen
+references (about 5 KB) became 554 PGSL nodes and 443 KB of plaintext, about
+790 KB once encrypted and base64 encoded, and the root node is rewritten by
+every commit. The bridge built, validated and encrypted that megabyte and the
+pod server validated and stored it, per write.
+
+- `packages/pgsl`: new `NativeCommitStore` option `compactIndexNodes`. When
+  set, an index node is written as a byte holon (the five-field tuple
+  `createNativeByteArtifact` makes) whose payload is the canonical JSON of the
+  same references. It is still a content-addressed, validated PGSL holon,
+  encrypted and staged like any artifact. A reader accepts a compact node only
+  as the exact canonical encoding of well-formed, content-bound references
+  under this store's owner, with the same key, prefix, fanout and duplicate
+  checks as the wide form.
+- **Every client from this version reads both forms, whatever the option
+  says**, so a store converts as its paths are rewritten and both kinds of
+  writer can extend one head. **A client older than this change cannot read a
+  compact node**: turn the option on only when every reader of the store has
+  been upgraded. The Foxxi LRS store, whose bridge is its only reader, turns
+  it on. The head, commit object and record formats are unchanged.
+- `integrations/pgsl-css-accessor`: the native commit and staging commands
+  validated `bodyBase64` with a pattern match over the whole body and then
+  again by exact re-encoding. The re-encoding alone proves the alphabet and
+  padding, so the pattern is replaced by a length check; on megabyte bodies it
+  was the pod server's largest single CPU cost. What is accepted is unchanged.
+
+**Measured** (single-statement `PUT /xapi/statements`, the LRS over the actual
+pod server, gate and Postgres 16 on one machine, 20 writes after 3 warm-ups):
+
+| | staged bytes per write | staging request | whole write | +100 ms per pod request |
+|---|---|---|---|---|
+| before | 1 344 558 | 187 ms median | 326 ms median | 720 ms median |
+| after | 304 090 | 68 ms median | 139 ms median | 549 ms median |
+
+Of what is still staged, the commit object (about 122 KB, a nine-field tuple) is
+now the largest item; it is not changed here.
 ## 2026-11-12 — Foxxi: guest learner routes answered 500 behind the bridge's body parser
 
 Found on the live bridge minutes after guest learners were switched on: every

@@ -84,9 +84,11 @@ export async function readNativeCommitCommand(stream: Readable): Promise<{ comma
     || typeof body.contentType !== 'string' || body.contentType.length > 255
     || !/^[A-Za-z0-9!#$%&'*+.^_|~-]+\/[A-Za-z0-9!#$%&'*+.^_|~-]+(?:;[^\r\n]*)?$/.test(body.contentType)
     || isNativeCommitMediaType(body.contentType) || body.contentType === 'internal/container'
-    || typeof body.bodyBase64 !== 'string' || !/^(?:[A-Za-z0-9+/]{4})*(?:[A-Za-z0-9+/]{2}==|[A-Za-z0-9+/]{3}=)?$/.test(body.bodyBase64)) {
+    || typeof body.bodyBase64 !== 'string' || body.bodyBase64.length % 4 !== 0) {
     throw new BadRequestHttpError('Invalid native commit command');
   }
+  // The alphabet and padding are proven by the exact re-encoding below. A pattern match over the
+  // whole body said the same thing first, at many times the cost on a megabyte.
   const bytes = Buffer.from(body.bodyBase64, 'base64');
   if (bytes.length > NATIVE_COMMIT_MAX_BYTES) throw new HttpError(413, 'PayloadTooLargeHttpError', 'Native commit representation exceeds its size limit');
   if (bytes.toString('base64') !== body.bodyBase64) throw new BadRequestHttpError('Native commit body must use canonical base64');

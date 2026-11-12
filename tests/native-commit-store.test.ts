@@ -1322,3 +1322,93 @@ describe('opt-in fewer round trips per commit', () => {
     } finally { vi.useRealTimers(); }
   });
 });
+
+describe('opt-in compact index nodes', () => {
+  const compact = { compactIndexNodes: true } as const;
+  const fill = async (client: NativeCommitStore, prefix: string, count: number) => client.commit({ operationId: prefix, expected: await client.readHead(),
+    changes: Array.from({ length: count }, (_, i) => ({ key: prefix + ':' + i, artifact: artifact(prefix + ' ' + i) })) });
+  /** Decrypted artifacts under the current head that are index nodes, with the tag of their top tuple. */
+  const indexBytes = (transport: NativeTransport, from: number): number => transport.writes.slice(from)
+    .filter(w => w.url.includes('/artifact-')).reduce((sum, w) => sum + w.body.length, 0);
+
+  it('holds the same index in a small fraction of the bytes, and reads back identically', async () => {
+    const wide = new NativeTransport(), small = new NativeTransport();
+    await fill(wide.client(), 'row', 60); await fill(small.client(compact), 'row', 60);
+    const wideOne = wide.writes.length, smallOne = small.writes.length;
+    await wide.client().commit({ operationId: 'one', expected: await wide.client().readHead(), changes: [{ key: 'one', artifact: artifact('one') }] });
+    await small.client(compact).commit({ operationId: 'one', expected: await small.client(compact).readHead(), changes: [{ key: 'one', artifact: artifact('one') }] });
+    // One more record: the same number of resources either way, a fraction of the bytes.
+    expect(small.writes.length - smallOne).toBe(wide.writes.length - wideOne);
+    expect(indexBytes(small, smallOne) * 5).toBeLessThan(indexBytes(wide, wideOne));
+    const a = await wide.client().readHead(), b = await small.client(compact).readHead();
+    expect([...b.records.keys()].sort()).toEqual([...a.records.keys()].sort());
+    for (const key of ['row:0', 'row:59', 'one']) expect(await textAt(small, b, key)).toBe(await textAt(wide, a, key));
+  }, 60_000);
+
+  it('is read by a client without the option, and both kinds of writer extend one head', async () => {
+    const transport = new NativeTransport(), plain = transport.client(), small = transport.client(compact);
+    await fill(plain, 'wide', 40);
+    await fill(small, 'compact', 40);
+    await fill(plain, 'again', 40);
+    await small.commit({ operationId: 'del', expected: await small.readHead(), changes: [{ key: 'wide:3', artifact: null }] });
+    for (const reader of [transport.client(), transport.client(compact), transport.client({ ...compact, indexNodeCacheEntries: 10_000, indexReadConcurrency: 8 })]) {
+      const head = await reader.readHead();
+      expect(head.records.size).toBe(119);
+      expect(await textAt(transport, head, 'compact:17')).toBe('compact 17');
+      expect(await textAt(transport, head, 'again:39')).toBe('again 39');
+      expect(head.records.has('wide:3')).toBe(false);
+      const selected = await reader.readHeadRecords(['wide:0', 'compact:1', 'missing']);
+      expect([...selected.records.keys()].sort()).toEqual(['compact:1', 'wide:0']);
+    }
+    // History written by either kind stays reachable.
+    const first = await transport.client(compact).commit({ operationId: 'wide', expected: await small.readHead(), changes: Array.from({ length: 40 }, (_, i) => ({ key: 'wide:' + i, artifact: artifact('wide ' + i) })) });
+    expect(first.replayed).toBe(true);
+  }, 60_000);
+
+  it('refuses a compact node that is not the canonical encoding of well-formed references', async () => {
+    const transport = new NativeTransport(), small = transport.client(compact);
+    await fill(small, 'row', 3);
+    const head = await small.readHead(), sample = head.records.get('row:0')!;
+    const entry = (key: string, over: Partial<NativeArtifactReference> = {}) => { const r = { ...sample, ...over }; return [key, r.resourceUrl, r.bodyDigest, r.plaintextDigest, r.topUri]; };
+    const forged = async (payload: string, owner = scope.owner, contentType = 'application/vnd.interego.native-index-node+json'): Promise<unknown> => {
+      const node = createNativeByteArtifact({ owner, contentType, bytes: Buffer.from(payload), provenance });
+      const staged = await small.commit({ operationId: 'forge-' + sha(payload + owner + contentType).slice(7, 20), expected: await small.readHead(), changes: [{ key: 'forged', artifact: node }] });
+      const reference = staged.snapshot.records.get('forged')!;
+      // The staged artifact stands in for an index node a hostile pod serves under a head.
+      return (small as unknown as { readIndexNode(r: NativeArtifactReference, prefix: string): Promise<unknown> }).readIndexNode(reference, '');
+    };
+    const good = JSON.stringify({ entries: [entry('record:row:0')], kind: 'leaf' });
+    await expect(forged(good)).resolves.toMatchObject({ kind: 'leaf' });
+    await expect(forged(JSON.stringify({ kind: 'leaf', entries: [entry('record:row:0')] }))).rejects.toThrow('canonical');
+    await expect(forged(good + ' ')).rejects.toThrow('canonical');
+    await expect(forged(JSON.stringify({ entries: [entry('b'), entry('a')], kind: 'leaf' }))).rejects.toThrow('canonical');
+    await expect(forged(JSON.stringify({ entries: [entry('a'), entry('a')], kind: 'leaf' }))).rejects.toThrow();
+    await expect(forged(JSON.stringify({ entries: [], kind: 'leaf' }))).rejects.toThrow('fanout');
+    await expect(forged(JSON.stringify({ entries: Array.from({ length: 17 }, (_, i) => entry('k' + String(i).padStart(2, '0'))), kind: 'leaf' }))).rejects.toThrow('fanout');
+    await expect(forged(JSON.stringify({ entries: [entry('a')], kind: 'root' }))).rejects.toThrow();
+    await expect(forged(JSON.stringify({ entries: [entry('a')], extra: 1, kind: 'leaf' }))).rejects.toThrow();
+    await expect(forged(JSON.stringify({ entries: [['a', sample.resourceUrl]], kind: 'leaf' }))).rejects.toThrow('malformed');
+    await expect(forged(JSON.stringify({ entries: [entry('a', { resourceUrl: 'https://evil.example/artifact-' + 'a'.repeat(64) + '.json' })], kind: 'leaf' }))).rejects.toThrow();
+    await expect(forged(JSON.stringify({ entries: [entry('a', { bodyDigest: 'sha256:' + '0'.repeat(64) })], kind: 'leaf' }))).rejects.toThrow('content bound');
+    await expect(forged(JSON.stringify({ entries: [entry('zz')], kind: 'branch' }))).rejects.toThrow('branch binding');
+    await expect(forged(good, 'did:web:someone-else.example' as IRI)).rejects.toThrow('owner or type');
+    await expect(forged(good, scope.owner, 'application/json')).rejects.toThrow('owner or type');
+    await expect(forged('not json')).rejects.toThrow('malformed');
+    // A leaf entry outside the hash prefix it is read under is refused, as in the wide form.
+    const reference = (await small.commit({ operationId: 'prefix', expected: await small.readHead(), changes: [{ key: 'p', artifact: createNativeByteArtifact({ owner: scope.owner,
+      contentType: 'application/vnd.interego.native-index-node+json', bytes: Buffer.from(good), provenance }) }] })).snapshot.records.get('p')!;
+    const wrongPrefix = createHash('sha256').update('record:row:0').digest('hex')[0] === '0' ? '1' : '0';
+    await expect((small as unknown as { readIndexNode(r: NativeArtifactReference, prefix: string): Promise<unknown> }).readIndexNode(reference, wrongPrefix)).rejects.toThrow('leaf binding');
+  }, 60_000);
+
+  it('works with batched staging, the node cache and the fewer-round-trip options together', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client({ ...compact, indexNodeCacheEntries: 10_000, reuseBackingCommits: true, commitFromExpectedSnapshot: true, capabilityProbeTtlMs: 60_000 });
+    await fill(client, 'row', 150);
+    for (const id of ['a', 'b', 'c']) await client.commit({ operationId: id, expected: await client.readHeadRecords([]), resultRecordKeys: [], changes: [{ key: id, artifact: artifact(id) }] });
+    const head = await transport.client().readHead();
+    expect(head.records.size).toBe(153);
+    expect(await textAt(transport, head, 'row:149')).toBe('row 149');
+    expect(transport.methods.filter(m => m.startsWith('PUT ') && !m.endsWith(scope.headUrl))).toEqual([]);
+  }, 60_000);
+});

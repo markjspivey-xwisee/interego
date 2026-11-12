@@ -19,6 +19,8 @@ const HEAD = PREFIX + 'head', ENTRY = PREFIX + 'entry', LEAF = PREFIX + 'leaf';
 const BRANCH = PREFIX + 'branch', EMPTY = PREFIX + 'empty', PREVIOUS = PREFIX + 'previous';
 const REFERENCE = PREFIX + 'reference', OPERATION = PREFIX + 'operation', BYTES = PREFIX + 'bytes';
 const ATOMIC = PREFIX + 'atomic-checkpoint';
+/** Media type of a compact index node's payload: canonical JSON inside a byte holon. */
+const INDEX_NODE_TYPE = 'application/vnd.interego.native-index-node+json';
 const REVISION = /^sha256:[a-f0-9]{64}$/;
 const DEFAULT_LIMIT = 8 * 1024 * 1024;
 const LEAF_SIZE = 16;
@@ -131,6 +133,19 @@ export interface NativeCommitStoreOptions {
    * conflict or replay outcome, not before staging. Any other `expected` value, and the
    * default, read and compare the current head first. */
   readonly commitFromExpectedSnapshot?: boolean;
+  /** Opt-in: write index nodes in the compact form. An index node holds up to sixteen
+   * references. As one wide PGSL tuple, each of those and every contiguous run of them is a
+   * node of its own, so sixteen references (about 5 KB) become several hundred nodes and
+   * roughly 440 KB of plaintext, and the root node is rewritten by every commit. The compact
+   * form is a byte holon (the same five-field tuple `createNativeByteArtifact` makes) whose
+   * payload is the canonical JSON of the same references. It is still a content-addressed,
+   * validated PGSL holon, encrypted and staged like any other artifact.
+   *
+   * Every client from this version on READS both forms, whatever this option says, so a
+   * store converts gradually as its paths are rewritten and the two kinds of writer can share
+   * a head. A client older than this option cannot read a compact node: turn it on only when
+   * every reader of the store has been upgraded. */
+  readonly compactIndexNodes?: boolean;
   /** Opt-in reuse of decoded index nodes within this client, bounded by the
    * total number of entries retained (least recently used nodes leave first).
    * An index node is immutable and content addressed: it is kept only after it
@@ -586,31 +601,65 @@ export class NativeCommitStore implements NativeCommitClient {
   }
   private async readIndexNode(reference: NativeArtifactReference, prefix: string): Promise<IndexNode> {
     const artifact = await this.readArtifact(reference), row = fields(artifact, artifact.topUri), tag = value(artifact, row[0]);
-    if (row.length < 2 || row.length > LEAF_SIZE + 1) fail('Native index node exceeds its bounded fanout.');
-    if (tag === LEAF) {
+    // Either form yields (key, reference) pairs; the bindings below are checked on both alike.
+    let kind: string, pairs: { key: string; reference: NativeArtifactReference }[];
+    if (tag === BYTES) ({ kind, pairs } = this.compactIndexEntries(artifact));
+    else {
+      if (row.length < 2 || row.length > LEAF_SIZE + 1) fail('Native index node exceeds its bounded fanout.');
+      kind = tag; pairs = row.slice(1).map(id => this.parseReference(artifact, id, ENTRY));
+    }
+    if (kind === LEAF) {
       const entries = new Map<string, NativeArtifactReference>();
-      for (const id of row.slice(1)) {
-        const entry = this.parseReference(artifact, id, ENTRY); bounded(entry.key, 4300, 'index key');
+      for (const entry of pairs) {
+        bounded(entry.key, 4300, 'index key');
         if (!hashKey(entry.key).startsWith(prefix) || entries.has(entry.key)) fail('Native index leaf binding changed.');
         entries.set(entry.key, entry.reference);
       }
       return { kind: 'leaf', entries };
     }
-    if (tag !== BRANCH || prefix.length >= 64) return fail('Native index branch is malformed.');
+    if (kind !== BRANCH || prefix.length >= 64) return fail('Native index branch is malformed.');
     const children = new Map<string, NativeArtifactReference>();
-    for (const id of row.slice(1)) {
-      const child = this.parseReference(artifact, id, ENTRY);
+    for (const child of pairs) {
       if (!/^[a-f0-9]$/.test(child.key) || children.has(child.key)) fail('Native index branch binding changed.');
       children.set(child.key, child.reference);
     }
     return { kind: 'branch', children };
   }
+  /** The payload of a compact index node, accepted only as the exact canonical bytes a writer produces. */
+  private compactIndexEntries(artifact: NativeArtifact): { kind: string; pairs: { key: string; reference: NativeArtifactReference }[] } {
+    const body = readNativeByteArtifact(artifact);
+    if (body.owner !== this.scope.owner || body.contentType !== INDEX_NODE_TYPE || body.bytes.length > 262_144) return fail('Native index node owner or type binding changed.');
+    const text = Buffer.from(body.bytes).toString('utf8');
+    let parsed: unknown; try { parsed = JSON.parse(text); } catch { return fail('Native index node is malformed.'); }
+    if (!object(parsed) || Object.keys(parsed).length !== 2 || (parsed.kind !== 'leaf' && parsed.kind !== 'branch')
+      || !Array.isArray(parsed.entries) || parsed.entries.length < 1 || parsed.entries.length > LEAF_SIZE) return fail('Native index node exceeds its bounded fanout.');
+    const pairs = (parsed.entries as unknown[]).map(entry => {
+      if (!Array.isArray(entry) || entry.length !== 5 || entry.some(field => typeof field !== 'string')) return fail('Native index node is malformed.');
+      const [key, resourceUrl, bodyDigest, plaintextDigest, topUri] = entry as string[];
+      const reference = { resourceUrl: resourceUrl!, bodyDigest: bodyDigest!, plaintextDigest: plaintextDigest!, topUri: topUri as IRI };
+      this.checkReference(reference);
+      return { key: key!, reference };
+    });
+    // One encoding per node: sorted by key and canonical, so equal content cannot hide in different bytes.
+    if (text !== this.compactIndexPayload(parsed.kind, pairs.map(pair => [pair.key, pair.reference]))) fail('Native index node is not canonical.');
+    return { kind: parsed.kind === 'leaf' ? LEAF : BRANCH, pairs };
+  }
+  private compactIndexPayload(kind: 'leaf' | 'branch', entries: readonly (readonly [string, NativeArtifactReference])[]): string {
+    return canonical({ kind, entries: [...entries].sort(([a], [b]) => compareStrings(a, b))
+      .map(([key, reference]) => [key, reference.resourceUrl, reference.bodyDigest, reference.plaintextDigest, reference.topUri]) });
+  }
   private async saveIndex(node: IndexNode, prefix: string, plan?: StagePlan): Promise<NativeArtifactReference> {
-    const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
     const entries = node.kind === 'leaf' ? node.entries : node.children;
-    const rows = [...entries].sort(([a], [b]) => compareStrings(a, b)).map(([key, reference]) => this.referenceTuple(pgsl, ENTRY, key, reference));
-    const topUri = ingest(pgsl, [literal(pgsl, node.kind === 'leaf' ? LEAF : BRANCH), ...rows]);
-    const reference = await this.persist({ pgsl, topUri }, plan);
+    let input: NativeArtifactInput;
+    if (this.options.compactIndexNodes === true) {
+      input = createNativeByteArtifact({ owner: this.scope.owner, contentType: INDEX_NODE_TYPE,
+        bytes: Buffer.from(this.compactIndexPayload(node.kind, [...entries])) });
+    } else {
+      const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
+      const rows = [...entries].sort(([a], [b]) => compareStrings(a, b)).map(([key, reference]) => this.referenceTuple(pgsl, ENTRY, key, reference));
+      input = { pgsl, topUri: ingest(pgsl, [literal(pgsl, node.kind === 'leaf' ? LEAF : BRANCH), ...rows]) };
+    }
+    const reference = await this.persist(input, plan);
     // Staging confirmed this exact node and decrypted it; the next head read
     // after this client's own commit need not fetch what it has just verified.
     // With a plan that has not happened yet, so the node is kept only once it has.
