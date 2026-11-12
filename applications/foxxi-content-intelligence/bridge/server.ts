@@ -122,7 +122,7 @@ import { authorXapiCourse, xapiCourseArtifact, xapiCourseLinks } from '../src/xa
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 import { frontDoor, frontDoorHtml } from '../src/front-door.js';
-import { PlayGrantError, PlayGrantService, playGrantConfig } from '../src/play-grant.js';
+import { PlayGrantError, PlayGrantService, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
 import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
@@ -11187,7 +11187,7 @@ app.post('/play/grant', playGrantRateLimit, async (req, res) => {
   // it is no defence against a client that is not a browser, which the rate limit and identity's
   // own caps bound.
   if (req.headers.origin !== playGrantSettings.audience) { res.status(403).json({ error: 'play_grant_origin' }); return; }
-  try { res.json(await playGrants.grant(req.body)); }
+  try { res.json(await playGrants.grant(playGrantRequestBody(req.body))); }
   catch (error) {
     if (error instanceof PlayGrantError) { res.status(error.status).json({ error: error.code }); return; }
     res.status(503).json({ error: 'play_grant_unavailable' });

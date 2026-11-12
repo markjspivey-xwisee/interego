@@ -25,7 +25,8 @@ import {
   type DurableGuestDeps, type StoredGuest,
 } from '../dashboard-app/src/auth/durable-guest.js';
 import { connectAsGuest } from '../dashboard-app/src/auth/session.js';
-import { PlayGrantError, PlayGrantService, playGrantConfig } from '../src/play-grant.js';
+import { PlayGrantError, PlayGrantService, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
+import { readFileSync } from 'node:fs';
 import { parseSiweMessage } from '../../../deploy/identity/siwe-message.js';
 
 interface GateModule {
@@ -330,6 +331,38 @@ describe('the bridge\'s grant service', () => {
       expect(out).not.toContain(SERVICE_KEY.slice(2));
       expect(out).not.toContain('cg2_service');
     }
+  });
+});
+
+describe('the grant route, as the bridge hands it a request', () => {
+  /**
+   * Found on the first run against the live services (2026-11-12): every browser's grant request
+   * was answered 400. The bridge's request middleware adds `__client_ip` to each JSON body, and
+   * `grant` refuses a body with any key but its two. The tests above call `grant` directly, so none
+   * of them carried what the route really receives.
+   */
+  it('grants a body that carries the bridge\'s own additions, and still refuses anything else a caller adds', async () => {
+    const d = deployment({ namespace: 'foxxi' });
+    const asked = { publicKeyThumbprint: 'A'.repeat(43), challenge: 'c'.repeat(32) };
+    const asRouted = { ...asked, __client_ip: '203.0.113.7', __caller_token: 'whatever-the-client-sent' };
+    await expect(d.grants!.grant(asRouted)).rejects.toMatchObject({ status: 400 });            // the defect, reproduced
+    const granted = await d.grants!.grant(playGrantRequestBody(asRouted));
+    expect(JSON.parse(granted.playGrant._signed_payload)).toMatchObject(asked);
+    expect(granted.playGrant._signed_payload).not.toContain('203.0.113.7');
+    expect(granted.playGrant._signed_payload).not.toContain('whatever-the-client-sent');
+    for (const extra of [{ audience: 'https://evil.example' }, { __proto_ip: 'x' }, { _client_ip: 'x' }, { client_ip: 'x' }]) {
+      await expect(d.grants!.grant(playGrantRequestBody({ ...asRouted, ...extra })), JSON.stringify(extra)).rejects.toMatchObject({ status: 400 });
+    }
+    for (const notAnObject of [null, 'text', ['a'], 7]) expect(playGrantRequestBody(notAnObject)).toBe(notAnObject);
+  });
+
+  it('the route passes the body through that step, and the middleware still adds exactly those two names', () => {
+    const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
+    expect(server).toContain('playGrants.grant(playGrantRequestBody(req.body))');
+    expect(server).not.toContain('playGrants.grant(req.body)');
+    // If the middleware starts adding another name, this fails and the helper must learn it.
+    const added = [...server.matchAll(/bodyRec\.(__[a-z_]+)\s*=/g)].map(match => match[1]).sort();
+    expect(added).toEqual(['__caller_token', '__client_ip']);
   });
 });
 

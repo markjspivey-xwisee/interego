@@ -74,6 +74,20 @@ export function playGrantConfig(env: Readonly<Record<string, string | undefined>
   };
 }
 
+/**
+ * What a grant request's body is once the bridge's own additions are taken off. The bridge's
+ * request middleware writes `__client_ip` (and `__caller_token` where a bearer was sent) into every
+ * JSON body before any route sees it (bridge/server.ts). `grant` refuses a body with any key but
+ * its two, so handed the body as the route receives it, it refused every request from a real
+ * browser (400 invalid_play_grant_request) while every test, which called `grant` directly, passed.
+ * Only those two names are dropped: anything else a caller adds is still refused.
+ */
+export function playGrantRequestBody(body: unknown): unknown {
+  if (!body || typeof body !== 'object' || Array.isArray(body)) return body;
+  const { __client_ip: _ip, __caller_token: _token, ...asked } = body as Record<string, unknown>;
+  return asked;
+}
+
 export type PlayFetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) =>
   Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
