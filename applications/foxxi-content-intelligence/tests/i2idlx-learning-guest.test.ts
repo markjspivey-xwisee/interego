@@ -28,7 +28,7 @@ const proves = (key: Jwk, text: string, proof: unknown) => typeof proof === 'str
 const thumb = (key: Jwk) => createHash('sha256').update(JSON.stringify({ crv: key.crv, kty: key.kty, x: key.x, y: key.y })).digest('base64url');
 
 /** A stand-in identity service that checks real P-256 proofs the way the provisional provider does. */
-async function fixture(options: { guests?: boolean; termsVersion?: string; signer?: GuestGrantSigner } = {}) {
+async function fixture(options: { guests?: boolean; termsVersion?: string; signer?: GuestGrantSigner; foreignParser?: boolean } = {}) {
   let now = 1_800_000_000_000;
   const control = { grantPatch: {} as Row, live: true, verifyCalls: 0, bootstrapCalls: 0, grants: [] as GuestGrantRequest[], claimPatch: {} as Row, audience: BASE, guestTtlMs: 86_400_000 };
   const attestations = new Map<string, Row & { publicKeyJwk: Jwk }>();
@@ -67,7 +67,14 @@ async function fixture(options: { guests?: boolean; termsVersion?: string; signe
     const u = new URL(String(input)); assert.equal(u.origin, IDENTITY, 'a guest session never calls the relay or a provider');
     return identity(u.pathname, JSON.parse(String(init.body)) as Row);
   };
-  const app = express(); app.set('trust proxy', false); app.use(express.json());
+  const app = express(); app.set('trust proxy', false);
+  // `foreignParser`: a global JSON parser that consumes the request and sets req.body WITHOUT body-parser 1's
+  // `_body` mark, as the bridge's (from another Express major) does.
+  if (options.foreignParser) app.use((req, _res, next) => {
+    const chunks: Buffer[] = []; req.on('data', chunk => chunks.push(chunk as Buffer));
+    req.on('end', () => { const text = Buffer.concat(chunks).toString('utf8'); req.body = text ? JSON.parse(text) as unknown : {}; next(); });
+  });
+  else app.use(express.json());
   attachLearningRoutes(app, { baseUrl: BASE, relayOrigin: RELAY, identityOrigin: IDENTITY, podOrigin: POD, repository, fetch: transport, now: () => now,
     sessions: {} as never, taskConfig: { baseUrl: BASE, appDataFile: '', checkOperations: {} } as never,
     ...(options.guests === false ? {} : { guestGrant: options.signer ?? (async (request: GuestGrantRequest) => {
@@ -232,6 +239,12 @@ describe('provisional guest learner sign-in', () => {
     }
     f.control.grantPatch = {}; f.advance(61_000);
     assert.equal((await post({ publicKeyThumbprint: 'A'.repeat(43) })).status, 200);
+  });
+
+  it('signs a guest in behind a global body parser that is not this module\'s own', async () => {
+    const f = await fixture({ foreignParser: true }), b = f.browser(); await b.signIn();
+    assert.equal((await b.status()).guest, true);
+    assert.equal((await b.call(API, { operation: 'my-links' })).status, 200);
   });
 
   it('is its own application: its own service key and origin, never the dashboard\'s', () => {
