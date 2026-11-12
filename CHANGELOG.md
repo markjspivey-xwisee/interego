@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-12 — Foxxi: guest learner routes refused the bridge's own body decorations
+
+With the body-parser fix deployed, the live guest routes answered
+`400 learning_sign_in_input_invalid` to a well-formed request. The bridge adds
+`__client_ip` (and, given a bearer, `__caller_token`) to every JSON body, and
+the guest routes accept a body only with exactly the fields they expect. The
+other learner routes already drop those two; the guest routes now do too, and
+still refuse any other extra field.
+
+The guest routes' per-address rate limits now use the bridge's `__client_ip`
+where it supplies one. Behind the bridge's proxy the socket address is the same
+for everyone, so the per-address limit had been one limit for all callers.
+
+The regression fixture now puts both of the bridge's behaviours in front of the
+routes: the foreign parser and the decorations.
+
 ## 2026-11-12 — Native commits: index nodes as compact byte holons (opt-in), and a cheaper base64 check
 
 Halving a write's round trips (the entry of the same date below) did not make the

@@ -310,15 +310,23 @@ export class LearningAccountAuth {
   private guestReady(req: Request, fields: string[]): Row {
     this.ready(); this.sweep();
     if (!this.guestGrant) refuse(503, 'learning_guest_unavailable');
-    const body: unknown = req.body;
-    if (Object.keys(req.query).length || req.get('Origin') !== this.base || !object(body)
-      || Object.keys(body).length !== fields.length || fields.some(k => typeof body[k] !== 'string')) refuse(400, 'learning_sign_in_input_invalid');
+    if (Object.keys(req.query).length || req.get('Origin') !== this.base || !object(req.body)) refuse(400, 'learning_sign_in_input_invalid');
+    // The bridge decorates every JSON body with these two (its own reading of the caller's address
+    // and bearer). They carry no authority here and are not part of what the browser sent.
+    const body = { ...req.body }; delete body.__client_ip; delete body.__caller_token;
+    if (Object.keys(body).length !== fields.length || fields.some(k => typeof body[k] !== 'string')) refuse(400, 'learning_sign_in_input_invalid');
     return body;
+  }
+  /** The caller's address for rate limits: the bridge's own reading where it supplies one (behind
+   * its proxy every request shares one socket address), else the socket's. Never an identity. */
+  private guestCaller(req: Request): string {
+    const supplied = object(req.body) ? req.body.__client_ip : undefined;
+    return typeof supplied === 'string' && supplied.length <= 64 && /^[0-9A-Fa-f:.]+$/.test(supplied) ? supplied : req.ip ?? 'unknown';
   }
   /** Step 1: a grant, signed by this application's service agent, for the caller's browser key. */
   async guestGrantFor(req: Request, res: Response): Promise<void> {
     const body = this.guestReady(req, ['publicKeyThumbprint']), thumbprint = body.publicKeyThumbprint as string;
-    this.admit('guest-grant:' + (req.ip ?? 'unknown'), 5); this.admit('guest-grants', 30);
+    this.admit('guest-grant:' + this.guestCaller(req), 5); this.admit('guest-grants', 30);
     if (thumbprint.length !== 43 || !B64URL.test(thumbprint)) refuse(400, 'learning_sign_in_input_invalid');
     const request: GuestGrantRequest = { audience: this.base, publicKeyThumbprint: thumbprint, challenge: randomBytes(32).toString('base64url') };
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 8000);
@@ -335,7 +343,7 @@ export class LearningAccountAuth {
   /** Step 2: a single-use challenge the browser key signs with its attestation. */
   async guestChallenge(req: Request, res: Response): Promise<void> {
     this.guestReady(req, []);
-    this.admit('guest-challenge:' + (req.ip ?? 'unknown'), 10); this.admit('guest-challenges', 100);
+    this.admit('guest-challenge:' + this.guestCaller(req), 10); this.admit('guest-challenges', 100);
     if (this.guestChallenges.size >= this.maxPending) refuse(429, 'learning_sign_in_busy');
     const challenge = randomBytes(32).toString('base64url'), expires = this.now() + 120_000;
     this.guestChallenges.set(hash(challenge), expires);
@@ -344,7 +352,7 @@ export class LearningAccountAuth {
   /** Step 3: attestation + proof over that challenge become a guest learner session. */
   async guestSession(req: Request, res: Response): Promise<void> {
     const body = this.guestReady(req, ['attestation', 'challenge', 'proof']);
-    this.admit('guest-session:' + (req.ip ?? 'unknown'), 10); this.admit('guest-sessions', 100);
+    this.admit('guest-session:' + this.guestCaller(req), 10); this.admit('guest-sessions', 100);
     const { attestation, challenge, proof } = body as { attestation: string; challenge: string; proof: string };
     const key = hash(challenge), expires = this.guestChallenges.get(key);
     this.guestChallenges.delete(key);
