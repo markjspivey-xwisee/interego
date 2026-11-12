@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-11-12 — Foxxi: a provisional guest can be a learner, and only a learner
+
+Follow-up to the per-application Provisional Play change. Foxxi's learner
+sign-in refused every provisional account, so a `foxxi` application in
+`PROVISIONAL_PLAY_CLIENTS` would have admitted guests with nowhere to go.
+
+- Three routes under `/i2idlx/learning/guest/` (`grant`, `challenge`,
+  `session`) admit a guest by browser-key proof: the workbench issues a
+  single-use challenge, the browser's P-256 key signs it with its attestation,
+  and the workbench asks identity's `/play/provisional/verify`, then checks
+  issuer, audience, owner, DID, WebID and pod again itself. It holds no relay or
+  identity credential for a guest, repeats the identity check at most every 30
+  seconds, and ends the session at the guest's deadline or after an hour.
+- `LearningAccountAuth.resolve()` refuses a guest session unless the route opts
+  in. Opted in: joining a connection as a learner, a guest's own links, its
+  courses, progress, readiness and released review, and course launch. Refused
+  with `403 learning_guest_refused`: everything a connection's owner does,
+  LTI setup, progress notifications and the AI learning context.
+- Browser module `i2idlx/app/src/learning-guest.js` keeps a non-extractable
+  P-256 key and the attestation in IndexedDB, and never stores the identity
+  token. The learning panel shows "Start as a guest learner" only when the
+  workbench offers it.
+- Off in production: guest sign-in exists only where the workbench is given a
+  `guestGrant` signer for Foxxi's service agent, and the bridge wires none. The
+  bridge's grant service for dashboard guests (`src/play-grant.ts`) signs for
+  the dashboard's origin and is not connected to it. No environment variable is
+  read and none is set. The relay sign-in path is
+  unchanged and still refuses provisional accounts.
+
+Application code only (`applications/foxxi-content-intelligence`); no change to
+identity, the relay, the css-gate, or any ontology.
 ## 2026-11-12 — Foxxi: an operator's script for the play service's account and agent
 
 Turning on kept guests (`DURABLE-GUEST.md`) needs two things done once on the

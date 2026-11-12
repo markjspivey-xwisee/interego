@@ -40,8 +40,10 @@ guest does. If any step of keeping fails, the person is still signed in as a tab
   pod's documents and the browser's record is dropped. Keeping an identity longer means claiming
   the owner with a passkey or wallet through identity's add-device flow, which the dashboard does
   not offer yet.
-- It does not let a guest into Foxxi's I2IDL-X learning sign-in, which still refuses provisional
-  accounts (`src/i2idlx-learning-auth.ts`).
+- It does not let a guest into Foxxi's I2IDL-X learning account. That workbench has its own guest
+  door, for learner operations only, which is off because nothing gives it a grant signer: this
+  grant service signs for the dashboard's origin, not the workbench's
+  (`i2idlx/LEARNING-CONNECTIONS.md`, "Guest learners").
 - It uses one of the two documents a guest may write. The second (`player-profile-index`) and the
   relay's guest tools are not used.
 - Only one guest is kept per browser profile; keeping a new one replaces the record of the old.

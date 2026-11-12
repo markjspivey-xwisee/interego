@@ -1,30 +1,44 @@
 /** Human sign-in is independent of the model driving Ask. Relay credentials never
  * leave this server; the browser receives only an opaque, HttpOnly session cookie. */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import type { Express, Request, Response } from 'express';
+import express, { type Express, type Request, type Response } from 'express';
 import { guardedFetchFn } from './ssrf-guard.js';
 
 type Row = Record<string, unknown>;
 export interface LearningPrincipal {
   subject: string; userId: string; webId: string; podUrl: string; sessionId: string;
   expiresAt: number; signal: AbortSignal;
+  /** Present only on a provisional guest (browser-key possession, no human credential). Routes
+   * refuse a guest unless they pass `allowGuest` to resolve(): see GUEST_LEARNING_OPERATIONS. */
+  guest?: true;
 }
+/** What Foxxi asks its service agent to sign so identity will provision a guest for one browser key. */
+export interface GuestGrantRequest { purpose: 'interego-play-provisional-v1'; audience: string; publicKeyThumbprint: string; challenge: string; expiresAt: number }
+/** Signs a grant as this application's registered service agent (the relay's `sign_request` envelope). */
+export type GuestGrantSigner = (request: GuestGrantRequest, signal: AbortSignal) => Promise<{ _signed_payload: string; _signature: string }>;
 export interface LearningAccountAuthConfig {
   baseUrl: string; relayOrigin: string; identityOrigin: string; podOrigin: string;
   /** Program-only transport/clock injection for isolated fixtures. */
   fetch?: typeof fetch; now?: () => number; maxSessions?: number; maxPending?: number;
+  /** Guest sign-in exists only where this is supplied. Never read from HTTP. */
+  guestGrant?: GuestGrantSigner;
 }
 export class LearningAuthError extends Error {
   constructor(readonly status: number, readonly code: string) { super(code); }
 }
 type Account = { subject: string; userId: string; webId: string; podUrl: string; agentId: string; clientId: string; expiresAt: number };
-type Session = { hash: string; principal: LearningPrincipal; account: Account; token: string; csrf: string; lifetime: AbortController; timer: ReturnType<typeof setTimeout> };
+/** Public proof material identity re-checks against the guest's live pod anchor. Not a bearer. */
+type GuestProof = { attestation: string; challenge: string; proof: string; checkedAt: number };
+type Session = { hash: string; principal: LearningPrincipal; account: Account; token: string; csrf: string; lifetime: AbortController; timer: ReturnType<typeof setTimeout>; guest?: GuestProof };
 type Pending = { hash: string; state: string; verifier: string; expires: number; prior: string | null; claimed: boolean; lifetime: AbortController };
 type Endpoints = { authorization: string; token: string; account: string; resource: string };
 const PREFIX = '/i2idlx/learning';
 const COOKIE = '__Host-i2idlx-learning', PENDING_COOKIE = '__Host-i2idlx-learning-pending';
 const object = (v: unknown): v is Row => !!v && typeof v === 'object' && !Array.isArray(v);
 const opaque = () => randomBytes(32).toString('hex');
+const B64URL = /^[A-Za-z0-9_-]+$/;
+/** How long one identity check of a guest's anchor stands before the next request repeats it. */
+const GUEST_RECHECK_MS = 30_000;
 const hash = (value: string) => createHash('sha256').update(value).digest('hex');
 function refuse(status: number, code: string): never { throw new LearningAuthError(status, code); }
 const equal = (a: string, b: string) => { const x = Buffer.from(a), y = Buffer.from(b); return x.length === y.length && timingSafeEqual(x, y); };
@@ -68,6 +82,10 @@ export class LearningAccountAuth {
   private active = 0;
   private readonly maxSessions: number;
   private readonly maxPending: number;
+  private readonly guestGrant?: GuestGrantSigner;
+  private readonly guestChallenges = new Map<string, number>();
+  /** Whether a provisional guest can sign in here at all. */
+  get guestEnabled(): boolean { return this.enabled && !!this.guestGrant; }
   constructor(config: LearningAccountAuthConfig) {
     let base = '', relay = '', identity = '', pod = '';
     try { base = origin(config.baseUrl); relay = origin(config.relayOrigin); identity = origin(config.identityOrigin); pod = origin(config.podOrigin); } catch { /* ordinary HTTP development keeps working without human sign-in */ }
@@ -76,6 +94,7 @@ export class LearningAccountAuth {
     this.clientId = base + PREFIX + '/oauth/client.json'; this.callbackUrl = base + PREFIX + '/oauth/callback';
     this.fetcher = config.fetch ?? guardedFetchFn(globalThis.fetch) as typeof fetch;
     this.now = config.now ?? Date.now;
+    this.guestGrant = config.guestGrant;
     this.maxSessions = config.maxSessions ?? 500; this.maxPending = config.maxPending ?? 200;
     if (![this.maxSessions, this.maxPending].every(v => Number.isSafeInteger(v) && v >= 1 && v <= 2000)) throw Error('Invalid learning session capacity');
   }
@@ -90,6 +109,7 @@ export class LearningAccountAuth {
   private sweep(): void {
     const now = this.now();
     for (const [key, p] of this.pending) if (p.expires <= now) this.dropPending(key);
+    for (const [key, expires] of this.guestChallenges) if (expires <= now) this.guestChallenges.delete(key);
     for (const [key, s] of this.sessions) if (s.principal.expiresAt <= now) this.drop(key);
   }
   private drop(key: string): void {
@@ -98,7 +118,7 @@ export class LearningAccountAuth {
     for (const [pendingKey, pending] of this.pending) if (pending.prior === key) this.dropPending(pendingKey);
   }
   private dropPending(key: string): void { const p = this.pending.get(key); if (p) { this.pending.delete(key); p.verifier = ''; p.lifetime.abort(); } }
-  dispose(): void { for (const key of this.sessions.keys()) this.drop(key); for (const key of this.pending.keys()) this.dropPending(key); this.rates.clear(); this.endpoints = undefined; }
+  dispose(): void { for (const key of this.sessions.keys()) this.drop(key); for (const key of this.pending.keys()) this.dropPending(key); this.rates.clear(); this.guestChallenges.clear(); this.endpoints = undefined; }
   private async json(url: string, init: RequestInit = {}, lifetime?: AbortSignal): Promise<Row> {
     if (this.active >= 8) refuse(429, 'learning_sign_in_busy');
     this.active++;
@@ -154,11 +174,33 @@ export class LearningAccountAuth {
     return { subject, userId: id, webId: a.webId as string, podUrl: a.podUrl as string,
       agentId: a.agentId as string, clientId: this.clientId, expiresAt: Number(a.expiresAt) * 1000 };
   }
-  async resolve(req: Request): Promise<LearningPrincipal> {
+  /** A guest session is refused unless the route opts in: a route nobody decided about stays closed to guests. */
+  async resolve(req: Request, options: { allowGuest?: boolean } = {}): Promise<LearningPrincipal> {
     this.ready(); this.sweep();
     const value = cookie(req, COOKIE), s = value ? this.sessions.get(hash(value)) : undefined;
     if (!s) refuse(401, 'learning_sign_in_required');
+    if (s.guest && options.allowGuest !== true) refuse(403, 'learning_guest_refused');
     return this.validateSession(s);
+  }
+  /**
+   * Asks identity whether this attestation, with this browser-key proof over this challenge, is a
+   * live guest of THIS application. Identity checks its own signature on the attestation, the proof,
+   * the original deadline and the owner's pod anchor; every canonical field is checked again here.
+   */
+  private async guestAccount(proof: Pick<GuestProof, 'attestation' | 'challenge' | 'proof'>, signal?: AbortSignal): Promise<Account> {
+    const v = await this.json(this.identity + '/play/provisional/verify', { method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
+      body: JSON.stringify({ attestation: proof.attestation, audience: this.base, challenge: proof.challenge, proof: proof.proof }) }, signal);
+    const id = v.userId, host = new URL(this.identity).host.replace(/:/g, '%3A');
+    if (typeof id !== 'string' || !/^u-try-play-[0-9a-f]{32}$/.test(id)) refuse(401, 'learning_account_invalid');
+    const subject = `did:web:${host}:users:${id}`, agentPrefix = `did:web:${host}:agents:`;
+    const expiresAt = typeof v.expiresAt === 'string' ? Date.parse(v.expiresAt) : NaN;
+    if (v.valid !== true || v.provisional !== true || v.issuer !== this.identity || v.audience !== this.base
+      || v.ownerDid !== subject || v.webId !== `${this.identity}/users/${id}/profile#me` || v.podUrl !== `${this.pod}/${id}/`
+      || typeof v.authenticatedAgentDid !== 'string' || !v.authenticatedAgentDid.startsWith(agentPrefix)
+      || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(v.authenticatedAgentDid.slice(agentPrefix.length))
+      || !Number.isFinite(expiresAt) || expiresAt <= this.now()) refuse(401, 'learning_account_invalid');
+    return { subject, userId: id, webId: v.webId as string, podUrl: v.podUrl as string,
+      agentId: v.authenticatedAgentDid as string, clientId: 'interego-play-provisional', expiresAt };
   }
   /** Program-only revalidation for an already authenticated task. A session id
    * from request JSON is never a replacement for resolve(req)'s cookie check. */
@@ -172,7 +214,9 @@ export class LearningAccountAuth {
   private async validateSession(s: Session): Promise<LearningPrincipal> {
     this.admit('session:' + s.hash, 120);
     try {
-      const account = await this.account(s.token, s.lifetime.signal);
+      if (s.guest && this.now() - s.guest.checkedAt < GUEST_RECHECK_MS && this.now() < s.principal.expiresAt && !s.lifetime.signal.aborted) return { ...s.principal };
+      const account = s.guest ? await this.guestAccount(s.guest, s.lifetime.signal) : await this.account(s.token, s.lifetime.signal);
+      if (s.guest) s.guest.checkedAt = this.now();
       if (this.sessions.get(s.hash) !== s || s.lifetime.signal.aborted || this.now() >= s.principal.expiresAt
         || ['subject', 'userId', 'webId', 'podUrl', 'agentId', 'clientId'].some(k => account[k as keyof Account] !== s.account[k as keyof Account])) refuse(401, 'learning_session_expired');
       if (account.expiresAt < s.principal.expiresAt) { s.principal.expiresAt = account.expiresAt; clearTimeout(s.timer); s.timer = this.expire(s.hash, account.expiresAt); }
@@ -186,11 +230,14 @@ export class LearningAccountAuth {
   }
   async status(req: Request): Promise<Row> {
     const basic = { authenticated: false, enabled: this.enabled, account: null, csrf: null, expires_at: null,
-      sign_in_url: this.enabled ? PREFIX + '/oauth/start' : null };
+      sign_in_url: this.enabled ? PREFIX + '/oauth/start' : null,
+      ...(this.guestEnabled ? { guest_sign_in: { grant_url: PREFIX + '/guest/grant', challenge_url: PREFIX + '/guest/challenge', session_url: PREFIX + '/guest/session',
+        bootstrap_url: this.identity + '/play/provisional', audience: this.base } } : {}) };
     if (!this.enabled || !cookie(req, COOKIE)) return basic;
     try {
-      const p = await this.resolve(req), s = this.sessionFor(req, p);
-      return { ...basic, authenticated: true, account: { id: p.subject, userId: p.userId, webId: p.webId }, csrf: s.csrf, expires_at: new Date(p.expiresAt).toISOString() };
+      const p = await this.resolve(req, { allowGuest: true }), s = this.sessionFor(req, p);
+      return { ...basic, authenticated: true, account: { id: p.subject, userId: p.userId, webId: p.webId }, csrf: s.csrf, expires_at: new Date(p.expiresAt).toISOString(),
+        ...(p.guest ? { guest: true } : {}) };
     } catch (error) { if (error instanceof LearningAuthError && error.status === 401) return basic; throw error; }
   }
   private sessionFor(req: Request, p: LearningPrincipal): Session {
@@ -259,8 +306,64 @@ export class LearningAccountAuth {
       setCookie(res, COOKIE, value, expiresAt - this.now()); secure(res); res.redirect(303, this.base + '/i2idlx/#ask');
     } finally { pending.verifier = ''; pending.lifetime.abort(); this.pending.delete(pending.hash); }
   }
+  private guestReady(req: Request, fields: string[]): Row {
+    this.ready(); this.sweep();
+    if (!this.guestGrant) refuse(503, 'learning_guest_unavailable');
+    const body: unknown = req.body;
+    if (Object.keys(req.query).length || req.get('Origin') !== this.base || !object(body)
+      || Object.keys(body).length !== fields.length || fields.some(k => typeof body[k] !== 'string')) refuse(400, 'learning_sign_in_input_invalid');
+    return body;
+  }
+  /** Step 1: a grant, signed by this application's service agent, for the caller's browser key. */
+  async guestGrantFor(req: Request, res: Response): Promise<void> {
+    const body = this.guestReady(req, ['publicKeyThumbprint']), thumbprint = body.publicKeyThumbprint as string;
+    this.admit('guest-grant:' + (req.ip ?? 'unknown'), 5); this.admit('guest-grants', 30);
+    if (thumbprint.length !== 43 || !B64URL.test(thumbprint)) refuse(400, 'learning_sign_in_input_invalid');
+    const request: GuestGrantRequest = { purpose: 'interego-play-provisional-v1', audience: this.base, publicKeyThumbprint: thumbprint,
+      challenge: randomBytes(32).toString('base64url'), expiresAt: Math.floor(this.now() / 1000) + 60 };
+    const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 8000);
+    let grant: { _signed_payload: string; _signature: string };
+    try { grant = await this.guestGrant!(request, controller.signal); } catch { refuse(503, 'learning_guest_unavailable'); } finally { clearTimeout(timer); }
+    // The signer is this deployment's own, but what leaves here is still checked: exactly the grant asked for.
+    let signed: unknown; try { signed = JSON.parse(grant._signed_payload); } catch { refuse(503, 'learning_guest_unavailable'); }
+    if (typeof grant._signed_payload !== 'string' || grant._signed_payload.length > 8192 || typeof grant._signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(grant._signature)
+      || !object(signed) || (Object.keys(request) as Array<keyof GuestGrantRequest>).some(k => signed[k] !== request[k])) refuse(503, 'learning_guest_unavailable');
+    secure(res); res.json({ playGrant: { _signed_payload: grant._signed_payload, _signature: grant._signature } });
+  }
+  /** Step 2: a single-use challenge the browser key signs with its attestation. */
+  async guestChallenge(req: Request, res: Response): Promise<void> {
+    this.guestReady(req, []);
+    this.admit('guest-challenge:' + (req.ip ?? 'unknown'), 10); this.admit('guest-challenges', 100);
+    if (this.guestChallenges.size >= this.maxPending) refuse(429, 'learning_sign_in_busy');
+    const challenge = randomBytes(32).toString('base64url'), expires = this.now() + 120_000;
+    this.guestChallenges.set(hash(challenge), expires);
+    secure(res); res.json({ challenge, audience: this.base, expires_at: new Date(expires).toISOString() });
+  }
+  /** Step 3: attestation + proof over that challenge become a guest learner session. */
+  async guestSession(req: Request, res: Response): Promise<void> {
+    const body = this.guestReady(req, ['attestation', 'challenge', 'proof']);
+    this.admit('guest-session:' + (req.ip ?? 'unknown'), 10); this.admit('guest-sessions', 100);
+    const { attestation, challenge, proof } = body as { attestation: string; challenge: string; proof: string };
+    const key = hash(challenge), expires = this.guestChallenges.get(key);
+    this.guestChallenges.delete(key);
+    if (expires === undefined || expires <= this.now() || attestation.length > 8192 || !/^ipa1_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(attestation)
+      || proof.length !== 86 || !B64URL.test(proof)) refuse(400, 'learning_sign_in_state_invalid');
+    const prior = cookie(req, COOKIE), priorHash = prior ? hash(prior) : null, replaces = !!priorHash && this.sessions.has(priorHash);
+    if (this.sessions.size >= this.maxSessions && !replaces) refuse(429, 'learning_sign_in_busy');
+    const lifetime = new AbortController();
+    let account: Account;
+    try { account = await this.guestAccount({ attestation, challenge, proof }, lifetime.signal); }
+    catch (error) { if (error instanceof LearningAuthError && error.status === 401) refuse(401, 'learning_account_invalid'); throw error; }
+    if (this.sessions.size >= this.maxSessions && !(priorHash && this.sessions.has(priorHash))) refuse(429, 'learning_sign_in_busy');
+    if (priorHash) this.drop(priorHash);
+    const value = opaque(), sessionKey = hash(value), expiresAt = Math.min(account.expiresAt, this.now() + 3600_000);
+    const principal: LearningPrincipal = { subject: account.subject, userId: account.userId, webId: account.webId, podUrl: account.podUrl, sessionId: opaque(), expiresAt, signal: lifetime.signal, guest: true };
+    this.sessions.set(sessionKey, { hash: sessionKey, principal, account, token: '', csrf: opaque(), lifetime, timer: this.expire(sessionKey, expiresAt),
+      guest: { attestation, challenge, proof, checkedAt: this.now() } });
+    setCookie(res, COOKIE, value, expiresAt - this.now()); secure(res); res.json({ signed_in: true, guest: true });
+  }
   async signOut(req: Request, res: Response): Promise<void> {
-    const principal = await this.resolve(req); this.assertMutation(req, principal);
+    const principal = await this.resolve(req, { allowGuest: true }); this.assertMutation(req, principal);
     const value = cookie(req, COOKIE); if (value) this.drop(hash(value));
     const pending = cookie(req, PENDING_COOKIE); if (pending) this.dropPending(hash(pending));
     setCookie(res, COOKIE, '', 0); setCookie(res, PENDING_COOKIE, '', 0); secure(res); res.json({ signed_out: true });
@@ -274,4 +377,8 @@ export function attachLearningAccountRoutes(app: Express, auth: LearningAccountA
   app.get(PREFIX + '/oauth/start', route((req, res) => auth.start(req, res)));
   app.get(PREFIX + '/oauth/callback', route((req, res) => auth.callback(req, res)));
   app.post(PREFIX + '/sign-out', route((req, res) => auth.signOut(req, res)));
+  const guestBody = express.json({ limit: '16kb', strict: true });
+  app.post(PREFIX + '/guest/grant', guestBody, route((req, res) => auth.guestGrantFor(req, res)));
+  app.post(PREFIX + '/guest/challenge', guestBody, route((req, res) => auth.guestChallenge(req, res)));
+  app.post(PREFIX + '/guest/session', guestBody, route((req, res) => auth.guestSession(req, res)));
 }

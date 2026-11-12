@@ -18,6 +18,7 @@ import { agentSessionRoutine, attachAgentSessionRoutes } from './i2idlx-agent-se
 import { attachUserCourseRoutes } from './i2idlx-user-courses.js';
 import { attachLearningRoutes } from './i2idlx-learning-routes.js';
 import type { LearningRepository } from './i2idlx-learning-connections.js';
+import type { GuestGrantSigner } from './i2idlx-learning-auth.js';
 import type { LearningContextService } from './i2idlx-learning-context.js';
 import { attachSemanticTaskRoutes } from './i2idlx-semantic-tasks.js';
 import { semanticCheckOperations } from './i2idlx-semantic-affordances.js';
@@ -54,7 +55,9 @@ export interface WorkbenchConfig {
   /** Optional generated public-data file; never derived from a request input. */
   appDataFile?: string;
   /** Deployment-owned human authority origins; provider accounts stay dynamic. */
-  learning?: { relayOrigin: string; identityOrigin: string; podOrigin: string; repository?: LearningRepository };
+  /** `guestGrant`: signs provisional-guest grants as this application's registered service agent.
+   * Absent (as in the bridge today) means learner sign-in offers no guest. */
+  learning?: { relayOrigin: string; identityOrigin: string; podOrigin: string; repository?: LearningRepository; guestGrant?: GuestGrantSigner };
 }
 const MAX_STORED_ENVELOPE_BYTES = 6_000_000;
 const hex = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -339,7 +342,7 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
   });
   const learningContext: LearningContextService = attachLearningRoutes(app, {
     baseUrl: base, relayOrigin: config.learning?.relayOrigin ?? '', identityOrigin: config.learning?.identityOrigin ?? '',
-    podOrigin: config.learning?.podOrigin ?? '', repository: config.learning?.repository,
+    podOrigin: config.learning?.podOrigin ?? '', repository: config.learning?.repository, guestGrant: config.learning?.guestGrant,
     sessions: agentSessions, taskConfig: { baseUrl: base, appDataFile: config.appDataFile, checkOperations }, fetch: config.fetch,
   }).context;
   attachUserCourseRoutes(app, {

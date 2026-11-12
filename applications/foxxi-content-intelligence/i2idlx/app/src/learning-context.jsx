@@ -79,6 +79,7 @@ export function useLearningContext(engine, { onActivate } = {}) {
     }
     else if (!locationOnly && (cause?.status === 401 || cause?.status === 403 || ['learning_authority_changed', 'learning_content_not_allowed', 'learning_progress_not_allowed', 'learning_review_not_allowed', 'learning_enrollment_required', 'learning_permission_required', 'learning_authorization_expired', 'session_expired', 'session_unauthorized'].includes(cause?.code))) clearPrivate();
     const messages = {
+      learning_guest_refused: 'A guest account cannot do this. Connect your Interego learning account with a passkey or wallet.',
       learning_sign_in_required: 'Sign in to your learning account again.', learning_session_expired: 'Your learning sign-in expired. Sign in again.',
       learning_link_inactive: 'This learning account link is no longer active. Refresh your connections.', learning_link_not_found: 'This learning account link could not be confirmed. Refresh your connections.',
       learning_connection_revoked: 'The learning provider ended this connection.', learning_authority_changed: 'Your learning access changed. Refresh your courses before continuing.',
@@ -200,6 +201,15 @@ export function useLearningContext(engine, { onActivate } = {}) {
     if (!opened) { setError('Allow a new sign-in window, then connect your learning account again.'); return; }
     opened.opener = null; opened.location.replace(session.sign_in_url); popup.current = opened;
     setNotice('Finish the normal Interego sign-in, then close its window or refresh your learning account here.');
+  }
+  async function guestSignIn() {
+    if (!session?.guest_sign_in || loading) return;
+    const { run, controller } = begin();
+    try {
+      await client.current.guestSignIn({ confirmTerms: terms => window.confirm('A guest account is created on the hosted Interego service. Do you agree to its Terms (' + terms.url + ') and Privacy Notice (' + terms.privacyUrl + ')?') }, controller.signal);
+      if (current(run)) setNotice('You are a guest. This browser holds the key; the guest account ends at its deadline unless you add a passkey or wallet.');
+    } catch (cause) { if (current(run)) setError(typeof cause?.message === 'string' ? cause.message : 'Guest sign-in is not available right now.'); }
+    finally { if (current(run)) setLoading(false); }
   }
   async function signOut() {
     clearAccount(); const { run, controller } = begin();
@@ -498,8 +508,9 @@ export function useLearningContext(engine, { onActivate } = {}) {
         <li>{selected ? 'Selected course: ' + selected.title + '. ' + (readiness ? 'Readiness checked ' + dateLabel(readiness.checked_at) + '.' : 'Check course readiness.') : link?.status === 'active' ? 'Choose one of your enrolled courses and check its readiness.' : 'Open the enrolled courses of an active account link to continue.'}</li>
         <li>{paired ? 'AI agent connected. ' : 'Connect your AI agent. '}{shareContent || shareProgress || shareReview ? 'Your sharing choices are set. Ask about your selected course.' : 'Choose the context you want to share before asking.'}</li>
       </> : <><li>Connect your Interego learning account.</li><li>Create a managed connection and explicitly choose its permissions.</li><li>Share its code and verify learners against actual registrations.</li><li>Optionally save a course learning map and release review of completed or terminal quiz results.</li></>}</ol>
-      {!session ? <p>Checking your learning account…</p> : !session.enabled ? <p>Learning account sign-in is not available on this workbench yet.</p> : !authenticated ? <button className="btn" disabled={loading} onClick={signIn}>Connect your Interego learning account</button> : <>
-        <p>Your Interego account is verified.</p><details><summary>My verified account details</summary><p style={{ overflowWrap: 'anywhere' }}>{session.account.webId}</p></details>
+      {!session ? <p>Checking your learning account…</p> : !session.enabled ? <p>Learning account sign-in is not available on this workbench yet.</p> : !authenticated ? <div className="row wrap"><button className="btn" disabled={loading} onClick={signIn}>Connect your Interego learning account</button>
+        {session.guest_sign_in ? <button className="btn sm" disabled={loading} onClick={guestSignIn}>Start as a guest learner</button> : null}</div> : <>
+        <p>{session.guest ? 'You are a guest learner. Guests can join a connection and use their own courses; managing a connection needs a passkey or wallet.' : 'Your Interego account is verified.'}</p><details><summary>My verified account details</summary><p style={{ overflowWrap: 'anywhere' }}>{session.account.webId}</p></details>
         <div className="row wrap"><button className="btn sm" disabled={disabled} onClick={refreshAccount}>Refresh learning account</button><button className="btn sm" disabled={loading} onClick={signOut}>Sign out of learning account</button></div>
         {journey === 'learner' ? <>
         <label className="stack">Learning provider connection code<input className="input" aria-label="Learning provider connection code" ref={joinCode} autoComplete="off" disabled={disabled} /></label>
