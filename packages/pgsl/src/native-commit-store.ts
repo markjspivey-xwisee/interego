@@ -112,6 +112,25 @@ export interface NativeCommitStoreOptions {
    * advertise the operation, or a batch request that is not answered all stage each
    * representation with its own conditional write and read-back, as before. */
   readonly stageIndividually?: boolean;
+  /** Opt-in: how long (0 to 3 600 000 ms; default 0, a probe before every commit) a commit may
+   * rely on this client's last successful capability probe instead of sending another.
+   * The probe only decides which requests a commit sends; every write is still confirmed by
+   * its own receipt or read-back, so a server that changed within the period costs a refused
+   * commit or the slower staging path, never an unconfirmed write. `ready()` always probes. */
+  readonly capabilityProbeTtlMs?: number;
+  /** Opt-in reuse of the immutable commit object that backs a head. Every head read still
+   * fetches and verifies the head itself; what is skipped is the second fetch of the
+   * content-addressed commit object when this client has already fetched it, or staged it
+   * with a confirmation, and checked its digest. The kept bytes are decrypted and compared
+   * with the head on every use. As with the other reuse options, a hit no longer shows that
+   * the pod still serves that object, so integrity-audit callers leave this off (the default). */
+  readonly reuseBackingCommits?: boolean;
+  /** Opt-in: a commit whose `expected` is a snapshot object this client itself returned
+   * starts from that verified head instead of reading the head again first. A head that has
+   * since moved is then caught by the head compare-and-set, after staging and with the same
+   * conflict or replay outcome, not before staging. Any other `expected` value, and the
+   * default, read and compare the current head first. */
+  readonly commitFromExpectedSnapshot?: boolean;
   /** Opt-in reuse of decoded index nodes within this client, bounded by the
    * total number of entries retained (least recently used nodes leave first).
    * An index node is immutable and content addressed: it is kept only after it
@@ -309,7 +328,15 @@ export class NativeCommitStore implements NativeCommitClient {
   private readonly verifiedIndexNodes = new Map<string, { node: IndexNode; weight: number }>();
   private verifiedIndexNodeWeight = 0;
   private readonly indexNodeReads = new Map<string, Promise<IndexNode>>();
+  private readonly probeTtl: number;
+  private probed: { at: number; batchedStaging: boolean } | undefined;
+  /** Digest-checked commit objects by URL; a handful, since only recent heads are asked for. */
+  private readonly backingCommits = new Map<string, Uint8Array>();
+  /** The verified head behind each snapshot object this client handed out. */
+  private readonly snapshotHeads = new WeakMap<object, DecodedHead>();
   constructor(private readonly options: NativeCommitStoreOptions) {
+    this.probeTtl = options.capabilityProbeTtlMs ?? 0;
+    if (!Number.isSafeInteger(this.probeTtl) || this.probeTtl < 0 || this.probeTtl > 3_600_000) fail('Invalid native capability probe period.', 400);
     this.indexNodeCacheLimit = options.indexNodeCacheEntries ?? 0;
     if (!Number.isSafeInteger(this.indexNodeCacheLimit) || this.indexNodeCacheLimit < 0 || this.indexNodeCacheLimit > 4_000_000) fail('Invalid native index node cache capacity.', 400);
     this.indexReadConcurrency = options.indexReadConcurrency ?? 1;
@@ -334,7 +361,13 @@ export class NativeCommitStore implements NativeCommitClient {
     catch { return fail('Native atomic resource commits are unavailable.'); }
     if (!response.ok || response.headers.get('Interego-Native-Commit') !== '1'
       || !response.headers.get('Accept-Put')?.split(',').map(s => s.trim()).includes(NATIVE_COMMIT_MEDIA_TYPE)) fail('Native atomic resource commits are unavailable.');
-    return { batchedStaging: response.headers.get('Interego-Native-Stage') === '1' };
+    this.probed = { at: Date.now(), batchedStaging: response.headers.get('Interego-Native-Stage') === '1' };
+    return this.probed;
+  }
+  private rememberBackingCommit(url: string, bytes: Uint8Array): void {
+    if (this.options.reuseBackingCommits !== true) return;
+    this.backingCommits.delete(url); this.backingCommits.set(url, Uint8Array.from(bytes));
+    while (this.backingCommits.size > 8) this.backingCommits.delete(this.backingCommits.keys().next().value!);
   }
   private target(url: string): URL {
     const parsed = uri(url), pod = uri(this.scope.pod);
@@ -721,9 +754,13 @@ export class NativeCommitStore implements NativeCommitClient {
     const match = reference.commitUrl.match(/\/commit-([a-f0-9]{64})\.json$/);
     if (!match) return fail('Invalid native commit reference.');
     this.expectedUrl(reference.commitUrl, 'commit', 'sha256:' + match[1]);
-    const stored = await this.readRepresentation(reference.commitUrl);
-    if (!stored || digest(stored.bytes) !== 'sha256:' + match[1]) return fail('Native commit history is unavailable or changed.');
-    return this.decodeHead(stored.bytes, reference.revision, reference.topUri);
+    const kept = this.options.reuseBackingCommits === true ? this.backingCommits.get(reference.commitUrl) : undefined;
+    const bytes = kept ?? (await this.readRepresentation(reference.commitUrl))?.bytes;
+    // The digest and the decryption below are checked on a kept copy exactly as on a fetched one.
+    if (!bytes || digest(bytes) !== 'sha256:' + match[1]) return fail('Native commit history is unavailable or changed.');
+    const decoded = this.decodeHead(bytes, reference.revision, reference.topUri);
+    if (!kept) this.rememberBackingCommit(reference.commitUrl, bytes);
+    return decoded;
   }
   private async current(): Promise<DecodedHead> {
     const stored = await this.readRepresentation(this.scope.headUrl);
@@ -734,7 +771,11 @@ export class NativeCommitStore implements NativeCommitClient {
     return head;
   }
   private indexReadContext(): IndexReadContext { return { stopped: false, failed: false, pending: new Set(), nodes: 0, branches: 0, leaves: 0, active: 0, peak: 0 }; }
-  private async complete(head: DecodedHead, context = this.indexReadContext()): Promise<DecodedHead> { return { ...head, records: await this.records(head.index, context) }; }
+  private async complete(head: DecodedHead, context = this.indexReadContext()): Promise<DecodedHead> {
+    const complete = { ...head, records: await this.records(head.index, context) };
+    this.snapshotHeads.set(complete, head);
+    return complete;
+  }
   private async observedHead(operation: 0 | 1, load: () => Promise<DecodedHead>): Promise<NativeSnapshot> {
     if (!this.options.onHeadRead) return this.complete(await load());
     const context = this.indexReadContext(), readNumber = ++this.headReadSequence, started = performance.now();
@@ -831,7 +872,9 @@ export class NativeCommitStore implements NativeCommitClient {
     // Independent paths under one already verified head: bounded, not serial.
     const found = await mapBounded(keys, this.indexReadConcurrency, key => this.lookup(head.index, 'record:' + key));
     keys.forEach((key, position) => { const reference = found[position]; if (reference) records.set(key, reference); });
-    return { ...head, records, selectedRecordKeys: keys };
+    const selected = { ...head, records, selectedRecordKeys: keys };
+    this.snapshotHeads.set(selected, head);
+    return selected;
   }
   async readHeadRecords(keys: readonly string[]): Promise<NativeSnapshot> {
     const selected = recordSelection(keys);
@@ -880,10 +923,12 @@ export class NativeCommitStore implements NativeCommitClient {
       bounded(change.key, 4096, 'record key'); if (keys.has(change.key)) fail('Native mutation repeats a record key.', 400); keys.add(change.key);
     }
     const logicalDigest = digest(canonical({ scope: this.scope, changes: changes.map(c => ({ key: c.key, plaintextDigest: c.artifact?.plaintextDigest ?? null })) }));
-    const current = await this.current(), prior = await this.operation(request.operationId, current);
+    // Only an object this client returned is trusted as a verified head; a copy reads again.
+    const known = this.options.commitFromExpectedSnapshot === true ? this.snapshotHeads.get(request.expected) : undefined;
+    const current = known ?? await this.current(), prior = await this.operation(request.operationId, current);
     if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null, selectedRecordKeys); }
     if (current.revision !== request.expected.revision || canonical(current.reference) !== canonical(request.expected.reference)) throw new NativeCommitConflictError();
-    const { batchedStaging } = await this.discover();
+    const { batchedStaging } = this.probed && Date.now() - this.probed.at < this.probeTtl ? this.probed : await this.discover();
     const plan: StagePlan | undefined = batchedStaging && this.options.stageIndividually !== true
       ? { pending: [], urls: new Set(), confirmed: [], bytes: 0 } : undefined;
     const indexChanges = new Map<string, NativeArtifactReference | null>();
@@ -914,6 +959,8 @@ export class NativeCommitStore implements NativeCommitClient {
     await this.stage(commitUrl, bytes, topUri, plan);
     // Nothing below runs until every representation this head refers to is confirmed staged.
     if (plan) await this.flushStaged(plan);
+    // Confirmed staged, by receipt or read-back: the head about to be published is backed by it.
+    this.rememberBackingCommit(commitUrl, bytes);
     let receipt: NativeResourceReceipt | null;
     try { receipt = await this.put(this.scope.headUrl, bytes, current.revision); }
     catch (error) {

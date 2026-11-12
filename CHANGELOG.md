@@ -15,6 +15,45 @@ other key a caller adds is still refused, and neither value reaches what the
 relay signs. A test reproduces the refusal with the body as routed, and another
 fails if the middleware starts adding a name the helper does not know.
 
+
+## 2026-11-12 — Native commits: a write reads the head once and skips three repeat requests (opt-in)
+
+After batched staging, a single-statement LRS write still made eight sequential
+requests to the pod server: two head reads and two reads of the commit object
+behind the head (one pair by the caller, one pair again inside `commit`), the
+`OPTIONS` capability probe, the staging request, the head compare-and-set and
+its read-back. Three options on `NativeCommitStore` (`packages/pgsl`), all off
+by default, remove four of them:
+
+- `commitFromExpectedSnapshot`: a commit whose `expected` is a snapshot object
+  this client itself returned starts from that verified head instead of reading
+  the head again. A head that moved since is caught by the head compare-and-set,
+  after staging, with the same conflict or replay outcome as before; a copy of
+  a snapshot, or one from another client, still reads the head first.
+- `reuseBackingCommits`: the immutable, content-addressed commit object behind a
+  head is fetched once. A client keeps the few it has fetched or staged with a
+  confirmation; a kept copy has its digest checked, is decrypted and is compared
+  with the head on every use. The head itself is fetched and verified on every
+  read.
+- `capabilityProbeTtlMs`: a commit may rely on the client's last successful
+  `OPTIONS` probe for this long. The probe only decides which requests a commit
+  sends; every write is still confirmed by its receipt or read-back. `ready()`
+  always probes.
+
+The head compare-and-set, its read-back and the staging confirmations are
+unchanged. The Foxxi LRS store turns all three on (probe period five minutes).
+
+**Measured** (single-statement `PUT /xapi/statements`, the LRS over the actual
+pod server, gate and Postgres 16 on one machine, 20 writes after 3 warm-ups):
+
+| | pod requests per write | loopback | +100 ms per pod request |
+|---|---|---|---|
+| before | 8 | 242 ms median | 1081 ms median (1022 to 1174) |
+| after | 4 | 267 ms median | 720 ms median (624 to 784) |
+
+Loopback time does not move because it is encryption and validation, not
+requests. On the live bridge the previous change measured 0.94 s median per
+write (12 writes, 2026-11-12) against about 2.7 s before it.
 ## 2026-11-12 — Foxxi: the learner workbench signs guest grants as its own application
 
 Guest learners were built but had no grant signer. The decision was that the
