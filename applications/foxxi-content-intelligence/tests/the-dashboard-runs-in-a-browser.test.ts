@@ -61,7 +61,7 @@ describe('the dashboard, loaded as a browser loads it', () => {
     browser.module.exports = browser.exports;
     expect(() => runInNewContext(code, browser, { filename: 'dashboard.bundle.js' })).not.toThrow();
     // What it leaves to the browser's bundler: the dashboard's own npm packages, nothing else.
-    expect([...new Set(asked.map(p => p.split('/')[0]!))].sort()).toEqual(['d3-force', 'ethers', 'react', 'react-dom', 'react-router-dom']);
+    expect([...new Set(asked.map(p => p.split('/')[0]!))].sort()).toEqual(['d3-force', 'ethers', 'react', 'react-dom', 'react-router-dom', 'tweetnacl']);
   });
 
   it('would have caught the blank page: a module that names process as it loads throws here', () => {

@@ -91,6 +91,11 @@ no `guest_sign_in`, the three guest routes answer `503 learning_guest_unavailabl
 below is reachable in production. Turning it on also needs Foxxi's origin, service agent and pod in
 identity's `PROVISIONAL_PLAY_CLIENTS`; both are operator steps.
 
+The bridge already has a grant service for guests the dashboard keeps (`src/play-grant.ts`,
+`DURABLE-GUEST.md`). It signs for the dashboard's origin (`FOXXI_PLAY_AUDIENCE`), and a guest's
+owner is derived from its application origin, so it is not this workbench's signer: connecting the
+two is a decision about whether the workbench and the dashboard are one application to identity.
+
 The flow, all under `/i2idlx/learning/guest/`, each requiring the workbench's own `Origin`:
 
 1. `POST grant` with `{publicKeyThumbprint}` returns a grant for that key, which the browser signs
@@ -123,8 +128,9 @@ account's `u-try-play-` WebID when doing so. A link belongs to the guest's owner
 that later adds a passkey or wallet to the same owner keeps its links and signs in the normal way.
 
 This is separate from the dashboard's "Start as a guest", which makes a secp256k1 wallet in the tab
-and signs requests to the Foxxi bridge as `did:ethr:`; that guest has no identity account and no
-learning account, and cannot use these routes.
+and signs requests to the Foxxi bridge as `did:ethr:`. That guest has no learning account and cannot
+use these routes, including when its browser keeps it in a provisional pod (`DURABLE-GUEST.md`): the
+pod is the dashboard application's, and the guest still signs as its wallet.
 
 ## Course readiness and released quiz review
 

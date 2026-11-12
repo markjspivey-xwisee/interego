@@ -23,12 +23,47 @@ sign-in refused every provisional account, so a `foxxi` application in
   token. The learning panel shows "Start as a guest learner" only when the
   workbench offers it.
 - Off in production: guest sign-in exists only where the workbench is given a
-  `guestGrant` signer for Foxxi's service agent, and the bridge wires none. No
-  environment variable is read and none is set. The relay sign-in path is
+  `guestGrant` signer for Foxxi's service agent, and the bridge wires none. The
+  bridge's grant service for dashboard guests (`src/play-grant.ts`) signs for
+  the dashboard's origin and is not connected to it. No environment variable is
+  read and none is set. The relay sign-in path is
   unchanged and still refuses provisional accounts.
 
 Application code only (`applications/foxxi-content-intelligence`); no change to
 identity, the relay, the css-gate, or any ontology.
+## 2026-11-12 — Foxxi: a guest can be kept by their browser, in a provisional pod
+
+The dashboard's guest is a wallet the tab makes, and a reload lost it unless the
+guest had written down its recovery phrase. Foxxi can now use the deployment's
+provisional owners (`deploy/identity/PROVISIONAL-PLAY.md`) to keep it, when an
+operator turns that on. It is off by default and nothing live changes with this
+merge.
+
+- **Bridge** (`src/play-grant.ts`): three routes. `GET /play/guest` says whether
+  guests are kept; `POST /play/grant` asks the relay to sign the grant identity
+  requires, for the one browser key the request names; `GET /play/status` shows
+  an operator the agent DID and pod the relay signs the service as, and whether
+  it is ready. On only when `FOXXI_PLAY_SERVICE_PRIVATE_KEY` and
+  `FOXXI_PLAY_AUDIENCE` are both set. The service signs in to identity with its
+  own wallet, `existingOnly`, so the bridge never creates an account.
+- **Dashboard** (`dashboard-app/src/auth/durable-guest.ts`): a "Keep this guest
+  in this browser" box on the sign-in page. The browser gets a provisional owner
+  on a non-extractable P-256 key, seals the recovery phrase to an X25519 key
+  whose secret is wrapped by a non-extractable AES key, and writes the sealed
+  document to the one path its token allows. The sign-in page then offers
+  "Continue as that guest" until the guest deadline, with no sign-in repeated.
+  New dependency: `tweetnacl`, in the dashboard only.
+
+The bridge's authentication is unchanged, and a guest that could not be kept is
+the tab-only guest it always was. Foxxi's I2IDL-X learner sign-in still refuses
+provisional accounts.
+
+The test runs the browser client and the grant service against identity's own
+admission code and the storage gate's own guest policy, not a stand-in for them.
+Not exercised: anything that needs the live services (the service account, its
+registration with the relay, the relay's signature, CORS, IndexedDB in a real
+browser). `applications/foxxi-content-intelligence/DURABLE-GUEST.md` lists the
+operator steps and exactly what has and has not been run.
 
 ## 2026-11-11 — CI: the Chromium install decides on whether the browser launches
 

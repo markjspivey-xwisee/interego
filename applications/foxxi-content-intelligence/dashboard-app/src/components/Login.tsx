@@ -1,10 +1,14 @@
-import React, { useState } from 'react';
+import React, { useEffect, useState } from 'react';
+import { ethers } from 'ethers';
 import { Card, Button, Pill } from './common.js';
 import {
   adminSessionOption, learnerSessionOptions, connectAsGuest, connectFromExtension, connectFromPrivateKey, sessionFromOption,
   type SessionRole, type FoxxiSession,
 } from '../auth/session.js';
 import { walletExtension } from '../auth/signer.js';
+import {
+  browserGuestDeps, durableGuestOffer, forgetKeptGuest, keepGuest, keptGuest, openKeptGuest, type DurableGuestOffer,
+} from '../auth/durable-guest.js';
 import { SAMPLE_TENANT_POD_URL } from '../sample/data.js';
 
 /** The bridge this dashboard talks to; its /start page says what can be done here. */
@@ -18,6 +22,27 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
   const [walletBusy, setWalletBusy] = useState(false);
   const [guestErr, setGuestErr] = useState<string | null>(null);
   const [guestBusy, setGuestBusy] = useState(false);
+  // A guest this browser keeps (auth/durable-guest.ts): whether the deployment offers it, whether the
+  // person asked for it, and the guest already kept here, if any. All three stay empty where the
+  // deployment does not keep guests or the browser cannot, and the page is then what it always was.
+  const [offer, setOffer] = useState<DurableGuestOffer | null>(null);
+  const [keep, setKeep] = useState(false);
+  const [kept, setKept] = useState<{ address: string; guestExpiresAt: string } | null>(null);
+  useEffect(() => {
+    let live = true;
+    void (async () => {
+      try {
+        const deps = browserGuestDeps();
+        const [offered, existing] = await Promise.all([durableGuestOffer(BRIDGE_BASE, deps), keptGuest(deps)]);
+        if (!live) return;
+        setOffer(offered);
+        // Keeping is the default only where nothing has to be agreed to first.
+        setKeep(!!offered && !offered.terms);
+        setKept(existing);
+      } catch { /* no IndexedDB, or no WebCrypto: the tab-only guest */ }
+    })();
+    return () => { live = false; };
+  }, []);
   const hasExtension = !!walletExtension();
   const learners = learnerSessionOptions();
   const admin = adminSessionOption();
@@ -39,10 +64,57 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
         </div>
         <Button primary disabled={guestBusy} onClick={() => { void (async () => {
           setGuestBusy(true); setGuestErr(null);
-          try { onSignIn(await connectAsGuest(SAMPLE_TENANT_POD_URL)); }
+          try {
+            const guest = await connectAsGuest(SAMPLE_TENANT_POD_URL);
+            let keptUntil: string | undefined;
+            if (offer && keep && guest.guestRecoveryPhrase) {
+              // Keeping is best effort: a guest the browser could not keep is still a guest, in this tab.
+              try {
+                keptUntil = (await keepGuest({ bridgeUrl: BRIDGE_BASE, offer, phrase: guest.guestRecoveryPhrase,
+                  address: guest.userId, ...(offer.terms ? { acceptedTermsVersion: offer.terms.version } : {}) }, browserGuestDeps())).guestExpiresAt;
+              } catch { keptUntil = undefined; }
+            }
+            onSignIn(keptUntil ? { ...guest, guestKeptUntil: keptUntil } : guest);
+          }
           catch (e) { setGuestErr((e as Error).message); }
           finally { setGuestBusy(false); }
         })(); }}>{guestBusy ? 'Making your key…' : 'Start as a guest'}</Button>
+        {offer && (
+          <label data-testid="keep-guest" style={{ display: 'block', fontSize: 12, marginTop: 8 }}>
+            <input type="checkbox" checked={keep} onChange={e => setKeep(e.target.checked)} />{' '}
+            Keep this guest in this browser{offer.ttlSeconds ? ` for about ${Math.max(1, Math.round(offer.ttlSeconds / 3600))} hours` : ''}, so a reload
+            does not lose it. Your recovery phrase is stored encrypted, with a key only this browser can use.
+            {offer.terms && (
+              <> By ticking this you agree to the <a href={offer.terms.url} target="_blank" rel="noreferrer">Terms</a>
+                {offer.terms.privacyUrl && <> and the <a href={offer.terms.privacyUrl} target="_blank" rel="noreferrer">Privacy Notice</a></>} of
+                the service that stores it.</>
+            )}
+          </label>
+        )}
+        {kept && (
+          <div data-testid="kept-guest" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+            <div style={{ fontSize: 12, marginBottom: 6 }}>
+              This browser keeps a guest, <code>{kept.address.slice(0, 6)}…{kept.address.slice(-4)}</code>, until {new Date(kept.guestExpiresAt).toLocaleString()}.
+            </div>
+            <div style={{ display: 'flex', gap: 8, alignItems: 'center', flexWrap: 'wrap' }}>
+              <Button disabled={guestBusy} onClick={() => { void (async () => {
+                setGuestBusy(true); setGuestErr(null);
+                try {
+                  const opened = await openKeptGuest(browserGuestDeps());
+                  const guest = await connectAsGuest(SAMPLE_TENANT_POD_URL, () => ethers.Wallet.fromPhrase(opened.phrase));
+                  onSignIn({ ...guest, guestKeptUntil: kept.guestExpiresAt });
+                } catch (e) {
+                  setGuestErr(`That guest could not be opened (${(e as Error).message}).`);
+                  setKept(await keptGuest(browserGuestDeps()).catch(() => null));
+                } finally { setGuestBusy(false); }
+              })(); }}>Continue as that guest</Button>
+              <Button disabled={guestBusy} onClick={() => { void (async () => {
+                await forgetKeptGuest(browserGuestDeps()).catch(() => undefined);
+                setKept(null);
+              })(); }}>Forget it on this browser</Button>
+            </div>
+          </div>
+        )}
         {guestErr && <div style={{ color: 'var(--bad)', fontSize: 12, marginTop: 6 }}>✗ {guestErr}</div>}
         <div style={{ fontSize: 12, marginTop: 10 }}>
           <a href={`${BRIDGE_BASE}/start`} target="_blank" rel="noreferrer">What can I do here?</a>
