@@ -74,6 +74,33 @@ export function playGrantConfig(env: Readonly<Record<string, string | undefined>
   };
 }
 
+/**
+ * The I2IDL-X learner workbench's own grant signer, or null where guest learners are off
+ * (i2idlx/LEARNING-CONNECTIONS.md, "Guest learners"). The workbench is a SECOND application to
+ * identity, apart from the dashboard: its own origin (the bridge's own, never a request's), its own
+ * service account, its own entry in PROVISIONAL_PLAY_CLIENTS, and so its own guests and admission
+ * cap. On only when FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY is set. A value that would make the two
+ * applications one (the dashboard's key, or the dashboard's origin) throws at start.
+ */
+export function learnerGuestGrantConfig(env: Readonly<Record<string, string | undefined>>, workbenchUrl: string): PlayGrantConfig | null {
+  const key = env['FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY']?.trim();
+  if (!key) return null;
+  if (!/^0x[0-9a-fA-F]{64}$/.test(key)) throw new Error('FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY must be a 32-byte hex private key');
+  if (key.toLowerCase() === env['FOXXI_PLAY_SERVICE_PRIVATE_KEY']?.trim().toLowerCase()) {
+    throw new Error('FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY must not be FOXXI_PLAY_SERVICE_PRIVATE_KEY: the learner workbench is its own application');
+  }
+  const audience = httpsOrigin(workbenchUrl.replace(/\/+$/, ''), 'The workbench URL (BRIDGE_DEPLOYMENT_URL)');
+  if (!audience.startsWith('https://')) throw new Error('Guest learners need the workbench on a public HTTPS origin (BRIDGE_DEPLOYMENT_URL)');
+  const dashboard = env['FOXXI_PLAY_AUDIENCE']?.trim().replace(/\/+$/, '');
+  if (dashboard && dashboard === audience) throw new Error('The learner workbench and FOXXI_PLAY_AUDIENCE are the same origin: identity admits one application per origin');
+  return {
+    audience,
+    identityUrl: httpsOrigin(env['INTEREGO_IDENTITY_URL'] ?? 'https://identity.interego.xwisee.com', 'INTEREGO_IDENTITY_URL'),
+    relayUrl: httpsOrigin(env['INTEREGO_RELAY_URL'] ?? 'https://relay.interego.xwisee.com', 'INTEREGO_RELAY_URL'),
+    servicePrivateKey: key,
+  };
+}
+
 export type PlayFetch = (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string; signal?: AbortSignal }) =>
   Promise<{ ok: boolean; status: number; json(): Promise<unknown> }>;
 
