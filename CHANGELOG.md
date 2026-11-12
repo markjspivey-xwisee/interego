@@ -31,6 +31,25 @@ sign-in refused every provisional account, so a `foxxi` application in
 
 Application code only (`applications/foxxi-content-intelligence`); no change to
 identity, the relay, the css-gate, or any ontology.
+## 2026-11-12 — Foxxi: an operator's script for the play service's account and agent
+
+Turning on kept guests (`DURABLE-GUEST.md`) needs two things done once on the
+live services: the service wallet's identity account, and its agent's
+registration with the relay. `tools/setup-play-service.mjs` does both, for an
+operator to run.
+
+Run with no flag it changes nothing: it signs in only if the account exists,
+asks the relay whether it signs for the agent, and reports. `--create-account`
+creates the account; `--register-agent` registers the agent; where identity has
+hosted terms it prints the version and links and creates nothing until
+`--accept-terms=<version>` is given. The key comes from the environment only,
+and neither it nor a token is printed. It ends by printing the
+`PROVISIONAL_PLAY_CLIENTS` entry for a person to set; it sets nothing itself.
+
+It has run only against stand-ins for identity's accounts and the relay's
+registry. Whether the relay registers an agent over REST on a pod nothing has
+bootstrapped is unconfirmed; the script prints the relay's own refusal if not.
+
 ## 2026-11-12 — Foxxi: a guest can be kept by their browser, in a provisional pod
 
 The dashboard's guest is a wallet the tab makes, and a reload lost it unless the
