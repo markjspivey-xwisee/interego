@@ -6552,7 +6552,10 @@ const app = createVerticalBridge({
         const statement = (body.instance ?? body.statement) as unknown;
         if (!statement || typeof statement !== 'object' || Array.isArray(statement)) { res.status(400).json({ ok: false, error: 'send the statement as `instance` (or `statement`) beside `profile`' }); return; }
         const s = validateAgainstSuppliedProfile(statement as Record<string, unknown>, supplied as Record<string, unknown>);
-        const verdict = !s.applicable ? (s.verbDeclared ? 'no-applicable-template' : 'unknown-verb') : (s.matchedTemplates.length ? 'conformant' : 'non-conformant');
+        // A template with no violation found but a part not evaluated settles nothing: the verdict
+        // says so, and `conforms` stays false, since conformance was not established.
+        const verdict = !s.applicable ? (s.verbDeclared ? 'no-applicable-template' : 'unknown-verb')
+          : s.matchedTemplates.length ? 'conformant' : s.partiallyCheckedTemplates.length ? 'not-fully-checked' : 'non-conformant';
         res.json({ ok: true, profileSource: 'supplied', ...s, verdict, conforms: s.matchedTemplates.length > 0 });
         return;
       }

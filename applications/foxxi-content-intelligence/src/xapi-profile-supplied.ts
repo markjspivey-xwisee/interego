@@ -11,7 +11,9 @@
  * determining properties (verb, objectActivityType, the four context*ActivityType lists,
  * attachmentUsageType) and its rules (location, presence, any, all, none). A statement follows
  * the profile when it carries every determining property of at least one template and breaks
- * none of that template's rules.
+ * none of that template's rules, with every part of that template evaluated. A template that
+ * shows no violation but has a part this reader does not evaluate is reported apart, as
+ * partially checked: it is neither a match nor a violation.
  *
  * Not read, and reported as not checked rather than passed or failed: a rule that has a
  * `selector`, a rule whose location uses a JSONPath form outside the ones selectLocation reads,
@@ -31,8 +33,11 @@ export interface SuppliedProfileResult {
   verbDeclared: boolean;
   /** At least one template has this statement's verb. If false, nothing was checked. */
   applicable: boolean;
-  /** Templates the statement fully follows. */
+  /** Templates the statement follows, with every part of them evaluated. */
   matchedTemplates: string[];
+  /** Templates with no violation found, but with a part that was not evaluated (see notChecked).
+   *  Following one of these is not established, so it does not make the statement conformant. */
+  partiallyCheckedTemplates: string[];
   /** Why the closest template is not followed; empty when one is, or when none applies. */
   violations: SuppliedProfileViolation[];
   /** Parts of the applicable templates this check does not evaluate. */
@@ -170,14 +175,20 @@ export function validateAgainstSuppliedProfile(stmt: Json, profile: Json): Suppl
   const applicable = templates.filter(t => t.verb === undefined || t.verb === verb);
   const notChecked = new Set<string>();
   const judged = applicable.map(t => {
-    for (const ref of ['objectStatementRefTemplate', 'contextStatementRefTemplate']) if (t[ref] !== undefined) notChecked.add(`${t.id as string}: ${ref}`);
-    return { id: t.id as string, violations: [...determiningMisses(stmt, t), ...ruleViolations(stmt, t, notChecked)] };
+    // What is not evaluated is kept per template: it decides whether a clean result is a match.
+    const unread = new Set<string>();
+    for (const ref of ['objectStatementRefTemplate', 'contextStatementRefTemplate']) if (t[ref] !== undefined) unread.add(`${t.id as string}: ${ref}`);
+    const violations = [...determiningMisses(stmt, t), ...ruleViolations(stmt, t, unread)];
+    for (const note of unread) notChecked.add(note);
+    return { id: t.id as string, violations, whole: unread.size === 0 };
   });
-  const followed = judged.filter(j => j.violations.length === 0).map(j => j.id);
-  const closest = judged.length && !followed.length ? judged.reduce((a, b) => b.violations.length < a.violations.length ? b : a).violations : [];
+  const clean = judged.filter(j => j.violations.length === 0);
+  const followed = clean.filter(j => j.whole).map(j => j.id), partial = clean.filter(j => !j.whole).map(j => j.id);
+  const closest = judged.length && !clean.length ? judged.reduce((a, b) => b.violations.length < a.violations.length ? b : a).violations : [];
+  // Patterns are about an order of statements. Saying so does not take away a template match.
   if (Array.isArray(profile.patterns) && profile.patterns.length) notChecked.add('patterns: an order of statements cannot be judged from one statement');
   return {
     profile: typeof profile.id === 'string' ? profile.id : null, verb, verbDeclared,
-    applicable: applicable.length > 0, matchedTemplates: followed, violations: closest, notChecked: [...notChecked],
+    applicable: applicable.length > 0, matchedTemplates: followed, partiallyCheckedTemplates: partial, violations: closest, notChecked: [...notChecked],
   };
 }

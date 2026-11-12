@@ -1,5 +1,17 @@
 # Changelog
 
+## 2026-11-12 — Foxxi LRS: a template checked in part is not a match
+
+Checking a statement against a brought xAPI Profile reported a template as
+followed when no violation was found, even when part of that template had not
+been evaluated: a template whose only rule has a `selector` was skipped whole
+and still made the statement `conformant`. A template with no violation found
+and a part not evaluated is now listed apart, in `partiallyCheckedTemplates`.
+Only a template evaluated whole counts as a match. When the only clean
+templates are partial ones the verdict is `not-fully-checked` and `conforms` is
+false. A fully checked match is kept when another template, or the profile's
+patterns, could not be evaluated.
+
 ## 2026-11-12 — Native commits and the Foxxi LRS: numeric timing of every write
 
 Two changes that were faster locally (fewer round trips, compact index nodes)
