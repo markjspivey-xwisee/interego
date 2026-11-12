@@ -26,6 +26,27 @@ This adds the measurement, and changes no behaviour.
   `[foxxi-lrs] native-commit`, `native-write` and `xapi-write`. The difference
   between `xapi-write` and `native-write` is what the handler spends outside
   the store. No tenant, key, statement, URL or error text is logged.
+## 2026-11-12 — Foxxi LRS: check a statement against an xAPI Profile you bring
+
+`POST /xapi/profile/validate` checked a statement against Foxxi's own profile
+and no other, so the author of a profile for another domain could have its
+statements kept here but not checked here. Send the profile document as
+`profile` beside the statement (`instance` or `statement`) and the check is
+against that profile's statement templates: each template's determining
+properties (verb, object and context activity types, attachment usage type) and
+its rules (location, presence, any, all, none). The answer names the templates
+followed, or why the closest one is not, and lists what it did not evaluate
+(a rule's `selector`, statement-reference templates, patterns) instead of
+passing it. Nothing is stored and nothing is fetched: the profile is whatever
+the request carries.
+
+Tried against the twelve templates of a published phone role-play profile,
+recovered from its RDF reading: usable, and a statement missing required
+locations is reported with each one.
+
+Not covered: the LRS does not refuse a statement on ingest for breaking a
+brought profile, a profile cannot be registered or kept, and patterns (the
+order of statements) are not checked.
 
 ## 2026-11-12 — Foxxi: guest learner routes refused the bridge's own body decorations
 
