@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-11-12 — Foxxi: the learner workbench signs guest grants as its own application
+
+Guest learners were built but had no grant signer. The decision was that the
+I2IDL-X workbench and the dashboard are two applications to identity, not one.
+
+- `learnerGuestGrantConfig` (`src/play-grant.ts`) turns the workbench's signer
+  on only when `FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY` is set. The audience is
+  the bridge's own origin. The bridge stops at start if the key is the
+  dashboard's `FOXXI_PLAY_SERVICE_PRIVATE_KEY`, if the origin is not public
+  HTTPS, or if it is also `FOXXI_PLAY_AUDIENCE`: either would make the two
+  applications one.
+- The bridge hands the workbench a signer backed by the existing
+  `PlayGrantService` (sign in `existingOnly`, relay `sign_request`, echo
+  checked). `GET /play/status` adds `learnerWorkbench` when it is configured.
+- The workbench now lets its signer set the grant's purpose and expiry and
+  checks both on what comes back (the purpose exactly; an expiry in the future
+  and no more than 120 seconds away).
+
+Still off in production: no variable was set, no service account was created,
+and identity's `PROVISIONAL_PLAY_CLIENTS` is unchanged. The steps are in
+`i2idlx/LEARNING-CONNECTIONS.md`, "Guest learners".
+
 ## 2026-11-12 — Foxxi: a provisional guest can be a learner, and only a learner
 
 Follow-up to the per-application Provisional Play change. Foxxi's learner

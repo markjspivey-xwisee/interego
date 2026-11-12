@@ -79,22 +79,35 @@ revokes future access; it cannot erase an already delivered client transcript.
 Connector removal first confirms cleanup of its generated LTI resources. Failed
 remote cleanup keeps the credential for an explicit retry.
 
-## Guest learners (off unless a grant signer is configured)
+## Guest learners (off unless the workbench's service key is set)
 
 A learner can also arrive as a provisional guest (`deploy/identity/PROVISIONAL-PLAY.md`): an owner
 the identity service creates for a P-256 key this browser generates, cannot export, and keeps in
 IndexedDB. Possession of that key is all a guest proves. It does not identify a person.
 
-Guest sign-in exists only where the workbench is given a `guestGrant` signer, which signs grants as
-Foxxi's registered service agent. The bridge wires none today, so `/i2idlx/learning/session` offers
-no `guest_sign_in`, the three guest routes answer `503 learning_guest_unavailable`, and nothing
-below is reachable in production. Turning it on also needs Foxxi's origin, service agent and pod in
-identity's `PROVISIONAL_PLAY_CLIENTS`; both are operator steps.
+The workbench is its own application to identity, separate from the Foxxi dashboard
+(`DURABLE-GUEST.md`): its own origin, its own service account, its own entry in identity's
+`PROVISIONAL_PLAY_CLIENTS`, and so its own guests and its own admission cap. A dashboard guest and a
+guest learner are never the same account.
 
-The bridge already has a grant service for guests the dashboard keeps (`src/play-grant.ts`,
-`DURABLE-GUEST.md`). It signs for the dashboard's origin (`FOXXI_PLAY_AUDIENCE`), and a guest's
-owner is derived from its application origin, so it is not this workbench's signer: connecting the
-two is a decision about whether the workbench and the dashboard are one application to identity.
+Guest sign-in is off unless `FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY` is set on the bridge. Unset,
+`/i2idlx/learning/session` offers no `guest_sign_in` and the three guest routes answer
+`503 learning_guest_unavailable`. Turning it on, in order (each step changes a live service):
+
+1. Make a secp256k1 key for this purpose only. The bridge stops at start if it is the dashboard's
+   `FOXXI_PLAY_SERVICE_PRIVATE_KEY`, if it is malformed, if `BRIDGE_DEPLOYMENT_URL` is not a public
+   HTTPS origin, or if that origin is also `FOXXI_PLAY_AUDIENCE`.
+2. Create the service's identity account and register its agent with the relay.
+   `tools/setup-play-service.mjs` does both; it reads its key from `FOXXI_PLAY_SERVICE_PRIVATE_KEY`,
+   so run it with the workbench's key in that variable and `--audience=<the bridge's origin>`
+   (`DURABLE-GUEST.md` has the flags).
+3. Set `FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY` on the bridge and restart it. `GET /play/status`
+   then carries `learnerWorkbench`, with the `agentDid` and `podUrl` the relay signs this service
+   as and whether it is `ready`.
+4. Add the workbench's origin to identity's `PROVISIONAL_PLAY_CLIENTS` with those two values, a
+   `namespace` and a `maxPods`. Merge it in; do not replace the other entries.
+
+The audience of every grant is the bridge's own configured origin, never a request's.
 
 The flow, all under `/i2idlx/learning/guest/`, each requiring the workbench's own `Origin`:
 

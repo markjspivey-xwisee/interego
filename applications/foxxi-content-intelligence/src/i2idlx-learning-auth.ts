@@ -13,8 +13,9 @@ export interface LearningPrincipal {
   guest?: true;
 }
 /** What Foxxi asks its service agent to sign so identity will provision a guest for one browser key. */
-export interface GuestGrantRequest { purpose: 'interego-play-provisional-v1'; audience: string; publicKeyThumbprint: string; challenge: string; expiresAt: number }
-/** Signs a grant as this application's registered service agent (the relay's `sign_request` envelope). */
+export interface GuestGrantRequest { audience: string; publicKeyThumbprint: string; challenge: string }
+/** Signs a grant as this application's registered service agent (the relay's `sign_request` envelope).
+ * The signer sets the grant's purpose and its short expiry; both are checked on what it returns. */
 export type GuestGrantSigner = (request: GuestGrantRequest, signal: AbortSignal) => Promise<{ _signed_payload: string; _signature: string }>;
 export interface LearningAccountAuthConfig {
   baseUrl: string; relayOrigin: string; identityOrigin: string; podOrigin: string;
@@ -319,15 +320,16 @@ export class LearningAccountAuth {
     const body = this.guestReady(req, ['publicKeyThumbprint']), thumbprint = body.publicKeyThumbprint as string;
     this.admit('guest-grant:' + (req.ip ?? 'unknown'), 5); this.admit('guest-grants', 30);
     if (thumbprint.length !== 43 || !B64URL.test(thumbprint)) refuse(400, 'learning_sign_in_input_invalid');
-    const request: GuestGrantRequest = { purpose: 'interego-play-provisional-v1', audience: this.base, publicKeyThumbprint: thumbprint,
-      challenge: randomBytes(32).toString('base64url'), expiresAt: Math.floor(this.now() / 1000) + 60 };
+    const request: GuestGrantRequest = { audience: this.base, publicKeyThumbprint: thumbprint, challenge: randomBytes(32).toString('base64url') };
     const controller = new AbortController(), timer = setTimeout(() => controller.abort(), 8000);
     let grant: { _signed_payload: string; _signature: string };
     try { grant = await this.guestGrant!(request, controller.signal); } catch { refuse(503, 'learning_guest_unavailable'); } finally { clearTimeout(timer); }
     // The signer is this deployment's own, but what leaves here is still checked: exactly the grant asked for.
     let signed: unknown; try { signed = JSON.parse(grant._signed_payload); } catch { refuse(503, 'learning_guest_unavailable'); }
     if (typeof grant._signed_payload !== 'string' || grant._signed_payload.length > 8192 || typeof grant._signature !== 'string' || !/^0x[0-9a-fA-F]{130}$/.test(grant._signature)
-      || !object(signed) || (Object.keys(request) as Array<keyof GuestGrantRequest>).some(k => signed[k] !== request[k])) refuse(503, 'learning_guest_unavailable');
+      || !object(signed) || (Object.keys(request) as Array<keyof GuestGrantRequest>).some(k => signed[k] !== request[k])
+      || signed.purpose !== 'interego-play-provisional-v1' || !Number.isSafeInteger(signed.expiresAt)
+      || Number(signed.expiresAt) * 1000 <= this.now() || Number(signed.expiresAt) * 1000 > this.now() + 120_000) refuse(503, 'learning_guest_unavailable');
     secure(res); res.json({ playGrant: { _signed_payload: grant._signed_payload, _signature: grant._signature } });
   }
   /** Step 2: a single-use challenge the browser key signs with its attestation. */
