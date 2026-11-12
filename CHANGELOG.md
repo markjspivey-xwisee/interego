@@ -45,6 +45,19 @@ pod server, gate and Postgres 16 on one machine, 20 writes after 3 warm-ups):
 
 Of what is still staged, the commit object (about 122 KB, a nine-field tuple) is
 now the largest item; it is not changed here.
+## 2026-11-12 — Foxxi: guest learner routes answered 500 behind the bridge's body parser
+
+Found on the live bridge minutes after guest learners were switched on: every
+`POST /i2idlx/learning/guest/*` answered `500 internal error` before reaching
+its handler. The bridge's global JSON parser comes from the shared bridge
+package's Express 5; this module's own `express.json` is Express 4's, which
+skips an already parsed request only by a mark the newer parser does not
+leave. It read the consumed stream again and failed. The guest routes now
+parse a body only when none is parsed yet.
+
+The tests missed it because their fixture took both parsers from the same
+Express. A new case runs the whole guest sign-in behind a parser that leaves
+no mark; it fails without the fix.
 
 ## 2026-11-12 — Foxxi: the grant route answered every browser 400
 
