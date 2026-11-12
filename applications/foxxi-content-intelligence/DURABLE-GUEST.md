@@ -41,8 +41,9 @@ guest does. If any step of keeping fails, the person is still signed in as a tab
   the owner with a passkey or wallet through identity's add-device flow, which the dashboard does
   not offer yet.
 - It does not let a guest into Foxxi's I2IDL-X learning account. That workbench has its own guest
-  door, for learner operations only, which is off because nothing gives it a grant signer: this
-  grant service signs for the dashboard's origin, not the workbench's
+  door, for learner operations only, as a second application with its own service key
+  (`FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY`): this grant service signs for the dashboard's origin,
+  never the workbench's
   (`i2idlx/LEARNING-CONNECTIONS.md`, "Guest learners").
 - It uses one of the two documents a guest may write. The second (`player-profile-index`) and the
   relay's guest tools are not used.

@@ -5,7 +5,8 @@ import { createHash, createPublicKey, randomBytes, verify as verifySignature, we
 import express from 'express';
 import { attachLearningRoutes, GUEST_LEARNING_OPERATIONS } from '../src/i2idlx-learning-routes.js';
 import { emptyLearningState, type LearningRepository, type LearningSnapshot } from '../src/i2idlx-learning-connections.js';
-import type { GuestGrantRequest } from '../src/i2idlx-learning-auth.js';
+import type { GuestGrantRequest, GuestGrantSigner } from '../src/i2idlx-learning-auth.js';
+import { PlayGrantService, learnerGuestGrantConfig, type PlayFetch } from '../src/play-grant.js';
 // The browser module, run here with Node's WebCrypto and an in-memory key store.
 type GuestModule = {
   guestLearningSignIn(config: unknown, options?: Record<string, unknown>): Promise<{ guest: boolean; resumed: boolean }>;
@@ -27,9 +28,9 @@ const proves = (key: Jwk, text: string, proof: unknown) => typeof proof === 'str
 const thumb = (key: Jwk) => createHash('sha256').update(JSON.stringify({ crv: key.crv, kty: key.kty, x: key.x, y: key.y })).digest('base64url');
 
 /** A stand-in identity service that checks real P-256 proofs the way the provisional provider does. */
-async function fixture(options: { guests?: boolean; termsVersion?: string } = {}) {
+async function fixture(options: { guests?: boolean; termsVersion?: string; signer?: GuestGrantSigner } = {}) {
   let now = 1_800_000_000_000;
-  const control = { live: true, verifyCalls: 0, bootstrapCalls: 0, grants: [] as GuestGrantRequest[], claimPatch: {} as Row, audience: BASE, guestTtlMs: 86_400_000 };
+  const control = { grantPatch: {} as Row, live: true, verifyCalls: 0, bootstrapCalls: 0, grants: [] as GuestGrantRequest[], claimPatch: {} as Row, audience: BASE, guestTtlMs: 86_400_000 };
   const attestations = new Map<string, Row & { publicKeyJwk: Jwk }>();
   let snapshot: LearningSnapshot = { revision: null, state: emptyLearningState() }, serial = 0;
   const repository: LearningRepository = {
@@ -40,7 +41,7 @@ async function fixture(options: { guests?: boolean; termsVersion?: string } = {}
     if (path === '/play/provisional') {
       control.bootstrapCalls++;
       const grant = body.playGrant as { _signed_payload: string; _signature: string }, key = body.publicKeyJwk as Jwk;
-      const payload = JSON.parse(grant._signed_payload) as GuestGrantRequest;
+      const payload = JSON.parse(grant._signed_payload) as GuestGrantRequest & { purpose: string; expiresAt: number };
       if (payload.audience !== control.audience || payload.publicKeyThumbprint !== thumb(key)) return json({ valid: false, error: 'invalid_play_grant' }, 401);
       if (options.termsVersion && body.termsVersion !== options.termsVersion) return json({ valid: false, error: 'hosted_terms_required',
         terms: { version: options.termsVersion, url: IDENTITY + '/terms', privacyUrl: IDENTITY + '/privacy' } }, 428);
@@ -69,11 +70,11 @@ async function fixture(options: { guests?: boolean; termsVersion?: string } = {}
   const app = express(); app.set('trust proxy', false); app.use(express.json());
   attachLearningRoutes(app, { baseUrl: BASE, relayOrigin: RELAY, identityOrigin: IDENTITY, podOrigin: POD, repository, fetch: transport, now: () => now,
     sessions: {} as never, taskConfig: { baseUrl: BASE, appDataFile: '', checkOperations: {} } as never,
-    ...(options.guests === false ? {} : { guestGrant: async (request: GuestGrantRequest) => {
+    ...(options.guests === false ? {} : { guestGrant: options.signer ?? (async (request: GuestGrantRequest) => {
       control.grants.push(request);
-      return { _signed_payload: JSON.stringify({ ...request, agent_id: 'did:web:identity.example:agents:foxxi-service', subject_pod_url: POD + '/foxxi/', timestamp: new Date(now).toISOString() }),
+      return { _signed_payload: JSON.stringify({ purpose: 'interego-play-provisional-v1', expiresAt: Math.floor(now / 1000) + 90, ...request, ...control.grantPatch, agent_id: 'did:web:identity.example:agents:foxxi-service', subject_pod_url: POD + '/foxxi/', timestamp: new Date(now).toISOString() }),
         _signature: '0x' + 'ab'.repeat(65) };
-    } }) });
+    }) }) });
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); const address = server.address(); assert.ok(address && typeof address !== 'string');
   const local = `http://127.0.0.1:${address.port}`;
   cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
@@ -118,7 +119,7 @@ describe('provisional guest learner sign-in', () => {
     const stored = b.stored()!; assert.deepEqual(Object.keys(stored).sort(), ['attestation', 'privateKey', 'publicKeyJwk']);
     assert.equal((stored.privateKey as CryptoKey).extractable, false);
     assert.ok(!JSON.stringify({ ...stored, privateKey: null }).includes('cg2_'), 'the identity token is never stored');
-    assert.equal(f.control.grants.length, 1); assert.equal(f.control.grants[0]!.audience, BASE); assert.equal(f.control.grants[0]!.purpose, 'interego-play-provisional-v1');
+    assert.equal(f.control.grants.length, 1); assert.equal(f.control.grants[0]!.audience, BASE);
     assert.equal(f.control.grants[0]!.publicKeyThumbprint, await guestKeyThumbprint(stored.publicKeyJwk as Jwk, webcrypto.subtle));
     const status = await b.status(); assert.equal(status.authenticated, true); assert.equal(status.guest, true);
     const account = status.account as Row; assert.match(String(account.userId), /^u-try-play-[0-9a-f]{32}$/);
@@ -219,7 +220,53 @@ describe('provisional guest learner sign-in', () => {
     assert.equal(f.control.grants.length, 0);
     const ok = await post({ publicKeyThumbprint: 'A'.repeat(43) }); assert.equal(ok.status, 200);
     const grant = ((await ok.json()) as { playGrant: { _signed_payload: string } }).playGrant;
-    const signed = JSON.parse(grant._signed_payload) as GuestGrantRequest;
-    assert.equal(signed.audience, BASE); assert.ok(signed.expiresAt - 1_800_000_000 === 60);
+    const signed = JSON.parse(grant._signed_payload) as GuestGrantRequest & { purpose: string };
+    assert.equal(signed.audience, BASE); assert.equal(signed.purpose, 'interego-play-provisional-v1');
+    // What the signer hands back is checked: another purpose, audience or key, or an expiry that is past or long, is not passed on.
+    let seconds = 1_800_000_000;
+    for (const patch of [() => ({ purpose: 'something-else' }), () => ({ audience: 'https://play.example' }), () => ({ publicKeyThumbprint: 'B'.repeat(43) }), () => ({ challenge: 'C'.repeat(43) }),
+      () => ({ expiresAt: seconds - 1 }), () => ({ expiresAt: seconds + 121 }), () => ({ expiresAt: String(seconds + 60) })] as Array<() => Row>) {
+      f.advance(61_000); seconds += 61; f.control.grantPatch = patch();
+      const refused = await post({ publicKeyThumbprint: 'A'.repeat(43) });
+      assert.equal(refused.status, 503, JSON.stringify(f.control.grantPatch)); assert.equal(((await refused.json()) as Row).error, 'learning_guest_unavailable');
+    }
+    f.control.grantPatch = {}; f.advance(61_000);
+    assert.equal((await post({ publicKeyThumbprint: 'A'.repeat(43) })).status, 200);
+  });
+
+  it('is its own application: its own service key and origin, never the dashboard\'s', () => {
+    const KEY = '0x' + '11'.repeat(32), OTHER = '0x' + '22'.repeat(32);
+    assert.equal(learnerGuestGrantConfig({}, BASE), null);
+    assert.equal(learnerGuestGrantConfig({ FOXXI_PLAY_SERVICE_PRIVATE_KEY: OTHER, FOXXI_PLAY_AUDIENCE: 'https://dashboard.example' }, BASE), null, 'the dashboard\'s settings alone turn nothing on here');
+    const config = learnerGuestGrantConfig({ FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY: KEY, FOXXI_PLAY_SERVICE_PRIVATE_KEY: OTHER, FOXXI_PLAY_AUDIENCE: 'https://dashboard.example',
+      INTEREGO_IDENTITY_URL: IDENTITY, INTEREGO_RELAY_URL: RELAY }, BASE + '/');
+    assert.deepEqual(config, { audience: BASE, identityUrl: IDENTITY, relayUrl: RELAY, servicePrivateKey: KEY });
+    assert.throws(() => learnerGuestGrantConfig({ FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY: 'nope' }, BASE), /32-byte hex/);
+    assert.throws(() => learnerGuestGrantConfig({ FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY: KEY, FOXXI_PLAY_SERVICE_PRIVATE_KEY: KEY.toUpperCase().replace('0X', '0x') }, BASE), /its own application/);
+    assert.throws(() => learnerGuestGrantConfig({ FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY: KEY, FOXXI_PLAY_AUDIENCE: BASE + '/' }, BASE), /one application per origin/);
+    assert.throws(() => learnerGuestGrantConfig({ FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY: KEY }, 'http://localhost:6080'), /public HTTPS origin/);
+    assert.throws(() => learnerGuestGrantConfig({ FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY: KEY }, BASE + '/i2idlx'), /HTTPS origin/);
+  });
+
+  it('signs a guest in through the bridge\'s grant service, for the workbench\'s origin only', async () => {
+    const KEY = '0x' + '11'.repeat(32), signedPayloads: Row[] = [];
+    // The relay and identity as the grant service sees them: a sign-in, then one signature per grant.
+    const serviceFetch: PlayFetch = async (url, init) => {
+      const u = new URL(url), body = JSON.parse(init?.body ?? '{}') as Row, answer = (value: Row, status = 200) => ({ ok: status < 300, status, json: async () => value });
+      if (u.origin === IDENTITY && u.pathname === '/challenges') return answer({ nonce: 'fixture-nonce-0001' });
+      if (u.origin === IDENTITY && u.pathname === '/auth/siwe') { assert.equal(body.existingOnly, true); return answer({ token: 'service-token', userId: 'u-eth-service',
+        agentDid: 'did:web:identity.example:agents:learn-service', podUrl: POD + '/u-eth-service/', expiresAt: new Date(1_800_000_000_000 + 3_600_000).toISOString() }); }
+      assert.equal(u.origin + u.pathname, RELAY + '/tool/sign_request'); assert.equal(init?.headers?.Authorization, 'Bearer service-token');
+      signedPayloads.push(body);
+      return answer({ _signed_payload: JSON.stringify({ ...body, agent_id: 'did:web:identity.example:agents:learn-service', subject_pod_url: POD + '/u-eth-service/', timestamp: new Date(1_800_000_000_000).toISOString() }),
+        _signature: '0x' + 'cd'.repeat(65) });
+    };
+    const service = new PlayGrantService(learnerGuestGrantConfig({ FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY: KEY, INTEREGO_IDENTITY_URL: IDENTITY, INTEREGO_RELAY_URL: RELAY }, BASE)!,
+      { fetch: serviceFetch, now: () => 1_800_000_000_000 });
+    // Exactly the adapter the bridge wires (bridge/server.ts).
+    const f = await fixture({ signer: async request => (await service.grant({ publicKeyThumbprint: request.publicKeyThumbprint, challenge: request.challenge })).playGrant });
+    const b = f.browser(); await b.signIn();
+    assert.equal((await b.status()).guest, true);
+    assert.equal(signedPayloads.length, 1); assert.equal(signedPayloads[0]!.audience, BASE); assert.equal(signedPayloads[0]!.purpose, 'interego-play-provisional-v1');
   });
 });

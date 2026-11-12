@@ -122,7 +122,7 @@ import { authorXapiCourse, xapiCourseArtifact, xapiCourseLinks } from '../src/xa
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 import { frontDoor, frontDoorHtml } from '../src/front-door.js';
-import { PlayGrantError, PlayGrantService, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
+import { PlayGrantError, PlayGrantService, learnerGuestGrantConfig, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
 import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
@@ -11165,6 +11165,11 @@ app.get('/start', (req, res) => {
 // the operator's check of the setup. None of the three takes or returns a credential.
 const playGrantSettings = playGrantConfig(process.env);
 const playGrants = playGrantSettings ? new PlayGrantService(playGrantSettings) : null;
+// The I2IDL-X learner workbench is a second application to identity, with its own service account
+// (i2idlx/LEARNING-CONNECTIONS.md, "Guest learners"). Off unless
+// FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY is set; the workbench's guest routes are its only caller.
+const learnerGuestSettings = learnerGuestGrantConfig(process.env, bridgeBaseUrl);
+const learnerGuestGrants = learnerGuestSettings ? new PlayGrantService(learnerGuestSettings) : null;
 const playGrantRateLimit = rateLimit({
   windowMs: 3_600_000, limit: 10, ipv6Subnet: 56, identifier: 'play-grant',
   standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
@@ -11195,9 +11200,10 @@ app.post('/play/grant', playGrantRateLimit, async (req, res) => {
 });
 app.get('/play/status', playStatusRateLimit, async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
-  if (!playGrants) { res.json({ enabled: false }); return; }
-  try { res.json(await playGrants.status()); }
-  catch { res.status(503).json({ enabled: true, ready: false, problem: 'status unavailable' }); }
+  try {
+    res.json({ ...(playGrants ? await playGrants.status() : { enabled: false }),
+      ...(learnerGuestGrants ? { learnerWorkbench: await learnerGuestGrants.status() } : {}) });
+  } catch { res.status(503).json({ enabled: !!playGrants, ready: false, problem: 'status unavailable' }); }
 });
 
 app.post('/agent/scorm/host', openHostingRateLimit, async (req, res) => {
@@ -12848,6 +12854,8 @@ attachWorkbenchRoutes(app, {
     relayOrigin: process.env.INTEREGO_RELAY_URL ?? 'https://relay.interego.xwisee.com',
     identityOrigin: process.env.INTEREGO_IDENTITY_URL ?? 'https://identity.interego.xwisee.com',
     podOrigin: (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })(),
+    // The workbench names the browser key and the challenge; the service signs for its own configured origin.
+    ...(learnerGuestGrants ? { guestGrant: async request => (await learnerGuestGrants.grant({ publicKeyThumbprint: request.publicKeyThumbprint, challenge: request.challenge })).playGrant } : {}),
     repository: (() => {
       try { return createLearningRepository({ baseUrl: bridgeBaseUrl, podUrl: tenantPodUrl,
         privateKey: process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '', fetch: guardedFetchFn(globalThis.fetch) as typeof fetch }); }
