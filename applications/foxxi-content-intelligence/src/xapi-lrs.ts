@@ -1689,6 +1689,21 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
   seedForwardingTargets(DEFAULT_TENANT, config.forwardingTargets);
   const gate = makeAuthGate(config);
 
+  // How long each xAPI write took end to end, beside the store's own native-write and
+  // native-commit lines: the difference is what this handler spends outside the store.
+  // Method, a resource name from a fixed list, status and milliseconds; nothing from the request.
+  app.use('/xapi', (req: Request, res: Response, next: NextFunction) => {
+    if (req.method !== 'PUT' && req.method !== 'POST' && req.method !== 'DELETE') { next(); return; }
+    // Read here: outside this mounted middleware the path regains its /xapi prefix.
+    const started = performance.now(), path = req.path;
+    res.once('finish', () => {
+      const resource = ['statements', 'activities/state', 'activities/profile', 'agents/profile'].find(name => path === '/' + name) ?? 'other';
+      try { console.warn('[foxxi-lrs] xapi-write ' + JSON.stringify({ method: req.method, resource, status: res.statusCode, elapsedMs: Math.round(performance.now() - started) })); }
+      catch { /* a closed log stream must not fail a response that was already sent */ }
+    });
+    next();
+  });
+
   // Raw-body parser for multipart/mixed Statement requests — the global
   // express.json() middleware skips non-JSON content types, so the
   // stream is intact for this parser to read.
