@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-13 — Practice Evidence: launch-mode evidence must be for the imported unit and session
+
+Taking a conversation an LMS launched as an attempt read the launch mode from the
+first `launched` statement in the registration, whatever unit or session it was
+for. A registration can cover several of each, so another session's Normal launch
+could stand in for this one's. That fix was pushed to the pull request after it
+had merged, so it is here.
+
+- Only a `launched` statement whose object is the unit of the conversation's
+  `initialized` statement, and whose session id is that session, says how the
+  conversation was launched.
+- Where several match, they have to agree on the mode and on the masteryScore.
+  Which of two records came first no longer decides whether a result may be
+  called passed.
+- With none, with several that disagree, or with one that names no valid mode,
+  the mode stays recorded as assumed. The attempt can still be reviewed, and no
+  cmi5 passed, failed or completed is built for it.
+
+Verified by the vertical's tests against fictional statements only.
+
 ## 2026-11-13 — Persisted lattices are written compressed
 
 The writers of persisted lattices now gzip the plaintext before sealing it,
