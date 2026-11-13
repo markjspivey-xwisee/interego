@@ -19,8 +19,12 @@ record's shape. No act sets it yet, and nothing reads an LRS.
   `completed`; `completed` alone for feedback only. They are on the LMS's
   registration, actor and activity, carry the cmi5 and moveOn categories and the
   contextTemplate, and name the session they are sent in, which can be a later
-  session of the registration than the conversation's. cmi5 gives these
-  statements to the assignable unit to send, so the bridge still posts nothing.
+  session of the registration than the conversation's. A statement's id is
+  fixed by the attempt, the registration and the verb, and its timestamp is the
+  time of the review, so a retry is the same document and an LRS refuses a second,
+  different passed or completed for the registration. cmi5 gives these statements
+  to the assignable unit to send, so the bridge still posts nothing, keeps no copy
+  of what was sent and confirms no delivery.
 - `launchedRefusals` gives the reason when none may be built: no launch, a launch
   that was not Normal, no standing review, or a reviewed result that meets the
   rubric's pass rule below the launch's masteryScore (or misses it at or above),

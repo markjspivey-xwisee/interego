@@ -261,8 +261,16 @@ export const CMI5_MASTERY_EXT = 'https://w3id.org/xapi/cmi5/context/extensions/m
 export type LaunchedVerb = 'passed' | 'failed' | 'completed';
 const LAUNCHED_VERB_IRI: Readonly<Record<LaunchedVerb, string>> = { passed: VERB_PASSED, failed: VERB_FAILED, completed: VERB_COMPLETED };
 
-/** The session the statements will be sent in. It may be a later session of the same registration than the conversation's. */
-export interface SendingSession { readonly sessionId: string; readonly at: string }
+/**
+ * The session the statements will be sent in. It may be a later session of the same registration
+ * than the conversation's. Nothing else about the sending enters a statement: its id is fixed by
+ * the attempt, the registration and the verb, and its timestamp is the time of the review, so a
+ * retry in the same session is the same document, and an LRS that already holds a passed or a
+ * completed for this registration refuses a second, different one under the same id. cmi5 allows
+ * one passed and one completed per registration; a caller that sends these still has to keep what
+ * it sent and confirm each delivery, which nothing here does.
+ */
+export interface SendingSession { readonly sessionId: string }
 
 const scaledOf = (points: number, maxPoints: number): number => (maxPoints > 0 ? points / maxPoints : 0);
 
@@ -342,13 +350,13 @@ export function buildLaunchedStatements(i: ProjectionInput, sendIn: SendingSessi
   const context = launchedContext(l, sendIn.sessionId, pevExt, spec.language);
   const statement = (verb: LaunchedVerb, result: Record<string, unknown>): Record<string, unknown> => ({
     version: XAPI_VERSION,
-    id: deterministicUuid(`${a.attemptIri}|${i.headDescriptorUrl}|launched|${verb}|${sendIn.sessionId}`),
+    id: deterministicUuid(`${a.attemptIri}|launched|${l.registration}|${verb === 'completed' ? 'completed' : 'passed-or-failed'}`),
     actor: { objectType: 'Agent', account: { homePage: l.actor.homePage, name: l.actor.name } },
     verb: { id: LAUNCHED_VERB_IRI[verb], display: { 'en-US': verb } },
     object: { objectType: 'Activity', id: l.activityId },
     result,
     context,
-    timestamp: sendIn.at,
+    timestamp: review.reviewedAt,
   });
   const out: Record<string, unknown>[] = [];
   if (x.use === 'pass-gate') {
@@ -396,7 +404,7 @@ export function launchedStatementProblems(stmt: unknown, l: LmsLaunch, sendIn: S
       }
     }
   }
-  if (stmt['timestamp'] !== sendIn.at || !ISO_WITH_OFFSET.test(sendIn.at)) p.push('timestamp must be the sending time, ISO 8601 with an offset');
+  if (typeof stmt['timestamp'] !== 'string' || !ISO_WITH_OFFSET.test(stmt['timestamp'])) p.push('timestamp must be ISO 8601 with an offset');
   const ctx = stmt['context'];
   if (!isObj(ctx)) p.push('context is required');
   else {

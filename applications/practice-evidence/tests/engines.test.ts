@@ -1425,7 +1425,7 @@ describe('statements', () => {
     const [passed, completed] = ss as [Record<string, unknown>, Record<string, unknown>];
     expect(passed['actor']).toEqual({ objectType: 'Agent', account: LAUNCH.actor });
     expect((passed['object'] as Record<string, unknown>)['id']).toBe(LAUNCH.activityId);
-    expect(passed['timestamp']).toBe(LATER.at);
+    expect(passed['timestamp']).toBe(gate.reviews[0]!.reviewedAt);
     expect(passed['result']).toMatchObject({ success: true, score: { scaled: 1, min: 0 } });
     expect((passed['result'] as Record<string, unknown>)['completion']).toBeUndefined();
     expect(completed['result']).toMatchObject({ completion: true });
@@ -1441,9 +1441,20 @@ describe('statements', () => {
     const ca = ctx['contextActivities'] as Record<string, unknown>;
     expect(ca['grouping']).toEqual([{ objectType: 'Activity', id: 'https://lms.example/courses/calls' }]);
     expect((ca['category'] as { id: string }[]).map((c) => c.id)).toEqual([CMI5_CATEGORY, CMI5_MOVEON_CATEGORY]);
-    // The two statements of one sending have different ids, and another session gets ids of its own.
+    // One id per verb for the registration, whatever session sends it and whichever record head it was built from:
+    // a retry is the same document, and a second passed for the registration cannot be stored beside the first.
     expect(passed['id']).not.toBe(completed['id']);
-    expect(buildLaunchedStatements(input(launched(gate)), { ...LATER, sessionId: LAUNCH.sessionId })[0]!['id']).not.toBe(passed['id']);
+    const retry = buildLaunchedStatements(input(launched(gate)), { sessionId: LATER.sessionId });
+    expect(retry).toEqual(ss);
+    const otherSession = buildLaunchedStatements(input(launched(gate)), { sessionId: LAUNCH.sessionId });
+    expect(otherSession.map((x) => x['id'])).toEqual(ss.map((x) => x['id']));
+    expect(otherSession.map((x) => x['timestamp'])).toEqual(ss.map((x) => x['timestamp']));
+    const otherHead = buildLaunchedStatements({ ...input(launched(gate)), headDescriptorUrl: `${POD}pev/records/later-head.ttl` }, LATER);
+    expect(otherHead.map((x) => x['id'])).toEqual(ss.map((x) => x['id']));
+    // A result reviewed again as a fail takes the id the pass had: an LRS holding the pass refuses it.
+    expect(buildLaunchedStatements(input(launched(failedGate)), LATER)[0]!['id']).toBe(passed['id']);
+    // Another registration is another assignable unit attempt, with ids of its own.
+    expect(buildLaunchedStatements(input(launched(gate, { registration: deterministicUuid('another launch') })), LATER)[0]!['id']).not.toBe(passed['id']);
     expect(LOSSY_LAUNCHED.join(' ')).toContain('this bridge posts nothing');
   });
 
@@ -1505,7 +1516,7 @@ describe('statements', () => {
     expect(one((s) => { (s['result'] as Record<string, unknown>)['success'] = false; })).toEqual(['passed needs result.success true']);
     expect(one((s) => { delete (s['result'] as Record<string, unknown>)['duration']; })).toEqual(['a cmi5 defined statement needs result.duration as PT<seconds>S']);
     expect(one((s) => { (s['verb'] as Record<string, unknown>)['id'] = 'http://adlnet.gov/expapi/verbs/attempted'; })).toEqual(['verb must be passed, failed or completed']);
-    expect(one((s) => { s['timestamp'] = at(1); })).toEqual(['timestamp must be the sending time, ISO 8601 with an offset']);
+    expect(one((s) => { s['timestamp'] = 'yesterday'; })).toEqual(['timestamp must be ISO 8601 with an offset']);
   });
 
   it('says what is wrong with a launch before an attempt may carry it', () => {
