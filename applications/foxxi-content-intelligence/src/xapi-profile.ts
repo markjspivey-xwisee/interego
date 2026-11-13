@@ -669,7 +669,7 @@ export function buildProfileDoc(spec: ProfileSpec): Record<string, unknown> {
     versions: [{ id: versionId, generatedAtTime: spec.generatedAt }],
     author: spec.author,
     concepts: withMeta(spec.concepts, 'Verb'),
-    templates: withMeta(spec.templates, 'StatementTemplate'),
+    templates: withMeta(spec.templates, 'StatementTemplate').map(withJsonPathRules),
     patterns: withMeta(spec.patterns, 'Pattern'),
   };
 }
@@ -691,8 +691,27 @@ interface TemplateRule { location: string; presence?: string; any?: unknown[]; a
 
 /** Resolve an xAPI Profile rule `location` (a JSONPath subset: dot segments,
  *  ["quoted keys"], and [*] over arrays) to the array of values it selects. */
+/**
+ * A rule location as the published document states it. The specification makes `location` a
+ * JSONPath, which starts at `$`; the templates in this file are written without it
+ * (`context.registration`), and were published that way, so the specification's own algorithm
+ * refused every one of them: "a JSONPath starts at $". The document now says
+ * `$.context.registration` and `$.context.extensions['…']`. `resolveLocation` reads both forms.
+ */
+export function asJsonPath(location: string): string {
+  if (location.trimStart().startsWith('$')) return location;
+  return `$.${location}`.replace(/\["([^"\]]*)"\]/g, (_m, key: string) => `['${key}']`);
+}
+function withJsonPathRules<T extends object>(template: T): T {
+  const rules = (template as { rules?: unknown }).rules;
+  if (!Array.isArray(rules)) return template;
+  return { ...template, rules: rules.map(r => (r && typeof r === 'object' && typeof (r as { location?: unknown }).location === 'string')
+    ? { ...r, location: asJsonPath((r as { location: string }).location) } : r) };
+}
+
 function resolveLocation(root: unknown, location: string): unknown[] {
   const tokens: string[] = [];
+  location = location.trim().replace(/^\$\.?/, '');
   const re = /\[\s*(?:"([^"]*)"|'([^']*)'|(\*))\s*\]|([^.[\]]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(location)) !== null) {
