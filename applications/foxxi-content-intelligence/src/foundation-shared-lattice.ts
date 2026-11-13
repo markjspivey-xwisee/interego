@@ -22,7 +22,7 @@ import {
   createPGSL, ingest, resolve, ancestorFragments, projectHolon,
   projectHolonToCredential, projectHolonToActivity,
   promoteInstanceEncryptedCAS, resolveLatticeFromPodDetailed, latticeStats,
-  type PGSLInstance, type Node as PgslNode,
+  type PGSLInstance, type Node as PgslNode, type LatticeCompression,
 } from '@interego/pgsl';
 import type { IRI, FetchFn } from '@interego/core';
 import { mintNodeId } from '@interego/core';
@@ -314,6 +314,8 @@ async function getLattice(podUrl: string, agentDid: string, label: string, fetch
 async function casPersist(a: {
   label: string; resourceUrl: string; agentDid: string; holonUri: IRI;
   recipients: string[]; kp: { publicKey: string }; fetchFn: FetchFn;
+  /** Passed straight to the writer; unset = its default (see composeIntoSharedLattice). */
+  compression?: LatticeCompression;
 }): Promise<{ ok: true; pgsl: PGSLInstance } | { ok: false; error: string }> {
   const kpFull = bridgeEncryptionKeypair();
   if (!kpFull) { unreadable.add(a.label); return { ok: false, error: `no encryption key — cannot read or write "${a.label}"` }; }
@@ -340,6 +342,9 @@ async function casPersist(a: {
   // different ciphertext and another large immutable store history. A successful
   // content fingerprint is reusable only while the exact resource ETag still
   // names the body we acknowledged; failures and remote changes never mark it clean.
+  // The fingerprint is over the NODES, not the stored bytes, so it is the same whether
+  // the body is sealed compressed or not; the ETag and confirmBody bind whatever bytes
+  // were actually sent.
   const unchangedDigest = latticeSnapshotDigest(a.resourceUrl, a.holonUri, instance.nodes, a.recipients);
   if (await confirmedSnapshotMatches(s.checkpoint, unchangedDigest, s.etag, async () => {
     const head = await doFetch(a.resourceUrl, { method: 'HEAD', headers: { Accept: 'application/json' } });
@@ -352,7 +357,8 @@ async function casPersist(a: {
   for (let attempt = 0; attempt < CAS_MAX_ATTEMPTS; attempt++) {
     const fingerprint = latticeSnapshotDigest(a.resourceUrl, a.holonUri, instance.nodes, a.recipients);
     const precond = { ...(s.etag ? { ifMatch: s.etag } : (s.absent ? { ifNoneMatch: '*' as const } : {})), confirmBody: true };
-    const w = await promoteInstanceEncryptedCAS(instance, a.holonUri, a.resourceUrl, a.recipients, kpFull, doFetch, precond);
+    const w = await promoteInstanceEncryptedCAS(instance, a.holonUri, a.resourceUrl, a.recipients, kpFull, doFetch, precond,
+      a.compression === undefined ? undefined : { compression: a.compression });
     if (w.status === 'ok') {
       // A later HEAD may belong to another writer. Without proof of our exact
       // body, leave the precondition unknown so the next compose reloads/merges.
@@ -481,6 +487,31 @@ export async function composeIntoSharedLattice(args: {
    * The encrypted canonical resource is still persisted. The derived descriptorUrl
    * is only a locator when publication is suppressed; callers must not advertise it. */
   publishDescriptor?: boolean;
+  /**
+   * OPT-IN. Fold a GROUP (any array in `termGroups`, at any depth) that has more
+   * children than this into sub-holons of at most this many, recursively — the same
+   * fold the top level gets from MAX_HOLON_WIDTH, applied inside a group.
+   *
+   * ingest builds W(W+1)/2 fragments over a sequence of width W, so one wide subject
+   * (a class with 80 triples is 3,240 fragments) dominates an artifact's node count
+   * and its stored size; the top-level fold does not reach inside a group.
+   *
+   * UNSET (the default) composes every group exactly as before, so the holon uri of
+   * every existing memory, course and ontology is unchanged. SETTING it changes the
+   * holon uri of any artifact with a group wider than the value (the fold is part of
+   * the composition, and uris are content-addressed) — so it is a choice for NEW
+   * artifact kinds, not a switch to flip on a caller with persisted holons. Must be
+   * an integer >= 2; anything else is ignored.
+   */
+  maxGroupWidth?: number;
+  /**
+   * Compress the persisted lattice before sealing it (`'gzip'`), or force it off
+   * (`'none'`). Unset = the substrate writer's default: the PGSL_LATTICE_COMPRESSION
+   * environment variable, else uncompressed. Off by default until every reader of
+   * these resources is deployed with the compressed-format reader. Node identity and
+   * the snapshot digest do not depend on it.
+   */
+  latticeCompression?: LatticeCompression;
   fetch?: FetchFn;
 }): Promise<ComposeResult | null> {
   try {
@@ -511,9 +542,21 @@ export async function composeIntoSharedLattice(args: {
     // value, so sub-holons compose without being re-atomized. Depth is the caller's
     // (a triple is a holon of 3; a subject is a holon of its triples), which is what
     // keeps each ingest narrow — ingest is ~O(n^2) in the sequence length.
+    // Opt-in (maxGroupWidth): a group wider than the bound folds into holons of
+    // holons until few enough remain, exactly as the top level does below. With the
+    // option unset `groupWidth` is undefined and `parts` reaches ingest untouched.
+    const groupWidth = Number.isInteger(args.maxGroupWidth) && args.maxGroupWidth! >= 2 ? args.maxGroupWidth! : undefined;
     const composeTree = (t: TermTree): string => {
       if (typeof t === 'string') return t;                       // leaf: a value ingest will atomize
-      const parts = t.map(composeTree);
+      let parts = t.map(composeTree);
+      while (groupWidth !== undefined && parts.length > groupWidth) {
+        const folded: string[] = [];
+        for (let i = 0; i < parts.length; i += groupWidth) {
+          const part = parts.slice(i, i + groupWidth);
+          folded.push(part.length === 1 ? part[0]! : ingest(pgsl, part, prov));
+        }
+        parts = folded;
+      }
       return parts.length ? ingest(pgsl, parts, prov) : '';
     };
     // The top of the holon must stay narrow too. One sub-holon per subject made the
@@ -587,7 +630,7 @@ export async function composeIntoSharedLattice(args: {
       // adopts the exact instance the write settled on (post-merge), so resident is
       // never left diverged from what is on the pod.
       const outcome = await withPodWriteLock(resourceUrl, () =>
-        casPersist({ label: args.label, resourceUrl, agentDid: args.agentDid, holonUri, recipients, kp, fetchFn }));
+        casPersist({ label: args.label, resourceUrl, agentDid: args.agentDid, holonUri, recipients, kp, fetchFn, compression: args.latticeCompression }));
       if (outcome.ok) {
         persisted = true;
         const cur = resident.get(args.label);
