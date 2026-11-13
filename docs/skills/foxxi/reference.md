@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 85 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 90 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -83,6 +83,81 @@ Read the deployment-owned Hypothetical authored layer with origin and source bin
 - HTTP: `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/authored-shapes.ttl` (served by a bespoke route; not through the bridge's MCP endpoint)
 - Media type: `text/turtle`
 - Inputs: none
+
+## `foxxi.xapi_profile_add`
+
+**Add an xAPI Profile to the profile server**
+
+Add a version of an xAPI Profile as yourself, by its contents (profile) or by the https address it is published at (uri). The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The version becomes a holon in a public PGSL lattice with its exact document as content, and its RDF is projected from that; it is then queryable at /sparql in a named graph whose IRI is the version's IRI, in the default graph if it is the profile's current version, and usable by id at /validate_templates and /validate_patterns. The first agent to add a profile IRI is the one who adds later versions of it. Up to 256 KB and 6,000 triples per version.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-add-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/add` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, profile?: <the profile document>, uri?: "https://…" — exactly one of the two }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_remove`
+
+**Take an xAPI Profile down from the profile server**
+
+Take down a profile you added (every version) or one version of it, named by iri. The operator may take down any. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The lattice is append-only: the removal is what is recorded, the server stops answering from the profile, and the earlier holon stays addressable. This deployment's own profile cannot be taken down.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-remove-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/remove` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, iri: <profile or version IRI> }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_sparql`
+
+**Query the xAPI Profiles on the profile server with SPARQL**
+
+Ask a SPARQL SELECT or ASK query of the profiles held. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The default graph holds the current version of every profile; each version is also a named graph whose IRI is the version IRI (FROM <version>, or WHERE { GRAPH <version> { … } }, or GRAPH ?g to ask every version). Inferred and queryable: every SKOS relationship in both directions and transitively (skos:broaderTransitive, skos:narrowerTransitive), and skos:inScheme from a concept, statement template or pattern to its profile. Evaluated: basic graph patterns, OPTIONAL, UNION, FILTER (comparison, REGEX, STRSTARTS, BOUND), VALUES, GROUP BY with COUNT/SUM/AVG/MIN/MAX, ORDER BY, LIMIT, OFFSET. Not evaluated, and refused with a 400 that says so rather than answered wrongly: property paths, subqueries, MINUS, EXISTS, HAVING, CONSTRUCT, DESCRIBE, SERVICE, and GRAPH beside other patterns. Also at GET {base}/xapi/profiles/sparql?query=….
+
+- Action: `urn:iep:action:foxxi:xapi-profile-sparql`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/sparql` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `query` | string | yes | The SPARQL query. The specification's own example queries are accepted as it writes them. |
+| `default-graph-uri` | string | no | A version IRI to query in place of the default graph. |
+
+## `foxxi.xapi_profile_validate_templates`
+
+**Validate a statement against a profile's statement templates**
+
+Run the specification's statement template validation (Part Three, 2.1) for one xAPI Statement against a profile on the server, named by its id. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. A statement validates when it matches at least one template on every determining property (verb, object activity type, context activity types, attachment usage types) and follows every rule of each template it matches. 204 with no body when it validates. 400 with comments naming the template, the rule's location and what was found when it does not, or when it matches no template. Nothing is stored. As the specification says of this API, it is for experiment and demonstration, not for a critical path.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-validate-templates`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_templates` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `statement` | object | yes | One xAPI Statement. |
+| `profile` | string | yes | The id of a profile, or of a version, held on the server. |
+
+## `foxxi.xapi_profile_validate_patterns`
+
+**Validate a run of statements against a profile's patterns**
+
+Run the specification's pattern validation (Part Three, 2.2) for an array of xAPI Statements against a profile on the server, named by its id. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The statements are taken in timestamp order, then array order. They follow the profile when each validates against its statement templates and one primary pattern matches all of them from first to last. 204 with no body when they do. 400 with comments saying which statement or which part of the pattern did not. Up to 500 statements. Nothing is stored.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-validate-patterns`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_patterns` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `statements` | array | yes | The xAPI Statements of one registration or sub-registration. |
+| `profile` | string | yes | The id of a profile, or of a version, held on the server. |
 
 ## `foxxi.i2idlx_capabilities`
 

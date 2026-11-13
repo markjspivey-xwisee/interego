@@ -40,6 +40,10 @@ import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/o
 import { createOwnSubjectActivityStore } from '../src/own-subject-activity-store.js';
 import { rateLimit } from 'express-rate-limit';
 import { SignerHourlyLimit, openHostingRequest, openHostingSettings } from '../src/open-hosting.js';
+import { ProfileServer, ProfileServerError, mountProfileServerReads, MAX_PROFILE_BYTES, type ProfileRecord } from '../src/xapi-profile-server/service.js';
+import { validates as profileValidates } from '../src/xapi-profile-server/processor.js';
+import { buildFoxxiProfileDoc as ownXapiProfileDoc } from '../src/xapi-profile.js';
+import { PROFILE_GENERATED_AT as OWN_XAPI_PROFILE_GENERATED_AT } from '../src/xapi-lrs.js';
 import { createOwnLtiReconciliation, validateRecoveryEntry, type RecoveryEntry } from '../src/lti-own-reconciliation.js';
 import { createOwnLtiReconciliationStore } from '../src/lti-own-reconciliation-store.js';
 import { createRecoveryAttestation, ownLtiReconciliationHandler, ownLtiReconciliationRateLimitOptions } from '../src/lti-own-reconciliation-http.js';
@@ -6556,7 +6560,17 @@ const app = createVerticalBridge({
         // says so, and `conforms` stays false, since conformance was not established.
         const verdict = !s.applicable ? (s.verbDeclared ? 'no-applicable-template' : 'unknown-verb')
           : s.matchedTemplates.length ? 'conformant' : s.partiallyCheckedTemplates.length ? 'not-fully-checked' : 'non-conformant';
-        res.json({ ok: true, profileSource: 'supplied', ...s, verdict, conforms: s.matchedTemplates.length > 0 });
+        // The same statement and templates through the specification's own algorithm
+        // (src/xapi-profile-server/processor.ts), which the Profile Server's /validate_templates
+        // answers with. The two differ by design in one place: this route picks templates by
+        // verb and reports each rule; the algorithm matches on every determining property.
+        let specification: Record<string, unknown> | undefined;
+        try {
+          const templates = Array.isArray((supplied as Record<string, unknown>).templates) ? (supplied as { templates: unknown[] }).templates : [];
+          const r = profileValidates(statement as never, templates as never);
+          specification = { outcome: r.outcome, templates: r.templates, findings: r.findings, ...(r.skipped.length ? { notChecked: r.skipped } : {}) };
+        } catch (e) { specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
+        res.json({ ok: true, profileSource: 'supplied', ...s, verdict, conforms: s.matchedTemplates.length > 0, specification });
         return;
       }
       const r = validateAgainstProfileTemplates(readInstance(req));
@@ -10970,6 +10984,134 @@ app.get('/agent/memories', async (req, res) => {
   res.json({ ok: true, count: memories.length, commons: `${base}/agent/memories`, inbox, memories });
 });
 
+// ── The xAPI Profile Server ──────────────────────────────────────────────────────
+//
+// xAPI Profiles, Part Three, section 1, made of what is already here (src/xapi-profile-server/):
+// each profile version is a holon in a PUBLIC lattice on the commons pod, with the exact document
+// as its content, and its RDF is a projection of that holon; the SPARQL endpoint is @interego/pgsl's
+// engine over a named graph per version; the two validation APIs are the specification's algorithms; and
+// adding a profile is a signed affordance, so "administrator" means the agent that signed.
+//
+// A dedicated pod resource, like the memory commons and for the same two reasons: it holds only
+// what was published to be public, so node-addressing it leaks nothing, and it sits at a fixed
+// address a cold replica can read back.
+const XAPI_PROFILES_POD = (process.env.FOXXI_XAPI_PROFILES_POD ?? MEMORY_COMMONS_POD);
+const XAPI_PROFILES_LABEL = 'xapi-profiles';
+const XAPI_PROFILES_RESOURCE = 'xapi-profiles';
+const XAPI_PROFILE_RECORD = 'xapi:ProfileRecord';
+const xapiProfileServerBase = `${bridgeBaseUrl}/xapi/profiles`;
+
+const xapiProfileServer = new ProfileServer({
+  builtIn: () => [ownXapiProfileDoc({ generatedAt: OWN_XAPI_PROFILE_GENERATED_AT }) as never],
+  isOperator: did => adminWebId !== '' && did === adminWebId,
+  hydrate: async () => {
+    if (!XAPI_PROFILES_POD) return [];
+    await ensureResident(XAPI_PROFILES_POD, XAPI_PROFILES_POD, XAPI_PROFILES_LABEL, undefined, XAPI_PROFILES_RESOURCE);
+    markLatticePublic(XAPI_PROFILES_LABEL);
+    const records = latticeArtifacts(XAPI_PROFILES_LABEL, XAPI_PROFILE_RECORD).map(a => a.content as ProfileRecord).filter(r => r && typeof r.at === 'string');
+    bridgeLog(`[foxxi-bridge][xapi-profiles] ${records.length} profile record(s) read back from the lattice`);
+    return records;
+  },
+  persist: async (record, held) => {
+    if (!XAPI_PROFILES_POD) return { persisted: false };
+    // The spine is the profile and its version; the document is the holon's content, and its
+    // triples are projected from that when the bridge starts. Composing every triple into the
+    // lattice was measured first: a 19 KB profile of 545 triples became 7,398 nodes and an
+    // 18.9 MB pod write, against 36 KB this way, and the pod refuses a resource a few times that.
+    const sl = await composeIntoSharedLattice({
+      podUrl: XAPI_PROFILES_POD, agentDid: record.by, label: XAPI_PROFILES_LABEL,
+      resourceName: XAPI_PROFILES_RESOURCE,
+      terms: record.kind === 'removed' ? [record.iri] : held ? [held.id, held.version] : [],
+      content: record as unknown as Record<string, unknown>,
+      contentType: XAPI_PROFILE_RECORD, projections: ['rdf'],
+      publicLattice: true,
+    });
+    return { ...(sl?.holonUri ? { holonUri: sl.holonUri } : {}), persisted: sl?.persisted === true };
+  },
+});
+
+mountProfileServerReads(app, xapiProfileServer, {
+  base: xapiProfileServerBase,
+  urlencoded: express.urlencoded({ extended: false, limit: '2mb' }),
+  text: express.text({ type: ['application/sparql-query', 'text/plain'], limit: '64kb' }),
+  addTarget: `${bridgeBaseUrl}/agent/xapi-profiles/add`,
+  removeTarget: `${bridgeBaseUrl}/agent/xapi-profiles/remove`,
+});
+
+const xapiProfileAddsBySigner = new SignerHourlyLimit(Number(process.env.FOXXI_XAPI_PROFILE_ADDS_PER_HOUR ?? 12));
+
+/** Read a profile from where it is published. Public targets only, bounded, never followed inward. */
+async function fetchProfileByUri(uri: string): Promise<unknown> {
+  let url: URL;
+  try { url = new URL(uri); } catch { throw new ProfileServerError(400, '`uri` is not a URL.'); }
+  if (url.protocol !== 'https:') throw new ProfileServerError(400, 'A profile is fetched over https.');
+  try { await assertSafeFetchTarget(url.toString()); } catch { throw new ProfileServerError(400, 'That host is not a public target.'); }
+  let resp: Response;
+  try {
+    resp = await (guardedFetchFn(globalThis.fetch) as typeof fetch)(url.toString(), {
+      headers: { Accept: 'application/ld+json, application/json' }, signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) { throw new ProfileServerError(502, `The profile could not be fetched: ${(e as Error).message}`); }
+  if (!resp.ok) throw new ProfileServerError(502, `The profile could not be fetched: its host answered ${resp.status}.`);
+  const declared = Number(resp.headers.get('content-length') ?? 0);
+  if (declared > MAX_PROFILE_BYTES) throw new ProfileServerError(413, `The document there is ${declared} bytes; profiles of up to ${MAX_PROFILE_BYTES} are held.`);
+  const text = await resp.text();
+  if (Buffer.byteLength(text) > MAX_PROFILE_BYTES) throw new ProfileServerError(413, `The document there is larger than ${MAX_PROFILE_BYTES} bytes.`);
+  try { return JSON.parse(text); } catch { throw new ProfileServerError(400, 'What is published there is not JSON.'); }
+}
+
+// POST /agent/xapi-profiles/add — add a profile version, by its contents (`profile`) or by where
+// it is published (`uri`). Signed: the profile is held under the agent that added it.
+app.post('/agent/xapi-profiles/add', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const admitted = xapiProfileAddsBySigner.admit(auth.callerDid);
+    if (!admitted.ok) {
+      res.setHeader('Retry-After', String(admitted.retryAfterSeconds));
+      res.status(429).json({ error: 'this signer has added as many profiles as one signer may in an hour; try again later', retryAfterSeconds: admitted.retryAfterSeconds });
+      return;
+    }
+    const p = auth.payload;
+    if ((p.profile === undefined) === (p.uri === undefined)) { res.status(400).json({ error: 'send the profile itself as `profile`, or where it is published as `uri` — one of the two' }); return; }
+    const uri = typeof p.uri === 'string' ? p.uri : undefined;
+    const doc = uri !== undefined ? await fetchProfileByUri(uri) : p.profile;
+    const r = await xapiProfileServer.add(doc as never, auth.callerDid, uri);
+    const document = `${xapiProfileServerBase}/profile?iri=${encodeURIComponent(r.held.version)}`;
+    sendActionResult(req, res, {
+      ok: true, profile: r.held.id, version: r.held.version, replaced: r.replaced,
+      current: xapiProfileServer.dataset.get(r.held.id)?.version === r.held.version,
+      triples: r.held.stated.length, addedBy: auth.callerDid,
+      graph: r.held.version, document,
+      sparql: `${xapiProfileServerBase}/sparql`,
+      validateTemplates: `${xapiProfileServerBase}/validate_templates`,
+      validatePatterns: `${xapiProfileServerBase}/validate_patterns`,
+      server: xapiProfileServerBase,
+      holonUri: r.holonUri ?? null, persisted: r.persisted,
+    }, bridgeBaseUrl, 'Profile added', []);
+  } catch (err) {
+    if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
+    sendServerError(res, err, 'route-handler');
+  }
+});
+
+// POST /agent/xapi-profiles/remove — take down a profile (every version) or one version. The
+// agent that added it, or the operator. The lattice is append-only, so what is recorded is the
+// removal; the earlier holon stays addressable and the server stops answering from it.
+app.post('/agent/xapi-profiles/remove', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const iri = typeof auth.payload.iri === 'string' ? auth.payload.iri : '';
+    if (!iri) { res.status(400).json({ error: 'name the profile or the version to take down as `iri`' }); return; }
+    const r = await xapiProfileServer.remove(iri, auth.callerDid);
+    sendActionResult(req, res, { ok: true, removed: r.removed, persisted: r.persisted, server: xapiProfileServerBase }, bridgeBaseUrl, 'Profile taken down', []);
+  } catch (err) {
+    if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
+    sendServerError(res, err, 'route-handler');
+  }
+});
+
 // ── Credentials through any signed connection ─────────────────────────────────────────────────
 //
 // The same claim as foxxi.claim_credential, for the courses this bridge's SCORM engine grades,
@@ -12994,6 +13136,7 @@ app.listen(PORT, () => {
   // Warm the public-memories commons so a published memory resolves from the first
   // request after a restart, not only after a lazy on-miss rehydrate.
   void hydratePublicMemories(true).catch(e => bridgeWarn('[foxxi-bridge][memories] boot warm:', (e as Error).message));
+  void xapiProfileServer.ready().catch(e => bridgeWarn('[foxxi-bridge][xapi-profiles] boot warm:', (e as Error).message));
   // Load the durable course→author registry so a bare course URL resolves after a restart.
   void loadCourseAuthors().catch(e => bridgeWarn('[foxxi-bridge][courses] registry boot load:', (e as Error).message));
   // Default demand mode performs no boot or idle mesh scan. Only an explicit

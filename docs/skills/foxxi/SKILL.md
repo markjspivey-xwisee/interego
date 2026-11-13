@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 85 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 90 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 85
+  affordances: 90
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -35,6 +35,11 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.i2idlx_authored_catalog` | Read the deployment-owned Hypothetical authored layer with origin and source binding. | `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/authored-catalog` *(HTTP only)* |
 | `foxxi.i2idlx_authored_rdf` | Read the deployment-owned Hypothetical authored layer with origin and source binding. | `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/authored.ttl` *(HTTP only)* |
 | `foxxi.i2idlx_authored_shapes` | Read the deployment-owned Hypothetical authored layer with origin and source binding. | `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/authored-shapes.ttl` *(HTTP only)* |
+| `foxxi.xapi_profile_add` | Add a version of an xAPI Profile as yourself, by its contents (profile) or by the https address it is published at (uri). | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/add` *(HTTP only)* |
+| `foxxi.xapi_profile_remove` | Take down a profile you added (every version) or one version of it, named by iri. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/remove` *(HTTP only)* |
+| `foxxi.xapi_profile_sparql` | Ask a SPARQL SELECT or ASK query of the profiles held. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/sparql` *(HTTP only)* |
+| `foxxi.xapi_profile_validate_templates` | Run the specification's statement template validation (Part Three, 2.1) for one xAPI Statement against a profile on the server, named by its id. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_templates` *(HTTP only)* |
+| `foxxi.xapi_profile_validate_patterns` | Run the specification's pattern validation (Part Three, 2.2) for an array of xAPI Statements against a profile on the server, named by its id. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_patterns` *(HTTP only)* |
 | `foxxi.i2idlx_capabilities` | Inspect optional pod storage and the workbench signed session/read/write links. | `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/capabilities` *(HTTP only)* |
 | `foxxi.i2idlx_challenge` | Get a server-issued nonce bound to this bridge. | `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/challenge` *(HTTP only)* |
 | `foxxi.i2idlx_session` | Signature/delegation-verify the calling actor on their own existing pod, consume the one-use server nonce, and return a derived account identifier plus actual… | `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/session` *(HTTP only)* |
