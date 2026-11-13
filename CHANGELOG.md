@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-12 — Foxxi LRS: a registration is checked against a brought profile's patterns
+
+Checking a statement against a brought xAPI Profile reported the profile's
+patterns as not checked, because one statement cannot show an order. The same
+endpoint, `POST /xapi/profile/validate`, now takes `statements` (the statements
+of one registration) beside `profile` and reads them against the profile's
+primary patterns: `sequence`, `alternates`, `optional`, `oneOrMore` and
+`zeroOrMore`, over patterns and statement templates of that profile.
+
+- The check is on demand. Nothing is stored or fetched, and nothing is refused
+  on ingest: the LRS keeps a statement whether or not it fits a pattern.
+- Each primary pattern is `followed`, `not-fully-checked` or `not-followed`.
+  `not-fully-checked` means the run fits only if a template checked in part, or
+  one the profile does not define, is taken as followed; `conforms` is then
+  false. `not-followed` says how many statements were read and where it stopped.
+- Statements are read in `timestamp` order when every one has a timestamp, and
+  in the order sent otherwise; the answer says which (`orderedBy`), and names
+  equal timestamps. Statements of more than one registration are refused.
+- Subregistrations are not read, and are named in `notChecked` when present.
+- The answer for a request carrying a `profile` is now built in
+  `src/xapi-profile-patterns.ts` (`answerSuppliedProfileRequest`), so a test
+  pins the response of both the one-statement and the registration check.
+
 ## 2026-11-12 — Foxxi LRS: a template checked in part is not a match
 
 Checking a statement against a brought xAPI Profile reported a template as
