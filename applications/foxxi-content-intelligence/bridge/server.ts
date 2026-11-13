@@ -475,7 +475,7 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
 import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
@@ -11487,6 +11487,10 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       learnerPod: learner.podUrl,
     });
     await stageLaunchData(tenant, launch, au.id);
+    if (launch.launched) {
+      const id = await recordLaunchedStatement(tenant, launch.launched);
+      keepCmi5OnLearnerPod({ ...launch.launched, id }, { did: learner.did, podUrl: learner.podUrl, homePage: String(authoritativeSource) });
+    }
     res.json({
       kind: 'cmi5-launch', courseId: course.id, auId: au.id, auTitle: au.title, moveOn: au.moveOn,
       ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}),

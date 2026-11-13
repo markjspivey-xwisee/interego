@@ -19,7 +19,7 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
-import { buildCmi5Launch, chooseAu, findResumableLaunch, serializeKeyed, whenCmi5Ready, type Cmi5Launch } from './cmi5-lms.js';
+import { buildCmi5Launch, chooseAu, findResumableLaunch, recordLaunchedStatement, serializeKeyed, whenCmi5Ready, type Cmi5Launch } from './cmi5-lms.js';
 import type { Cmi5Course } from './cmi5-course.js';
 import type { TenantId } from './tenant-context.js';
 import { htmlEscape } from './lti-player.js';
@@ -466,6 +466,7 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
           ...(link.returnUrl ? { returnUrl: link.returnUrl } : {}),
         });
         await deps.stageLaunch(tenant, launch, au.id);
+        if (launch.launched) await recordLaunchedStatement(tenant, launch.launched);
         return { launch, resumed: !!prior && !prior.newSession && launch.registration === prior.registration, au };
       });
       deps.registry.noteOpen(link.id, now());

@@ -9,7 +9,8 @@
  *
  * The cmi5 launch handshake this implements:
  *
- *   1. The LMS builds a launch URL for a learner + an AU:
+ *   1. The LMS records a `launched` statement for the new session, then builds
+ *      a launch URL for a learner + an AU:
  *        <auUrl>?endpoint=<lrs>&fetch=<fetchUrl>&actor=<agentJSON>
  *               &activityId=<auId>&registration=<uuid>
  *   2. The LMS stages the `LMS.LaunchData` State document (launchMode,
@@ -39,7 +40,7 @@ import {
   parseCmi5Course, auById, precedingAu, flatAus, flatBlocks, blockAuIds,
   type Cmi5Course, type Cmi5AuNode,
 } from './cmi5-course.js';
-import { stageStateDocument } from './xapi-lrs.js';
+import { stageStateDocument, storeStatementDurably } from './xapi-lrs.js';
 
 const CMI5_CATEGORY = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 const V_PASSED = 'http://adlnet.gov/expapi/verbs/passed';
@@ -111,6 +112,12 @@ export interface Cmi5Launch {
   launchData: Record<string, unknown>;
   /** The one-time fetch token (already registered; for staging/inspection). */
   fetchToken: string;
+  /**
+   * The LMS `launched` statement for this session (cmi5 §9.3.1). Absent when the same
+   * session is resumed. A new registration, and a new session of a registration terminated
+   * before moveOn, each carry a fresh one.
+   */
+  launched?: Record<string, unknown>;
 }
 
 interface FetchTokenRecord {
@@ -488,7 +495,33 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
     ...(req.au.entitlementKey ? { entitlementKey: { courseStructure: req.au.entitlementKey } } : {}),
   };
 
-  return { registration, launchUrl, actor, launchData, fetchToken };
+  // A resumed session already has its launched statement. A new session, including one that
+  // keeps the registration after terminated left moveOn unmet, records a fresh one.
+  const launched = resumed ? undefined : buildCmi5Statement({
+    verb: 'launched',
+    actor: { account: { homePage: req.authoritativeSource, name: req.learner.id }, ...(req.learner.name ? { name: req.learner.name } : {}) },
+    session: {
+      registration,
+      sessionId,
+      auActivityId: req.au.id,
+      ...(req.courseId ? { courseActivityId: req.courseId } : {}),
+    },
+    launched: {
+      launchMode,
+      launchUrl: req.au.url,
+      moveOn,
+      ...(typeof req.au.masteryScore === 'number' ? { masteryScore: req.au.masteryScore } : {}),
+    },
+  }) as unknown as Record<string, unknown>;
+
+  return { registration, launchUrl, actor, launchData, fetchToken, ...(launched ? { launched } : {}) };
+}
+
+/** Store the LMS `launched` statement in the launch's tenant. The id once the LRS holds it. */
+export async function recordLaunchedStatement(tenant: TenantId, statement: Record<string, unknown>): Promise<string> {
+  const id = await storeStatementDurably(statement, tenant);
+  if (!id) throw new Error('cmi5 launched statement was not stored');
+  return id;
 }
 
 /**
@@ -842,8 +875,13 @@ export function attachCmi5LmsRoutes(app: Express, config: {
     // The LMS stages LaunchData itself (cmi5 §10); this route used to hand it back and ask the caller to.
     try { await stageLaunchData(tenant, launch, auId); }
     catch { res.status(503).json({ error: 'LRS launch data storage is unavailable' }); return; }
+    if (launch.launched) {
+      try { await recordLaunchedStatement(tenant, launch.launched); }
+      catch { res.status(503).json({ error: 'LRS launch statement storage is unavailable' }); return; }
+    }
+    const { launched: _launched, ...launchBody } = launch;
     res.status(200).json({
-      ...launch,
+      ...launchBody,
       launchDataStaged: true,
       ...(course ? { course: { id: course.id, prerequisiteGate: structuralPrereq ?? null } } : {}),
       note: 'Navigate the learner to launchUrl. LMS.LaunchData is already staged in the State resource. The AU POSTs the fetch URL once for its auth-token. The LMS watches the registration: when the AU\'s statements meet moveOn it auto-emits `satisfied`, and rolls satisfaction up the course structure to blocks and the course.',

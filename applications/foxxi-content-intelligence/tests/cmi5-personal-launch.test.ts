@@ -17,6 +17,7 @@ import { commitDurableRegistry } from '../src/revocable-registry.js';
 import {
   buildCmi5Launch, cmi5BearerRegistration, findResumableLaunch, observeCmi5Statement, redeemFetchToken,
 } from '../src/cmi5-lms.js';
+import { getStatementStore } from '../src/xapi-lrs.js';
 import type { Cmi5Course } from '../src/cmi5-course.js';
 import type { TenantId } from '../src/tenant-context.js';
 
@@ -333,6 +334,11 @@ describe('minting, opening and withdrawing a personal launch link', () => {
     expect(third.registration).toBe(registration);
     expect(s.registry.lookup(token)?.opens).toBe(3);
     expect(writes).toBe(1);
+    const held = await getStatementStore(TENANT).query({ registration, limit: 20 });
+    const launched = held.statements.filter(row => (row.statement.verb as { id?: string }).id === 'http://adlnet.gov/expapi/verbs/launched');
+    expect(launched).toHaveLength(2);
+    const sessions = launched.map(row => (row.statement.context as { extensions: Record<string, string> }).extensions[SESSION]);
+    expect(new Set(sessions).size).toBe(2);
   });
 
   it('follows the course: the next unsatisfied activity, then Review once the only one is satisfied and closed', async () => {
