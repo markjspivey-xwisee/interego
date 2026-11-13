@@ -1,5 +1,50 @@
 # Changelog
 
+## 2026-11-13 — Pod server: a staged batch is one storage transaction
+
+The timing added on 2026-11-12 showed where a live single-statement write
+goes: about 1.6 s of a 2.0 s write was the one request that stages its
+artifacts (10 items, 305 KB), about 160 ms an item against 7 ms on one machine.
+The server ran the whole per-document write path for each item, and the
+Postgres adapter sent every buffered write as two statements, one at a time:
+about fifteen database round trips an item. With the database 2 ms away in each
+direction (a delaying proxy in front of a local Postgres) the same build
+measures 1.29 s for a 7-item staging request, which is the live figure. With
+this change it measures 93 ms, and a `PUT /xapi/statements` goes from a median
+of 1,708 ms to 515 ms (12 writes each; 145 ms to 102 ms with no delay). The
+live effect is not measured yet; the server now logs it.
+
+- `packages/pgsl-store`: `LdpStore.stageResources` creates or confirms a batch
+  of immutable resources in one transaction. An absent name is created by a
+  statement that restates its absence; a present one is confirmed only by the
+  identical stored bytes, size and media type; anything else refuses the whole
+  batch, and a refused batch stages nothing. A name taken by a concurrent
+  writer sends the transaction round again, where it is confirmed. The
+  container's marker moves forward in the same transaction.
+- `packages/pgsl-store`: the Postgres adapter writes a run of buffered sets as
+  two statements over arrays (lock and size the rows being replaced, then one
+  upsert) instead of two per key, in key order, at most 4 MiB or 1,024 keys a
+  statement. The transaction interface gains two optional operations with
+  fallbacks, `getMany` and `createAbsent`, each one round trip on Postgres.
+  Write admission, the per-transaction byte bound and the retired-bytes charge
+  are unchanged. This applies to every write through the adapter.
+- `integrations/pgsl-css-accessor`: the `application/vnd.interego.native-stage+json`
+  operation uses that transaction instead of one document write per item. The
+  request, its limits and its receipts are unchanged, except that a request is
+  now atomic: one that is refused leaves none of its items behind (it used to
+  keep the items before the one refused). Staged names take no per-document
+  lock and emit no per-document change notification; they are immutable and
+  content-named, and are created by compare-and-set. A container that does not
+  exist yet is created by staging its first item the ordinary way.
+  A name that is already a container (a marker at `name/`, or anything beneath
+  it) is refused, as the ordinary write path refuses it, and so is a name that
+  is an auxiliary resource (`.meta`, `.acl`, `.acr`).
+- The handler logs one line of numbers per staging request to stderr,
+  `[pgsl-css] native-stage {items, bytes, created, ordinary, prepareMs, engineMs, containerMs, totalMs}`.
+
+Not addressed: writing and re-reading the head still cost about 200 ms and
+100 ms under the same 2 ms delay. Each is a separate ordinary request to the
+server, several small transactions each.
 ## 2026-11-13 — Foxxi is an xAPI Profile Server
 
 The bridge served one profile, its own, and checked a statement against a

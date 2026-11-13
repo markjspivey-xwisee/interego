@@ -124,6 +124,29 @@ export class LdpStore {
     });
   }
 
+  /**
+   * Create-or-confirm several immutable resources in one native transaction. Each result carries
+   * the digest, size and revision of what is now stored at that path; a path holding a different
+   * representation refuses the whole request and stages nothing.
+   */
+  async stageResources(
+    pod: string, items: readonly { path: string; bytes: Uint8Array; contentType: string }[],
+    options: { touch?: string } = {},
+  ): Promise<
+    | { status: 'staged'; touched: boolean; receipts: { path: string; created: boolean; revision: string; bodyDigest: string; contentType: string; size: number }[] }
+    | { status: 'conflict'; path: string }
+  > {
+    const prepared = items.map((item) => ({ item, ...this.prepareResource(item.bytes, item.contentType, {}) }));
+    const outcome = await this.store.stageResources(pod, prepared.map(({ item, nodes, record }) => ({
+      resource: item.path, slice: nodes, record, bytes: item.bytes,
+    })), options);
+    if (outcome.status === 'conflict') return { status: 'conflict', path: outcome.resource };
+    return { status: 'staged', touched: outcome.touched, receipts: prepared.map(({ item, record }, index) => ({
+      path: item.path, created: outcome.results[index]!.created, revision: outcome.results[index]!.revision,
+      bodyDigest: record.bodyDigest!, contentType: item.contentType, size: item.bytes.length,
+    })) };
+  }
+
   private prepareResource(bytes: Uint8Array, contentType: string, opts: IngestOptions, meta?: string): {
     nodes: StoredNode[]; record: ResourceRecord;
   } {

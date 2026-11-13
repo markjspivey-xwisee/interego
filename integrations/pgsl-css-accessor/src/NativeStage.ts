@@ -62,6 +62,9 @@ export async function readNativeStageCommand(stream: Readable): Promise<NativeSt
     total += bytes.length;
     if (total > NATIVE_STAGE_MAX_BYTES) throw new HttpError(413, 'PayloadTooLargeHttpError', 'Native stage representations exceed their size limit');
     if (bytes.toString('base64') !== bodyBase64) throw new BadRequestHttpError('Native stage body must use canonical base64');
+    // Never an auxiliary resource (metadata or access control): those are not documents of the
+    // container, and appending to a container does not grant writing them.
+    if (/\.(?:meta|acl|acr)$/.test(name)) throw new BadRequestHttpError('A staged name must not be an auxiliary resource');
     if (STAGED_NAME.exec(name)?.[1] !== createHash('sha256').update(bytes).digest('hex')) {
       throw new BadRequestHttpError('A staged name must carry the SHA-256 of its representation');
     }

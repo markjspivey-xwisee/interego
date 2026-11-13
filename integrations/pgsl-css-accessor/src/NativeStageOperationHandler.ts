@@ -9,25 +9,34 @@ import {
   NATIVE_COMMIT_MAX_BYTES, NATIVE_COMMIT_MEDIA_TYPE, NATIVE_REVISION_PREDICATE, isNativeRevision, nativeCommitScope,
   type NativeCommitScope,
 } from './NativeCommit.js';
+import type { PgslDataAccessorFactory } from './PgslDataAccessorFactory.js';
 import { isNativeStageMediaType, readNativeStageCommand, type NativeStageItem, type NativeStageReceipt } from './NativeStage.js';
 
 /**
  * Stages several immutable, content-named representations into one container in a single request.
  *
- * Each item is the same create-if-absent native commit a conditional PUT of that document would be,
- * through the same authorized ResourceStore path, one after another, and is answered with a receipt
- * bound to the digest of its bytes. A name that already holds the identical representation is read
- * back and confirmed; one that holds anything else refuses the request. The items are independent
- * commits, not one transaction: a refused request may have staged the items before the one refused.
+ * Every item is created if its name is absent, or confirmed if the name already holds the identical
+ * representation (read back and compared), and is answered with a receipt bound to the digest of
+ * its bytes. The whole batch is ONE storage transaction followed by one refresh of the container:
+ * a name that holds anything else refuses the request, and a refused request stages nothing.
+ *
+ * The batch goes to the storage accessor directly rather than through one ResourceStore write per
+ * item. The request was authorized as an append to the container, exactly as before; what it does
+ * not do is take a per-document lock or emit a change notification for each staged name. Neither
+ * is needed for these: a staged name is immutable and content-addressed, creation is a
+ * compare-and-set inside the transaction, and a later reader observes it or not, atomically.
+ * A container that does not exist yet is first created by staging one item the ordinary way.
  */
 export class NativeStageOperationHandler extends PostOperationHandler {
   private readonly stageStore: ResourceStore;
   private readonly eTagHandler: ETagHandler;
+  private readonly accessor: PgslDataAccessorFactory;
 
-  constructor(store: ResourceStore, eTagHandler: ETagHandler) {
+  constructor(store: ResourceStore, eTagHandler: ETagHandler, accessor: PgslDataAccessorFactory) {
     super(store);
     this.stageStore = store;
     this.eTagHandler = eTagHandler;
+    this.accessor = accessor;
   }
 
   override async handle(input: OperationHandlerInput): Promise<ResponseDescription> {
@@ -35,8 +44,38 @@ export class NativeStageOperationHandler extends PostOperationHandler {
     if (!isNativeStageMediaType(operation.body.metadata.contentType)) return super.handle(input);
     if (!operation.target.path.endsWith('/')) throw new BadRequestHttpError('Native staging targets a container');
     const items = await readNativeStageCommand(operation.body.data);
+    const started = performance.now();
     const receipts: NativeStageReceipt[] = [];
-    for (const item of items) receipts.push(await this.stage({ path: operation.target.path + item.name }, item));
+    let rest = items;
+    if (!await this.stageStore.hasResource(operation.target)) {
+      // The ordinary write creates the container (and any missing ancestors) with CSS's own rules.
+      receipts.push(await this.stage({ path: operation.target.path + items[0]!.name }, items[0]!));
+      rest = items.slice(1);
+    }
+    const prepared = performance.now();
+    let engineMs = 0;
+    let containerMs = 0;
+    if (rest.length > 0) {
+      const outcome = await this.accessor.stageDocuments(operation.target, rest);
+      if (!outcome) throw new ConflictHttpError('A staged name already holds a different representation');
+      ({ engineMs, containerMs } = outcome);
+      rest.forEach((item, index) => {
+        const receipt = outcome.receipts[index]!;
+        const bodyDigest = `sha256:${createHash('sha256').update(item.bytes).digest('hex')}`;
+        if (receipt.bodyDigest !== bodyDigest || receipt.size !== item.bytes.length || !isNativeRevision(receipt.revision)) {
+          throw new InternalServerError('Native stage receipt is unavailable');
+        }
+        receipts.push({ name: item.name, status: 'staged', created: receipt.created, revision: receipt.revision,
+          bodyDigest, contentType: receipt.contentType, size: receipt.size });
+      });
+    }
+    // Numbers only: where the time of one staging request went, on the server that spent it.
+    process.stderr.write(`[pgsl-css] native-stage ${JSON.stringify({
+      items: items.length, bytes: items.reduce((sum, item) => sum + item.bytes.length, 0),
+      created: receipts.filter(receipt => receipt.created).length, ordinary: items.length - rest.length,
+      prepareMs: Math.round(prepared - started), engineMs: Math.round(engineMs), containerMs: Math.round(containerMs),
+      totalMs: Math.round(performance.now() - started),
+    })}\n`);
     const metadata = new RepresentationMetadata(operation.target);
     metadata.contentType = 'application/json';
     return new OkResponseDescription(metadata, guardStream(Readable.from([JSON.stringify({ version: 1, receipts })])));

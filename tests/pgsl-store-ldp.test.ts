@@ -81,6 +81,96 @@ describe('pgsl-store: LDP resource CRUD over the PGSL store (S2 core, no CSS)', 
     expect(marker?.meta).toMatch(/^<urn:(writer|meta)> <urn:n> "\d+" \.$/);
   });
 
+  it('stages a batch of immutable resources in one transaction, with a receipt bound to each', async () => {
+    const fdb = new InMemoryFdb();
+    let transactions = 0;
+    const counted = Object.create(fdb) as InMemoryFdb;
+    counted.transact = (body => { transactions++; return fdb.transact(body); }) as InMemoryFdb['transact'];
+    const ldp = new LdpStore(openStore(counted), new CodecRegistry().register(rdfCodec));
+    const items = Array.from({ length: 10 }, (_, i) => ({ path: `a/item-${i}`, bytes: enc.encode(`payload ${i}`), contentType: 'application/json' }));
+    const staged = await ldp.stageResources(POD, items);
+    expect(transactions).toBe(1);
+    if (staged.status !== 'staged') throw new Error('expected a staged batch');
+    expect(staged.receipts.map(receipt => receipt.created)).toEqual(items.map(() => true));
+    for (const [index, item] of items.entries()) {
+      const got = await ldp.readResource(POD, item.path);
+      expect(dec.decode(got!.bytes)).toBe(`payload ${index}`);
+      expect(staged.receipts[index]).toMatchObject({ path: item.path, revision: got!.revision, bodyDigest: got!.bodyDigest, size: item.bytes.length });
+    }
+    // A staged name is a native head: an ordinary overwrite cannot move it.
+    await expect(ldp.writeResource(POD, items[0]!.path, enc.encode('other'), 'application/json')).rejects.toThrow();
+
+    // Staging again confirms what is there (same revisions) and creates only what is new.
+    const again = await ldp.stageResources(POD, [items[3]!, { path: 'a/new', bytes: enc.encode('new'), contentType: 'text/plain' }]);
+    if (again.status !== 'staged') throw new Error('expected a staged batch');
+    expect(again.receipts.map(receipt => receipt.created)).toEqual([false, true]);
+    expect(again.receipts[0]!.revision).toBe(staged.receipts[3]!.revision);
+  });
+
+  it('moves the container marker forward in the staging transaction, only when something was created', async () => {
+    const fdb = new InMemoryFdb();
+    let transactions = 0;
+    const counted = Object.create(fdb) as InMemoryFdb;
+    counted.transact = (body => { transactions++; return fdb.transact(body); }) as InMemoryFdb['transact'];
+    const ldp = new LdpStore(openStore(counted), new CodecRegistry().register(rdfCodec));
+    const item = { path: 'box/one', bytes: enc.encode('one'), contentType: 'application/json' };
+    // No marker yet: nothing to move, and the caller is told so.
+    expect(await ldp.stageResources(POD, [item], { touch: 'box/' })).toMatchObject({ status: 'staged', touched: false });
+    await ldp.writeResource(POD, 'box/', new Uint8Array(0), 'internal/container', {}, '<urn:kept> <urn:p> "meta" .');
+    const before = (await ldp.stat(POD, 'box/'))!;
+    await new Promise(resolve => setTimeout(resolve, 5));
+    transactions = 0;
+    const next = { path: 'box/two', bytes: enc.encode('two'), contentType: 'application/json' };
+    expect(await ldp.stageResources(POD, [item, next], { touch: 'box/' })).toMatchObject({ status: 'staged', touched: true });
+    expect(transactions).toBe(1);
+    const after = (await ldp.stat(POD, 'box/'))!;
+    expect(after.updatedAt).toBeGreaterThan(before.updatedAt);
+    expect(after).toMatchObject({ meta: before.meta, contentType: 'internal/container', size: 0 });
+    expect(after.revision).not.toBe(before.revision);
+    // Confirming only: the container did not change, so neither does its marker.
+    expect(await ldp.stageResources(POD, [item, next], { touch: 'box/' })).toMatchObject({ touched: false });
+    expect((await ldp.stat(POD, 'box/'))!.revision).toBe(after.revision);
+    // A native-managed head is never moved this way.
+    await expect(ldp.stageResources(POD, [{ ...item, path: 'box/three' }], { touch: 'box/one' })).rejects.toThrow();
+    expect(await ldp.readResource(POD, 'box/three')).toBeNull();
+  });
+
+  it('refuses a whole staging batch when one name holds something else, and stages none of it', async () => {
+    const { ldp } = setup();
+    const taken = { path: 'a/taken', bytes: enc.encode('first'), contentType: 'application/json' };
+    await ldp.stageResources(POD, [taken]);
+    for (const other of [{ ...taken, bytes: enc.encode('second') }, { ...taken, contentType: 'text/plain' },
+      { ...taken, contentType: 'application/json; charset=utf-8' }]) {
+      const fresh = { path: `a/fresh-${other.contentType.length}-${other.bytes.length}`, bytes: enc.encode('fresh'), contentType: 'text/plain' };
+      expect(await ldp.stageResources(POD, [fresh, other])).toEqual({ status: 'conflict', path: 'a/taken' });
+      expect(await ldp.readResource(POD, fresh.path)).toBeNull();
+    }
+    expect(dec.decode((await ldp.readResource(POD, 'a/taken'))!.bytes)).toBe('first');
+    await expect(ldp.stageResources(POD, [taken, taken])).rejects.toThrow(/twice/);
+    // A name is a document or a container, never both: a marker at `name/`, or anything beneath it.
+    await ldp.writeResource(POD, 'a/marked/', new Uint8Array(0), 'internal/container');
+    await ldp.writeResource(POD, 'a/implicit/child', enc.encode('x'), 'text/plain');
+    for (const path of ['a/marked', 'a/implicit']) {
+      const fresh = { path: `${path}-sibling`, bytes: enc.encode('fresh'), contentType: 'text/plain' };
+      expect(await ldp.stageResources(POD, [fresh, { path, bytes: enc.encode('doc'), contentType: 'text/plain' }])).toEqual({ status: 'conflict', path });
+      expect(await ldp.readResource(POD, path)).toBeNull();
+      expect(await ldp.readResource(POD, fresh.path)).toBeNull();
+    }
+    // A sibling whose name merely starts the same way is not beneath it.
+    expect(await ldp.stageResources(POD, [{ path: 'a/implic', bytes: enc.encode('doc'), contentType: 'text/plain' }])).toMatchObject({ status: 'staged' });
+  });
+
+  it('lets concurrent batches stage the same names: each is created once and confirmed by the rest', async () => {
+    const { ldp } = setup();
+    const items = Array.from({ length: 6 }, (_, i) => ({ path: `race/item-${i}`, bytes: enc.encode(`shared ${i}`), contentType: 'application/json' }));
+    const outcomes = await Promise.all(Array.from({ length: 8 }, () => ldp.stageResources(POD, items)));
+    for (const [index] of items.entries()) {
+      const receipts = outcomes.map(outcome => { if (outcome.status !== 'staged') throw new Error('refused'); return outcome.receipts[index]!; });
+      expect(receipts.filter(receipt => receipt.created)).toHaveLength(1);
+      expect(new Set(receipts.map(receipt => receipt.revision)).size).toBe(1);
+    }
+  });
+
   it('survives restart: a fresh LdpStore over the same backing still reads', async () => {
     const fdb = new InMemoryFdb();
     const codecs = new CodecRegistry().register(rdfCodec);
