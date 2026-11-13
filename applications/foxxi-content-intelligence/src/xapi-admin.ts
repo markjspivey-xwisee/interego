@@ -17,7 +17,8 @@
  * role so a regular learner can't read other learners' statements.
  */
 
-import express, { type Express, type Request, type Response, type NextFunction } from 'express';
+import type { Express, Request, Response, NextFunction } from 'express';
+import { routeJson } from './route-json.js';
 import { getStatementStore, listStoredStatements, statementStoreTenants } from './xapi-lrs.js';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { FOXXI_PROFILE_ID } from './xapi-profile.js';
@@ -493,7 +494,7 @@ function handleDeleteCredential(req: Request, res: Response): void {
 
 export function attachXapiAdminRoutes(app: Express, config: AdminConfig): void {
   const gate = makeAdminGate(config);
-  const json = express.json({ limit: '256kb' });
+  const json = routeJson({ limit: '256kb' });
   const storageRead = (read: (req: Request, res: Response) => Promise<void>) => async (req: Request, res: Response): Promise<void> => {
     try { await read(req, res); }
     catch {
