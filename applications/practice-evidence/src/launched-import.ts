@@ -134,7 +134,7 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
   read.sort((a, b) => a.ms - b.ms || a.order - b.order);
 
   // The LMS's own launched statement names the actor too, but is the LMS's, not the unit's.
-  const launched = read.find((r) => r.verb === VERB_LAUNCHED);
+  const launches = read.filter((r) => r.verb === VERB_LAUNCHED);
   const unit = read.filter((r) => r.verb !== VERB_LAUNCHED);
   const accounts = new Set(read.map((r) => {
     const a = objOf(objOf(r.s['actor'])['account']);
@@ -204,8 +204,13 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
     p.push(`the unit already sent ${unitSent.join(' and ')} for this registration: a pass gate is passed, failed or completed only after its review`);
   }
 
-  const mode = launched ? launched.ext[CMI5_LAUNCH_MODE_EXT] : undefined;
-  if (launched && mode !== 'Normal' && mode !== 'Browse' && mode !== 'Review') p.push('the launched statement carries no launch mode');
+  // A registration can cover several units and several sessions, each launched in its own mode. Only
+  // a launched statement for this unit and this session says how the conversation was launched; with
+  // none, or with several that disagree or name no mode, the mode is not known.
+  const matching = launches.filter((r) => r.objectId === first.objectId && r.ext[CMI5_SESSION_EXT] === sessionId);
+  const modes = new Set(matching.map((r) => r.ext[CMI5_LAUNCH_MODE_EXT]));
+  const mode = matching.length > 0 && modes.size === 1 ? matching[0]!.ext[CMI5_LAUNCH_MODE_EXT] : undefined;
+  const launched = mode === 'Normal' || mode === 'Browse' || mode === 'Review' ? matching[0] : undefined;
   const mastery = [launched, first].map((r) => r?.ext[CMI5_MASTERY_EXT]).find((m) => typeof m === 'number');
   if (p.length > 0 || !ended || sessionId === undefined || homePage === undefined || name === undefined || first.objectId === undefined) return { problems: p };
 
