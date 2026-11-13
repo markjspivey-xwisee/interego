@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-13 — Persisted lattices are written compressed
+
+The writers of persisted lattices now gzip the plaintext before sealing it,
+unless told not to. The reader for that format shipped first, with the writer
+off, because services deploy separately and a reader built before it cannot
+open a compressed body; this turns the writer on now that the reader is live.
+Setting `PGSL_LATTICE_COMPRESSION=none` on a service returns it to plain JSON
+writes without a code change, and a caller can pass `compression: 'none'`.
+Readers accept both forms either way, so resources already stored are read as
+before and are rewritten compressed the next time they are written.
+
+Measured on a made-up artifact with one 120-triple subject: 43.82 MB as plain
+JSON, 1.35 MB compressed. Node identity, holon addresses and the snapshot
+digest do not depend on the stored form.
 ## 2026-11-13 — Practice Evidence: an attempt under an LMS launch can count toward its assignable unit
 
 Practice Evidence refused, by design, to put a cmi5 defined category on anything:
