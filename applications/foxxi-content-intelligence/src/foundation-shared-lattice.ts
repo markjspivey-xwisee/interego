@@ -506,10 +506,9 @@ export async function composeIntoSharedLattice(args: {
   maxGroupWidth?: number;
   /**
    * Compress the persisted lattice before sealing it (`'gzip'`), or force it off
-   * (`'none'`). Unset = the substrate writer's default: the PGSL_LATTICE_COMPRESSION
-   * environment variable, else uncompressed. Off by default until every reader of
-   * these resources is deployed with the compressed-format reader. Node identity and
-   * the snapshot digest do not depend on it.
+   * (`'none'`). Unset = the substrate writer's default: gzip, unless the
+   * PGSL_LATTICE_COMPRESSION environment variable is `none`. Node identity and the
+   * snapshot digest do not depend on it.
    */
   latticeCompression?: LatticeCompression;
   fetch?: FetchFn;

@@ -87,21 +87,36 @@ describe('core: a bytes plaintext seals in the same envelope', () => {
   });
 });
 
-describe('the writer is off unless asked', () => {
-  it('resolves to none by default, gzip only on the exact env value, and an explicit choice wins', () => {
-    expect(resolveLatticeCompression()).toBe('none');
-    process.env[LATTICE_COMPRESSION_ENV] = 'GZIP';
-    expect(resolveLatticeCompression()).toBe('none');
-    process.env[LATTICE_COMPRESSION_ENV] = '1';
-    expect(resolveLatticeCompression()).toBe('none');
-    process.env[LATTICE_COMPRESSION_ENV] = 'gzip';
+describe('the writer compresses unless told not to', () => {
+  it('resolves to gzip by default, none only on the exact env value, and an explicit choice wins', () => {
     expect(resolveLatticeCompression()).toBe('gzip');
-    expect(resolveLatticeCompression('none')).toBe('none');
-    delete process.env[LATTICE_COMPRESSION_ENV];
+    process.env[LATTICE_COMPRESSION_ENV] = 'NONE';
+    expect(resolveLatticeCompression()).toBe('gzip');
+    process.env[LATTICE_COMPRESSION_ENV] = '0';
+    expect(resolveLatticeCompression()).toBe('gzip');
+    process.env[LATTICE_COMPRESSION_ENV] = 'none';
+    expect(resolveLatticeCompression()).toBe('none');
     expect(resolveLatticeCompression('gzip')).toBe('gzip');
+    delete process.env[LATTICE_COMPRESSION_ENV];
+    expect(resolveLatticeCompression('none')).toBe('none');
   });
 
-  it('with no option and no env, every writer seals the plain JSON it always did', async () => {
+  it('with no option and no env, every writer seals a compressed body', async () => {
+    const { pgsl, top } = wideInstance();
+    for (const write of [
+      (f: typeof fetch) => promoteInstanceEncryptedCAS(pgsl, top, URL_, [kp.publicKey], kp, f, { ifNoneMatch: '*' }),
+      (f: typeof fetch) => promoteInstanceEncrypted(pgsl, top, URL_, [kp.publicKey], kp, f),
+      (f: typeof fetch) => promoteLatticeSliceEncrypted(pgsl, top, URL_, [kp.publicKey], kp, f),
+      (f: typeof fetch) => promoteToPodEncrypted(pgsl, top, URL_, [kp.publicKey], kp, f),
+    ]) {
+      const p = pod();
+      await write(p.fetchFn as typeof fetch);
+      expect(isCompressedLatticePlaintext(bytesOf(p.body()))).toBe(true);
+    }
+  });
+
+  it('told not to by the environment, every writer seals the plain JSON it always did', async () => {
+    process.env[LATTICE_COMPRESSION_ENV] = 'none';
     const { pgsl, top } = wideInstance();
     const expected = JSON.stringify({ topUri: top, nodes: Object.fromEntries(pgsl.nodes) });
 
@@ -141,7 +156,7 @@ describe('both formats read back to the same lattice', () => {
   it('round-trips compressed to nodes deep-equal to the uncompressed round trip, far smaller', async () => {
     const { pgsl, top } = wideInstance();
     const plain = pod(), packed = pod();
-    await promoteInstanceEncryptedCAS(pgsl, top, URL_, [kp.publicKey], kp, plain.fetchFn, { ifNoneMatch: '*' });
+    await promoteInstanceEncryptedCAS(pgsl, top, URL_, [kp.publicKey], kp, plain.fetchFn, { ifNoneMatch: '*' }, { compression: 'none' });
     const w = await promoteInstanceEncryptedCAS(pgsl, top, URL_, [kp.publicKey], kp, packed.fetchFn,
       { ifNoneMatch: '*', confirmBody: true }, { compression: 'gzip' });
     expect(w.status).toBe('ok');

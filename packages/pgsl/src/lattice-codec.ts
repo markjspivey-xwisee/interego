@@ -46,9 +46,9 @@ import { gzipSync, gunzipSync } from 'node:zlib';
 export type LatticeCompression = 'none' | 'gzip';
 
 /**
- * The environment variable that turns compressed writes on when a caller does
- * not pass an explicit `compression` option. The only value that enables it is
- * the exact string `gzip`; unset, empty or anything else means uncompressed.
+ * The environment variable that turns compressed writes OFF when a caller does
+ * not pass an explicit `compression` option. The only value that disables it
+ * is the exact string `none`; unset, empty or anything else means gzip.
  */
 export const LATTICE_COMPRESSION_ENV = 'PGSL_LATTICE_COMPRESSION';
 
@@ -78,18 +78,19 @@ export class LatticeCodecError extends Error {
 
 /**
  * Which compression a writer should use: the caller's explicit choice if it
- * made one, otherwise the environment variable, otherwise none.
+ * made one, otherwise gzip unless the environment variable says `none`.
  *
- * DEFAULT IS UNCOMPRESSED, DELIBERATELY. Several services read these resources
- * and deploy separately; a reader built before this module cannot open a
- * compressed body. Every reader has to be live before any writer emits the
- * new format, so this change ships the reader and leaves the writer off. The
- * default flips to gzip in a later change, once that is true everywhere.
+ * DEFAULT IS GZIP. It was off for one release on purpose: several services
+ * read these resources and deploy separately, and a reader built before this
+ * module cannot open a compressed body, so the reader shipped first (2026-11-13)
+ * and the writer followed once that reader was live everywhere. Setting
+ * PGSL_LATTICE_COMPRESSION=none on a service returns it to plain JSON writes
+ * without a code change; readers accept both either way.
  */
 export function resolveLatticeCompression(explicit?: LatticeCompression): LatticeCompression {
   if (explicit !== undefined) return explicit;
   const env = typeof process !== 'undefined' ? process.env?.[LATTICE_COMPRESSION_ENV] : undefined;
-  return env === 'gzip' ? 'gzip' : 'none';
+  return env === 'none' ? 'none' : 'gzip';
 }
 
 /** True when an authenticated plaintext is in the compressed container (byte 0 is NUL). */
