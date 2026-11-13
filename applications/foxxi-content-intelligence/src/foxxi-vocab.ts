@@ -120,6 +120,9 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'activities/credential', kind: 'ActivityType', label: 'credential', definition: 'A Verifiable Credential / Open Badge 3.0.' },
   { name: 'activities/framework', kind: 'ActivityType', label: 'framework', definition: 'A CASE 1.0 / CaSS competency framework.' },
   { name: 'activities/affordance', kind: 'ActivityType', label: 'affordance', definition: 'A bridge affordance / MCP tool, identified by toolName.' },
+  { name: 'activities/descriptor-projection', kind: 'ActivityType', label: 'descriptor projection', definition: 'The type of the category activity carried by a statement projected from a context descriptor.' },
+  { name: 'activities/performance-record', kind: 'ActivityType', label: 'performance record', definition: 'The type of the category activity carried by a statement recording a unit of performance work: production, training or performance support.' },
+  { name: 'activities/superseded-descriptor', kind: 'ActivityType', label: 'superseded descriptor', definition: 'The type of the `other` context activity naming the descriptor a statement revises or closes.' },
   { name: 'activities/fragment', kind: 'ActivityType', label: 'fragment', definition: 'A piece of teaching or support whose IRI is the hash of its content: a concept, worked example, practice task, assessment item, job aid, reference, context, probe or reflection.' },
   { name: 'activities/composition', kind: 'ActivityType', label: 'composition', definition: 'A path of positions holding fragments or compositions by reference, resolved per learner from their own record.' },
   // Generic fallback activity type — names the ENVELOPE act (a context-descriptor
