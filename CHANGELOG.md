@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-13 — Foxxi's own xAPI Profile states its rule locations as JSONPath
+
+Found on the live Profile Server the day it shipped: `/validate_templates`
+against Foxxi's own profile answered "a JSONPath starts at $". The profile
+published every rule location without the `$` (`context.registration`), which
+the specification's algorithm rightly refuses. The published document now
+states `$.context.registration` and `$.context.extensions['…']`; Foxxi's own
+validator reads both forms, so nothing it accepted before is refused.
+
+Not fixed here: under the specification's matching, a statement can match two
+of this profile's templates at once (for example `fragment-experienced` and
+`experienced-activity`, which share a verb and differ only in a rule), and
+then has to follow both.
+
 ## 2026-11-13 — Pod server: a staged batch is one storage transaction
 
 The timing added on 2026-11-12 showed where a live single-statement write
