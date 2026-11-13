@@ -9,11 +9,12 @@ import { once } from 'node:events';
 import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import { actorAliases, canonicalActorName, setActorAliasSource } from '../src/actor-alias.js';
+import { actorForPod } from '../src/mesh-event-projector.js';
 import { attachCoursePlayerRoutes, browserWantsPlayer, playerLocation, PlayerBook, voidActorStatements, type PlayerLearner } from '../src/cmi5-player.js';
 import { attachHostedPackageRoutes } from '../src/scorm-hosting.js';
 import { cmi5BearerTenant, forgetCmi5Learner, learnerSatisfiedAus, observeCmi5Statement, redeemFetchToken, registerCmi5Course, buildCmi5Launch } from '../src/cmi5-lms.js';
 import { matchesFilter } from '../src/statement-store.js';
-import { clearStatementStore, getStatementStore, internalRefusalOf, storeStatementDurably } from '../src/xapi-lrs.js';
+import { clearStatementStore, getStatementStore, internalRefusalOf, listStoredStatements, storeStatementDurably } from '../src/xapi-lrs.js';
 import { DEFAULT_TENANT } from '../src/tenant-context.js';
 import type { Cmi5Course } from '../src/cmi5-course.js';
 
@@ -27,6 +28,11 @@ const course: Cmi5Course = {
   description: 'From the course record.',
   structure: [{ kind: 'au', id: 'https://bridge.example/au/1', title: 'First activity', url: 'https://bridge.example/content/au/p/0', moveOn: 'Completed' }],
 };
+
+/** The same lens a signed launch and `foxxi.read_xapi_statements_signed` use: `lens:` plus the pod's actor. */
+function lensTenant(person: PlayerLearner) {
+  return `lens:${actorForPod(person.podUrl)}` as typeof DEFAULT_TENANT;
+}
 
 function learner(did: string, guest: boolean): PlayerLearner {
   const userId = did.split(':').at(-1)!;
@@ -263,6 +269,135 @@ describe('the course player', () => {
     expect((voider?.statement.verb as { id: string }).id).toBe('http://adlnet.gov/expapi/verbs/voided');
     expect(internalRefusalOf(voider!.statement)).toEqual([]);
     await clearStatementStore(tenant);
+  });
+
+  it('returns a statement written through /learn from that learner lens, and not from another', async () => {
+    const guest = learner(GUEST, true);
+    const owner = learner(OWNER, false);
+    const guestLens = lensTenant(guest);
+    const ownerLens = lensTenant(owner);
+    expect(guestLens).not.toBe(ownerLens);
+    expect(guestLens).not.toBe(DEFAULT_TENANT);
+    registerCmi5Course(DEFAULT_TENANT, course);
+    const book = new PlayerBook();
+    let who = guest;
+    const app = express();
+    app.use(express.json());
+    attachCoursePlayerRoutes(app, {
+      baseUrl: HOME, authoritativeSource: SOURCE, book, tenantFor: lensTenant,
+      requireLearner: async () => who,
+      verifyGuest: async () => guest,
+      resolveCourse: async (id) => id === course.id ? course : null,
+      satisfied: (tenant, id) => learnerSatisfiedAus(tenant, id),
+      stageLaunch: async () => undefined,
+      forgetActor: async (did, tenant) => {
+        const result = await voidActorStatements({
+          did, homePage: SOURCE,
+          list: () => getStatementStore(tenant).listAll(),
+          store: (statement) => storeStatementDurably(statement, tenant),
+          mark: (targetId, voidingId) => getStatementStore(tenant).markVoided(targetId, voidingId),
+        });
+        forgetCmi5Learner(tenant, did);
+        return result.forgotten;
+      },
+      statementIds: async (did, tenant) => (await listStoredStatements(tenant))
+        .filter(rec => !rec.voided && (rec.statement.actor as { account?: { name?: string } }).account?.name === did)
+        .map(rec => rec.id),
+      storeStatement: (statement, tenant) => storeStatementDurably(statement, tenant),
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('no port');
+    const base = `http://127.0.0.1:${address.port}`;
+    const agentFor = (did: string) => ({ objectType: 'Agent', account: { homePage: SOURCE, name: did } });
+    const read = async (tenant: typeof DEFAULT_TENANT, did: string) =>
+      (await getStatementStore(tenant).query({ agent: agentFor(did), verb: `${HOME}/learn#consented` })).statements;
+    const auId = course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0].id : '';
+    try {
+      const body = { course_id: course.id, tracking_consent: true };
+      const opened = await (await fetch(`${base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as { registration: string };
+      who = owner;
+      await fetch(`${base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      expect(await read(guestLens, GUEST)).toHaveLength(1);
+      expect(await read(ownerLens, GUEST)).toEqual([]);
+      expect(await read(DEFAULT_TENANT, GUEST)).toEqual([]);
+      expect(await read(ownerLens, OWNER)).toHaveLength(1);
+      expect(await read(guestLens, OWNER)).toEqual([]);
+      const completed = { verb: { id: 'http://adlnet.gov/expapi/verbs/completed' }, object: { id: auId }, context: { registration: opened.registration }, result: { completion: true } };
+      const deps = { statementsForRegistration: async () => [completed], emit: () => undefined };
+      await observeCmi5Statement({ verb: { id: 'http://adlnet.gov/expapi/verbs/terminated' }, object: { id: auId }, context: { registration: opened.registration } }, guestLens, deps);
+      expect((await observeCmi5Statement(completed, guestLens, deps))?.satisfied).toBe(true);
+      expect(learnerSatisfiedAus(guestLens, GUEST)).toContain(auId);
+      expect(learnerSatisfiedAus(ownerLens, GUEST)).toEqual([]);
+      expect(learnerSatisfiedAus(DEFAULT_TENANT, GUEST)).toEqual([]);
+      who = guest;
+      const forgotten = await (await fetch(`${base}/learn/forget`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json() as { forgotten: number };
+      expect(forgotten.forgotten).toBeGreaterThan(0);
+      expect(await read(guestLens, GUEST)).toEqual([]);
+      expect(await read(ownerLens, OWNER)).toHaveLength(1);
+      expect(learnerSatisfiedAus(guestLens, GUEST)).toEqual([]);
+    } finally {
+      forgetCmi5Learner(guestLens, GUEST);
+      forgetCmi5Learner(ownerLens, OWNER);
+      await clearStatementStore(guestLens);
+      await clearStatementStore(ownerLens);
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it('copies the guest lens satisfaction onto the owner lens and leaves the guest statements there', async () => {
+    const guest = learner(GUEST, true);
+    const owner = learner(OWNER, false);
+    const guestLens = lensTenant(guest);
+    const ownerLens = lensTenant(owner);
+    registerCmi5Course(DEFAULT_TENANT, course);
+    let who = guest;
+    const app = express();
+    app.use(express.json());
+    attachCoursePlayerRoutes(app, {
+      baseUrl: HOME, authoritativeSource: SOURCE, tenantFor: lensTenant,
+      requireLearner: async () => who,
+      verifyGuest: async () => guest,
+      resolveCourse: async (id) => id === course.id ? course : null,
+      satisfied: (tenant, id) => learnerSatisfiedAus(tenant, id),
+      stageLaunch: async () => undefined,
+      forgetActor: async () => 0,
+      statementIds: async (did, tenant) => (await listStoredStatements(tenant))
+        .filter(rec => !rec.voided && (rec.statement.actor as { account?: { name?: string } }).account?.name === did)
+        .map(rec => rec.id),
+      storeStatement: (statement, tenant) => storeStatementDurably(statement, tenant),
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('no port');
+    const base = `http://127.0.0.1:${address.port}`;
+    const auId = course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0].id : '';
+    try {
+      const opened = await (await fetch(`${base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ course_id: course.id, tracking_consent: true }) })).json() as { registration: string };
+      const completed = { verb: { id: 'http://adlnet.gov/expapi/verbs/completed' }, object: { id: auId }, context: { registration: opened.registration }, result: { completion: true } };
+      const deps = { statementsForRegistration: async () => [completed], emit: () => undefined };
+      expect((await observeCmi5Statement(completed, guestLens, deps))?.satisfied).toBe(true);
+      const catalogueBefore = learnerSatisfiedAus(DEFAULT_TENANT, OWNER);
+      who = owner;
+      const linked = await fetch(`${base}/learn/link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      expect(linked.status).toBe(200);
+      expect(learnerSatisfiedAus(ownerLens, OWNER)).toContain(auId);
+      expect(learnerSatisfiedAus(guestLens, GUEST)).toContain(auId);
+      expect(learnerSatisfiedAus(DEFAULT_TENANT, OWNER)).toEqual(catalogueBefore);
+      const claim = await getStatementStore(ownerLens).query({ agent: { objectType: 'Agent', account: { homePage: SOURCE, name: OWNER } }, verb: `${HOME}/learn#claimed` });
+      expect(claim.statements).toHaveLength(1);
+      expect(await getStatementStore(guestLens).query({ agent: { objectType: 'Agent', account: { homePage: SOURCE, name: OWNER } }, verb: `${HOME}/learn#claimed` })).toMatchObject({ statements: [] });
+      const guestConsent = await getStatementStore(guestLens).query({ agent: { objectType: 'Agent', account: { homePage: SOURCE, name: GUEST } }, verb: `${HOME}/learn#consented` });
+      expect(guestConsent.statements).toHaveLength(1);
+    } finally {
+      forgetCmi5Learner(guestLens, GUEST);
+      forgetCmi5Learner(ownerLens, OWNER);
+      await clearStatementStore(guestLens);
+      await clearStatementStore(ownerLens);
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
   });
 
   it('redirects a browser visiting a hosted package record to the player', async () => {

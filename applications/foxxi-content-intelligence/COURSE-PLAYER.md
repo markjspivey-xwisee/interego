@@ -29,7 +29,11 @@ The learner is whoever the learning account already has (`/i2idlx/learning/sessi
   OAuth start, and it returns to this page (`next` is only a `/learn` path on this origin).
 
 The launch is `buildCmi5Launch` for that owner's DID, with the bridge as the xAPI account
-homePage, the same shape as `POST /agent/cmi5/launch`. The activity URL receives `endpoint`,
+homePage, the same shape as `POST /agent/cmi5/launch`. The statements, the satisfied
+activities and a deletion are kept in that learner's own lens (`lens:` plus the actor of
+their pod), the same place `POST /agent/cmi5/launch` and a signed statement read use.
+Another learner's pod is a different lens. The published course stays in the shared
+catalogue. The activity URL receives `endpoint`,
 `fetch`, `actor`, `activityId` and `registration`. The first agreement is kept as a row on
 the player book and as one statement, and nothing is launched before that row exists. While
 the session has not been terminated, abandoned or waived, the next Start continues that
@@ -46,8 +50,9 @@ DID, so the statements already name the right actor.
 
 Signing in as a different existing owner does not rewrite those statements. `POST /learn/link`
 requires that owner session and a fresh proof from the guest key identity still accepts.
-It records the link, copies which activities the guest has satisfied onto the owner, and
-stores one statement by the owner that points at the guest and at the original statement ids.
+It records the link, copies which activities the guest has satisfied from the guest's lens
+onto the owner's, and stores one statement by the owner, in the owner's lens, that points
+at the guest and at the original statement ids.
 Reads of either actor return both (`alsoAgents` on the statement query). Admin actor counts
 use the owner. The stored guest statements are unchanged.
 

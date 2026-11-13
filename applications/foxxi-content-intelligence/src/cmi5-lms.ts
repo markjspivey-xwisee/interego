@@ -895,9 +895,9 @@ export function forgetCmi5Learner(tenant: TenantId, learnerId: string): Forgotte
   return removed;
 }
 
-/** Copy the AUs one learner has satisfied onto another, in the same tenant. The source is unchanged. */
-export function copyLearnerSatisfaction(tenant: TenantId, fromLearnerId: string, toLearnerId: string): string[] {
-  const ids = learnerSatisfiedAus(tenant, fromLearnerId);
-  for (const id of ids) markAuSatisfied(tenant, toLearnerId, id);
+/** Copy satisfied activities from one learner's lens into another's. The source lens is unchanged. */
+export function copyLearnerSatisfaction(fromTenant: TenantId, fromLearnerId: string, toTenant: TenantId, toLearnerId: string): string[] {
+  const ids = learnerSatisfiedAus(fromTenant, fromLearnerId);
+  for (const id of ids) markAuSatisfied(toTenant, toLearnerId, id);
   return ids;
 }

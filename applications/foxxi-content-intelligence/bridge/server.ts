@@ -11372,23 +11372,24 @@ attachCoursePlayerRoutes(app, {
   },
   satisfied: learnerSatisfiedAus,
   stageLaunch: stageLaunchData,
-  forgetActor: async (did) => {
+  tenantFor: (learner) => lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS)),
+  forgetActor: async (did, tenant) => {
     const result = await voidActorStatements({
       did, homePage: String(authoritativeSource),
-      list: () => getStatementStore(DEFAULT_TENANT).listAll(),
-      store: (statement) => storeStatementDurably(statement, DEFAULT_TENANT),
-      mark: (targetId, voidingId) => getStatementStore(DEFAULT_TENANT).markVoided(targetId, voidingId),
+      list: () => getStatementStore(tenant).listAll(),
+      store: (statement) => storeStatementDurably(statement, tenant),
+      mark: (targetId, voidingId) => getStatementStore(tenant).markVoided(targetId, voidingId),
     });
-    for (const launch of forgetCmi5Learner(DEFAULT_TENANT, did)) {
+    for (const launch of forgetCmi5Learner(tenant, did)) {
       if (!launch.podUrl) continue;
       for (const statement of result.voids) keepCmi5OnLearnerPod(statement, { did, podUrl: launch.podUrl, homePage: launch.homePage });
     }
     return result.forgotten;
   },
-  statementIds: async (did) => (await listStoredStatements(DEFAULT_TENANT))
+  statementIds: async (did, tenant) => (await listStoredStatements(tenant))
     .filter(rec => !rec.voided && (rec.statement.actor as { account?: { name?: string } } | undefined)?.account?.name === did)
     .map(rec => rec.id),
-  storeStatement: (statement) => storeStatementDurably(statement, DEFAULT_TENANT),
+  storeStatement: (statement, tenant) => storeStatementDurably(statement, tenant),
   onChange: persistPlayerBook,
 });
 
