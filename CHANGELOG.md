@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-13 — Foxxi: a course player on the existing Interego guest
+
+A browser that opens a hosted package or a published activity, with no cmi5 launch on the URL, gets a player for that course. Start does not mint a Foxxi identity. It uses the provisional Interego guest the learning account already signs in (`u-try-play-`, browser key) or an existing owner, and the xAPI actor is that owner's DID. Agreeing to the recording is required before the launch. The same browser continues the same owner and, while the attempt is open, the same registration. Adding a passkey, wallet or DID keeps that owner (`/connect?claim=`). Signing in as a different existing owner records a link and leaves the guest's statements as they were. Unclaimed guests still expire on identity's own deadline.
+
 ## 2026-11-13 — Foxxi's own xAPI Profile states its rule locations as JSONPath
 
 Found on the live Profile Server the day it shipped: `/validate_templates`

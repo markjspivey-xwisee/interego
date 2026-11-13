@@ -124,8 +124,12 @@ describe('provisional guest learner sign-in', () => {
 
   it('creates a guest from a browser-held key, keeps no bearer, and resumes it without a new grant', async () => {
     const f = await fixture(), b = f.browser();
-    const first = await b.signIn(); assert.deepEqual({ guest: first.guest, resumed: first.resumed }, { guest: true, resumed: false });
+    let provision: Row | undefined;
+    const first = await b.signIn({ onProvisioned: (value: Row) => { provision = value; } });
+    assert.deepEqual({ guest: first.guest, resumed: first.resumed }, { guest: true, resumed: false });
+    assert.equal(typeof provision?.token, 'string');
     const stored = b.stored()!; assert.deepEqual(Object.keys(stored).sort(), ['attestation', 'privateKey', 'publicKeyJwk']);
+    assert.ok(!JSON.stringify({ ...stored, privateKey: null }).includes(String(provision?.token)));
     assert.equal((stored.privateKey as CryptoKey).extractable, false);
     assert.ok(!JSON.stringify({ ...stored, privateKey: null }).includes('cg2_'), 'the identity token is never stored');
     assert.equal(f.control.grants.length, 1); assert.equal(f.control.grants[0]!.audience, BASE);

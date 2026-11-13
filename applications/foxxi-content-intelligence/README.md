@@ -233,6 +233,8 @@ An authoring tool's own export that is no SCORM package (an `.h5p` file, an Adap
 
 In the dashboard, "Host a package" takes an `.h5p` file too, and the Author page folds an export as it folds a package.
 
+A browser that opens a hosted package, or a published activity with no cmi5 launch parameters, gets a player for that course (`GET /learn?course_id=…`, [`COURSE-PLAYER.md`](COURSE-PLAYER.md)). Start uses the Interego guest or an existing owner already signed in on the bridge. The activity is then a normal cmi5 launch for that owner.
+
 ## Folding a SCORM package into composable content
 
 A hosted package can also be taken apart, into the same fragments and compositions an author writes here ([`src/package-import.ts`](src/package-import.ts)). Anyone may fold one, since a hosted package is served to anyone. Send `package_sha256` to `foxxi.content_fold_course` (`POST /agent/content/fold-course`), or use the Author page's "Fold a package" tab. What it makes is kept on the signer's pod, with the package it was derived from.

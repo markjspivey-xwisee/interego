@@ -32,9 +32,21 @@ type Account = { subject: string; userId: string; webId: string; podUrl: string;
 /** Public proof material identity re-checks against the guest's live pod anchor. Not a bearer. */
 type GuestProof = { attestation: string; challenge: string; proof: string; checkedAt: number };
 type Session = { hash: string; principal: LearningPrincipal; account: Account; token: string; csrf: string; lifetime: AbortController; timer: ReturnType<typeof setTimeout>; guest?: GuestProof };
-type Pending = { hash: string; state: string; verifier: string; expires: number; prior: string | null; claimed: boolean; lifetime: AbortController };
+type Pending = { hash: string; state: string; verifier: string; expires: number; prior: string | null; claimed: boolean; lifetime: AbortController; next: string | null };
 type Endpoints = { authorization: string; token: string; account: string; resource: string };
 const PREFIX = '/i2idlx/learning';
+
+/**
+ * Where a finished sign-in may return. Only this application's course player, as a path.
+ * Anything else (another origin, a scheme, a different path) is refused rather than followed.
+ */
+export function learnerReturnPath(value: unknown): string | null {
+  if (value === undefined) return null;
+  if (typeof value !== 'string' || value.length > 2000) return null;
+  if (value !== '/learn' && !value.startsWith('/learn?')) return null;
+  if (value.includes('\\') || value.includes('//') || value.includes('://') || /[\u0000-\u001f\u007f]/.test(value)) return null;
+  return value;
+}
 const COOKIE = '__Host-i2idlx-learning', PENDING_COOKIE = '__Host-i2idlx-learning-pending';
 const object = (v: unknown): v is Row => !!v && typeof v === 'object' && !Array.isArray(v);
 const opaque = () => randomBytes(32).toString('hex');
@@ -88,6 +100,8 @@ export class LearningAccountAuth {
   private readonly guestChallenges = new Map<string, number>();
   /** Whether a provisional guest can sign in here at all. */
   get guestEnabled(): boolean { return this.enabled && !!this.guestGrant; }
+  /** The identity origin this sign-in talks to, or empty when sign-in is off. */
+  get identityOrigin(): string { return this.identity; }
   constructor(config: LearningAccountAuthConfig) {
     let base = '', relay = '', identity = '', pod = '';
     try { base = origin(config.baseUrl); relay = origin(config.relayOrigin); identity = origin(config.identityOrigin); pod = origin(config.podOrigin); } catch { /* ordinary HTTP development keeps working without human sign-in */ }
@@ -262,15 +276,17 @@ export class LearningAccountAuth {
   }
   async start(req: Request, res: Response): Promise<void> {
     this.ready(); this.sweep(); this.admit('start:' + (req.ip ?? 'unknown'), 10); this.admit('starts', 100);
-    if (Object.keys(req.query).length || req.get('Origin') && req.get('Origin') !== this.base) refuse(400, 'learning_sign_in_input_invalid');
+    if (req.get('Origin') && req.get('Origin') !== this.base) refuse(400, 'learning_sign_in_input_invalid');
     const oldPending = cookie(req, PENDING_COOKIE); if (oldPending) this.dropPending(hash(oldPending));
     if (this.pending.size >= this.maxPending) refuse(429, 'learning_sign_in_busy');
     // The cookie is only a random lookup handle; OAuth credentials stay server-side.
     const endpoints = await this.discover(), pendingHandle = opaque();
     if (this.pending.size >= this.maxPending) refuse(429, 'learning_sign_in_busy');
     const prior = cookie(req, COOKIE), priorHash = prior ? hash(prior) : null;
+    const next = learnerReturnPath(req.query.next);
+    if (Object.keys(req.query).some(key => key !== 'next') || (req.query.next !== undefined && !next)) refuse(400, 'learning_sign_in_input_invalid');
     const record = { hash: hash(pendingHandle), state: opaque(), verifier: randomBytes(32).toString('base64url'), expires: this.now() + 300_000,
-      prior: priorHash && this.sessions.has(priorHash) ? priorHash : null, claimed: false, lifetime: new AbortController() };
+      prior: priorHash && this.sessions.has(priorHash) ? priorHash : null, claimed: false, lifetime: new AbortController(), next };
     this.pending.set(record.hash, record);
     const url = new URL(endpoints.authorization);
     for (const [k, v] of Object.entries({ response_type: 'code', client_id: this.clientId, redirect_uri: this.callbackUrl, scope: 'mcp:read',
@@ -305,7 +321,8 @@ export class LearningAccountAuth {
       if (pending.prior) this.drop(pending.prior);
       const current = cookie(req, COOKIE); if (current) this.drop(hash(current));
       this.sessions.set(key, { hash: key, principal, account, token: token.access_token, csrf: opaque(), lifetime, timer: this.expire(key, expiresAt) });
-      setCookie(res, COOKIE, value, expiresAt - this.now()); secure(res); res.redirect(303, this.base + '/i2idlx/#ask');
+      setCookie(res, COOKIE, value, expiresAt - this.now()); secure(res);
+      res.redirect(303, pending.next ? this.base + pending.next : this.base + '/i2idlx/#ask');
     } finally { pending.verifier = ''; pending.lifetime.abort(); this.pending.delete(pending.hash); }
   }
   private guestReady(req: Request, fields: string[]): Row {
@@ -350,15 +367,30 @@ export class LearningAccountAuth {
     this.guestChallenges.set(hash(challenge), expires);
     secure(res); res.json({ challenge, audience: this.base, expires_at: new Date(expires).toISOString() });
   }
-  /** Step 3: attestation + proof over that challenge become a guest learner session. */
-  async guestSession(req: Request, res: Response): Promise<void> {
-    const body = this.guestReady(req, ['attestation', 'challenge', 'proof']);
-    this.admit('guest-session:' + this.guestCaller(req), 10); this.admit('guest-sessions', 100);
+  /**
+   * A browser-key proof of a live guest of this application, checked with identity and then
+   * forgotten. It does not open a session: a person who is already signed in as another owner
+   * can show they still hold the guest key without being signed out of that owner.
+   */
+  async consumeGuestProof(req: Request): Promise<{ did: string; webId: string; podUrl: string; userId: string }> {
+    const proof = this.takeGuestProof(this.guestReady(req, ['attestation', 'challenge', 'proof']));
+    this.admit('guest-proof:' + this.guestCaller(req), 10);
+    const account = await this.guestAccount(proof);
+    return { did: account.subject, webId: account.webId, podUrl: account.podUrl, userId: account.userId };
+  }
+  private takeGuestProof(body: Row): GuestProof {
     const { attestation, challenge, proof } = body as { attestation: string; challenge: string; proof: string };
     const key = hash(challenge), expires = this.guestChallenges.get(key);
     this.guestChallenges.delete(key);
     if (expires === undefined || expires <= this.now() || attestation.length > 8192 || !/^ipa1_[A-Za-z0-9_-]+\.[A-Za-z0-9_-]+$/.test(attestation)
       || proof.length !== 86 || !B64URL.test(proof)) refuse(400, 'learning_sign_in_state_invalid');
+    return { attestation, challenge, proof, checkedAt: this.now() };
+  }
+  /** Step 3: attestation + proof over that challenge become a guest learner session. */
+  async guestSession(req: Request, res: Response): Promise<void> {
+    const shown = this.takeGuestProof(this.guestReady(req, ['attestation', 'challenge', 'proof']));
+    this.admit('guest-session:' + this.guestCaller(req), 10); this.admit('guest-sessions', 100);
+    const { attestation, challenge, proof } = shown;
     const prior = cookie(req, COOKIE), priorHash = prior ? hash(prior) : null, replaces = !!priorHash && this.sessions.has(priorHash);
     if (this.sessions.size >= this.maxSessions && !replaces) refuse(429, 'learning_sign_in_busy');
     const lifetime = new AbortController();

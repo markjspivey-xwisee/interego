@@ -102,6 +102,7 @@ export async function guestLearningSignIn(config, options = {}) {
     if (!options.confirmTerms || await options.confirmTerms(created.value.terms) !== true) throw fail('A guest account needs agreement to the hosted terms.', 'learning_guest_terms_required', { terms: created.value.terms });
     created = await bootstrap(created.value.terms.version);
   }
+  if (created.ok && typeof created.value.attestation === 'string' && options.onProvisioned) await options.onProvisioned(created.value);
   if (!created.ok || typeof created.value.attestation !== 'string') {
     const code = typeof created.value.error === 'string' ? created.value.error : '';
     throw fail(/capacity/.test(code) ? 'No guest places are left right now. Sign in with a passkey or wallet instead.'
@@ -112,4 +113,24 @@ export async function guestLearningSignIn(config, options = {}) {
   const entered = await enter(record.attestation);
   if (!entered.ok) throw fail('The guest account was created but could not be signed in. Try again.', entered.value.error || undefined);
   return { guest: true, resumed: false, ...(typeof created.value.guestExpiresAt === 'string' ? { guest_expires_at: created.value.guestExpiresAt } : {}) };
+}
+
+/**
+ * A fresh proof that this browser still holds the guest key, without opening a guest session.
+ * Used when the person is signed in as another owner and is linking that guest's record.
+ * Null when this browser has no guest attestation yet.
+ */
+export async function guestPossessionProof(config, options = {}) {
+  const fetcher = options.fetch || globalThis.fetch.bind(globalThis), subtle = options.subtle || globalThis.crypto.subtle;
+  const store = options.store || guestKeyStore(), signal = options.signal;
+  const record = await store.get();
+  if (!record || !record.privateKey || typeof record.attestation !== 'string') return null;
+  let response;
+  try { response = await fetcher(config.challenge_url, { method: 'POST', headers: { Accept: 'application/json', 'Content-Type': 'application/json' }, body: '{}',
+    credentials: 'same-origin', cache: 'no-store', redirect: 'error', signal }); }
+  catch { throw fail('Guest sign-in is not reachable right now. Try again.'); }
+  let value = null; try { value = await response.json(); } catch { /* answered below */ }
+  if (!response.ok || !object(value) || typeof value.challenge !== 'string') throw fail('Guest sign-in is not available right now. Try again.');
+  const proof = base64url(await subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, record.privateKey, utf8(`interego-play-proof-v1\n${record.attestation}\n${config.audience}\n${value.challenge}`)));
+  return { attestation: record.attestation, challenge: value.challenge, proof };
 }

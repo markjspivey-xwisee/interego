@@ -752,3 +752,85 @@ export function attachCmi5LmsRoutes(app: Express, config: {
     res.status(200).json(state);
   });
 }
+
+const CMI5_SESSION = 'https://w3id.org/xapi/cmi5/context/extensions/sessionid';
+
+/** The session id a launch put in LMS.LaunchData, when it has one. */
+export function cmi5SessionId(launchData: Record<string, unknown>): string | undefined {
+  const template = launchData.contextTemplate as { extensions?: Record<string, unknown> } | undefined;
+  const id = template?.extensions?.[CMI5_SESSION];
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+/**
+ * A new fetch token for a launch that is still open, keeping its registration and session.
+ * Null when that registration is not this learner's open launch of this AU (it is missing
+ * from this process and cannot be rebuilt, it belongs to someone else, or it is already
+ * satisfied). A satisfied launch is a finished attempt: the caller starts another.
+ */
+export function reissueCmi5Fetch(req: Cmi5LaunchRequest & { registration: string; sessionId: string }): Cmi5Launch | null {
+  const tenant = req.tenant ?? DEFAULT_TENANT;
+  const existing = launches.get(req.registration);
+  if (existing && (existing.satisfied || existing.tenant !== tenant || existing.learner.id !== req.learner.id || existing.auId !== req.au.id)) return null;
+  if (!existing && !req.sessionId) return null;
+  sweepExpired();
+  const registration = req.registration;
+  const fetchToken = `ft-${randomUUID()}`;
+  const authToken = `cmi5-${tenant === DEFAULT_TENANT ? 'd' : '0'}-${randomUUID()}`;
+  fetchTokens.set(fetchToken, {
+    authToken, tenant, registration, auId: req.au.id,
+    expiresAt: Date.now() + FETCH_TOKEN_TTL_MS, redeemed: false,
+  });
+  if (!existing) {
+    launches.set(registration, {
+      registration,
+      auId: req.au.id,
+      ...(req.au.title ? { auTitle: req.au.title } : {}),
+      moveOn: req.au.moveOn ?? 'CompletedOrPassed',
+      masteryScore: typeof req.au.masteryScore === 'number' ? req.au.masteryScore : 1.0,
+      tenant,
+      learner: { id: req.learner.id, ...(req.learner.name ? { name: req.learner.name } : {}) },
+      authoritativeSource: req.authoritativeSource,
+      ...(req.courseId ? { courseId: req.courseId } : {}),
+      ...(req.learnerPod ? { learnerPod: req.learnerPod } : {}),
+      satisfied: false,
+      reason: 'resumed — awaiting the AU\'s cmi5 statements',
+    });
+    cmi5PodDirty();
+  }
+  const actor = {
+    objectType: 'Agent',
+    ...(req.learner.name ? { name: req.learner.name } : {}),
+    account: { homePage: req.authoritativeSource, name: req.learner.id },
+  };
+  const moveOn = existing?.moveOn ?? req.au.moveOn ?? 'CompletedOrPassed';
+  const launchData: Record<string, unknown> = {
+    contextTemplate: {
+      registration,
+      contextActivities: { category: [{ id: CMI5_CATEGORY }], grouping: [{ id: req.au.id }] },
+      extensions: { [CMI5_SESSION]: req.sessionId },
+    },
+    launchMode: existing ? 'Normal' : (req.launchMode ?? 'Normal'),
+    moveOn,
+    ...(typeof req.au.masteryScore === 'number' ? { masteryScore: req.au.masteryScore } : {}),
+    ...(req.returnUrl ? { returnURL: req.returnUrl } : {}),
+    ...(req.au.entitlementKey ? { entitlementKey: { courseStructure: req.au.entitlementKey } } : {}),
+  };
+  const fetchUrl = `${req.fetchBaseUrl.replace(/\/+$/, '')}/${fetchToken}`;
+  const params = new URLSearchParams({
+    endpoint: req.lrsEndpoint,
+    fetch: fetchUrl,
+    actor: JSON.stringify(actor),
+    activityId: req.au.id,
+    registration,
+  });
+  const sep = req.au.url.includes('?') ? '&' : '?';
+  return { registration, launchUrl: `${req.au.url}${sep}${params.toString()}`, actor, launchData, fetchToken };
+}
+
+/** Copy the AUs one learner has satisfied onto another, in the same tenant. The source is unchanged. */
+export function copyLearnerSatisfaction(tenant: TenantId, fromLearnerId: string, toLearnerId: string): string[] {
+  const ids = learnerSatisfiedAus(tenant, fromLearnerId);
+  for (const id of ids) markAuSatisfied(tenant, toLearnerId, id);
+  return ids;
+}

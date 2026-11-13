@@ -31,6 +31,7 @@ import type { Express, Request, Response } from 'express';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { registerCmi5Course } from './cmi5-lms.js';
+import { browserWantsPlayer, playerLocation } from './cmi5-player.js';
 import { parseCmi5Course } from './cmi5-course.js';
 import { sendServerError } from './http-errors.js';
 import type { Course } from './emergent-content.js';
@@ -250,7 +251,10 @@ export function attachContentDeliveryRoutes(app: Express, config: ContentDeliver
   app.get('/content/au/:pub/:idx', contentRead(async (req: Request, res: Response) => {
     const pub = await readPublishedCourse(String(req.params.pub ?? ''), store);
     const au = pub?.aus[Number(req.params.idx)];
-    if (!au) { res.status(404).type('html').send('<p>No such Assignable Unit.</p>'); return; }
+    if (!pub || !au) { res.status(404).type('html').send('<p>No such Assignable Unit.</p>'); return; }
+    // A browser that opens the activity with no cmi5 launch parameters gets the player.
+    // The launch itself carries endpoint, fetch and registration, and still receives the activity.
+    if (browserWantsPlayer(req)) { res.redirect(303, playerLocation(pub.courseId, au.lessonId)); return; }
     res.type('html').send(au.html);
   }));
 

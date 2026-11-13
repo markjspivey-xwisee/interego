@@ -65,6 +65,7 @@ import type {
   IRI,
 } from '@interego/core';
 import { verifySessionToken, trustedAddressMap } from './auth.js';
+import { actorAliases } from './actor-alias.js';
 import { verifyOauthBearer } from './xapi-oauth.js';
 import type { KeyObject } from 'node:crypto';
 
@@ -1287,7 +1288,10 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
       : (limitRaw !== undefined ? Number(limitRaw) : 100),
     cursor: cursorToken,
   };
-  const result = await store.query(filter);
+  // A linked actor is the same reader. The statement itself is not rewritten; the filter widens.
+  const also = filter.agent ? actorAliases(filter.agent as { account?: { name?: string; homePage?: string } }) : [];
+  const queried = also.length ? { ...filter, alsoAgents: also } : filter;
+  const result = await store.query(queried);
 
   // §2.1.4: a query that would match a voided Statement still surfaces
   // the Voiding Statement that voided it, so the requester sees the void.
@@ -1296,7 +1300,7 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     const includedIds = new Set(recs.map(r => r.id));
     const all = await store.listAll();
     for (const r of all) {
-      if (!r.voided || !r.voidingStatementId || !matchesFilter(r, filter)) continue;
+      if (!r.voided || !r.voidingStatementId || !matchesFilter(r, queried)) continue;
       if (includedIds.has(r.voidingStatementId)) continue;
       const voiding = await store.get(r.voidingStatementId);
       if (voiding && (bound === undefined || registrationOfStatement(voiding.statement) === bound)) {
