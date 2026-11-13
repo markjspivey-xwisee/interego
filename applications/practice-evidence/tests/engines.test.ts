@@ -1492,6 +1492,16 @@ describe('statements', () => {
     expect(one((s) => { ((s['context'] as Record<string, unknown>)['contextActivities'] as Record<string, unknown>)['category'] = [{ id: CMI5_CATEGORY }]; })).toEqual([`context must carry the category ${CMI5_MOVEON_CATEGORY} once`]);
     expect(one((s) => { ((s['context'] as Record<string, unknown>)['extensions'] as Record<string, unknown>)[CMI5_SESSION_EXT] = LAUNCH.sessionId; })).toEqual(['the session id extension must be the session the statement is sent in']);
     expect(one((s) => { ((s['context'] as Record<string, unknown>)['extensions'] as Record<string, unknown>)['https://lms.example/ext/tenant'] = 'south'; })).toEqual(['the contextTemplate extension https://lms.example/ext/tenant must be carried unchanged']);
+    const activities = (s: Record<string, unknown>): Record<string, unknown> => (s['context'] as Record<string, unknown>)['contextActivities'] as Record<string, unknown>;
+    expect(one((s) => { delete activities(s)['grouping']; })).toEqual(['the contextTemplate grouping activities must be carried unchanged']);
+    expect(one((s) => { activities(s)['grouping'] = [{ objectType: 'Activity', id: 'https://lms.example/courses/other' }]; })).toEqual(['the contextTemplate grouping activities must be carried unchanged']);
+    // A category the template gave is kept beside the two cmi5 ones, and a statement that drops it is found.
+    const tagged = { ...LAUNCH, contextTemplate: { contextActivities: { category: [{ objectType: 'Activity', id: 'https://lms.example/tags/pilot' }], parent: [{ objectType: 'Activity', id: 'https://lms.example/blocks/1' }] } } };
+    const [withTag] = buildLaunchedStatements(input(launched(gate, tagged)), LATER) as [Record<string, unknown>];
+    expect(launchedStatementProblems(withTag, tagged, LATER)).toEqual([]);
+    expect((activities(withTag)['category'] as { id: string }[]).map((c) => c.id)).toEqual(['https://lms.example/tags/pilot', CMI5_CATEGORY, CMI5_MOVEON_CATEGORY]);
+    const dropped = clone(withTag); activities(dropped)['category'] = [{ objectType: 'Activity', id: CMI5_CATEGORY }, { objectType: 'Activity', id: CMI5_MOVEON_CATEGORY }]; delete activities(dropped)['parent'];
+    expect(launchedStatementProblems(dropped, tagged, LATER)).toEqual(['the contextTemplate category activities must be carried unchanged', 'the contextTemplate parent activities must be carried unchanged']);
     expect(one((s) => { (s['result'] as Record<string, unknown>)['success'] = false; })).toEqual(['passed needs result.success true']);
     expect(one((s) => { delete (s['result'] as Record<string, unknown>)['duration']; })).toEqual(['a cmi5 defined statement needs result.duration as PT<seconds>S']);
     expect(one((s) => { (s['verb'] as Record<string, unknown>)['id'] = 'http://adlnet.gov/expapi/verbs/attempted'; })).toEqual(['verb must be passed, failed or completed']);

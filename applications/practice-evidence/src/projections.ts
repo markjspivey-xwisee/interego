@@ -410,6 +410,12 @@ export function launchedStatementProblems(stmt: unknown, l: LmsLaunch, sendIn: S
     for (const need of [CMI5_CATEGORY, CMI5_MOVEON_CATEGORY]) {
       if (cats.filter((c) => c === need).length !== 1) p.push(`context must carry the category ${need} once`);
     }
+    // cmi5 9.6.2: every context activity the launch's contextTemplate gave is carried, under the same property.
+    for (const [kind, given] of Object.entries(objOf(objOf(l.contextTemplate)['contextActivities']))) {
+      const carried = new Set((Array.isArray(ca[kind]) ? ca[kind] as unknown[] : [ca[kind]]).map((x) => JSON.stringify(x)));
+      const missing = (Array.isArray(given) ? given : [given]).filter((x) => !carried.has(JSON.stringify(x)));
+      if (missing.length > 0) p.push(`the contextTemplate ${kind} activities must be carried unchanged`);
+    }
     for (const [k, v] of Object.entries(objOf(objOf(l.contextTemplate)['extensions']))) {
       if (k !== CMI5_SESSION_EXT && JSON.stringify(cext[k]) !== JSON.stringify(v)) p.push(`the contextTemplate extension ${k} must be carried unchanged`);
     }
