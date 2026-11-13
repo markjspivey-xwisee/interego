@@ -206,10 +206,13 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
 
   // A registration can cover several units and several sessions, each launched in its own mode. Only
   // a launched statement for this unit and this session says how the conversation was launched; with
-  // none, or with several that disagree or name no mode, the mode is not known.
+  // none, or with several that disagree on the mode or the masteryScore, or name no mode, the mode is not known.
   const matching = launches.filter((r) => r.objectId === first.objectId && r.ext[CMI5_SESSION_EXT] === sessionId);
   const modes = new Set(matching.map((r) => r.ext[CMI5_LAUNCH_MODE_EXT]));
-  const mode = matching.length > 0 && modes.size === 1 ? matching[0]!.ext[CMI5_LAUNCH_MODE_EXT] : undefined;
+  // They have to agree on the masteryScore too (a missing one is a value like any other): which of two
+  // records came first must not decide whether a result can be called passed.
+  const masteries = new Set(matching.map((r) => JSON.stringify(r.ext[CMI5_MASTERY_EXT] ?? null)));
+  const mode = matching.length > 0 && modes.size === 1 && masteries.size === 1 ? matching[0]!.ext[CMI5_LAUNCH_MODE_EXT] : undefined;
   const launched = mode === 'Normal' || mode === 'Browse' || mode === 'Review' ? matching[0] : undefined;
   const mastery = [launched, first].map((r) => r?.ext[CMI5_MASTERY_EXT]).find((m) => typeof m === 'number');
   if (p.length > 0 || !ended || sessionId === undefined || homePage === undefined || name === undefined || first.objectId === undefined) return { problems: p };

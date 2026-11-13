@@ -159,6 +159,16 @@ describe('a registration read as a conversation', () => {
     // Two for this session that disagree, or one that names no mode, leave it unknown too.
     expect(modeOf([launchedBy('Normal'), launchedBy('Review')])).toEqual(['Normal', 'assumed', undefined]);
     expect(modeOf([stmt(VERB_LAUNCHED, -1, ext('normal'))])).toEqual(['Normal', 'assumed', undefined]);
+    // Two for this session that agree on Normal and disagree on the masteryScore: in either order the mode is not
+    // known, so which came first cannot decide whether a result may be called passed.
+    const m8 = stmt(VERB_LAUNCHED, -1, ext('Normal', 0.8));
+    const m5 = stmt(VERB_LAUNCHED, -2, ext('Normal', 0.5));
+    const none = stmt(VERB_LAUNCHED, -3, ext('Normal'));
+    expect(modeOf([m8, m5])).toEqual(['Normal', 'assumed', undefined]);
+    expect(modeOf([m5, m8])).toEqual(['Normal', 'assumed', undefined]);
+    expect(modeOf([m8, none])).toEqual(['Normal', 'assumed', undefined]);
+    // Two that agree on both are one piece of evidence said twice.
+    expect(modeOf([m8, stmt(VERB_LAUNCHED, -4, ext('Normal', 0.8))])).toEqual(['Normal', 'launched-statement', 0.8]);
     expect(modeOf([launchedBy('Normal'), stmt(VERB_LAUNCHED, -2, ext('Review'), { session: 'aaaaaaaa-0000-4000-8000-000000000001' })])).toEqual(['Normal', 'launched-statement', undefined]);
   });
 
