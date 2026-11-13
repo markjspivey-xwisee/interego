@@ -194,6 +194,10 @@ describe('independent human learning-account sign-in', () => {
     assert.equal(learnerReturnPath('/learn'), '/learn');
     assert.equal(learnerReturnPath('https://evil.example/learn'), null);
     assert.equal(learnerReturnPath('/i2idlx/'), null);
+    assert.equal(learnerReturnPath('//learn'), null);
+    assert.equal(learnerReturnPath('/learn/../admin'), null);
+    assert.equal(learnerReturnPath(''), null);
+    assert.equal(learnerReturnPath(['/learn']), null);
     const f = await fixture();
     const refused = await f.request(PATH + '/oauth/start?next=' + encodeURIComponent('https://evil.example'));
     assert.equal(refused.status, 400); await refused.text();

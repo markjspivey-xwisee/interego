@@ -30,10 +30,11 @@ The learner is whoever the learning account already has (`/i2idlx/learning/sessi
 
 The launch is `buildCmi5Launch` for that owner's DID, with the bridge as the xAPI account
 homePage, the same shape as `POST /agent/cmi5/launch`. The activity URL receives `endpoint`,
-`fetch`, `actor`, `activityId` and `registration`. While that attempt is not yet satisfied,
-the next Start on the same owner, course and activity continues that registration and session
-and only mints a new fetch token. Once it is satisfied, the next Start is a new registration
-in Review.
+`fetch`, `actor`, `activityId` and `registration`. The first agreement is kept as a row on
+the player book and as one statement, and nothing is launched before that row exists. While
+the session has not been terminated, abandoned or waived, the next Start continues that
+registration and the launch mode it already has (including Review). After the session ends,
+the next Start is a new registration, in Review when the activity is already satisfied.
 
 ## Keeping the guest, or linking another owner
 

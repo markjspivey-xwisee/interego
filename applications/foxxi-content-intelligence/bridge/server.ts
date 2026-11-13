@@ -475,7 +475,9 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
 import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, forgetCmi5Learner, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachPersonalLaunchRoutes, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
+import { readDurableRegistry } from '../src/revocable-registry.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
@@ -507,7 +509,7 @@ import { validateCoverageQueryInput } from '../src/coverage-query-input.js';
 import type { PrivateAuthResult } from '../src/private-performance-auth.js';
 import { attachPerformanceRoutes, offerFromWork, WORK_OFFER_WINDOW, type WorkOffer } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
-import { attachCoursePlayerRoutes, coursePlayerAuth, PlayerBook, PlayerError, voidActorStatements } from '../src/cmi5-player.js';
+import { attachCoursePlayerRoutes, coursePlayerAuth, learnerFromPlayerAuth, PlayerBook, PlayerError, voidActorStatements } from '../src/cmi5-player.js';
 // Re-integration with the agentic-performance (agp:) layer: Foxxi surfaces the
 // emergent, learnable standards-extension capability the agp layer affords by
 // composing Foxxi's own standards. + the shared in-flow performance-support primitive.
@@ -11354,16 +11356,14 @@ attachCoursePlayerRoutes(app, {
   book: playerBook,
   requireLearner: async (req) => {
     const auth = coursePlayerAuth();
-    if (!auth?.enabled) throw new PlayerError(503, 'player_sign_in_unavailable');
-    const principal = await auth.resolve(req, { allowGuest: true });
-    auth.assertMutation(req, principal);
-    return { did: principal.subject, webId: principal.webId, podUrl: principal.podUrl, userId: principal.userId, guest: principal.guest === true };
+    if (!auth) throw new PlayerError(503, 'player_sign_in_unavailable');
+    return learnerFromPlayerAuth(auth, req);
   },
   verifyGuest: async (req) => {
     const auth = coursePlayerAuth();
     if (!auth?.guestEnabled) throw new PlayerError(503, 'learning_guest_unavailable');
     const guest = await auth.consumeGuestProof(req);
-    return { ...guest, guest: true };
+    return { ...guest, guest: guest.userId.startsWith('u-try-play-') };
   },
   resolveCourse: async (courseId) => {
     if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent */ } }
@@ -11372,12 +11372,19 @@ attachCoursePlayerRoutes(app, {
   },
   satisfied: learnerSatisfiedAus,
   stageLaunch: stageLaunchData,
-  forgetActor: (did) => voidActorStatements({
-    did, homePage: String(authoritativeSource),
-    list: () => getStatementStore(DEFAULT_TENANT).listAll(),
-    store: (statement) => storeStatementDurably(statement, DEFAULT_TENANT),
-    mark: (targetId, voidingId) => getStatementStore(DEFAULT_TENANT).markVoided(targetId, voidingId),
-  }),
+  forgetActor: async (did) => {
+    const result = await voidActorStatements({
+      did, homePage: String(authoritativeSource),
+      list: () => getStatementStore(DEFAULT_TENANT).listAll(),
+      store: (statement) => storeStatementDurably(statement, DEFAULT_TENANT),
+      mark: (targetId, voidingId) => getStatementStore(DEFAULT_TENANT).markVoided(targetId, voidingId),
+    });
+    for (const launch of forgetCmi5Learner(DEFAULT_TENANT, did)) {
+      if (!launch.podUrl) continue;
+      for (const statement of result.voids) keepCmi5OnLearnerPod(statement, { did, podUrl: launch.podUrl, homePage: launch.homePage });
+    }
+    return result.forgotten;
+  },
   statementIds: async (did) => (await listStoredStatements(DEFAULT_TENANT))
     .filter(rec => !rec.voided && (rec.statement.actor as { account?: { name?: string } } | undefined)?.account?.name === did)
     .map(rec => rec.id),
@@ -11504,16 +11511,24 @@ function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did
   }).catch((e) => bridgeWarn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message));
 }
 
+/**
+ * Any published cmi5 course, by the id the caller names. Registered courses live in the default
+ * tenant and are restored from the pod after a restart; a hosted package is restored from its bytes.
+ * The learner's own record is a different tenant, decided from their identity when the launch is built.
+ */
+async function publishedCmi5Course(courseId: string): Promise<ReturnType<typeof getCmi5Course>> {
+  if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent below */ } }
+  if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
+  return getCmi5Course(DEFAULT_TENANT, courseId);
+}
+
 app.post('/agent/cmi5/launch', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     const courseId = typeof auth.payload.course_id === 'string' ? auth.payload.course_id.trim() : '';
     if (!courseId) { res.status(400).json({ error: 'course_id is required: a cmi5 course published on this bridge (POST /content/publish-course)' }); return; }
-    // Published courses are registered in the default tenant, and come back from the pod after a restart.
-    if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent below */ } }
-    if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
-    const course = getCmi5Course(DEFAULT_TENANT, courseId);
+    const course = await publishedCmi5Course(courseId);
     if (!course) { res.status(404).json({ error: `no cmi5 course ${courseId} is published on this bridge` }); return; }
     const learner = await signedLearner(auth);
     const tenant = lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS));
@@ -11542,6 +11557,70 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       note: 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
     });
   } catch (err) { sendServerError(res, err, 'cmi5-launch-signed'); }
+});
+
+// ── A reusable personal launch link ───────────────────────────────────────────────────────────
+//
+// The launch above is one fetch token, spent on first use and expired after 30 minutes. This mints
+// a link the learner can open again (src/cmi5-personal-link.ts): each open builds a fresh launch,
+// or continues the registration whose session has not ended, and redirects to the AU. The link is
+// kept on the tenant pod beside the dispatches, so a withdrawal survives a restart.
+const PERSONAL_LINKS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/cmi5-personal-links.json` : '';
+const personalLaunchLinks = new PersonalLaunchRegistry();
+let personalLinksReadAt = 0;
+async function readPersonalLinks(): Promise<'loaded' | 'absent' | 'failed'> {
+  if (!PERSONAL_LINKS_RESOURCE) return 'absent';
+  personalLinksReadAt = Date.now();
+  return readDurableRegistry(
+    () => (globalThis.fetch as typeof fetch)(PERSONAL_LINKS_RESOURCE, { headers: { Accept: 'application/json' } }),
+    (json) => { personalLaunchLinks.load(json); },
+  );
+}
+/**
+ * Write the registry to the pod. True when the pod holds what this process holds. A read that
+ * failed is not followed by a write: this process has not seen the links already there, and
+ * replacing the resource with its own copy would drop them. The write is tried again later.
+ */
+async function writePersonalLinks(): Promise<boolean> {
+  if (!PERSONAL_LINKS_RESOURCE || !personalLaunchLinks.dirty) return true;
+  personalLaunchLinks.dirty = false;
+  const f = globalThis.fetch as typeof fetch;
+  try {
+    const read = await readPersonalLinks();
+    if (read === 'failed') { personalLaunchLinks.dirty = true; return false; }
+    const container = PERSONAL_LINKS_RESOURCE.replace(/[^/]+$/, '');
+    await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+    const w = await f(PERSONAL_LINKS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(personalLaunchLinks) });
+    if (w.ok) return true;
+  } catch { /* tried again below */ }
+  personalLaunchLinks.dirty = true;
+  return false;
+}
+const persistPersonalLinks = registryWriter(writePersonalLinks);
+void readPersonalLinks();
+
+function positiveLimit(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 10_000 ? n : fallback;
+}
+
+attachPersonalLaunchRoutes(app, {
+  baseUrl: bridgeBaseUrl,
+  registry: personalLaunchLinks,
+  authoritativeSource: String(authoritativeSource),
+  verifyCaller: verifyDelegatedCaller,
+  learnerOf: signedLearner,
+  tenantFor: (learner) => lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS)),
+  resolveCourse: async (courseId) => (await publishedCmi5Course(courseId)) ?? null,
+  satisfiedAus: learnerSatisfiedAus,
+  stageLaunch: stageLaunchData,
+  rateLimit: checkAgenticRateLimit,
+  opensPerMinute: positiveLimit(process.env.FOXXI_CMI5_GO_PER_IP, 60),
+  opensPerTokenPerMinute: positiveLimit(process.env.FOXXI_CMI5_GO_PER_TOKEN, 12),
+  persist: persistPersonalLinks,
+  reload: async () => { if (Date.now() - personalLinksReadAt > 30_000) await readPersonalLinks(); },
+  serverError: (res, err, where) => sendServerError(res, err, where),
 });
 
 // ── Composable content: fragments and compositions ───────────────────
@@ -12666,22 +12745,23 @@ async function advanceScormPlay(play: ScormPlay, answersGiven: unknown): Promise
 const DISPATCHES_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/dispatches.json` : '';
 const scormDispatches = new DispatchRegistry();
 let dispatchesReadAt = 0;
-async function readDispatches(): Promise<void> {
-  if (!DISPATCHES_RESOURCE) return;
+async function readDispatches(): Promise<'loaded' | 'absent' | 'failed'> {
+  if (!DISPATCHES_RESOURCE) return 'absent';
   dispatchesReadAt = Date.now();
-  try {
-    const r = await (globalThis.fetch as typeof fetch)(DISPATCHES_RESOURCE, { headers: { Accept: 'application/json' } });
-    if (r.ok) scormDispatches.load(await r.json());
-  } catch { /* none yet, or the pod is unreachable: what this process holds stands */ }
+  return readDurableRegistry(
+    () => (globalThis.fetch as typeof fetch)(DISPATCHES_RESOURCE, { headers: { Accept: 'application/json' } }),
+    (json) => { scormDispatches.load(json); },
+  );
 }
-/** Write the registry to the pod. True when the pod holds what this process holds. */
+/** Write the registry to the pod. True when the pod holds what this process holds. A failed read is not overwritten. */
 async function writeDispatches(): Promise<boolean> {
   if (!DISPATCHES_RESOURCE || !scormDispatches.dirty) return true;
   scormDispatches.dirty = false;
   const f = globalThis.fetch as typeof fetch;
   try {
     // Merge the durable copy in first, so another process's dispatches, counts and withdrawals are kept.
-    await readDispatches();
+    const read = await readDispatches();
+    if (read === 'failed') { scormDispatches.dirty = true; return false; }
     const container = DISPATCHES_RESOURCE.replace(/[^/]+$/, '');
     await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
     const w = await f(DISPATCHES_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scormDispatches) });

@@ -129,7 +129,7 @@ export function matchesFilter(rec: StoredStatement, f: QueryFilter): boolean {
  *  same filter as page 1. `statementId`/`voidedStatementId` are excluded: those
  *  return a single statement and never paginate. */
 export type CursorQuery = Pick<QueryFilter,
-  'agent' | 'verb' | 'activity' | 'registration' | 'since' | 'until' | 'ascending' | 'limit'>;
+  'agent' | 'alsoAgents' | 'verb' | 'activity' | 'registration' | 'since' | 'until' | 'ascending' | 'limit'>;
 
 export interface DecodedCursor { offset: number; ts?: number; q?: CursorQuery }
 
@@ -152,6 +152,7 @@ export function encodeCursor(c: DecodedCursor): string {
 export function cursorQueryOf(f: QueryFilter): CursorQuery {
   const q: CursorQuery = {};
   if (f.agent !== undefined) q.agent = f.agent;
+  if (f.alsoAgents !== undefined) q.alsoAgents = f.alsoAgents;
   if (f.verb !== undefined) q.verb = f.verb;
   if (f.activity !== undefined) q.activity = f.activity;
   if (f.registration !== undefined) q.registration = f.registration;

@@ -20,9 +20,10 @@ import type { Express, Request, Response } from 'express';
 import { rateLimit, type Options } from 'express-rate-limit';
 import { setActorAliasSource, type ActorLink } from './actor-alias.js';
 import {
-  buildCmi5Launch, chooseAu, cmi5SessionId, copyLearnerSatisfaction, reissueCmi5Fetch,
+  buildCmi5Launch, chooseAu, cmi5SessionId, copyLearnerSatisfaction, findResumableLaunch,
   type Cmi5Launch,
 } from './cmi5-lms.js';
+import { requestAddress } from './revocable-registry.js';
 import type { Cmi5Course } from './cmi5-course.js';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import type { LearningAccountAuth } from './i2idlx-learning-auth.js';
@@ -31,6 +32,14 @@ let boundAuth: LearningAccountAuth | null = null;
 /** The learning-account sign-in the workbench attached, which the player uses and does not replace. */
 export function bindCoursePlayerAuth(auth: LearningAccountAuth | null): void { boundAuth = auth; }
 export function coursePlayerAuth(): LearningAccountAuth | null { return boundAuth; }
+
+/** The signed-in learner, from the learning account's own session and CSRF check. */
+export async function learnerFromPlayerAuth(auth: LearningAccountAuth, req: Request): Promise<PlayerLearner> {
+  if (!auth.enabled) throw new PlayerError(503, 'player_sign_in_unavailable');
+  const principal = await auth.resolve(req, { allowGuest: true });
+  auth.assertMutation(req, principal);
+  return { did: principal.subject, webId: principal.webId, podUrl: principal.podUrl, userId: principal.userId, guest: principal.guest === true };
+}
 
 export class PlayerError extends Error {
   constructor(readonly status: number, readonly code: string) { super(code); }
@@ -72,6 +81,8 @@ export class PlayerBook {
   /** Keys and guest DIDs removed here. A later read of an older copy must not put them back. */
   private readonly removedAttempts = new Set<string>();
   private readonly removedLinks = new Set<string>();
+  private readonly consents = new Map<string, { learnerDid: string; courseId: string; at: string }>();
+  private readonly removedConsents = new Set<string>();
   dirty = false;
   /** Bumps on every change, so a read that overlaps a change does not clear `dirty`. */
   generation = 0;
@@ -100,16 +111,21 @@ export class PlayerBook {
       this.links.delete(guest);
       this.removedLinks.add(guest);
     }
+    for (const [key, consent] of this.consents) if (consent.learnerDid === did) {
+      this.consents.delete(key);
+      this.removedConsents.add(key);
+    }
     this.touch();
     this.publish();
   }
-  link(guestDid: string, ownerDid: string, at: string): RecordedLink | { refused: string } {
+  link(guestDid: string, ownerDid: string, at: string): (RecordedLink & { already: boolean }) | { refused: string } {
     if (guestDid === ownerDid) return { refused: 'player_same_actor' };
     if (this.links.size >= LINK_MAX && !this.links.has(guestDid)) return { refused: 'player_link_capacity' };
     const held = this.links.get(guestDid);
     if (held && held.ownerDid !== ownerDid) return { refused: 'player_link_held' };
+    if (held) return { ...held, already: true as const };
     this.removedLinks.delete(guestDid);
-    const link = held ?? { guestDid, ownerDid, at };
+    const link = { guestDid, ownerDid, at, already: false as const };
     this.links.set(guestDid, link);
     this.touch();
     this.publish();
@@ -118,10 +134,24 @@ export class PlayerBook {
   linksFor(ownerDid: string): RecordedLink[] {
     return [...this.links.values()].filter(link => link.ownerDid === ownerDid);
   }
-  toJSON(): { attempts: OpenAttempt[]; links: RecordedLink[]; removedAttempts: string[]; removedLinks: string[] } {
+  hasConsent(learnerDid: string, courseId: string): boolean {
+    return this.consents.has(`${learnerDid}\n${courseId}`);
+  }
+  /** The first agreement to record this learner in this course. A repeat keeps the original time. */
+  recordConsent(learnerDid: string, courseId: string, at: string): { fresh: boolean; at: string } {
+    const key = `${learnerDid}\n${courseId}`;
+    const held = this.consents.get(key);
+    if (held) return { fresh: false, at: held.at };
+    this.removedConsents.delete(key);
+    this.consents.set(key, { learnerDid, courseId, at });
+    this.touch();
+    return { fresh: true, at };
+  }
+  toJSON(): { attempts: OpenAttempt[]; links: RecordedLink[]; removedAttempts: string[]; removedLinks: string[]; consents: Array<{ learnerDid: string; courseId: string; at: string }>; removedConsents: string[] } {
     return {
       attempts: [...this.attempts.values()], links: [...this.links.values()],
       removedAttempts: [...this.removedAttempts], removedLinks: [...this.removedLinks],
+      consents: [...this.consents.values()], removedConsents: [...this.removedConsents],
     };
   }
   /**
@@ -131,7 +161,7 @@ export class PlayerBook {
    */
   load(json: unknown): void {
     if (!json || typeof json !== 'object') return;
-    const body = json as { attempts?: unknown; links?: unknown; removedAttempts?: unknown; removedLinks?: unknown };
+    const body = json as { attempts?: unknown; links?: unknown; removedAttempts?: unknown; removedLinks?: unknown; consents?: unknown; removedConsents?: unknown };
     if (Array.isArray(body.removedAttempts)) for (const key of body.removedAttempts) if (typeof key === 'string' && !this.attempts.has(key)) this.removedAttempts.add(key);
     if (Array.isArray(body.removedLinks)) for (const guest of body.removedLinks) if (typeof guest === 'string' && !this.links.has(guest)) this.removedLinks.add(guest);
     if (Array.isArray(body.attempts)) for (const row of body.attempts) {
@@ -139,6 +169,15 @@ export class PlayerBook {
       const key = attemptKey(row.learnerDid, row.courseId, row.auId);
       if (this.removedAttempts.has(key) || this.attempts.has(key)) continue;
       this.attempts.set(key, row);
+    }
+    if (Array.isArray(body.removedConsents)) for (const key of body.removedConsents) if (typeof key === 'string' && !this.consents.has(key)) this.removedConsents.add(key);
+    if (Array.isArray(body.consents)) for (const row of body.consents) {
+      if (!row || typeof row !== 'object') continue;
+      const consent = row as { learnerDid?: unknown; courseId?: unknown; at?: unknown };
+      if (typeof consent.learnerDid !== 'string' || typeof consent.courseId !== 'string' || typeof consent.at !== 'string') continue;
+      const key = `${consent.learnerDid}\n${consent.courseId}`;
+      if (this.removedConsents.has(key) || this.consents.has(key)) continue;
+      this.consents.set(key, { learnerDid: consent.learnerDid, courseId: consent.courseId, at: consent.at });
     }
     if (Array.isArray(body.links)) for (const row of body.links) {
       if (!validLink(row) || this.removedLinks.has(row.guestDid) || this.links.has(row.guestDid)) continue;
@@ -177,8 +216,9 @@ export async function voidActorStatements(args: {
   list: () => Promise<ReadonlyArray<{ id: string; voided: boolean; statement: Record<string, unknown> }>>;
   store: (statement: Record<string, unknown>) => Promise<string | null>;
   mark: (targetId: string, voidingId: string) => Promise<boolean>;
-}): Promise<number> {
+}): Promise<{ forgotten: number; voids: Record<string, unknown>[] }> {
   const rows = await args.list();
+  const voids: Record<string, unknown>[] = [];
   let forgotten = 0;
   for (const rec of rows) {
     if (rec.voided) continue;
@@ -187,15 +227,16 @@ export async function voidActorStatements(args: {
     const verb = (rec.statement.verb as { id?: string } | undefined)?.id;
     const object = rec.statement.object as { objectType?: string } | undefined;
     if (verb === VOIDED_VERB && object?.objectType === 'StatementRef') continue;
-    const voidingId = await args.store({
+    const statement = {
       actor: { objectType: 'Agent', account: { homePage: args.homePage, name: args.did } },
       verb: { id: VOIDED_VERB, display: { 'en-US': 'voided' } },
       object: { objectType: 'StatementRef', id: rec.id },
-    });
+    };
+    const voidingId = await args.store(statement);
     if (!voidingId || voidingId === rec.id) continue;
-    if (await args.mark(rec.id, voidingId)) forgotten++;
+    if (await args.mark(rec.id, voidingId)) { forgotten++; voids.push({ ...statement, id: voidingId }); }
   }
-  return forgotten;
+  return { forgotten, voids };
 }
 
 function validAttempt(row: unknown): row is OpenAttempt {
@@ -304,6 +345,10 @@ function limit(name: string, max: number): ReturnType<typeof rateLimit> {
     windowMs: 60_000, limit: max, ipv6Subnet: 56, identifier: name,
     standardHeaders: 'draft-8', legacyHeaders: false,
     message: { error: 'too_many_requests' },
+    // The socket address is the proxy. The last forwarded hop is the client, the same
+    // address a personal launch link uses.
+    keyGenerator: (req) => requestAddress(req as Request),
+    validate: { keyGeneratorIpFallback: false },
   };
   return rateLimit(options);
 }
@@ -366,6 +411,20 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
       if (!courseId || courseId.length > 2000) { res.status(400).json({ error: 'player_course_required' }); return; }
       const course = await deps.resolveCourse(courseId);
       if (!course) { res.status(404).json({ error: 'player_course_unknown' }); return; }
+      if (!book.hasConsent(learner.did, course.id)) {
+        const at = new Date(now()).toISOString();
+        if (deps.storeStatement) {
+          const id = await deps.storeStatement({
+            actor: { objectType: 'Agent', account: { homePage: deps.authoritativeSource, name: learner.did } },
+            verb: { id: `${base}/learn#consented`, display: { 'en-US': 'consented' } },
+            object: { objectType: 'Activity', id: course.id },
+            timestamp: at,
+          });
+          if (!id) { res.status(503).json({ error: 'player_consent_unavailable' }); return; }
+        }
+        book.recordConsent(learner.did, course.id, at);
+        deps.onChange?.();
+      }
       const requested = typeof body.au_id === 'string' ? body.au_id.trim() : undefined;
       const satisfied = new Set(deps.satisfied(tenant, learner.did));
       const choice = chooseAu(course, satisfied, requested || undefined);
@@ -390,10 +449,14 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
         learnerPod: learner.podUrl,
         returnUrl,
       };
-      const prior = book.open(learner.did, course.id, au.id);
-      const resumed = prior ? reissueCmi5Fetch({ ...launchRequest, registration: prior.registration, sessionId: prior.sessionId }) : null;
-      const launch = resumed ?? buildCmi5Launch({ ...launchRequest, launchMode: satisfied.has(au.id) ? 'Review' : 'Normal' });
-      if (!resumed) {
+      const prior = findResumableLaunch({ tenant, learnerId: learner.did, courseId: course.id, auId: au.id })
+        ?? book.open(learner.did, course.id, au.id);
+      const launch = buildCmi5Launch({
+        ...launchRequest,
+        ...(prior ? { resume: { registration: prior.registration, sessionId: prior.sessionId } } : { launchMode: satisfied.has(au.id) ? 'Review' : 'Normal' }),
+      });
+      const continued = !!prior && launch.registration === prior.registration;
+      if (!continued) {
         const sessionId = cmi5SessionId(launch.launchData);
         if (!sessionId) { res.status(503).json({ error: 'player_launch_unavailable' }); return; }
         book.remember({ learnerDid: learner.did, courseId: course.id, auId: au.id, registration: launch.registration, sessionId });
@@ -402,7 +465,7 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
       await deps.stageLaunch(tenant, launch, au.id);
       res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer').json({
         kind: 'cmi5-player-launch',
-        resumed: !!resumed,
+        resumed: continued,
         registration: launch.registration,
         launchUrl: launch.launchUrl,
         actor: launch.actor,
@@ -419,9 +482,13 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
       const learner = await deps.requireLearner(req);
       if (learner.guest) { res.status(409).json({ error: 'player_use_existing_sign_in' }); return; }
       const guest = await deps.verifyGuest(req);
-      if (!guest.guest && guest.userId && !guest.userId.startsWith('u-try-play-')) { res.status(400).json({ error: 'player_not_a_guest' }); return; }
+      if (!guest.userId.startsWith('u-try-play-')) { res.status(400).json({ error: 'player_not_a_guest' }); return; }
       const recorded = book.link(guest.did, learner.did, new Date(now()).toISOString());
       if ('refused' in recorded) { res.status(recorded.refused === 'player_link_capacity' ? 503 : 409).json({ error: recorded.refused }); return; }
+      if (recorded.already) {
+        res.json({ kind: 'cmi5-player-link', guest: guest.did, owner: learner.did, already: true, statementsUnchanged: true });
+        return;
+      }
       copyLearnerSatisfaction(tenant, guest.did, learner.did);
       const ids = (await deps.statementIds?.(guest.did)) ?? [];
       let claimStatementId: string | null = null;
@@ -451,7 +518,9 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
   app.post('/learn/forget', forgetLimit, async (req, res) => {
     try {
       const learner = await deps.requireLearner(req);
-      const targets = learner.guest ? [learner.did] : book.linksFor(learner.did).map(link => link.guestDid);
+      // The caller's own actor, including a guest who has since signed in as that same owner,
+      // plus any other guest they have linked.
+      const targets = [...new Set([learner.did, ...book.linksFor(learner.did).map(link => link.guestDid)])];
       let forgotten = 0;
       for (const did of targets) {
         forgotten += await deps.forgetActor(did);

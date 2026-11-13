@@ -108,6 +108,7 @@ async function forget(current) {
   });
   const value = await response.json().catch(() => ({}));
   if (!response.ok) { say(typeof value.error === 'string' ? value.error : 'The recording could not be deleted.'); return; }
+  if (value.forgotten === 0) { say('Nothing of yours was deleted.'); return; }
   if (token && value.identityDelete && typeof value.identityDelete.url === 'string') {
     await fetch(value.identityDelete.url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}', credentials: 'omit' }).catch(() => undefined);
   }

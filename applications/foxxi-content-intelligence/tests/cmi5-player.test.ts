@@ -9,11 +9,11 @@ import { once } from 'node:events';
 import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import { actorAliases, canonicalActorName, setActorAliasSource } from '../src/actor-alias.js';
-import { attachCoursePlayerRoutes, browserWantsPlayer, playerLocation, PlayerBook, PlayerError, voidActorStatements, type PlayerLearner } from '../src/cmi5-player.js';
+import { attachCoursePlayerRoutes, browserWantsPlayer, playerLocation, PlayerBook, voidActorStatements, type PlayerLearner } from '../src/cmi5-player.js';
 import { attachHostedPackageRoutes } from '../src/scorm-hosting.js';
-import { learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course } from '../src/cmi5-lms.js';
+import { cmi5BearerTenant, forgetCmi5Learner, learnerSatisfiedAus, observeCmi5Statement, redeemFetchToken, registerCmi5Course, buildCmi5Launch } from '../src/cmi5-lms.js';
 import { matchesFilter } from '../src/statement-store.js';
-import { internalRefusalOf } from '../src/xapi-lrs.js';
+import { clearStatementStore, getStatementStore, internalRefusalOf, storeStatementDurably } from '../src/xapi-lrs.js';
 import { DEFAULT_TENANT } from '../src/tenant-context.js';
 import type { Cmi5Course } from '../src/cmi5-course.js';
 
@@ -33,7 +33,7 @@ function learner(did: string, guest: boolean): PlayerLearner {
   return { did, webId: `https://identity.example/users/${userId}/profile#me`, podUrl: `https://pods.example/${userId}/`, userId, guest };
 }
 
-async function player(options: { perMinute?: number; who?: PlayerLearner } = {}) {
+async function player(options: { perMinute?: number; who?: PlayerLearner; verifyGuest?: () => Promise<PlayerLearner> } = {}) {
   registerCmi5Course(DEFAULT_TENANT, course);
   const book = new PlayerBook();
   let who = options.who ?? learner(GUEST, true);
@@ -44,7 +44,7 @@ async function player(options: { perMinute?: number; who?: PlayerLearner } = {})
   attachCoursePlayerRoutes(app, {
     baseUrl: HOME, authoritativeSource: SOURCE, book, launchesPerMinute: options.perMinute ?? 30,
     requireLearner: async () => who,
-    verifyGuest: async () => learner(GUEST, true),
+    verifyGuest: options.verifyGuest ?? (async () => learner(GUEST, true)),
     resolveCourse: async (id) => id === course.id ? course : null,
     satisfied: (tenant, id) => learnerSatisfiedAus(tenant, id),
     stageLaunch: async (_tenant, launch) => { staged.push({ launchMode: launch.launchData.launchMode, registration: launch.registration }); },
@@ -116,17 +116,23 @@ describe('the course player', () => {
     } finally { await launched.close(); }
   });
 
-  it('starts a new registration once the attempt is satisfied, in review', async () => {
+  it('opens a finished attempt in Review and keeps that mode when the review is resumed', async () => {
     const launched = await player();
     try {
       const body = { course_id: course.id, tracking_consent: true };
       const first = await (await fetch(`${launched.base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as { registration: string };
-      const completed = { verb: { id: 'http://adlnet.gov/expapi/verbs/completed' }, object: { id: course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0].id : '' }, context: { registration: first.registration }, result: { completion: true } };
-      const observed = await observeCmi5Statement(completed, DEFAULT_TENANT, { statementsForRegistration: async () => [completed], emit: () => undefined });
-      expect(observed?.satisfied).toBe(true);
+      const auId = course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0].id : '';
+      const completed = { verb: { id: 'http://adlnet.gov/expapi/verbs/completed' }, object: { id: auId }, context: { registration: first.registration }, result: { completion: true } };
+      const deps = { statementsForRegistration: async () => [completed], emit: () => undefined };
+      await observeCmi5Statement({ verb: { id: 'http://adlnet.gov/expapi/verbs/terminated' }, object: { id: auId }, context: { registration: first.registration } }, DEFAULT_TENANT, deps);
+      expect((await observeCmi5Statement(completed, DEFAULT_TENANT, deps))?.satisfied).toBe(true);
+      const review = await (await fetch(`${launched.base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as { registration: string; resumed: boolean };
+      expect(review.resumed).toBe(false);
+      expect(review.registration).not.toBe(first.registration);
+      expect(launched.staged.at(-1)).toMatchObject({ launchMode: 'Review' });
       const again = await (await fetch(`${launched.base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as { registration: string; resumed: boolean };
-      expect(again.resumed).toBe(false);
-      expect(again.registration).not.toBe(first.registration);
+      expect(again.resumed).toBe(true);
+      expect(again.registration).toBe(review.registration);
       expect(launched.staged.at(-1)).toMatchObject({ launchMode: 'Review' });
     } finally { await launched.close(); }
   });
@@ -146,10 +152,13 @@ describe('the course player', () => {
       expect(original.actor.account.name).toBe(GUEST);
       const claim = launched.statements.find(rec => rec.id === body.claimStatementId)!;
       expect((claim.statement.actor as { account: { name: string } }).account.name).toBe(OWNER);
+      const repeat = await (await fetch(`${launched.base}/learn/link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json() as { already?: boolean };
+      expect(repeat.already).toBe(true);
+      expect(launched.statements.filter(rec => (rec.statement.verb as { id?: string }).id?.endsWith('#claimed'))).toHaveLength(1);
       const owner = { account: { homePage: SOURCE, name: OWNER } };
       expect(matchesFilter({ id: original.id, statement: original, stored: new Date().toISOString(), voided: false }, { agent: owner, alsoAgents: actorAliases(owner) })).toBe(true);
       const forgotten = await fetch(`${launched.base}/learn/forget`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
-      expect(await forgotten.json()).toMatchObject({ forgotten: 1 });
+      expect((await forgotten.json() as { forgotten: number }).forgotten).toBeGreaterThan(0);
       expect(launched.statements[0]!.voided).toBe(true);
       expect(original.actor.account.name).toBe(GUEST);
     } finally { await launched.close(); }
@@ -172,7 +181,44 @@ describe('the course player', () => {
     expect(browserWantsPlayer({ headers: { accept: '*/*' }, query: {} })).toBe(false);
     expect(browserWantsPlayer({ headers: { accept: 'text/html' }, query: { endpoint: 'https://lrs.example', fetch: 'https://lrs.example/fetch', registration: 'r' } })).toBe(false);
     expect(playerLocation(course.id)).toBe(`/learn?course_id=${encodeURIComponent(course.id)}`);
-    expect(() => { throw new PlayerError(503, 'player_sign_in_unavailable'); }).toThrow(PlayerError);
+  });
+
+  it('refuses to link an account that is not a provisional guest', async () => {
+    const launched = await player({ verifyGuest: async () => learner('did:web:identity.example:users:u-pk-abc123abc123', false) });
+    try {
+      launched.setWho(learner(OWNER, false));
+      const refused = await fetch(`${launched.base}/learn/link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      expect(refused.status).toBe(400);
+      expect(await refused.json()).toMatchObject({ error: 'player_not_a_guest' });
+    } finally { await launched.close(); }
+  });
+
+  it('forgetting one learner leaves another learner\'s satisfaction and auth token', async () => {
+    const au = course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0] : undefined;
+    if (!au) throw new Error('course');
+    const other = 'did:web:identity.example:users:u-try-play-' + 'cd'.repeat(16);
+    const kept = buildCmi5Launch({
+      au, learner: { id: other }, lrsEndpoint: `${HOME}/xapi`, fetchBaseUrl: `${HOME}/cmi5/fetch`,
+      authoritativeSource: SOURCE, tenant: DEFAULT_TENANT, courseId: course.id,
+    });
+    const redeemed = redeemFetchToken(kept.fetchToken);
+    expect(redeemed.ok).toBe(true);
+    if (!redeemed.ok) return;
+    expect(cmi5BearerTenant(redeemed.body['auth-token'])).toBe(DEFAULT_TENANT);
+    const auId = au.id;
+    const completed = { verb: { id: 'http://adlnet.gov/expapi/verbs/completed' }, object: { id: auId }, context: { registration: kept.registration }, result: { completion: true } };
+    await observeCmi5Statement(completed, DEFAULT_TENANT, { statementsForRegistration: async () => [completed], emit: () => undefined });
+    const keptSatisfied = learnerSatisfiedAus(DEFAULT_TENANT, other);
+    expect(keptSatisfied).toContain(auId);
+    const dropped = buildCmi5Launch({
+      au, learner: { id: GUEST }, lrsEndpoint: `${HOME}/xapi`, fetchBaseUrl: `${HOME}/cmi5/fetch`,
+      authoritativeSource: SOURCE, tenant: DEFAULT_TENANT, courseId: course.id, learnerPod: 'https://pods.example/guest/',
+    });
+    forgetCmi5Learner(DEFAULT_TENANT, GUEST);
+    expect(learnerSatisfiedAus(DEFAULT_TENANT, other)).toEqual(keptSatisfied);
+    expect(learnerSatisfiedAus(DEFAULT_TENANT, GUEST)).toEqual([]);
+    expect(cmi5BearerTenant(redeemed.body['auth-token'])).toBe(DEFAULT_TENANT);
+    expect(redeemFetchToken(dropped.fetchToken).ok).toBe(false);
   });
 
   it('keeps a pending attempt and a deletion when an older copy is read, and counts every linked guest', () => {
@@ -198,25 +244,25 @@ describe('the course player', () => {
     expect(actorAliases({ account: { homePage: SOURCE, name: 'did:guest-a' } }).map(actor => actor.account?.name).sort()).toEqual(['did:guest-b', 'did:owner']);
   });
 
-  it('voids a recording only with a statement that names it', async () => {
-    const original = { id: randomUUID(), voided: false, statement: { actor: { objectType: 'Agent', account: { homePage: SOURCE, name: GUEST } }, verb: { id: 'http://adlnet.gov/expapi/verbs/experienced' }, object: { id: 'https://bridge.example/au/1' } } };
-    const stored: Array<{ id: string; statement: Record<string, unknown> }> = [];
-    const forgotten = await voidActorStatements({
-      homePage: SOURCE, did: GUEST, list: async () => [original],
-      store: async (statement) => {
-        expect(internalRefusalOf(statement)).toEqual([]);
-        const id = randomUUID();
-        stored.push({ id, statement });
-        return id;
-      },
-      mark: async (target, voiding) => {
-        const statement = stored.find(row => row.id === voiding)?.statement;
-        const object = statement?.object as { objectType?: string; id?: string } | undefined;
-        return target !== voiding && object?.objectType === 'StatementRef' && object.id === target;
-      },
+  it('voids a recording in the statement store with a separate voiding statement', async () => {
+    const tenant = `player-void-${randomUUID()}` as typeof DEFAULT_TENANT;
+    const id = randomUUID();
+    const statement = { id, actor: { objectType: 'Agent', account: { homePage: SOURCE, name: GUEST } }, verb: { id: 'http://adlnet.gov/expapi/verbs/experienced' }, object: { id: 'https://bridge.example/au/1' }, timestamp: new Date().toISOString() };
+    expect(await storeStatementDurably(statement, tenant)).toBe(id);
+    const result = await voidActorStatements({
+      homePage: SOURCE, did: GUEST,
+      list: () => getStatementStore(tenant).listAll(),
+      store: (next) => storeStatementDurably(next, tenant),
+      mark: (target, voiding) => getStatementStore(tenant).markVoided(target, voiding),
     });
-    expect(forgotten).toBe(1);
-    expect((stored[0]!.statement.verb as { id: string }).id).toBe('http://adlnet.gov/expapi/verbs/voided');
+    expect(result.forgotten).toBe(1);
+    const stored = await getStatementStore(tenant).get(id);
+    expect(stored?.voided).toBe(true);
+    expect(stored?.voidingStatementId).not.toBe(id);
+    const voider = await getStatementStore(tenant).get(stored!.voidingStatementId!);
+    expect((voider?.statement.verb as { id: string }).id).toBe('http://adlnet.gov/expapi/verbs/voided');
+    expect(internalRefusalOf(voider!.statement)).toEqual([]);
+    await clearStatementStore(tenant);
   });
 
   it('redirects a browser visiting a hosted package record to the player', async () => {
