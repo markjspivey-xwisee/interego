@@ -147,6 +147,19 @@ describe('a registration read as a conversation', () => {
     const r = readLaunchedCall([launched, ...call()], INPUT);
     if (!('call' in r)) throw new Error(r.problems.join('; '));
     expect([r.call.launch.launchMode, r.call.launchModeFrom, r.call.launch.masteryScore]).toEqual(['Review', 'launched-statement', 0.8]);
+    // A launched statement for another session, or another unit, of the same registration says nothing about this conversation.
+    const modeOf = (extra: Out[]): unknown[] => {
+      const x = readLaunchedCall([...extra, ...call()], INPUT);
+      if (!('call' in x)) throw new Error(x.problems.join('; '));
+      return [x.call.launch.launchMode, x.call.launchModeFrom, x.call.launch.masteryScore];
+    };
+    const ext = (mode: unknown, mastery?: number): Out => ({ contextExt: { [LAUNCH_MODE_EXT]: mode, ...(mastery !== undefined ? { 'https://w3id.org/xapi/cmi5/context/extensions/masteryscore': mastery } : {}) } });
+    expect(modeOf([stmt(VERB_LAUNCHED, -1, ext('Normal', 0.9), { session: 'aaaaaaaa-0000-4000-8000-000000000001' })])).toEqual(['Normal', 'assumed', undefined]);
+    expect(modeOf([stmt(VERB_LAUNCHED, -1, { ...ext('Normal', 0.9), object: { objectType: 'Activity', id: `${LMS}/courses/calls/au/2` } })])).toEqual(['Normal', 'assumed', undefined]);
+    // Two for this session that disagree, or one that names no mode, leave it unknown too.
+    expect(modeOf([launchedBy('Normal'), launchedBy('Review')])).toEqual(['Normal', 'assumed', undefined]);
+    expect(modeOf([stmt(VERB_LAUNCHED, -1, ext('normal'))])).toEqual(['Normal', 'assumed', undefined]);
+    expect(modeOf([launchedBy('Normal'), stmt(VERB_LAUNCHED, -2, ext('Review'), { session: 'aaaaaaaa-0000-4000-8000-000000000001' })])).toEqual(['Normal', 'launched-statement', undefined]);
   });
 
   it('says every reason a registration is not one whole conversation against the rubric', () => {
