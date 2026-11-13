@@ -78,8 +78,10 @@ export function provisionalCheckpointPaths(claims) {
     `/${claims.userId}/${namespace}/checkpoints/${sha256(`urn:graph:${namespace}:${kind}:${owner}`)}.json`);
 }
 
-export function checkProvisionalTarget(claims, method, target, headers) {
-  if (claims.expiresAt * 1000 <= Date.now()) throw refusal(401, 'provisional_play_expired', 'Keep your character to continue saving after the temporary session expires');
+// `now` is a parameter, as it is for verifiedProvisional, so a caller that verified the credential
+// at one instant checks its expiry against that same instant.
+export function checkProvisionalTarget(claims, method, target, headers, now = Date.now()) {
+  if (claims.expiresAt * 1000 <= now) throw refusal(401, 'provisional_play_expired', 'Keep your character to continue saving after the temporary session expires');
   if (method !== 'PUT' || target.search || !provisionalCheckpointPaths(claims).includes(target.pathname)) {
     throw refusal(403, 'provisional_play_scope', 'temporary play permits only its own bounded native character checkpoints');
   }

@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-13 — A guest test stopped passing when the clock reached the guest's expiry
+
+`a-guest-is-kept-by-their-browser.test.ts` runs a deployment at a fixed instant
+(2026-11-12T10:00Z) with a guest that expires a day later. The storage gate's
+`checkProvisionalTarget` compared that expiry with the machine's clock, so the
+test passed until 2026-11-13T10:00Z and has answered 401 on every run since,
+on every pull request. `checkProvisionalTarget` now takes `now` as a parameter,
+defaulting to the machine's clock as before, the way `verifiedProvisional`
+already does; the test passes the deployment's clock. The gate's behaviour in
+service is unchanged.
+
 ## 2026-11-13 — Foxxi's own xAPI Profile states its rule locations as JSONPath
 
 Found on the live Profile Server the day it shipped: `/validate_templates`

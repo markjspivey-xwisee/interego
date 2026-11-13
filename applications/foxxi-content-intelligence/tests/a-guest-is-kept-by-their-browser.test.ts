@@ -32,7 +32,7 @@ import { parseSiweMessage } from '../../../deploy/identity/siwe-message.js';
 interface GateModule {
   verifiedProvisional(data: unknown, now?: number): Record<string, unknown> | undefined;
   provisionalCheckpointPaths(claims: unknown): string[];
-  checkProvisionalTarget(claims: unknown, method: string, target: URL, headers: Record<string, string | undefined>): string | null;
+  checkProvisionalTarget(claims: unknown, method: string, target: URL, headers: Record<string, string | undefined>, now?: number): string | null;
   readProvisionalCommit(stream: AsyncIterable<Uint8Array>, expectedRevision: string | null, limits: unknown): Promise<{ body: Buffer; bytes: number }>;
   provisionalLimits(env: Record<string, string>): unknown;
 }
@@ -151,7 +151,9 @@ function deployment(options: { namespace?: string; relaySigns?: boolean; service
       try {
         const verified = gate.verifiedProvisional({ userId: claims.userId, ownerDid: claims.ownerDid, provisionalPlay: identity.tokenGrant(claims) }, now);
         const headers = Object.fromEntries(Object.entries(init.headers ?? {}).map(([k, v]) => [k.toLowerCase(), v]));
-        const expected = gate.checkProvisionalTarget(verified, init.method ?? 'GET', target, headers);
+        // The deployment's clock, not the machine's: without it this passed until the wall clock
+        // reached the guest's expiry (2026-11-13T10:00Z) and then answered 401 for every run.
+        const expected = gate.checkProvisionalTarget(verified, init.method ?? 'GET', target, headers, now);
         const commit = await gate.readProvisionalCommit(Readable.from([Buffer.from(init.body ?? '')]), expected, gate.provisionalLimits({}));
         const command = JSON.parse(commit.body.toString('utf8')) as { bodyBase64: string };
         stored.set(target.pathname, Buffer.from(command.bodyBase64, 'base64'));
