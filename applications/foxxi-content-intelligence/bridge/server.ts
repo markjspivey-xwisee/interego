@@ -536,7 +536,7 @@ import { releasedVersion, releasedVersions, versionLinks } from '../src/ns/relea
 import type { PublishedKind } from '../src/ns/published.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
-import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
+import { validateAgainstProfileTemplates, performanceRecordCategory } from '../src/xapi-profile.js';
 import { answerSuppliedProfileRequest } from '../src/xapi-profile-patterns.js';
 import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 /** Credential-format models registered as DATA (not bespoke handlers): the generic
@@ -3697,7 +3697,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         // A per-performance registration + the published xAPI Profile as a
         // category, so every statement references the profile it conforms to.
         registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }] },
+        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, performanceRecordCategory()] },
         extensions: {
           [PERF_EXT.observedBy]: ctx.webId,
           [PERF_EXT.contextKind]: 'production',
@@ -9398,7 +9398,7 @@ app.post('/agent/record-performance', async (req, res) => {
       },
       context: {
         registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }] },
+        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, performanceRecordCategory()] },
         extensions: {
           [PERF_EXT.observedBy]: callerDid,
           [PERF_EXT.contextKind]: 'production',
@@ -10230,7 +10230,7 @@ async function emitAgentActivity(args: {
       verb: { id: args.verbIri, display: { en: args.verbDisplay } },
       object: { objectType: 'Activity', id: args.objectId, definition: { name: { en: args.objectName }, type: args.objectType } },
       ...(args.result ? { result: args.result } : {}),
-      context: { extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
+      context: { contextActivities: { category: [performanceRecordCategory()] }, extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
       timestamp: new Date().toISOString(),
     };
     const id = await storeStatementDurably(statement, lens);

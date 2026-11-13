@@ -58,6 +58,46 @@ Measured on one made-up artifact with a 120-triple subject and thirty
 4-triple subjects: 9,227 nodes, 32.9 MB plaintext and a 43.8 MB PUT as
 written today; a 1.35 MB PUT with compression; 2,574 nodes and a 2.2 MB PUT
 with groups folded at eight; 0.15 MB with both.
+## 2026-11-13 — Foxxi statements say which kind they are, and its profile selects on that
+
+Under the xAPI Profiles specification a statement must follow every template it
+matches, and it matches on determining properties only. Three families of
+Foxxi's templates shared a verb and took any object type, so a statement of one
+kind matched the templates written for another and failed them: a course
+completion against the performance template, an ingested production run against
+the descriptor templates, a plain voiding against the descriptor voiding.
+
+Statements Foxxi emits now carry a typed context activity saying which kind
+they are, and the templates select on its type:
+
+- a category of type `foxxi:activities/descriptor-projection` on every statement
+  projected from a context descriptor (`performed-descriptor`,
+  `superseding-descriptor`, `voided-descriptor`);
+- a category of type `foxxi:activities/performance-record` on every recorded
+  unit of performance: `record_performance`, its signed form, agent activity,
+  and a descriptor projected as an outcome (`production-performance-completed`,
+  `production-performance-failed`);
+- type `foxxi:activities/superseded-descriptor` on the `other` activity naming
+  the descriptor a statement revises (`superseding-descriptor`).
+
+`performed-production` now names its object type, `foxxi:ProductionTask`, which
+its two emitters already used. The three activity types are declared in the
+profile and in the Foxxi vocabulary.
+
+The Foxxi vocabulary takes a new version for them, 2026.11.0, released and
+archived on its own (backward compatible with 2026.10.1). The archive test
+counted imports per release as if every release carried every document; it now
+counts the releases that archived a shapes graph.
+
+A new test runs what the descriptor projector and the run ingest really emit
+through the specification's validation: each validates, against the template
+for its own kind. Statements stored before this carry no marker: a stored
+production completion or descriptor projection matches no template under the
+specification's reading, and is not rewritten. Foxxi's own validator, which
+selects by verb and object type and accepts any one template, is unchanged. One
+case left: a performance recorded against an activity typed as a course or a
+lesson matches both the course template and the performance template, and has
+to follow both.
 
 ## 2026-11-13 — Foxxi's xAPI Profile: two templates the specification's matching could not use
 
