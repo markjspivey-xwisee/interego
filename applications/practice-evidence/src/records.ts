@@ -188,6 +188,57 @@ export interface AttemptAct {
   readonly authority?: 'relay-delegated'; readonly agentId?: string; readonly relaySigner?: string;
 }
 
+/**
+ * The cmi5 launch an attempt ran under, as the LMS issued it. Present only on an attempt taken from
+ * an LMS launch; an attempt started here carries none, and satisfies no assignable unit.
+ */
+export interface LmsLaunch {
+  /** The registration and the session of the conversation, both issued by the LMS. */
+  readonly registration: string; readonly sessionId: string;
+  /** The assignable unit's activity id, as the launch gave it: the object of every cmi5 defined statement. */
+  readonly activityId: string;
+  /** The actor the LMS launched, as it named them. */
+  readonly actor: { readonly homePage: string; readonly name: string };
+  /** The LRS endpoint the launch named, where the session's statements are. */
+  readonly endpoint: string;
+  readonly launchMode: 'Normal' | 'Browse' | 'Review';
+  /** Present when the launch data carried one (a scaled score, 0 to 1). */
+  readonly masteryScore?: number;
+  /** The launch data's contextTemplate, carried into every statement of the registration. */
+  readonly contextTemplate?: Readonly<Record<string, unknown>>;
+}
+
+const LMS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LMS_IRI = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"{}|\\^`]+$/;
+const lmsHttp = (v: unknown): boolean => {
+  if (typeof v !== 'string') return false;
+  try { const u = new URL(v); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
+};
+
+/** Each failure as one sentence; [] means the value is a launch an attempt may carry. */
+export function lmsLaunchProblems(v: unknown): string[] {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return ['the launch is not an object'];
+  const l = v as Record<string, unknown>;
+  const p: string[] = [];
+  if (typeof l['registration'] !== 'string' || !LMS_UUID.test(l['registration'])) p.push('registration must be a UUID');
+  if (typeof l['sessionId'] !== 'string' || l['sessionId'].length === 0 || l['sessionId'].length > 200) p.push('sessionId must be a non-empty string');
+  if (typeof l['activityId'] !== 'string' || !LMS_IRI.test(l['activityId'])) p.push('activityId must be an absolute IRI');
+  const actor = l['actor'];
+  if (typeof actor !== 'object' || actor === null || Array.isArray(actor)) p.push('actor must be an account: homePage and name');
+  else {
+    const a = actor as Record<string, unknown>;
+    if (!lmsHttp(a['homePage'])) p.push('actor.homePage must be an absolute http(s) URL');
+    if (typeof a['name'] !== 'string' || a['name'].length === 0) p.push('actor.name must be non-empty');
+  }
+  if (!lmsHttp(l['endpoint'])) p.push('endpoint must be an absolute http(s) URL');
+  if (l['launchMode'] !== 'Normal' && l['launchMode'] !== 'Browse' && l['launchMode'] !== 'Review') p.push('launchMode must be Normal, Browse or Review');
+  const m = l['masteryScore'];
+  if (m !== undefined && (typeof m !== 'number' || !Number.isFinite(m) || m < 0 || m > 1)) p.push('masteryScore must be a number from 0 to 1');
+  const t = l['contextTemplate'];
+  if (t !== undefined && (typeof t !== 'object' || t === null || Array.isArray(t))) p.push('contextTemplate must be an object');
+  return p;
+}
+
 export interface AttemptBody extends RecordCommon {
   readonly kind: 'attempt'; readonly attemptIri: string; readonly state: LifecycleState; readonly evidenceKind: 'practice';
   readonly scenario: {
@@ -210,6 +261,8 @@ export interface AttemptBody extends RecordCommon {
   readonly reviews: readonly ReviewResult[];
   readonly reopenings: readonly Reopening[];
   readonly redaction?: Redaction;
+  /** Set only on an attempt taken from an LMS launch. */
+  readonly lmsLaunch?: LmsLaunch;
   readonly startEnvelope: StoredEnvelope;
   readonly acts: readonly AttemptAct[];
 }
@@ -1255,11 +1308,23 @@ function attemptGraph(a: AttemptBody, json: string): string[] {
     ['pev:hasReview', a.reviews.map((r) => ref(`${A}#review-${r.index}`))],
     ['pev:hasReopening', a.reopenings.map((o) => ref(`${A}#reopening-${o.index}`))],
     ['pev:hasRedaction', a.redaction ? ref(`${A}#redaction`) : undefined],
+    ['pev:lmsLaunch', a.lmsLaunch ? ref(`${A}#lms-launch`) : undefined],
     ...assessmentPairs(standing?.assessment ?? a.judgments[0]?.provisional),
     ['pev:serverHeldDemoKey', anyDemoSigner(a) ? bool(true) : undefined],
     ...envelopePairs(a.startEnvelope),
     ...commonPairs(a, json),
   ]));
+  if (a.lmsLaunch) {
+    const l = a.lmsLaunch;
+    blocks.push(block(`${A}#lms-launch`, 'pev:LmsLaunch', [
+      ['pev:lmsRegistration', lit(l.registration)],
+      ['pev:lmsSessionId', lit(l.sessionId)],
+      ['pev:lmsActivity', ref(l.activityId)],
+      ['pev:lmsEndpoint', ref(l.endpoint)],
+      ['pev:lmsLaunchMode', lit(l.launchMode)],
+      ['pev:lmsMasteryScore', l.masteryScore !== undefined ? `"${l.masteryScore}"^^xsd:decimal` : undefined],
+    ]));
+  }
   for (const t of a.turns) {
     const T = `${A}#turn-${t.index}`;
     blocks.push(block(T, 'pev:Turn', [

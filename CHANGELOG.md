@@ -1,5 +1,36 @@
 # Changelog
 
+## 2026-11-13 — Practice Evidence: an attempt under an LMS launch can count toward its assignable unit
+
+Practice Evidence refused, by design, to put a cmi5 defined category on anything:
+practice could not satisfy an assignable unit, and its registration was derived
+from the attempt. The owner has decided that a practice conversation run under an
+LMS launch does count. This is the first piece of that, as pure functions and the
+record's shape. No act sets it yet, and nothing reads an LRS.
+
+- An attempt record may carry the launch it ran under (`lmsLaunch`): the
+  registration, session, actor and activity id the LMS issued, the LRS endpoint,
+  the launch mode, and the masteryScore and contextTemplate when the launch data
+  had them. `lmsLaunchProblems` says what is wrong with one. The record graph
+  writes it as a `pev:LmsLaunch`, declared in `pev.ttl` with a shape in
+  `pev-shapes.ttl`.
+- `buildLaunchedStatements` builds the cmi5 defined statements for a reviewed
+  attempt that has a launch: `passed` or `failed` for a pass gate, then
+  `completed`; `completed` alone for feedback only. They are on the LMS's
+  registration, actor and activity, carry the cmi5 and moveOn categories and the
+  contextTemplate, and name the session they are sent in, which can be a later
+  session of the registration than the conversation's. cmi5 gives these
+  statements to the assignable unit to send, so the bridge still posts nothing.
+- `launchedRefusals` gives the reason when none may be built: no launch, a launch
+  that was not Normal, no standing review, or a reviewed result that meets the
+  rubric's pass rule below the launch's masteryScore (or misses it at or above),
+  which cmi5 can call neither passed nor failed. `launchedStatementProblems`
+  checks a statement against its launch.
+
+An attempt started in Practice Evidence itself has no launch, projects exactly as
+before and satisfies nothing. Verified by the vertical's engine tests against
+fictional fixtures only: no live LMS, LRS or assignable unit has used this.
+
 ## 2026-11-13 — Foxxi's xAPI Profile: two templates the specification's matching could not use
 
 The specification matches a statement to a template on its determining

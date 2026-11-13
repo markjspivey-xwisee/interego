@@ -15,11 +15,18 @@
  *     category, so practice cannot satisfy an assignable unit, and its registration and session id
  *     are derived from the attempt, not issued by an LMS.
  * Nothing is posted anywhere. The exact LRS request is returned for a person to send.
+ *
+ * An attempt taken from an LMS launch (`attempt.lmsLaunch`) is the one exception to the cmi5 rule
+ * above: practice under a launch counts toward the assignable unit. `buildLaunchedStatements`
+ * builds the cmi5 defined statements for it (passed or failed for a pass gate, and completed), on
+ * the LMS's own registration, actor and activity id. cmi5 gives those statements to the assignable
+ * unit to send inside a session, so they are documents for the unit: this bridge still posts
+ * nothing.
  */
 import { createHash } from 'node:crypto';
 import type { AssessmentUse } from './practice.js';
 import { PEV_NS } from './ontology.js';
-import { anyDemoSigner, standingReview, type AttemptBody } from './records.js';
+import { anyDemoSigner, lmsLaunchProblems, standingReview, type AttemptBody, type LmsLaunch } from './records.js';
 
 export type ProjectionFormat = 'xapi' | 'cmi5';
 export const PROJECTION_FORMATS: readonly ProjectionFormat[] = ['xapi', 'cmi5'];
@@ -240,3 +247,185 @@ export const LRS_REQUEST_NOTE = {
   headers: { 'Content-Type': 'application/json', 'X-Experience-API-Version': '2.0.0' },
   note: 'This bridge posts nothing. Send the statement with your own LRS credentials; the statement id is fixed, so sending it twice stores it once.',
 } as const;
+
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+//  An attempt taken from an LMS launch: the cmi5 defined statements the assignable unit sends
+// ─────────────────────────────────────────────────────────────────────────────────────────────
+
+export const VERB_PASSED = 'http://adlnet.gov/expapi/verbs/passed';
+export const VERB_FAILED = 'http://adlnet.gov/expapi/verbs/failed';
+export const CMI5_CATEGORY = `${CMI5_CATEGORY_PREFIX}cmi5`;
+export const CMI5_MOVEON_CATEGORY = `${CMI5_CATEGORY_PREFIX}moveon`;
+export const CMI5_MASTERY_EXT = 'https://w3id.org/xapi/cmi5/context/extensions/masteryscore';
+
+export type LaunchedVerb = 'passed' | 'failed' | 'completed';
+const LAUNCHED_VERB_IRI: Readonly<Record<LaunchedVerb, string>> = { passed: VERB_PASSED, failed: VERB_FAILED, completed: VERB_COMPLETED };
+
+/** The session the statements will be sent in. It may be a later session of the same registration than the conversation's. */
+export interface SendingSession { readonly sessionId: string; readonly at: string }
+
+const scaledOf = (points: number, maxPoints: number): number => (maxPoints > 0 ? points / maxPoints : 0);
+
+/**
+ * Why no cmi5 defined statement may be built for this attempt; [] when they may.
+ * A reviewed result that passes the rubric's rule below the launch's masteryScore (or fails it at
+ * or above) fits neither passed nor failed as cmi5 defines them, so it is refused, not rounded.
+ */
+export function launchedRefusals(a: AttemptBody): string[] {
+  const l = a.lmsLaunch;
+  if (!l) return ['no LMS launched this attempt: it satisfies no assignable unit'];
+  const bad = lmsLaunchProblems(l);
+  if (bad.length > 0) return bad.map((b) => `the stored launch is not usable: ${b}`);
+  const p: string[] = [];
+  if (l.launchMode !== 'Normal') p.push(`the launch mode was ${l.launchMode}: cmi5 allows passed, failed and completed only in a Normal launch`);
+  const review = standingReview(a);
+  if (!review || (a.state !== 'countersigned' && a.state !== 'overridden')) { p.push('the attempt has no standing review'); return p; }
+  if (!a.judgments[0]) { p.push('the attempt has no judgment'); return p; }
+  const x = review.assessment;
+  if (x.use === 'pass-gate' && l.masteryScore !== undefined) {
+    const scaled = scaledOf(x.points, x.maxPoints);
+    if (x.meetsPassRule && scaled < l.masteryScore) p.push(`the reviewed result meets the rubric's pass rule at a scaled score of ${scaled}, below the launch's masteryScore ${l.masteryScore}: cmi5 allows no passed below it`);
+    if (!x.meetsPassRule && scaled >= l.masteryScore) p.push(`the reviewed result does not meet the rubric's pass rule at a scaled score of ${scaled}, at or above the launch's masteryScore ${l.masteryScore}: cmi5 allows no failed at or above it`);
+  }
+  return p;
+}
+
+const objOf = (v: unknown): Record<string, unknown> => (isObj(v) ? v : {});
+
+function launchedContext(l: LmsLaunch, sessionId: string, extensions: Readonly<Record<string, unknown>>, language: string): Record<string, unknown> {
+  const template = objOf(l.contextTemplate);
+  const templateCa = objOf(template['contextActivities']);
+  const templateCats = Array.isArray(templateCa['category']) ? (templateCa['category'] as unknown[]) : [];
+  const ours = [CMI5_CATEGORY, CMI5_MOVEON_CATEGORY];
+  const kept = templateCats.filter((c) => !(isObj(c) && ours.includes(c['id'] as string)));
+  return {
+    ...template,
+    registration: l.registration,
+    language,
+    contextActivities: { ...templateCa, category: [...kept, ...ours.map((id) => ({ objectType: 'Activity', id }))] },
+    extensions: { ...objOf(template['extensions']), ...extensions, [CMI5_SESSION_EXT]: sessionId },
+  };
+}
+
+/**
+ * The cmi5 defined statements for a reviewed attempt taken from an LMS launch, in the order the
+ * assignable unit sends them: passed or failed (a pass gate only), then completed.
+ * Throws when `launchedRefusals` is not empty (a caller defect: eligibility comes first).
+ */
+export function buildLaunchedStatements(i: ProjectionInput, sendIn: SendingSession): Record<string, unknown>[] {
+  const a = i.attempt;
+  const refusals = launchedRefusals(a);
+  if (refusals.length > 0) throw new Error(`buildLaunchedStatements: ${refusals[0]}`);
+  const l = a.lmsLaunch as LmsLaunch;
+  const review = standingReview(a)!;
+  const primary = a.judgments[0]!;
+  const spec = a.scenarioSpec;
+  const x = review.assessment;
+  const duration = durationOf(a.startedAt, a.endedAt ?? a.startedAt);
+  const criterionLevels = Object.fromEntries(review.finalLevels.map((f) => [f.criterionId, f.levelId]));
+  const pevExt: Record<string, unknown> = {
+    [PRACTICE_MARKER]: true,
+    [ext('rubricHash')]: a.scenario.rubricHash,
+    [ext('transcriptHash')]: a.transcriptHash ?? null,
+    [ext('judgeModel')]: `${primary.disclosure.provider}/${primary.disclosure.model}`,
+    [ext('judgeId')]: primary.judge.id,
+    [ext('judgeRoute')]: primary.route,
+    [ext('reviewer')]: review.reviewer.did,
+    [ext('reviewOutcome')]: review.outcome,
+    [ext('rubricRatifiedBy')]: i.ratifiedBy,
+    [ext('scenario')]: a.scenario.scenarioIri,
+    [ext('assessmentUse')]: spec.assessmentUse,
+    [ext('lmsSessionId')]: l.sessionId,
+    [ext('sourceRecord')]: i.headDescriptorUrl,
+  };
+  if (l.masteryScore !== undefined) pevExt[CMI5_MASTERY_EXT] = l.masteryScore;
+  const context = launchedContext(l, sendIn.sessionId, pevExt, spec.language);
+  const statement = (verb: LaunchedVerb, result: Record<string, unknown>): Record<string, unknown> => ({
+    version: XAPI_VERSION,
+    id: deterministicUuid(`${a.attemptIri}|${i.headDescriptorUrl}|launched|${verb}|${sendIn.sessionId}`),
+    actor: { objectType: 'Agent', account: { homePage: l.actor.homePage, name: l.actor.name } },
+    verb: { id: LAUNCHED_VERB_IRI[verb], display: { 'en-US': verb } },
+    object: { objectType: 'Activity', id: l.activityId },
+    result,
+    context,
+    timestamp: sendIn.at,
+  });
+  const out: Record<string, unknown>[] = [];
+  if (x.use === 'pass-gate') {
+    out.push(statement(x.meetsPassRule ? 'passed' : 'failed', {
+      score: { scaled: scaledOf(x.points, x.maxPoints), raw: x.points, min: 0, max: x.maxPoints },
+      success: x.meetsPassRule, duration, extensions: { [ext('criterionLevels')]: criterionLevels },
+    }));
+  }
+  out.push(statement('completed', { completion: true, duration, extensions: { [ext('criterionLevels')]: criterionLevels } }));
+  return out;
+}
+
+/** Each failure as one sentence; [] means the statement is a cmi5 defined statement of this launch. */
+export function launchedStatementProblems(stmt: unknown, l: LmsLaunch, sendIn: SendingSession): string[] {
+  const p: string[] = [];
+  if (!isObj(stmt)) return ['the statement is not an object'];
+  if (stmt['version'] !== XAPI_VERSION) p.push(`version must be ${XAPI_VERSION}`);
+  if (typeof stmt['id'] !== 'string' || !UUID.test(stmt['id'])) p.push('id must be an RFC 4122 UUID');
+  const actor = stmt['actor'];
+  const acc = isObj(actor) ? actor['account'] : undefined;
+  if (!isObj(actor) || actor['objectType'] !== 'Agent' || !isObj(acc) || acc['homePage'] !== l.actor.homePage || acc['name'] !== l.actor.name) {
+    p.push('actor must be the account the LMS launched');
+  }
+  const verbId = isObj(stmt['verb']) ? stmt['verb']['id'] : undefined;
+  const verb = (Object.keys(LAUNCHED_VERB_IRI) as LaunchedVerb[]).find((v) => LAUNCHED_VERB_IRI[v] === verbId);
+  if (!verb) p.push('verb must be passed, failed or completed');
+  const obj = stmt['object'];
+  if (!isObj(obj) || obj['objectType'] !== 'Activity' || obj['id'] !== l.activityId) p.push('object must be the launched activity');
+  const result = stmt['result'];
+  if (!isObj(result)) p.push('result is required');
+  else {
+    if (typeof result['duration'] !== 'string' || !DURATION.test(result['duration'])) p.push('a cmi5 defined statement needs result.duration as PT<seconds>S');
+    const score = result['score'];
+    const scaled = isObj(score) ? score['scaled'] : undefined;
+    if (verb === 'completed') {
+      if (result['completion'] !== true) p.push('completed needs result.completion true');
+      if (result['success'] !== undefined || score !== undefined) p.push('completed carries no success and no score');
+    } else if (verb) {
+      if (result['success'] !== (verb === 'passed')) p.push(`${verb} needs result.success ${verb === 'passed'}`);
+      if (result['completion'] !== undefined) p.push(`${verb} carries no completion`);
+      if (typeof scaled !== 'number' || scaled < -1 || scaled > 1) p.push('result.score.scaled must be from -1 to 1');
+      else if (l.masteryScore !== undefined) {
+        if (verb === 'passed' && scaled < l.masteryScore) p.push('passed needs a scaled score at or above the masteryScore');
+        if (verb === 'failed' && scaled >= l.masteryScore) p.push('failed needs a scaled score below the masteryScore');
+      }
+    }
+  }
+  if (stmt['timestamp'] !== sendIn.at || !ISO_WITH_OFFSET.test(sendIn.at)) p.push('timestamp must be the sending time, ISO 8601 with an offset');
+  const ctx = stmt['context'];
+  if (!isObj(ctx)) p.push('context is required');
+  else {
+    if (ctx['registration'] !== l.registration) p.push('context.registration must be the registration the LMS issued');
+    const cext = objOf(ctx['extensions']);
+    if (cext[CMI5_SESSION_EXT] !== sendIn.sessionId) p.push('the session id extension must be the session the statement is sent in');
+    if (cext[PRACTICE_MARKER] !== true) p.push('the practice marker must be present and true');
+    if (l.masteryScore !== undefined && verb !== 'completed' && cext[CMI5_MASTERY_EXT] !== l.masteryScore) p.push('the masteryScore extension must carry the masteryScore of the launch');
+    const ca = objOf(ctx['contextActivities']);
+    const cats = (Array.isArray(ca['category']) ? ca['category'] as unknown[] : []).map((c) => (isObj(c) ? c['id'] : undefined));
+    for (const need of [CMI5_CATEGORY, CMI5_MOVEON_CATEGORY]) {
+      if (cats.filter((c) => c === need).length !== 1) p.push(`context must carry the category ${need} once`);
+    }
+    for (const [k, v] of Object.entries(objOf(objOf(l.contextTemplate)['extensions']))) {
+      if (k !== CMI5_SESSION_EXT && JSON.stringify(cext[k]) !== JSON.stringify(v)) p.push(`the contextTemplate extension ${k} must be carried unchanged`);
+    }
+    const relative = Object.keys(cext).filter((k) => !ABSOLUTE_IRI.test(k));
+    if (relative.length > 0) p.push(`extension keys must be absolute IRIs: ${relative.join(', ')}`);
+  }
+  return p;
+}
+
+/** What the launched statements leave out. Returned with them. */
+export const LOSSY_LAUNCHED: readonly string[] = [
+  'carries levels, not the quotes or their offsets',
+  'carries the transcript hash, not the transcript',
+  'carries the reviewer, not the grounds of the review',
+  'carries the primary judge; other judgments are in the record',
+  'the duration is that of the conversation, not the time since the launch',
+  'built for the assignable unit to send inside a session of the registration: this bridge posts nothing',
+  'the full record is referenced by descriptor URL',
+];
