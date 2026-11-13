@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-13 — Foxxi's xAPI Profile: two templates the specification's matching could not use
+
+The specification matches a statement to a template on its determining
+properties, and a statement that matches several templates has to follow every
+one. Two of Foxxi's templates were written for a looser reading and went wrong
+under it:
+
+- `launched` named the cmi5 category in `contextCategoryActivityType`. That
+  property is the type of a category activity; the cmi5 category is an
+  activity id and carries no type, so the template matched no statement. The
+  property is gone; the rule on the category id is what requires it.
+- `experienced-activity` had no `objectActivityType` and a rule that the object
+  be a course or a performance. It therefore matched every `experienced`
+  statement, and made each fragment and slide statement invalid. It is now the
+  course template, with a new `experienced-performance` beside it.
+
+Of 26 statements this application's own tests treat as conformant, 21 now
+validate under the specification's algorithm (16 before). The other five need a
+decision about what Foxxi emits, and are unchanged: `completed` and `failed`
+for a course or lesson against the production-performance templates,
+`performed` for an ingested production run against the descriptor templates,
+and a plain `voided` against `voided-descriptor`. Each pair shares a verb with
+nothing in the statement to tell them apart.
 ## 2026-11-13 — A guest test stopped passing when the clock reached the guest's expiry
 
 `a-guest-is-kept-by-their-browser.test.ts` runs a deployment at a fixed instant
