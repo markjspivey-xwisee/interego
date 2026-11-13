@@ -185,7 +185,10 @@ const templates = [
     // NB: objectActivityType is a SINGLE IRI per the xAPI Profile spec — a verb that applies to
     // BOTH a course and a lesson/AU is not pinned here; the object type is enforced by an
     // object.definition.type rule (rules MAY carry multiple `any` values, unlike objectActivityType).
-    contextCategoryActivityType: [`${CMI5}/context/categories/cmi5`],
+    // No contextCategoryActivityType: that property names the TYPE of a category activity, and
+    // the cmi5 category is an activity ID that carries no type in a statement. Stating the id
+    // there meant the specification's matching found this template for no statement at all.
+    // The category rule below is what requires it.
     rules: [
       { location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] },
       // Enforced determining property (present, not just value-checked-when-present): a
@@ -218,10 +221,17 @@ const templates = [
     // and the content-delivery job-aid/deliver paths (experienced+performance). Selected by
     // objectActivityType; no slide-specific rules (those belong to slide-viewed).
     id: `${FOXXI_PROFILE_ID}/templates/experienced-activity`,
-    prefLabel: { en: 'experienced (course / performance-support)' },
-    definition: { en: 'A course-catalog experience or a performance-support artifact was experienced. Object type is a course OR a performance activity — enforced by an object.definition.type rule (objectActivityType stays a single IRI per spec).' },
+    prefLabel: { en: 'experienced (course)' },
+    definition: { en: 'A course-catalog experience: a course was experienced. One template per object activity type, because a template with no objectActivityType matches every `experienced` statement under the specification, a fragment or a slide included, and each would then have to follow its rules too.' },
     verb: `${ADL}/verbs/experienced`,
-    rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/performance`] }],
+    objectActivityType: `${ADL}/activities/course`,
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/experienced-performance`,
+    prefLabel: { en: 'experienced (performance support)' },
+    definition: { en: 'A performance-support artifact (a job aid, a delivered reference) was experienced.' },
+    verb: `${ADL}/verbs/experienced`,
+    objectActivityType: `${ADL}/activities/performance`,
   },
   {
     // The Context Companion (POST /content/ask) records an `interacted` with an interaction
