@@ -126,6 +126,10 @@ interface PgClient {
   release(): void;
 }
 
+/** Bounds on one batched write statement (see writeRun). */
+const RUN_BYTES = 4 * 1024 * 1024;
+const RUN_KEYS = 1024;
+
 export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
   const pressure = writePressure(opts);
   // @ts-ignore optional dependency (pure-JS node-postgres), installed where used.
@@ -154,7 +158,9 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
         const client = await pool.connect();
         // Queue SQL, rather than starting it in set(): admission must run BEFORE a
         // positive write. Serial flushing also preserves read-your-own-writes.
-        const pending: Array<() => Promise<unknown>> = [];
+        // A buffered set is data, not a closure, so a run of them can go out as two statements
+        // (see writeRun) instead of two per key.
+        const pending: Array<{ set: [Buffer, Buffer] } | { run: () => Promise<unknown> }> = [];
         let flushing: Promise<void> = Promise.resolve();
         let inputBytes = 0;
         let positiveOperations = 0;
@@ -232,11 +238,60 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           }
           await admit();
         };
+        /**
+         * Buffered sets, written together. One set is the two statements it always was. Several
+         * are the same two, over arrays: one that locks every existing row and reads its size
+         * (what reserveExisting does per key), then one upsert of them all. Rows are taken in key
+         * order so two transactions writing overlapping runs lock them in the same order.
+         */
+        const writeRun = async (run: [Buffer, Buffer][]): Promise<void> => {
+          if (run.length === 1) {
+            await reserveExisting(run[0]![0]);
+            await client.query(
+              `INSERT INTO ${table}(k, v) VALUES ($1, $2) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v`, run[0]!);
+            return;
+          }
+          run.sort((a, b) => Buffer.compare(a[0], b[0]));
+          const keys = run.map(entry => entry[0]);
+          if (pressure) {
+            const prior = await client.query<{ bytes: number }>(
+              `SELECT octet_length(v) AS bytes FROM ${table} WHERE k = ANY($1::bytea[]) ORDER BY k FOR UPDATE`, [keys]);
+            for (const row of prior.rows) {
+              if (typeof row.bytes !== 'number' || !Number.isSafeInteger(row.bytes) || row.bytes < 0) {
+                refusal ??= new PgWritePressureError('replaced value size is unavailable');
+                throw refusal;
+              }
+              inputBytes += row.bytes;
+            }
+            if (!Number.isSafeInteger(inputBytes) || inputBytes > pressure.inputMaximum) {
+              refusal ??= new PgWritePressureError('transaction input including replaced values exceeds its byte bound');
+              throw refusal;
+            }
+            await admit();
+          }
+          await client.query(
+            `INSERT INTO ${table}(k, v) SELECT * FROM unnest($1::bytea[], $2::bytea[]) ORDER BY 1
+             ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v`, [keys, run.map(entry => entry[1])]);
+        };
         const flush = (): Promise<void> => {
           const operations = pending.splice(0);
           flushing = flushing.then(async () => {
             await admit();
-            for (const operation of operations) await operation();
+            for (let index = 0; index < operations.length;) {
+              const operation = operations[index]!;
+              if ('run' in operation) { await operation.run(); index++; continue; }
+              // A run of consecutive sets; a key written twice in it keeps its last value.
+              // One statement carries a bounded amount: a large upload stays a series of
+              // statements, as it was, rather than one of the whole size.
+              const run = new Map<string, [Buffer, Buffer]>();
+              for (let bytes = 0; index < operations.length && bytes < RUN_BYTES && run.size < RUN_KEYS; index++) {
+                const next = operations[index]!;
+                if (!('set' in next)) break;
+                run.set(next.set[0].toString('hex'), next.set);
+                bytes += next.set[0].length + next.set[1].length;
+              }
+              await writeRun([...run.values()]);
+            }
           });
           return flushing;
         };
@@ -253,12 +308,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
             set: (key: Key, value: Key) => {
               const capturedKey = Buffer.from(key), capturedValue = Buffer.from(value);
               planPositive(capturedKey, capturedValue);
-              pending.push(async () => {
-                await reserveExisting(capturedKey);
-                return client.query(
-                  `INSERT INTO ${table}(k, v) VALUES ($1, $2) ON CONFLICT (k) DO UPDATE SET v = EXCLUDED.v`,
-                  [capturedKey, capturedValue]);
-              });
+              pending.push({ set: [capturedKey, capturedValue] });
             },
             /**
              * ★ THE CONDITION IS IN THE STATEMENT, NOT IN AN EARLIER SELECT.
@@ -307,13 +357,42 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
                   [capturedKey, capturedValue, capturedExpected]);
               return r.rowCount === 1;
             },
+            getMany: async (keys: readonly Key[]) => {
+              const captured = keys.map(key => Buffer.from(key));
+              await flush();
+              if (captured.length === 0) return [];
+              const r = await client.query<{ k: Buffer; v: Buffer }>(
+                `SELECT k, v FROM ${table} WHERE k = ANY($1::bytea[])`, [captured]);
+              const found = new Map(r.rows.map(row => [row.k.toString('hex'), row.v]));
+              return captured.map((key) => { const v = found.get(key.toString('hex')); return v ? new Uint8Array(v) : undefined; });
+            },
+            // compareAndSet(key, null, value) for every entry in one statement: ON CONFLICT DO
+            // NOTHING waits on a concurrent creator of a key and then leaves that key alone, and
+            // RETURNING names exactly the rows this statement created. Nothing is replaced, so
+            // there is no prior value to reserve for.
+            createAbsent: async (entries: readonly { readonly key: Key; readonly value: Value }[]) => {
+              const captured = entries.map(entry => [Buffer.from(entry.key), Buffer.from(entry.value)] as const)
+                .sort((a, b) => Buffer.compare(a[0], b[0]));
+              if (new Set(captured.map(entry => entry[0].toString('hex'))).size !== captured.length) {
+                throw new Error('pgsl-store: createAbsent keys must be distinct');
+              }
+              for (const [key, value] of captured) planPositive(key, value);
+              await flush();
+              if (captured.length === 0) return [];
+              await admit();
+              const r = await client.query<{ k: Buffer }>(
+                `INSERT INTO ${table}(k, v) SELECT * FROM unnest($1::bytea[], $2::bytea[]) ORDER BY 1
+                 ON CONFLICT (k) DO NOTHING RETURNING k`, [captured.map(entry => entry[0]), captured.map(entry => entry[1])]);
+              const created = new Set(r.rows.map(row => row.k.toString('hex')));
+              return entries.map(entry => created.has(Buffer.from(entry.key).toString('hex')));
+            },
             clear: (key: Key) => {
               const capturedKey = Buffer.from(key);
-              pending.push(() => client.query(`DELETE FROM ${table} WHERE k = $1`, [capturedKey]));
+              pending.push({ run: () => client.query(`DELETE FROM ${table} WHERE k = $1`, [capturedKey]) });
             },
             clearRange: (begin: Key, end: Key) => {
               const capturedBegin = Buffer.from(begin), capturedEnd = Buffer.from(end);
-              pending.push(() => client.query(`DELETE FROM ${table} WHERE k >= $1 AND k < $2`, [capturedBegin, capturedEnd]));
+              pending.push({ run: () => client.query(`DELETE FROM ${table} WHERE k >= $1 AND k < $2`, [capturedBegin, capturedEnd]) });
             },
             getRange: async (begin: Key, end: Key, opts?: { readonly limit?: number }): Promise<KeyValue[]> => {
               const capturedBegin = Buffer.from(begin), capturedEnd = Buffer.from(end);

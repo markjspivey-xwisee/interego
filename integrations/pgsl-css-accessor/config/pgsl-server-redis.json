@@ -162,6 +162,9 @@
             },
             "eTagHandler": {
               "@id": "urn:solid-server:default:ETagHandler"
+            },
+            "accessor": {
+              "@id": "urn:pgsl-css:default:PgslDataAccessor"
             }
           },
           {

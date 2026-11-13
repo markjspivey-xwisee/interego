@@ -589,6 +589,91 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
     } finally { await fixture.close(); }
   }, 15_000);
 
+  it('writes a run of buffered sets together: last value per key wins, and sets, deletes and reads keep their order', async () => {
+    const fixture = await pressureFixture('set_run');
+    try {
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 1 << 20, writeReserveBytes: 8192 });
+      const key = (name: string): Buffer => Buffer.from(`run-${name}`);
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2),($3,$4)`, [key('old'), Buffer.from('before'), key('gone'), Buffer.from('before')]);
+      await adapter.transact(async tx => {
+        for (let index = 0; index < 40; index++) tx.set(key(`n${index}`), randomBytes(index));
+        tx.set(key('old'), Buffer.from('first'));
+        tx.set(key('old'), Buffer.from('second'));
+        tx.set(key('gone'), Buffer.from('written then cleared'));
+        tx.clear(key('gone'));
+        tx.set(key('back'), Buffer.from('cleared'));
+        tx.clear(key('back'));
+        tx.set(key('back'), Buffer.from('then written'));
+        // A read sees every write buffered before it.
+        expect(Buffer.from((await tx.get(key('old')))!).toString()).toBe('second');
+        expect(await tx.get(key('gone'))).toBeUndefined();
+        tx.set(key('old'), Buffer.from('third'));
+        tx.set(key('late'), Buffer.from('late'));
+      });
+      expect((await fixture.value(key('old')))?.toString()).toBe('third');
+      expect(await fixture.value(key('gone'))).toBeUndefined();
+      expect((await fixture.value(key('back')))?.toString()).toBe('then written');
+      expect((await fixture.value(key('late')))?.toString()).toBe('late');
+      for (let index = 0; index < 40; index++) expect((await fixture.value(key(`n${index}`)))?.length).toBe(index);
+      // A failed transaction leaves none of a run behind.
+      await expect(adapter.transact(async tx => {
+        tx.set(key('x1'), Buffer.from('x')); tx.set(key('x2'), Buffer.from('x'));
+        await tx.get(key('x1'));
+        throw new Error('abandon');
+      })).rejects.toThrow('abandon');
+      expect(await fixture.value(key('x1'))).toBeUndefined();
+      expect(await fixture.value(key('x2'))).toBeUndefined();
+    } finally { await fixture.close(); }
+  }, 15_000);
+
+  it('charges the replaced bytes of a whole run against the transaction bound before writing any of it', async () => {
+    const fixture = await pressureFixture('run_budget');
+    try {
+      const keys = [Buffer.from('a'), Buffer.from('b'), Buffer.from('c')];
+      for (const key of keys) await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [key, randomBytes(2048)]);
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 4096, writeReserveBytes: 8192 });
+      await expect(adapter.transact(async tx => { for (const key of keys) tx.set(key, Buffer.from('small')); }))
+        .rejects.toMatchObject({ code: 'PGSL_WRITE_PRESSURE' });
+      for (const key of keys) expect((await fixture.value(key))?.length).toBe(2048);
+      // Two of them fit.
+      await adapter.transact(async tx => { tx.set(keys[0]!, Buffer.from('small')); });
+      expect((await fixture.value(keys[0]!))?.toString()).toBe('small');
+    } finally { await fixture.close(); }
+  }, 15_000);
+
+  it('reads many keys in the order asked and creates only absent keys, one creator per key across pools', async () => {
+    const fixture = await pressureFixture('many');
+    try {
+      const options = { maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 1 << 20, writeReserveBytes: 8192 };
+      const left = await fixture.open(options), right = await fixture.open(options);
+      const key = (name: string): Buffer => Buffer.from(`many-${name}`);
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [key('taken'), Buffer.from('kept')]);
+      await left.transact(async tx => {
+        tx.set(key('buffered'), Buffer.from('own write'));
+        const read = await tx.getMany!([key('missing'), key('taken'), key('buffered'), key('taken')]);
+        expect(read.map(value => value && Buffer.from(value).toString())).toEqual([undefined, 'kept', 'own write', 'kept']);
+        expect(await tx.getMany!([])).toEqual([]);
+        expect(await tx.createAbsent!([])).toEqual([]);
+        expect(await tx.createAbsent!([
+          { key: key('z-new'), value: Buffer.from('made') }, { key: key('taken'), value: Buffer.from('ignored') },
+          { key: key('a-new'), value: Buffer.from('made') }, { key: key('buffered'), value: Buffer.from('ignored') },
+        ])).toEqual([true, false, true, false]);
+        await expect(tx.createAbsent!([{ key: key('dup'), value: Buffer.of(1) }, { key: key('dup'), value: Buffer.of(2) }])).rejects.toThrow(/distinct/);
+      });
+      expect((await fixture.value(key('taken')))?.toString()).toBe('kept');
+      expect((await fixture.value(key('buffered')))?.toString()).toBe('own write');
+      expect((await fixture.value(key('z-new')))?.toString()).toBe('made');
+      // Overlapping creators: every key is created by exactly one of them, and holds that one's value.
+      const contested = Array.from({ length: 24 }, (_, index) => key(`race-${index}`));
+      const [one, two] = await Promise.all([left, right].map((adapter, who) => adapter.transact(tx =>
+        tx.createAbsent!(contested.map(k => ({ key: k, value: Buffer.from(`writer-${who}`) }))))));
+      for (const [index, k] of contested.entries()) {
+        expect(Number(one![index]) + Number(two![index])).toBe(1);
+        expect((await fixture.value(k))?.toString()).toBe(one![index] ? 'writer-0' : 'writer-1');
+      }
+    } finally { await fixture.close(); }
+  }, 20_000);
+
   it('captures compareAndSet arguments before awaiting a pending flush, including the expected revision bytes', async () => {
     const fixture = await pressureFixture('cas_snapshot');
     try {
