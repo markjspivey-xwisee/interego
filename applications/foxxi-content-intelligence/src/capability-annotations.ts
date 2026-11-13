@@ -419,6 +419,18 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
       "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
     ]
   },
+  "foxxi.cmi5_personal_launch_list": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "signed",
+    "requires": [
+      "An authenticated own-account signed request or supported Foxxi bearer session"
+    ],
+    "notes": [
+      "Lists personal launch links minted for the signed learner. The URL secret is not stored and is not returned.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
   "foxxi.cmi5_personal_launch_revoke": {
     "implementation": "implemented",
     "mode": "write",

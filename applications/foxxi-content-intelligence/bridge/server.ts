@@ -476,8 +476,8 @@ import { readyStatementStore, residentStatementBudget, residentStatementCount, r
 import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
-import { attachPersonalLaunchRoutes, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
-import { readDurableRegistry } from '../src/revocable-registry.js';
+import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
+import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
@@ -11135,6 +11135,27 @@ app.post('/agent/xapi-profiles/remove', xapiProfileWriteRateLimit, async (req, r
 // own pod, derived from the signature and never named by the caller; a delegated claim is
 // issued to the person the delegation names, not to the agent carrying it.
 
+/**
+ * Who a personal launch link is for. A wallet is itself. A delegate is the person the delegation
+ * names, and the link ends when that delegation does. A read that fails does not bind the link to
+ * the agent: the caller is told to try again.
+ */
+async function signedLearnerForLink(auth: { callerDid: string }): Promise<{ did: string; podUrl: string; via?: string; delegationExpiresAt?: string }> {
+  const podUrl = selfBoundPod(auth.callerDid);
+  if (auth.callerDid.startsWith('did:ethr:')) return { did: auth.callerDid, podUrl };
+  let vc;
+  try {
+    vc = await readDelegationCredential(resolveSubjectPodUrl(auth.callerDid), auth.callerDid as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never });
+  } catch {
+    throw new PersonalLinkAuthError(503, 'the delegation could not be read just now; the link was not bound to the agent');
+  }
+  if (!vc) throw new PersonalLinkAuthError(401, 'this agent has no delegation to act as a person');
+  const person = vc.credentialSubject?.delegatedBy ?? vc.issuer;
+  if (!person || person === auth.callerDid) throw new PersonalLinkAuthError(503, 'the delegation could not be read just now; the link was not bound to the agent');
+  if (vc.expirationDate && Date.parse(vc.expirationDate) <= Date.now()) throw new PersonalLinkAuthError(401, 'this delegation has expired');
+  return { did: String(person), podUrl, via: auth.callerDid, ...(vc.expirationDate ? { delegationExpiresAt: vc.expirationDate } : {}) };
+}
+
 /** Who a signed caller is learning as, and whose record and wallet that means. */
 async function signedLearner(auth: { callerDid: string }): Promise<{ did: string; podUrl: string; via?: string }> {
   const podUrl = selfBoundPod(auth.callerDid);
@@ -11309,10 +11330,7 @@ attachHostedPackageRoutes(app, {
 
 const openHosting = openHostingSettings(process.env);
 const openHostingBySigner = new SignerHourlyLimit(openHosting.perSignerHourly);
-const openHostingRateLimit = rateLimit({
-  windowMs: 3_600_000, limit: 20, ipv6Subnet: 56, identifier: 'open-hosting',
-  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
-});
+const openHostingRateLimit = forwardedRateLimit({ windowMs: 3_600_000, limit: 20, identifier: 'open-hosting' });
 // ── The front door: what a newcomer can do here, as a page for a person and as data for an agent.
 // It names only what this deployment offers (src/front-door.ts).
 app.get('/start', (req, res) => {
@@ -11490,12 +11508,13 @@ const PERSONAL_LINKS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, ''
 const personalLaunchLinks = new PersonalLaunchRegistry();
 let personalLinksReadAt = 0;
 async function readPersonalLinks(): Promise<'loaded' | 'absent' | 'failed'> {
-  if (!PERSONAL_LINKS_RESOURCE) return 'absent';
-  personalLinksReadAt = Date.now();
-  return readDurableRegistry(
+  if (!PERSONAL_LINKS_RESOURCE) { personalLinksReadAt = Date.now(); return 'absent'; }
+  const read = await readDurableRegistry(
     () => (globalThis.fetch as typeof fetch)(PERSONAL_LINKS_RESOURCE, { headers: { Accept: 'application/json' } }),
     (json) => { personalLaunchLinks.load(json); },
   );
+  if (read !== 'failed') personalLinksReadAt = Date.now();
+  return read;
 }
 /**
  * Write the registry to the pod. True when the pod holds what this process holds. A read that
@@ -11505,14 +11524,14 @@ async function readPersonalLinks(): Promise<'loaded' | 'absent' | 'failed'> {
 async function writePersonalLinks(): Promise<boolean> {
   if (!PERSONAL_LINKS_RESOURCE || !personalLaunchLinks.dirty) return true;
   personalLaunchLinks.dirty = false;
-  const f = globalThis.fetch as typeof fetch;
   try {
-    const read = await readPersonalLinks();
-    if (read === 'failed') { personalLaunchLinks.dirty = true; return false; }
-    const container = PERSONAL_LINKS_RESOURCE.replace(/[^/]+$/, '');
-    await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
-    const w = await f(PERSONAL_LINKS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(personalLaunchLinks) });
-    if (w.ok) return true;
+    const ok = await commitDurableRegistry({
+      resource: PERSONAL_LINKS_RESOURCE,
+      fetch: globalThis.fetch as typeof fetch,
+      load: (json) => { personalLaunchLinks.load(json); },
+      body: () => JSON.stringify(personalLaunchLinks),
+    });
+    if (ok) { personalLinksReadAt = Date.now(); return true; }
   } catch { /* tried again below */ }
   personalLaunchLinks.dirty = true;
   return false;
@@ -11531,7 +11550,7 @@ attachPersonalLaunchRoutes(app, {
   registry: personalLaunchLinks,
   authoritativeSource: String(authoritativeSource),
   verifyCaller: verifyDelegatedCaller,
-  learnerOf: signedLearner,
+  learnerOf: signedLearnerForLink,
   tenantFor: (learner) => lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS)),
   resolveCourse: async (courseId) => (await publishedCmi5Course(courseId)) ?? null,
   satisfiedAus: learnerSatisfiedAus,
@@ -11540,7 +11559,10 @@ attachPersonalLaunchRoutes(app, {
   opensPerMinute: positiveLimit(process.env.FOXXI_CMI5_GO_PER_IP, 60),
   opensPerTokenPerMinute: positiveLimit(process.env.FOXXI_CMI5_GO_PER_TOKEN, 12),
   persist: persistPersonalLinks,
-  reload: async () => { if (Date.now() - personalLinksReadAt > 30_000) await readPersonalLinks(); },
+  reload: async () => {
+    if (personalLinksReadAt && Date.now() - personalLinksReadAt <= 30_000) return 'loaded' as const;
+    return readPersonalLinks();
+  },
   serverError: (res, err, where) => sendServerError(res, err, where),
 });
 
@@ -12667,26 +12689,26 @@ const DISPATCHES_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/f
 const scormDispatches = new DispatchRegistry();
 let dispatchesReadAt = 0;
 async function readDispatches(): Promise<'loaded' | 'absent' | 'failed'> {
-  if (!DISPATCHES_RESOURCE) return 'absent';
-  dispatchesReadAt = Date.now();
-  return readDurableRegistry(
+  if (!DISPATCHES_RESOURCE) { dispatchesReadAt = Date.now(); return 'absent'; }
+  const read = await readDurableRegistry(
     () => (globalThis.fetch as typeof fetch)(DISPATCHES_RESOURCE, { headers: { Accept: 'application/json' } }),
     (json) => { scormDispatches.load(json); },
   );
+  if (read !== 'failed') dispatchesReadAt = Date.now();
+  return read;
 }
 /** Write the registry to the pod. True when the pod holds what this process holds. A failed read is not overwritten. */
 async function writeDispatches(): Promise<boolean> {
   if (!DISPATCHES_RESOURCE || !scormDispatches.dirty) return true;
   scormDispatches.dirty = false;
-  const f = globalThis.fetch as typeof fetch;
   try {
-    // Merge the durable copy in first, so another process's dispatches, counts and withdrawals are kept.
-    const read = await readDispatches();
-    if (read === 'failed') { scormDispatches.dirty = true; return false; }
-    const container = DISPATCHES_RESOURCE.replace(/[^/]+$/, '');
-    await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
-    const w = await f(DISPATCHES_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scormDispatches) });
-    if (w.ok) return true;
+    const ok = await commitDurableRegistry({
+      resource: DISPATCHES_RESOURCE,
+      fetch: globalThis.fetch as typeof fetch,
+      load: (json) => { scormDispatches.load(json); },
+      body: () => JSON.stringify(scormDispatches),
+    });
+    if (ok) { dispatchesReadAt = Date.now(); return true; }
   } catch { /* tried again below */ }
   scormDispatches.dirty = true;
   return false;

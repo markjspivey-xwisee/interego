@@ -95,10 +95,10 @@ export interface Cmi5LaunchRequest {
    *  statements and the LMS's `satisfied` can be kept on that pod as well as in the lens. */
   learnerPod?: string;
   /**
-   * Continue this registration and session instead of opening a new one (cmi5 §9.3). Ignored
-   * unless that launch is still open for this learner and this AU.
+   * Continue this registration. `sessionId` resumes that open session. `newSession` keeps the
+   * registration after `terminated` left moveOn unmet, and mints a new session id (cmi5 §9.3).
    */
-  resume?: { registration: string; sessionId: string };
+  resume?: { registration: string; sessionId?: string; newSession?: boolean };
 }
 
 export interface Cmi5Launch {
@@ -150,7 +150,7 @@ interface LaunchRecord {
   learnerPod?: string;
   /** cmi5 session id (§9.6.3.1). Absent on a snapshot from before sessions were kept; those are not resumed. */
   sessionId?: string;
-  /** Set once the session has ended, so the next open of a personal link starts a new registration. */
+  /** Set once the session has ended. terminated without moveOn keeps this registration and starts a new session. */
   sessionClosed?: 'terminated' | 'abandoned' | 'waived';
   /** Browse and Review are kept and not judged (§10.2.2). Absent means Normal. */
   launchMode?: Cmi5LaunchMode;
@@ -169,11 +169,7 @@ function openLaunchKey(l: { tenant: TenantId; learner: { id: string }; courseId?
 }
 function rememberOpenLaunch(l: LaunchRecord): void {
   const key = openLaunchKey(l);
-  if (key && l.sessionId && !l.sessionClosed) openByKey.set(key, l.registration);
-}
-function forgetOpenLaunch(l: LaunchRecord): void {
-  const key = openLaunchKey(l);
-  if (key && openByKey.get(key) === l.registration) openByKey.delete(key);
+  if (key && l.sessionId) openByKey.set(key, l.registration);
 }
 function reindexOpenLaunches(): void {
   openByKey.clear();
@@ -182,7 +178,7 @@ function reindexOpenLaunches(): void {
 function closeSession(launch: LaunchRecord, how: 'terminated' | 'abandoned' | 'waived'): void {
   if (launch.sessionClosed) return;
   launch.sessionClosed = how;
-  forgetOpenLaunch(launch);
+  rememberOpenLaunch(launch);
   cmi5PodDirty();
 }
 /** Per tenant, per learner — the set of AU ids the learner has satisfied
@@ -374,34 +370,41 @@ function sweepExpired(): void {
  * and stages `launchData` into the LRS State resource as `LMS.LaunchData`.
  */
 /**
- * The open session a personal link should continue: same learner, course and AU, not yet
- * terminated, abandoned or waived, and carrying the session id the AU already has.
+ * The registration a personal link should continue: the open session, or a session terminated
+ * before moveOn was met. Abandoned, waived, Browse, Review, and a satisfied termination do not.
  */
-export function findResumableLaunch(query: { tenant: TenantId; learnerId: string; courseId: string; auId: string }): { registration: string; sessionId: string } | undefined {
+export function findResumableLaunch(query: { tenant: TenantId; learnerId: string; courseId: string; auId: string }): { registration: string; sessionId?: string; newSession?: boolean } | undefined {
   const key = `${query.tenant}\n${query.learnerId}\n${query.courseId}\n${query.auId}`;
   const registration = openByKey.get(key);
   if (!registration) return undefined;
   const l = launches.get(registration);
-  if (!l || l.sessionClosed || !l.sessionId || l.tenant !== query.tenant || l.learner.id !== query.learnerId || l.auId !== query.auId || l.courseId !== query.courseId) {
+  if (!l || !l.sessionId || l.tenant !== query.tenant || l.learner.id !== query.learnerId || l.auId !== query.auId || l.courseId !== query.courseId) {
     openByKey.delete(key);
     return undefined;
   }
-  return { registration: l.registration, sessionId: l.sessionId };
+  if (!l.sessionClosed) return { registration: l.registration, sessionId: l.sessionId };
+  // terminated without meeting moveOn is the same registration and a new session, not a new attempt.
+  // Browse and Review are not judged, so ending one does not continue that registration.
+  if (l.sessionClosed === 'terminated' && !l.satisfied && l.launchMode !== 'Review' && l.launchMode !== 'Browse') {
+    return { registration: l.registration, newSession: true };
+  }
+  return undefined;
 }
 
 export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
   sweepExpired();
   const tenant = req.tenant ?? DEFAULT_TENANT;
   const prior = req.resume ? launches.get(req.resume.registration) : undefined;
-  const resumed = prior
-    && !prior.sessionClosed
-    && prior.sessionId === req.resume!.sessionId
+  const same = prior
     && prior.tenant === tenant
     && prior.learner.id === req.learner.id
     && prior.auId === req.au.id
     && (!req.courseId || prior.courseId === req.courseId)
     ? prior : undefined;
-  const registration = resumed ? resumed.registration : randomUUID();
+  const resumed = same && !same.sessionClosed && same.sessionId && same.sessionId === req.resume?.sessionId ? same : undefined;
+  const restarted = same && req.resume?.newSession && same.sessionClosed === 'terminated' && !same.satisfied && same.launchMode !== 'Review' && same.launchMode !== 'Browse' ? same : undefined;
+  const continued = resumed ?? restarted;
+  const registration = continued ? continued.registration : randomUUID();
   const sessionId = resumed ? resumed.sessionId! : randomUUID();
   const actor = {
     objectType: 'Agent',
@@ -420,10 +423,19 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
 
   // Register the launch so the LMS can watch it for moveOn satisfaction. A resume keeps the
   // record it already has, including whether moveOn has been met.
-  const moveOn = resumed ? resumed.moveOn : (req.au.moveOn ?? 'CompletedOrPassed');
-  const masteryScore = resumed ? resumed.masteryScore : (typeof req.au.masteryScore === 'number' ? req.au.masteryScore : 1.0);
-  const launchMode: Cmi5LaunchMode = resumed ? (resumed.launchMode ?? 'Normal') : (req.launchMode ?? 'Normal');
-  if (resumed) {
+  const moveOn = continued ? continued.moveOn : (req.au.moveOn ?? 'CompletedOrPassed');
+  const masteryScore = continued ? continued.masteryScore : (typeof req.au.masteryScore === 'number' ? req.au.masteryScore : 1.0);
+  // A relaunch keeps the mode already stored. A missing request mode must not turn Review into Normal.
+  const launchMode: Cmi5LaunchMode = req.launchMode ?? continued?.launchMode ?? 'Normal';
+  if (restarted) {
+    restarted.sessionId = sessionId;
+    restarted.sessionClosed = undefined;
+    restarted.launchMode = launchMode;
+    if (req.learnerPod && !restarted.learnerPod) restarted.learnerPod = req.learnerPod;
+    rememberOpenLaunch(restarted);
+    cmi5PodDirty();
+  } else if (resumed) {
+    if (req.launchMode) resumed.launchMode = req.launchMode;
     if (req.learnerPod && !resumed.learnerPod) { resumed.learnerPod = req.learnerPod; cmi5PodDirty(); }
   } else {
     launches.set(registration, {
