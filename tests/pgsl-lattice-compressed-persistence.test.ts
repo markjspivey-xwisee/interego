@@ -26,7 +26,7 @@ import {
 } from '@interego/pgsl';
 import {
   deriveEncryptionKeyPair, createEncryptedEnvelope, createEncryptedEnvelopeFromBytes,
-  openEncryptedEnvelope, openEncryptedEnvelopeBytes,
+  openEncryptedEnvelope, openEncryptedEnvelopeBytes, reEncryptForRecipients,
   type EncryptedEnvelope, type IRI,
 } from '@interego/core';
 
@@ -84,6 +84,24 @@ describe('core: a bytes plaintext seals in the same envelope', () => {
     expect(Buffer.from(openEncryptedEnvelopeBytes(env, kp)!).equals(Buffer.from(text, 'utf8'))).toBe(true);
     // secretbox adds a 16-byte tag; the ciphertext is exactly that much longer.
     expect(Buffer.from(env.content.ciphertext, 'base64').byteLength).toBe(Buffer.byteLength(text, 'utf8') + 16);
+  });
+});
+
+describe('a recipient is revoked from an envelope whatever it holds', () => {
+  it('re-encrypts a compressed lattice and a text envelope to the same plaintext, for the new recipients only', () => {
+    const packed = compressLatticePlaintext(JSON.stringify({ topUri: 'urn:made-up', nodes: { a: 'x'.repeat(4000) } }))!;
+    const before = createEncryptedEnvelopeFromBytes(packed, [kp.publicKey, stranger.publicKey], kp);
+    expect(openEncryptedEnvelopeBytes(before, stranger)).not.toBeNull();
+    // This threw "URI malformed": the helper decoded the plaintext as text on its way through.
+    const after = reEncryptForRecipients(before, kp, [kp.publicKey])!;
+    expect(Buffer.from(openEncryptedEnvelopeBytes(after, kp)!).equals(Buffer.from(packed))).toBe(true);
+    expect(openEncryptedEnvelopeBytes(after, stranger)).toBeNull();
+    expect(decodeLatticePlaintext(openEncryptedEnvelopeBytes(after, kp)!)).toContain('"topUri":"urn:made-up"');
+
+    const text = createEncryptedEnvelope('plain words, with an accent: é', [kp.publicKey, stranger.publicKey], kp);
+    const textAfter = reEncryptForRecipients(text, kp, [kp.publicKey])!;
+    expect(openEncryptedEnvelope(textAfter, kp)).toBe('plain words, with an accent: é');
+    expect(openEncryptedEnvelope(textAfter, stranger)).toBeNull();
   });
 });
 

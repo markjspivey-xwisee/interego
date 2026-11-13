@@ -462,12 +462,14 @@ export function reEncryptForRecipients(
   ownerKeyPair: EncryptionKeyPair,
   newRecipientPublicKeys: readonly string[],
 ): EncryptedEnvelope | null {
-  // Decrypt with owner's key
-  const plaintext = openEncryptedEnvelope(envelope, ownerKeyPair);
+  // Decrypt with owner's key. As BYTES: the plaintext is not always text (a compressed lattice is
+  // a binary container), and decoding it as UTF-8 threw, so such an envelope could not have a
+  // recipient revoked. Bytes in, the same bytes out, whatever they are.
+  const plaintext = openEncryptedEnvelopeBytes(envelope, ownerKeyPair);
   if (!plaintext) return null;
 
   // Re-encrypt for new recipient set (with a new random content key)
-  return createEncryptedEnvelope(plaintext, newRecipientPublicKeys, ownerKeyPair);
+  return createEncryptedEnvelopeFromBytes(plaintext, newRecipientPublicKeys, ownerKeyPair);
 }
 
 // ═════════════════════════════════════════════════════════════
