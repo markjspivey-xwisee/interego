@@ -717,7 +717,8 @@ const BASELINE = {};
 // 2026-10-27: both, merged, bring the linted scope to 686; the gate named 653.
 // 2026-11-08: tests/relay-tool-result-shape.test.ts brings the linted scope to 702; the gate named 668.
 // 2026-11-08: tests/relay-image-strips-test-only-deps.test.ts brings it to 703; the gate named 669.
-export const MIN_FILES = 673;
+// 2026-11-13: packages/pgsl/src/lattice-codec.ts and its test bring it to 709; the gate named 675.
+export const MIN_FILES = 675;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
