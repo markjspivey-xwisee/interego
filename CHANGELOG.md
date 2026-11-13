@@ -9,6 +9,11 @@ of one registration) beside `profile` and reads them against the profile's
 primary patterns: `sequence`, `alternates`, `optional`, `oneOrMore` and
 `zeroOrMore`, over patterns and statement templates of that profile.
 
+This is beside the Profile Server's `/xapi/profiles/validate_patterns`, which
+runs the specification's algorithm against a profile the server holds, by id.
+This route takes the profile in the request, holds nothing, and says what it
+did not evaluate.
+
 - The check is on demand. Nothing is stored or fetched, and nothing is refused
   on ingest: the LRS keeps a statement whether or not it fits a pattern.
 - Each primary pattern is `followed`, `not-fully-checked` or `not-followed`.
@@ -22,6 +27,53 @@ primary patterns: `sequence`, `alternates`, `optional`, `oneOrMore` and
 - The answer for a request carrying a `profile` is now built in
   `src/xapi-profile-patterns.ts` (`answerSuppliedProfileRequest`), so a test
   pins the response of both the one-statement and the registration check.
+
+## 2026-11-13 — Foxxi is an xAPI Profile Server
+
+The bridge served one profile, its own, and checked a statement against a
+profile sent with the request. It is now the Profile Server of the xAPI
+Profiles specification, Part Three, at `/xapi/profiles`:
+
+- **Profiles in an RDF store.** A profile version added to the server is a
+  holon in a public PGSL lattice on the commons pod, the exact document its
+  content, and is read back from there when the bridge starts. Its RDF is a
+  projection of that holon. Foxxi's own profile is always held. (Composing
+  every triple into the lattice was measured and dropped: a 19 KB profile
+  became an 18.9 MB pod write, against 36 KB.)
+- **`/sparql`.** `@interego/pgsl`'s SPARQL engine over a named graph per
+  profile version (the graph IRI is the version IRI) and a default graph of
+  current versions, with the inference the specification asks for: every SKOS
+  relationship, and `profile:concepts`, `profile:templates` and
+  `profile:patterns` as subproperties of the inverse of `skos:inScheme`. GET,
+  form POST, `application/sparql-query` and JSON; results in the SPARQL 1.1
+  JSON format. The specification's own example queries run as it writes them.
+- **`/validate_templates` and `/validate_patterns`.** The specification's two
+  algorithms, written from its pseudocode
+  (`src/xapi-profile-server/processor.ts`). POST variables `statement` or
+  `statements`, and `profile` by id; 204 on success, 400 with comments naming
+  the template and rule, or the part of the pattern.
+- **Adding a profile is a signed affordance**, by contents, or by https URI on
+  a host the deployment lists (`FOXXI_XAPI_PROFILE_URI_HOSTS`; by default
+  profiles.adlnet.gov, raw.githubusercontent.com and w3id.org)
+  (`foxxi.xapi_profile_add`). The agent that first adds a profile IRI adds its
+  later versions and may take it down (`foxxi.xapi_profile_remove`); the
+  operator may take down any. Query and both validations are affordances too.
+
+What it does not do: the SPARQL engine evaluates SELECT and ASK with OPTIONAL,
+UNION, FILTER, VALUES, grouping, ordering, LIMIT and OFFSET. Property paths,
+subqueries, MINUS, EXISTS, HAVING, CONSTRUCT, DESCRIBE, SERVICE and a GRAPH
+pattern beside other patterns are refused with a 400 that names the form. An
+Activity definition inside a concept is kept as one JSON literal, not expanded.
+
+`POST /xapi/profile/validate` with a brought profile is unchanged, and now also
+returns `specification`: the outcome of the specification's algorithm for the
+same statement and templates. The two differ where this route picks templates
+by verb and the algorithm matches on every determining property.
+
+Fixed in `packages/pgsl`'s SPARQL engine on the way, each of which returned no
+rows without an error: an IRI ref with a fragment was cut at its `#` as if a
+comment began there; a typed literal whose datatype was written `^^<iri>`
+never matched; and REGEX ignored its flags argument.
 
 ## 2026-11-13 — Foxxi: two more routes parsed an already parsed body
 

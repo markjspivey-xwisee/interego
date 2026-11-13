@@ -258,3 +258,33 @@ describe('a wide artifact composes in narrow holons', () => {
     expect(a.stats.totalNodes).toBeLessThan(80);
   });
 });
+
+// The xAPI Profile Server keeps each added profile version the way the bridge composes it: the
+// profile and version as the spine, the record as content, in a dedicated public resource.
+describe('an xAPI Profile is kept as a holon and read back whole', () => {
+  it('returns the exact record, and costs about what the document does', async () => {
+    const { latticeArtifacts } = await import('../src/foundation-shared-lattice.js');
+    const id = 'https://example.org/profiles/orchard';
+    const doc = {
+      id, type: 'Profile', prefLabel: { en: 'Orchard' }, definition: { en: 'A made-up profile with many concepts.' },
+      versions: [{ id: `${id}/v1`, generatedAtTime: '2026-01-01T00:00:00Z' }],
+      concepts: Array.from({ length: 60 }, (_, i) => ({ id: `${id}/verbs/v${i}`, type: 'Verb', inScheme: `${id}/v1`,
+        prefLabel: { en: `verb ${i}`, fr: `verbe ${i}` }, definition: { en: `It says "v${i}".` } })),
+    };
+    const record = { kind: 'added', doc, by: 'did:test:adder', at: '2026-11-13T00:00:00.000Z' };
+    const { fetchFn, holonPuts, bodyAt } = makePodFetch();
+    const r = await composeIntoSharedLattice({
+      podUrl: 'https://pod.test-profiles.example/commons/', agentDid: 'did:test:adder', label: 'xapi-profiles-test', resourceName: 'xapi-profiles',
+      terms: [id, `${id}/v1`],
+      content: record, contentType: 'xapi:ProfileRecord', projections: ['rdf'], publicLattice: true, fetch: fetchFn,
+    });
+    expect(r?.persisted).toBe(true);
+    expect(holonPuts().every(u => u.endsWith('/foxxi-lattice/xapi-profiles.holon.json'))).toBe(true);
+    expect(latticeArtifacts('xapi-profiles-test', 'xapi:ProfileRecord').map(a => a.content)).toEqual([record]);
+    // The profile and its version are nodes of the public lattice.
+    expect(dereferenceTerm('xapi-profiles-test', id)?.atomUri).toBeTruthy();
+    expect(dereferenceTerm('xapi-profiles-test', `${id}/v1`)?.atomUri).toBeTruthy();
+    // Composing every triple instead was measured at about a thousand times the document.
+    expect(bodyAt(holonPuts()[0]!)!.length).toBeLessThan(JSON.stringify(doc).length * 6);
+  }, 60_000);
+});
