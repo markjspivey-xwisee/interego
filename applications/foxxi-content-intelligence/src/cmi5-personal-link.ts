@@ -79,8 +79,10 @@ function validLink(v: unknown): v is PersonalLaunchLink {
 }
 
 /**
- * Every personal launch link this bridge has minted. Bounded, and never by evicting: a full
- * registry, or a learner holding as many as one may, refuses a new one.
+ * Every personal launch link this bridge has minted. Bounded, and never by dropping a live link.
+ * A learner's quota counts links that still launch. Withdrawn and expired links stay, so a later
+ * merge keeps the withdrawal, and they do not count toward that quota. The registry as a whole
+ * stops growing once it holds `max` records, withdrawn ones included.
  */
 export class PersonalLaunchRegistry {
   private readonly byId = new Map<string, PersonalLaunchLink>();
@@ -93,7 +95,8 @@ export class PersonalLaunchRegistry {
     auId?: string; returnUrl?: string; expiresAt?: string;
   }, now: number): PersonalLaunchLink | { refused: string } {
     if (this.byId.size >= this.max) return { refused: 'this bridge holds as many personal launch links as it can' };
-    if (this.forActor(input.actorDid).length >= this.perActor) return { refused: `a learner may hold ${this.perActor} personal launch links; withdraw one you no longer need` };
+    const live = this.forActor(input.actorDid).filter(l => personalLinkState(l, now) === 'live').length;
+    if (live >= this.perActor) return { refused: `a learner may hold ${this.perActor} personal launch links; withdraw one you no longer need` };
     const link: PersonalLaunchLink = {
       id: `pl-${randomBytes(32).toString('base64url')}`,
       actorDid: input.actorDid, courseId: input.courseId, learnerPod: input.learnerPod, mintedBy: input.mintedBy,
@@ -134,6 +137,29 @@ export class PersonalLaunchRegistry {
     return n;
   }
   get size(): number { return this.byId.size; }
+}
+
+/**
+ * What a read of the durable registry means for the next write. `loaded` and `absent` are safe to
+ * follow with a write: the pod answered, or confirmed it has no such resource. `failed` is not:
+ * this process has not seen what the pod holds, and writing its own copy over that resource would
+ * drop every link it missed.
+ */
+export type DurableRegistryRead = 'loaded' | 'absent' | 'failed';
+
+export async function readDurableRegistry(
+  fetchResource: () => Promise<{ status: number; json(): Promise<unknown> }>,
+  load: (json: unknown) => void,
+): Promise<DurableRegistryRead> {
+  try {
+    const response = await fetchResource();
+    if (response.status === 404) return 'absent';
+    if (response.status < 200 || response.status >= 300) return 'failed';
+    load(await response.json());
+    return 'loaded';
+  } catch {
+    return 'failed';
+  }
 }
 
 /** What the signer sees of a link. The URL carries the token and nothing about the learner. */

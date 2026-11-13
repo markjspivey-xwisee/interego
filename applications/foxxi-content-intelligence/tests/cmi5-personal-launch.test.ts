@@ -9,7 +9,7 @@ import { readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
-  PersonalLaunchRegistry, attachPersonalLaunchRoutes, mergePersonalLink, personalLinkState,
+  PersonalLaunchRegistry, attachPersonalLaunchRoutes, mergePersonalLink, personalLinkState, readDurableRegistry,
   type PersonalLaunchLink, type PersonalLaunchRouteDeps,
 } from '../src/cmi5-personal-link.js';
 import {
@@ -86,6 +86,34 @@ describe('the personal-link registry', () => {
     made(registry.create({ actorDid: OTHER, courseId: 'c', learnerPod: POD, mintedBy: OTHER }, 0));
     expect(registry.create({ actorDid: 'did:ethr:0x3333333333333333333333333333333333333333', courseId: 'c', learnerPod: POD, mintedBy: 'did:ethr:0x3' }, 0)).toEqual({ refused: 'this bridge holds as many personal launch links as it can' });
     expect(registry.get(firstLink.id)?.actorDid).toBe(LEARNER);
+  });
+
+  it('frees a learner\'s quota when a link is withdrawn or has expired, and keeps the record', () => {
+    const registry = new PersonalLaunchRegistry(10, 1);
+    const now = Date.parse('2026-11-13T00:00:00Z');
+    const live = made(registry.create({ actorDid: LEARNER, courseId: 'c', learnerPod: POD, mintedBy: LEARNER }, now));
+    expect(registry.create({ actorDid: LEARNER, courseId: 'c', learnerPod: POD, mintedBy: LEARNER }, now)).toEqual({ refused: 'a learner may hold 1 personal launch links; withdraw one you no longer need' });
+    registry.revoke(live.id, now);
+    expect(registry.get(live.id)?.revokedAt).toBeTruthy();
+    const again = made(registry.create({ actorDid: LEARNER, courseId: 'c', learnerPod: POD, mintedBy: LEARNER }, now));
+    expect(again.id).not.toBe(live.id);
+
+    const expired = made(registry.create({ actorDid: OTHER, courseId: 'c', learnerPod: POD, mintedBy: OTHER, expiresAt: '2026-11-01T00:00:00.000Z' }, now));
+    expect(personalLinkState(expired, now)).toBe('expired');
+    expect(made(registry.create({ actorDid: OTHER, courseId: 'c', learnerPod: POD, mintedBy: OTHER }, now)).actorDid).toBe(OTHER);
+    expect(registry.get(expired.id)?.expiresAt).toBe('2026-11-01T00:00:00.000Z');
+  });
+
+  it('treats a missing registry as absent and a failed read as not safe to overwrite', async () => {
+    const loads: unknown[] = [];
+    expect(await readDurableRegistry(async () => ({ status: 404, json: async () => ({}) }), (json) => { loads.push(json); })).toBe('absent');
+    expect(loads).toEqual([]);
+    expect(await readDurableRegistry(async () => ({ status: 200, json: async () => ({ kept: true }) }), (json) => { loads.push(json); })).toBe('loaded');
+    expect(loads).toEqual([{ kept: true }]);
+    expect(await readDurableRegistry(async () => ({ status: 503, json: async () => ({ kept: false }) }), (json) => { loads.push(json); })).toBe('failed');
+    expect(await readDurableRegistry(async () => ({ status: 200, json: async () => { throw new Error('not json'); } }), (json) => { loads.push(json); })).toBe('failed');
+    expect(await readDurableRegistry(async () => { throw new Error('pod down'); }, (json) => { loads.push(json); })).toBe('failed');
+    expect(loads).toEqual([{ kept: true }]);
   });
 });
 
@@ -388,6 +416,7 @@ describe('the bridge wires the personal link the way it wires a signed launch', 
     expect(block).toContain('stageLaunch: stageLaunchData');
     expect(block).toContain('persist: persistPersonalLinks');
     expect(block).toContain('registryWriter(writePersonalLinks)');
+    expect(block).toContain("if (read === 'failed') { personalLaunchLinks.dirty = true; return false; }");
     expect(block).toMatch(/opensPerMinute: positiveLimit\(process\.env\.FOXXI_CMI5_GO_PER_IP, 60\)/);
     expect(block).toMatch(/opensPerTokenPerMinute: positiveLimit\(process\.env\.FOXXI_CMI5_GO_PER_TOKEN, 12\)/);
   });

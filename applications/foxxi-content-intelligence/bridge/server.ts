@@ -476,7 +476,7 @@ import { readyStatementStore, residentStatementBudget, residentStatementCount, r
 import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
-import { attachPersonalLaunchRoutes, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
+import { attachPersonalLaunchRoutes, PersonalLaunchRegistry, readDurableRegistry } from '../src/cmi5-personal-link.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
@@ -11480,21 +11480,26 @@ app.post('/agent/cmi5/launch', async (req, res) => {
 const PERSONAL_LINKS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/cmi5-personal-links.json` : '';
 const personalLaunchLinks = new PersonalLaunchRegistry();
 let personalLinksReadAt = 0;
-async function readPersonalLinks(): Promise<void> {
-  if (!PERSONAL_LINKS_RESOURCE) return;
+async function readPersonalLinks(): Promise<'loaded' | 'absent' | 'failed'> {
+  if (!PERSONAL_LINKS_RESOURCE) return 'absent';
   personalLinksReadAt = Date.now();
-  try {
-    const r = await (globalThis.fetch as typeof fetch)(PERSONAL_LINKS_RESOURCE, { headers: { Accept: 'application/json' } });
-    if (r.ok) personalLaunchLinks.load(await r.json());
-  } catch { /* none yet, or the pod is unreachable: what this process holds stands */ }
+  return readDurableRegistry(
+    () => (globalThis.fetch as typeof fetch)(PERSONAL_LINKS_RESOURCE, { headers: { Accept: 'application/json' } }),
+    (json) => { personalLaunchLinks.load(json); },
+  );
 }
-/** Write the registry to the pod. True when the pod holds what this process holds. */
+/**
+ * Write the registry to the pod. True when the pod holds what this process holds. A read that
+ * failed is not followed by a write: this process has not seen the links already there, and
+ * replacing the resource with its own copy would drop them. The write is tried again later.
+ */
 async function writePersonalLinks(): Promise<boolean> {
   if (!PERSONAL_LINKS_RESOURCE || !personalLaunchLinks.dirty) return true;
   personalLaunchLinks.dirty = false;
   const f = globalThis.fetch as typeof fetch;
   try {
-    await readPersonalLinks();
+    const read = await readPersonalLinks();
+    if (read === 'failed') { personalLaunchLinks.dirty = true; return false; }
     const container = PERSONAL_LINKS_RESOURCE.replace(/[^/]+$/, '');
     await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
     const w = await f(PERSONAL_LINKS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(personalLaunchLinks) });
