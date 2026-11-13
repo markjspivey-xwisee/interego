@@ -537,7 +537,7 @@ import type { PublishedKind } from '../src/ns/published.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
 import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
-import { validateAgainstSuppliedProfile, whyNotAProfile } from '../src/xapi-profile-supplied.js';
+import { answerSuppliedProfileRequest } from '../src/xapi-profile-patterns.js';
 import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 /** Credential-format models registered as DATA (not bespoke handlers): the generic
  *  /ns/<module> loop mounts GET/shapes/validate/term + composes them into the lattice,
@@ -6548,29 +6548,25 @@ const app = createVerticalBridge({
       // With a `profile` beside the statement, the check is against that profile's templates
       // (src/xapi-profile-supplied.ts): the caller's own xAPI Profile, read from the request and
       // neither stored nor fetched. Without one it is Foxxi's own profile, as before.
-      const supplied = (req.body && typeof req.body === 'object') ? (req.body as Record<string, unknown>).profile : undefined;
-      if (supplied !== undefined) {
-        const why = whyNotAProfile(supplied);
-        if (why) { res.status(400).json({ ok: false, error: why }); return; }
-        const body = req.body as Record<string, unknown>;
-        const statement = (body.instance ?? body.statement) as unknown;
-        if (!statement || typeof statement !== 'object' || Array.isArray(statement)) { res.status(400).json({ ok: false, error: 'send the statement as `instance` (or `statement`) beside `profile`' }); return; }
-        const s = validateAgainstSuppliedProfile(statement as Record<string, unknown>, supplied as Record<string, unknown>);
-        // A template with no violation found but a part not evaluated settles nothing: the verdict
-        // says so, and `conforms` stays false, since conformance was not established.
-        const verdict = !s.applicable ? (s.verbDeclared ? 'no-applicable-template' : 'unknown-verb')
-          : s.matchedTemplates.length ? 'conformant' : s.partiallyCheckedTemplates.length ? 'not-fully-checked' : 'non-conformant';
-        // The same statement and templates through the specification's own algorithm
-        // (src/xapi-profile-server/processor.ts), which the Profile Server's /validate_templates
-        // answers with. The two differ by design in one place: this route picks templates by
-        // verb and reports each rule; the algorithm matches on every determining property.
-        let specification: Record<string, unknown> | undefined;
-        try {
-          const templates = Array.isArray((supplied as Record<string, unknown>).templates) ? (supplied as { templates: unknown[] }).templates : [];
-          const r = profileValidates(statement as never, templates as never);
-          specification = { outcome: r.outcome, templates: r.templates, findings: r.findings, ...(r.skipped.length ? { notChecked: r.skipped } : {}) };
-        } catch (e) { specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
-        res.json({ ok: true, profileSource: 'supplied', ...s, verdict, conforms: s.matchedTemplates.length > 0, specification });
+      // With `statements` (the ordered statements of one registration) in place of one statement,
+      // the check is against that profile's patterns (src/xapi-profile-patterns.ts). Both are on
+      // demand: nothing here refuses or alters what the LRS keeps.
+      const sent = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body as Record<string, unknown> : undefined;
+      if (sent && (sent.profile !== undefined || sent.statements !== undefined)) {
+        const answer = answerSuppliedProfileRequest(sent);
+        if (answer.status === 200 && answer.body.checked === undefined) {
+          // One statement: the same statement and templates through the specification's own
+          // algorithm (src/xapi-profile-server/processor.ts), which the Profile Server's
+          // /validate_templates answers with. The two differ by design in one place: this route
+          // picks templates by verb and reports each rule; the algorithm matches on every
+          // determining property.
+          try {
+            const templates = Array.isArray((sent.profile as Record<string, unknown>).templates) ? (sent.profile as { templates: unknown[] }).templates : [];
+            const r = profileValidates((sent.instance ?? sent.statement) as never, templates as never);
+            answer.body.specification = { outcome: r.outcome, templates: r.templates, findings: r.findings, ...(r.skipped.length ? { notChecked: r.skipped } : {}) };
+          } catch (e) { answer.body.specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
+        }
+        res.status(answer.status).json(answer.body);
         return;
       }
       const r = validateAgainstProfileTemplates(readInstance(req));

@@ -1,5 +1,33 @@
 # Changelog
 
+## 2026-11-13 — Foxxi LRS: a registration is checked against a brought profile's patterns
+
+Checking a statement against a brought xAPI Profile reported the profile's
+patterns as not checked, because one statement cannot show an order. The same
+endpoint, `POST /xapi/profile/validate`, now takes `statements` (the statements
+of one registration) beside `profile` and reads them against the profile's
+primary patterns: `sequence`, `alternates`, `optional`, `oneOrMore` and
+`zeroOrMore`, over patterns and statement templates of that profile.
+
+This is beside the Profile Server's `/xapi/profiles/validate_patterns`, which
+runs the specification's algorithm against a profile the server holds, by id.
+This route takes the profile in the request, holds nothing, and says what it
+did not evaluate.
+
+- The check is on demand. Nothing is stored or fetched, and nothing is refused
+  on ingest: the LRS keeps a statement whether or not it fits a pattern.
+- Each primary pattern is `followed`, `not-fully-checked` or `not-followed`.
+  `not-fully-checked` means the run fits only if a template checked in part, or
+  one the profile does not define, is taken as followed; `conforms` is then
+  false. `not-followed` says how many statements were read and where it stopped.
+- Statements are read in `timestamp` order when every one has a timestamp, and
+  in the order sent otherwise; the answer says which (`orderedBy`), and names
+  equal timestamps. Statements of more than one registration are refused.
+- Subregistrations are not read, and are named in `notChecked` when present.
+- The answer for a request carrying a `profile` is now built in
+  `src/xapi-profile-patterns.ts` (`answerSuppliedProfileRequest`), so a test
+  pins the response of both the one-statement and the registration check.
+
 ## 2026-11-13 — Pod server: a staged batch is one storage transaction
 
 The timing added on 2026-11-12 showed where a live single-statement write
@@ -45,6 +73,7 @@ live effect is not measured yet; the server now logs it.
 Not addressed: writing and re-reading the head still cost about 200 ms and
 100 ms under the same 2 ms delay. Each is a separate ordinary request to the
 server, several small transactions each.
+
 ## 2026-11-13 — Foxxi is an xAPI Profile Server
 
 The bridge served one profile, its own, and checked a statement against a
@@ -91,6 +120,7 @@ Fixed in `packages/pgsl`'s SPARQL engine on the way, each of which returned no
 rows without an error: an IRI ref with a fragment was cut at its `#` as if a
 comment began there; a typed literal whose datatype was written `^^<iri>`
 never matched; and REGEX ignored its flags argument.
+
 ## 2026-11-13 — Foxxi: two more routes parsed an already parsed body
 
 The guest learner routes failed on the live bridge because their own
