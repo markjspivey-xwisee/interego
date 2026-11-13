@@ -450,7 +450,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Launch a cmi5 activity', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url? }): the published course, optionally the AU, optionally where the AU returns you.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, launch_parameters? }): the published course, optionally the AU, optionally where the AU returns you, optionally the launchParameters string that replaces the one in the course structure (cmi5 §10.2.3).' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -479,7 +479,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Mint a reusable cmi5 launch link', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, expires_in_days? }). expires_in_days is a whole number of days (1 to 3650) or null for no expiry; omitted means 90 days.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, expires_in_days?, launch_parameters? }). expires_in_days is a whole number of days (1 to 3650) or null for no expiry; omitted means 90 days. launch_parameters, when present, replaces the course structure\'s launchParameters on every open (cmi5 §10.2.3); null clears it.' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['profiles'] },
