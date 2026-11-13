@@ -211,14 +211,10 @@ export async function promoteToPod(
 /** Options for the encrypted pod writers. */
 export interface EncryptedWriteOptions {
   /**
-   * Compress the plaintext before sealing it. Unset = the
-   * `PGSL_LATTICE_COMPRESSION` environment variable (`gzip` enables), and with
-   * that unset too = `'none'`, which is the format every writer has always
-   * produced.
-   *
-   * OFF BY DEFAULT IN THIS CHANGE: every reader of these resources (they deploy
-   * separately) must understand the compressed format before any writer emits
-   * it. The default flips to `'gzip'` in a later change. See lattice-codec.ts.
+   * Compress the plaintext before sealing it. Unset = gzip, unless the
+   * `PGSL_LATTICE_COMPRESSION` environment variable is `none`. Pass `'none'`
+   * for the plain JSON every writer produced before 2026-11. Readers accept
+   * both. See lattice-codec.ts.
    */
   readonly compression?: LatticeCompression;
 }

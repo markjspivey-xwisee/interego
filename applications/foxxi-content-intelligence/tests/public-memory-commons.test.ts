@@ -305,7 +305,7 @@ const ORCHARD = 'https://fixture.example/orchard';
 const wideGroup = (n: number): TermTree[] =>
   [Array.from({ length: n }, (_, i) => [ORCHARD, `https://fixture.example/prop/p${i}`, `made-up value ${i}`])];
 
-describe('a wide artifact is stored compressed only when asked, and reads back whole', () => {
+describe('a wide artifact is stored compressed unless told not to, and reads back whole', () => {
   const content = { orchard: 'made-up', rows: 40 };
   const composeWide = (label: string, fetchFn: typeof fetch, extra: Record<string, unknown> = {}) => composeIntoSharedLattice({
     podUrl: `https://pod.test-${label}.example/agent/`, agentDid: 'did:test:orchard', label,
@@ -325,14 +325,15 @@ describe('a wide artifact is stored compressed only when asked, and reads back w
     vi.setSystemTime(new Date('2026-11-13T00:00:00.000Z'));
     try {
       const plainPod = makePodFetch(), packedPod = makePodFetch();
-      const plain = await composeWide('orchard-plain', plainPod.fetchFn);
-      const packed = await composeWide('orchard-packed', packedPod.fetchFn, { latticeCompression: 'gzip' });
+      const plain = await composeWide('orchard-plain', plainPod.fetchFn, { latticeCompression: 'none' });
+      // Nothing asked: compressed is what a compose writes.
+      const packed = await composeWide('orchard-packed', packedPod.fetchFn);
       expect(plain?.persisted).toBe(true);
       expect(packed?.persisted).toBe(true);
       expect(plainPod.holonPuts()).toHaveLength(1);
       expect(packedPod.holonPuts()).toHaveLength(1);
 
-      // Unset = uncompressed: the sealed plaintext is the JSON text it always was.
+      // Told not to: the sealed plaintext is the JSON text it always was.
       const kp = bridgeEncryptionKeypair()!;
       const plainBody = plainPod.bodyAt(plainPod.holonPuts()[0]!)!, packedBody = packedPod.bodyAt(packedPod.holonPuts()[0]!)!;
       expect(openEncryptedEnvelope(JSON.parse(plainBody) as EncryptedEnvelope, kp)!.startsWith('{"topUri":')).toBe(true);
