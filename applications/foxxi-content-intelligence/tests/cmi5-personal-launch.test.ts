@@ -283,11 +283,12 @@ describe('minting, opening and withdrawing a personal launch link', () => {
     const done = new Set<string>();
     const s = await start({ satisfiedAus: (_tenant, id) => id === learner ? [...done] : [] });
     const token = (await mint(s, { course_id: course.id }, learner)).body.token as string;
-    const a = await (await open(s, token)).json() as { auId: string; registration: string };
-    expect(a.auId).toBe(first);
+    const a = await (await open(s, token)).json() as { auId: string; registration: string; moveOn: string };
+    expect(a).toMatchObject({ auId: first, moveOn: 'CompletedOrPassed' });
     done.add(first);
-    const b = await (await open(s, token)).json() as { auId: string; registration: string; resumed: boolean };
+    const b = await (await open(s, token)).json() as { auId: string; registration: string; resumed: boolean; moveOn: string };
     expect(b.auId).toBe(second);
+    expect(b.moveOn).toBe('Passed');
     expect(b.resumed).toBe(false);
     expect(b.registration).not.toBe(a.registration);
 

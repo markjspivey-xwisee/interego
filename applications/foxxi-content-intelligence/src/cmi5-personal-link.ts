@@ -9,17 +9,23 @@
  * are continued, which is what keeps suspend data and the xAPI registration together (cmi5 §9.3).
  *
  * The token is unguessable and is the whole of the URL: the learner's identifier is not in it.
- * The link is kept on the tenant pod the way a dispatch is kept. The signer who minted it, and
- * only that learner, can withdraw it.
+ * Nothing here names a course or a person. The course is whatever published course the signed
+ * request names, and the actor is whoever the signature is. Which activity opens, and its moveOn,
+ * mastery and entitlement, are that course's own structure. The launch itself is the bridge's
+ * cmi5 launch. The link is kept and withdrawn the same way a dispatch is.
+ * The signer who minted it, and only that actor, can withdraw it.
  *
  * Layer: L3 vertical. No new ontology term.
  */
 import { randomBytes } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import { buildCmi5Launch, chooseAu, findResumableLaunch, whenCmi5Ready, type Cmi5Launch } from './cmi5-lms.js';
+import { buildCmi5Launch, chooseAu, findResumableLaunch, serializeKeyed, whenCmi5Ready, type Cmi5Launch } from './cmi5-lms.js';
 import type { Cmi5Course } from './cmi5-course.js';
 import type { TenantId } from './tenant-context.js';
+import { htmlEscape } from './lti-player.js';
+import { earlierMark, laterMark, perAddressLimiter, requestAddress, tighterExpiry, withdrawalState } from './revocable-registry.js';
+export { readDurableRegistry } from './revocable-registry.js';
 
 export const PERSONAL_LAUNCH_TOKEN = /^pl-[A-Za-z0-9_-]{43}$/;
 export const DEFAULT_LINK_DAYS = 90;
@@ -44,16 +50,14 @@ export interface PersonalLaunchLink {
 export type PersonalLinkState = 'live' | 'revoked' | 'expired';
 
 export function personalLinkState(link: PersonalLaunchLink, now: number): PersonalLinkState {
-  if (link.revokedAt) return 'revoked';
-  if (link.expiresAt && Date.parse(link.expiresAt) <= now) return 'expired';
-  return 'live';
+  return withdrawalState(link, now);
 }
 
 /** Two copies of one link: the earlier withdrawal, the earlier expiry, the larger open count. */
 export function mergePersonalLink(a: PersonalLaunchLink, b: PersonalLaunchLink): PersonalLaunchLink {
-  const revokedAt = [a.revokedAt, b.revokedAt].filter((x): x is string => !!x).sort()[0];
-  const lastOpenAt = [a.lastOpenAt, b.lastOpenAt].filter((x): x is string => !!x).sort().at(-1);
-  const expiresAt = a.expiresAt && b.expiresAt ? (a.expiresAt < b.expiresAt ? a.expiresAt : b.expiresAt) : (a.expiresAt ?? b.expiresAt);
+  const revokedAt = earlierMark(a.revokedAt, b.revokedAt);
+  const lastOpenAt = laterMark(a.lastOpenAt, b.lastOpenAt);
+  const expiresAt = tighterExpiry(a.expiresAt, b.expiresAt);
   return {
     ...a,
     opens: Math.max(a.opens, b.opens),
@@ -140,30 +144,7 @@ export class PersonalLaunchRegistry {
   get size(): number { return this.byId.size; }
 }
 
-/**
- * What a read of the durable registry means for the next write. `loaded` and `absent` are safe to
- * follow with a write: the pod answered, or confirmed it has no such resource. `failed` is not:
- * this process has not seen what the pod holds, and writing its own copy over that resource would
- * drop every link it missed.
- */
-export type DurableRegistryRead = 'loaded' | 'absent' | 'failed';
-
-export async function readDurableRegistry(
-  fetchResource: () => Promise<{ status: number; json(): Promise<unknown> }>,
-  load: (json: unknown) => void,
-): Promise<DurableRegistryRead> {
-  try {
-    const response = await fetchResource();
-    if (response.status === 404) return 'absent';
-    if (response.status < 200 || response.status >= 300) return 'failed';
-    load(await response.json());
-    return 'loaded';
-  } catch {
-    return 'failed';
-  }
-}
-
-/** What the signer sees of a link. The URL carries the token and nothing about the learner. */
+/** What the signer sees of a link. The URL carries the token and nothing about the actor. */
 export function personalLinkView(link: PersonalLaunchLink, baseUrl: string, now: number): Record<string, unknown> {
   const base = baseUrl.replace(/\/$/, '');
   return {
@@ -214,42 +195,10 @@ export interface PersonalLaunchRouteDeps {
   serverError?: (res: Response, err: unknown, where: string) => void;
 }
 
-function windowLimit(max: number, windowMs: number, now: () => number): (key: string) => { ok: true } | { ok: false; retryAfterSeconds: number } {
-  const seen = new Map<string, { count: number; resetAt: number }>();
-  return (key) => {
-    const t = now();
-    let entry = seen.get(key);
-    if (!entry || t > entry.resetAt) { entry = { count: 0, resetAt: t + windowMs }; seen.set(key, entry); }
-    if (seen.size > 10_000) for (const [k, v] of seen) if (v.resetAt < t) seen.delete(k);
-    return ++entry.count > max ? { ok: false, retryAfterSeconds: Math.max(1, Math.ceil((entry.resetAt - t) / 1000)) } : { ok: true };
-  };
-}
-
 const openings = new Map<string, Promise<unknown>>();
-function serializeOpen<T>(key: string, work: () => Promise<T>): Promise<T> {
-  const prior = openings.get(key) ?? Promise.resolve();
-  const next = prior.catch(() => undefined).then(work);
-  openings.set(key, next);
-  const cleanup = (): void => { if (openings.get(key) === next) openings.delete(key); };
-  void next.then(cleanup, cleanup);
-  return next;
-}
-
-function clientIp(req: Request): string {
-  const decorated = req.body && typeof req.body === 'object' ? (req.body as { __client_ip?: unknown }).__client_ip : undefined;
-  if (typeof decorated === 'string' && decorated.trim()) return decorated.trim().slice(0, 200);
-  const xff = req.headers['x-forwarded-for'];
-  if (typeof xff === 'string' && xff.trim()) return xff.split(',').at(-1)!.trim().slice(0, 200);
-  if (Array.isArray(xff) && xff.length) return String(xff.at(-1)).trim().slice(0, 200);
-  return req.ip ?? 'unknown';
-}
 
 function wantsJson(req: Request): boolean {
   return req.accepts(['html', 'json']) === 'json';
-}
-
-function htmlEscape(s: string): string {
-  return s.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;').replace(/"/g, '&quot;');
 }
 
 function htmlPage(message: string): string {
@@ -297,11 +246,11 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
   const base = deps.baseUrl.replace(/\/$/, '');
   const lrsEndpoint = deps.lrsEndpoint ?? `${base}/xapi`;
   const failed = deps.serverError ?? ((res: Response) => { if (!res.headersSent) res.status(500).json({ error: 'internal error' }); });
-  const byAddress = windowLimit(deps.opensPerMinute ?? 60, 60_000, now);
-  const byToken = windowLimit(deps.opensPerTokenPerMinute ?? 12, 60_000, now);
+  const byAddress = perAddressLimiter(deps.opensPerMinute ?? 60, 60_000, now);
+  const byToken = perAddressLimiter(deps.opensPerTokenPerMinute ?? 12, 60_000, now);
 
   const limited = (req: Request, res: Response): boolean => {
-    const rl = deps.rateLimit(clientIp(req));
+    const rl = deps.rateLimit(requestAddress(req));
     if (rl.ok) return false;
     res.set('Retry-After', String(rl.retryAfterSeconds));
     res.status(429).json({ error: `rate limit — retry in ${rl.retryAfterSeconds}s` });
@@ -393,7 +342,7 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
     try {
       res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer').set('X-Robots-Tag', 'noindex, nofollow');
       const token = String(req.params.token ?? '');
-      const address = byAddress(clientIp(req));
+      const address = byAddress(requestAddress(req));
       if (!address.ok) {
         res.set('Retry-After', String(address.retryAfterSeconds));
         sendGone(req, res, 429, `Too many opens from this address. Try again in ${address.retryAfterSeconds}s.`);
@@ -427,7 +376,7 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
       catch { sendGone(req, res, 404, 'This course has no launchable address.'); return; }
       if (!/^https?:\/\//i.test(auUrl)) { sendGone(req, res, 404, 'This course has no launchable address.'); return; }
 
-      const opened = await serializeOpen(`${link.actorDid}\n${course.id}\n${au.id}`, async () => {
+      const opened = await serializeKeyed(openings, `${link.actorDid}\n${course.id}\n${au.id}`, async () => {
         const prior = findResumableLaunch({ tenant, learnerId: link.actorDid, courseId: course.id, auId: au.id });
         const launch = buildCmi5Launch({
           au: {

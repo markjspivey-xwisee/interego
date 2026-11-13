@@ -622,7 +622,9 @@ describe('the bridge hosts what is uploaded, and restores it after a restart', (
     // answers follows it into uploadScormPackage and reads its declines (tests/handler-delegation-reach.ts).
     expect(upload).toMatch(/\n {4}return uploadScormPackage\(\{\n[\s\S]*\n {6}host: \(bytes, parsed\) => hostUploadedPackage\(bytes, parsed\.packageTitle, parsed\.launchable\),\n {6}keepExport: \(bytes, exported\) => hostProjectExport\(bytes, exported\),\n {4}\}\);\n {2}\},/);
     const launch = server.slice(server.indexOf("app.post('/agent/cmi5/launch'"), server.indexOf("app.post('/agent/cmi5/launch'") + 1500);
-    expect(launch).toMatch(/restorePublishedCourse\(DEFAULT_TENANT, courseId\);[^\n]*\n\s+if \(!getCmi5Course\(DEFAULT_TENANT, courseId\)\) await restoreHostedPackage\(courseId\);\n\s+const course = getCmi5Course\(DEFAULT_TENANT, courseId\);/);
+    expect(launch).toMatch(/const course = await publishedCmi5Course\(courseId\)/);
+    const lookup = server.slice(server.indexOf('async function publishedCmi5Course'), server.indexOf("app.post('/agent/cmi5/launch'"));
+    expect(lookup).toMatch(/restorePublishedCourse\(DEFAULT_TENANT, courseId\);[^\n]*\n\s+if \(!getCmi5Course\(DEFAULT_TENANT, courseId\)\) await restoreHostedPackage\(courseId\);\n\s+return getCmi5Course\(DEFAULT_TENANT, courseId\);/);
     expect(server).toMatch(/attachHostedPackageRoutes\(app, \{\n\s+packages: hostedPackages,\n\s+bridgeBaseUrl,/);
     expect(server).toContain('const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage });');
   });

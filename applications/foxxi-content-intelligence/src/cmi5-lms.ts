@@ -298,13 +298,17 @@ function courseContainingAu(tenant: TenantId, auId: string): Cmi5Course | undefi
  */
 // These maps coordinate in-flight commits only; durable evidence remains in the LRS primary.
 const satisfactionCommits = new Map<string, Promise<unknown>>();
-function serializeSatisfaction<T>(key: string, work: () => Promise<T>): Promise<T> {
-  const prior = satisfactionCommits.get(key) ?? Promise.resolve();
+/** One in-flight piece of work per key. A later call waits for the earlier, and a failure does not block the next. */
+export function serializeKeyed<T>(gate: Map<string, Promise<unknown>>, key: string, work: () => Promise<T>): Promise<T> {
+  const prior = gate.get(key) ?? Promise.resolve();
   const next = prior.catch(() => undefined).then(work);
-  satisfactionCommits.set(key, next);
-  const cleanup = (): void => { if (satisfactionCommits.get(key) === next) satisfactionCommits.delete(key); };
+  gate.set(key, next);
+  const cleanup = (): void => { if (gate.get(key) === next) gate.delete(key); };
   void next.then(cleanup, cleanup);
   return next;
+}
+function serializeSatisfaction<T>(key: string, work: () => Promise<T>): Promise<T> {
+  return serializeKeyed(satisfactionCommits, key, work);
 }
 async function rollupCourse(
   tenant: TenantId, learner: { id: string; name?: string }, authoritativeSource: string,
