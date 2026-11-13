@@ -40,6 +40,20 @@ const isObject = (v: unknown): v is Json => !!v && typeof v === 'object' && !Arr
 const iriOf = (v: unknown): string | null => typeof v === 'string' ? v
   : isObject(v) && typeof v['@id'] === 'string' ? v['@id'] : isObject(v) && typeof v.id === 'string' ? v.id : null;
 
+/**
+ * A timestamp as an instant that keeps every fractional digit. A Date holds milliseconds, so
+ * two statements a tenth of a millisecond apart would read as equal and fall back to the order
+ * sent. `ms` is the instant to the millisecond; `finer` is the digits after the third, with
+ * trailing zeros dropped, which compare as text because they all start at the same place.
+ */
+interface Instant { ms: number; finer: string }
+function instantOf(timestamp: unknown): Instant | null {
+  if (typeof timestamp !== 'string') return null;
+  const fraction = /^([^.]*T[^.]*)\.(\d+)(.*)$/.exec(timestamp);
+  const ms = Date.parse(fraction ? `${fraction[1]}.${fraction[2]!.slice(0, 3)}${fraction[3]}` : timestamp);
+  return Number.isNaN(ms) ? null : { ms, finer: fraction ? fraction[2]!.slice(3).replace(/0+$/, '') : '' };
+}
+
 interface Pattern { id: string; primary: boolean; operator: Operator; operands: string[] }
 
 /** The profile's patterns in a form the matcher reads, or a string saying why they cannot be read. */
@@ -135,12 +149,13 @@ export function validatePatternsAgainstSuppliedProfile(sentStatements: Json[], p
   const templateIds = new Set((profile.templates as Json[]).map(t => t.id as string));
   const notChecked = new Set<string>();
 
-  const times = sentStatements.map(s => typeof s.timestamp === 'string' ? Date.parse(s.timestamp) : NaN);
-  const timed = times.every(t => !Number.isNaN(t));
+  const times = sentStatements.map(s => instantOf(s.timestamp));
+  const timed = times.every(t => t !== null);
   const order = sentStatements.map((_, i) => i);
   if (timed) {
-    order.sort((a, b) => times[a]! - times[b]! || a - b);
-    if (new Set(times).size < times.length) notChecked.add('order: statements with equal timestamps were read in the order sent');
+    const before = (a: Instant, b: Instant): number => a.ms - b.ms || (a.finer < b.finer ? -1 : a.finer > b.finer ? 1 : 0);
+    order.sort((a, b) => before(times[a]!, times[b]!) || a - b);
+    if (new Set(times.map(t => `${t!.ms} ${t!.finer}`)).size < times.length) notChecked.add('order: statements with equal timestamps were read in the order sent');
   } else notChecked.add('order: not every statement has a readable timestamp, so the order sent was used');
 
   const statements: PatternStatement[] = order.map((sent, index) => {
@@ -182,7 +197,9 @@ export function validatePatternsAgainstSuppliedProfile(sentStatements: Json[], p
         if (p.operator !== 'oneOrMore') out.add(from);
         let frontier = [...ends(operand, from)];
         if (p.operator !== 'optional') while (frontier.length) {
-          const fresh = frontier.filter(e => !out.has(e));
+          // Each end is expanded once: two readings that end at the same place go on the same way,
+          // and expanding every copy multiplies the work at each repeat.
+          const fresh = [...new Set(frontier)].filter(e => !out.has(e));
           for (const e of fresh) out.add(e);
           // A repeat that read nothing (e === from) cannot read more by repeating.
           frontier = fresh.filter(e => e !== from).flatMap(e => [...ends(operand, e)]);

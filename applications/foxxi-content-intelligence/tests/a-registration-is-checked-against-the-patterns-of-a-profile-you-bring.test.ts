@@ -83,6 +83,33 @@ describe('a registration is checked against the patterns of a profile you bring'
     expect(bare.notChecked.some(n => n.startsWith('order:'))).toBe(true);
   });
 
+  it('orders by the whole timestamp, past the millisecond', () => {
+    const a = attempt();
+    // Nine instants a tenth of a millisecond apart, sent backwards: all within one millisecond.
+    const fine = a.map((s, i) => ({ ...s, timestamp: `2026-01-01T12:00:00.000${i + 1}Z` }));
+    const r = check([...fine].reverse());
+    expect(r).toMatchObject({ orderedBy: 'timestamp', verdict: 'conformant', notChecked: [] });
+    // Trailing zeros and an offset do not make two spellings of one instant differ.
+    const same = check(a.map((s, i) => ({ ...s, timestamp: i % 2 ? '2026-01-01T12:00:00.1000Z' : '2026-01-01T13:00:00.1+01:00' })));
+    expect(same.verdict).toBe('conformant');
+    expect(same.notChecked.some(n => n.includes('equal timestamps'))).toBe(true);
+  });
+
+  it('reads a long run through a repeat whose readings overlap without stalling', () => {
+    const many = (count: number) => Array.from({ length: count }, () => T('a'));
+    const overlapping = { id: P, templates: [simple('a')], patterns: [
+      { id: `${P}/patterns/top`, primary: true, oneOrMore: `${P}/patterns/either` },
+      { id: `${P}/patterns/either`, alternates: [`${P}/patterns/nine`, `${P}/patterns/ten`] },
+      { id: `${P}/patterns/nine`, sequence: many(9) }, { id: `${P}/patterns/ten`, sequence: many(10) },
+    ] };
+    const started = Date.now();
+    const r = check(Array.from({ length: 1000 }, () => statement('a')), overlapping);
+    expect(r.verdict).toBe('conformant');
+    // 1000 is 100 tens. Seventeen is neither nines nor tens.
+    expect(check(Array.from({ length: 17 }, () => statement('a')), overlapping).verdict).toBe('non-conformant');
+    expect(Date.now() - started).toBeLessThan(5000);
+  });
+
   it('reads alternates, optional, oneOrMore and zeroOrMore', () => {
     const lettered = (patterns: unknown[]) => ({ id: P, templates: ['a', 'b', 'c'].map(simple), patterns });
     const run = (letters: string, patterns: unknown[]) => check([...letters].map(l => statement(l)), lettered(patterns)).verdict === 'conformant';
