@@ -19,6 +19,7 @@ import { privatePerformanceAffordances } from '../agentic-performance-practice/c
 import { telemetryAffordances } from '../llm-telemetry/affordances.js';
 import { semanticAffordances } from './src/i2idlx-semantic-affordances.js';
 import { authoredGlossaryAffordances } from './src/i2idlx-authored-affordances.js';
+import { xapiProfileServerAffordances } from './src/xapi-profile-server/affordances.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -30,6 +31,7 @@ import type {
 export const foxxiAffordances: ReadonlyArray<Affordance> = [
   ...semanticAffordances,
   ...authoredGlossaryAffordances,
+  ...xapiProfileServerAffordances,
   // I2IDL-X workbench: the generic relay follows these signed external routes.
   // Identity, owner binding and editor checks live in src/i2idlx-workbench.ts.
   {
