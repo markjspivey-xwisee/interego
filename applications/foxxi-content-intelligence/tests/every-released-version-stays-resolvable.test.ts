@@ -131,7 +131,10 @@ describe('the archive', () => {
     // In each release, every shapes graph imports its ontology, and cmi5, ai-elearning and scorm-sn
     // import another. ★ REVISED: counted by release, now that there are two.
     expect([...imports.values()]).toEqual([...imports.keys()].map(() => 12 + 3));
-    expect(imports.size).toBe(new Set(archivedFiles.map(f => f.version)).size);
+    // ★ REVISED AGAIN: a release need not carry every document. 2026.11.0 is the Foxxi vocabulary
+    // alone, which imports nothing, so the releases counted are the ones that archived a shapes
+    // graph, each of which imports its ontology.
+    expect(imports.size).toBe(new Set(archivedFiles.filter(f => f.kind === 'shapes').map(f => f.version)).size);
   });
 });
 
