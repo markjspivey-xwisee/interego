@@ -2185,19 +2185,27 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
 
   const keys = attemptKeysOf(ctx, s.pod, sIri, s.signer);
   const key = keys[0]!;
-  return locked(call, `${s.pod}|attempts|${key}`, async () => {
+  // One attempt per registration of an LRS on this pod, whatever scenario it is taken against: an
+  // attempt's IRI is numbered within one learner's attempts on one scenario, so two scenarios with
+  // the same rubric would otherwise each take the same call, and each could later build a passed
+  // for the one registration. The registration is locked first, then every attempt on the pod is read.
+  return locked(call, `${s.pod}|launch-registration|${li.endpoint}|${registration}`, () => locked(call, `${s.pod}|attempts|${key}`, async () => {
     const all = await podEntries(s.pod, call.read, call.cache);
     const mismatch = keyMismatchIn(ctx, keyMarksOf(all, s.pod));
     if (mismatch) throw keyMismatchDecline(ctx, mismatch);
     const prefixes = keys.map((k) => `urn:pev:attempt:${k}-`);
     const mine = [...new Set(all.flatMap((e) => e.describes.filter((d) => prefixes.some((p) => d.startsWith(p)))))];
     await notAStartedEnvelope(call, s, all, mine);
-    // One attempt per registration: a second import of the same call is refused, naming the first.
-    for (const iri of mine) {
-      const prior = await attemptHead(call, s.pod, iri).catch(() => null);
-      if (prior?.body.lmsLaunch?.registration.toLowerCase() === registration) {
-        throw decline(409, 'This registration was already taken as an attempt.', 'registration-already-imported', undefined, { attemptIri: iri, state: prior.body.state });
-      }
+    const every = await attemptBodies(call, s.pod, 'whether this registration was already taken');
+    const prior = every.bodies.find((b) => b.lmsLaunch !== undefined && b.lmsLaunch.registration.toLowerCase() === registration && b.lmsLaunch.endpoint === li.endpoint);
+    if (prior) {
+      // Whose attempt it is, and against which scenario, is told only to its own learner.
+      const own = samePrincipal(prior.learner.address, s.signer);
+      throw decline(409, 'This registration was already taken as an attempt.', 'registration-already-imported', undefined,
+        own ? { attemptIri: prior.attemptIri, state: prior.state, scenarioIri: prior.scenario.scenarioIri } : {});
+    }
+    if (!every.complete) {
+      throw decline(503, 'Not every attempt on this pod could be read, so this bridge cannot tell whether the registration was already taken; nothing was recorded.', 'registration-use-unknown', undefined, every.limit);
     }
     const taken = ctx.attemptBudget.take(s.signer, ctx.now().getTime());
     if (!taken.ok) {
@@ -2257,7 +2265,7 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
       },
       nextActions: nextFor(ctx, body, s, roles.of(s.signer), false, stakes), recorded: true,
     };
-  });
+  }));
 }
 
 function withExchange(a: AttemptBody, learner: Turn, counterpart: Turn, endAfter: boolean, act: AttemptAct, at: string): AttemptBody {

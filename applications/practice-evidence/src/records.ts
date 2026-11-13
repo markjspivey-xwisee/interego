@@ -212,6 +212,8 @@ export interface LmsLaunch {
   readonly launchModeFrom?: 'launched-statement' | 'assumed';
   /** Every statement the attempt was read from, in time order. */
   readonly statementIds?: readonly string[];
+  /** The activity's definition as the unit's own first statement gave it, carried onto the statements built for the unit. */
+  readonly activityDefinition?: Readonly<Record<string, unknown>>;
 }
 
 const LMS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -246,6 +248,8 @@ export function lmsLaunchProblems(v: unknown): string[] {
   if (u !== undefined && !(Array.isArray(u) && u.every((x) => x === 'passed' || x === 'failed' || x === 'completed'))) p.push('unitSent must list passed, failed or completed');
   const f = l['launchModeFrom'];
   if (f !== undefined && f !== 'launched-statement' && f !== 'assumed') p.push('launchModeFrom must be launched-statement or assumed');
+  const d = l['activityDefinition'];
+  if (d !== undefined && (typeof d !== 'object' || d === null || Array.isArray(d))) p.push('activityDefinition must be an object');
   const ids = l['statementIds'];
   if (ids !== undefined && !(Array.isArray(ids) && ids.every((x) => typeof x === 'string' && LMS_UUID.test(x)))) p.push('statementIds must be UUIDs');
   return p;

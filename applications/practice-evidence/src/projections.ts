@@ -286,6 +286,8 @@ export function launchedRefusals(a: AttemptBody): string[] {
   if (bad.length > 0) return bad.map((b) => `the stored launch is not usable: ${b}`);
   const p: string[] = [];
   if (l.launchMode !== 'Normal') p.push(`the launch mode was ${l.launchMode}: cmi5 allows passed, failed and completed only in a Normal launch`);
+  // Normal recorded only because nothing said otherwise is not evidence of a Normal launch.
+  else if (l.launchModeFrom === 'assumed') p.push('the launch mode is not known: the LRS returned no launched statement from the LMS, and cmi5 allows passed, failed and completed only in a Normal launch');
   const review = standingReview(a);
   if (!review || (a.state !== 'countersigned' && a.state !== 'overridden')) { p.push('the attempt has no standing review'); return p; }
   if (!a.judgments[0]) { p.push('the attempt has no judgment'); return p; }
@@ -353,7 +355,7 @@ export function buildLaunchedStatements(i: ProjectionInput, sendIn: SendingSessi
     id: deterministicUuid(`${a.attemptIri}|launched|${l.registration}|${verb === 'completed' ? 'completed' : 'passed-or-failed'}`),
     actor: { objectType: 'Agent', account: { homePage: l.actor.homePage, name: l.actor.name } },
     verb: { id: LAUNCHED_VERB_IRI[verb], display: { 'en-US': verb } },
-    object: { objectType: 'Activity', id: l.activityId },
+    object: { objectType: 'Activity', id: l.activityId, ...(l.activityDefinition ? { definition: l.activityDefinition } : {}) },
     result,
     context,
     timestamp: review.reviewedAt,

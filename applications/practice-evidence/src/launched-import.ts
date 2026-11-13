@@ -228,6 +228,7 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
     launchMode: launched ? (mode as LmsLaunch['launchMode']) : 'Normal',
     ...(typeof mastery === 'number' ? { masteryScore: mastery } : {}),
     ...(Object.keys(template).length > 0 ? { contextTemplate: template } : {}),
+    ...(isObj(objOf(first.s['object'])['definition']) ? { activityDefinition: objOf(first.s['object'])['definition'] as Record<string, unknown> } : {}),
   };
   return {
     call: {

@@ -41,7 +41,10 @@ record's shape, and the act that takes a launched conversation as an attempt.
   profile terms the unit's statements use are a setting (`PEV_LAUNCH_VOCABULARY`);
   no profile, course or player is named in code. A registration that is not one
   whole conversation against the scenario version's rubric is refused with every
-  reason, as are another actor's statements and a registration already taken.
+  reason, as are another actor's statements and a registration already taken on
+  the pod against any scenario. The cmi5 statements are built only where the LMS's
+  own `launched` statement says the launch was Normal; a mode that was only
+  assumed is refused.
 - A turn may now be an `lrs-statement`, and the other person's lines may be
   controlled by an `assignable-unit`; both are in `pev.ttl` and its shapes.
 

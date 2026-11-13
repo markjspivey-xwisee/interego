@@ -93,7 +93,7 @@ const scored = (second: number, criterion: string, raw: number, o: Opt = {}, not
 /** One whole call: a session, two exchanges, a score for each of the three criteria, and the end. */
 function call(o: Opt = {}): Out[] {
   return [
-    stmt(VERB_INITIALIZED, 0, { categories: [CMI5] }, o),
+    stmt(VERB_INITIALIZED, 0, { categories: [CMI5], object: { objectType: 'Activity', id: AU, definition: { type: `${P}/activity-types/roleplay-scenario` } } }, o),
     turn(10, 'You wanted to see me? If this is about the report, I already know.', 'The quarterly report was due Thursday at noon and reached me on Friday afternoon.', o),
     turn(20, 'The finance feed was late twice this month.', 'What got in the way on your side, and what would help next time?', o),
     scored(30, 'specific-observation', 100, o, 'Named the report, Thursday noon and Friday afternoon at the first exchange.'),
@@ -102,6 +102,9 @@ function call(o: Opt = {}): Out[] {
     stmt(VERB_TERMINATED, 40, { categories: [CMI5] }, o),
   ];
 }
+const LAUNCH_MODE_EXT = 'https://w3id.org/xapi/cmi5/context/extensions/launchmode';
+/** The LMS's own statement that it launched the unit, which says in which mode. */
+const launchedBy = (mode: string, o: Opt = {}): Out => stmt(VERB_LAUNCHED, -1, { contextExt: { [LAUNCH_MODE_EXT]: mode } }, o);
 const INPUT = { registration: REG, spec: SPEC, rubricHash: RUBRIC, vocabulary: VOCAB, endpoint: `${LMS}/xapi` };
 const problemsOf = (statements: Out[]): readonly string[] => {
   const r = readLaunchedCall(statements, INPUT);
@@ -122,6 +125,7 @@ describe('a registration read as a conversation', () => {
       registration: REG, sessionId: SESSION, activityId: AU, actor: { homePage: LMS, name: didOf(W.ana.address) }, endpoint: `${LMS}/xapi`, launchMode: 'Normal',
     });
     expect(c.launchModeFrom).toBe('assumed');
+    expect(c.launch.activityDefinition).toEqual({ type: `${P}/activity-types/roleplay-scenario` });
     // What the unit put on its first statement is carried: its grouping, the profile category (not the cmi5 one), its extensions (not the session id).
     const template = c.launch.contextTemplate as { contextActivities: { grouping: unknown[]; category: { id: string }[] }; extensions: Out };
     expect(template.contextActivities.category.map((x) => x.id)).toEqual([`${P}/v/3`]);
@@ -183,7 +187,7 @@ describe('a registration read as a conversation', () => {
 
 /** A stand-in for the LRS's signed-read route: it answers what the test put there, and keeps what it was sent. */
 const lrs = {
-  answer: (): { status: number; body: unknown } => ({ status: 200, body: { statements: call() } }),
+  answer: (): { status: number; body: unknown } => ({ status: 200, body: { statements: [launchedBy('Normal'), ...call()] } }),
   seen: [] as { url: string; body: Out }[],
   fetchFn: (async (u: RequestInfo | URL, init?: RequestInit) => {
     lrs.seen.push({ url: String(u), body: JSON.parse(String(init?.body)) as Out });
@@ -254,7 +258,7 @@ describe('pev.import_launched_attempt', () => {
     const r = refused(await act(H, 'pev.import_launched_attempt', W.ana, pay(), readOf(REG)), 422, 'registration-not-a-conversation');
     expect(r['problems']).toEqual(['the session of the conversation has no terminated statement: it is still open']);
     // Ben signs, but the LRS answered with Ana's statements: a learner takes only their own conversation.
-    lrs.answer = () => ({ status: 200, body: { statements: call() } });
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal'), ...call()] } });
     refused(await act(H, 'pev.import_launched_attempt', W.ben, pay(), readOf(REG)), 403, 'not-your-registration');
     expect(pod.store.size).toBe(before);
     // The learner's signed read went to the configured route, unchanged, and nowhere else.
@@ -263,20 +267,20 @@ describe('pev.import_launched_attempt', () => {
   }, SLOW);
 
   it('writes the conversation as a judged attempt on the LMS\'s registration, with the unit\'s lines and scores as read', async () => {
-    lrs.answer = () => ({ status: 200, body: { statements: call() } });
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal'), ...call()] } });
     const r = ok(await act(H, 'pev.import_launched_attempt', W.ana, pay({ coached: true }), readOf(REG)));
     S['attempt'] = String(r['attemptIri']);
     expect(r).toMatchObject({
-      state: 'judged', coached: true, registration: REG, lmsSessionId: SESSION, launchMode: 'Normal', launchModeFrom: 'assumed',
-      turnsRead: 4, statementsRead: 7, counterpartControlledBy: 'assignable-unit', recorded: true,
+      state: 'judged', coached: true, registration: REG, lmsSessionId: SESSION, launchMode: 'Normal', launchModeFrom: 'launched-statement',
+      turnsRead: 4, statementsRead: 8, counterpartControlledBy: 'assignable-unit', recorded: true,
     });
     expect((r['unitJudgment'] as Out)['route']).toBe('scripted');
     expect((r['taken'] as Out)['fromLrs']).toBe(`${LMS}/xapi`);
 
     const head = (await readHead(POD, S['attempt']!, TRUSTED, pod.fetchFn)).head!;
     const a = head.body as AttemptBody;
-    expect(a.lmsLaunch).toMatchObject({ registration: REG, sessionId: SESSION, activityId: AU, launchMode: 'Normal', launchModeFrom: 'assumed', unitSent: [] });
-    expect(a.lmsLaunch!.statementIds).toHaveLength(7);
+    expect(a.lmsLaunch).toMatchObject({ registration: REG, sessionId: SESSION, activityId: AU, launchMode: 'Normal', launchModeFrom: 'launched-statement', unitSent: [] });
+    expect(a.lmsLaunch!.statementIds).toHaveLength(8);
     expect([a.startedAt, a.endedAt, a.endedBy]).toEqual([at(0), at(40), 'learner']);
     expect(a.turns.map((t) => [t.index, t.speaker, t.source])).toEqual([
       [0, 'counterpart', 'lrs-statement'], [1, 'learner', 'lrs-statement'], [2, 'counterpart', 'lrs-statement'], [3, 'learner', 'lrs-statement'],
@@ -297,9 +301,42 @@ describe('pev.import_launched_attempt', () => {
     expect(launchedRefusals(a)).toEqual(['the attempt has no standing review']);
   }, SLOW);
 
-  it('takes a registration once', async () => {
+  it('takes a registration once, whatever scenario it is taken against, and once when two imports race', async () => {
     const r = refused(await act(H, 'pev.import_launched_attempt', W.ana, pay(), readOf(REG)), 409, 'registration-already-imported');
     expect(r['attemptIri']).toBe(S['attempt']);
+    // A second scenario with the same rubric: the same call cannot become a second attempt there.
+    const twin = ok(await act(H, 'pev.author_scenario', W.author, {
+      scenario: { ...demoScenarioInput('missed-deadline', 1), scenarioKey: 'missed-deadline-twin' }, status: 'published', draftAssistance: { used: false },
+    }));
+    S['twin'] = String(twin['scenarioIri']);
+    const again = refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ scenarioIri: S['twin'] }), readOf(REG)), 409, 'registration-already-imported');
+    expect(again['scenarioIri']).toBe(S['scenario']);
+    // Two imports of one new registration at once, one against each scenario: exactly one is written.
+    const REG2 = '7a2d3f7f-4c2b-4d64-8e3f-1b5c8d0e2f3a';
+    const SESSION2 = 'd8f2b0d5-63e4-4a71-9b28-4d6e0f1a2b3c';
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', { registration: REG2, session: SESSION2 }), ...call({ registration: REG2, session: SESSION2 })] } });
+    const both = await Promise.all([
+      act(H, 'pev.import_launched_attempt', W.ana, pay({ registration: REG2 }), readOf(REG2)),
+      act(H, 'pev.import_launched_attempt', W.ana, pay({ registration: REG2, scenarioIri: S['twin'] }), readOf(REG2)),
+    ]);
+    expect(both.filter((x) => x['kind'] === undefined)).toHaveLength(1);
+    refused(both.find((x) => x['kind'] !== undefined)!, 409, 'registration-already-imported');
+  }, SLOW);
+
+  it('builds nothing for the unit where the launch mode is only assumed', async () => {
+    // Ben's own call, read from an LRS that returned no launched statement.
+    const REG3 = '8b3e4a80-5d3c-4e75-9f40-2c6d9e1f3a4b';
+    const SESSION3 = 'e9a3c1e6-74f5-4b82-8c39-5e7f1a2b3c4d';
+    const ben = { actor: didOf(W.ben.address), registration: REG3, session: SESSION3 };
+    lrs.answer = () => ({ status: 200, body: { statements: call(ben) } });
+    const r = ok(await act(H, 'pev.import_launched_attempt', W.ben, pay({ registration: REG3 }), readOf(REG3)));
+    expect(r['launchModeFrom']).toBe('assumed');
+    const a = (await readHead(POD, String(r['attemptIri']), TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    // It can be reviewed like any attempt; what it cannot have is a cmi5 passed, failed or completed.
+    expect(launchedRefusals(a)).toEqual([
+      'the launch mode is not known: the LRS returned no launched statement from the LMS, and cmi5 allows passed, failed and completed only in a Normal launch',
+      'the attempt has no standing review',
+    ]);
   }, SLOW);
 
   it('lets a reviewer decide the levels, after which the statements for the unit can be built', async () => {
@@ -320,5 +357,7 @@ describe('pev.import_launched_attempt', () => {
     // The profile category the unit used rides along with the two cmi5 ones.
     expect(ctx.contextActivities.category.map((c) => c.id)).toEqual([`${P}/v/3`, CMI5, 'https://w3id.org/xapi/cmi5/context/categories/moveon']);
     expect((out[0]!['actor'] as { account: Out }).account).toEqual({ homePage: LMS, name: didOf(W.ana.address) });
+    // The activity keeps the definition the unit gave it, so a profile that selects on its type still matches.
+    expect(out.map((x) => x['object'])).toEqual([0, 1].map(() => ({ objectType: 'Activity', id: AU, definition: { type: `${P}/activity-types/roleplay-scenario` } })));
   }, SLOW);
 });
