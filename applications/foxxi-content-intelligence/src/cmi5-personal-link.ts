@@ -16,6 +16,7 @@
  */
 import { randomBytes } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
+import { rateLimit } from 'express-rate-limit';
 import { buildCmi5Launch, chooseAu, findResumableLaunch, whenCmi5Ready, type Cmi5Launch } from './cmi5-lms.js';
 import type { Cmi5Course } from './cmi5-course.js';
 import type { TenantId } from './tenant-context.js';
@@ -313,7 +314,14 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
     return link;
   };
 
-  app.post('/agent/cmi5/go', async (req, res) => {
+  // Ahead of the signature check, on the route itself. The handler's own limit is the shared
+  // agentic budget; this one refuses a burst before that check runs.
+  const signedRouteLimit = rateLimit({
+    windowMs: 5 * 60 * 1000, limit: 120, ipv6Subnet: 56, identifier: 'cmi5-personal-launch',
+    standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+  });
+
+  app.post('/agent/cmi5/go', signedRouteLimit, async (req, res) => {
     try {
       if (limited(req, res)) return;
       const auth = await deps.verifyCaller(req.body);
@@ -354,7 +362,7 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
     } catch (err) { failed(res, err, 'cmi5-personal-launch'); }
   });
 
-  app.post('/agent/cmi5/go/revoke', async (req, res) => {
+  app.post('/agent/cmi5/go/revoke', signedRouteLimit, async (req, res) => {
     try {
       if (limited(req, res)) return;
       const auth = await deps.verifyCaller(req.body);
