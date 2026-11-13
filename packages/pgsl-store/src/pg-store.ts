@@ -366,6 +366,16 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
               const found = new Map(r.rows.map(row => [row.k.toString('hex'), row.v]));
               return captured.map((key) => { const v = found.get(key.toString('hex')); return v ? new Uint8Array(v) : undefined; });
             },
+            anyInRanges: async (ranges: readonly { readonly begin: Key; readonly end: Key }[]) => {
+              const begins = ranges.map(range => Buffer.from(range.begin)), ends = ranges.map(range => Buffer.from(range.end));
+              await flush();
+              if (ranges.length === 0) return [];
+              const r = await client.query<{ i: string }>(
+                `SELECT r.i::text AS i FROM unnest($1::bytea[], $2::bytea[]) WITH ORDINALITY AS r(b, e, i)
+                 WHERE EXISTS (SELECT 1 FROM ${table} t WHERE t.k >= r.b AND t.k < r.e)`, [begins, ends]);
+              const hit = new Set(r.rows.map(row => Number(row.i) - 1));
+              return ranges.map((_, index) => hit.has(index));
+            },
             // compareAndSet(key, null, value) for every entry in one statement: ON CONFLICT DO
             // NOTHING waits on a concurrent creator of a key and then leaves that key alone, and
             // RETURNING names exactly the rows this statement created. Nothing is replaced, so

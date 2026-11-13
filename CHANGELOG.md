@@ -36,6 +36,9 @@ live effect is not measured yet; the server now logs it.
   lock and emit no per-document change notification; they are immutable and
   content-named, and are created by compare-and-set. A container that does not
   exist yet is created by staging its first item the ordinary way.
+  A name that is already a container (a marker at `name/`, or anything beneath
+  it) is refused, as the ordinary write path refuses it, and so is a name that
+  is an auxiliary resource (`.meta`, `.acl`, `.acr`).
 - The handler logs one line of numbers per staging request to stderr,
   `[pgsl-css] native-stage {items, bytes, created, ordinary, prepareMs, engineMs, containerMs, totalMs}`.
 

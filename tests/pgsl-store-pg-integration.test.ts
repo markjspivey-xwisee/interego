@@ -654,6 +654,11 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
         expect(read.map(value => value && Buffer.from(value).toString())).toEqual([undefined, 'kept', 'own write', 'kept']);
         expect(await tx.getMany!([])).toEqual([]);
         expect(await tx.createAbsent!([])).toEqual([]);
+        expect(await tx.anyInRanges!([])).toEqual([]);
+        expect(await tx.anyInRanges!([
+          { begin: key('zzz'), end: key('zzzz') }, { begin: key('t'), end: key('u') },
+          { begin: key('buffered'), end: key('buffered\x00') }, { begin: key('taken\x00'), end: key('u') },
+        ])).toEqual([false, true, true, false]);
         expect(await tx.createAbsent!([
           { key: key('z-new'), value: Buffer.from('made') }, { key: key('taken'), value: Buffer.from('ignored') },
           { key: key('a-new'), value: Buffer.from('made') }, { key: key('buffered'), value: Buffer.from('ignored') },

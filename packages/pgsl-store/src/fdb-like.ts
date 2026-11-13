@@ -104,6 +104,21 @@ export interface FdbTxn {
    * Use `createAbsent()` below, which falls back to `compareAndSet`.
    */
   createAbsent?(entries: readonly { readonly key: Key; readonly value: Value }[]): Promise<boolean[]>;
+  /**
+   * OPTIONAL: for each half-open range [begin, end), whether any key lies in it, in the order
+   * asked. Exactly `getRange(begin, end, { limit: 1 })` per range, in one round trip.
+   * Use `anyInRanges()` below, which falls back to `getRange`.
+   */
+  anyInRanges?(ranges: readonly { readonly begin: Key; readonly end: Key }[]): Promise<boolean[]>;
+}
+
+export async function anyInRanges(
+  txn: FdbTxn, ranges: readonly { readonly begin: Key; readonly end: Key }[],
+): Promise<boolean[]> {
+  if (txn.anyInRanges) return txn.anyInRanges(ranges);
+  const out: boolean[] = [];
+  for (const range of ranges) out.push((await txn.getRange(range.begin, range.end, { limit: 1 })).length > 0);
+  return out;
 }
 
 export async function getMany(txn: FdbTxn, keys: readonly Key[]): Promise<(Value | undefined)[]> {

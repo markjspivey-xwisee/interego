@@ -15,7 +15,7 @@
  * adapter over this same seam.
  */
 
-import { createAbsent, getMany, type FdbLike, type FdbTxn } from './fdb-like.js';
+import { anyInRanges, createAbsent, getMany, type FdbLike, type FdbTxn } from './fdb-like.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { nodeAddrFromUrn, urnFromNodeAddr } from './addressing.js';
 import {
@@ -253,7 +253,8 @@ export class PgslStore {
   /**
    * Stage several immutable native resources in ONE transaction: each is created if absent, or
    * confirmed if the identical representation is already there (same digest, size and media
-   * type, and the stored bytes read back equal). A path that holds anything else fails the whole
+   * type, and the stored bytes read back equal). A path that holds anything else, or that is a
+   * container (anything stored at or beneath `path/`), fails the whole
    * transaction, so a refused batch stages nothing. Heads written here are native-managed, exactly
    * as a create through commitResource with an absent-head expectation.
    *
@@ -342,6 +343,10 @@ export class PgslStore {
           if (!same) throw new StageConflict(item.resource);
           results.push({ created: false, revision: resourceRevision(pod, item.resource, previous) });
         }
+        // A name is a document or a container, never both: nothing may exist at `name/`, whether a
+        // container's own marker or anything stored beneath it.
+        const occupied = await anyInRanges(base, absent.map(item => cpListRange(resourceCollection(pod), `${item.resource}/`)));
+        if (occupied.includes(true)) throw new StageConflict(absent[occupied.indexOf(true)]!.resource);
         // Absent a moment ago is restated in the write: a name a concurrent creator took is not
         // overwritten, the transaction is abandoned and run again against what is there now.
         const created = await createAbsent(base, absent.map(item => ({ key: item.key, value: item.encoded })));

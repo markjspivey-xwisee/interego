@@ -147,6 +147,17 @@ describe('pgsl-store: LDP resource CRUD over the PGSL store (S2 core, no CSS)', 
     }
     expect(dec.decode((await ldp.readResource(POD, 'a/taken'))!.bytes)).toBe('first');
     await expect(ldp.stageResources(POD, [taken, taken])).rejects.toThrow(/twice/);
+    // A name is a document or a container, never both: a marker at `name/`, or anything beneath it.
+    await ldp.writeResource(POD, 'a/marked/', new Uint8Array(0), 'internal/container');
+    await ldp.writeResource(POD, 'a/implicit/child', enc.encode('x'), 'text/plain');
+    for (const path of ['a/marked', 'a/implicit']) {
+      const fresh = { path: `${path}-sibling`, bytes: enc.encode('fresh'), contentType: 'text/plain' };
+      expect(await ldp.stageResources(POD, [fresh, { path, bytes: enc.encode('doc'), contentType: 'text/plain' }])).toEqual({ status: 'conflict', path });
+      expect(await ldp.readResource(POD, path)).toBeNull();
+      expect(await ldp.readResource(POD, fresh.path)).toBeNull();
+    }
+    // A sibling whose name merely starts the same way is not beneath it.
+    expect(await ldp.stageResources(POD, [{ path: 'a/implic', bytes: enc.encode('doc'), contentType: 'text/plain' }])).toMatchObject({ status: 'staged' });
   });
 
   it('lets concurrent batches stage the same names: each is created once and confirmed by the rest', async () => {
