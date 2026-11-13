@@ -2111,8 +2111,8 @@ describe('ontology files', () => {
 
   it('gives every action a pev tool name and keeps the export steps in substrate terms', () => {
     const actions = Object.values(PEV_ACTION);
-    expect(actions).toHaveLength(27);
-    expect(new Set(actions.map((a) => toolNameOf(a))).size).toBe(27);
+    expect(actions).toHaveLength(28);
+    expect(new Set(actions.map((a) => toolNameOf(a))).size).toBe(28);
     expect(toolNameOf(PEV_ACTION.registerRole)).toBe('pev.register_role');
     expect(toolNameOf('urn:iep:action:other:x')).toBeNull();
     expect(EXPORT_VERIFY_STEPS.join(' ')).toContain('verifySignedAuthorship');

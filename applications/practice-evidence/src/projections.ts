@@ -366,7 +366,10 @@ export function buildLaunchedStatements(i: ProjectionInput, sendIn: SendingSessi
     }));
   }
   out.push(statement('completed', { completion: true, duration, extensions: { [ext('criterionLevels')]: criterionLevels } }));
-  return out;
+  // What the unit already sent in this registration is not built again: cmi5 allows one of each.
+  const sent = new Set(l.unitSent ?? []);
+  if (sent.has('passed') || sent.has('failed')) { sent.add('passed'); sent.add('failed'); }
+  return out.filter((st) => !sent.has(((Object.keys(LAUNCHED_VERB_IRI) as LaunchedVerb[]).find((k) => LAUNCHED_VERB_IRI[k] === (st['verb'] as Record<string, unknown>)['id']))!));
 }
 
 /** Each failure as one sentence; [] means the statement is a cmi5 defined statement of this launch. */

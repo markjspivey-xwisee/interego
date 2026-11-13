@@ -34,6 +34,7 @@ export const PEV_ACTION = {
   ratifyScenario: 'urn:iep:action:pev:ratify-scenario',
   listScenarios: 'urn:iep:action:pev:list-scenarios',
   startAttempt: 'urn:iep:action:pev:start-attempt',
+  importLaunchedAttempt: 'urn:iep:action:pev:import-launched-attempt',
   say: 'urn:iep:action:pev:say',
   counterpartPacket: 'urn:iep:action:pev:counterpart-packet',
   recordTurns: 'urn:iep:action:pev:record-turns',

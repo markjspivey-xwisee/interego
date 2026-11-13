@@ -113,7 +113,7 @@ pevsh:AttemptShape a sh:NodeShape ;
     sh:property [ sh:path pev:coached ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ;
         sh:message "An attempt records whether the learner was coached." ] ;
     sh:property [ sh:path pev:authorTest ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
-    sh:property [ sh:path pev:counterpartControlledBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "platform" "learner-model" "learner" ) ] ;
+    sh:property [ sh:path pev:counterpartControlledBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "platform" "learner-model" "learner" "assignable-unit" ) ] ;
     sh:property [ sh:path pev:lmsLaunch ; sh:maxCount 1 ; sh:class pev:LmsLaunch ] ;
     sh:property [ sh:path pev:evidenceKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "practice" ) ;
         sh:message "Practice evidence is rehearsal, not capability evidence." ] ;
@@ -129,7 +129,7 @@ pevsh:TurnShape a sh:NodeShape ;
     sh:property [ sh:path pev:text ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
     sh:property [ sh:path pev:textSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
     sh:property [ sh:path pev:turnSource ; sh:minCount 1 ; sh:maxCount 1 ;
-        sh:in ( "authored-first-line" "learner-signed" "bridge-model" "scripted" "client-packet" ) ] .
+        sh:in ( "authored-first-line" "learner-signed" "bridge-model" "scripted" "client-packet" "lrs-statement" ) ] .
 
 pevsh:InferenceDisclosureShape a sh:NodeShape ;
     sh:targetClass pev:InferenceDisclosure ;

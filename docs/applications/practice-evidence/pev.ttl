@@ -512,7 +512,7 @@ pev:transcriptHash a owl:DatatypeProperty ;
     rdfs:range xsd:string .
 pev:counterpartControlledBy a owl:DatatypeProperty ;
     rdfs:label "other person's lines controlled by" ;
-    rdfs:comment "platform, learner-model or learner: the most learner-controlled route that wrote the other person's lines." ;
+    rdfs:comment "platform, learner-model, learner or assignable-unit: the most learner-controlled route that wrote the other person's lines, or the unit an LMS launched when the conversation was read from its statements." ;
     rdfs:range xsd:string .
 pev:lmsRegistration a owl:DatatypeProperty ;
     rdfs:label "LMS registration" ;
@@ -578,7 +578,7 @@ pev:textSha256 a owl:DatatypeProperty ;
     rdfs:range xsd:string .
 pev:turnSource a owl:DatatypeProperty ;
     rdfs:label "turn source" ;
-    rdfs:comment "authored-first-line, learner-signed, bridge-model, scripted or client-packet." ;
+    rdfs:comment "authored-first-line, learner-signed, bridge-model, scripted, client-packet or lrs-statement (read from a statement an assignable unit wrote to an LRS)." ;
     rdfs:range xsd:string .
 pev:endSignal a owl:DatatypeProperty ;
     rdfs:label "end signal" ;

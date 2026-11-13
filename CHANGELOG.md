@@ -6,7 +6,7 @@ Practice Evidence refused, by design, to put a cmi5 defined category on anything
 practice could not satisfy an assignable unit, and its registration was derived
 from the attempt. The owner has decided that a practice conversation run under an
 LMS launch does count. This is the first piece of that, as pure functions and the
-record's shape. No act sets it yet, and nothing reads an LRS.
+record's shape, and the act that takes a launched conversation as an attempt.
 
 - An attempt record may carry the launch it ran under (`lmsLaunch`): the
   registration, session, actor and activity id the LMS issued, the LRS endpoint,
@@ -31,9 +31,25 @@ record's shape. No act sets it yet, and nothing reads an LRS.
   which cmi5 can call neither passed nor failed. `launchedStatementProblems`
   checks a statement against its launch.
 
+- `pev.import_launched_attempt` takes a conversation an assignable unit already
+  held under an LMS launch. The learner signs it and passes their own signed read
+  of the registration, which the bridge forwards unchanged to the LRS's signed-read
+  route (`PEV_LAUNCH_READ_URL`); the bridge holds no LRS credential and does not
+  keep the read. The exchanges become turns read from statements, the unit's score
+  per criterion becomes a scripted judgment with nothing verified, and the attempt
+  is written `judged` on the LMS's registration for a reviewer to decide. The
+  profile terms the unit's statements use are a setting (`PEV_LAUNCH_VOCABULARY`);
+  no profile, course or player is named in code. A registration that is not one
+  whole conversation against the scenario version's rubric is refused with every
+  reason, as are another actor's statements and a registration already taken.
+- A turn may now be an `lrs-statement`, and the other person's lines may be
+  controlled by an `assignable-unit`; both are in `pev.ttl` and its shapes.
+
 An attempt started in Practice Evidence itself has no launch, projects exactly as
-before and satisfies nothing. Verified by the vertical's engine tests against
-fictional fixtures only: no live LMS, LRS or assignable unit has used this.
+before and satisfies nothing. Verified by the vertical's tests against fictional
+fixtures only, with a fetch double for the LRS: no live LMS, LRS or assignable
+unit has used this. Not built: the act that serves the reviewed statements to the
+unit and keeps what it handed out.
 
 ## 2026-11-13 — Foxxi statements say which kind they are, and its profile selects on that
 

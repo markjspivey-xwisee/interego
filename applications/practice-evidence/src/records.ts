@@ -206,6 +206,12 @@ export interface LmsLaunch {
   readonly masteryScore?: number;
   /** The launch data's contextTemplate, carried into every statement of the registration. */
   readonly contextTemplate?: Readonly<Record<string, unknown>>;
+  /** The cmi5 defined verbs the unit had already sent in this registration when the attempt was taken from it. */
+  readonly unitSent?: readonly ('passed' | 'failed' | 'completed')[];
+  /** How the launch mode is known: from the LMS's launched statement, or not at all (Normal is then assumed). */
+  readonly launchModeFrom?: 'launched-statement' | 'assumed';
+  /** Every statement the attempt was read from, in time order. */
+  readonly statementIds?: readonly string[];
 }
 
 const LMS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
@@ -236,6 +242,12 @@ export function lmsLaunchProblems(v: unknown): string[] {
   if (m !== undefined && (typeof m !== 'number' || !Number.isFinite(m) || m < 0 || m > 1)) p.push('masteryScore must be a number from 0 to 1');
   const t = l['contextTemplate'];
   if (t !== undefined && (typeof t !== 'object' || t === null || Array.isArray(t))) p.push('contextTemplate must be an object');
+  const u = l['unitSent'];
+  if (u !== undefined && !(Array.isArray(u) && u.every((x) => x === 'passed' || x === 'failed' || x === 'completed'))) p.push('unitSent must list passed, failed or completed');
+  const f = l['launchModeFrom'];
+  if (f !== undefined && f !== 'launched-statement' && f !== 'assumed') p.push('launchModeFrom must be launched-statement or assumed');
+  const ids = l['statementIds'];
+  if (ids !== undefined && !(Array.isArray(ids) && ids.every((x) => typeof x === 'string' && LMS_UUID.test(x)))) p.push('statementIds must be UUIDs');
   return p;
 }
 
@@ -254,7 +266,7 @@ export interface AttemptBody extends RecordCommon {
   readonly endedBy?: 'learner' | 'learner-confirmed-counterpart-end' | 'turn-limit';
   readonly endProposedAtTurn?: number;
   readonly turns: readonly Turn[];
-  readonly counterpartControlledBy: 'platform' | 'learner-model' | 'learner';
+  readonly counterpartControlledBy: 'platform' | 'learner-model' | 'learner' | 'assignable-unit';
   readonly transcriptHash?: string;
   /** judgments[0] is the PRIMARY judgment. */
   readonly judgments: readonly JudgmentResult[];
