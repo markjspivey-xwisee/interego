@@ -19,7 +19,7 @@
 import type { Express, Request, Response, RequestHandler } from 'express';
 import { ProfileDataset, SparqlRefused, type HeldProfile } from './dataset.js';
 import { follows, validates, type Json as PJson } from './processor.js';
-import type { Json } from './rdf.js';
+import { versionsOf, type Json } from './rdf.js';
 
 type Obj = { [key: string]: Json };
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -81,6 +81,13 @@ export class ProfileServer {
     if (this.builtInIds.has(id)) throw new ProfileServerError(409, `${id} is this deployment's own profile and is served from its code.`);
     const owner = this.owners.get(id);
     if (owner && owner !== by) throw new ProfileServerError(409, `${id} was added by another agent, and only that agent adds versions of it.`);
+    // The dataset is keyed by version IRI. A version already held under another profile is that
+    // profile's: without this, a document naming a different profile could replace it, the
+    // deployment's own included.
+    const version = versionsOf(doc).current.id;
+    const taken = this.dataset.all().find(h => h.version === version || h.id === version);
+    if (taken && taken.id !== id) throw new ProfileServerError(409, `${version} is already held as a version of ${taken.id}.`);
+    if (this.dataset.all().some(h => h.version === id)) throw new ProfileServerError(409, `${id} is held here as a version, not as a profile.`);
     const held = this.dataset.add(doc);
     if (held.stated.length > MAX_PROFILE_TRIPLES) {
       this.dataset.remove(held.version);

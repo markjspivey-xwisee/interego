@@ -97,6 +97,9 @@ describe('validates', () => {
     // Available, and it follows another template: invalid.
     const other = { ...S('commented', { object: { objectType: 'StatementRef', id: 'z' } }), id: '22222222-2222-4222-8222-222222222222' };
     expect(validates(about(other.id as string), all, { statementById: id => id === other.id ? other : undefined }).outcome).toBe('invalid');
+    // Available, but it breaks a rule of the template wanted: that is not following it.
+    const strictBase = { ...base, rules: [{ location: '$.result.score.raw', presence: 'included' }] };
+    expect(validates(about(first.id as string), [strictBase, commented], lookup).outcome).toBe('invalid');
     // The object is not a StatementRef at all: invalid.
     expect(validates(S('commented'), all).outcome).toBe('invalid');
     expect(follows_rules(S('commented'), commented, all)).toBe(false);
@@ -132,6 +135,16 @@ describe('matches and follows', () => {
     // Greedy: oneOrMore(a) takes every a, so a sequence wanting one more a after it cannot match.
     const greedy = pat('greedy', { sequence: [many.id, a.id] });
     expect(matches(judged('a', 'a'), greedy.id as string, of([...ps, greedy]))[0]).not.toBe('success');
+  });
+
+  it('calls a repetition that ran out part-way unfinished', () => {
+    const pair = pat('pair', { sequence: [a.id, b.id] }), pairs = pat('pairs', { primary: true, zeroOrMore: pair.id });
+    const ps = [pair, pairs];
+    expect(matches(judged('a'), pairs.id as string, of(ps))).toEqual(['partial', []]);
+    expect(matches(judged('a', 'b', 'a'), pairs.id as string, of(ps))).toEqual(['partial', []]);
+    expect(matches(judged('a', 'b', 'a', 'b'), pairs.id as string, of(ps))).toEqual(['success', []]);
+    expect(matches([], pairs.id as string, of(ps))).toEqual(['success', []]);
+    expect(follows([S('a')], templates, ps).follows).toBe(false);
   });
 
   it('takes the alternate that consumes the most', () => {

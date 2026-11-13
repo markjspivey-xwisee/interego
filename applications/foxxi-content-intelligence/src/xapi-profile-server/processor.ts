@@ -218,7 +218,8 @@ function rules_failure(statement: Json, template: Json, run: Run): TemplateFindi
     const other = run.depth < 8 ? run.options.statementById?.(ref) : undefined;
     if (!other) { run.skipped.add(`${id}: ${property} (statement ${ref} is not available to this check)`); continue; }
     const result = validatesIn(normalized(other), { ...run, depth: run.depth + 1 });
-    if (!result.templates.some(t => wanted.includes(t))) return { template: id, reason: `${property}: the statement referred to follows none of ${JSON.stringify(wanted)}` };
+    // On an invalid outcome `templates` lists the templates that FAILED, so only a success counts.
+    if (result.outcome !== 'success' || !result.templates.some(t => wanted.includes(t))) return { template: id, reason: `${property}: the statement referred to follows none of ${JSON.stringify(wanted)}` };
   }
   for (const rule of list(template.rules)) {
     if (!isObject(rule)) continue;
@@ -307,6 +308,11 @@ function matchesIn(statements: readonly Judged[], element: string, of: Elements,
       const [more, rest] = next(last, pattern.zeroOrMore);
       if (more === 'failure') return ['success', last];
       if (more === 'partial' && rest.length > 0) return ['partial', rest];
+      // Where this departs from the pseudocode as printed: a repetition that consumed statements
+      // and then ran out is unfinished. Read literally, the next pass would call it on nothing,
+      // see no progress, and report success, so zeroOrMore(sequence(A, B)) given only an A would
+      // match. The specification's own table calls that case partial.
+      if (more === 'partial' && last.length > 0) return ['partial', []];
       if (rest.length === last.length) return ['success', rest];
       last = rest;
     }

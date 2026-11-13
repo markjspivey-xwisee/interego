@@ -70,6 +70,13 @@ describe('adding and holding profiles', () => {
     await expect(server.remove(OWN, 'did:example:operator')).rejects.toMatchObject({ status: 409 });
     await expect(server.remove('https://example.org/none', 'did:example:alice')).rejects.toBeInstanceOf(ProfileServerError);
   });
+  it('does not let a version held under one profile be replaced through another', async () => {
+    const thief = (version: string): Json => ({ ...(profile(1, 'https://example.org/profiles/thief') as object), versions: [{ id: version, generatedAtTime: '2027-01-01T00:00:00Z' }] });
+    await expect(server.add(thief(`${P}/v2`), 'did:example:mallory')).rejects.toMatchObject({ status: 409 });
+    await expect(server.add(thief(`${OWN}/v1`), 'did:example:mallory')).rejects.toMatchObject({ status: 409 });
+    expect(server.dataset.get(`${P}/v2`)!.id).toBe(P);
+    expect(server.dataset.get(`${OWN}/v1`)!.id).toBe(OWN);
+  });
   it('says why a document is not a profile', () => {
     expect(whyNotAddable([])).toMatch(/JSON object/);
     expect(whyNotAddable({ id: 'urn:x', type: 'Profile', versions: [{ id: 'https://e.org/v1' }] })).toMatch(/http\(s\) IRI/);
