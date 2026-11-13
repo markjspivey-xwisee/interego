@@ -201,6 +201,8 @@ export interface SparqlFilter {
   operator?: string;
   value?: string;
   pattern?: string;
+  /** REGEX's third argument. It was parsed and dropped, so `REGEX(?l, "x", "i")` matched case-sensitively. */
+  flags?: string;
 }
 
 export interface SparqlAggregate {
@@ -364,7 +366,7 @@ export function parseSparql(queryString: string): SparqlQuery {
     }
     const patterns: SparqlPattern[] = [];
     // Normalize: remove comments, collapse whitespace
-    const clean = block.replace(/#[^\n]*/g, '').replace(/\s+/g, ' ').trim();
+    const clean = stripComments(block).replace(/\s+/g, ' ').trim();
     // Split on the triple terminator '.', but NOT a '.' inside an IRI ref (<…>) or a
     // string literal ("…"/'…'). PGSL node ids are now https URLs whose host contains
     // dots (relay.interego.xwisee.com), so a naive split on every '.' shreds the IRI.
@@ -506,6 +508,27 @@ export function parseSparql(queryString: string): SparqlQuery {
   };
 }
 
+/**
+ * Remove `# …` comments, leaving a '#' inside an IRI ref or a string alone.
+ *
+ * The strip was a bare "hash to end of line" pattern over the whole block, so an IRI with a fragment —
+ * `<http://www.w3.org/2001/XMLSchema#boolean>`, `<…/ontology#Profile>` — was cut at its '#' and the
+ * pattern then matched nothing, with no error.
+ */
+function stripComments(block: string): string {
+  let out = '', inIri = false, quote = '';
+  for (let i = 0; i < block.length; i++) {
+    const c = block[i]!;
+    if (quote) { out += c; if (c === quote) quote = ''; continue; }
+    if (inIri) { out += c; if (c === '>') inIri = false; continue; }
+    if (c === '"' || c === "'") { quote = c; out += c; continue; }
+    if (c === '<' && /^<[^\s<>]*>/.test(block.slice(i))) { inIri = true; out += c; continue; }
+    if (c === '#') { const end = block.indexOf('\n', i); if (end < 0) break; i = end - 1; continue; }
+    out += c;
+  }
+  return out;
+}
+
 function tokenize(s: string): string[] {
   const tokens: string[] = [];
   let current = '';
@@ -534,7 +557,10 @@ function expandTerm(term: string, expandPrefixed: (s: string) => string): string
     // Expand typed literals: "value"^^prefix:local → "value"^^full-uri
     const typedMatch = term.match(/^(".*?")\^\^(.+)$/);
     if (typedMatch) {
-      const expanded = expandPrefixed(typedMatch[2]!);
+      // A datatype written as an IRI ref is held bare, like every other IRI; it was kept with its
+      // brackets, so "1"^^<…integer> never equalled the stored "1"^^…integer.
+      const dt = typedMatch[2]!;
+      const expanded = dt.startsWith('<') && dt.endsWith('>') ? dt.slice(1, -1) : expandPrefixed(dt);
       return `${typedMatch[1]}^^${expanded}`;
     }
     return term;
@@ -649,7 +675,7 @@ function parseFilter(expr: string, expandPrefixed: (s: string) => string): Sparq
   if (regexMatch) {
     const variable = unwrapStr(regexMatch[1]!);
     if (/^\?\w+$/.test(variable)) {
-      return { type: 'regex', variable, pattern: regexMatch[2]! };
+      return { type: 'regex', variable, pattern: regexMatch[2]!, ...(regexMatch[3] ? { flags: regexMatch[3].replace(/[^imsu]/g, '') } : {}) };
     }
   }
 
@@ -896,7 +922,7 @@ function evaluateFilter(filter: SparqlFilter, binding: Binding): boolean {
     case 'strstarts':
       return val !== undefined && stripQuotes(val).startsWith(filter.pattern!);
     case 'regex':
-      return val !== undefined && new RegExp(filter.pattern!).test(stripQuotes(val));
+      return val !== undefined && new RegExp(filter.pattern!, filter.flags ?? '').test(stripQuotes(val));
     case 'comparison': {
       if (val === undefined) return false;
       const numVal = extractNumber(val);

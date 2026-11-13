@@ -856,6 +856,60 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
       "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
     ]
   },
+  "foxxi.xapi_profile_add": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by any wallet, or by an agent holding a delegation"
+    ],
+    "notes": [
+      "Bounded by document size, triple count and a count per signer each hour; the first agent to add a profile IRI adds its later versions.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_remove": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by the agent that added the profile, or by the operator"
+    ],
+    "notes": [
+      "Records the removal; the lattice is append-only, so the earlier holon stays addressable.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_sparql": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "public",
+    "requires": [],
+    "notes": [
+      "SELECT and ASK over the profiles held; forms the engine does not evaluate are refused by name.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_validate_templates": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "public",
+    "requires": [],
+    "notes": [
+      "Runs the specification's statement template algorithm; stores nothing.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_validate_patterns": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "public",
+    "requires": [],
+    "notes": [
+      "Runs the specification's pattern algorithm; stores nothing.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
   "foxxi.publish_memory": {
     "implementation": "implemented",
     "mode": "write",

@@ -1637,7 +1637,7 @@ import { FOXXI_NS } from './foxxi-vocab.js';
 /** xAPI Profile Version objects MUST be immutable — a fixed authoring timestamp for
  *  /v/1, NOT the live clock (which made generatedAtTime change on every fetch). A real
  *  revision appends /v/2 with wasRevisionOf rather than mutating this. */
-const PROFILE_GENERATED_AT = '2026-07-22T00:00:00.000Z';
+export const PROFILE_GENERATED_AT = '2026-07-22T00:00:00.000Z';
 
 let _profileCache: { url: string; doc: Record<string, unknown>; fetchedAt: number } | null = null;
 async function fetchExternalProfile(url: string): Promise<Record<string, unknown> | null> {
