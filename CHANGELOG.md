@@ -30,6 +30,7 @@ record's shape. No act sets it yet, and nothing reads an LRS.
 An attempt started in Practice Evidence itself has no launch, projects exactly as
 before and satisfies nothing. Verified by the vertical's engine tests against
 fictional fixtures only: no live LMS, LRS or assignable unit has used this.
+
 ## 2026-11-13 — Foxxi statements say which kind they are, and its profile selects on that
 
 Under the xAPI Profiles specification a statement must follow every template it
