@@ -375,6 +375,9 @@ async function batchedStagingContract(left: Worker, right: Worker, baseUrl: stri
   await refused(container, [good, good], 400, 'a repeated name');
   await refused(container, [{ ...good, contentType: mediaType }], 400, 'a native protocol media type as the representation type');
   await refused(container, [{ ...good, extra: true }], 400, 'an unknown item field');
+  for (const suffix of ['.meta', '.acl', '.acr']) {
+    await refused(container, [{ ...good, name: good.name.replace(/\.json$/, suffix) }], 400, `an auxiliary name (${suffix})`);
+  }
   await refused(container, [], 400, 'an empty batch');
   await refused(container, Array.from({ length: 65 }, () => stageItem('artifact')), 400, 'more items than one request may stage');
   await refused(container + 'document', [good], 400, 'a target that is not a container');
@@ -386,10 +389,21 @@ async function batchedStagingContract(left: Worker, right: Worker, baseUrl: stri
   await refused(container, [{ ...text, contentType: 'text/plain; charset=iso-8859-1' }], 409, 'a taken name under another charset');
   await refused(container, [{ ...text, contentType: 'text/plain' }], 409, 'a taken name without its parameters');
   for (const name of [good.name, 'head', `${good.name}.acl`]) assert.equal((await wire(right, container + name)).status, 404, 'a refused request stages nothing it refused');
-  // A request refused part-way keeps what it had already confirmed; it is not a transaction.
+  // One request is one transaction: a later item that conflicts stages none of the earlier ones.
   const before = stageItem('artifact');
   await refused(container, [before, { ...items[0]!, contentType: 'text/plain' }], 409, 'a later item that conflicts');
-  assert.equal((await wire(right, container + before.name, 'GET', { accept: 'application/json' })).status, 200);
+  assert.equal((await wire(right, container + before.name, 'GET', { accept: 'application/json' })).status, 404);
+  // A name that is already a container is not also made a document.
+  const folder = stageItem('artifact');
+  assert.equal((await wire(left, `${container}${folder.name}/inner`, 'PUT', { 'content-type': 'text/plain' }, Buffer.from('inside'))).status, 201);
+  await refused(container, [stageItem('artifact'), folder], 409, 'a name that is a container');
+  assert.equal((await wire(right, container + folder.name, 'GET')).status, 404);
+  // A container that does not exist yet is created by the request that first stages into it.
+  const fresh = `${container}fresh-${before.name.slice(-12)}/`;
+  const firsts = [stageItem('artifact'), stageItem('artifact'), stageItem('artifact')];
+  stageReceipts(await stageRequest(left, fresh, firsts), firsts, [true, true, true]);
+  for (const item of firsts) assert.equal((await wire(right, fresh + item.name, 'GET', { accept: 'application/json' })).status, 200);
+  assert.equal((await wire(right, fresh, 'HEAD')).status, 200, 'the new container is a container');
   // An ordinary POST to the same container is still CSS's own.
   const ordinary = await wire(left, container, 'POST', { 'content-type': 'text/plain', slug: 'note' }, Buffer.from('plain'));
   assert.equal(ordinary.status, 201);

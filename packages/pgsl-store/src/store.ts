@@ -15,7 +15,7 @@
  * adapter over this same seam.
  */
 
-import type { FdbLike, FdbTxn } from './fdb-like.js';
+import { anyInRanges, createAbsent, getMany, type FdbLike, type FdbTxn } from './fdb-like.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { nodeAddrFromUrn, urnFromNodeAddr } from './addressing.js';
 import {
@@ -87,6 +87,9 @@ function keyAfter(key: Uint8Array): Uint8Array {
   return out;
 }
 class ResourceWriteRace extends Error {}
+class StageConflict extends Error {
+  constructor(readonly resource: string) { super('native staging conflict'); }
+}
 // Provenance is edge/context metadata; immutable node content must agree even
 // when the same bytes are projected with a different media type or attribution.
 function nodeContentIdentity(node: StoredNode): string {
@@ -189,6 +192,190 @@ export class PgslStore {
   }
 
   /**
+   * The part of a native commit that follows its head compare-and-set, inside that same
+   * transaction: every canonical node the head needs is present and consistent, the stored bytes
+   * match the committed metadata, and the nodes, indexes and both overlay directions are written.
+   */
+  private async writeNativeBodyInTransaction(
+    txn: FdbTxn, slice: readonly StoredNode[], pod: string, path: string, record: NativeResourceRecord,
+  ): Promise<void> {
+    const available = new Map<string, StoredNode>();
+    for (const node of slice) {
+      const duplicate = available.get(node.uri);
+      if (duplicate && nodeContentIdentity(duplicate) !== nodeContentIdentity(node)) {
+        throw new Error('native resource contains conflicting canonical node content');
+      }
+      available.set(node.uri, node);
+    }
+    const resolved = new Map<string, StoredNode>();
+    const resolve = async (uri: string): Promise<StoredNode> => {
+      const cached = resolved.get(uri);
+      if (cached) return cached;
+      const local = available.get(uri);
+      const stored = await txn.get(nodeKey(nodeAddrFromUrn(uri)));
+      if (stored === undefined) {
+        if (!local) throw new Error('native resource head references an unavailable canonical node');
+        resolved.set(uri, local);
+        return local;
+      }
+      const node = decodeNode(stored);
+      if (node.uri !== uri || (local && nodeContentIdentity(local) !== nodeContentIdentity(node))) {
+        throw new Error('native resource references conflicting canonical node content');
+      }
+      resolved.set(uri, node);
+      return node;
+    };
+    await resolve(record.topUri);
+    await resolve(record.opaqueUri);
+    for (const node of slice) {
+      await resolve(node.uri);
+      for (const ref of [...(node.items ?? []), ...(node.left ? [node.left] : []), ...(node.right ? [node.right] : [])]) await resolve(ref);
+    }
+    const digest = createHash('sha256');
+    let size = 0;
+    for (const uri of record.chunkUris?.length ? record.chunkUris : [record.opaqueUri]) {
+      const node = await resolve(uri);
+      if (node.kind !== 'atom' || typeof node.value !== 'string') throw new Error('native representation is not an opaque byte atom');
+      const chunk = Buffer.from(node.value, 'base64');
+      size += chunk.byteLength;
+      digest.update(chunk);
+    }
+    if (size !== record.size || `sha256:${digest.digest('hex')}` !== record.bodyDigest) {
+      throw new Error('native representation bytes do not match the committed metadata');
+    }
+    const oldTop = await txn.get(ovKey(pod, path));
+    if (oldTop !== undefined && dec.decode(oldTop) !== record.topUri) {
+      txn.clear(ovrKey(nodeAddrFromUrn(dec.decode(oldTop)).hash, pod, path));
+    }
+    await this.composeInTransaction(txn, slice, { pod, resource: path }, record.topUri);
+  }
+
+  /**
+   * Stage several immutable native resources in ONE transaction: each is created if absent, or
+   * confirmed if the identical representation is already there (same digest, size and media
+   * type, and the stored bytes read back equal). A path that holds anything else, or that is a
+   * container (anything stored at or beneath `path/`), fails the whole
+   * transaction, so a refused batch stages nothing. Heads written here are native-managed, exactly
+   * as a create through commitResource with an absent-head expectation.
+   *
+   * `touch` names one ordinary (not native-managed) head, such as the marker of the container the
+   * names live in, whose modified time moves forward in the same transaction when anything was
+   * created. `touched` is false when there was no such head to move, or it predates digests.
+   */
+  async stageResources(
+    pod: string,
+    items: readonly { resource: string; slice: readonly StoredNode[]; record: NativeResourceRecord; bytes: Uint8Array }[],
+    options: { touch?: string } = {},
+  ): Promise<{ status: 'staged'; results: { created: boolean; revision: string }[]; touched: boolean } | { status: 'conflict'; resource: string }> {
+    const touchKey = options.touch === undefined ? undefined : cpKey(resourceCollection(pod), options.touch);
+    const prepared = items.map((item) => {
+      const record: NativeResourceRecord = { ...item.record, commitNonce: randomUUID(), nativeManaged: true };
+      if (!record.bodyDigest || !/^sha256:[a-f0-9]{64}$/.test(record.bodyDigest)
+        || !Number.isSafeInteger(record.size) || record.size < 0
+        || !Number.isFinite(record.updatedAt) || typeof record.contentType !== 'string' || !record.contentType) {
+        throw new Error('native resource commit requires valid representation metadata');
+      }
+      const bytes = encodeJson(record);
+      return { ...item, record, encoded: bytes, key: cpKey(resourceCollection(pod), item.resource),
+        revision: resourceRevision(pod, item.resource, bytes) };
+    });
+    if (new Set(prepared.map((item) => item.resource)).size !== prepared.length) throw new Error('native staging names a resource twice');
+    // A concurrent creator of one of these names loses nothing: the transaction is rolled back and
+    // run again, where that name is now present and is confirmed instead of created.
+    for (let attempt = 0; ; attempt++) try {
+      return await this.fdb.transact(async (base) => {
+        // One read for every head, canonical node and overlay row this batch consults, and one
+        // statement that creates every absent head. Everything after that reads through `seen`,
+        // so the node and index writes stay buffered and leave together at commit.
+        const hex = (key: Uint8Array): string => Buffer.from(key).toString('hex');
+        const wanted = new Map<string, Uint8Array>();
+        const want = (key: Uint8Array): void => { wanted.set(hex(key), key); };
+        if (touchKey) want(touchKey);
+        for (const item of prepared) {
+          want(item.key);
+          want(ovKey(pod, item.resource));
+          for (const uri of [item.record.topUri, item.record.opaqueUri, ...(item.record.chunkUris ?? [])]) want(nodeKey(nodeAddrFromUrn(uri)));
+          for (const node of item.slice) {
+            for (const uri of [node.uri, ...(node.items ?? []), ...(node.left ? [node.left] : []), ...(node.right ? [node.right] : [])]) {
+              want(nodeKey(nodeAddrFromUrn(uri)));
+            }
+          }
+        }
+        const keys = [...wanted.values()];
+        const values = await getMany(base, keys);
+        const seen = new Map<string, Uint8Array | undefined>(keys.map((key, index) => [hex(key), values[index]]));
+        const txn: FdbTxn = {
+          get: async (key) => { const id = hex(key); return seen.has(id) ? seen.get(id) : base.get(key); },
+          set: (key, value) => { seen.set(hex(key), value); base.set(key, value); },
+          clear: (key) => { seen.set(hex(key), undefined); base.clear(key); },
+          clearRange: (begin, end) => { seen.clear(); base.clearRange(begin, end); },
+          getRange: (begin, end, opts) => base.getRange(begin, end, opts),
+          compareAndSet: async (key, expected, value) => {
+            const swapped = await base.compareAndSet(key, expected, value);
+            if (swapped) seen.set(hex(key), value); else seen.delete(hex(key));
+            return swapped;
+          },
+          ...(base.firstPerSegment ? { firstPerSegment: (start, end, opts) => base.firstPerSegment!(start, end, opts) } : {}),
+        };
+        const results: { created: boolean; revision: string }[] = [];
+        const absent: typeof prepared = [];
+        for (const item of prepared) {
+          const previous = seen.get(hex(item.key));
+          if (previous === undefined) {
+            absent.push(item);
+            results.push({ created: true, revision: item.revision });
+            continue;
+          }
+          const existing = decodeJson<NativeResourceRecord>(previous);
+          let same = existing.bodyDigest === item.record.bodyDigest && existing.size === item.record.size
+            && existing.contentType === item.record.contentType;
+          if (same) {
+            // Read back: the stored bytes themselves, not only the metadata that describes them.
+            const parts: Buffer[] = [];
+            for (const uri of existing.chunkUris?.length ? existing.chunkUris : [existing.opaqueUri]) {
+              const stored = await txn.get(nodeKey(nodeAddrFromUrn(uri)));
+              const node = stored === undefined ? undefined : decodeNode(stored);
+              if (node?.kind !== 'atom' || typeof node.value !== 'string') { same = false; break; }
+              parts.push(Buffer.from(node.value, 'base64'));
+            }
+            same = same && Buffer.concat(parts).equals(Buffer.from(item.bytes));
+          }
+          if (!same) throw new StageConflict(item.resource);
+          results.push({ created: false, revision: resourceRevision(pod, item.resource, previous) });
+        }
+        // A name is a document or a container, never both: nothing may exist at `name/`, whether a
+        // container's own marker or anything stored beneath it.
+        const occupied = await anyInRanges(base, absent.map(item => cpListRange(resourceCollection(pod), `${item.resource}/`)));
+        if (occupied.includes(true)) throw new StageConflict(absent[occupied.indexOf(true)]!.resource);
+        // Absent a moment ago is restated in the write: a name a concurrent creator took is not
+        // overwritten, the transaction is abandoned and run again against what is there now.
+        const created = await createAbsent(base, absent.map(item => ({ key: item.key, value: item.encoded })));
+        if (created.includes(false)) throw new ResourceWriteRace();
+        let touched = false;
+        const marker = touchKey && absent.length > 0 ? seen.get(hex(touchKey)) : undefined;
+        if (touchKey && marker !== undefined) {
+          const record = decodeJson<NativeResourceRecord>(marker);
+          if (record.nativeManaged) throw new NativeResourceManagedError();
+          if (record.bodyDigest) {
+            // Only the head record moves; a writer that moved it first sends this batch round again.
+            const moved = encodeJson({ ...record, updatedAt: Date.now(), commitNonce: randomUUID() });
+            if (!await base.compareAndSet(touchKey, marker, moved)) throw new ResourceWriteRace();
+            touched = true;
+          }
+        }
+        for (const item of absent) {
+          seen.set(hex(item.key), item.encoded);
+          await this.writeNativeBodyInTransaction(txn, item.slice, pod, item.resource, item.record);
+        }
+        return { status: 'staged' as const, results, touched };
+      });
+    } catch (error) {
+      if (error instanceof StageConflict) return { status: 'conflict', resource: error.resource };
+      if (!(error instanceof ResourceWriteRace) || attempt >= prepared.length + 8) throw error;
+    }
+  }
+
+  /**
    * Atomically commit the native head, canonical nodes, structural indexes and
    * both overlay directions. The receipt describes this write, never a later
    * HEAD request. Uses only the existing native transaction and keyspace.
@@ -221,55 +408,7 @@ export class PgslStore {
         // Restate the expectation in the write: SELECT then SET is not a CAS
         // under READ COMMITTED. Failure must abort all related writes.
         if (!await txn.compareAndSet(key, previous ?? null, bytes)) throw new ResourceWriteRace();
-        const available = new Map<string, StoredNode>();
-        for (const node of slice) {
-          const duplicate = available.get(node.uri);
-          if (duplicate && nodeContentIdentity(duplicate) !== nodeContentIdentity(node)) {
-            throw new Error('native resource contains conflicting canonical node content');
-          }
-          available.set(node.uri, node);
-        }
-        const resolved = new Map<string, StoredNode>();
-        const resolve = async (uri: string): Promise<StoredNode> => {
-          const cached = resolved.get(uri);
-          if (cached) return cached;
-          const local = available.get(uri);
-          const stored = await txn.get(nodeKey(nodeAddrFromUrn(uri)));
-          if (stored === undefined) {
-            if (!local) throw new Error('native resource head references an unavailable canonical node');
-            resolved.set(uri, local);
-            return local;
-          }
-          const node = decodeNode(stored);
-          if (node.uri !== uri || (local && nodeContentIdentity(local) !== nodeContentIdentity(node))) {
-            throw new Error('native resource references conflicting canonical node content');
-          }
-          resolved.set(uri, node);
-          return node;
-        };
-        await resolve(record.topUri);
-        await resolve(record.opaqueUri);
-        for (const node of slice) {
-          await resolve(node.uri);
-          for (const ref of [...(node.items ?? []), ...(node.left ? [node.left] : []), ...(node.right ? [node.right] : [])]) await resolve(ref);
-        }
-        const digest = createHash('sha256');
-        let size = 0;
-        for (const uri of record.chunkUris?.length ? record.chunkUris : [record.opaqueUri]) {
-          const node = await resolve(uri);
-          if (node.kind !== 'atom' || typeof node.value !== 'string') throw new Error('native representation is not an opaque byte atom');
-          const chunk = Buffer.from(node.value, 'base64');
-          size += chunk.byteLength;
-          digest.update(chunk);
-        }
-        if (size !== record.size || `sha256:${digest.digest('hex')}` !== record.bodyDigest) {
-          throw new Error('native representation bytes do not match the committed metadata');
-        }
-        const oldTop = await txn.get(ovKey(pod, path));
-        if (oldTop !== undefined && dec.decode(oldTop) !== record.topUri) {
-          txn.clear(ovrKey(nodeAddrFromUrn(dec.decode(oldTop)).hash, pod, path));
-        }
-        await this.composeInTransaction(txn, slice, { pod, resource: path }, record.topUri);
+        await this.writeNativeBodyInTransaction(txn, slice, pod, path, record);
         return { status: 'committed' as const, pod, path, revision,
           topUri: record.topUri, opaqueUri: record.opaqueUri, bodyDigest: record.bodyDigest!,
           contentType: record.contentType, updatedAt: record.updatedAt, size: record.size };
