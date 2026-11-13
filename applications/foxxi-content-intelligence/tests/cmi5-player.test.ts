@@ -8,8 +8,8 @@ import { randomUUID } from 'node:crypto';
 import { once } from 'node:events';
 import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
-import { actorAliases, setActorAliasSource } from '../src/actor-alias.js';
-import { attachCoursePlayerRoutes, browserWantsPlayer, playerLocation, PlayerBook, PlayerError, type PlayerLearner } from '../src/cmi5-player.js';
+import { actorAliases, canonicalActorName, setActorAliasSource } from '../src/actor-alias.js';
+import { attachCoursePlayerRoutes, browserWantsPlayer, playerLocation, PlayerBook, PlayerError, voidActorStatements, type PlayerLearner } from '../src/cmi5-player.js';
 import { attachHostedPackageRoutes } from '../src/scorm-hosting.js';
 import { learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course } from '../src/cmi5-lms.js';
 import { matchesFilter } from '../src/statement-store.js';
@@ -173,6 +173,50 @@ describe('the course player', () => {
     expect(browserWantsPlayer({ headers: { accept: 'text/html' }, query: { endpoint: 'https://lrs.example', fetch: 'https://lrs.example/fetch', registration: 'r' } })).toBe(false);
     expect(playerLocation(course.id)).toBe(`/learn?course_id=${encodeURIComponent(course.id)}`);
     expect(() => { throw new PlayerError(503, 'player_sign_in_unavailable'); }).toThrow(PlayerError);
+  });
+
+  it('keeps a pending attempt and a deletion when an older copy is read, and counts every linked guest', () => {
+    const book = new PlayerBook();
+    const older = { learnerDid: 'did:guest', courseId: 'course', auId: 'au', registration: 'old', sessionId: 's' };
+    book.remember(older);
+    const stale = book.toJSON();
+    book.remember({ ...older, registration: 'new' });
+    book.load(stale);
+    expect(book.open('did:guest', 'course', 'au')?.registration).toBe('new');
+    book.forgetLearner('did:guest');
+    book.load(stale);
+    expect(book.open('did:guest', 'course', 'au')).toBeUndefined();
+    const restored = new PlayerBook();
+    restored.load(book.toJSON());
+    restored.load(stale);
+    expect(restored.open('did:guest', 'course', 'au')).toBeUndefined();
+    book.link('did:guest-a', 'did:owner', 't');
+    book.link('did:guest-b', 'did:owner', 't');
+    const home = { homePage: SOURCE, name: 'did:owner' };
+    expect(actorAliases({ account: home }).map(actor => actor.account?.name).sort()).toEqual(['did:guest-a', 'did:guest-b']);
+    expect(canonicalActorName('did:guest-a')).toBe('did:owner');
+    expect(actorAliases({ account: { homePage: SOURCE, name: 'did:guest-a' } }).map(actor => actor.account?.name).sort()).toEqual(['did:guest-b', 'did:owner']);
+  });
+
+  it('voids a recording only with a statement that names it', async () => {
+    const original = { id: randomUUID(), voided: false, statement: { actor: { objectType: 'Agent', account: { homePage: SOURCE, name: GUEST } }, verb: { id: 'http://adlnet.gov/expapi/verbs/experienced' }, object: { id: 'https://bridge.example/au/1' } } };
+    const stored: Array<{ id: string; statement: Record<string, unknown> }> = [];
+    const forgotten = await voidActorStatements({
+      homePage: SOURCE, did: GUEST, list: async () => [original],
+      store: async (statement) => {
+        expect(internalRefusalOf(statement)).toEqual([]);
+        const id = randomUUID();
+        stored.push({ id, statement });
+        return id;
+      },
+      mark: async (target, voiding) => {
+        const statement = stored.find(row => row.id === voiding)?.statement;
+        const object = statement?.object as { objectType?: string; id?: string } | undefined;
+        return target !== voiding && object?.objectType === 'StatementRef' && object.id === target;
+      },
+    });
+    expect(forgotten).toBe(1);
+    expect((stored[0]!.statement.verb as { id: string }).id).toBe('http://adlnet.gov/expapi/verbs/voided');
   });
 
   it('redirects a browser visiting a hosted package record to the player', async () => {

@@ -1,7 +1,7 @@
 // The course player in the browser. It signs in through the learning account that is already
 // here (a provisional Interego guest, or an existing owner) and then asks this bridge to launch
 // the course named on the page. No course is named in this file.
-import { guestLearningSignIn, guestPossessionProof, learningGuestSignIn } from '/learn/guest.js';
+import { guestFreshCredential, guestLearningSignIn, guestPossessionProof, learningGuestSignIn } from '/learn/guest.js';
 
 const page = document.body;
 const courseId = page.dataset.courseId;
@@ -35,14 +35,12 @@ function showAccount(current) {
     signin.append(link);
   }
   claim.replaceChildren();
-  if (provision && provision.token && current.guest_sign_in) {
-    const origin = identityOrigin(current.guest_sign_in);
-    if (origin) {
-      const link = document.createElement('a');
-      link.href = origin + '/connect?claim=' + encodeURIComponent(provision.token);
-      link.textContent = 'Keep this guest — add a passkey, wallet or DID';
-      claim.append(link, ' ');
-    }
+  if (current.authenticated && current.guest && current.guest_sign_in) {
+    const button = document.createElement('button');
+    button.type = 'button';
+    button.textContent = 'Keep this guest — add a passkey, wallet or DID';
+    button.addEventListener('click', () => { void keepGuest(current); });
+    claim.append(button, ' ');
   }
   if (current.authenticated && !current.guest && current.guest_sign_in) {
     const button = document.createElement('button');
@@ -74,6 +72,14 @@ async function launch(current) {
   if (typeof value.launchUrl === 'string') location.assign(value.launchUrl);
 }
 
+async function keepGuest(current) {
+  const config = learningGuestSignIn(current.guest_sign_in, location.origin);
+  const created = await guestFreshCredential(config, { confirmTerms: (terms) => confirm(terms) });
+  const origin = identityOrigin(current.guest_sign_in);
+  if (!origin || !created.token) { say('This guest could not be opened for a passkey or wallet just now.'); return; }
+  location.assign(origin + '/connect?claim=' + encodeURIComponent(created.token));
+}
+
 async function linkGuest(current) {
   const config = learningGuestSignIn(current.guest_sign_in, location.origin);
   const proof = await guestPossessionProof(config);
@@ -88,6 +94,13 @@ async function linkGuest(current) {
 }
 
 async function forget(current) {
+  let token = provision && provision.token;
+  if (!token && current.guest && current.guest_sign_in) {
+    try {
+      const created = await guestFreshCredential(learningGuestSignIn(current.guest_sign_in, location.origin), { confirmTerms: (terms) => confirm(terms) });
+      token = created.token;
+    } catch { token = ''; }
+  }
   const response = await fetch('/learn/forget', {
     method: 'POST', credentials: 'same-origin',
     headers: { Accept: 'application/json', 'Content-Type': 'application/json', 'X-I2IDLX-Learning-CSRF': current.csrf },
@@ -95,10 +108,10 @@ async function forget(current) {
   });
   const value = await response.json().catch(() => ({}));
   if (!response.ok) { say(typeof value.error === 'string' ? value.error : 'The recording could not be deleted.'); return; }
-  if (provision && provision.token && value.identityDelete && typeof value.identityDelete.url === 'string') {
-    await fetch(value.identityDelete.url, { method: 'POST', headers: { Authorization: 'Bearer ' + provision.token, 'Content-Type': 'application/json' }, body: '{}', credentials: 'omit' }).catch(() => undefined);
+  if (token && value.identityDelete && typeof value.identityDelete.url === 'string') {
+    await fetch(value.identityDelete.url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}', credentials: 'omit' }).catch(() => undefined);
   }
-  say(provision && provision.token ? 'The recording was deleted, and the guest account was asked to close.' : 'The recording was deleted. Start once more if the guest account itself should be closed.');
+  say(token ? 'The recording was deleted, and the guest account was asked to close.' : 'The recording was deleted. The guest account itself could not be closed just now.');
 }
 
 start.addEventListener('click', () => {

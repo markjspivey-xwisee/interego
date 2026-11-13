@@ -69,23 +69,38 @@ function attemptKey(learnerDid: string, courseId: string, auId: string): string 
 export class PlayerBook {
   private readonly attempts = new Map<string, OpenAttempt>();
   private readonly links = new Map<string, RecordedLink>();
+  /** Keys and guest DIDs removed here. A later read of an older copy must not put them back. */
+  private readonly removedAttempts = new Set<string>();
+  private readonly removedLinks = new Set<string>();
   dirty = false;
+  /** Bumps on every change, so a read that overlaps a change does not clear `dirty`. */
+  generation = 0;
+
+  private touch(): void { this.dirty = true; this.generation++; }
 
   remember(attempt: OpenAttempt): void {
-    if (this.attempts.size >= ATTEMPT_MAX && !this.attempts.has(attemptKey(attempt.learnerDid, attempt.courseId, attempt.auId))) {
+    const key = attemptKey(attempt.learnerDid, attempt.courseId, attempt.auId);
+    this.removedAttempts.delete(key);
+    if (this.attempts.size >= ATTEMPT_MAX && !this.attempts.has(key)) {
       const oldest = this.attempts.keys().next().value;
       if (oldest !== undefined) this.attempts.delete(oldest);
     }
-    this.attempts.set(attemptKey(attempt.learnerDid, attempt.courseId, attempt.auId), attempt);
-    this.dirty = true;
+    this.attempts.set(key, attempt);
+    this.touch();
   }
   open(learnerDid: string, courseId: string, auId: string): OpenAttempt | undefined {
     return this.attempts.get(attemptKey(learnerDid, courseId, auId));
   }
   forgetLearner(did: string): void {
-    for (const [key, attempt] of this.attempts) if (attempt.learnerDid === did) this.attempts.delete(key);
-    for (const [guest, link] of this.links) if (link.guestDid === did || link.ownerDid === did) this.links.delete(guest);
-    this.dirty = true;
+    for (const [key, attempt] of this.attempts) if (attempt.learnerDid === did) {
+      this.attempts.delete(key);
+      this.removedAttempts.add(key);
+    }
+    for (const [guest, link] of this.links) if (link.guestDid === did || link.ownerDid === did) {
+      this.links.delete(guest);
+      this.removedLinks.add(guest);
+    }
+    this.touch();
     this.publish();
   }
   link(guestDid: string, ownerDid: string, at: string): RecordedLink | { refused: string } {
@@ -93,34 +108,94 @@ export class PlayerBook {
     if (this.links.size >= LINK_MAX && !this.links.has(guestDid)) return { refused: 'player_link_capacity' };
     const held = this.links.get(guestDid);
     if (held && held.ownerDid !== ownerDid) return { refused: 'player_link_held' };
+    this.removedLinks.delete(guestDid);
     const link = held ?? { guestDid, ownerDid, at };
     this.links.set(guestDid, link);
-    this.dirty = true;
+    this.touch();
     this.publish();
     return link;
   }
   linksFor(ownerDid: string): RecordedLink[] {
     return [...this.links.values()].filter(link => link.ownerDid === ownerDid);
   }
-  toJSON(): { attempts: OpenAttempt[]; links: RecordedLink[] } {
-    return { attempts: [...this.attempts.values()], links: [...this.links.values()] };
+  toJSON(): { attempts: OpenAttempt[]; links: RecordedLink[]; removedAttempts: string[]; removedLinks: string[] } {
+    return {
+      attempts: [...this.attempts.values()], links: [...this.links.values()],
+      removedAttempts: [...this.removedAttempts], removedLinks: [...this.removedLinks],
+    };
   }
+  /**
+   * Take in another copy. A row this process already holds is left as it is (the pending
+   * change wins). A row this process has removed stays removed. A row only the other copy
+   * has, and this process has not removed, is added.
+   */
   load(json: unknown): void {
     if (!json || typeof json !== 'object') return;
-    const body = json as { attempts?: unknown; links?: unknown };
-    if (Array.isArray(body.attempts)) for (const row of body.attempts) if (validAttempt(row)) this.attempts.set(attemptKey(row.learnerDid, row.courseId, row.auId), row);
-    if (Array.isArray(body.links)) for (const row of body.links) if (validLink(row)) this.links.set(row.guestDid, row);
+    const body = json as { attempts?: unknown; links?: unknown; removedAttempts?: unknown; removedLinks?: unknown };
+    if (Array.isArray(body.removedAttempts)) for (const key of body.removedAttempts) if (typeof key === 'string' && !this.attempts.has(key)) this.removedAttempts.add(key);
+    if (Array.isArray(body.removedLinks)) for (const guest of body.removedLinks) if (typeof guest === 'string' && !this.links.has(guest)) this.removedLinks.add(guest);
+    if (Array.isArray(body.attempts)) for (const row of body.attempts) {
+      if (!validAttempt(row)) continue;
+      const key = attemptKey(row.learnerDid, row.courseId, row.auId);
+      if (this.removedAttempts.has(key) || this.attempts.has(key)) continue;
+      this.attempts.set(key, row);
+    }
+    if (Array.isArray(body.links)) for (const row of body.links) {
+      if (!validLink(row) || this.removedLinks.has(row.guestDid) || this.links.has(row.guestDid)) continue;
+      this.links.set(row.guestDid, row);
+    }
     this.publish();
   }
   publish(): void {
-    const byName = new Map<string, ActorLink>();
+    const guestsByOwner = new Map<string, string[]>();
     for (const link of this.links.values()) {
-      const record: ActorLink = { canonical: link.ownerDid, also: [link.guestDid, link.ownerDid] };
-      byName.set(link.guestDid, record);
-      byName.set(link.ownerDid, record);
+      const guests = guestsByOwner.get(link.ownerDid) ?? [];
+      guests.push(link.guestDid);
+      guestsByOwner.set(link.ownerDid, guests);
+    }
+    const byName = new Map<string, ActorLink>();
+    for (const [ownerDid, guests] of guestsByOwner) {
+      const record: ActorLink = { canonical: ownerDid, also: [ownerDid, ...guests] };
+      byName.set(ownerDid, record);
+      for (const guest of guests) byName.set(guest, record);
     }
     setActorAliasSource(name => byName.get(name));
   }
+}
+
+const VOIDED_VERB = 'http://adlnet.gov/expapi/verbs/voided';
+
+/**
+ * Void one actor's statements by storing a voiding statement first and then marking the
+ * target with that statement's id. A mark that names the target as its own voider does
+ * not count: the native store refuses it, and a query would otherwise return the recording
+ * as the statement that voided it.
+ */
+export async function voidActorStatements(args: {
+  homePage: string;
+  did: string;
+  list: () => Promise<ReadonlyArray<{ id: string; voided: boolean; statement: Record<string, unknown> }>>;
+  store: (statement: Record<string, unknown>) => Promise<string | null>;
+  mark: (targetId: string, voidingId: string) => Promise<boolean>;
+}): Promise<number> {
+  const rows = await args.list();
+  let forgotten = 0;
+  for (const rec of rows) {
+    if (rec.voided) continue;
+    const account = (rec.statement.actor as { account?: { name?: string; homePage?: string } } | undefined)?.account;
+    if (account?.name !== args.did || account.homePage !== args.homePage) continue;
+    const verb = (rec.statement.verb as { id?: string } | undefined)?.id;
+    const object = rec.statement.object as { objectType?: string } | undefined;
+    if (verb === VOIDED_VERB && object?.objectType === 'StatementRef') continue;
+    const voidingId = await args.store({
+      actor: { objectType: 'Agent', account: { homePage: args.homePage, name: args.did } },
+      verb: { id: VOIDED_VERB, display: { 'en-US': 'voided' } },
+      object: { objectType: 'StatementRef', id: rec.id },
+    });
+    if (!voidingId || voidingId === rec.id) continue;
+    if (await args.mark(rec.id, voidingId)) forgotten++;
+  }
+  return forgotten;
 }
 
 function validAttempt(row: unknown): row is OpenAttempt {

@@ -37,10 +37,11 @@ in Review.
 
 ## Keeping the guest, or linking another owner
 
-Adding a passkey, wallet or DID to the guest is identity's add-device flow. The page links to
-`<identity>/connect?claim=<the token identity just issued>`. That keeps the same owner and the
-same DID, so the statements already name the right actor. The token stays in the page; it is
-not written next to the key.
+Adding a passkey, wallet or DID to the guest is identity's add-device flow. **Keep this guest**
+asks identity for a fresh token for the key this browser already holds (the same owner again)
+and opens `<identity>/connect?claim=<that token>`. The token is not kept in the page or next
+to the key, so leaving for the activity and coming back can still claim. That keeps the same
+DID, so the statements already name the right actor.
 
 Signing in as a different existing owner does not rewrite those statements. `POST /learn/link`
 requires that owner session and a fresh proof from the guest key identity still accepts.

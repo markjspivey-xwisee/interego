@@ -10,11 +10,12 @@ import { PlayGrantService, learnerGuestGrantConfig, type PlayFetch } from '../sr
 // The browser module, run here with Node's WebCrypto and an in-memory key store.
 type GuestModule = {
   guestLearningSignIn(config: unknown, options?: Record<string, unknown>): Promise<{ guest: boolean; resumed: boolean }>;
+  guestFreshCredential(config: unknown, options?: Record<string, unknown>): Promise<{ token: string }>;
   guestKeyThumbprint(jwk: { kty: string; crv: string; x: string; y: string }, subtle?: unknown): Promise<string>;
   learningGuestSignIn(value: unknown, origin: string): unknown;
 };
 const guestModuleUrl = new URL('../i2idlx/app/src/learning-guest.js', import.meta.url).href;
-const { guestLearningSignIn, guestKeyThumbprint, learningGuestSignIn } = await import(/* @vite-ignore */ guestModuleUrl) as GuestModule;
+const { guestFreshCredential, guestLearningSignIn, guestKeyThumbprint, learningGuestSignIn } = await import(/* @vite-ignore */ guestModuleUrl) as GuestModule;
 
 type Row = Record<string, unknown>;
 const BASE = 'https://workbench.example', RELAY = 'https://relay.example', IDENTITY = 'https://identity.example', POD = 'https://pods.example';
@@ -140,6 +141,12 @@ describe('provisional guest learner sign-in', () => {
     // A reload: same key store, no cookie. The stored attestation and a fresh proof are enough.
     b.forget(); const again = await b.signIn(); assert.equal(again.resumed, true);
     assert.equal(f.control.grants.length, 1); assert.equal(f.control.bootstrapCalls, 1);
+    assert.equal(((await b.status()).account as Row).userId, account.userId);
+    // The page that held the token is gone. Asking again returns one for the same owner and still does not store it.
+    const credential = await guestFreshCredential(learningGuestSignIn((await b.status()).guest_sign_in, BASE), { fetch: b.fetch, subtle: webcrypto.subtle, store: b.store });
+    assert.equal(typeof credential.token, 'string');
+    assert.equal(f.control.grants.length, 2);
+    assert.ok(!JSON.stringify({ ...b.stored()!, privateKey: null }).includes(credential.token));
     assert.equal(((await b.status()).account as Row).userId, account.userId);
   });
 

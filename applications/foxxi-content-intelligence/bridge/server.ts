@@ -507,7 +507,7 @@ import { validateCoverageQueryInput } from '../src/coverage-query-input.js';
 import type { PrivateAuthResult } from '../src/private-performance-auth.js';
 import { attachPerformanceRoutes, offerFromWork, WORK_OFFER_WINDOW, type WorkOffer } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
-import { attachCoursePlayerRoutes, coursePlayerAuth, PlayerBook, PlayerError } from '../src/cmi5-player.js';
+import { attachCoursePlayerRoutes, coursePlayerAuth, PlayerBook, PlayerError, voidActorStatements } from '../src/cmi5-player.js';
 // Re-integration with the agentic-performance (agp:) layer: Foxxi surfaces the
 // emergent, learnable standards-extension capability the agp layer affords by
 // composing Foxxi's own standards. + the shared in-flow performance-support primitive.
@@ -11318,12 +11318,14 @@ const PLAYER_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi
 const playerBook = new PlayerBook();
 async function readPlayerBook(): Promise<boolean> {
   if (!PLAYER_RESOURCE) return true;
+  const since = playerBook.generation;
   try {
     const response = await (globalThis.fetch as typeof fetch)(PLAYER_RESOURCE, { headers: { Accept: 'application/json' } });
     if (response.status === 404) return true;
     if (!response.ok) return false;
     playerBook.load(await response.json());
-    playerBook.dirty = false;
+    // A change made while this read was in flight is still waiting to be written.
+    if (playerBook.generation === since) playerBook.dirty = false;
     return true;
   } catch { return false; }
 }
@@ -11331,13 +11333,16 @@ async function writePlayerBook(): Promise<boolean> {
   if (!PLAYER_RESOURCE || !playerBook.dirty) return true;
   const f = globalThis.fetch as typeof fetch;
   try {
-    const read = await readPlayerBook();
-    if (!read) return false;
-    playerBook.dirty = true;
+    const response = await f(PLAYER_RESOURCE, { headers: { Accept: 'application/json' } });
+    if (response.status !== 404) {
+      if (!response.ok) return false;
+      playerBook.load(await response.json());
+    }
+    const since = playerBook.generation;
     const body = JSON.stringify(playerBook);
     await f(PLAYER_RESOURCE.replace(/[^/]+$/, ''), { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
     const written = await f(PLAYER_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
-    if (written.ok) { playerBook.dirty = false; return true; }
+    if (written.ok) { if (playerBook.generation === since) playerBook.dirty = false; return true; }
   } catch { /* tried again below */ }
   return false;
 }
@@ -11367,17 +11372,12 @@ attachCoursePlayerRoutes(app, {
   },
   satisfied: learnerSatisfiedAus,
   stageLaunch: stageLaunchData,
-  forgetActor: async (did) => {
-    const store = getStatementStore(DEFAULT_TENANT);
-    const all = await store.listAll();
-    let forgotten = 0;
-    for (const rec of all) {
-      if (rec.voided) continue;
-      const account = (rec.statement.actor as { account?: { name?: string; homePage?: string } } | undefined)?.account;
-      if (account?.name === did && account.homePage === String(authoritativeSource) && await store.markVoided(rec.id, rec.id)) forgotten++;
-    }
-    return forgotten;
-  },
+  forgetActor: (did) => voidActorStatements({
+    did, homePage: String(authoritativeSource),
+    list: () => getStatementStore(DEFAULT_TENANT).listAll(),
+    store: (statement) => storeStatementDurably(statement, DEFAULT_TENANT),
+    mark: (targetId, voidingId) => getStatementStore(DEFAULT_TENANT).markVoided(targetId, voidingId),
+  }),
   statementIds: async (did) => (await listStoredStatements(DEFAULT_TENANT))
     .filter(rec => !rec.voided && (rec.statement.actor as { account?: { name?: string } } | undefined)?.account?.name === did)
     .map(rec => rec.id),
