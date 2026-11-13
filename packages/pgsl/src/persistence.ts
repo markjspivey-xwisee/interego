@@ -22,11 +22,15 @@
  */
 
 import type { IRI } from '@interego/core';
-import { createEncryptedEnvelope, openEncryptedEnvelope } from '@interego/core';
+import { createEncryptedEnvelope, createEncryptedEnvelopeFromBytes, openEncryptedEnvelopeBytes } from '@interego/core';
 import type { EncryptionKeyPair, EncryptedEnvelope } from '@interego/core';
 import type { PGSLInstance, Value, NodeProvenance, Node } from './types.js';
 import { resolve as pgslResolve } from './lattice.js';
 import { PGSL_NS } from './rdf.js';
+import {
+  compressLatticePlaintext, decodeLatticePlaintext, resolveLatticeCompression,
+  type LatticeCompression,
+} from './lattice-codec.js';
 import { createHash } from 'node:crypto';
 import { writeFile, mkdir } from 'node:fs/promises';
 import { dirname } from 'node:path';
@@ -204,6 +208,49 @@ export async function promoteToPod(
   });
 }
 
+/** Options for the encrypted pod writers. */
+export interface EncryptedWriteOptions {
+  /**
+   * Compress the plaintext before sealing it. Unset = the
+   * `PGSL_LATTICE_COMPRESSION` environment variable (`gzip` enables), and with
+   * that unset too = `'none'`, which is the format every writer has always
+   * produced.
+   *
+   * OFF BY DEFAULT IN THIS CHANGE: every reader of these resources (they deploy
+   * separately) must understand the compressed format before any writer emits
+   * it. The default flips to `'gzip'` in a later change. See lattice-codec.ts.
+   */
+  readonly compression?: LatticeCompression;
+}
+
+/** Seal a JSON plaintext, compressed first when the caller or environment asks. */
+function sealPersistedPlaintext(
+  json: string,
+  recipientPublicKeys: readonly string[],
+  senderKeyPair: EncryptionKeyPair,
+  options: EncryptedWriteOptions | undefined,
+): EncryptedEnvelope {
+  if (resolveLatticeCompression(options?.compression) === 'gzip') {
+    const packed = compressLatticePlaintext(json);
+    // Sealed as RAW BYTES: base64-ing the gzip stream into a string plaintext
+    // would cost a third again before the envelope's own base64.
+    if (packed) return createEncryptedEnvelopeFromBytes(packed, recipientPublicKeys, senderKeyPair);
+  }
+  return createEncryptedEnvelope(json, recipientPublicKeys, senderKeyPair);
+}
+
+/**
+ * Open a persisted envelope to its JSON text, accepting BOTH plaintext formats
+ * (plain UTF-8 JSON, or the compressed container — see lattice-codec.ts).
+ * Returns null when this key cannot open the envelope. Throws
+ * LatticeCodecError when it opens but the plaintext is a corrupt, truncated or
+ * oversized compressed body: that is never retried as plain JSON.
+ */
+function openPersistedPlaintext(envelope: EncryptedEnvelope, recipientKeyPair: EncryptionKeyPair): string | null {
+  const bytes = openEncryptedEnvelopeBytes(envelope, recipientKeyPair);
+  return bytes == null ? null : decodeLatticePlaintext(bytes);
+}
+
 /**
  * Promote a node to tier 2 (pod) ENCRYPTED — the canonical, encrypted-by-default
  * form. The holon is the source of truth; this writes it as an encrypted
@@ -219,6 +266,7 @@ export async function promoteToPodEncrypted(
   recipientPublicKeys: readonly string[],
   senderKeyPair: EncryptionKeyPair,
   fetchFn: typeof fetch,
+  options?: EncryptedWriteOptions,
 ): Promise<PersistenceRecord> {
   const node = pgsl.nodes.get(uri);
   if (!node) throw new Error(`Node not found: ${uri}`);
@@ -226,7 +274,7 @@ export async function promoteToPodEncrypted(
   // Canonical, lossless holon serialization → encrypted envelope. (JSON of the
   // node round-trips exactly; the projection layer renders RDF/Turtle separately.)
   const plaintext = JSON.stringify(node);
-  const envelope = createEncryptedEnvelope(plaintext, recipientPublicKeys, senderKeyPair);
+  const envelope = sealPersistedPlaintext(plaintext, recipientPublicKeys, senderKeyPair, options);
 
   const response = await fetchFn(resourceUrl, {
     method: 'PUT',
@@ -257,9 +305,11 @@ export async function resolveHolonFromPod(
   if (!r.ok) return null;
   let envelope: EncryptedEnvelope;
   try { envelope = (await r.json()) as EncryptedEnvelope; } catch { return null; }
-  const plaintext = openEncryptedEnvelope(envelope, recipientKeyPair);
-  if (plaintext == null) return null;
-  try { return JSON.parse(plaintext) as Node; } catch { return null; }
+  try {
+    const plaintext = openPersistedPlaintext(envelope, recipientKeyPair);
+    if (plaintext == null) return null;
+    return JSON.parse(plaintext) as Node;
+  } catch { return null; }
 }
 
 /** All nodes reachable from a top holon — the lattice slice it spans (items +
@@ -305,6 +355,7 @@ export async function promoteLatticeSliceEncrypted(
   recipientPublicKeys: readonly string[],
   senderKeyPair: EncryptionKeyPair,
   fetchFn: typeof fetch,
+  options?: EncryptedWriteOptions,
 ): Promise<PersistenceRecord> {
   const top = pgsl.nodes.get(topUri);
   if (!top) throw new Error(`Node not found: ${topUri}`);
@@ -314,7 +365,7 @@ export async function promoteLatticeSliceEncrypted(
     topUri,
     nodes: Object.fromEntries(slice) as Record<string, Node>,
   };
-  const envelope = createEncryptedEnvelope(JSON.stringify(payload), recipientPublicKeys, senderKeyPair);
+  const envelope = sealPersistedPlaintext(JSON.stringify(payload), recipientPublicKeys, senderKeyPair, options);
 
   const response = await fetchFn(resourceUrl, {
     method: 'PUT',
@@ -347,6 +398,7 @@ export async function promoteInstanceEncrypted(
   recipientPublicKeys: readonly string[],
   senderKeyPair: EncryptionKeyPair,
   fetchFn: typeof fetch,
+  options?: EncryptedWriteOptions,
 ): Promise<PersistenceRecord> {
   const top = pgsl.nodes.get(topUri);
   if (!top) throw new Error(`Node not found: ${topUri}`);
@@ -355,7 +407,7 @@ export async function promoteInstanceEncrypted(
     topUri,
     nodes: Object.fromEntries(pgsl.nodes) as Record<string, Node>,
   };
-  const envelope = createEncryptedEnvelope(JSON.stringify(payload), recipientPublicKeys, senderKeyPair);
+  const envelope = sealPersistedPlaintext(JSON.stringify(payload), recipientPublicKeys, senderKeyPair, options);
 
   const response = await fetchFn(resourceUrl, {
     method: 'PUT',
@@ -401,6 +453,9 @@ export interface LatticeReadResult {
   readonly nodes?: Map<IRI, Node>;
   /** The resource's entity tag, for a subsequent If-Match write. */
   readonly etag?: string;
+  /** Why an opened body was 'unreadable' (a corrupt/truncated/oversized
+   *  compressed body, or JSON that would not parse). Diagnostic only. */
+  readonly error?: string;
 }
 
 /**
@@ -423,13 +478,18 @@ export async function resolveLatticeFromPodDetailed(
   const etag = r.headers.get('etag') ?? undefined;
   let envelope: EncryptedEnvelope;
   try { envelope = (await r.json()) as EncryptedEnvelope; } catch { return { status: 'unreadable', etag }; }
-  const plaintext = openEncryptedEnvelope(envelope, recipientKeyPair);
-  if (plaintext == null) return { status: 'unreadable', etag };  // a body WAS returned but we can't decrypt it
+  // Both plaintext formats are accepted here (plain JSON, or the compressed
+  // container). A compressed body that is corrupt, truncated or over the
+  // inflation cap throws inside openPersistedPlaintext and lands in the catch:
+  // 'unreadable', with the reason — never parsed as something else, and never
+  // mistaken for an empty lattice a writer may overwrite.
   try {
+    const plaintext = openPersistedPlaintext(envelope, recipientKeyPair);
+    if (plaintext == null) return { status: 'unreadable', etag };  // a body WAS returned but we can't decrypt it
     const payload = JSON.parse(plaintext) as EncryptedLatticeSlice;
     return { status: 'ok', topUri: payload.topUri, nodes: new Map(Object.entries(payload.nodes)) as Map<IRI, Node>, etag };
-  } catch {
-    return { status: 'unreadable', etag };
+  } catch (e) {
+    return { status: 'unreadable', etag, error: e instanceof Error ? e.message : String(e) };
   }
 }
 
@@ -503,11 +563,12 @@ export async function promoteInstanceEncryptedCAS(
   senderKeyPair: EncryptionKeyPair,
   fetchFn: typeof fetch,
   precondition: { ifMatch?: string; ifNoneMatch?: '*'; confirmBody?: boolean },
+  options?: EncryptedWriteOptions,
 ): Promise<CasWriteResult> {
   const top = pgsl.nodes.get(topUri);
   if (!top) throw new Error(`Node not found: ${topUri}`);
   const payload: EncryptedLatticeSlice = { topUri, nodes: Object.fromEntries(pgsl.nodes) as Record<string, Node> };
-  const envelope = createEncryptedEnvelope(JSON.stringify(payload), recipientPublicKeys, senderKeyPair);
+  const envelope = sealPersistedPlaintext(JSON.stringify(payload), recipientPublicKeys, senderKeyPair, options);
 
   const headers: Record<string, string> = { 'Content-Type': 'application/json' };
   if (precondition.ifMatch) headers['If-Match'] = precondition.ifMatch;

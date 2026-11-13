@@ -51,6 +51,65 @@ fixtures only, with a fetch double for the LRS: no live LMS, LRS or assignable
 unit has used this. Not built: the act that serves the reviewed statements to the
 unit and keeps what it handed out.
 
+## 2026-11-13 — A persisted lattice can be read compressed; writing it that way is off for now
+
+A PGSL lattice is kept as one sealed pod resource whose plaintext is
+`JSON.stringify({ topUri, nodes })`. That text is highly redundant: every
+fragment repeats its full list of item URIs, about 91 characters each, and the
+same provenance object sits on every node. For a made-up artifact of 485
+triples the plaintext was 13.9 MB and the pod PUT 18.5 MB, while gzip of the
+same plaintext is about 0.57 MB. Sealing the compressed bytes directly takes
+that PUT to roughly 0.77 MB; carrying them as base64 inside a string plaintext
+would have been about 1.02 MB.
+
+Every reader of these resources (`resolveLatticeFromPodDetailed`,
+`resolveLatticeFromPod`, `resolveHolonFromPod`, and through them Foxxi's shared
+lattice and the private performance store) now opens both forms. The two are
+told apart by the first byte of the authenticated plaintext: a plain one is
+JSON text and begins with `{`; a compressed one begins with a NUL byte, which
+no JSON text can, followed by a marker, a version, a codec, the exact inflated
+length and one gzip stream. Once the first byte says compressed, everything
+after it has to check out or the read is refused as unreadable, with the
+reason. It is never retried as JSON, so a writer will not take a damaged body
+for an empty lattice and write over it. Inflation is capped at 256 MiB
+(`MAX_LATTICE_INFLATED_BYTES`), enforced inside zlib, so a small body cannot
+make a reader allocate without limit.
+
+The writers can compress, and do not unless asked: pass
+`{ compression: 'gzip' }` to a `promote*Encrypted*` writer (or
+`latticeCompression: 'gzip'` to `composeIntoSharedLattice`), or set
+`PGSL_LATTICE_COMPRESSION=gzip`. Unset, a writer seals the same plain JSON it
+always has. That is deliberate. The services that read these resources deploy
+separately, and a reader built before this change cannot open a compressed
+body, so every reader has to be live before any writer emits one. The default
+flips in a later change.
+
+To seal bytes without base64-ing them first, `@interego/core` gains
+`createEncryptedEnvelopeFromBytes` and `openEncryptedEnvelopeBytes` (with
+`encryptContentBytes` and `decryptContentBytes` beneath them). The string
+functions are now thin wrappers over these; an envelope made from a string has
+the same shape and seals the same bytes as before. The zlib use is in a
+Node-only module of `@interego/pgsl`; core stays free of it.
+
+Node URIs are content-addressed and do not depend on how the body is stored:
+the nodes read back from a compressed body are deep-equal to those from a
+plain one, and the snapshot digest that lets a duplicate compose skip its
+write is computed over the nodes, so it is unchanged.
+
+Separately, `composeIntoSharedLattice` takes an opt-in `maxGroupWidth`. An
+ingest over a group of width W builds W(W+1)/2 fragments, so one wide subject
+dominates an artifact, and the existing fold at eight applies only to the top
+level list of groups. With `maxGroupWidth` set, a group with more children
+than that folds into sub-holons of at most that width, recursively. No caller
+sets it: folding is part of the composition, so it changes the holon URI of
+any artifact with a group that wide, and existing memories, courses and
+ontologies keep their URIs only because it is unset.
+
+Measured on one made-up artifact with a 120-triple subject and thirty
+4-triple subjects: 9,227 nodes, 32.9 MB plaintext and a 43.8 MB PUT as
+written today; a 1.35 MB PUT with compression; 2,574 nodes and a 2.2 MB PUT
+with groups folded at eight; 0.15 MB with both.
+
 ## 2026-11-13 — Foxxi statements say which kind they are, and its profile selects on that
 
 Under the xAPI Profiles specification a statement must follow every template it
