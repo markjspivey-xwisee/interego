@@ -1,7 +1,8 @@
 /** Human sign-in is independent of the model driving Ask. Relay credentials never
  * leave this server; the browser receives only an opaque, HttpOnly session cookie. */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import express, { type Express, type NextFunction, type Request, type Response } from 'express';
+import type { Express, Request, Response } from 'express';
+import { routeJson } from './route-json.js';
 import { guardedFetchFn } from './ssrf-guard.js';
 
 type Row = Record<string, unknown>;
@@ -387,11 +388,7 @@ export function attachLearningAccountRoutes(app: Express, auth: LearningAccountA
   app.get(PREFIX + '/oauth/start', route((req, res) => auth.start(req, res)));
   app.get(PREFIX + '/oauth/callback', route((req, res) => auth.callback(req, res)));
   app.post(PREFIX + '/sign-out', route((req, res) => auth.signOut(req, res)));
-  // The bridge's global parser comes from another Express major than this module's, and does not
-  // leave the mark this one looks for: parsing again read an already consumed stream and answered
-  // 500 on every guest route in production. A body that is already parsed is left alone.
-  const parseGuestBody = express.json({ limit: '16kb', strict: true });
-  const guestBody = (req: Request, res: Response, next: NextFunction) => { if (req.body !== undefined) next(); else parseGuestBody(req, res, next); };
+  const guestBody = routeJson({ limit: '16kb', strict: true });
   app.post(PREFIX + '/guest/grant', guestBody, route((req, res) => auth.guestGrantFor(req, res)));
   app.post(PREFIX + '/guest/challenge', guestBody, route((req, res) => auth.guestChallenge(req, res)));
   app.post(PREFIX + '/guest/session', guestBody, route((req, res) => auth.guestSession(req, res)));
