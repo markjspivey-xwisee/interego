@@ -18,7 +18,8 @@
  * Not read, and reported as not checked rather than passed or failed: a rule that has a
  * `selector`, a rule whose location uses a JSONPath form outside the ones selectLocation reads,
  * objectStatementRefTemplate and contextStatementRefTemplate, and patterns (a pattern is a
- * property of a sequence of statements, not of one).
+ * property of a sequence of statements, not of one; xapi-profile-patterns.ts checks those, over
+ * the statements of one registration).
  */
 
 const MAX_TEMPLATES = 500;
@@ -186,7 +187,7 @@ export function validateAgainstSuppliedProfile(stmt: Json, profile: Json): Suppl
   const followed = clean.filter(j => j.whole).map(j => j.id), partial = clean.filter(j => !j.whole).map(j => j.id);
   const closest = judged.length && !clean.length ? judged.reduce((a, b) => b.violations.length < a.violations.length ? b : a).violations : [];
   // Patterns are about an order of statements. Saying so does not take away a template match.
-  if (Array.isArray(profile.patterns) && profile.patterns.length) notChecked.add('patterns: an order of statements cannot be judged from one statement');
+  if (Array.isArray(profile.patterns) && profile.patterns.length) notChecked.add('patterns: an order of statements cannot be judged from one statement; send the statements of one registration as `statements` to check them');
   return {
     profile: typeof profile.id === 'string' ? profile.id : null, verb, verbDeclared,
     applicable: applicable.length > 0, matchedTemplates: followed, partiallyCheckedTemplates: partial, violations: closest, notChecked: [...notChecked],
