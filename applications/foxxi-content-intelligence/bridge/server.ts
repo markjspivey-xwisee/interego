@@ -11038,17 +11038,29 @@ mountProfileServerReads(app, xapiProfileServer, {
   removeTarget: `${bridgeBaseUrl}/agent/xapi-profiles/remove`,
 });
 
+/** Hosts a profile may be fetched from by URI. Anything else is added by its contents. */
+const XAPI_PROFILE_URI_HOSTS: readonly string[] = (process.env.FOXXI_XAPI_PROFILE_URI_HOSTS ?? 'profiles.adlnet.gov,raw.githubusercontent.com,w3id.org')
+  .split(',').map(h => h.trim().toLowerCase()).filter(h => /^[a-z0-9.-]+$/.test(h));
+const xapiProfileWriteRateLimit = rateLimit({
+  windowMs: 3_600_000, limit: 60, ipv6Subnet: 56, identifier: 'xapi-profiles',
+  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+});
 const xapiProfileAddsBySigner = new SignerHourlyLimit(Number(process.env.FOXXI_XAPI_PROFILE_ADDS_PER_HOUR ?? 12));
 
 /** Read a profile from where it is published. Public targets only, bounded, never followed inward. */
 async function fetchProfileByUri(uri: string): Promise<unknown> {
   let url: URL;
   try { url = new URL(uri); } catch { throw new ProfileServerError(400, '`uri` is not a URL.'); }
-  if (url.protocol !== 'https:') throw new ProfileServerError(400, 'A profile is fetched over https.');
-  try { await assertSafeFetchTarget(url.toString()); } catch { throw new ProfileServerError(400, 'That host is not a public target.'); }
+  if (url.protocol !== 'https:' || url.port !== '' || url.username !== '' || url.password !== '') throw new ProfileServerError(400, 'A profile is fetched over https, on the default port, with no credentials in the address.');
+  // The host is one this deployment names, and the address fetched is built from that name, not
+  // from the caller's text: a signed caller chooses a path on a listed host and nothing else.
+  const host = XAPI_PROFILE_URI_HOSTS.find(h => h === url.hostname.toLowerCase());
+  if (!host) throw new ProfileServerError(400, `Profiles are fetched from ${XAPI_PROFILE_URI_HOSTS.join(', ') || 'no host'} here. Send a profile published elsewhere by its contents, as \`profile\`.`);
+  const target = `https://${host}${url.pathname}${url.search}`;
+  try { await assertSafeFetchTarget(target); } catch { throw new ProfileServerError(400, 'That host is not a public target.'); }
   let resp: Response;
   try {
-    resp = await (guardedFetchFn(globalThis.fetch) as typeof fetch)(url.toString(), {
+    resp = await (guardedFetchFn(globalThis.fetch) as typeof fetch)(target, {
       headers: { Accept: 'application/ld+json, application/json' }, signal: AbortSignal.timeout(10_000),
     });
   } catch (e) { throw new ProfileServerError(502, `The profile could not be fetched: ${(e as Error).message}`); }
@@ -11062,7 +11074,7 @@ async function fetchProfileByUri(uri: string): Promise<unknown> {
 
 // POST /agent/xapi-profiles/add — add a profile version, by its contents (`profile`) or by where
 // it is published (`uri`). Signed: the profile is held under the agent that added it.
-app.post('/agent/xapi-profiles/add', async (req, res) => {
+app.post('/agent/xapi-profiles/add', xapiProfileWriteRateLimit, async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
@@ -11098,7 +11110,7 @@ app.post('/agent/xapi-profiles/add', async (req, res) => {
 // POST /agent/xapi-profiles/remove — take down a profile (every version) or one version. The
 // agent that added it, or the operator. The lattice is append-only, so what is recorded is the
 // removal; the earlier holon stays addressable and the server stops answering from it.
-app.post('/agent/xapi-profiles/remove', async (req, res) => {
+app.post('/agent/xapi-profiles/remove', xapiProfileWriteRateLimit, async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }

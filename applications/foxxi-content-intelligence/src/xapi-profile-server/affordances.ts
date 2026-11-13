@@ -16,7 +16,7 @@ export const xapiProfileServerAffordances: Affordance[] = [
     action: 'urn:iep:action:foxxi:xapi-profile-add-signed' as IRI,
     toolName: 'foxxi.xapi_profile_add',
     title: 'Add an xAPI Profile to the profile server',
-    description: `Add a version of an xAPI Profile as yourself, by its contents (profile) or by the https address it is published at (uri). ${SERVER} The version becomes a holon in a public PGSL lattice with its exact document as content, and its RDF is projected from that; it is then queryable at /sparql in a named graph whose IRI is the version's IRI, in the default graph if it is the profile's current version, and usable by id at /validate_templates and /validate_patterns. The first agent to add a profile IRI is the one who adds later versions of it. Up to 256 KB and 6,000 triples per version.`,
+    description: `Add a version of an xAPI Profile as yourself, by its contents (profile) or by the https address it is published at (uri), when that address is on a host this deployment fetches from (profiles.adlnet.gov, raw.githubusercontent.com and w3id.org unless the operator set others); a profile published anywhere else is sent by its contents. ${SERVER} The version becomes a holon in a public PGSL lattice with its exact document as content, and its RDF is projected from that; it is then queryable at /sparql in a named graph whose IRI is the version's IRI, in the default graph if it is the profile's current version, and usable by id at /validate_templates and /validate_patterns. The first agent to add a profile IRI is the one who adds later versions of it. Up to 256 KB and 6,000 triples per version.`,
     method: 'POST',
     targetTemplate: '{base}/agent/xapi-profiles/add',
     mediaType: 'application/json',

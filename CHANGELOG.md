@@ -24,7 +24,9 @@ Profiles specification, Part Three, at `/xapi/profiles`:
   (`src/xapi-profile-server/processor.ts`). POST variables `statement` or
   `statements`, and `profile` by id; 204 on success, 400 with comments naming
   the template and rule, or the part of the pattern.
-- **Adding a profile is a signed affordance**, by contents or by https URI
+- **Adding a profile is a signed affordance**, by contents, or by https URI on
+  a host the deployment lists (`FOXXI_XAPI_PROFILE_URI_HOSTS`; by default
+  profiles.adlnet.gov, raw.githubusercontent.com and w3id.org)
   (`foxxi.xapi_profile_add`). The agent that first adds a profile IRI adds its
   later versions and may take it down (`foxxi.xapi_profile_remove`); the
   operator may take down any. Query and both validations are affordances too.
