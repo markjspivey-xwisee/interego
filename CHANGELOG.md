@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-13 — Foxxi: two more routes parsed an already parsed body
+
+The guest learner routes failed on the live bridge because their own
+`express.json` (Express 4) re-read a request the bridge's global parser
+(Express 5) had already consumed. Two other JSON routes in this application had
+the same shape and were found by reading, not by a report:
+
+- the LRS admin writes (`POST`/`PUT /xapi/admin/forwarding/targets`,
+  `POST /xapi/admin/forwarding/retry`, `POST /xapi/admin/credentials`);
+- the course-source service's endpoint.
+
+All three now use one helper, `routeJson` (`src/route-json.ts`), which leaves a
+parsed body alone and parses only an unparsed request. The progress-notification
+callback already guarded against this itself and is unchanged. Routes that parse
+forms, XML or raw bodies are unaffected: the bridge's parser reads JSON only.
+
+A new test reproduces the failure with plain `express.json` behind a parser that
+leaves no mark (`500`, `stream.not.readable`) and shows the helper passing. The
+LRS admin routes sit behind an admin gate and were not probed live.
+
 ## 2026-11-12 — Foxxi LRS: a template checked in part is not a match
 
 Checking a statement against a brought xAPI Profile reported a template as
