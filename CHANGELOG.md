@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-13 — Foxxi: a reusable personal cmi5 launch link
+
+`POST /agent/cmi5/launch` returns one launch URL. Its fetch token is single-use and expires after 30 minutes, so a trainee who bookmarks it cannot get back into the activity. A signed caller can now mint `GET /cmi5/go/<token>` (`POST /agent/cmi5/go`) for themselves and one course. The token is 32 random bytes and the URL does not carry the learner. Each open builds a fresh cmi5 launch and redirects to the AU: a new fetch token every time, the same registration and session while that session has not been terminated, abandoned or waived, and a new registration afterwards (Review when the activity is already satisfied). `POST /agent/cmi5/go/revoke` withdraws it. Opens are rate-limited per address and per token. Links expire in 90 days unless `expires_in_days` says otherwise, and they are kept on the tenant pod at `foxxi-lattice/cmi5-personal-links.json`.
+
 ## 2026-11-13 — Foxxi is an xAPI Profile Server
 
 The bridge served one profile, its own, and checked a statement against a

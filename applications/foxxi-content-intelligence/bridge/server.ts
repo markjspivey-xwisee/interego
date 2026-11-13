@@ -476,6 +476,7 @@ import { readyStatementStore, residentStatementBudget, residentStatementCount, r
 import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachPersonalLaunchRoutes, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
@@ -11468,6 +11469,69 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       note: 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
     });
   } catch (err) { sendServerError(res, err, 'cmi5-launch-signed'); }
+});
+
+// ── A reusable personal launch link ───────────────────────────────────────────────────────────
+//
+// The launch above is one fetch token, spent on first use and expired after 30 minutes. This mints
+// a link the learner can open again (src/cmi5-personal-link.ts): each open builds a fresh launch,
+// or continues the registration whose session has not ended, and redirects to the AU. The link is
+// kept on the tenant pod beside the dispatches, so a withdrawal survives a restart.
+const PERSONAL_LINKS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/cmi5-personal-links.json` : '';
+const personalLaunchLinks = new PersonalLaunchRegistry();
+let personalLinksReadAt = 0;
+async function readPersonalLinks(): Promise<void> {
+  if (!PERSONAL_LINKS_RESOURCE) return;
+  personalLinksReadAt = Date.now();
+  try {
+    const r = await (globalThis.fetch as typeof fetch)(PERSONAL_LINKS_RESOURCE, { headers: { Accept: 'application/json' } });
+    if (r.ok) personalLaunchLinks.load(await r.json());
+  } catch { /* none yet, or the pod is unreachable: what this process holds stands */ }
+}
+/** Write the registry to the pod. True when the pod holds what this process holds. */
+async function writePersonalLinks(): Promise<boolean> {
+  if (!PERSONAL_LINKS_RESOURCE || !personalLaunchLinks.dirty) return true;
+  personalLaunchLinks.dirty = false;
+  const f = globalThis.fetch as typeof fetch;
+  try {
+    await readPersonalLinks();
+    const container = PERSONAL_LINKS_RESOURCE.replace(/[^/]+$/, '');
+    await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+    const w = await f(PERSONAL_LINKS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(personalLaunchLinks) });
+    if (w.ok) return true;
+  } catch { /* tried again below */ }
+  personalLaunchLinks.dirty = true;
+  return false;
+}
+const persistPersonalLinks = registryWriter(writePersonalLinks);
+void readPersonalLinks();
+
+function positiveLimit(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 10_000 ? n : fallback;
+}
+
+attachPersonalLaunchRoutes(app, {
+  baseUrl: bridgeBaseUrl,
+  registry: personalLaunchLinks,
+  authoritativeSource: String(authoritativeSource),
+  verifyCaller: verifyDelegatedCaller,
+  learnerOf: signedLearner,
+  tenantFor: (learner) => lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS)),
+  resolveCourse: async (courseId) => {
+    if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent */ } }
+    if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
+    return getCmi5Course(DEFAULT_TENANT, courseId) ?? null;
+  },
+  satisfiedAus: learnerSatisfiedAus,
+  stageLaunch: stageLaunchData,
+  rateLimit: checkAgenticRateLimit,
+  opensPerMinute: positiveLimit(process.env.FOXXI_CMI5_GO_PER_IP, 60),
+  opensPerTokenPerMinute: positiveLimit(process.env.FOXXI_CMI5_GO_PER_TOKEN, 12),
+  persist: persistPersonalLinks,
+  reload: async () => { if (Date.now() - personalLinksReadAt > 30_000) await readPersonalLinks(); },
+  serverError: (res, err, where) => sendServerError(res, err, where),
 });
 
 // ── Composable content: fragments and compositions ───────────────────

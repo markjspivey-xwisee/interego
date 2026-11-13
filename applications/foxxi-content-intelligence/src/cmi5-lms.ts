@@ -45,11 +45,13 @@ const CMI5_CATEGORY = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
 const V_PASSED = 'http://adlnet.gov/expapi/verbs/passed';
 const V_COMPLETED = 'http://adlnet.gov/expapi/verbs/completed';
 const V_FAILED = 'http://adlnet.gov/expapi/verbs/failed';
+const V_TERMINATED = 'http://adlnet.gov/expapi/verbs/terminated';
+const V_ABANDONED = 'https://w3id.org/xapi/adl/verbs/abandoned';
+const V_WAIVED = 'https://w3id.org/xapi/adl/verbs/waived';
 const V_SATISFIED = 'https://w3id.org/xapi/adl/verbs/satisfied';
 /** cmi5 lifecycle verbs whose arrival should re-evaluate moveOn. */
 const CMI5_LIFECYCLE = new Set([
-  V_PASSED, V_COMPLETED, V_FAILED,
-  'http://adlnet.gov/expapi/verbs/terminated',
+  V_PASSED, V_COMPLETED, V_FAILED, V_TERMINATED,
   'http://adlnet.gov/expapi/verbs/initialized',
 ]);
 
@@ -92,6 +94,11 @@ export interface Cmi5LaunchRequest {
   /** A signed learner's own pod: set when the learner launched for themselves, so the AU's
    *  statements and the LMS's `satisfied` can be kept on that pod as well as in the lens. */
   learnerPod?: string;
+  /**
+   * Continue this registration and session instead of opening a new one (cmi5 §9.3). Ignored
+   * unless that launch is still open for this learner and this AU.
+   */
+  resume?: { registration: string; sessionId: string };
 }
 
 export interface Cmi5Launch {
@@ -141,6 +148,12 @@ interface LaunchRecord {
   courseId?: string;
   /** See Cmi5LaunchRequest.learnerPod. */
   learnerPod?: string;
+  /** cmi5 session id (§9.6.3.1). Absent on a snapshot from before sessions were kept; those are not resumed. */
+  sessionId?: string;
+  /** Set once the session has ended, so the next open of a personal link starts a new registration. */
+  sessionClosed?: 'terminated' | 'abandoned' | 'waived';
+  /** Browse and Review are kept and not judged (§10.2.2). Absent means Normal. */
+  launchMode?: Cmi5LaunchMode;
   satisfied: boolean;
   satisfiedAt?: string;
   reason: string;
@@ -148,6 +161,30 @@ interface LaunchRecord {
 
 /** Launches keyed by registration — the LMS watches these for moveOn. */
 const launches = new Map<string, LaunchRecord>();
+/** The open session for one learner, course and AU, when it can be resumed. */
+const openByKey = new Map<string, string>();
+
+function openLaunchKey(l: { tenant: TenantId; learner: { id: string }; courseId?: string; auId: string }): string | undefined {
+  return l.courseId ? `${l.tenant}\n${l.learner.id}\n${l.courseId}\n${l.auId}` : undefined;
+}
+function rememberOpenLaunch(l: LaunchRecord): void {
+  const key = openLaunchKey(l);
+  if (key && l.sessionId && !l.sessionClosed) openByKey.set(key, l.registration);
+}
+function forgetOpenLaunch(l: LaunchRecord): void {
+  const key = openLaunchKey(l);
+  if (key && openByKey.get(key) === l.registration) openByKey.delete(key);
+}
+function reindexOpenLaunches(): void {
+  openByKey.clear();
+  for (const l of launches.values()) rememberOpenLaunch(l);
+}
+function closeSession(launch: LaunchRecord, how: 'terminated' | 'abandoned' | 'waived'): void {
+  if (launch.sessionClosed) return;
+  launch.sessionClosed = how;
+  forgetOpenLaunch(launch);
+  cmi5PodDirty();
+}
 /** Per tenant, per learner — the set of AU ids the learner has satisfied
  *  (drives prerequisite gating). */
 const satisfiedAus = new Map<TenantId, Map<string, Set<string>>>();
@@ -184,9 +221,14 @@ async function hydrateCmi5FromPod(): Promise<void> {
       satisfiedAus.set(tenant as TenantId, byLearner);
     }
   }
+  reindexOpenLaunches();
 }
 registerSnapshot({ surface: 'cmi5', typeIri: FOXXI_SNAPSHOT_TYPES.Cmi5Launches, collect: collectCmi5Snapshot });
-void hydrateCmi5FromPod();
+const cmi5Hydrated = hydrateCmi5FromPod();
+/** Resolves once the launch snapshot has been read, or the read has failed. Resume waits for this. */
+export function whenCmi5Ready(): Promise<void> {
+  return cmi5Hydrated.then(() => undefined, () => undefined);
+}
 const cmi5PodDirty = (): void => markCmi5Dirty('cmi5');
 
 function markAuSatisfied(tenant: TenantId, learnerId: string, auId: string): void {
@@ -327,17 +369,44 @@ function sweepExpired(): void {
  * one-time fetch token; the caller navigates the learner to `launchUrl`
  * and stages `launchData` into the LRS State resource as `LMS.LaunchData`.
  */
+/**
+ * The open session a personal link should continue: same learner, course and AU, not yet
+ * terminated, abandoned or waived, and carrying the session id the AU already has.
+ */
+export function findResumableLaunch(query: { tenant: TenantId; learnerId: string; courseId: string; auId: string }): { registration: string; sessionId: string } | undefined {
+  const key = `${query.tenant}\n${query.learnerId}\n${query.courseId}\n${query.auId}`;
+  const registration = openByKey.get(key);
+  if (!registration) return undefined;
+  const l = launches.get(registration);
+  if (!l || l.sessionClosed || !l.sessionId || l.tenant !== query.tenant || l.learner.id !== query.learnerId || l.auId !== query.auId || l.courseId !== query.courseId) {
+    openByKey.delete(key);
+    return undefined;
+  }
+  return { registration: l.registration, sessionId: l.sessionId };
+}
+
 export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
   sweepExpired();
   const tenant = req.tenant ?? DEFAULT_TENANT;
-  const registration = randomUUID();
+  const prior = req.resume ? launches.get(req.resume.registration) : undefined;
+  const resumed = prior
+    && !prior.sessionClosed
+    && prior.sessionId === req.resume!.sessionId
+    && prior.tenant === tenant
+    && prior.learner.id === req.learner.id
+    && prior.auId === req.au.id
+    && (!req.courseId || prior.courseId === req.courseId)
+    ? prior : undefined;
+  const registration = resumed ? resumed.registration : randomUUID();
+  const sessionId = resumed ? resumed.sessionId! : randomUUID();
   const actor = {
     objectType: 'Agent',
     ...(req.learner.name ? { name: req.learner.name } : {}),
     account: { homePage: req.authoritativeSource, name: req.learner.id },
   };
 
-  // The one-time fetch token + the auth-token the AU will end up with.
+  // The one-time fetch token + the auth-token the AU will end up with. A resumed session gets a
+  // new fetch token: the previous one was single-use, and the registration stays the same.
   const fetchToken = `ft-${randomUUID()}`;
   const authToken = `cmi5-${tenant === DEFAULT_TENANT ? 'd' : '0'}-${randomUUID()}`;
   fetchTokens.set(fetchToken, {
@@ -345,23 +414,33 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
     expiresAt: Date.now() + FETCH_TOKEN_TTL_MS, redeemed: false,
   });
 
-  // Register the launch so the LMS can watch it for moveOn satisfaction.
-  const moveOn = req.au.moveOn ?? 'CompletedOrPassed';
-  launches.set(registration, {
-    registration,
-    auId: req.au.id,
-    ...(req.au.title ? { auTitle: req.au.title } : {}),
-    moveOn,
-    masteryScore: typeof req.au.masteryScore === 'number' ? req.au.masteryScore : 1.0,
-    tenant,
-    learner: { id: req.learner.id, ...(req.learner.name ? { name: req.learner.name } : {}) },
-    authoritativeSource: req.authoritativeSource,
-    ...(req.courseId ? { courseId: req.courseId } : {}),
-    ...(req.learnerPod ? { learnerPod: req.learnerPod } : {}),
-    satisfied: false,
-    reason: 'launched — awaiting the AU\'s cmi5 statements',
-  });
-  cmi5PodDirty();
+  // Register the launch so the LMS can watch it for moveOn satisfaction. A resume keeps the
+  // record it already has, including whether moveOn has been met.
+  const moveOn = resumed ? resumed.moveOn : (req.au.moveOn ?? 'CompletedOrPassed');
+  const masteryScore = resumed ? resumed.masteryScore : (typeof req.au.masteryScore === 'number' ? req.au.masteryScore : 1.0);
+  const launchMode: Cmi5LaunchMode = resumed ? (resumed.launchMode ?? 'Normal') : (req.launchMode ?? 'Normal');
+  if (resumed) {
+    if (req.learnerPod && !resumed.learnerPod) { resumed.learnerPod = req.learnerPod; cmi5PodDirty(); }
+  } else {
+    launches.set(registration, {
+      registration,
+      auId: req.au.id,
+      ...(req.au.title ? { auTitle: req.au.title } : {}),
+      moveOn,
+      masteryScore,
+      tenant,
+      learner: { id: req.learner.id, ...(req.learner.name ? { name: req.learner.name } : {}) },
+      authoritativeSource: req.authoritativeSource,
+      ...(req.courseId ? { courseId: req.courseId } : {}),
+      ...(req.learnerPod ? { learnerPod: req.learnerPod } : {}),
+      sessionId,
+      launchMode,
+      satisfied: false,
+      reason: 'launched — awaiting the AU\'s cmi5 statements',
+    });
+    rememberOpenLaunch(launches.get(registration)!);
+    cmi5PodDirty();
+  }
 
   const fetchUrl = `${req.fetchBaseUrl.replace(/\/+$/, '')}/${fetchToken}`;
   const params = new URLSearchParams({
@@ -383,11 +462,11 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
       registration,
       contextActivities: { category: [{ id: CMI5_CATEGORY }], grouping: [{ id: req.au.id }] },
       extensions: {
-        'https://w3id.org/xapi/cmi5/context/extensions/sessionid': randomUUID(),
+        'https://w3id.org/xapi/cmi5/context/extensions/sessionid': sessionId,
       },
     },
-    launchMode: req.launchMode ?? 'Normal',
-    moveOn: req.au.moveOn ?? 'CompletedOrPassed',
+    launchMode,
+    moveOn,
     ...(typeof req.au.masteryScore === 'number' ? { masteryScore: req.au.masteryScore } : {}),
     ...(req.returnUrl ? { returnURL: req.returnUrl } : {}),
     ...(req.au.entitlementKey ? { entitlementKey: { courseStructure: req.au.entitlementKey } } : {}),
@@ -522,7 +601,17 @@ async function observeCmi5StatementUnlocked(
   const launch = launches.get(registration);
   if (!launch || launch.tenant !== tenant) return null;
   const verbId = (statement.verb as { id?: string } | undefined)?.id;
-  if (!verbId || verbId === V_SATISFIED || !CMI5_LIFECYCLE.has(verbId)) return null;
+  if (!verbId || verbId === V_SATISFIED) return null;
+  // A session ends on the AU's terminated, or on abandoned / waived recorded for it. Until then
+  // the same registration is the active one a personal link resumes.
+  if (verbId === V_TERMINATED) closeSession(launch, 'terminated');
+  else if (verbId === V_ABANDONED) closeSession(launch, 'abandoned');
+  else if (verbId === V_WAIVED) closeSession(launch, 'waived');
+  if (!CMI5_LIFECYCLE.has(verbId)) return null;
+  // Browse and Review keep the statements and do not move satisfaction (§10.2.2).
+  if (launch.launchMode === 'Review' || launch.launchMode === 'Browse') {
+    return { registration, satisfied: false, reason: 'a Browse or Review launch is kept and not judged', emittedSatisfied: false };
+  }
   if (launch.satisfied) {
     await rollupCourse(tenant, launch.learner, launch.authoritativeSource, deps.emit, launch.auId);
     return { registration, satisfied: true, reason: launch.reason, emittedSatisfied: false };
@@ -594,6 +683,7 @@ export function inspectRegistration(registration: string): Record<string, unknow
     satisfiedAt: l.satisfiedAt,
     reason: l.reason,
     learner: l.learner.id,
+    ...(l.sessionClosed ? { sessionClosed: l.sessionClosed } : {}),
   };
 }
 
