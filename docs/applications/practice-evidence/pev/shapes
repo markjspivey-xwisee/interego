@@ -85,6 +85,19 @@ pevsh:RatificationShape a sh:NodeShape ;
     sh:property [ sh:path pev:envelopeSignature ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^0x[0-9a-fA-F]{130}$" ;
         sh:message "A ratification carries the reviewer's own signature." ] .
 
+# ── LMS launch ──────────────────────────────────────────────────────────
+
+pevsh:LmsLaunchShape a sh:NodeShape ;
+    sh:targetClass pev:LmsLaunch ;
+    sh:property [ sh:path pev:lmsRegistration ; sh:minCount 1 ; sh:maxCount 1 ;
+        sh:pattern "^[0-9a-fA-F]{8}-[0-9a-fA-F]{4}-[1-5][0-9a-fA-F]{3}-[89abAB][0-9a-fA-F]{3}-[0-9a-fA-F]{12}$" ;
+        sh:message "A launch carries the registration the LMS issued." ] ;
+    sh:property [ sh:path pev:lmsSessionId ; sh:minCount 1 ; sh:maxCount 1 ; sh:minLength 1 ] ;
+    sh:property [ sh:path pev:lmsActivity ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:lmsEndpoint ; sh:minCount 1 ; sh:maxCount 1 ; sh:nodeKind sh:IRI ] ;
+    sh:property [ sh:path pev:lmsLaunchMode ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "Normal" "Browse" "Review" ) ] ;
+    sh:property [ sh:path pev:lmsMasteryScore ; sh:maxCount 1 ; sh:datatype xsd:decimal ] .
+
 # ── Attempt ──────────────────────────────────────────────────────────────────────────────
 
 pevsh:AttemptShape a sh:NodeShape ;
@@ -100,7 +113,8 @@ pevsh:AttemptShape a sh:NodeShape ;
     sh:property [ sh:path pev:coached ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ;
         sh:message "An attempt records whether the learner was coached." ] ;
     sh:property [ sh:path pev:authorTest ; sh:minCount 1 ; sh:maxCount 1 ; sh:datatype xsd:boolean ] ;
-    sh:property [ sh:path pev:counterpartControlledBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "platform" "learner-model" "learner" ) ] ;
+    sh:property [ sh:path pev:counterpartControlledBy ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "platform" "learner-model" "learner" "assignable-unit" ) ] ;
+    sh:property [ sh:path pev:lmsLaunch ; sh:maxCount 1 ; sh:class pev:LmsLaunch ] ;
     sh:property [ sh:path pev:evidenceKind ; sh:minCount 1 ; sh:maxCount 1 ; sh:in ( "practice" ) ;
         sh:message "Practice evidence is rehearsal, not capability evidence." ] ;
     sh:property [ sh:path pev:hasTurn ; sh:minCount 1 ; sh:class pev:Turn ] ;
@@ -115,7 +129,7 @@ pevsh:TurnShape a sh:NodeShape ;
     sh:property [ sh:path pev:text ; sh:maxCount 1 ; sh:datatype xsd:string ] ;
     sh:property [ sh:path pev:textSha256 ; sh:minCount 1 ; sh:maxCount 1 ; sh:pattern "^[0-9a-f]{64}$" ] ;
     sh:property [ sh:path pev:turnSource ; sh:minCount 1 ; sh:maxCount 1 ;
-        sh:in ( "authored-first-line" "learner-signed" "bridge-model" "scripted" "client-packet" ) ] .
+        sh:in ( "authored-first-line" "learner-signed" "bridge-model" "scripted" "client-packet" "lrs-statement" ) ] .
 
 pevsh:InferenceDisclosureShape a sh:NodeShape ;
     sh:targetClass pev:InferenceDisclosure ;

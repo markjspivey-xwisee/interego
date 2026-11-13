@@ -14,6 +14,59 @@ before and are rewritten compressed the next time they are written.
 Measured on a made-up artifact with one 120-triple subject: 43.82 MB as plain
 JSON, 1.35 MB compressed. Node identity, holon addresses and the snapshot
 digest do not depend on the stored form.
+## 2026-11-13 — Practice Evidence: an attempt under an LMS launch can count toward its assignable unit
+
+Practice Evidence refused, by design, to put a cmi5 defined category on anything:
+practice could not satisfy an assignable unit, and its registration was derived
+from the attempt. The owner has decided that a practice conversation run under an
+LMS launch does count. This is the first piece of that, as pure functions and the
+record's shape, and the act that takes a launched conversation as an attempt.
+
+- An attempt record may carry the launch it ran under (`lmsLaunch`): the
+  registration, session, actor and activity id the LMS issued, the LRS endpoint,
+  the launch mode, and the masteryScore and contextTemplate when the launch data
+  had them. `lmsLaunchProblems` says what is wrong with one. The record graph
+  writes it as a `pev:LmsLaunch`, declared in `pev.ttl` with a shape in
+  `pev-shapes.ttl`.
+- `buildLaunchedStatements` builds the cmi5 defined statements for a reviewed
+  attempt that has a launch: `passed` or `failed` for a pass gate, then
+  `completed`; `completed` alone for feedback only. They are on the LMS's
+  registration, actor and activity, carry the cmi5 and moveOn categories and the
+  contextTemplate, and name the session they are sent in, which can be a later
+  session of the registration than the conversation's. A statement's id is
+  fixed by the attempt, the registration and the verb, and its timestamp is the
+  time of the review, so a retry is the same document and an LRS refuses a second,
+  different passed or completed for the registration. cmi5 gives these statements
+  to the assignable unit to send, so the bridge still posts nothing, keeps no copy
+  of what was sent and confirms no delivery.
+- `launchedRefusals` gives the reason when none may be built: no launch, a launch
+  that was not Normal, no standing review, or a reviewed result that meets the
+  rubric's pass rule below the launch's masteryScore (or misses it at or above),
+  which cmi5 can call neither passed nor failed. `launchedStatementProblems`
+  checks a statement against its launch.
+
+- `pev.import_launched_attempt` takes a conversation an assignable unit already
+  held under an LMS launch. The learner signs it and passes their own signed read
+  of the registration, which the bridge forwards unchanged to the LRS's signed-read
+  route (`PEV_LAUNCH_READ_URL`); the bridge holds no LRS credential and does not
+  keep the read. The exchanges become turns read from statements, the unit's score
+  per criterion becomes a scripted judgment with nothing verified, and the attempt
+  is written `judged` on the LMS's registration for a reviewer to decide. The
+  profile terms the unit's statements use are a setting (`PEV_LAUNCH_VOCABULARY`);
+  no profile, course or player is named in code. A registration that is not one
+  whole conversation against the scenario version's rubric is refused with every
+  reason, as are another actor's statements and a registration already taken on
+  the pod against any scenario. The cmi5 statements are built only where the LMS's
+  own `launched` statement says the launch was Normal; a mode that was only
+  assumed is refused.
+- A turn may now be an `lrs-statement`, and the other person's lines may be
+  controlled by an `assignable-unit`; both are in `pev.ttl` and its shapes.
+
+An attempt started in Practice Evidence itself has no launch, projects exactly as
+before and satisfies nothing. Verified by the vertical's tests against fictional
+fixtures only, with a fetch double for the LRS: no live LMS, LRS or assignable
+unit has used this. Not built: the act that serves the reviewed statements to the
+unit and keeps what it handed out.
 
 ## 2026-11-13 — A persisted lattice can be read compressed; writing it that way is off for now
 
@@ -73,6 +126,7 @@ Measured on one made-up artifact with a 120-triple subject and thirty
 4-triple subjects: 9,227 nodes, 32.9 MB plaintext and a 43.8 MB PUT as
 written today; a 1.35 MB PUT with compression; 2,574 nodes and a 2.2 MB PUT
 with groups folded at eight; 0.15 MB with both.
+
 ## 2026-11-13 — Foxxi statements say which kind they are, and its profile selects on that
 
 Under the xAPI Profiles specification a statement must follow every template it
