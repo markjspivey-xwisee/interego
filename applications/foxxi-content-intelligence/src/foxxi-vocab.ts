@@ -280,7 +280,7 @@ function termLabel(t: FoxxiTerm): string {
 const notationOf = (t: FoxxiTerm): string => t.name.split('/').pop()!;
 
 /** The vocabulary document's version. */
-export const FOXXI_VOCAB_VERSION = '2026.10.1';
+export const FOXXI_VOCAB_VERSION = '2026.11.0';
 
 /** Self-description of the vocabulary document. */
 export function foxxiDocMeta(): DocMeta {
@@ -288,8 +288,8 @@ export function foxxiDocMeta(): DocMeta {
     iri: FOXXI_VOCAB_DOC, ns: FOXXI_NS, prefix: foxxiPrefix('foxxi'),
     title: 'Foxxi Content Intelligence vocabulary',
     description: FOXXI_VOCAB_COMMENT,
-    version: FOXXI_VOCAB_VERSION, created: '2026-05-20', modified: '2026-10-13', issued: '2026-10-13',
-    priorVersion: '2026.10.0', priorCompatibility: 'backward',
+    version: FOXXI_VOCAB_VERSION, created: '2026-05-20', modified: '2026-11-13', issued: '2026-11-13',
+    priorVersion: '2026.10.1', priorCompatibility: 'backward',
     standards: [],
     bodies: ['ADL'],
     notice: `An original vocabulary of the Foxxi vertical, by ${CREATOR} (${PUBLISHER}). It formalizes no standard; its xAPI concepts are typed with classes of ADL's xAPI ontology (https://w3id.org/xapi/ontology), which is not affiliated with or endorsing this vocabulary.`,

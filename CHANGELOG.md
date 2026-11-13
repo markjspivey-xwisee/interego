@@ -26,6 +26,11 @@ they are, and the templates select on its type:
 its two emitters already used. The three activity types are declared in the
 profile and in the Foxxi vocabulary.
 
+The Foxxi vocabulary takes a new version for them, 2026.11.0, released and
+archived on its own (backward compatible with 2026.10.1). The archive test
+counted imports per release as if every release carried every document; it now
+counts the releases that archived a shapes graph.
+
 A new test runs what the descriptor projector and the run ingest really emit
 through the specification's validation: each validates, against the template
 for its own kind. Statements stored before this carry no marker: a stored
