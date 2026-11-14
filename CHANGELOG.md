@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-14 — Foxxi: a failed lesson nobody scored is recorded without a score
+
+A performance recorded against a lesson, failed, with no quality given, built a
+`failed` statement with no `result.score.scaled`, and Foxxi's own `lesson-failed`
+template required one, so the statement did not follow the profile it names
+(found in review of the statement builder). The template now recommends the
+score and does not require it: cmi5 constrains a score a failed statement
+carries and does not demand one. The statement is unchanged; no score is
+invented. The builder test now runs every kind of activity, each outcome,
+scored and unscored, through the specification's algorithm.
+
 ## 2026-11-13 — Foxxi: the LMS records cmi5 launched
 
 A cmi5 launch now stores the LMS `launched` statement before the AU runs. It uses the launch's actor and registration, verb `http://adlnet.gov/expapi/verbs/launched`, the AU as object, and the cmi5 context category. The context extensions are the session id, launch mode, the AU's URL without the cmi5 query, moveOn, and mastery score when the course structure sets one. It is written into the launch's tenant, which for a signed launch and a personal link is the learner's lens, so `foxxi.read_xapi_statements_signed` returns it with the AU's statements. A resumed session does not record another. A new session does, including one that keeps the registration after `terminated` left moveOn unmet.
