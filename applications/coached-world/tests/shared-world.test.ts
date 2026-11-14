@@ -556,6 +556,7 @@ describe('a coached world that offers the general guest door', () => {
       expect(second.token).not.toBe(session.token);
     } finally { await running.close(); }
   });
+});
 
 /**
  * Connect an agent. A consultant pairs their own AI chat session and it becomes the agent they
