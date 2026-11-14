@@ -20,6 +20,14 @@ served with the documentation, and changed:
 - launched again in the same registration, it asks the LMS for the reviewed
   statements (`GET /cmi5/reviewed`) and sends them.
 
+Three things a review of the page found, fixed before it merged. Sending the
+reviewed statements stops at the first one the LRS does not take, keeps the
+session open and offers to try again, so a `completed` is never stored without
+the `passed` or `failed` before it. An id the LRS already holds counts as this
+result only when the stored statement says everything the issued one says. And
+a practice starts only when the LMS answers that nothing is under review: when
+it cannot be asked, the page says so and starts nothing.
+
 Checked by hand in a browser against a loopback stand-in for the LMS: a practice
 wrote `initialized`, a consent, 5 exchanges, 5 scores and `terminated`, and this
 application's own reader took those statements as one conversation; a second

@@ -104,6 +104,13 @@ describe('the published role-play player page', () => {
     expect(page).toContain('new URL("/cmi5/reviewed", cfg.lrs)');
     // The cmi5 credential goes to the LMS as a Bearer; the LRS takes the same token as Basic.
     expect(page).toContain('"Bearer " + cfg.authorization.replace(/^Basic\\s+/, "")');
+    // It stops at the first reviewed statement the LRS does not take, and ends the session only when all were taken.
+    expect(page).toContain('if (o !== "sent" && o !== "already") break;');
+    // A practice starts only when the LMS says nothing is under review; not being able to ask is its own state.
+    expect(page).toContain('return {state:"unknown", why: "the LMS could not be reached"};');
+    expect(page).toContain('if (got.state === "unknown") return reviewUnknown(got);');
+    // An id the LRS already holds counts only when what it holds says everything the issued statement says.
+    expect(page).toContain('return holds(stored, restIssued) && (ti === undefined || sameInstant(ts, ti));');
     // It never writes a verb cmi5 keeps for the LMS.
     for (const verb of ['verbs/launched', 'verbs/abandoned', 'verbs/waived', 'verbs/satisfied']) expect(page).not.toContain(verb);
   });

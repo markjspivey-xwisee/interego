@@ -161,7 +161,7 @@ a{color:var(--accent)}.hide{display:none!important}
   <div class="card"><h2>Saved to your record</h2><p class="track" id="trackstatus">Sending…</p></div>
 </section>
 
-<section id="s-reviewed" class="hide"><div class="card"><h2 id="rvtitle">Your reviewed result</h2><p class="sub" id="rvmsg"></p><p class="track" id="rvtrack"></p></div></section>
+<section id="s-reviewed" class="hide"><div class="card"><h2 id="rvtitle">Your reviewed result</h2><p class="sub" id="rvmsg"></p><p class="track" id="rvtrack"></p><button class="btn primary hide" id="rvretry" style="margin-top:12px">Try again</button></div></section>
 
 <section id="s-declined" class="hide"><div class="card"><h2>No problem</h2><p class="sub" id="declinedmsg">Nothing was scored.</p></div></section>
 </div>
@@ -456,22 +456,45 @@ async function finish(){
 const freshNote = () => (S && S.ui && S.ui.freshLinkNote) || "Ask for a fresh course link.";
 
 // ---------- a reviewed result (the LMS's GET /cmi5/reviewed, with this session's cmi5 credential) ----------
-/* Returns {state:"none"} when there is nothing to do here and a practice may start;
+/* Returns {state:"none"} when the LMS says there is nothing under review here, so a practice may start;
    {state:"waiting", why} when this registration's practice is with a reviewer;
    {state:"ready", statements} when the reviewed statements are for this session;
-   {state:"elsewhere"} when they were fixed for another session. */
+   {state:"elsewhere"} when they were fixed for another session;
+   {state:"unknown", why} when the LMS could not be asked or did not give one of those answers.
+   A practice starts only on "none": this registration holds one conversation, and a second one
+   played because the LMS was unreachable would be a conversation nobody takes. */
 async function askReviewed(){
   if (!S.resultAfterReview || !cfg || !cfg.authorization) return {state:"none"};
+  let r, b;
   try {
-    const r = await fetch(new URL("/cmi5/reviewed", cfg.lrs), {headers:{Authorization: "Bearer " + cfg.authorization.replace(/^Basic\s+/, ""), Accept:"application/json"}});
-    const b = await r.json().catch(() => null);
-    if (r.ok && b && Array.isArray(b.statements) && b.statements.length) return b.usableInSession === true ? {state:"ready", statements: b.statements} : {state:"elsewhere"};
-    if (r.status === 409 && b && b.error === "no_reviewed_statements") return {state:"waiting", why: b.reason || ""};
-  } catch(e) {}
-  return {state:"none"};
+    r = await fetch(new URL("/cmi5/reviewed", cfg.lrs), {headers:{Authorization: "Bearer " + cfg.authorization.replace(/^Basic\s+/, ""), Accept:"application/json"}});
+    b = await r.json().catch(() => null);
+  } catch(e) { return {state:"unknown", why: "the LMS could not be reached"}; }
+  if (r.ok && b && Array.isArray(b.statements) && b.statements.length) return b.usableInSession === true ? {state:"ready", statements: b.statements} : {state:"elsewhere"};
+  const err = b && b.error;
+  if (r.status === 409 && err === "no_reviewed_statements") return {state:"waiting", why: b.reason || ""};
+  // Nothing was taken from this registration, the LMS asks no review service, or this launch is not
+  // one that records a result (Browse, Review): there is no reviewed result to wait for.
+  if (r.status === 409 && (err === "registration_not_under_review" || err === "not_a_normal_launch")) return {state:"none"};
+  if (r.status === 501 && err === "no_review_service") return {state:"none"};
+  return {state:"unknown", why: "the LMS answered " + r.status + (err ? " (" + err + ")" : "")};
 }
-const sameStatement = (a, b) => a && b && a.verb && b.verb && a.verb.id === b.verb.id && a.object && b.object && a.object.id === b.object.id
-  && JSON.stringify((a.result||{}).score||null) === JSON.stringify((b.result||{}).score||null) && (a.result||{}).success === (b.result||{}).success;
+/* Whether `stored` holds everything `issued` says. An LRS adds to what it stores (stored, authority,
+   version, an objectType, a display) and may reorder a list of activities, so what it holds can say
+   more. It may not say anything different: every field of the issued statement has to be there with
+   the same value, to any depth. */
+function holds(stored, issued){
+  if (issued === null || typeof issued !== "object") return stored === issued;
+  if (Array.isArray(issued)) return Array.isArray(stored) && stored.length === issued.length && issued.every(x => stored.some(y => holds(y, x)));
+  if (stored === null || typeof stored !== "object" || Array.isArray(stored)) return false;
+  return Object.keys(issued).every(k => holds(stored[k], issued[k]));
+}
+const sameInstant = (a, b) => typeof a === "string" && typeof b === "string" && Date.parse(a) === Date.parse(b);
+function sameStatement(stored, issued){
+  if (!stored || !issued) return false;
+  const {timestamp: ti, ...restIssued} = issued, {timestamp: ts} = stored;
+  return holds(stored, restIssued) && (ti === undefined || sameInstant(ts, ti));
+}
 /* Sends the reviewed statements exactly as given, in order. An id the LRS already holds is read back:
    only an equal statement is this result recorded. */
 async function postReviewed(st){
@@ -485,9 +508,9 @@ async function postReviewed(st){
   }
   return "refused " + r.status;
 }
-async function recordReviewed(got){
+async function recordReviewed(got, again){
   show("s-reviewed");
-  await send("initialized", "initialized", scenarioAct(), null, true, false);
+  if (!again) await send("initialized", "initialized", scenarioAct(), null, true, false);
   if (got.state === "waiting") {
     $("rvtitle").textContent = "With a reviewer";
     $("rvmsg").textContent = "Your practice is saved and is waiting for a reviewer to sign it off. Nothing more is needed from you here. Open this course again once it has been reviewed.";
@@ -495,17 +518,56 @@ async function recordReviewed(got){
     $("rvtitle").textContent = "Your reviewed result";
     $("rvmsg").textContent = "Your reviewed result was issued for an earlier visit that ended before it was recorded. Ask for it to be issued again, then open this course once more.";
   } else {
-    const out = []; for (const st of got.statements) out.push(await postReviewed(st));
-    const ok = out.every(o => o === "sent" || o === "already");
+    // In order, and no further than the first one the learning record does not take: a completed
+    // without the passed or failed before it would be a result nobody reviewed.
     const verbs = got.statements.map(x => (x.verb && x.verb.id || "").split("/").pop());
-    $("rvtitle").textContent = ok ? "Your reviewed result is recorded" : "Your reviewed result could not be recorded";
-    $("rvmsg").textContent = ok ? "A reviewer signed off your practice. Recorded for this course: " + verbs.join(" and ") + "."
-      : "The learning record did not take it (" + out.join(", ") + "). Nothing was changed. " + freshNote();
-    setChip(ok ? "Recorded" : "Not saved", ok ? "ok" : "warn");
+    const out = [];
+    for (const st of got.statements) {
+      let o; try { o = await postReviewed(st); } catch(e) { o = "unreachable"; }
+      out.push(o);
+      if (o !== "sent" && o !== "already") break;
+    }
+    const ok = out.length === got.statements.length && out.every(o => o === "sent" || o === "already");
     window.__rolePlayReviewed = {outcomes: out, verbs};
+    if (!ok) {
+      // The session stays open: these statements are for this session only, and ending it would
+      // leave them with nowhere to be sent. Trying again sends from the start; one already stored
+      // is read back and compared, not stored twice.
+      const done = out.filter(o => o === "sent" || o === "already").length;
+      $("rvtitle").textContent = "Your reviewed result is not recorded yet";
+      $("rvmsg").textContent = "The learning record did not take " + verbs[out.length - 1] + " (" + out[out.length - 1] + ")."
+        + (done ? " " + verbs.slice(0, done).join(" and ") + " was recorded." : " Nothing was recorded.") + " Nothing further was sent. You can try again now, or leave this page open and try later.";
+      setChip("Not saved", "warn");
+      const btn = $("rvretry"); btn.classList.remove("hide"); btn.disabled = false;
+      btn.onclick = async () => { btn.disabled = true; $("rvmsg").textContent = "Trying again…"; await recordReviewed(got, true); };
+      return;
+    }
+    $("rvretry").classList.add("hide");
+    $("rvtitle").textContent = "Your reviewed result is recorded";
+    $("rvmsg").textContent = "A reviewer signed off your practice. Recorded for this course: " + verbs.join(" and ") + ".";
+    setChip("Recorded", "ok");
   }
   await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);
   $("rvtrack").textContent = trackErr ? "This visit didn't save (" + trackErr + ")." : "";
+}
+/* The LMS could not say whether a reviewed result is waiting. Nothing is started and nothing is sent. */
+function reviewUnknown(got){
+  show("s-reviewed"); setChip("Can't check", "warn");
+  $("rvtitle").textContent = "Couldn't check for your reviewed result";
+  $("rvmsg").textContent = "This course records a result only after a reviewer signs it off, and whether yours is ready could not be checked (" + got.why + "). No new practice was started. Try again in a moment.";
+  const btn = $("rvretry"); btn.classList.remove("hide"); btn.disabled = false;
+  btn.onclick = async () => { btn.disabled = true; $("rvmsg").textContent = "Checking again…"; await begin(); };
+}
+/* Asks the LMS, then starts what its answer calls for: a practice, a reviewed result to record, or neither. */
+async function begin(){
+  const got = await askReviewed();
+  window.__rolePlay.reviewed = got.state;
+  if (got.state === "unknown") return reviewUnknown(got);
+  $("rvretry").classList.add("hide");
+  if (got.state !== "none") return recordReviewed(got);
+  setChip(P.contextKind === "agent-test" ? "Tracked (agent test)" : "Tracked", "ok");
+  show("s-welcome");
+  await send("initialized", "initialized", scenarioAct(), null, true, false);
 }
 
 // ---------- start ----------
@@ -534,10 +596,7 @@ async function recordReviewed(got){
   if (!cfg) { setChip("Preview, not saved", "warn"); return; }
   if (!ready) { setChip("Not saving", "warn"); $("voicenote").textContent = "This link couldn't connect to your record (" + trackErr + "). It may have been used already. " + freshNote(); return; }
   tracked = true; setChip(P.contextKind === "agent-test" ? "Tracked (agent test)" : "Tracked", "ok");
-  const got = await askReviewed();
-  window.__rolePlay.reviewed = got.state;
-  if (got.state !== "none") return recordReviewed(got);
-  await send("initialized", "initialized", scenarioAct(), null, true, false);
+  await begin();
 })();
 $("mic").onclick = listen;
 $("coachbtn").onclick = () => { coach = !coach; $("coachbtn").textContent = "Coach: " + (coach?"on":"off"); $("hint").classList.toggle("hide", !coach); };
