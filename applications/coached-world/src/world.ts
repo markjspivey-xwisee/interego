@@ -74,6 +74,7 @@ export class CoachedWorld {
   private readonly now: () => string;
   private readonly wallet: Signer;
   private readonly lrs: LrsReader | undefined;
+  private readonly actorHomePage: string | undefined;
   private readonly published: Published[] = [];
   private readonly heads = new Map<string, string>();
   private readonly consultants = new Map<string, Consultant>();
@@ -92,7 +93,7 @@ export class CoachedWorld {
 
   private constructor(opts: {
     pack: WorldPack; base: string; didHost: string; now: () => string; wallet: Signer;
-    log: StatementLog; lrs?: LrsReader; seed: number;
+    log: StatementLog; lrs?: LrsReader; actorHomePage?: string; seed: number;
   }) {
     this.pack = opts.pack;
     this.base = opts.base.endsWith('/') ? opts.base : `${opts.base}/`;
@@ -101,6 +102,7 @@ export class CoachedWorld {
     this.wallet = opts.wallet;
     this.log = opts.log;
     this.lrs = opts.lrs;
+    this.actorHomePage = opts.actorHomePage;
     this.rng = mulberry(opts.seed);
     this.operatorAddress = opts.wallet.address;
     this.minutes = opts.pack.season.startMinutes;
@@ -120,13 +122,13 @@ export class CoachedWorld {
   static async create(opts: {
     readonly pack: WorldPack; readonly base: string; readonly didHost: string;
     readonly seed?: number; readonly now?: () => string; readonly wallet?: Signer;
-    readonly log?: StatementLog; readonly lrs?: LrsReader;
+    readonly log?: StatementLog; readonly lrs?: LrsReader; readonly actorHomePage?: string;
   }): Promise<CoachedWorld> {
     const world = new CoachedWorld({
       pack: opts.pack, base: opts.base, didHost: opts.didHost,
       now: opts.now ?? (() => new Date().toISOString()),
       wallet: opts.wallet ?? Wallet.createRandom(),
-      log: opts.log ?? new StatementLog(), lrs: opts.lrs,
+      log: opts.log ?? new StatementLog(), lrs: opts.lrs, actorHomePage: opts.actorHomePage,
       seed: opts.seed ?? hashSeed(opts.pack.id),
     });
     await world.publishOpening();
@@ -359,11 +361,7 @@ export class CoachedWorld {
       base: this.base, missionId: live.id, observationId: observation.id, causeId: live.cause.id,
       interventionId: intervention.id, agentDid: agent.did, consultantDid: consultant.ownerDid, at, delta: result.delta,
     }), 'intervention');
-    const territoryHead = this.published.filter(p => p.kind === 'territory' && p.id.includes(`/territory/${territory.id}/`)).at(-1)?.id;
-    await this.publish(territoryGraph({
-      pack: this.pack, base: this.base, territoryId: territory.id, name: territory.name, control: territory.control,
-      version: territory.version, at, writerDid: this.did('world'), ...(territoryHead ? { supersedes: territoryHead } : {}),
-    }), 'territory');
+    await this.publishTerritory(territory);
     await this.putAgent({ ...agent, controllerDid: agent.controllerDid, consultantId: agent.consultantId, factionId: agent.factionId });
     const sign = result.delta >= 0 ? `+${result.delta}` : String(result.delta);
     this.pushFeed(fill(this.pack.templates.feedIntervene, {
@@ -468,6 +466,7 @@ export class CoachedWorld {
     });
     territory.control = result.control;
     territory.version += 1;
+    await this.publishTerritory(territory);
     const actor = this.did(bot.id);
     const built = buildMissionStatements({
       pack: this.pack, homePage: this.base, actorDid: actor, missionId: mission.id, missionTitle: mission.title,
@@ -496,16 +495,18 @@ export class CoachedWorld {
     const course = tier?.courseIri;
     if (!course) throw new WorldError(409, 'no-gate', 'this tier has no course');
     if (consultant.gate !== 'eligible') throw new WorldError(409, 'gate-not-open');
-    let lrs: 'unconfigured' | 'ok' | 'unreachable' = 'unconfigured';
-    if (this.lrs) {
+    let lrs: 'unconfigured' | 'ok' | 'unreachable' | 'actor-home-unset' = 'unconfigured';
+    if (this.lrs && this.actorHomePage) {
       try {
-        const remote = await this.lrs.fetchActor(consultant.ownerDid);
+        const remote = await this.lrs.fetchActor(consultant.ownerDid, this.actorHomePage);
         const fresh = remote.filter(statement => !this.log.has(statement.id));
         this.log.add(fresh, 'external');
         lrs = 'ok';
       } catch {
         lrs = 'unreachable';
       }
+    } else if (this.lrs) {
+      lrs = 'actor-home-unset';
     }
     const passed = this.log.sawExternal(consultant.ownerDid, course, PASSED);
     const completed = this.log.sawExternal(consultant.ownerDid, course, COMPLETED);
@@ -516,6 +517,14 @@ export class CoachedWorld {
     return { promoted: true, lrs, passed, completed, courseIri: course, tier: consultant.tier, gate: consultant.gate };
   }
 
+  private async publishTerritory(territory: TerritoryState): Promise<void> {
+    const head = this.published.filter(p => p.kind === 'territory' && p.id.includes(`/territory/${territory.id}/`)).at(-1)?.id;
+    await this.publish(territoryGraph({
+      pack: this.pack, base: this.base, territoryId: territory.id, name: territory.name, control: territory.control,
+      version: territory.version, at: this.now(), writerDid: this.did('world'), ...(head ? { supersedes: head } : {}),
+    }), 'territory');
+  }
+
   private async promote(consultant: Consultant): Promise<void> {
     const next = consultant.tier + 1;
     const tier = this.pack.tiers[next];
@@ -523,7 +532,9 @@ export class CoachedWorld {
     consultant.tier = next;
     consultant.gate = 'none';
     consultant.influence += this.pack.scoring.promoteInfluence;
-    while (consultant.roster.length < tier.rosterCap) {
+    // One seat stays open so a transfer can still land. The starter already occupies a seat.
+    const seats = Math.max(consultant.roster.length, tier.rosterCap - 1);
+    while (consultant.roster.length < seats && consultant.roster.length < tier.rosterCap) {
       const agent = await this.putAgent({
         id: `a${this.agentSerial++}`, name: `${pick(this.pack.agentNames, this.rng)}-${consultant.roster.length + 1}`,
         role: pick(this.pack.roles, this.rng), factionId: consultant.factionId, consultantId: consultant.id,
@@ -572,9 +583,10 @@ export class CoachedWorld {
 
   private leaderboard(you: Consultant | undefined): Array<{ name: string; factionId: string; tier: number; roi: number; growth: number; you: boolean }> {
     const rows = this.bots.map(b => ({ name: b.name, factionId: b.factionId, tier: b.tier, roi: b.roi, growth: b.growth, you: false }));
-    if (you?.factionId) {
-      const roi = you.rois.length ? you.rois.reduce((a, b) => a + b, 0) / you.rois.length : 0;
-      rows.push({ name: you.name, factionId: you.factionId, tier: you.tier, roi, growth: you.growth, you: true });
+    for (const consultant of this.consultants.values()) {
+      if (!consultant.factionId) continue;
+      const roi = consultant.rois.length ? consultant.rois.reduce((a, b) => a + b, 0) / consultant.rois.length : 0;
+      rows.push({ name: consultant.name, factionId: consultant.factionId, tier: consultant.tier, roi, growth: consultant.growth, you: consultant.id === you?.id });
     }
     return rows.sort((a, b) => this.score(b.roi, b.growth) - this.score(a.roi, a.growth));
   }

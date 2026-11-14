@@ -18,7 +18,9 @@ Open the URL it prints (port 6191 unless `CPW_PORT` is set). **Join as guest** m
 
 When `CPW_PLAY_SERVICE_PRIVATE_KEY`, `CPW_PLAY_AUDIENCE` and `CPW_IDENTITY_URL` are set, grants go through Foxxi's `PlayGrantService` (`applications/foxxi-content-intelligence/src/play-grant.ts`) and the session is checked at identity's `POST /play/provisional/verify`. The browser proof does not change. That service account has to be an entry in identity's `PROVISIONAL_PLAY_CLIENTS`, with its own namespace (use `coached-world`, not the default). See `deploy/identity/PROVISIONAL-PLAY.md`.
 
-`CPW_LRS_URL` (and optional `CPW_LRS_AUTHORIZATION`) is a Foxxi `/xapi/statements` endpoint. Mission statements are still kept here if the LRS cannot be reached; the world says so on the gate check rather than pretending they landed.
+`CPW_LRS_URL` (and optional `CPW_LRS_AUTHORIZATION`) is a Foxxi `/xapi/statements` endpoint. `CPW_LRS_ACTOR_HOME` is the home page on the course actor's account, the same value Foxxi calls its authoritative source. The gate query sends that home page with the guest's DID. Foxxi's agent filter matches the two together, so a query with only the name never sees the course's `passed` and `completed`. Mission statements are still kept here if the LRS cannot be reached. The gate check says so.
+
+The starter occupies one roster seat. The first tier's cap leaves another seat open, and a promotion stops one seat short of the new cap, so a marketplace transfer can land.
 
 `CPW_PACK` is not read. Pass a pack by starting from code (`start({ packPath })`), or replace `packs/mandate.json` only as data. The engine loads whatever file it is given.
 

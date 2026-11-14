@@ -70,7 +70,7 @@ export async function start(opts: {
   const lrsUrl = process.env['CPW_LRS_URL'];
   const world = await CoachedWorld.create({
     pack, base: `${origin}/`, didHost: didHost(origin),
-    ...(lrsUrl ? { lrs: new HttpLrs(lrsUrl, process.env['CPW_LRS_AUTHORIZATION']) } : {}),
+    ...(lrsUrl ? { lrs: new HttpLrs(lrsUrl, process.env['CPW_LRS_AUTHORIZATION']), actorHomePage: process.env['CPW_LRS_ACTOR_HOME'] } : {}),
   });
   live.world = world;
   if (opts.bots !== false) {

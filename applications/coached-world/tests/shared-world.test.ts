@@ -10,6 +10,7 @@ import { verifyMessage } from 'ethers';
 import { describe, expect, it } from 'vitest';
 import { start } from '../src/server.js';
 import { CoachedWorld } from '../src/world.js';
+import { HttpLrs, type LrsReader } from '../src/lrs.js';
 import { loadPackFile } from '../src/pack.js';
 import type { XapiStatement } from '../src/statements.js';
 
@@ -63,6 +64,23 @@ describe('a shared coached world', () => {
       expect(north.ownerDid).not.toBe(south.ownerDid);
       await post(running.url, '/faction', { factionId: 'north' }, north.token);
       await post(running.url, '/faction', { factionId: 'south' }, south.token);
+      const northView = await get(running.url, '/world', north.token);
+      const southView = await get(running.url, '/world', south.token);
+      const northName = (northView['you'] as { name: string }).name;
+      const southName = (southView['you'] as { name: string }).name;
+      const boardOf = (body: Record<string, unknown>) => body['leaderboard'] as Array<{ name: string; you: boolean }>;
+      expect(boardOf(northView).some(row => row.name === southName && !row.you)).toBe(true);
+      expect(boardOf(southView).some(row => row.name === northName && !row.you)).toBe(true);
+      const anon = boardOf(await get(running.url, '/world'));
+      expect(anon.some(row => row.name === northName)).toBe(true);
+      expect(anon.some(row => row.name === southName)).toBe(true);
+      expect(anon.every(row => !row.you)).toBe(true);
+      const market = northView['market'] as Array<{ id: string; factionId: string | null; price: number }>;
+      expect(market.length).toBeGreaterThan(0);
+      const offer = market.find(agent => agent.factionId === null) ?? market.slice().sort((a, b) => a.price - b.price)[0];
+      if (!offer) throw new Error('market empty');
+      const hired = await post(running.url, '/market/transfer', { agentId: offer.id }, north.token);
+      expect(typeof hired['agent']).toBe('string');
       const opened = await post(running.url, '/missions', {}, north.token);
       const statements = opened['statements'] as Array<{ verb: { id: string } }>;
       expect(statements.length).toBeGreaterThan(1);
@@ -122,8 +140,45 @@ describe('a shared coached world', () => {
     const promoted = await world.refreshGate(consultant.id);
     expect(promoted['promoted']).toBe(true);
     expect(promoted['tier']).toBe(1);
+    const seated = world.view(consultant.id)['you'] as { roster: unknown[]; rosterCap: number };
+    expect(seated.roster.length).toBeLessThan(seated.rosterCap);
+    const territoriesBefore = world.graphs().filter(row => row.kind === 'territory').length;
+    await world.tick();
+    const territoriesAfter = world.graphs().filter(row => row.kind === 'territory');
+    expect(territoriesAfter.length).toBe(territoriesBefore + 1);
+    const latest = territoriesAfter.at(-1);
+    expect(latest?.graph).toContain('cpw:Territory');
+    expect(latest?.version).toBeGreaterThan(1);
     const verbs = world.log.entries.filter(entry => entry.origin === 'world').map(entry => entry.statement.verb.id);
     expect(verbs.some(id => id.endsWith('/passed') || id.endsWith('/completed'))).toBe(false);
     expect(pack.profileId).toContain('orchard');
+  });
+
+  it('asks an LRS for the actor name and home page together', async () => {
+    let seen = '';
+    const fetchImpl = (async (url: string | URL | Request) => {
+      seen = String(url);
+      return new Response(JSON.stringify({ statements: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    const lrs = new HttpLrs('https://lrs.example/xapi/statements', undefined, fetchImpl);
+    await lrs.fetchActor('did:web:example:users:u-try-play-abc', 'https://foxxi.example');
+    const agent = JSON.parse(new URL(seen).searchParams.get('agent') ?? '{}') as { account?: { name?: string; homePage?: string } };
+    expect(agent.account).toEqual({ name: 'did:web:example:users:u-try-play-abc', homePage: 'https://foxxi.example' });
+
+    let recordingSeen: { name: string; homePage: string } | undefined;
+    const recording: LrsReader = { async fetchActor(name, homePage) { recordingSeen = { name, homePage }; return []; } };
+    const world = await CoachedWorld.create({
+      pack: { ...loadPackFile(orchardPath), influence: 400 }, base: 'http://world.example/', didHost: 'world.example', seed: 2,
+      lrs: recording, actorHomePage: 'https://foxxi.example',
+    });
+    const consultant = world.admit({ ownerDid: 'did:web:example:users:u-try-play-abc', userId: 'u-try-play-abc', podUrl: 'http://world.example/pods/u/', agentDid: 'did:web:example:agents:mcp' });
+    await world.joinFaction(consultant.id, 'north');
+    for (let i = 0; i < 12 && (world.view(consultant.id)['you'] as { gate: string }).gate !== 'eligible'; i++) {
+      await world.startMission(consultant.id);
+      await world.intervene(consultant.id, 'timing', 'calendar');
+    }
+    const gate = await world.refreshGate(consultant.id);
+    expect(gate['lrs']).toBe('ok');
+    expect(recordingSeen).toEqual({ name: consultant.ownerDid, homePage: 'https://foxxi.example' });
   });
 });

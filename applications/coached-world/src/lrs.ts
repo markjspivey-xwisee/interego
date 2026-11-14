@@ -28,7 +28,8 @@ export class StatementLog {
 }
 
 export interface LrsReader {
-  fetchActor(actorDid: string): Promise<XapiStatement[]>;
+  /** `homePage` is the course actor's account home page. Foxxi's agent filter matches name and home page together. */
+  fetchActor(actorDid: string, homePage: string): Promise<XapiStatement[]>;
 }
 
 /** GET an LRS statement list for one actor. Foxxi's `/xapi/statements` speaks this. */
@@ -39,9 +40,9 @@ export class HttpLrs implements LrsReader {
     private readonly fetchImpl: typeof fetch = fetch,
   ) {}
 
-  async fetchActor(actorDid: string): Promise<XapiStatement[]> {
+  async fetchActor(actorDid: string, homePage: string): Promise<XapiStatement[]> {
     const endpoint = new URL(this.statementsUrl);
-    endpoint.searchParams.set('agent', JSON.stringify({ objectType: 'Agent', account: { name: actorDid } }));
+    endpoint.searchParams.set('agent', JSON.stringify({ objectType: 'Agent', account: { homePage, name: actorDid } }));
     const headers: Record<string, string> = { 'X-Experience-API-Version': '2.0.0', Accept: 'application/json' };
     if (this.authorization) headers['Authorization'] = this.authorization;
     const response = await this.fetchImpl(endpoint, { headers });

@@ -34,7 +34,7 @@
     { "id": "pick", "type": "Harvest", "title": "Clear row before dusk", "object": "apple row", "kpi": "Bins filled", "base": 50, "minTier": 0, "weights": { "timing": 2, "press": 2 } }
   ],
   "tiers": [
-    { "id": "hand", "label": "Hand", "rosterCap": 1, "gateAfterSuccesses": 1, "courseIri": "https://example.org/courses/orchard-crew" },
+    { "id": "hand", "label": "Hand", "rosterCap": 2, "gateAfterSuccesses": 1, "courseIri": "https://example.org/courses/orchard-crew" },
     { "id": "crew", "label": "Crew", "rosterCap": 2 }
   ],
   "roles": ["Picker", "Press hand"],
@@ -42,7 +42,7 @@
   "givenNames": ["Ada", "Bram"],
   "familyNames": ["Holt", "Voss"],
   "starter": { "name": "Pip-1", "role": "Picker", "baseline": 48 },
-  "influence": 40,
+  "influence": 80,
   "botCount": 4,
   "marketCount": 2,
   "pactProposalCost": 5,

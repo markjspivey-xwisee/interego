@@ -64,7 +64,7 @@
     { "id": "sweep", "type": "Recon", "title": "Joint sweep, shared sector", "object": "joint sweep", "kpi": "Sector cleared", "base": 49, "minTier": 1, "weights": { "coord": 3, "info": 2, "skill": 1 } }
   ],
   "tiers": [
-    { "id": "agent", "label": "Agent", "rosterCap": 1, "gateAfterSuccesses": 3, "courseIri": "https://example.org/courses/coached-world/squad" },
+    { "id": "agent", "label": "Agent", "rosterCap": 2, "gateAfterSuccesses": 3, "courseIri": "https://example.org/courses/coached-world/squad" },
     { "id": "squad", "label": "Squad", "rosterCap": 3, "gateAfterSuccesses": 6, "courseIri": "https://example.org/courses/coached-world/company" },
     { "id": "company", "label": "Company", "rosterCap": 6, "gateAfterSuccesses": 10, "courseIri": "https://example.org/courses/coached-world/command" },
     { "id": "command", "label": "Faction command", "rosterCap": 12 }
