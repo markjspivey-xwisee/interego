@@ -536,7 +536,7 @@ import { releasedVersion, releasedVersions, versionLinks } from '../src/ns/relea
 import type { PublishedKind } from '../src/ns/published.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
-import { validateAgainstProfileTemplates, performanceCategoriesFor, outcomeResultFor } from '../src/xapi-profile.js';
+import { validateAgainstProfileTemplates, performanceCategoriesFor } from '../src/xapi-profile.js';
 import { answerSuppliedProfileRequest } from '../src/xapi-profile-patterns.js';
 import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 /** Credential-format models registered as DATA (not bespoke handlers): the generic
@@ -558,7 +558,8 @@ import { resolveSubjectPodUrlPure, explicitPodRoot, hasControlChars } from '../s
 import { configureStoreSpelling } from '../src/store-origins.js';
 import { resolveReadTarget, type ReadTargetDecision } from '../src/read-target.js';
 import { retireRow, activeRows, isRetired } from '../src/enrolment-register.js';
-import { bindPerformanceToEvidence, EVIDENCE_BINDING_EXT, EVIDENCE_SHAPE_EXT } from '../src/performance-evidence.js';
+import { bindPerformanceToEvidence } from '../src/performance-evidence.js';
+import { buildPerformanceStatement, momOutcomeVerb } from '../src/performance-statement.js';
 // The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
 import { escapeTurtleLiteral } from '@interego/core';
 import type {
@@ -658,16 +659,6 @@ if (!process.env.FOXXI_AUTHORITATIVE_SOURCE) {
  *  published xAPI Profile as a contextActivities.category. */
 const bridgeBaseUrl = process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080';
 const xapiProfileUrl = `${bridgeBaseUrl}/xapi/profile`;
-/** MOM-conformant outcome verb for a production performance (ADL / MOM Level 1
- *  Completion & Certification): a successful unit of work is `completed`, an
- *  unsuccessful one `failed`. The verb is a canonical, dereferenceable ADL/MOM
- *  verb; the DOMAIN of the work stays in object.definition.type (the transplant
- *  test), never coined into the verb. */
-function momOutcomeVerb(success: boolean): { id: string; display: { en: string } } {
-  return success
-    ? { id: 'http://adlnet.gov/expapi/verbs/completed', display: { en: 'completed' } }
-    : { id: 'http://adlnet.gov/expapi/verbs/failed', display: { en: 'failed' } };
-}
 /** Resolve a performance task to a valid xAPI Activity id that is ALSO a
  *  dereferenceable URL: a caller-supplied http(s) id is used as-is; anything else
  *  (a bare label, or a urn) is minted into a bridge activity URL. Guarantees
@@ -3667,53 +3658,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // The performer is the xAPI actor; the authenticated caller is the
     // attesting observer (provenance). Any authenticated caller may
     // record a performance event — the observer is on the record.
-    const outcomeVerb = momOutcomeVerb(args.success as boolean);
-    const recordedActivityType = (typeof args.activity_type === 'string' && args.activity_type.trim())
-      ? args.activity_type.trim()
-      : `${FOXXI_NS}ProductionTask`;
-    const statement: Record<string, unknown> = {
-      id: randomUUID(),
-      version: '2.0.0',
-      actor: { objectType: 'Agent', account: { homePage: bridgeBaseUrl, name: performerDid } },
-      verb: outcomeVerb,
-      object: {
-        objectType: 'Activity',
-        id: taskId,
-        definition: {
-          name: { en: taskName },
-          // A creator-declared DOMAIN activity type (e.g. urn:ttt:Move) makes this
-          // a publishing-layer vocabulary act: the ELR projector aggregates a
-          // competency by this type across instances. Absent one, it falls back to
-          // the generic ProductionTask wrapper (the competency then keys off
-          // task_name — the skill the caller explicitly named).
-          type: recordedActivityType,
-        },
-      },
-      result: {
-        success: args.success,
-        ...outcomeResultFor(recordedActivityType, args.success === true),
-        ...(quality !== undefined ? { score: { scaled: quality } } : {}),
-        ...(args.duration_iso ? { duration: args.duration_iso as string } : {}),
-      },
-      context: {
-        // A per-performance registration + the published xAPI Profile as a
-        // category, so every statement references the profile it conforms to.
-        registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, ...performanceCategoriesFor(recordedActivityType)] },
-        extensions: {
-          [PERF_EXT.observedBy]: ctx.webId,
-          [PERF_EXT.contextKind]: 'production',
-          [PERF_EXT.actorKind]: actorKind,
-          // How strongly this claim is tied to an artifact anybody can check. On the
-          // statement rather than in a README, so a reader who pulls the record can tell a
-          // shape-validated performance from a bare self-report without asking anyone.
-          [EVIDENCE_BINDING_EXT]: evidence.binding,
-          ...(evidence.shapeIri ? { [EVIDENCE_SHAPE_EXT]: evidence.shapeIri } : {}),
-          ...(typeof args.cost_usd === 'number' ? { [PERF_EXT.costUsd]: args.cost_usd } : {}),
-        },
-      },
-      timestamp: new Date().toISOString(),
-    };
+    const statement = buildPerformanceStatement({
+      id: randomUUID(), registration: randomUUID(), timestamp: new Date().toISOString(),
+      homePage: bridgeBaseUrl, performer: performerDid,
+      taskId, taskName, activityType: args.activity_type,
+      success: args.success as boolean,
+      ...(quality !== undefined ? { quality } : {}),
+      ...(args.duration_iso ? { durationIso: args.duration_iso as string } : {}),
+      profileUrl: xapiProfileUrl, observedBy: ctx.webId, actorKind,
+      evidence: { binding: evidence.binding, ...(evidence.shapeIri ? { shapeIri: evidence.shapeIri } : {}) },
+      ...(typeof args.cost_usd === 'number' ? { costUsd: args.cost_usd } : {}),
+    });
     // Land the performance in the PERFORMER's OWN lens + shared lattice — the
     // self-sovereign system of record that assemble_learner_record reads — NOT the
     // flat env-tenant partition (the legacy outlier; the delegated /agent/record-
@@ -3791,7 +3746,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     void composeIntoSharedLattice({
       podUrl: perfPod, agentDid: performerDid, label: perfLabel,
-      terms: [performerDid, outcomeVerb.id, perfActivityType, taskId],
+      terms: [performerDid, momOutcomeVerb(args.success as boolean).id, perfActivityType, taskId],
       content: withId, contentType: 'xapi:Statement',
       ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
       projections: ['rdf', 'vc', 'activity'],
@@ -9396,34 +9351,18 @@ app.post('/agent/record-performance', async (req, res) => {
       });
       return;
     }
-    const outcomeVerb = momOutcomeVerb(p.success as boolean);
-    const statement: Record<string, unknown> = {
-      id: randomUUID(),
-      version: '2.0.0',
-      actor: { objectType: 'Agent', account: { homePage: bridgeBaseUrl, name: callerDid } },
-      verb: outcomeVerb,
-      object: { objectType: 'Activity', id: taskId, definition: { name: { en: taskName }, type: activityType } },
-      result: {
-        success: p.success,
-        ...outcomeResultFor(activityType, p.success === true),
-        ...(quality !== undefined ? { score: { scaled: quality } } : {}),
-        ...(typeof p.duration_iso === 'string' && p.duration_iso ? { duration: p.duration_iso } : {}),
-      },
-      context: {
-        registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, ...performanceCategoriesFor(activityType)] },
-        extensions: {
-          [PERF_EXT.observedBy]: callerDid,
-          [PERF_EXT.contextKind]: 'production',
-          [PERF_EXT.actorKind]: (p.actor_kind === 'human' ? 'human' : 'agent'),
-          [EVIDENCE_BINDING_EXT]: evidence.binding,
-          ...(evidence.shapeIri ? { [EVIDENCE_SHAPE_EXT]: evidence.shapeIri } : {}),
-          ...(typeof p.cost_usd === 'number' ? { [PERF_EXT.costUsd]: p.cost_usd } : {}),
-          ...(workSteps ? { [PERF_EXT.workTrajectory]: workSteps } : {}),
-        },
-      },
-      timestamp: new Date().toISOString(),
-    };
+    const statement = buildPerformanceStatement({
+      id: randomUUID(), registration: randomUUID(), timestamp: new Date().toISOString(),
+      homePage: bridgeBaseUrl, performer: callerDid,
+      taskId, taskName, activityType,
+      success: p.success as boolean,
+      ...(quality !== undefined ? { quality } : {}),
+      ...(typeof p.duration_iso === 'string' && p.duration_iso ? { durationIso: p.duration_iso } : {}),
+      profileUrl: xapiProfileUrl, observedBy: callerDid, actorKind: p.actor_kind === 'human' ? 'human' : 'agent',
+      evidence: { binding: evidence.binding, ...(evidence.shapeIri ? { shapeIri: evidence.shapeIri } : {}) },
+      ...(typeof p.cost_usd === 'number' ? { costUsd: p.cost_usd } : {}),
+      ...(workSteps ? { workTrajectory: workSteps } : {}),
+    });
     // Awaited (storeStatementDurably): the store's write can fail after it has taken the statement,
     // and storeStatementInternal answered with the id regardless.
     const statementId = await storeStatementDurably(statement, lensTenantFor(label));
@@ -9469,7 +9408,7 @@ app.post('/agent/record-performance', async (req, res) => {
     // record); cross-seat recipients are wrapped into the encrypted lattice.
     const sharedLattice = await composeIntoSharedLattice({
       podUrl: subjectPod, agentDid: callerDid, label,
-      terms: [callerDid, outcomeVerb.id, activityType, taskId],
+      terms: [callerDid, momOutcomeVerb(p.success as boolean).id, activityType, taskId],
       content: { ...statement, id: statementId }, contentType: 'xapi:Statement',
       ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
       projections: ['rdf', 'vc', 'activity'],
