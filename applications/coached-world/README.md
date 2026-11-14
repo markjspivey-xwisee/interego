@@ -45,6 +45,15 @@ It is the same connect-agent method as the I2IDL-X workbench, from the shared `a
 
 Routes: `GET /agent-sessions` (is it on, and what is mine doing), `DELETE /agent-sessions` (close mine), `POST /agent-sessions/create | browser | driver` (the shared protocol), `GET /agent-connection.js` (the shared browser client, served from here so the page keeps `script-src 'self'`).
 
+## Voice
+
+The Coach tab has a small voice card, built on the shared module `applications/_shared/voice/` (served at `GET /voice.js`, the same bytes, so the page keeps `script-src 'self'`).
+
+- **Read aloud** (off until the consultant turns it on): the connected agent's work product when it arrives, and the outcome line after an intervention is deployed. Stop reading at any time.
+- **Say a command**: one utterance, matched against the labels on the page with no model. "Send the agent on a mission", a diagnosis or an intervention by its label, "deploy". If nothing matches, or two labels fit, the page shows what it heard and does nothing. A spoken command presses the same button a click would, so the same rules and limits apply.
+- Each half is shown only where the browser has it (no recognition in Firefox, so no microphone button there). The microphone opens only from that button.
+- **The audio.** Recognition is the browser's. Chrome and most Chromium browsers send what you say to the browser vendor's speech service; the card says so beside the button. This bridge receives no audio and no transcript: only the request the pressed button makes.
+
 `CPW_PACK` is not read. Pass a pack by starting from code (`start({ packPath })`), or replace `packs/mandate.json` only as data. The engine loads whatever file it is given.
 
 ## Deploy it
