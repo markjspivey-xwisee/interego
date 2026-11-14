@@ -473,9 +473,9 @@ import {
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
-import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
@@ -509,6 +509,7 @@ import { validateCoverageQueryInput } from '../src/coverage-query-input.js';
 import type { PrivateAuthResult } from '../src/private-performance-auth.js';
 import { attachPerformanceRoutes, offerFromWork, WORK_OFFER_WINDOW, type WorkOffer } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
+import { attachCoursePlayerRoutes, coursePlayerAuth, learnerFromPlayerAuth, persistVoidCopies, PlayerBook, PlayerError, statementNamesGuest, voidActorStatements } from '../src/cmi5-player.js';
 // Re-integration with the agentic-performance (agp:) layer: Foxxi surfaces the
 // emergent, learnable standards-extension capability the agp layer affords by
 // composing Foxxi's own standards. + the shared in-flow performance-support primitive.
@@ -11279,6 +11280,106 @@ attachHostedPackageRoutes(app, {
 const openHosting = openHostingSettings(process.env);
 const openHostingBySigner = new SignerHourlyLimit(openHosting.perSignerHourly);
 const openHostingRateLimit = forwardedRateLimit({ windowMs: 3_600_000, limit: 20, identifier: 'open-hosting' });
+// ── A course page anyone can start (src/cmi5-player.ts) ─────────────────────────────────────────
+//
+// The learner is an Interego owner the learning account already signs in: a provisional guest
+// (u-try-play-, browser key) or an existing account. This only launches that owner's cmi5 attempt
+// and, when they hold both, records that the two actors are one reader. The book is the open
+// attempts and those links, kept beside the other lattice JSON so a restart can resume.
+const PLAYER_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/cmi5-player.json` : '';
+const playerBook = new PlayerBook();
+async function readPlayerBook(): Promise<boolean> {
+  if (!PLAYER_RESOURCE) return true;
+  const since = playerBook.generation;
+  try {
+    const response = await (globalThis.fetch as typeof fetch)(PLAYER_RESOURCE, { headers: { Accept: 'application/json' } });
+    if (response.status === 404) return true;
+    if (!response.ok) return false;
+    playerBook.load(await response.json());
+    // A change made while this read was in flight is still waiting to be written.
+    if (playerBook.generation === since) playerBook.dirty = false;
+    return true;
+  } catch { return false; }
+}
+async function writePlayerBook(): Promise<boolean> {
+  if (!PLAYER_RESOURCE || !playerBook.dirty) return true;
+  const f = globalThis.fetch as typeof fetch;
+  try {
+    const response = await f(PLAYER_RESOURCE, { headers: { Accept: 'application/json' } });
+    if (response.status !== 404) {
+      if (!response.ok) return false;
+      playerBook.load(await response.json());
+    }
+    const since = playerBook.generation;
+    const body = JSON.stringify(playerBook);
+    await f(PLAYER_RESOURCE.replace(/[^/]+$/, ''), { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+    const written = await f(PLAYER_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
+    if (written.ok) { if (playerBook.generation === since) playerBook.dirty = false; return true; }
+  } catch { /* tried again below */ }
+  return false;
+}
+const persistPlayerBook = registryWriter(writePlayerBook);
+void readPlayerBook();
+attachCoursePlayerRoutes(app, {
+  baseUrl: bridgeBaseUrl,
+  authoritativeSource: String(authoritativeSource),
+  book: playerBook,
+  requireLearner: async (req) => {
+    const auth = coursePlayerAuth();
+    if (!auth) throw new PlayerError(503, 'player_sign_in_unavailable');
+    return learnerFromPlayerAuth(auth, req);
+  },
+  verifyGuest: async (req) => {
+    const auth = coursePlayerAuth();
+    if (!auth?.guestEnabled) throw new PlayerError(503, 'learning_guest_unavailable');
+    const guest = await auth.consumeGuestProof(req);
+    return { ...guest, guest: guest.userId.startsWith('u-try-play-') };
+  },
+  resolveCourse: async (courseId) => {
+    if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent */ } }
+    if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
+    return getCmi5Course(DEFAULT_TENANT, courseId) ?? null;
+  },
+  satisfied: learnerSatisfiedAus,
+  stageLaunch: stageLaunchData,
+  recordLaunched: async (tenant, statement, learner) => {
+    const id = await recordLaunchedStatement(tenant, statement);
+    keepCmi5OnLearnerPod({ ...statement, id }, { did: learner.did, podUrl: learner.podUrl, homePage: String(authoritativeSource) });
+  },
+  tenantFor: (learner) => lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS)),
+  dropSatisfaction: (tenant, learnerId, auIds) => { dropLearnerSatisfaction(tenant, learnerId, auIds); },
+  voidClaims: async (ownerDid, tenant, guestDid, where) => {
+    const result = await voidActorStatements({
+      did: ownerDid, homePage: String(authoritativeSource),
+      list: async () => (await getStatementStore(tenant).listAll()).filter(rec => statementNamesGuest(rec.statement, guestDid)),
+      store: (statement) => storeStatementDurably(statement, tenant),
+      mark: (targetId, voidingId) => getStatementStore(tenant).markVoided(targetId, voidingId),
+    });
+    await persistVoidCopies(result.voids, statement => keepCmi5OnLearnerPod(statement, { did: ownerDid, podUrl: where.podUrl, homePage: String(authoritativeSource) }));
+    return result.forgotten;
+  },
+  forgetActor: async (did, tenant, where) => {
+    const result = await voidActorStatements({
+      did, homePage: String(authoritativeSource),
+      list: () => getStatementStore(tenant).listAll(),
+      store: (statement) => storeStatementDurably(statement, tenant),
+      mark: (targetId, voidingId) => getStatementStore(tenant).markVoided(targetId, voidingId),
+    });
+    const launches = forgetCmi5Learner(tenant, did);
+    await clearActorStateDocuments(tenant, { homePage: String(authoritativeSource), name: did });
+    // The caller's pod, not only a launch still held in memory. A restart has no launch record,
+    // and the voids are still this learner's to keep.
+    const podUrl = where?.podUrl ?? launches.find(launch => launch.podUrl)?.podUrl;
+    if (podUrl) await persistVoidCopies(result.voids, statement => keepCmi5OnLearnerPod(statement, { did, podUrl, homePage: String(authoritativeSource) }));
+    return result.forgotten;
+  },
+  statementIds: async (did, tenant) => (await listStoredStatements(tenant))
+    .filter(rec => !rec.voided && (rec.statement.actor as { account?: { name?: string } } | undefined)?.account?.name === did)
+    .map(rec => rec.id),
+  storeStatement: (statement, tenant) => storeStatementDurably(statement, tenant),
+  onChange: persistPlayerBook,
+});
+
 // ── The front door: what a newcomer can do here, as a page for a person and as data for an agent.
 // It names only what this deployment offers (src/front-door.ts).
 app.get('/start', (req, res) => {
@@ -11382,20 +11483,26 @@ app.post('/agent/scorm/host', openHostingRateLimit, async (req, res) => {
 // grading tag. A cmi5 AU reports its own result, so it adds experience to the record, not graded
 // evidence for a credential.
 
-/** Keep one of a learner's own cmi5 statements on their pod, where the learner record reads it. */
-function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did: string; podUrl: string; homePage: string }): void {
+/** Keep one of a learner's own cmi5 statements on their pod, where the learner record reads it. False when that copy did not land. */
+async function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did: string; podUrl: string; homePage: string }): Promise<boolean> {
   // Only the launch's own actor, whole: an AU is handed that Agent, and a statement about anyone
   // else (another homePage naming the same DID, or a Group) is not this learner's record to keep.
   const actor = statement.actor as { objectType?: unknown; account?: { homePage?: unknown; name?: unknown } } | undefined;
-  if ((actor?.objectType ?? 'Agent') !== 'Agent' || actor?.account?.name !== learner.did || actor?.account?.homePage !== learner.homePage) return;
+  if ((actor?.objectType ?? 'Agent') !== 'Agent' || actor?.account?.name !== learner.did || actor?.account?.homePage !== learner.homePage) return true;
   const verbId = String((statement.verb as { id?: unknown } | undefined)?.id ?? '');
   const objectId = String((statement.object as { id?: unknown } | undefined)?.id ?? '');
-  void composeIntoSharedLattice({
-    podUrl: learner.podUrl, agentDid: learner.did, label: actorForPod(learner.podUrl, MESH_ACTOR_LABELS),
-    terms: [learner.did, verbId, objectId], content: statement, contentType: 'xapi:Statement',
-    ...(typeof statement.timestamp === 'string' ? { ts: statement.timestamp } : {}),
-    projections: ['rdf', 'vc', 'activity'],
-  }).catch((e) => bridgeWarn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message));
+  try {
+    await composeIntoSharedLattice({
+      podUrl: learner.podUrl, agentDid: learner.did, label: actorForPod(learner.podUrl, MESH_ACTOR_LABELS),
+      terms: [learner.did, verbId, objectId], content: statement, contentType: 'xapi:Statement',
+      ...(typeof statement.timestamp === 'string' ? { ts: statement.timestamp } : {}),
+      projections: ['rdf', 'vc', 'activity'],
+    });
+    return true;
+  } catch (e) {
+    bridgeWarn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message);
+    return false;
+  }
 }
 
 /**
