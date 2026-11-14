@@ -742,7 +742,7 @@ pev:address a owl:DatatypeProperty ;
     rdfs:range xsd:string .
 pev:role a owl:DatatypeProperty ;
     rdfs:label "role" ;
-    rdfs:comment "reviewer, author, judge, agent or learner." ;
+    rdfs:comment "reviewer, author, judge, agent, learner or lms (the LMS whose LRS launched attempts are taken from, as a signing principal)." ;
     rdfs:range xsd:string .
 
 # Projection audit.
