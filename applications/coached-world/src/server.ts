@@ -133,7 +133,12 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
   }
   if (req.method === 'POST' && url.pathname === '/session/challenge') {
     const challenge = randomBytes(32).toString('base64url');
-    ctx.challenges.set(challenge, Date.now() + 120_000);
+    const now = Date.now();
+    // Nobody is signed in yet, so this table is bounded here: what has expired goes, and past the
+    // cap the oldest goes, so asking for challenges cannot grow the process without limit.
+    for (const [issued, expires] of ctx.challenges) if (expires < now) ctx.challenges.delete(issued);
+    bound(ctx.challenges, MAX_CHALLENGES - 1);
+    ctx.challenges.set(challenge, now + 120_000);
     send(res, 200, { challenge });
     return;
   }
@@ -145,6 +150,7 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
     const guest = await ctx.door.verify({ ...body, audience: ctx.door.audience });
     const consultant = await ctx.world.exclusive(() => ctx.world.admit(guest));
     const token = randomBytes(32).toString('base64url');
+    bound(ctx.sessions, MAX_SESSIONS - 1);
     ctx.sessions.set(token, consultant.id);
     send(res, 200, { token, ownerDid: guest.ownerDid, name: consultant.name });
     return;
@@ -214,6 +220,18 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
     return;
   }
   send(res, 404, { error: 'not-found' });
+}
+
+/** The most pending sign-in challenges, and the most sessions, this process keeps. */
+export const MAX_CHALLENGES = 5_000;
+export const MAX_SESSIONS = 5_000;
+
+/** Drop the oldest entries until the map holds at most `max`. A Map keeps insertion order. */
+export function bound<K, V>(map: Map<K, V>, max: number): void {
+  for (const key of map.keys()) {
+    if (map.size <= max) return;
+    map.delete(key);
+  }
 }
 
 function who(req: IncomingMessage, sessions: Map<string, string>): string | undefined {

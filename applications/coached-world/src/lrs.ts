@@ -55,6 +55,9 @@ export interface LrsReader {
 
 interface StatementPage { statements?: XapiStatement[]; more?: string }
 
+/** How long one page of the LRS may take. A gate that cannot read says `unreachable`; it does not hang the world. */
+const LRS_TIMEOUT_MS = 15_000;
+
 /** GET an LRS statement list. Foxxi's `/xapi/statements` speaks this, including `more`. */
 export class HttpLrs implements LrsReader {
   constructor(
@@ -75,11 +78,14 @@ export class HttpLrs implements LrsReader {
     let next: string | undefined = first.href;
     while (next && !seen.has(next) && seen.size < 20) {
       seen.add(next);
-      const response = await this.fetchImpl(next, { headers });
+      const response = await this.fetchImpl(next, { headers, redirect: 'error', signal: AbortSignal.timeout(LRS_TIMEOUT_MS) });
       if (!response.ok) throw new Error(`lrs ${response.status}`);
       const body = await response.json() as StatementPage;
       if (Array.isArray(body.statements)) statements.push(...body.statements);
       next = typeof body.more === 'string' && body.more.length > 0 ? new URL(body.more, next).href : undefined;
+      // `more` is the LRS's own continuation. One that names another origin is not followed: the
+      // request carries this reader's credential, and it goes only where the operator sent it.
+      if (next && new URL(next).origin !== first.origin) throw new Error('lrs more names another origin');
     }
     return statements;
   }

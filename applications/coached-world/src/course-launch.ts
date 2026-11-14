@@ -44,6 +44,7 @@ export class FoxxiCourseLauncher implements CourseLauncher {
       method: 'POST',
       headers: { 'Content-Type': 'application/json', Accept: 'application/json' },
       body: JSON.stringify({ _signed_payload, _signature }),
+      redirect: 'error', signal: AbortSignal.timeout(15_000),
     });
     if (!response.ok) throw new Error(`launch ${response.status}`);
     const body = await response.json() as { launchUrl?: unknown; registration?: unknown; learner?: unknown };
