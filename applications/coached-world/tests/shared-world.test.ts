@@ -613,6 +613,30 @@ describe('a coached world that offers the general guest door', () => {
  * a stand-in passed through the start option that exists for tests; the production verifier
  * is exercised too, by a request it must refuse.
  */
+describe('voice on the page', () => {
+  it('serves the shared voice module as it is, under the page\'s own script policy, and the page uses it', async () => {
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true });
+    try {
+      const served = await fetch(`${running.url}/voice.js`);
+      expect(served.status).toBe(200);
+      expect(served.headers.get('content-type')).toBe('text/javascript; charset=utf-8');
+      // The same bytes as the shared source: the world keeps no copy of its own.
+      expect(await served.text()).toBe(readFileSync(join(here, '../../_shared/voice/voice.js'), 'utf8'));
+      const page = await fetch(`${running.url}/`);
+      expect(page.headers.get('content-security-policy')).toContain("script-src 'self'");
+      // No header takes the microphone away from the page's own origin.
+      expect(page.headers.get('permissions-policy')).toBeNull();
+      const app = readFileSync(join(here, '../public/app.js'), 'utf8');
+      expect(app).toContain("from './voice.js'");
+      // The microphone is opened in one place, a click handler, and what is heard is matched
+      // against the labels on screen: the page asks no model and posts no audio.
+      expect(app.match(/voice\.startListening\(/g)).toHaveLength(1);
+      expect(app).toContain('matchSpoken(text, speakable())');
+      expect(app).toContain('voice.notice');
+    } finally { await running.close(); }
+  });
+});
+
 describe('a consultant connects their own agent', () => {
   const DRIVER = 'did:web:agents.example:fictional-chat-session';
   /** Believes what it is told. Signatures are the verifier's business, tested where it lives. */
