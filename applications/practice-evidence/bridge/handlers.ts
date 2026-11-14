@@ -88,7 +88,7 @@ import {
   buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, CMI5_SESSION_EXT, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
   type ProjectionFormat,
 } from '../src/projections.js';
-import { readLaunchedCall, refixProblems, sendingSessionProblems, type LaunchVocabulary } from '../src/launched-import.js';
+import { readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
   readCache, readChain, readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship,
@@ -2217,7 +2217,8 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
 
   const statements = await statementsOfRegistration(ctx, li, lrsRead);
   const readOut = readLaunchedCall(statements, {
-    registration: String(s.payload['registration']), spec, rubricHash: sb.rubricHash, rubricIri: sb.rubricIri, vocabulary: li.vocabulary, endpoint: li.endpoint,
+    registration: String(s.payload['registration']), spec, rubricHash: sb.rubricHash, rubricIri: sb.rubricIri, scenarioVersionRef: scenarioVersionRef(sIri, sb.version),
+    vocabulary: li.vocabulary, endpoint: li.endpoint,
   });
   if ('problems' in readOut) {
     throw decline(422, 'The registration is not one whole practice conversation against this scenario version; nothing was recorded.', 'registration-not-a-conversation',
