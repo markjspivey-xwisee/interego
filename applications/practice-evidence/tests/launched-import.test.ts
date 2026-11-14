@@ -270,6 +270,10 @@ describe('pev.import_launched_attempt', () => {
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay()), 400, 'lrs-read-missing');
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay(), readOf('11111111-1111-4111-8111-111111111111')), 400, 'lrs-read-other-registration');
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay(), readOf(REG, { cursor: 'page-2' })), 400, 'lrs-read-other-registration');
+    // A read that leaves statements out is not a read of the registration: what it lacks proves nothing.
+    for (const filter of [{ since: '2026-10-22T08:30:00.000Z' }, { until: '2026-10-22T08:30:00.000Z' }, { verb: VERB_TERMINATED }, { activity: AU }, { statementId: '00000000-0000-4000-8000-000000000001' }]) {
+      expect(refused(await act(H, 'pev.import_launched_attempt', W.ana, pay(), readOf(REG, filter)), 400, 'lrs-read-narrowed')['narrowing']).toEqual(Object.keys(filter));
+    }
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ scenarioVersion: 2 }), readOf(REG)), 409, 'scenario-revised');
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ scenarioIri: `${S['scenario']}-other` }), readOf(REG)), 404, 'scenario-not-found');
     expect(lrs.seen).toEqual([]);
@@ -422,15 +426,18 @@ describe('pev.import_launched_attempt', () => {
     expect(await notOne([...held, stmt(VERB_LAUNCHED, 50, { contextExt: { [LAUNCH_MODE_EXT]: 'Normal' }, object: { objectType: 'Activity', id: `${LMS}/courses/calls/au/2` } }, { session: A })], A)).toHaveLength(1);
     expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt(VERB_TERMINATED, 60, {}, { session: A })], A)).toEqual(['the session has already ended: a statement cannot be sent in it']);
     expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt('https://w3id.org/xapi/adl/verbs/abandoned', 60, {}, { session: A })], A)).toEqual(['the session has already ended: a statement cannot be sent in it']);
-    expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt(VERB_COMPLETED, 60, {}, { session: A })], A)).toEqual(['the registration already holds a passed, failed or completed statement for this unit: cmi5 allows one of each']);
+    expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt(VERB_COMPLETED, 60, { categories: [CMI5] }, { session: A })], A)).toEqual(['the registration already holds a passed, failed or completed statement for this unit: cmi5 allows one of each']);
     expect(pod.store.size).toBe(untouched);
 
     // Another unit of the same course, completed and passed in this registration, and another session abandoned: neither is this unit's.
+    // Nor is a completed for this unit that is not a cmi5 defined statement (no cmi5 category), or one by another learner.
     const elsewhere = { objectType: 'Activity', id: `${LMS}/courses/calls/au/2` };
     lrs.answer = () => ({ status: 200, body: { statements: [
       ...held, launchedBy('Normal', { session: A }),
-      stmt(VERB_COMPLETED, 5, { object: elsewhere }, { session: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
-      stmt(VERB_PASSED, 6, { object: elsewhere }, { session: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
+      stmt(VERB_COMPLETED, 5, { object: elsewhere, categories: [CMI5] }, { session: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
+      stmt(VERB_PASSED, 6, { object: elsewhere, categories: [CMI5] }, { session: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
+      stmt(VERB_COMPLETED, 8, {}, { session: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
+      stmt(VERB_PASSED, 9, { categories: [CMI5] }, { session: 'aaaaaaaa-0000-4000-8000-00000000000a', actor: didOf(W.ben.address) }),
       stmt('https://w3id.org/xapi/adl/verbs/abandoned', 7, { object: elsewhere }, { session: 'aaaaaaaa-0000-4000-8000-00000000000b' }),
     ] } });
     const first = ok(await ask(A));
@@ -462,6 +469,70 @@ describe('pev.import_launched_attempt', () => {
     expect(a.lmsLaunch!.handedOut!.statements).toEqual(statements);
     expect(a.state).toBe('overridden');
     expect(validateAgainstShape(recordGraphTurtle(a), readShapesTurtle(), { entailment: 'rdfs' }).conforms).toBe(true);
+  }, SLOW);
+
+  it('fixes the same result for a later session only when the first ended with nothing sent', async () => {
+    const A = 'c0ffee00-1111-4222-8333-444455556666';
+    const B = 'c0ffee00-1111-4222-8333-777788889999';
+    const ask = (sessionId: string, extra: Out = readOf(REG)): Promise<Out> => act(H, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'], sessionId }, extra);
+    const before = (await readHead(POD, S['attempt']!, TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    const fixed = before.lmsLaunch!.handedOut!;
+    const held = [launchedBy('Normal'), ...call(), launchedBy('Normal', { session: A })];
+    const size = pod.store.size;
+    const stays = async (statements: Out[]): Promise<unknown> => {
+      lrs.answer = () => ({ status: 200, body: { statements } });
+      const r = ok(await ask(B));
+      // Not fixed again: the copy for comparing, as before, and why.
+      expect([r['again'], r['recorded'], r['usableInSession'], r['usableOnlyIn']]).toEqual([true, false, false, A]);
+      expect(r['statements']).toEqual(fixed.statements);
+      return r['notFixedAgain'];
+    };
+    const endedA = stmt(VERB_TERMINATED, 60, { categories: [CMI5] }, { session: A });
+    const openB = launchedBy('Normal', { session: B });
+    // The first session is still open: the statements can still be sent there.
+    expect(await stays([...held, openB])).toEqual(['the session the statements were fixed for has not ended: they can still be sent in it']);
+    // It ended, but one of the statements handed out is in the LRS: the result was sent.
+    const sent = { ...(fixed.statements[0] as Out) };
+    expect(await stays([...held, sent, endedA, openB])).toEqual([
+      'a statement that was handed out is already in the LRS: the result was sent',
+      'the registration already holds a passed, failed or completed statement for this unit: cmi5 allows one of each',
+    ]);
+    // A read with a time window could show the ending and the new launch and leave out what was sent: it is not taken.
+    lrs.answer = () => ({ status: 200, body: { statements: [...held, endedA, openB] } });
+    const looked = lrs.seen.length;
+    refused(await ask(B, readOf(REG, { since: at(55) })), 400, 'lrs-read-narrowed');
+    expect(lrs.seen.length).toBe(looked);
+    // A limit or an order leaves nothing out (a read cut short comes back with `more`, which is refused).
+    lrs.answer = () => ({ status: 200, body: { statements: [...held, openB] } });
+    expect(ok(await ask(B, readOf(REG, { limit: 200, ascending: true })))['notFixedAgain']).toHaveLength(1);
+    // It ended with nothing sent, but the new session is not one the LMS opened.
+    expect((await stays([...held, endedA]) as string[])[0]).toContain('holds no launched statement from the LMS for this unit and this session');
+    expect(pod.store.size).toBe(size);
+
+    // Ended, nothing sent, and a new Normal session open for the same learner: the same result, for that session.
+    lrs.answer = () => ({ status: 200, body: { statements: [...held, endedA, openB] } });
+    const again = ok(await ask(B));
+    expect([again['again'], again['fixedAgain'], again['recorded'], again['earlierSession'], again['usableInSession'], again['usableOnlyIn']]).toEqual([false, true, true, A, true, B]);
+    const now = again['statements'] as Out[];
+    const strip = (x: Out): Out => {
+      const c = x['context'] as { extensions: Out };
+      const { [SESSION_EXT]: _session, ...extensions } = c.extensions;
+      return { ...x, context: { ...c, extensions } };
+    };
+    // Only the session differs: the ids, the verbs, the score and the time are the ones fixed first.
+    expect(now.map(strip)).toEqual((fixed.statements as Out[]).map(strip));
+    expect(now.map((x) => (x['context'] as { extensions: Out }).extensions[SESSION_EXT])).toEqual([B, B]);
+    expect(now.map((x) => x['id'])).toEqual(fixed.statements.map((x) => x['id']));
+    const a = (await readHead(POD, S['attempt']!, TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    expect(a.lmsLaunch!.handedOut).toMatchObject({ sessionId: B, sessionVouchedBy: 'lrs-read', fixedBefore: [{ sessionId: A, at: fixed.at }] });
+    expect(validateAgainstShape(recordGraphTurtle(a), readShapesTurtle(), { entailment: 'rdfs' }).conforms).toBe(true);
+    // Asked for the first session now, they are the copy for comparing; without a read, nothing is looked up.
+    const reads = lrs.seen.length;
+    const old = ok(await ask(A, {}));
+    expect([old['again'], old['usableInSession'], old['usableOnlyIn'], old['notFixedAgain']]).toEqual([true, false, B, undefined]);
+    expect(lrs.seen.length).toBe(reads);
+    // Nobody but the learner has them fixed again.
+    refused(await act(H, 'pev.launched_statements', W.ben, { attemptIri: S['attempt'], sessionId: A }, readOf(REG)), 403, 'not-the-learner');
   }, SLOW);
 
   it('hands out nothing for an attempt no LMS launched, or one whose launch mode was only assumed', async () => {
