@@ -91,13 +91,13 @@ test('expired artifacts and completed producers from another head never become e
   assert.ok(h.calls.artifacts.every(id=>id===101),'wrong-head artifacts are never inspected');
   assert.equal(h.calls.gets,0);
   assert.deepEqual(h.outputs,{});
-  assert.equal(h.sleeps.reduce((sum,ms)=>sum+ms,0),8*60_000);
+  assert.equal(h.sleeps.reduce((sum,ms)=>sum+ms,0),30*60_000);
 });
-test('no eligible producer stops after eight virtual minutes with thirty-second heartbeats',async()=>{
+test('no eligible producer stops after thirty virtual minutes with thirty-second heartbeats',async()=>{
   const h=fixture({runs:()=>[native({status:'in_progress',conclusion:null})]});
   await assert.rejects(h.completion,/No completed native or golden outputs.*bounded wait/);
-  assert.equal(h.calls.polls,17);
-  assert.equal(h.sleeps.length,16);
+  assert.equal(h.calls.polls,61);
+  assert.equal(h.sleeps.length,60);
   assert.ok(h.sleeps.every(ms=>ms===30_000));
   assert.equal(h.calls.gets,0);assert.deepEqual(h.calls.artifacts,[]);
   assert.deepEqual(h.outputs,{});
@@ -198,9 +198,9 @@ test('when nothing is eligible within the bounded wait, the error keeps its text
   const h=fixture({runs:()=>[golden({status:'in_progress',conclusion:null}),native({pull_requests:[{number:999}]})]});
   const error=await rejection(h.completion);
   assert.equal(error.message,noOutputs+' Last check excluded run 101 by pull_requests, run 202 by status.');
-  assert.equal(h.calls.polls,17);assert.equal(h.sleeps.length,16);assert.ok(h.sleeps.every(ms=>ms===30_000));
+  assert.equal(h.calls.polls,61);assert.equal(h.sleeps.length,60);assert.ok(h.sleeps.every(ms=>ms===30_000));
   assert.deepEqual(h.calls.artifacts,[]);assert.equal(h.calls.gets,0);assert.deepEqual(h.outputs,{});
-  assert.equal(excludedLine(h.messages,101,'pull_requests').length,17,'every poll says why each candidate was passed over');
+  assert.equal(excludedLine(h.messages,101,'pull_requests').length,61,'every poll says why each candidate was passed over');
   // Real run ids have 11 digits; head_repository is the longest check name, and an all-identity
   // list carries the longer advice, so this is the longest message the cap allows.
   const many=fixture({runs:()=>Array.from({length:14},(_,i)=>native({id:42951589971+i,head_repository:{full_name:'foreign/fork'}}))});
@@ -217,7 +217,7 @@ test('when nothing is eligible within the bounded wait, the error keeps its text
 test('Actions run 42951589971 replayed: a PR merged while its builds ran keeps them, and the native run is chosen',async()=>{
   // PR #827 was merged two seconds after this step started; from then on GitHub listed no pull
   // request on its build runs. The native run finished 374 seconds in, the golden run after the
-  // eight-minute deadline. The step failed at the first check after the native run finished.
+  // eight-minute deadline the step had then. The step failed at the first check after the native run finished.
   const nativeId=42951590127,goldenId=42951589975;
   const h=fixture({
     runs:poll=>{
@@ -270,7 +270,7 @@ test('when every run found fails an identity check, the bounded-wait error says 
   const h=fixture({runs:()=>[native({id:131,head_branch:'other-branch'}),golden({id:232,path:nativePath})]});
   const error=await rejection(h.completion);
   assert.equal(error.message,noOutputsFirst+noRetry+' Last check excluded run 131 by head_branch, run 232 by path.');
-  assert.equal(h.calls.polls,17);assert.deepEqual(h.calls.artifacts,[]);
+  assert.equal(h.calls.polls,61);assert.deepEqual(h.calls.artifacts,[]);
   // A run that can still finish, or still get its artifact, keeps the retry advice.
   for(const [other,check] of [[golden({status:'in_progress',conclusion:null}),'status'],[golden(),'artifact']] as const){
     const mixed=fixture({runs:()=>[native({id:131,head_branch:'other-branch'}),other],artifacts:()=>[]});
