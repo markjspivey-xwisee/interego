@@ -413,12 +413,13 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
   const base = deps.baseUrl.replace(/\/$/, '');
   const book = deps.book ?? new PlayerBook();
   const tenantOf = (learner: { did: string; podUrl: string }): TenantId => deps.tenantFor?.(learner) ?? DEFAULT_TENANT;
-  /** After a link, the guest's later records are the owner's: that actor, that lens. Records from before the link stay where they were. */
-  const recordedOwner = (learner: PlayerLearner): PlayerLearner => {
-    const link = book.ownerFor(learner.did);
-    if (!link?.ownerPodUrl || link.ownerDid === learner.did) return learner;
-    return { did: link.ownerDid, webId: link.ownerWebId || learner.webId, podUrl: link.ownerPodUrl, userId: learner.userId, guest: false };
-  };
+  // A link says an owner and a guest are one reader. It does not make the guest's browser the owner:
+  // a guest session holds the guest's key and nothing of the owner's, so it launches as the guest,
+  // in the guest's lens, before the link and after it. What the guest satisfies reaches the owner
+  // when the owner launches or links again, which needs the owner's own session. Were a linked guest
+  // to launch as the owner, whoever next opened that browser would record under the owner's name,
+  // into the owner's lens and pod, and resume the owner's open attempt, with no owner credential and
+  // no end to it.
   const now = deps.now ?? Date.now;
   const pageLimit = limit('course-player-page', 120);
   const launchLimit = limit('course-player-launch', deps.launchesPerMinute ?? 30);
@@ -456,8 +457,8 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
 
   app.post('/learn/launch', launchLimit, async (req, res) => {
     try {
-      const session = await deps.requireLearner(req);
-      const learner = recordedOwner(session);
+      // The session's own identity, linked or not.
+      const learner = await deps.requireLearner(req);
       const body = (req.body ?? {}) as Record<string, unknown>;
       if (body.tracking_consent !== true) { res.status(400).json({ error: 'player_consent_required' }); return; }
       const courseId = typeof body.course_id === 'string' ? body.course_id.trim() : '';
@@ -539,7 +540,7 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
         auId: au.id,
         moveOn: au.moveOn,
         learner: learner.did,
-        guest: session.guest,
+        guest: learner.guest,
       });
     } catch (error) { send(res, error); }
   });

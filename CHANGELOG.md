@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-14 — Foxxi: a linked guest's browser is not the owner
+
+The course player let an owner link a guest they still held the key for. After
+that link, every later launch from the guest's browser was recorded as the
+owner: the owner's actor, the owner's lens and pod, the owner's open attempt
+resumed. It checked only that the link existed. No owner session was needed, the
+link did not expire, and nothing but deleting either party's records undid it.
+On a shared computer, someone who signed in, linked the guest that browser kept
+and signed out left the next person who pressed Start recording under their name.
+
+A guest session now launches as the guest, in the guest's lens, linked or not.
+What the guest satisfies after a link still reaches the owner, when the owner
+next launches or links again, both of which take the owner's own session. Making
+a link is unchanged: it needs the owner's session and a fresh proof from the
+guest's key.
+
+Found by a review of the player after it merged. Not fixed here: a guest's
+deletion removes from the owner every activity the guest had satisfied, including
+any the owner satisfied themselves; and a deletion whose pod copy failed reports
+nothing deleted when it is tried again.
+
 ## 2026-11-13 — Foxxi: a course player on the existing Interego guest
 
 A browser that opens a hosted package or a published activity, with no cmi5 launch on the URL, gets a player for that course. Start does not mint a Foxxi identity. It uses the provisional Interego guest the learning account already signs in (`u-try-play-`, browser key) or an existing owner, and the xAPI actor is that owner's DID. Agreeing to the recording is required before the launch, and that agreement is kept against the learner and the course. The statements, the satisfied activities and a later deletion are kept in that learner's own lens, the same one a signed read uses. The published course stays in the shared catalogue. The same browser continues the same owner and, while the attempt is open, the same registration. Adding a passkey, wallet or DID keeps that owner (`/connect?claim=`), and the page can ask identity for a fresh token for that key after the activity, because the first one is not kept. Signing in as a different existing owner records a link and leaves the guest's statements as they were. After that link, what the guest does next is recorded as the owner, in the owner's lens; linking again copies satisfaction once more and does not store a second claim. Deleting a guest recording stores a voiding statement and then marks the original with that statement's id, keeps those voids on the learner's pod even when no launch is still in memory, and clears that learner's State documents. A linked guest's own deletion also removes the satisfaction copied onto the owner and the owner's claim that names the guest. Unclaimed guests still expire on identity's own deadline.
