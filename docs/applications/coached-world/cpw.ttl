@@ -1,0 +1,38 @@
+# cpw: — coached performance world (vertical application)
+#
+# Vertical application ontology. Non-normative. Layer: application-over-L3.
+# It composes the Interego protocol and extends no L1, L2 or L3 ontology.
+# Missions, causes, interventions and tiers are individuals supplied as a world
+# pack; nothing in this vocabulary names a game, a mission or a learner.
+
+@prefix cpw:  <https://markjspivey-xwisee.github.io/interego/applications/coached-world/cpw#> .
+@prefix iep:  <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix owl:  <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dct:  <http://purl.org/dc/terms/> .
+@prefix xsd:  <http://www.w3.org/2001/XMLSchema#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+
+<https://markjspivey-xwisee.github.io/interego/applications/coached-world/cpw> a owl:Ontology ;
+  dct:title "cpw: — coached performance world" ;
+  rdfs:comment "Shared world whose territories, factions, pacts and agent memory are Interego graphs. Application-over-L3. Not protocol." .
+
+cpw:World a owl:Class ; rdfs:label "world" ; rdfs:comment "One shared world loaded from a pack." .
+cpw:Territory a owl:Class ; rdfs:label "territory" .
+cpw:Faction a owl:Class ; rdfs:label "faction" ; rdfs:comment "A faction is a pod the world's consultants federate through." .
+cpw:Pact a owl:Class ; rdfs:label "pact" ; rdfs:comment "A federation agreement between two faction pods." .
+cpw:Agent a owl:Class ; rdfs:label "agent" ; rdfs:comment "An autonomous agent. Its memory is a descriptor on its pod. Control is who the descriptor names, and a transfer supersedes it." .
+cpw:Lesson a owl:Class ; rdfs:label "lesson" .
+
+cpw:name a owl:DatatypeProperty ; rdfs:range xsd:string .
+cpw:heldBy a owl:ObjectProperty ; rdfs:comment "The faction with the greatest control share." .
+cpw:controlShare a owl:ObjectProperty .
+cpw:faction a owl:ObjectProperty .
+cpw:share a owl:DatatypeProperty ; rdfs:range xsd:decimal .
+cpw:party a owl:ObjectProperty ; rdfs:domain cpw:Pact ; rdfs:range cpw:Faction .
+cpw:controlledBy a owl:ObjectProperty ; rdfs:comment "The consultant (a guest owner's DID) who currently directs this agent. Absent when the agent is unattached." .
+cpw:lesson a owl:ObjectProperty .
+cpw:cause a owl:DatatypeProperty ; rdfs:comment "Cause id from the world pack. The pack is the vocabulary; this property does not enumerate causes." .
+cpw:matched a owl:DatatypeProperty ; rdfs:range xsd:boolean ; rdfs:comment "Whether the intervention addressed the cause the pack assigned." .
+cpw:text a owl:DatatypeProperty ; rdfs:range xsd:string .
+cpw:pack a owl:ObjectProperty ; rdfs:comment "The world pack IRI these individuals were read from." .

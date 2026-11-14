@@ -4,13 +4,20 @@
  * The named graph beside it is this vertical's own triples (cpw:).
  */
 import {
-  ContextDescriptor, canonicalJson, escapeTurtleLiteral, toTurtle,
+  ContextDescriptor, canonicalJson, escapeTurtleLiteral, toTurtle, turtleIriRef,
   type ContextDescriptorData, type IRI,
 } from '@interego/core';
 import { CPW, holderOf, type WorldPack } from './pack.js';
 
 const iri = (value: string): IRI => value as IRI;
 const lit = (value: string): string => `"${escapeTurtleLiteral(value)}"`;
+
+/** A Turtle IRI reference, or a refusal. A value turtleIriRef rejects is not written. */
+function ref(value: string): string {
+  const out = turtleIriRef(value);
+  if (out === null) throw new Error(`refusing to emit a Turtle IRI for ${JSON.stringify(value)}`);
+  return out;
+}
 
 export interface GraphBundle {
   readonly id: string;
@@ -25,7 +32,7 @@ function bundle(data: ContextDescriptorData, graph: string): GraphBundle {
 }
 
 function prefix(): string {
-  return `@prefix cpw: <${CPW}> .\n@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .\n`;
+  return `@prefix cpw: ${ref(CPW)} .\n@prefix xsd: ${ref('http://www.w3.org/2001/XMLSchema#')} .\n`;
 }
 
 export function factionGraph(input: {
@@ -42,7 +49,7 @@ export function factionGraph(input: {
     .selfAsserted(iri(input.did))
     .fromSolid(iri(input.podUrl), iri(input.podUrl), input.at)
     .build();
-  const graph = `${prefix()}<${graphIri}> a cpw:Faction ; cpw:name ${lit(input.name)} ; cpw:pack <${input.pack.id}> .\n`;
+  const graph = `${prefix()}${ref(graphIri)} a cpw:Faction ; cpw:name ${lit(input.name)} ; cpw:pack ${ref(input.pack.id)} .\n`;
   return bundle(data, graph);
 }
 
@@ -63,8 +70,8 @@ export function territoryGraph(input: {
     .selfAsserted(iri(input.writerDid))
     .fromSolid(iri(`${input.base}factions/${held}/`), iri(`${input.base}factions/${held}/`), input.at);
   if (input.supersedes) builder = builder.supersedes(iri(input.supersedes));
-  const shares = order.map(fid => `cpw:controlShare [ cpw:faction <${input.base}factions/${fid}/> ; cpw:share "${input.control[fid] ?? 0}"^^xsd:decimal ]`).join(' ;\n  ');
-  const graph = `${prefix()}<${graphIri}> a cpw:Territory ; cpw:name ${lit(input.name)} ; cpw:heldBy <${input.base}factions/${held}/> ;\n  ${shares} .\n`;
+  const shares = order.map(fid => `cpw:controlShare [ cpw:faction ${ref(`${input.base}factions/${fid}/`)} ; cpw:share "${input.control[fid] ?? 0}"^^xsd:decimal ]`).join(' ;\n  ');
+  const graph = `${prefix()}${ref(graphIri)} a cpw:Territory ; cpw:name ${lit(input.name)} ; cpw:heldBy ${ref(`${input.base}factions/${held}/`)} ;\n  ${shares} .\n`;
   return bundle(builder.build(), graph);
 }
 
@@ -89,7 +96,7 @@ export function pactGraph(input: {
     });
   if (input.supersedes) builder = builder.supersedes(iri(input.supersedes));
   if (input.ended) builder = builder.semiotic({ modalStatus: 'Counterfactual', groundTruth: false });
-  const graph = `${prefix()}<${graphIri}> a cpw:Pact ; cpw:party <${input.base}factions/${input.a}/> ; cpw:party <${input.base}factions/${input.b}/> ; cpw:matched ${input.ended ? 'false' : 'true'} .\n`;
+  const graph = `${prefix()}${ref(graphIri)} a cpw:Pact ; cpw:party ${ref(`${input.base}factions/${input.a}/`)} ; cpw:party ${ref(`${input.base}factions/${input.b}/`)} ; cpw:matched ${input.ended ? 'false' : 'true'} .\n`;
   return bundle(builder.build(), graph);
 }
 
@@ -108,8 +115,8 @@ export function agentGraph(input: {
     .fromSolid(iri(input.podUrl), iri(input.podUrl), input.at);
   if (input.supersedes) builder = builder.supersedes(iri(input.supersedes));
   const lessons = input.lessons.map(lesson => `cpw:lesson [ a cpw:Lesson ; cpw:text ${lit(lesson.text)} ; cpw:cause ${lit(lesson.causeId)} ; cpw:matched ${lesson.matched} ]`).join(' ;\n  ');
-  const controller = input.controllerDid ? ` ; cpw:controlledBy <${input.controllerDid}>` : '';
-  const graph = `${prefix()}<${graphIri}> a cpw:Agent ; cpw:name ${lit(input.name)}${controller}${lessons ? ` ;\n  ${lessons}` : ''} .\n`;
+  const controller = input.controllerDid ? ` ; cpw:controlledBy ${ref(input.controllerDid)}` : '';
+  const graph = `${prefix()}${ref(graphIri)} a cpw:Agent ; cpw:name ${lit(input.name)}${controller}${lessons ? ` ;\n  ${lessons}` : ''} .\n`;
   return bundle(builder.build(), graph);
 }
 
@@ -127,7 +134,7 @@ export function interventionGraph(input: {
     .selfAsserted(iri(input.agentDid))
     .intervention([{ variable: input.causeId, value: input.interventionId }], iri(input.observationId))
     .build();
-  const graph = `${prefix()}<${graphIri}> a cpw:Lesson ; cpw:cause ${lit(input.causeId)} ; cpw:matched ${input.delta !== 0} ; cpw:text ${lit(String(input.delta))} .\n`;
+  const graph = `${prefix()}${ref(graphIri)} a cpw:Lesson ; cpw:cause ${lit(input.causeId)} ; cpw:matched ${input.delta !== 0} ; cpw:text ${lit(String(input.delta))} .\n`;
   return bundle(data, graph);
 }
 
@@ -143,6 +150,6 @@ export function observationGraph(input: {
     .observation()
     .selfAsserted(iri(input.agentDid))
     .build();
-  const graph = `${prefix()}<${graphIri}> cpw:text ${lit(input.registration)} .\n`;
+  const graph = `${prefix()}${ref(graphIri)} cpw:text ${lit(input.registration)} .\n`;
   return bundle(data, graph);
 }

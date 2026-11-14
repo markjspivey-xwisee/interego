@@ -1,6 +1,6 @@
 # Coached world
 
-> **Vertical application of Interego — not part of the protocol, not a reference implementation of the protocol.** Vocabulary in `cpw:` lives in [`ontology/cpw.ttl`](ontology/cpw.ttl). Missions, causes, interventions and tiers are data in a world pack. Mandate is one pack. Nothing in the engine is named for it.
+> **Vertical application of Interego — not part of the protocol, not a reference implementation of the protocol.** Vocabulary in `cpw:` lives in [`ontology/cpw.ttl`](ontology/cpw.ttl) and is published, byte for byte, at `docs/applications/coached-world/cpw.ttl`. Missions, causes, interventions and tiers are data in a world pack. Mandate is one pack. Nothing in the engine is named for it.
 
 A human never commands a unit. They consult for an autonomous agent: they read what the agent did, name a cause, deploy an intervention the pack says addresses some cause, and measure the change. A fix that does not address the cause the pack drew does not move the score. Several consultants share one world. What the agents do is xAPI. What the world is, is Interego graphs.
 

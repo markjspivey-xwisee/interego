@@ -33,6 +33,13 @@ describe('a world pack is the policy', () => {
     expect(() => loadPack(raw)).toThrow(/passed, completed/);
   });
 
+  it('publishes cpw at the IRI the code cites, as the same bytes', () => {
+    const source = readFileSync(join(here, '../ontology/cpw.ttl'), 'utf8');
+    const published = readFileSync(join(here, '../../../docs/applications/coached-world/cpw.ttl'), 'utf8');
+    expect(published).toBe(source);
+    expect(published).toContain('https://markjspivey-xwisee.github.io/interego/applications/coached-world/cpw#');
+  });
+
   it('keeps Mandate, and every faction name, out of the engine', () => {
     for (const file of ['settle.ts', 'statements.ts', 'profile.ts', 'world.ts', 'graphs.ts', 'server.ts']) {
       const source = readFileSync(join(here, '../src', file), 'utf8');
