@@ -70,7 +70,8 @@ RUN npm ci
 #   packages/                      the @interego/core substrate (descriptors, Turtle, canonical JSON)
 #   applications/_shared/          affordance-mcp (the /affordances manifest), vertical-bridge/route-errors,
 #                                  http-guard (request limits, public URL, /health), agent-connection
-#                                  (the Connect-an-agent broker and the browser client the page imports)
+#                                  (the Connect-an-agent broker and the browser client the page imports),
+#                                  voice (the browser module the page imports for speech in and out)
 #   applications/coached-world/    the vertical: src/, bridge/, affordances.ts, packs/, public/, ontology/
 #   foxxi play-grant.ts            the relay-signed guest grant (PlayGrantService)
 #   foxxi xapi-profile-supplied.ts the check every statement passes before it is kept
