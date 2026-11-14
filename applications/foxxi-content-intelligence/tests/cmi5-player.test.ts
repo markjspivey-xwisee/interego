@@ -300,7 +300,7 @@ describe('the course player', () => {
     }
   });
 
-  it('records a linked guest\'s later launch as the owner, and the guest\'s forget removes the copy and the claim', async () => {
+  it('keeps a linked guest\'s later launch the guest\'s own, and the guest\'s forget removes the copy and the claim', async () => {
     const guest = learner('did:web:identity.example:users:u-try-play-' + '55'.repeat(16), true);
     const owner = learner('did:web:identity.example:users:u-pk-55owner55owner', false);
     const launched = await player({ who: guest, verifyGuest: async () => guest });
@@ -323,8 +323,9 @@ describe('the course player', () => {
       expect(learnerSatisfiedAus(DEFAULT_TENANT, owner.did)).toContain(auId);
       expect(launched.statements.filter(rec => statementNamesGuest(rec.statement, guest.did))).toHaveLength(1);
       launched.setWho(guest);
+      // The guest's browser holds the guest's key and nothing of the owner's: it still launches as the guest.
       const later = await post();
-      expect(later.actor.account.name).toBe(owner.did);
+      expect(later.actor.account.name).toBe(guest.did);
       await stageStateDocument(DEFAULT_TENANT, { activityId: auId, agent: guestAgent, stateId: 'LMS.LaunchData', registration: first.registration }, { launchMode: 'Normal' });
       await stageStateDocument(DEFAULT_TENANT, { activityId: auId, agent: guestAgent, stateId: 'suspend', registration: first.registration }, { at: 1 });
       await stageStateDocument(DEFAULT_TENANT, { activityId: auId, agent: ownerAgent, stateId: 'LMS.LaunchData', registration: 'kept' }, { launchMode: 'Review' });
@@ -347,7 +348,7 @@ describe('the course player', () => {
     }
   });
 
-  it('writes a linked guest\'s later statement into the owner lens and leaves the earlier one in the guest lens', async () => {
+  it('writes a linked guest\'s later launch into the guest lens still, and the owner\'s own into the owner lens', async () => {
     const guest = learner('did:web:identity.example:users:u-try-play-' + '56'.repeat(16), true);
     const owner = learner('did:web:identity.example:users:u-pk-56owner56owner', false);
     const guestLens = lensTenant(guest);
@@ -383,10 +384,17 @@ describe('the course player', () => {
       expect(await read(ownerLens, owner.did)).toEqual([]);
       who = owner;
       expect((await fetch(`${base}/learn/link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(200);
+      // After the link, the guest's session is still the guest: nothing of it is recorded under the owner.
       who = guest;
-      expect((await post()).actor.account.name).toBe(owner.did);
+      expect((await post()).actor.account.name).toBe(guest.did);
       expect(await read(guestLens, guest.did)).toHaveLength(1);
+      expect(await read(ownerLens, owner.did)).toEqual([]);
+      expect(await read(ownerLens, guest.did)).toEqual([]);
+      // Only the owner's own session records as the owner, in the owner's lens.
+      who = owner;
+      expect((await post()).actor.account.name).toBe(owner.did);
       expect(await read(ownerLens, owner.did)).toHaveLength(1);
+      expect(await read(guestLens, owner.did)).toEqual([]);
       expect(await read(DEFAULT_TENANT, owner.did)).toEqual([]);
     } finally {
       await clearStatementStore(guestLens);
