@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-11-14 — Practice Evidence: a launched counts only under the LMS's authority
+
+Practice Evidence reads a `launched` statement in two places: for the launch
+mode of an attempt taken from an LMS launch, and to check that a session a
+reviewed result will be sent in was opened by the LMS. It took one by verb,
+actor, unit and session. On an LRS where a learner can store statements about
+themselves, a learner can produce that.
+
+`PEV_LAUNCH_LMS_AUTHORITY` names the authority account the LMS's own statements
+carry on the LRS. With it set, a `launched` counts only under that authority.
+One without it is nobody's word about the launch: the attempt is still taken,
+with its launch mode not known, and no cmi5 result can be built for it.
+
+`PEV_LAUNCH_LMS_ISSUERS` now needs it. The bridge does not start with the LMS
+binding and no authority.
+
+The launch mode is decided once, when an attempt is taken, and a hand-out goes
+by that without reading the LRS again. So an attempt now records the authority
+its `launched` was read under, and a bridge told the authority hands out
+nothing for an attempt that records none, or another (409
+`launch-not-verified`). That holds for the learner, for the LMS, and for
+statements already fixed, and it covers every attempt taken before the setting
+was on. Such an attempt is not revalidated.
+
+Without the setting nothing changes. Not covered: `terminated`, the exchanges
+and the scores are the unit's own statements and are not the LMS's to mark.
+
 ## 2026-11-14 — Role-play player: a visit's start is confirmed before a reviewed result is sent
 
 Three follow-ups to the role-play player, from a reviewer's read after it merged.

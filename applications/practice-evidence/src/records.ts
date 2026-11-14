@@ -215,6 +215,13 @@ export interface LmsLaunch {
   readonly unitSent?: readonly ('passed' | 'failed' | 'completed')[];
   /** How the launch mode is known: from the LMS's launched statement, or not at all (Normal is then assumed). */
   readonly launchModeFrom?: 'launched-statement' | 'assumed';
+  /**
+   * The authority the `launched` statement was recorded under, when the launch mode was read from
+   * one that carried the authority this bridge was told is the LMS's. Absent where the mode was
+   * taken from a `launched` whose recorder was not checked: every attempt taken before the check
+   * existed, and every one taken by a bridge not told the authority.
+   */
+  readonly launchedUnder?: { readonly homePage: string; readonly name: string };
   /** Every statement the attempt was read from, in time order. */
   readonly statementIds?: readonly string[];
   /** The activity's definition as the unit's own first statement gave it, carried onto the statements built for the unit. */
@@ -270,6 +277,10 @@ export function lmsLaunchProblems(v: unknown): string[] {
   if (u !== undefined && !(Array.isArray(u) && u.every((x) => x === 'passed' || x === 'failed' || x === 'completed'))) p.push('unitSent must list passed, failed or completed');
   const f = l['launchModeFrom'];
   if (f !== undefined && f !== 'launched-statement' && f !== 'assumed') p.push('launchModeFrom must be launched-statement or assumed');
+  const lu = l['launchedUnder'];
+  if (lu !== undefined && (typeof lu !== 'object' || lu === null || typeof (lu as Record<string, unknown>)['homePage'] !== 'string' || typeof (lu as Record<string, unknown>)['name'] !== 'string')) {
+    p.push('launchedUnder must name an authority account: homePage and name');
+  }
   const ho = l['handedOut'];
   if (ho !== undefined && (typeof ho !== 'object' || ho === null || !Array.isArray((ho as Record<string, unknown>)['statements']))) p.push('handedOut must carry the statements handed out');
   const d = l['activityDefinition'];
