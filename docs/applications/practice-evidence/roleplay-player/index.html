@@ -277,21 +277,32 @@ function ctx(cmi5, parent){
 }
 let lastTs = 0;
 function nextTs(){ let n = Date.now(); if (n <= lastTs) n = lastTs + 1; lastTs = n; return new Date(n).toISOString(); }
-function send(verbKey, verbLabel, object, result, cmi5, parent){
+/* `keep`, when given, holds the statement across calls: the first call builds it and a later call
+   sends that same document again, id and timestamp included. A send whose answer was lost may have
+   been stored, and sending a new statement for it would leave two. */
+function send(verbKey, verbLabel, object, result, cmi5, parent, keep){
   if (!tracked) return Promise.resolve(null);
-  const st = {id: uuid(), actor: cfg.actor, verb:{id: X.verbs[verbKey], display:{"en-US":verbLabel}}, object: object, context: ctx(cmi5, parent), timestamp: nextTs()};
-  if (result) st.result = result;
+  const st = (keep && keep.st) || {id: uuid(), actor: cfg.actor, verb:{id: X.verbs[verbKey], display:{"en-US":verbLabel}}, object: object, context: ctx(cmi5, parent), timestamp: nextTs()};
+  if (result && !st.result) st.result = result;
+  if (keep) keep.st = st;
   chain = chain.then(async () => {
+    // A refusal that a later try gets past is not a failure of this statement: only the last answer is kept.
+    let err = null;
     for (let i=0;i<3;i++){
       try {
         const r = await fetch(cfg.lrs + "/statements", {method:"POST", headers:{"Content-Type":"application/json","X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization}, body: JSON.stringify(st)});
         if (r.ok) { sent.push({id: st.id, verb: verbLabel}); return st.id; }
-        trackErr = "LRS answered " + r.status + " on " + verbLabel + ": " + (await r.text()).slice(0,200);
+        // The same document sent before and stored then: the LRS holds this id already. That is this statement recorded, once.
+        if (r.status === 409 && keep) {
+          const g = await fetch(cfg.lrs + "/statements?statementId=" + encodeURIComponent(st.id), {headers:{"X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization}});
+          if (g.ok && sameStatement(await g.json(), st)) { sent.push({id: st.id, verb: verbLabel}); return st.id; }
+        }
+        err = "LRS answered " + r.status + " on " + verbLabel + ": " + (await r.text()).slice(0,200);
         if (r.status < 500) break;
-      } catch(e){ trackErr = e.message; }
+      } catch(e){ err = e.message; }
       await new Promise(r => setTimeout(r, 600*(i+1)));
     }
-    setChip("Not saving", "warn"); throw new Error(trackErr);
+    trackErr = err; setChip("Not saving", "warn"); throw new Error(err);
   });
   return chain.catch(() => null);
 }
@@ -508,15 +519,31 @@ async function postReviewed(st){
   }
   return "refused " + r.status;
 }
+let sessionOpened = false;
+const visitStart = {};   // this visit's initialized, kept so that trying again sends the same statement
 async function recordReviewed(got, again){
   show("s-reviewed");
-  if (!again) await send("initialized", "initialized", scenarioAct(), null, true, false);
+  // cmi5 has initialized come first in a session. Nothing reviewed is sent until the LRS has taken
+  // it: a passed in a session with no initialized is not a session's statement.
+  if (!sessionOpened) {
+    chain = Promise.resolve(); trackErr = null;   // a send that failed earlier does not hold up this one
+    sessionOpened = (await send("initialized", "initialized", scenarioAct(), null, true, false, visitStart)) !== null;
+  }
+  if (!sessionOpened) {
+    $("rvtitle").textContent = "This visit could not be started";
+    $("rvmsg").textContent = "The learning record did not take the start of this visit" + (trackErr ? " (" + trackErr + ")" : "") + ", so nothing else was sent. Try again in a moment.";
+    setChip("Not saved", "warn");
+    const btn = $("rvretry"); btn.classList.remove("hide"); btn.disabled = false;
+    btn.onclick = async () => { btn.disabled = true; $("rvmsg").textContent = "Trying again…"; await recordReviewed(got, true); };
+    return;
+  }
   if (got.state === "waiting") {
     $("rvtitle").textContent = "With a reviewer";
     $("rvmsg").textContent = "Your practice is saved and is waiting for a reviewer to sign it off. Nothing more is needed from you here. Open this course again once it has been reviewed.";
   } else if (got.state === "elsewhere") {
     $("rvtitle").textContent = "Your reviewed result";
-    $("rvmsg").textContent = "Your reviewed result was issued for an earlier visit that ended before it was recorded. Ask for it to be issued again, then open this course once more.";
+    // What is known: it was issued for another visit. Whether it was recorded in that visit is not known here.
+    $("rvmsg").textContent = "Your reviewed result was issued for a different visit to this course, so it cannot be recorded in this one. It may already be in your learning record from that visit. If your course still shows as not complete, ask for the result to be issued again, then open this course once more.";
   } else {
     // In order, and no further than the first one the learning record does not take: a completed
     // without the passed or failed before it would be a result nobody reviewed.
