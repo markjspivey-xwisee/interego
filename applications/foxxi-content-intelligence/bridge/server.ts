@@ -475,7 +475,7 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
 import { attachXapiLrsRoutes, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
@@ -5989,6 +5989,7 @@ const app = createVerticalBridge({
       bearerTenantResolver: cmi5BearerTenant,
       // ...and to the launch's registration: one launch's token cannot read or write another's.
       bearerRegistrationResolver: cmi5BearerRegistration,
+      bearerActorResolver: cmi5BearerActor,
       // Verify wallet-signed Foxxi session-token Bearers against the published directory
       // (round-47: the gate previously accepted ANY Bearer as DEFAULT_TENANT). Directory
       // users get a deterministic wallet so a token minted for a known user_id verifies.
