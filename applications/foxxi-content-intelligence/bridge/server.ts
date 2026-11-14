@@ -478,7 +478,7 @@ import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
-import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
+import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, takenDownPackages, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes } from '../src/lti-platform.js';
@@ -11195,7 +11195,20 @@ app.post('/agent/credentials/claim', async (req, res) => {
 // with foxxi.upload_scorm_package; kept on the tenant pod by sha-256; played as a cmi5 course
 // through the signed launch below, the SCOs' statements sent with that launch's auth-token.
 
-const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage });
+// The operator's take-down list (FOXXI_HOSTED_PACKAGES_TAKEN_DOWN: sha-256s, comma or space
+// separated). Whoever sets this service's variables is its operator, so this needs no signer: a
+// listed package is removed at start, its course forgotten, and it is not kept again while listed.
+const hostedPackagesTakenDown = takenDownPackages(process.env.FOXXI_HOSTED_PACKAGES_TAKEN_DOWN);
+for (const entry of hostedPackagesTakenDown.ignored) bridgeWarn(`[foxxi-bridge] FOXXI_HOSTED_PACKAGES_TAKEN_DOWN: "${entry}" is not a sha-256 (64 hex characters); it takes nothing down`);
+const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage, takenDown: hostedPackagesTakenDown.shas });
+/** Remove what the operator listed, and forget each one's course. Run once the bridge is listening. */
+async function takeDownListedPackages(): Promise<void> {
+  for (const taken of await hostedPackages.removeTakenDown()) {
+    const courseForgotten = unregisterCmi5Course(DEFAULT_TENANT, `${bridgeBaseUrl}/scorm/packages/${taken.sha256}`);
+    if (taken.removed) bridgeLog(`[foxxi-bridge] hosted package ${taken.sha256} is taken down by the operator's list${courseForgotten ? '; its course is forgotten' : ''}`);
+    else bridgeWarn(`[foxxi-bridge] hosted package ${taken.sha256} is on the operator's take-down list and was not removed: ${taken.why ?? 'the pod did not remove it'}`);
+  }
+}
 
 /**
  * What a kept package's bytes say it is, parsed as an upload is and under the same inflation
@@ -13303,6 +13316,7 @@ app.listen(PORT, () => {
   bridgeLog(`  Standards extension: http://localhost:${PORT}/agent/extend-standards  |  Guidance: http://localhost:${PORT}/guidance`);
   bridgeLog(`  Audience: ${audience} (${activeAffordances.length} affordances active; FOXXI_AUDIENCE=learner|admin|both)`);
   void seedDemoContent();
+  void takeDownListedPackages().catch(e => bridgeWarn(`[foxxi-bridge] the operator's take-down list could not be applied: ${(e as Error).message}`));
   // Warm the public-memories commons so a published memory resolves from the first
   // request after a restart, not only after a lazy on-miss rehydrate.
   void hydratePublicMemories(true).catch(e => bridgeWarn('[foxxi-bridge][memories] boot warm:', (e as Error).message));
