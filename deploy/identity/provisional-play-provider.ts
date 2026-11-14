@@ -1,6 +1,8 @@
 import * as crypto from 'node:crypto';
-import { ProvisionalPlay, PlayError, parsePlayClients, type PlayClaims } from './provisional-play.js';
-import { provisionPlayAnchor, type PlayAnchorDocument } from './provisional-play-store.js';
+import { ProvisionalPlay, PlayError, parsePlayClients, type PlayClaims, type PlayClient, type PlayGrant } from './provisional-play.js';
+import { provisionPlayAnchor, updatePlayAnchorDocument, type PlayAnchorDocument, type PlayReceipt } from './provisional-play-store.js';
+import { GeneralGuest, type GeneralTokenGrant } from './provisional-general-guest.js';
+import type { TermsAcceptance } from './hosted-terms.js';
 import { readAdmissionLedger, reservePlayAdmission } from './provisional-play-admission.js';
 import type { HostedTermsPolicy } from './hosted-terms.js';
 
@@ -16,6 +18,10 @@ export interface PlayProviderOptions {
   ttlSeconds?: number;
   maxPods?: number;
   hostedTerms?: HostedTermsPolicy;
+  /** PROVISIONAL_GENERAL_GUEST=1: the general guest door (provisional-general-guest.ts). Off by default. */
+  generalGuest?: boolean;
+  /** Issues a general guest's token with the marker given. Required while the door is on. */
+  issueGuestToken?(claims: PlayClaims, grant: GeneralTokenGrant): Promise<{ token: string; expiresAt: string }>;
   fetcher?: typeof fetch;
   /** Share the identity host's owner lock with credential mutations and cleanup. */
   withOwnerLock<T>(userId: string, work: () => Promise<T>): Promise<T>;
@@ -44,14 +50,26 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
     if (!document || typeof document !== 'object' || document.userId !== userId) throw new PlayError(409, 'provisional_owner_conflict');
     return { document, etag };
   };
+  const write = async (userId: string, document: PlayAnchorDocument, etag: string | null) => {
+    if (etag === null) {
+      const container = await request(new URL(`${userId}/`, options.cssUrl).href, {
+        method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '',
+      });
+      if (!container.ok && container.status !== 409) throw new Error('Provisional pod creation unavailable');
+    }
+    const response = await request(new URL(`${userId}/auth-methods.jsonld`, options.cssUrl).href, {
+      method: 'PUT', headers: { 'Content-Type': 'application/ld+json',
+        ...(etag === null ? { 'If-None-Match': '*' } : { 'If-Match': etag }) }, body: JSON.stringify(document),
+    });
+    if (response.status === 412) return false;
+    if (!response.ok) throw new Error('Provisional anchor persistence failed');
+    return true;
+  };
+  const generalGuest = options.generalGuest === true;
   // One admission writer per deployment. Canonical anchor CAS separately
   // prevents duplicate/replayed issuance across restarts and concurrent requests.
   let admission = Promise.resolve();
-  const play: ProvisionalPlay = new ProvisionalPlay({
-    issuer: options.issuer, publicPodBase: options.publicPodBase, signingKey: options.signingKey,
-    clients, ttlSeconds: options.ttlSeconds ?? 86400, maxPods: options.maxPods ?? 100,
-    hostedTerms: options.hostedTerms,
-    verifyGrantSignature: async (grant, client) => {
+  const verifyGrantSignature = async (grant: PlayGrant, client: PlayClient) => {
       const response = await request(new URL('/tool/verify_agent', options.relayUrl).href, {
         method: 'POST', headers: { 'Content-Type': 'application/json' },
         body: JSON.stringify({ agent_id: client.agentDid, pod_url: client.podUrl }),
@@ -66,9 +84,9 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
       const message = `sha256:${crypto.createHash('sha256').update(grant._signed_payload, 'utf8').digest('hex')}`;
       try { return (await options.recoverSigner(message, grant._signature)).toLowerCase() === result.signing!.relayAnchor!.toLowerCase(); }
       catch { return false; }
-    },
-    readAnchor: async userId => (await read(userId))?.document.provisionalPlayAnchor ?? null,
-    provision: async (claims, attestation, maxPods, receipt, acceptance) => {
+  };
+  const provision = async (claims: PlayClaims, attestation: string, maxPods: number, receipt: PlayReceipt,
+    acceptance?: TermsAcceptance, doorCode?: PlayReceipt): Promise<string> => {
       const before = admission;
       let release!: () => void;
       admission = new Promise(resolve => { release = resolve; });
@@ -77,22 +95,7 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
         // The complete read/CAS transaction shares credential ownership's lock:
         // an unconditional credential PUT must not erase a new replay receipt.
         return await options.withOwnerLock(claims.userId, () => provisionPlayAnchor({
-          read,
-          write: async (userId, document, etag) => {
-            if (etag === null) {
-              const container = await request(new URL(`${userId}/`, options.cssUrl).href, {
-                method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '',
-              });
-              if (!container.ok && container.status !== 409) throw new Error('Provisional pod creation unavailable');
-            }
-            const response = await request(new URL(`${userId}/auth-methods.jsonld`, options.cssUrl).href, {
-              method: 'PUT', headers: { 'Content-Type': 'application/ld+json',
-                ...(etag === null ? { 'If-None-Match': '*' } : { 'If-Match': etag }) }, body: JSON.stringify(document),
-            });
-            if (response.status === 412) return false;
-            if (!response.ok) throw new Error('Provisional anchor persistence failed');
-            return true;
-          },
+          read, write,
           reserveAdmission: (owner, anchor, limit) => reservePlayAdmission({
             read: () => readAdmissionLedger(request, options.cssUrl),
             write: async (ledger, etag) => {
@@ -109,10 +112,29 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
           }, owner, anchor, limit, clients.get(owner.audience)?.maxPods),
           empty: options.empty, validate: anchor => play.open(anchor), committed: options.committed,
         }, claims, attestation, maxPods, receipt,
-        options.hostedTerms && { requiredVersion: options.hostedTerms.version, acceptance }));
+        options.hostedTerms && { requiredVersion: options.hostedTerms.version, acceptance }, doorCode));
       } finally { release(); }
-    },
+  };
+  const play: ProvisionalPlay = new ProvisionalPlay({
+    issuer: options.issuer, publicPodBase: options.publicPodBase, signingKey: options.signingKey,
+    clients, ttlSeconds: options.ttlSeconds ?? 86400, maxPods: options.maxPods ?? 100,
+    hostedTerms: options.hostedTerms, generalGuest,
+    verifyGrantSignature,
+    readAnchor: async userId => (await read(userId))?.document.provisionalPlayAnchor ?? null,
+    provision,
     issueCredential: options.issueCredential,
+  });
+  // The general guest door: built always, on only with the setting (GeneralGuest.enabled), so a
+  // deployment without it has no door, no exchange and no general token.
+  play.general = new GeneralGuest(play, {
+    issuer: options.issuer, publicPodBase: options.publicPodBase, signingKey: options.signingKey, clients,
+    enabled: generalGuest, hostedTerms: options.hostedTerms, verifyGrantSignature,
+    provision: (claims, attestation, maxPods, receipt, acceptance, code) => provision(claims, attestation, maxPods, receipt, acceptance, code),
+    update: (userId, change) => options.withOwnerLock(userId, () => updatePlayAnchorDocument({ read, write, committed: options.committed }, userId, change)),
+    issueToken: async (claims, grant) => {
+      if (!options.issueGuestToken) throw new Error('General guest token issuer unavailable');
+      return options.issueGuestToken(claims, grant);
+    },
   });
   return play;
 }

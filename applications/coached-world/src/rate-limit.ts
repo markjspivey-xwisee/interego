@@ -108,7 +108,9 @@ export function clientKey(forwardedFor: string | readonly string[] | undefined, 
 /** The limit a request falls under, or undefined for the one path that is never counted. */
 export function rateClassFor(method: string | undefined, pathname: string): RateClass | undefined {
   if (pathname === '/health') return undefined;
-  if (method === 'POST' && ['/session/challenge', '/play/grant', '/play/provisional', '/session'].includes(pathname)) return 'door';
+  if (method === 'POST' && ['/session/challenge', '/play/grant', '/play/provisional', '/session', '/play/general/session'].includes(pathname)) return 'door';
+  // The general guest door's two navigations each cost a signed grant or an exchange with identity.
+  if (method === 'GET' && ['/play/general/start', '/play/general/return'].includes(pathname)) return 'door';
   return method === 'GET' || method === 'HEAD' ? 'read' : 'write';
 }
 

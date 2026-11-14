@@ -29,6 +29,8 @@ import { Wallet } from 'ethers';
 
 /** What identity's PROVISIONAL-PLAY.md calls the grant's purpose. */
 export const PLAY_GRANT_PURPOSE = 'interego-play-provisional-v1';
+/** The purpose of a grant for identity's general guest door (PROVISIONAL-PLAY.md, "General guest"). */
+export const GENERAL_GUEST_GRANT_PURPOSE = 'interego-general-guest-v1';
 /** A grant is asked for with this lifetime; identity refuses one that outlives its timestamp by more than 120 s. */
 const GRANT_LIFETIME_S = 90;
 /** The token is asked for again when it has less than this left. */
@@ -205,6 +207,38 @@ export class PlayGrantService {
       throw new PlayGrantError(502, 'play_grant_mismatch', 'the relay signed something other than what was asked');
     }
     return { playGrant: { _signed_payload: signedPayload, _signature: signature }, audience: this.config.audience, identityUrl: this.config.identityUrl };
+  }
+
+  /**
+   * The relay's signed grant for one visit to identity's general guest door: it names this
+   * deployment's own audience, the visit's state and the challenge of a verifier only this backend
+   * holds (applications/_shared/guest-access/door.ts builds the request and keeps the verifier).
+   * Like `grant`, it is checked against what was asked for before it is handed on, and it is not a
+   * credential: it lets one browser pass the door for this application, once, within two minutes.
+   */
+  async generalGuestGrant(request: { purpose: string; audience: string; state: string; codeChallenge: string; expiresAt: number }): Promise<PlayGrant> {
+    const now = Math.floor(this.now() / 1000);
+    if (!request || request.purpose !== GENERAL_GUEST_GRANT_PURPOSE || request.audience !== this.config.audience
+      || typeof request.state !== 'string' || !/^[A-Za-z0-9_-]{20,128}$/.test(request.state)
+      || typeof request.codeChallenge !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(request.codeChallenge)
+      || !Number.isInteger(request.expiresAt) || request.expiresAt <= now || request.expiresAt > now + 120
+      || Object.keys(request).length !== 5) throw new PlayGrantError(400, 'invalid_play_grant_request');
+    const payload = { purpose: request.purpose, audience: request.audience, state: request.state, codeChallenge: request.codeChallenge, expiresAt: request.expiresAt };
+    let session = await this.serviceSession();
+    let signed = await this.post(`${this.config.relayUrl}/tool/sign_request`, payload, session.token);
+    if (signed.status === 401) {
+      session = await this.serviceSession(true);
+      signed = await this.post(`${this.config.relayUrl}/tool/sign_request`, payload, session.token);
+    }
+    const signature = text(signed.body['_signature']), signedPayload = text(signed.body['_signed_payload']);
+    if (!signed.ok || !signature || !signedPayload) throw new PlayGrantError(503, 'play_grant_unavailable', `the relay answered ${signed.status}`);
+    let echoed: Record<string, unknown>;
+    try { echoed = record(JSON.parse(signedPayload)); } catch { echoed = {}; }
+    if (!/^0x[0-9a-fA-F]{130}$/.test(signature) || (Object.keys(payload) as Array<keyof typeof payload>).some(key => echoed[key] !== payload[key])
+      || typeof echoed['agent_id'] !== 'string' || typeof echoed['subject_pod_url'] !== 'string') {
+      throw new PlayGrantError(502, 'play_grant_mismatch', 'the relay signed something other than what was asked');
+    }
+    return { _signed_payload: signedPayload, _signature: signature };
   }
 
   /**

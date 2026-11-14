@@ -53,6 +53,25 @@ async function post(url, body, token) {
   return parsed;
 }
 
+/**
+ * Whether this world also offers identity's general guest door (one guest per browser across
+ * Interego applications), and where it starts. Null where it does not.
+ */
+export async function generalGuestOffer() {
+  const offer = await (await fetch('/play/guest', { headers: { Accept: 'application/json' } })).json().catch(() => ({}));
+  return offer.enabled && offer.general ? offer.general : null;
+}
+
+/**
+ * The world session waiting for this browser after it came back from the general guest door, or
+ * null. It is collected once, with the cookie the visit was started with; nothing is read from the
+ * address.
+ */
+export async function collectGeneralGuest(offer) {
+  const response = await fetch(offer.sessionUrl, { method: 'POST', credentials: 'same-origin', headers: { Accept: 'application/json' } });
+  return response.ok ? response.json() : null;
+}
+
 /** Sign this browser in as a provisional guest and return the world session token. */
 export async function signIn() {
   const subtle = crypto.subtle;

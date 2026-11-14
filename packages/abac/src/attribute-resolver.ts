@@ -27,6 +27,9 @@ import type { AttributeGraph, AmtaTrustFacetData } from './types.js';
  * descriptor (or whatever predicate semantics they want). This keeps
  * the resolver pure — knowing WHICH descriptors should count is a
  * policy question, not a resolver question.
+ *
+ * Direct statements (`graph.attributes`) have no source descriptor to ask the predicate about,
+ * so the result never holds any.
  */
 export function filterAttributeGraph(
   graph: AttributeGraph,
@@ -168,5 +171,8 @@ export function extractAttribute(graph: AttributeGraph, path: string): unknown[]
       if (axes && axisName in axes) out.push(axes[axisName]);
     }
   }
+  // Statements made directly about the subject (AttributeGraph.attributes), after the facets'.
+  const direct = graph.attributes?.get(path);
+  if (direct) out.push(...direct);
   return out.filter(v => v !== undefined && v !== null);
 }

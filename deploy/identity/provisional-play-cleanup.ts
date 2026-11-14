@@ -195,7 +195,7 @@ export async function purgeProvisionalPlayPod(options: {
    */
   close(listed: readonly string[]): Promise<'purge' | 'closed' | 'kept'>;
 }): Promise<PlayPodPurge> {
-  if (!/^u-try-play-[a-f0-9]{32}$/.test(options.userId)) throw new Error('Refusing non-Play pod cleanup');
+  if (!/^u-try-(?:play|guest)-[a-f0-9]{32}$/.test(options.userId)) throw new Error('Refusing non-Play pod cleanup');
   const root = new URL(`${options.userId}/`, options.cssUrl);
   const fetcher = options.fetcher ?? fetch;
   const request: PodRequest = (url, init = {}) => fetcher(url, {

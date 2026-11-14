@@ -319,6 +319,25 @@ describe('the bridge\'s grant service', () => {
     }
   });
 
+  it('signs a grant for identity\'s general guest door only for its own audience, a state and a challenge of the right shape, and a near expiry', async () => {
+    const d = deployment({ namespace: 'foxxi' });
+    const request = { purpose: 'interego-general-guest-v1', audience: DASHBOARD, state: 's'.repeat(43), codeChallenge: 'C'.repeat(43),
+      expiresAt: Math.floor(d.now / 1000) + 90 };
+    const grant = await d.grants!.generalGuestGrant(request);
+    expect(Object.keys(grant)).toEqual(['_signed_payload', '_signature']);
+    expect(JSON.parse(grant._signed_payload)).toMatchObject({ ...request, agent_id: SERVICE.agentDid, subject_pod_url: SERVICE.podUrl });
+    // It is not a per-application grant: it names no key, so identity's bootstrap refuses it.
+    expect(JSON.parse(grant._signed_payload)).not.toHaveProperty('publicKeyThumbprint');
+    const sent = d.requests.length;
+    for (const bad of [{ ...request, purpose: 'interego-play-provisional-v1' }, { ...request, audience: 'https://evil.example' }, { ...request, state: 'short' },
+      { ...request, state: 'not base64url!!!!!!!!!!!!!!!' }, { ...request, codeChallenge: 'C'.repeat(42) }, { ...request, expiresAt: request.expiresAt + 600 },
+      { ...request, expiresAt: Math.floor(d.now / 1000) }, { ...request, expiresAt: 1.5 }, { ...request, publicKeyThumbprint: 'A'.repeat(43) }, null]) {
+      await expect(d.grants!.generalGuestGrant(bad as never), JSON.stringify(bad)).rejects.toMatchObject({ status: 400, code: 'invalid_play_grant_request' });
+    }
+    expect(d.requests.length, 'a refused request reaches neither identity nor the relay').toBe(sent);
+    expect(JSON.stringify(grant)).not.toContain('cg2_service');
+  });
+
   it('never returns its key or its token: in a grant, in its status, or in an error', async () => {
     const d = deployment({ namespace: 'foxxi' });
     const granted = JSON.stringify(await d.grants!.grant({ publicKeyThumbprint: 'A'.repeat(43), challenge: 'c'.repeat(32) }));

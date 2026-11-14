@@ -1,9 +1,9 @@
-import { signIn } from './guest.js';
+import { signIn, generalGuestOffer, collectGeneralGuest } from './guest.js';
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hue = (pack, id) => (pack.factions.findIndex(f => f.id === id) + 6) % 6;
 
-const state = { token: sessionStorage.getItem('cpw-token') || '', tab: 'world', world: null, note: '', diagnosis: '', intervention: '' };
+const state = { token: sessionStorage.getItem('cpw-token') || '', tab: 'world', world: null, note: '', diagnosis: '', intervention: '', general: null };
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -104,7 +104,7 @@ function render() {
   root.innerHTML = `<header class="top"><div><h1>${esc(world.pack.title)}</h1><p class="tag">${esc(world.pack.tagline)}</p></div>
     <div class="meta"><div><div class="kicker">${esc(world.pack.season.name)}</div><b>${esc(world.clock.long)}</b></div>
     <div><div class="kicker">Online</div><b>${esc(world.online)}</b></div>
-    ${you ? `<div><div class="kicker">You</div><b>${esc(you.name)}</b></div>` : `<button class="btn primary" data-act="guest">Join as guest</button>`}</div></header>
+    ${you ? `<div><div class="kicker">You</div><b>${esc(you.name)}</b></div>` : `<button class="btn primary" data-act="guest">Join as guest</button>${state.general ? ' <button class="btn" data-act="general-guest">Use my Interego guest</button>' : ''}`}</div></header>
     ${state.note ? `<div class="card">${esc(state.note)}</div>` : ''}
     <div class="tabs">${tabs.map(id => `<button class="${state.tab === id ? 'on' : ''}" data-tab="${id}">${id}</button>`).join('')}</div>
     <div class="layout"><div class="main">${panel(world)}</div><div class="side">${feed(world)}</div></div>`;
@@ -123,6 +123,7 @@ document.getElementById('app').addEventListener('click', async event => {
     if (target.dataset.tab) { state.tab = target.dataset.tab; render(); return; }
     if (target.dataset.diag) { state.diagnosis = target.dataset.diag; render(); return; }
     if (target.dataset.iv) { state.intervention = target.dataset.iv; render(); return; }
+    if (target.dataset.act === 'general-guest') { location.assign(state.general.startUrl); return; }
     if (target.dataset.act === 'guest') {
       const session = await signIn();
       state.token = session.token;
@@ -162,6 +163,21 @@ document.getElementById('app').addEventListener('click', async event => {
   }
 });
 
-refresh().then(() => setInterval(() => refresh().catch(() => undefined), 3000)).catch(error => {
+/** Whether the general guest door is offered here, and the session waiting after a return from it. */
+async function arrive() {
+  state.general = await generalGuestOffer().catch(() => null);
+  const here = new URL(location.href);
+  if (here.searchParams.get('arrived') !== 'general') return;
+  here.searchParams.delete('arrived');
+  history.replaceState(null, '', here.pathname + here.search);
+  if (!state.general) return;
+  const session = await collectGeneralGuest(state.general).catch(() => null);
+  if (!session?.token) { state.note = 'The guest did not arrive. Try again.'; return; }
+  state.token = session.token;
+  sessionStorage.setItem('cpw-token', session.token);
+  state.note = `Signed in as ${session.name}. Pick a faction.`;
+}
+
+arrive().catch(() => undefined).then(() => refresh()).then(() => setInterval(() => refresh().catch(() => undefined), 3000)).catch(error => {
   document.getElementById('app').textContent = error.message;
 });

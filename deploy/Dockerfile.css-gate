@@ -33,6 +33,7 @@ RUN npm ci --omit=dev --no-audit --no-fund
 
 COPY deploy/css-gate/server.mjs /app/server.mjs
 COPY deploy/css-gate/provisional-play.mjs /app/provisional-play.mjs
+COPY deploy/css-gate/guest-access.mjs /app/guest-access.mjs
 
 EXPOSE 8080
 ENV PORT=8080
