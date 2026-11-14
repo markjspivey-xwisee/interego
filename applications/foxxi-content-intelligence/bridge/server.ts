@@ -227,7 +227,7 @@ import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { acceptSessionKeys, sessionKeyPolicy, sessionKeyPolicyFor, SESSION_KEY_CHAIN_ID } from '../src/session-key.js';
-import { deriveEncryptionKeyPair, makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
+import { deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf } from '../src/course-identity.js';
 import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest } from '../src/scorm-artifacts.js';
@@ -475,7 +475,8 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
 import { attachXapiLrsRoutes, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, takenDownPackages, type PackageAbout } from '../src/scorm-hosting.js';
@@ -11618,6 +11619,38 @@ function positiveLimit(raw: string | undefined, fallback: number): number {
   const n = Number(raw);
   return Number.isInteger(n) && n > 0 && n <= 10_000 ? n : fallback;
 }
+
+// ── The reviewed statements of a launched activity (src/cmi5-reviewed.ts) ────────────────────────
+//
+// An activity judged after its session asks here, with its cmi5 credential, for the passed, failed
+// or completed it may now send. This LMS asks the review service, signing with its own key. Where
+// to ask is a setting: all three of FOXXI_REVIEW_STATEMENTS_URL (the service's act),
+// FOXXI_REVIEW_STATEMENTS_POD (the pod it keeps its records on) and FOXXI_REVIEW_STATEMENTS_ACTION
+// (the action IRI that act is signed for), with FOXXI_BRIDGE_PRIVATE_KEY as the signing key.
+// Without them the route answers 501. The review service has to have registered this key's address.
+const reviewAsk = (() => {
+  const url = process.env.FOXXI_REVIEW_STATEMENTS_URL ?? '';
+  const podUrl = process.env.FOXXI_REVIEW_STATEMENTS_POD ?? '';
+  const action = process.env.FOXXI_REVIEW_STATEMENTS_ACTION ?? '';
+  const key = process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '';
+  if (!url && !podUrl && !action) return undefined;
+  const https = (v: string): boolean => { try { return new URL(v).protocol === 'https:'; } catch { return false; } };
+  if (!https(url) || !https(podUrl) || !/^[A-Za-z][A-Za-z0-9+.-]*:\S+$/.test(action) || !/^(0x)?[0-9a-fA-F]{64}$/.test(key)) {
+    bridgeWarn('[foxxi-bridge] WARNING: FOXXI_REVIEW_STATEMENTS_URL, _POD and _ACTION must all be set (https URLs and an action IRI) with FOXXI_BRIDGE_PRIVATE_KEY; GET /cmi5/reviewed answers 501 until they are.');
+    return undefined;
+  }
+  const wallet = importWallet(key.startsWith('0x') ? key : `0x${key}`, 'agent', 'foxxi-bridge');
+  bridgeLog(`[foxxi-bridge] reviewed statements are asked of ${new URL(url).host} as ${wallet.address}`);
+  return reviewServiceAsk({
+    url, podUrl, action, wallet,
+    fetch: async (input, init) => { await assertSafeFetchTarget(String(input)); return globalThis.fetch(input, init); },
+  });
+})();
+attachReviewedStatementsRoute(app, {
+  session: cmi5BearerSession,
+  ...(reviewAsk ? { ask: reviewAsk } : {}),
+  limiter: forwardedRateLimit({ windowMs: 60_000, limit: 30, identifier: 'cmi5-reviewed' }),
+});
 
 attachPersonalLaunchRoutes(app, {
   baseUrl: bridgeBaseUrl,
