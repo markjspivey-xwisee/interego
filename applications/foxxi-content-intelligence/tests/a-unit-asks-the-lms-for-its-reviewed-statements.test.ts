@@ -12,7 +12,7 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { importWallet, recoverMessageSigner, sha256, sha256Hex } from '@interego/core';
 import { buildCmi5Launch, cmi5BearerSession, findResumableLaunch, observeCmi5Statement, redeemFetchToken } from '../src/cmi5-lms.js';
-import { attachReviewedStatementsRoute, reviewServiceAsk, signedReviewRequest, type ReviewAnswer } from '../src/cmi5-reviewed.js';
+import { attachReviewedStatementsRoute, reviewServiceAsk, signedReviewRequest } from '../src/cmi5-reviewed.js';
 import type { TenantId } from '../src/tenant-context.js';
 
 const tenant = 'lens:reviewed-statements' as TenantId;
