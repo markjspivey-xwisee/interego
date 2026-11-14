@@ -4,6 +4,43 @@
 
 A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. The `cpw:` vocabulary is published at `docs/applications/coached-world/cpw.ttl`, the same bytes as `applications/coached-world/ontology/cpw.ttl`. Named-graph IRIs go through `turtleIriRef`. The bridge entry installs the shared process safety net, so a rejection nothing awaited is logged and the process keeps serving. See `applications/coached-world/README.md`.
 
+## 2026-11-14 — Practice Evidence: what the LMS issuer binding rests on
+
+The README now says what an operator must know before setting
+`PEV_LAUNCH_LMS_ISSUERS`: on that LRS, an actor account homePage names exactly
+one issuer, and only that issuer can write it. The binding compares two
+strings. Where two LMSs share a homePage, or a client can store a launched
+statement under any homePage, the setting should stay unset. Asked for by the
+reviewer of the binding. No code change.
+
+## 2026-11-14 — Practice Evidence: the LMS that launched an attempt may take its reviewed statements
+
+A unit in a browser holds only its cmi5 credential, which the LMS checks and this
+bridge cannot. So only the learner could take the reviewed statements for the
+unit, and a player had no way to ask for them itself.
+
+A new role, `lms`, is for the LMS's own signing key. An admin registers it like
+any other role. That principal signs `pev.launched_statements` with
+`{registration, sessionId}` and gets the same documents the learner would, under
+the same eligibility and refusals, fixed once.
+
+- It asks by the registration it issued. No one else may (403), so the answer
+  tells no one whether a registration was taken.
+- It needs no read of the LRS for the session: it opened the session, and its
+  signed word is recorded as the LMS's word (`handedOut.sessionVouchedBy`).
+- The role works only for attempts taken from the LRS this bridge reads, never
+  together with the role `agent`, and gives no other right: an `lms` principal
+  reviews nothing and reads no attempt.
+- The role alone names no issuer. An LRS endpoint can front several LMSs, so the
+  operator binds each `lms` principal to the account homePage its LMS puts on the
+  actors it launches (`PEV_LAUNCH_LMS_ISSUERS`). The principal takes statements
+  only for attempts whose launch actor carries that homePage, and one with no
+  binding speaks for no LMS.
+
+Whoever holds a registered `lms` key can take the reviewed result of any attempt
+taken from that LMS. The LMS's own route that takes the unit's credential and
+makes this request is not part of this change. Verified on an in-memory pod only.
+
 ## 2026-11-14 — Foxxi: a failed lesson nobody scored is recorded without a score
 
 A performance recorded against a lesson, failed, with no quality given, built a

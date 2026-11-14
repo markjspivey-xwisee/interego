@@ -59,8 +59,13 @@ export const LIFECYCLE_STATES: readonly LifecycleState[] = [
   'in-conversation', 'ended', 'judged', 'countersigned', 'overridden', 'contested', 'review-retracted', 'redacted',
 ];
 export type EnvelopeForm = 'pev-canonical' | 'signed-request';
-export type Role = 'reviewer' | 'author' | 'judge' | 'agent' | 'learner';
-export const ROLES: readonly Role[] = ['reviewer', 'author', 'judge', 'agent', 'learner'];
+/**
+ * `lms`: the LMS whose LRS launched attempts are taken from, as a signing principal (its bridge's
+ * own key). It may take a launched attempt's reviewed statements for the unit it launched, and
+ * vouch for the session it opened. It holds no other right here.
+ */
+export type Role = 'reviewer' | 'author' | 'judge' | 'agent' | 'learner' | 'lms';
+export const ROLES: readonly Role[] = ['reviewer', 'author', 'judge', 'agent', 'learner', 'lms'];
 
 /** Who stands behind a signature: a key the person holds, or the Interego relay signing for their session. */
 export type Authority = 'key-held' | 'relay-delegated';
@@ -220,6 +225,10 @@ export interface LmsLaunch {
    */
   readonly handedOut?: {
     readonly at: string; readonly sessionId: string; readonly to: string; readonly statements: readonly Readonly<Record<string, unknown>>[];
+    /** What said the session was one to send in: the LRS, read through the learner's signed read, or the LMS that opened it. */
+    readonly sessionVouchedBy?: 'lrs-read' | 'lms';
+    /** When the LMS vouched: the account homePage it speaks for, which is the launch actor's. */
+    readonly issuer?: string;
   };
 }
 
@@ -242,7 +251,8 @@ export function lmsLaunchProblems(v: unknown): string[] {
   if (typeof actor !== 'object' || actor === null || Array.isArray(actor)) p.push('actor must be an account: homePage and name');
   else {
     const a = actor as Record<string, unknown>;
-    if (!lmsHttp(a['homePage'])) p.push('actor.homePage must be an absolute http(s) URL');
+    // An LMS may name its accounts under a DID or another IRI, not only a web address.
+    if (typeof a['homePage'] !== 'string' || !LMS_IRI.test(a['homePage'])) p.push('actor.homePage must be an absolute IRI');
     if (typeof a['name'] !== 'string' || a['name'].length === 0) p.push('actor.name must be non-empty');
   }
   if (!lmsHttp(l['endpoint'])) p.push('endpoint must be an absolute http(s) URL');

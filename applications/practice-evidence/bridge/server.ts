@@ -116,6 +116,12 @@
  *                                   none: with none the act answers 501; with some, or a value that
  *                                   is not an https URL (http on loopback) or not that JSON, the
  *                                   bridge does not start. This bridge holds no LRS credential
+ *   PEV_LAUNCH_LMS_ISSUERS          optional, with the three above: JSON mapping each principal
+ *                                   that holds the role lms (a 0x address or a DID) to the account
+ *                                   homePage its LMS puts on the actors it launches. Such a
+ *                                   principal takes reviewed statements only for attempts whose
+ *                                   launch actor carries that homePage; one not listed speaks for
+ *                                   no LMS, whatever its role. Malformed: the bridge does not start
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
  *                                   route (this bridge never picks a model)
@@ -346,7 +352,21 @@ async function main(): Promise<void> {
       process.exitCode = 1;
       return;
     }
-    launchImport = { readUrl: launchReadUrl as string, endpoint: launchEndpoint as string, vocabulary: vocabulary as LaunchVocabulary };
+    // Which LMS each lms principal speaks for. Optional: without it no principal takes statements as an LMS.
+    const issuersRaw = env('PEV_LAUNCH_LMS_ISSUERS');
+    let lmsIssuers: Record<string, string> | undefined;
+    if (issuersRaw !== undefined) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(issuersRaw); } catch { parsed = undefined; }
+      const entries = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? Object.entries(parsed as Record<string, unknown>) : null;
+      if (!entries || entries.length === 0 || entries.some(([k, v]) => !(/^0x[0-9a-fA-F]{40}$/.test(k) || /^did:/.test(k)) || typeof v !== 'string' || !/^[A-Za-z][A-Za-z0-9+.-]*:\S+$/.test(v))) {
+        warn('PEV_LAUNCH_LMS_ISSUERS takes JSON mapping each lms principal (a 0x address or a DID) to the account homePage its LMS puts on the actors it launches, such as {"0x…":"did:web:lms.example"}. A wrong binding would let one LMS take another\'s attempts. Not listening.');
+        process.exitCode = 1;
+        return;
+      }
+      lmsIssuers = Object.fromEntries(entries as [string, string][]);
+    }
+    launchImport = { readUrl: launchReadUrl as string, endpoint: launchEndpoint as string, vocabulary: vocabulary as LaunchVocabulary, ...(lmsIssuers ? { lmsIssuers } : {}) };
   }
   const llmKey = env('PEV_LLM_API_KEY') ?? env('ANTHROPIC_API_KEY');
   const llmModel = env('PEV_LLM_MODEL');
