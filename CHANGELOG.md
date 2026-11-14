@@ -1,5 +1,27 @@
 # Changelog
 
+## 2026-11-14 — Foxxi: a performance recorded against a course or a lesson is that course's or lesson's outcome
+
+The last pair of Foxxi's statement templates one statement could match
+together. A performance recorded against an activity typed as a course or a
+lesson matched the course or lesson template by its object type and the
+performance template by its marker, and had to follow both; a completion failed
+the first for want of `result.completion`.
+
+The object type now decides (`performanceCategoriesFor`, `outcomeResultFor` in
+`src/xapi-profile.ts`). Recorded against a course or a lesson, the statement
+carries no performance marker and, when it is a completion, states
+`completion: true`; it is held to the course or lesson template alone.
+Recorded against anything else it is a performance record, as before. This
+applies to `record_performance`, its signed form, agent activity and a
+descriptor projected as an outcome. One rule is left to refuse: a failed lesson
+states its score, whoever records it.
+
+`POST /xapi/profile/validate` against Foxxi's own profile now also returns
+`specification`, the outcome of the specification's algorithm for the same
+statement, beside its own verdict, which accepts any one template selected by
+verb and object type.
+
 ## 2026-11-13 — Practice Evidence: launch-mode evidence must be for the imported unit and session
 
 Taking a conversation an LMS launched as an attempt read the launch mode from the
