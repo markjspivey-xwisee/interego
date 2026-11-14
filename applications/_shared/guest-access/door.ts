@@ -82,6 +82,8 @@ export class GeneralGuestDoor {
   readonly doorOrigin: string;
   readonly audience: string;
   private readonly visits = new Map<string, { verifier: string; binding: string; expiresAt: number }>();
+  /** Visits whose grant is still being signed: they count toward the ceiling before they are kept. */
+  private starting = 0;
   private readonly policies: PolicySet;
   private readonly now: () => number;
   private readonly fetch: DoorFetch;
@@ -105,14 +107,18 @@ export class GeneralGuestDoor {
   async start(): Promise<{ url: string; state: string; binding: string }> {
     const now = this.now();
     for (const [state, visit] of this.visits) if (visit.expiresAt <= now) this.visits.delete(state);
-    if (this.visits.size >= this.maxVisits) throw new GuestDoorError(429, 'guest_door_busy');
+    if (this.visits.size + this.starting >= this.maxVisits) throw new GuestDoorError(429, 'guest_door_busy');
     const state = randomBytes(32).toString('base64url');
     const verifier = randomBytes(32).toString('base64url');
     const binding = randomBytes(32).toString('base64url');
     const request = { purpose: GENERAL_GUEST_PURPOSE, audience: this.audience, state,
       codeChallenge: createHash('sha256').update(verifier, 'utf8').digest('base64url'), expiresAt: Math.floor(now / 1000) + 90 };
     let grant: DoorGrant;
+    // The place is taken before the signer is awaited and given back when it answers, so starts
+    // that overlap cannot each see room for themselves and together pass the ceiling.
+    this.starting += 1;
     try { grant = await this.options.signGrant(request); } catch { throw new GuestDoorError(503, 'guest_door_unavailable'); }
+    finally { this.starting -= 1; }
     // What the relay signed is what was asked for, or nothing leaves here.
     let signed: Record<string, unknown> = {};
     try { signed = JSON.parse(grant._signed_payload) as Record<string, unknown>; } catch { /* refused below */ }

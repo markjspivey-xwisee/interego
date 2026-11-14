@@ -17,6 +17,8 @@ import { hostedTermsPolicy } from '../hosted-terms.js';
 import { purgeProvisionalPlayPod } from '../provisional-play-cleanup.js';
 import { readFileSync } from 'node:fs';
 import { publicJwk } from './public-jwk.js';
+import { inlineScripts } from './inline-scripts.js';
+import * as vm from 'node:vm';
 
 const ISSUER = 'https://identity.example';
 const game = 'https://play.example';
@@ -383,12 +385,12 @@ test('the door page is a top-level document that runs one script, named by hash,
   assert.equal(directives['form-action'], "'none'");
   assert.equal(directives['base-uri'], "'none'");
   assert.doesNotMatch(page.csp, /unsafe-inline|unsafe-eval|\*/);
-  const scripts = [...page.html.matchAll(/<script>([\s\S]*?)<\/script>/g)];
+  const scripts = inlineScripts(page.html);
   assert.equal(scripts.length, 1);
-  assert.equal(directives['script-src'], `'sha256-${crypto.createHash('sha256').update(scripts[0]![1]!, 'utf8').digest('base64')}'`);
+  assert.equal(directives['script-src'], `'sha256-${crypto.createHash('sha256').update(scripts[0]!, 'utf8').digest('base64')}'`);
   const style = /<style>([\s\S]*?)<\/style>/.exec(page.html)![1]!;
   assert.equal(directives['style-src'], `'sha256-${crypto.createHash('sha256').update(style, 'utf8').digest('base64')}'`);
-  const script = scripts[0]![1]!;
+  const script = scripts[0]!;
   // The key is generated non-extractable, and the page reaches nothing but its own three routes.
   assert.match(script, /generateKey\(\{ name: 'ECDSA', namedCurve: 'P-256' \}, false, \['sign'\]\)/);
   assert.deepEqual([...script.matchAll(/post\('([^']+)'/g)].map(m => m[1]), ['/guest/door', '/guest/door/claim', '/guest/door/link']);
@@ -398,7 +400,7 @@ test('the door page is a top-level document that runs one script, named by hash,
   assert.match(script, /new URL\(result\.answer\.redirect\)\.origin !== audience/);
   // The terms link is escaped, and no attribute or tag is opened by its value.
   assert.match(page.html, /href="https:\/\/terms\.example\/t\?a=1&#38;b=&#34;2&#34;"/);
-  assert.doesNotThrow(() => new Function(`return function(){${script}}`), 'the script parses');
+  assert.doesNotThrow(() => new vm.Script(script, { filename: 'door-page.js' }), 'the script parses');
 });
 
 test('the janitor and the cleanup take up a general guest as they take up a per-application one, whatever the setting', async () => {

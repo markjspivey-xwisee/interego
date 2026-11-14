@@ -91,6 +91,26 @@ describe('the general guest door client', () => {
     await expect(small.start()).rejects.toMatchObject({ status: 429, code: 'guest_door_busy' });
     now += 11 * 60 * 1000;
     await expect(small.start()).resolves.toMatchObject({ state: expect.any(String) });
+    // Starts that overlap while their grants are being signed count toward the ceiling too: of
+    // ten started together against room for one, one is kept, and a failed signer gives its place back.
+    const release: Array<() => void> = [];
+    const slow = id.doorFor(WORLD, agent, { maxVisits: 1, signGrant: request => new Promise(resolve => {
+      release.push(() => resolve({ _signed_payload: JSON.stringify(request), _signature: `0x${'12'.repeat(65)}` }));
+    }) });
+    const together = Array.from({ length: 10 }, () => slow.start().then(() => 'kept', (error: { code?: string }) => error.code));
+    await Promise.resolve();
+    for (const let_go of release) let_go();
+    const outcomes = await Promise.all(together);
+    expect(outcomes.filter(outcome => outcome === 'kept')).toHaveLength(1);
+    expect(outcomes.filter(outcome => outcome === 'guest_door_busy')).toHaveLength(9);
+    let fail = true;
+    const flaky = id.doorFor(WORLD, agent, { maxVisits: 1, signGrant: async request => {
+      if (fail) throw new Error('relay down');
+      return { _signed_payload: JSON.stringify(request), _signature: `0x${'12'.repeat(65)}` };
+    } });
+    await expect(flaky.start()).rejects.toMatchObject({ status: 503 });
+    fail = false;
+    await expect(flaky.start()).resolves.toMatchObject({ state: expect.any(String) });
     expect(() => new GeneralGuestDoor({ identityUrl: 'http://identity.example', audience: WORLD, signGrant: async () => ({ _signed_payload: '', _signature: '' }) })).toThrow(/HTTPS/);
     expect(() => new GeneralGuestDoor({ identityUrl: ISSUER, audience: `${WORLD}/path`, signGrant: async () => ({ _signed_payload: '', _signature: '' }) })).toThrow(/origin/);
   });

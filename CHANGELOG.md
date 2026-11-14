@@ -33,6 +33,9 @@ A guest ("provisional owner") has been one per application: the key lives in the
 - **Applications.** The coached world can offer the door beside its own (`CPW_GENERAL_GUEST=1`). Foxxi's bridge can sign door grants, but its learner workbench does not use the door yet, because it re-checks a guest with identity while the session lives and an application cannot re-check a general guest.
 
 A general guest is linkable across applications by design: each one learns the same DID, pod and key thumbprint (identity does not tell one application which others the guest has used). Linking a guest to a registered account, a cross-device link code and a recovery code are not in this change. The rollout order (gate and relay, then identity, then the setting) and what each older service does with the new token are in `deploy/identity/PROVISIONAL-PLAY.md`, "General guest".
+
+**After review.** The door page now stores a new browser key only if the stored one is still the one that tab saw, in one transaction, so two tabs that start together use one key and a browser never admits a guest whose key it did not keep. `GeneralGuestDoor.start` counts visits whose grant is still being signed toward its ceiling. The page's inline configuration escapes every character that could end the script element or a source line, and the tests read that script by position instead of by a tag pattern.
+
 ## 2026-11-14 — Voice mode, shared: say it and hear it, in the coached world and in I2IDL-X Ask
 
 A page can now take a spoken question or command and read an answer aloud, using only what the browser has. No model is called for it and no key is involved: where a page has model work, the paired chat session still does it. It is one shared module, so any vertical or bridge can adopt it.

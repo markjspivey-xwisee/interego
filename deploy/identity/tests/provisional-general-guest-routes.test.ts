@@ -27,6 +27,7 @@ import { join } from 'node:path';
 import { Wallet } from 'ethers';
 import { closeServer, stopChild } from './teardown.js';
 import { publicJwk } from './public-jwk.js';
+import { inlineScripts } from './inline-scripts.js';
 import { generalGuestUserId, playKeyThumbprint, publicPlayKey } from '../provisional-play.js';
 import { claimProofPayload, doorProofPayload } from '../provisional-general-guest.js';
 
@@ -225,7 +226,7 @@ test('with the setting on, the door page is served as a top-level document with 
   assert.equal(page.headers.get('x-frame-options'), 'DENY');
   assert.equal(page.headers.get('cache-control'), 'no-store');
   assert.equal(page.headers.get('referrer-policy'), 'no-referrer');
-  const script = /<script>([\s\S]*?)<\/script>/.exec(page.text)![1]!;
+  const script = inlineScripts(page.text)[0]!;
   assert.ok(csp.includes(`script-src 'sha256-${crypto.createHash('sha256').update(script, 'utf8').digest('base64')}'`));
   assert.ok(script.includes(`"issuer":"${on.base}"`));
 });
@@ -340,7 +341,7 @@ test('with a dedicated door origin, the door exists on that host alone, and that
   const door = doorOriginOf(dedicated);
   const doorHost = new URL(door).host;
   const mainHost = new URL(dedicated.base).host;
-  assert.match(dedicated.output(), new RegExp(`General guest door: on at ${door.replace(/[.]/g, '\\.')}`));
+  assert.match(dedicated.output(), new RegExp(`General guest door: on at ${door.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}`));
   const metadata = JSON.parse((await hosted(dedicated, mainHost, 'GET', '/.well-known/play-provisional')).text) as { generalGuest: { doorUrl: string; exchangeEndpoint: string } };
   assert.equal(metadata.generalGuest.doorUrl, `${door}/guest/door`);
   assert.equal(metadata.generalGuest.exchangeEndpoint, `${dedicated.base}/guest/exchange`);
@@ -421,9 +422,9 @@ test('in a browser: the door page admits this browser\'s guest for an applicatio
       await page.waitForSelector('#go:not([disabled])');
       // The grant has left the address bar, and the page names the application before anything happens.
       assert.equal(page.url(), `${door}/guest/door`);
-      assert.match(await page.textContent('#who') ?? '', new RegExp(`^${audience.replace(/[.]/g, '\\.')} asks to continue`));
+      assert.match(await page.textContent('#who') ?? '', new RegExp(`^${audience.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')} asks to continue`));
       await page.click('#go');
-      await page.waitForURL(new RegExp(`^${audience.replace(/[.]/g, '\\.')}/guest/return\\?code=`), { timeout: 15_000 });
+      await page.waitForURL(new RegExp(`^${audience.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/guest/return\\?code=`), { timeout: 15_000 });
       const back = new URL(page.url());
       assert.equal(back.searchParams.get('state'), prepared.state);
       const exchanged = await call(dedicated, 'POST', '/guest/exchange', { body: { code: back.searchParams.get('code'), codeVerifier: prepared.verifier, audience, state: prepared.state } });
@@ -461,7 +462,7 @@ test('in a browser: the door page admits this browser\'s guest for an applicatio
     await page.goto(`${door}/guest/door#claim`);
     await page.waitForSelector('#go:not([disabled])');
     await page.click('#go');
-    await page.waitForURL(new RegExp(`^${dedicated.base.replace(/[.]/g, '\\.')}/connect`), { timeout: 15_000 });
+    await page.waitForURL(new RegExp(`^${dedicated.base.replace(/[.*+?^${}()|[\]\\]/g, '\\$&')}/connect`), { timeout: 15_000 });
     await page.waitForSelector('#addDeviceToken');
     const bearer = await page.inputValue('#addDeviceToken');
     assert.match(bearer, /^cg2_/);

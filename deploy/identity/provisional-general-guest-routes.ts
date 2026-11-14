@@ -60,7 +60,7 @@ export function doorHostGuard(doorOrigin: string): express.RequestHandler {
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 
-/** The door page's script. `__CONFIG__` is replaced with JSON that holds no `<`. */
+/** The door page's script. `__CONFIG__` is replaced with JSON made safe to stand in a script element (scriptJson). */
 const DOOR_SCRIPT = `'use strict';
 (function () {
   var config = __CONFIG__;
@@ -94,10 +94,34 @@ const DOOR_SCRIPT = `'use strict';
     });
   }
   var readKey = function () { return store('readonly', function (keys) { return keys.get('guest'); }); };
-  function newKey() {
+  // The key and the serial stored beside it, read in one transaction. The serial names one stored
+  // key, so a tab can tell whether the key it saw is still the one this browser holds.
+  function readEntry() {
+    return store('readonly', function (keys) {
+      var entry = {};
+      keys.get('guest').onsuccess = function (event) { entry.pair = event.target.result; };
+      keys.get('serial').onsuccess = function (event) { entry.serial = event.target.result; };
+      return { result: entry };
+    }).then(function (entry) { return entry.pair ? entry : null; });
+  }
+  // A new key becomes this browser's guest only if the stored one is still the one this tab saw
+  // (seen: none, or the serial of the guest being replaced). The check and the write are one
+  // transaction, so of two tabs that start together one stores its key and the other uses that
+  // same key: a browser never admits a guest whose key it did not keep.
+  function newKey(seen) {
     // extractable: false. The private key can sign here and can never be exported, by this page or any other.
     return crypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']).then(function (pair) {
-      return store('readwrite', function (keys) { return keys.put(pair, 'guest'); }).then(function () { return pair; });
+      var kept = { pair: pair, serial: b64url(crypto.getRandomValues(new Uint8Array(16))) };
+      return store('readwrite', function (keys) {
+        var held = {};
+        keys.get('guest').onsuccess = function (event) { held.pair = event.target.result; };
+        keys.get('serial').onsuccess = function (event) {
+          held.serial = event.target.result;
+          if (held.pair && held.serial !== seen) { kept = held; return; }
+          keys.put(kept.pair, 'guest'); keys.put(kept.serial, 'serial');
+        };
+        return null;
+      }).then(function () { return kept; });
     });
   }
   var publicJwk = function (pair) {
@@ -112,7 +136,9 @@ const DOOR_SCRIPT = `'use strict';
   }
 
   function enter(grant, audience, rotated) {
-    return readKey().then(function (pair) { return pair || newKey(); }).then(function (pair) {
+    var used;
+    return readEntry().then(function (entry) { return entry || newKey(undefined); }).then(function (entry) {
+      used = entry; var pair = entry.pair;
       return publicJwk(pair).then(function (jwk) {
         var text = 'interego-general-guest-door-v1\\n' + grant._signed_payload + '\\n' + grant._signature;
         if (config.terms) text += '\\nHosted-Interego-Terms: ' + config.terms.version;
@@ -127,8 +153,9 @@ const DOOR_SCRIPT = `'use strict';
         location.replace(result.answer.redirect);
         return;
       }
-      // This browser's guest has reached its deadline: a new key is a new guest. Once.
-      if (result.answer.error === 'provisional_owner_expired' && !rotated) return newKey().then(function () { return enter(grant, audience, true); });
+      // This browser's guest has reached its deadline: a new key is a new guest. Once, and only in
+      // place of the key that expired: where another tab has already replaced it, that one is used.
+      if (result.answer.error === 'provisional_owner_expired' && !rotated) return newKey(used.serial).then(function () { return enter(grant, audience, true); });
       throw new Error(result.answer.error || 'the guest could not be continued');
     });
   }
@@ -252,9 +279,18 @@ const DOOR_STYLE = 'body{font:16px/1.5 system-ui,sans-serif;margin:0;background:
   + 'input{font:inherit;width:100%;box-sizing:border-box;margin-top:.3rem;padding:.5rem;border-radius:.4rem;border:1px solid #555;background:#1b1b1b;color:#eee}'
   + '#account{border-left:3px solid #e6c36a;padding-left:.8rem}';
 
+/**
+ * JSON that is safe to place inside an inline script: no character that could end the script
+ * element, open a comment or an entity, or end a line in JavaScript source survives unescaped.
+ */
+const SCRIPT_UNSAFE: Readonly<Record<string, string>> = { '<': '\\u003c', '>': '\\u003e', '&': '\\u0026', '\u2028': '\\u2028', '\u2029': '\\u2029' };
+export function scriptJson(value: unknown): string {
+  return JSON.stringify(value).replace(/[<>&\u2028\u2029]/g, character => SCRIPT_UNSAFE[character]!);
+}
+
 /** The door page and the Content-Security-Policy that names its one script and one style sheet by hash. */
 export function generalGuestDoorPage(config: { issuer: string; terms?: { version: string; url: string; privacyUrl: string } }): { html: string; csp: string } {
-  const script = DOOR_SCRIPT.replace('__CONFIG__', () => JSON.stringify(config).replace(/</g, '\\u003c'));
+  const script = DOOR_SCRIPT.replace('__CONFIG__', () => scriptJson(config));
   const hash = (text: string) => `'sha256-${crypto.createHash('sha256').update(text, 'utf8').digest('base64')}'`;
   const terms = config.terms
     ? `<p id="terms" hidden>By continuing you agree to the <a href="${escapeHtml(config.terms.url)}" target="_blank" rel="noopener noreferrer">Terms</a> and the <a href="${escapeHtml(config.terms.privacyUrl)}" target="_blank" rel="noopener noreferrer">Privacy Notice</a>.</p>`
