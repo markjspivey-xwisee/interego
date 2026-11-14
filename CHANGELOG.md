@@ -6,6 +6,20 @@ A guest can join one shared world, choose a faction from the pack, and coach an 
 
 Before it landed, three edges were closed in review: the LRS reader no longer follows a `more` link to another origin (the request carries its credential), outbound calls to the LRS and to Foxxi's launch have a time limit and follow no redirect, and the sign-in challenge and session tables have a ceiling, since callers nobody has verified fill them.
 
+## 2026-11-14 — css-gate: a test no longer fails when another test takes its port
+
+The "Durable LRS" CI job failed twice in two hours, on two pull requests that did
+not touch the gateway, with `listen EADDRINUSE`. The cause is one test,
+`identity-introspection-value-warning.test.mjs`. It starts real gate processes,
+and the gate takes its port from `PORT`, so the test opens a port, reads its
+number, closes it and hands the number to the child. `node --test` runs the
+other test files at the same time, each opening servers on port 0, and one of
+them could be given that port before the child listened.
+
+The test now starts the gate again on another port when the child exits with
+`EADDRINUSE`, up to five times. Any other exit fails as before. The gate itself
+is unchanged.
+
 ## 2026-11-14 — Practice Evidence: what shows a session over, and a byte limit on the LRS read
 
 Two follow-ups to the change that lets a learner have a reviewed result fixed
