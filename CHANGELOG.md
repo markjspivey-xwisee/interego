@@ -4,6 +4,18 @@
 
 A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. The `cpw:` vocabulary is published at `docs/applications/coached-world/cpw.ttl`, the same bytes as `applications/coached-world/ontology/cpw.ttl`. Named-graph IRIs go through `turtleIriRef`. The bridge entry installs the shared process safety net, so a rejection nothing awaited is logged and the process keeps serving. See `applications/coached-world/README.md`.
 
+## 2026-11-14 — Foxxi: a failed lesson nobody scored is recorded without a score
+
+A performance recorded against a lesson, failed, with no quality given, built a
+`failed` statement with no `result.score.scaled`, and Foxxi's own `lesson-failed`
+template required one, so the statement did not follow the profile it names
+(found in review of the statement builder). The template now recommends the
+score and requires `result.success` false instead, so a bare `failed` with no
+result is still refused: cmi5 constrains a score a failed statement
+carries and does not demand one. The statement is unchanged; no score is
+invented. The builder test now runs every kind of activity, each outcome,
+scored and unscored, through the specification's algorithm.
+
 ## 2026-11-14 — Foxxi: a linked guest's browser is not the owner
 
 The course player let an owner link a guest they still held the key for. After
