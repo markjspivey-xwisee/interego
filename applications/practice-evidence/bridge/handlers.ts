@@ -88,7 +88,7 @@ import {
   buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
   type ProjectionFormat,
 } from '../src/projections.js';
-import { readLaunchedCall, type LaunchVocabulary } from '../src/launched-import.js';
+import { readLaunchedCall, sendingSessionProblems, type LaunchVocabulary } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
   readCache, readChain, readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship,
@@ -3202,12 +3202,14 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
     }
     const forUnit = {
       registration: l.registration, activityId: l.activityId, lrsEndpoint: l.endpoint,
-      send: 'The assignable unit sends these, in this order, inside a session of the registration, with its own cmi5 credential. An LRS that already holds a statement with one of these ids has it recorded: read it back and go on.',
+      send: 'The assignable unit sends these, in this order, inside the session they name, with its own cmi5 credential. If the LRS answers that a statement with one of these ids already exists, read that statement back and compare it with the document here: only an equal one is this result recorded; a different one is another result, and nothing more may be sent for the registration.',
     };
     if (l.handedOut) {
       return {
         attemptIri: iri, statements: l.handedOut.statements, handedOutAt: l.handedOut.at, sessionId: l.handedOut.sessionId, again: true,
-        ...(l.handedOut.sessionId !== sessionId ? { sessionNote: 'These were fixed when they were first handed out, for the session named then; they are not rebuilt for another session.' } : {}),
+        // A copy for checking what was sent, unless it is asked for the very session it was fixed for.
+        usableInSession: l.handedOut.sessionId === sessionId, usableOnlyIn: l.handedOut.sessionId,
+        ...(l.handedOut.sessionId !== sessionId ? { sessionNote: 'These were fixed when they were first handed out, for the session named then; they are not rebuilt for another session. In any other session they are for comparing with what the LRS holds, not for sending.' } : {}),
         forUnit, lossy: LOSSY_LAUNCHED, practiceEvidence: true, recorded: false,
       };
     }
@@ -3220,6 +3222,17 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
     if (refusals.length > 0) {
       throw decline(409, 'No cmi5 statement may be built for this attempt.', 'launched-statements-refused', undefined, { problems: refusals });
     }
+    // What is fixed now is fixed for good, so the session has to be one the LMS opened for this unit
+    // and this learner, still open, with nothing yet sent for the registration. The LRS says so, read
+    // through the learner's own signed read, as when the attempt was taken.
+    const li = ctx.deps.launchImport;
+    if (!li) throw decline(501, 'This bridge is not set up to read an LRS, so it cannot tell whether the session is one to send in.', 'launch-import-not-configured');
+    if (li.endpoint !== l.endpoint) throw decline(409, 'This attempt was taken from another LRS than the one this bridge reads.', 'another-lrs');
+    const now = await statementsOfRegistration(ctx, li, lrsReadOf(args, l.registration));
+    const sessionProblems = sendingSessionProblems(now, l, sessionId);
+    if (sessionProblems.length > 0) {
+      throw decline(409, 'The session named is not one these statements can be sent in; nothing was fixed.', 'not-a-sending-session', undefined, { problems: sessionProblems });
+    }
     const statements = buildLaunchedStatements({ attempt: h.body, headDescriptorUrl: h.rec.descriptorUrl, homePage: ctx.homePage, ratifiedBy: e.ratifiedBy }, { sessionId });
     const problems = statements.flatMap((st) => launchedStatementProblems(st, l, { sessionId }));
     if (problems.length > 0) {
@@ -3231,7 +3244,7 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
     };
     const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
     return {
-      attemptIri: iri, statements, handedOutAt: at, sessionId, again: false, forUnit, lossy: LOSSY_LAUNCHED,
+      attemptIri: iri, statements, handedOutAt: at, sessionId, again: false, usableInSession: true, usableOnlyIn: sessionId, forUnit, lossy: LOSSY_LAUNCHED,
       descriptorUrl: w.descriptorUrl, practiceEvidence: true, recorded: true,
     };
   });

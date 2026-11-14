@@ -16,6 +16,11 @@ be Normal.
   (`lmsLaunch.handedOut`). Every later ask returns the same documents, whatever
   session it names, and writes nothing. A review changed afterwards hands out
   nothing new.
+- Before they are fixed, the session is checked against the LRS through the
+  learner's own signed read: the LMS's `launched` statement for that unit and
+  session, in Normal mode and for the same actor, with the session not ended and
+  nothing passed, failed or completed in the registration. A session typed wrong
+  or already ended fixes nothing.
 - Only the learner may take them. A scored attempt's statements carry its score,
   so they are refused to a chat assistant, as a projection is.
 - The bridge still sends nothing to an LRS, and does not learn whether the unit

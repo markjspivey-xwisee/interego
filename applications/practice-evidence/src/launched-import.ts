@@ -245,3 +245,35 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
     },
   };
 }
+
+/**
+ * Why a session may not be the one a launched attempt's reviewed statements are sent in; [] when
+ * it may. `statements` is what the LRS returned for the registration now. The evidence asked for
+ * is the LMS's own: its launched statement for this unit and this session, in Normal mode, by the
+ * same actor, with no terminated in that session yet, and no passed, failed or completed anywhere
+ * in the registration. A session named by mistake, one already ended, or one of another unit
+ * would otherwise fix the statements for good.
+ */
+export function sendingSessionProblems(statements: readonly unknown[], launch: LmsLaunch, sessionId: string): string[] {
+  const p: string[] = [];
+  const mine = statements.filter(isObj).filter((s) => objOf(s['context'])['registration'] === launch.registration);
+  if (mine.length !== statements.length) p.push('the LRS returned statements of another registration');
+  const sessionOf = (s: Record<string, unknown>): unknown => objOf(objOf(s['context'])['extensions'])[CMI5_SESSION_EXT];
+  const verbOf = (s: Record<string, unknown>): unknown => objOf(s['verb'])['id'];
+  const launches = mine.filter((s) => verbOf(s) === VERB_LAUNCHED && sessionOf(s) === sessionId && objOf(s['object'])['id'] === launch.activityId);
+  if (launches.length === 0) {
+    p.push('the LRS holds no launched statement from the LMS for this unit and this session: the session is not one the LMS opened for this attempt');
+  } else {
+    const modes = new Set(launches.map((s) => objOf(objOf(s['context'])['extensions'])[CMI5_LAUNCH_MODE_EXT]));
+    if (modes.size !== 1 || !modes.has('Normal')) p.push('the session was not launched in Normal mode: cmi5 allows passed, failed and completed only in a Normal launch');
+    const sameActor = launches.every((s) => {
+      const a = objOf(objOf(s['actor'])['account']);
+      return a['homePage'] === launch.actor.homePage && a['name'] === launch.actor.name;
+    });
+    if (!sameActor) p.push('the session was launched for another actor');
+  }
+  if (mine.some((s) => verbOf(s) === VERB_TERMINATED && sessionOf(s) === sessionId)) p.push('the session has already ended: a statement cannot be sent in it');
+  const closed = [VERB_PASSED, VERB_FAILED, VERB_COMPLETED].filter((v) => mine.some((s) => verbOf(s) === v));
+  if (closed.length > 0) p.push('the registration already holds a passed, failed or completed statement: cmi5 allows one of each');
+  return p;
+}
