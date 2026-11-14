@@ -42,7 +42,8 @@ jobs:
     name: Original client oracles and hosted visitor render
     # The locked Playwright release supports Ubuntu 24.04.
     runs-on: ubuntu-24.04
-    timeout-minutes: 25
+    # The wait for build outputs (up to 30 minutes) and then the job's own work.
+    timeout-minutes: 50
     env:
       I2IDLX_ROOT: applications/foxxi-content-intelligence/i2idlx
       I2IDL_CLONE: ${{ github.workspace }}/.cache/i2idl-linked-data-v0.0.93
@@ -118,7 +119,9 @@ jobs:
               // Only automatic PR selection waits. Explicit manual IDs require
               // their named build to be eligible immediately.
               const waitForPr = Boolean(context.payload.pull_request);
-              const deadline = Date.now() + (waitForPr ? 8 * 60 * 1000 : 0);
+              // Thirty minutes: the native build this waits for has taken 6 to 23 minutes from the
+              // push on recent pull requests, queue included, so eight gave up before most of them.
+              const deadline = Date.now() + (waitForPr ? 30 * 60 * 1000 : 0);
               let selected;
               for (;;) {
                 const listing = await github.rest.actions.listWorkflowRunsForRepo({

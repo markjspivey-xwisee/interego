@@ -14,6 +14,17 @@ or kept again, whether or not the pod has removed it yet. An entry that is no
 sha-256 is named in a warning and takes nothing down. What learners recorded of
 a package stays in their own records, as with the signed removal.
 
+## 2026-11-14 — The UI oracle job waits long enough for the build it reads
+
+"Original client oracles and hosted visitor render" waited eight minutes for a
+completed native or golden build of the pull request's head and then failed. On
+recent pull requests that native build finished 6 to 23 minutes after the push,
+queue included, so the job failed on most of them and passed on a manual re-run
+once the build was done; the gated auto-merge refuses a red check, so each of
+those pull requests waited for a person or a session to press re-run. The wait
+is now thirty minutes and the job's limit fifty. A head whose build never
+finishes fails later than before, with the same message.
+
 ## 2026-11-13 — Foxxi: a course player on the existing Interego guest
 
 A browser that opens a hosted package or a published activity, with no cmi5 launch on the URL, gets a player for that course. Start does not mint a Foxxi identity. It uses the provisional Interego guest the learning account already signs in (`u-try-play-`, browser key) or an existing owner, and the xAPI actor is that owner's DID. Agreeing to the recording is required before the launch, and that agreement is kept against the learner and the course. The statements, the satisfied activities and a later deletion are kept in that learner's own lens, the same one a signed read uses. The published course stays in the shared catalogue. The same browser continues the same owner and, while the attempt is open, the same registration. Adding a passkey, wallet or DID keeps that owner (`/connect?claim=`), and the page can ask identity for a fresh token for that key after the activity, because the first one is not kept. Signing in as a different existing owner records a link and leaves the guest's statements as they were. After that link, what the guest does next is recorded as the owner, in the owner's lens; linking again copies satisfaction once more and does not store a second claim. Deleting a guest recording stores a voiding statement and then marks the original with that statement's id, keeps those voids on the learner's pod even when no launch is still in memory, and clears that learner's State documents. A linked guest's own deletion also removes the satisfaction copied onto the owner and the owner's claim that names the guest. Unclaimed guests still expire on identity's own deadline.
