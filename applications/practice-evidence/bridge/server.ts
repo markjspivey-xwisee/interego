@@ -116,6 +116,12 @@
  *                                   none: with none the act answers 501; with some, or a value that
  *                                   is not an https URL (http on loopback) or not that JSON, the
  *                                   bridge does not start. This bridge holds no LRS credential
+ *   PEV_LAUNCH_LMS_AUTHORITY        optional, with the three above, and required with
+ *                                   PEV_LAUNCH_LMS_ISSUERS: JSON {homePage, name}, the authority
+ *                                   account the LMS's own statements carry on that LRS. With it a
+ *                                   launched statement counts only under that authority; without
+ *                                   it one is taken by verb, actor, unit and session. A value that
+ *                                   is not that JSON, or issuers without it: the bridge does not start
  *   PEV_LAUNCH_LMS_ISSUERS          optional, with the three above: JSON mapping each principal
  *                                   that holds the role lms (a 0x address or a DID) to the account
  *                                   homePage its LMS puts on the actors it launches. Such a
@@ -140,7 +146,7 @@ import { contactForLog } from '../../_shared/contact-link/index.js';
 import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
-import { launchVocabularyProblems, type LaunchVocabulary } from '../src/launched-import.js';
+import { launchVocabularyProblems, lmsAuthorityProblems, type LaunchVocabulary, type LmsAuthority } from '../src/launched-import.js';
 import { attemptIriSecret, freshNonce, iriKeyFingerprint, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
 import { cachedDidDocuments, isUserDid, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import {
@@ -366,7 +372,29 @@ async function main(): Promise<void> {
       }
       lmsIssuers = Object.fromEntries(entries as [string, string][]);
     }
-    launchImport = { readUrl: launchReadUrl as string, endpoint: launchEndpoint as string, vocabulary: vocabulary as LaunchVocabulary, ...(lmsIssuers ? { lmsIssuers } : {}) };
+    // The authority the LMS's own statements carry on that LRS. Optional by itself; required with the binding above.
+    const authorityRaw = env('PEV_LAUNCH_LMS_AUTHORITY');
+    let lmsAuthority: LmsAuthority | undefined;
+    if (authorityRaw !== undefined) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(authorityRaw); } catch { parsed = undefined; }
+      const wrong = lmsAuthorityProblems(parsed);
+      if (wrong.length > 0) {
+        warn(`PEV_LAUNCH_LMS_AUTHORITY takes JSON naming the authority account the LMS's own statements carry on the LRS, such as {"homePage":"https://lms.example","name":"lms"}: ${wrong.join('; ')}. Not listening.`);
+        process.exitCode = 1;
+        return;
+      }
+      lmsAuthority = parsed as LmsAuthority;
+    }
+    if (lmsIssuers && !lmsAuthority) {
+      warn('PEV_LAUNCH_LMS_ISSUERS needs PEV_LAUNCH_LMS_AUTHORITY: an LMS takes reviewed results for the sessions its own launched statements name, and without the authority the LMS records them under, a launched statement anyone stored would be taken for the LMS\'s. Not listening.');
+      process.exitCode = 1;
+      return;
+    }
+    launchImport = {
+      readUrl: launchReadUrl as string, endpoint: launchEndpoint as string, vocabulary: vocabulary as LaunchVocabulary,
+      ...(lmsIssuers ? { lmsIssuers } : {}), ...(lmsAuthority ? { lmsAuthority } : {}),
+    };
   }
   const llmKey = env('PEV_LLM_API_KEY') ?? env('ANTHROPIC_API_KEY');
   const llmModel = env('PEV_LLM_MODEL');

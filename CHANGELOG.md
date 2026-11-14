@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-11-14 — Practice Evidence: a launched counts only under the LMS's authority
+
+Practice Evidence reads a `launched` statement in two places: for the launch
+mode of an attempt taken from an LMS launch, and to check that a session a
+reviewed result will be sent in was opened by the LMS. It took one by verb,
+actor, unit and session. On an LRS where a learner can store statements about
+themselves, a learner can produce that.
+
+`PEV_LAUNCH_LMS_AUTHORITY` names the authority account the LMS's own statements
+carry on the LRS. With it set, a `launched` counts only under that authority.
+One without it is nobody's word about the launch: the attempt is still taken,
+with its launch mode not known, and no cmi5 result can be built for it.
+
+`PEV_LAUNCH_LMS_ISSUERS` now needs it. The bridge does not start with the LMS
+binding and no authority.
+
+Without the setting nothing changes. Not covered: `terminated`, the exchanges
+and the scores are the unit's own statements and are not the LMS's to mark.
+
 ## 2026-11-14 — Connect an agent, shared: any bridge can use a chat session's subscription instead of an API key
 
 The I2IDL-X workbench lets a person pair their own AI chat session with a page, so the page's questions are answered on that session's subscription and no model key is held anywhere. That method lived inside Foxxi. It is now shared code, and the coached world is the second bridge to use it.
