@@ -112,7 +112,10 @@ describe('the published role-play player page', () => {
     // An id the LRS already holds counts only when what it holds says everything the issued statement says.
     expect(page).toContain('return holds(stored, restIssued) && (ti === undefined || sameInstant(ts, ti));');
     // Nothing reviewed is sent before the LRS has taken this session's initialized.
-    expect(page).toContain('sessionOpened = (await send("initialized", "initialized", scenarioAct(), null, true, false)) !== null;');
+    expect(page).toContain('sessionOpened = (await send("initialized", "initialized", scenarioAct(), null, true, false, visitStart)) !== null;');
+    // Trying again sends the same initialized, id and time included, and an id the LRS already holds counts once.
+    expect(page).toContain('const st = (keep && keep.st) || {id: uuid()');
+    expect(page).toContain('if (r.status === 409 && keep) {');
     expect(page.indexOf('if (!sessionOpened) {\n    $("rvtitle")')).toBeLessThan(page.indexOf('o = await postReviewed(st)'));
     // It does not claim to know what happened in the visit the result was issued for.
     expect(page).toContain('It may already be in your learning record from that visit.');

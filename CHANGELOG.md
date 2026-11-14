@@ -13,6 +13,12 @@ The message for a result issued for another visit said that visit "ended before
 it was recorded". The player knows only that the result was issued for a
 different visit, not what was recorded in it. The message now says that.
 
+Trying again after a start that could not be confirmed sent a new `initialized`
+with a new id. If the first had been stored and only its answer lost, the visit
+would have had two. The player now keeps the visit's `initialized` and sends
+that same statement again; where the LRS answers that it already holds the id,
+the stored statement is read back and compared, and counts once.
+
 A statement the LRS refused once and took on a second try left its first error
 behind, and the page then said the visit had not saved. Only the last answer
 for a statement is kept.
