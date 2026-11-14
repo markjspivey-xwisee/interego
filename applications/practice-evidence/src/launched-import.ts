@@ -100,6 +100,12 @@ export interface ReadLaunchedInput {
   readonly spec: ScenarioSpec;
   /** The scenario version's rubric, as a scored statement may name it: its hash, or its IRI. */
   readonly rubricHash: string; readonly rubricIri?: string;
+  /**
+   * The scenario version itself (`scenarioVersionRef`), which a scored statement may name instead. A
+   * version has exactly one rubric, so naming the version names that rubric, and unlike the rubric's
+   * hash it is something whoever builds the unit can know without being shown the rubric's stakes.
+   */
+  readonly scenarioVersionRef?: string;
   readonly vocabulary: LaunchVocabulary;
   /** The LRS endpoint the statements were read from. */
   readonly endpoint: string;
@@ -109,6 +115,14 @@ export interface ReadLaunchedInput {
  * The call a registration's statements describe, or every reason they do not describe one.
  * `statements` is what the LRS returned for the registration, in any order.
  */
+/**
+ * A scenario version as a statement names it: the scenario's IRI and `#version-<n>`. A published
+ * version never changes, so this names one rubric for good.
+ */
+export function scenarioVersionRef(scenarioIri: string, version: number): string {
+  return `${scenarioIri}#version-${version}`;
+}
+
 export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunchedInput): { readonly call: ImportedCall } | { readonly problems: readonly string[] } {
   const p: string[] = [];
   const v = i.vocabulary;
@@ -170,9 +184,9 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
 
   const scoredRead = inSession.filter((r) => r.verb === VERB_SCORED);
   const scores: ImportedScore[] = [];
-  const named = [i.rubricHash, ...(i.rubricIri !== undefined ? [i.rubricIri] : [])];
+  const named = [i.rubricHash, ...(i.rubricIri !== undefined ? [i.rubricIri] : []), ...(i.scenarioVersionRef !== undefined ? [i.scenarioVersionRef] : [])];
   const wrongRubric = scoredRead.filter((r) => !named.includes(r.ext[v.rubricExt] as string));
-  if (wrongRubric.length > 0) p.push(`${wrongRubric.length} scored statement(s) do not name this scenario version's rubric (${i.rubricHash})`);
+  if (wrongRubric.length > 0) p.push(`${wrongRubric.length} scored statement(s) do not name this scenario version's rubric (${i.scenarioVersionRef ?? i.rubricHash})`);
   const byKey = new Map<string, Read[]>();
   for (const r of scoredRead) {
     const key = str(r.objectExt[v.criterionKeyExt]);
