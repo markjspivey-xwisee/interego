@@ -6,14 +6,6 @@
 export const MAX_CHALLENGES = 5_000;
 export const MAX_SESSIONS = 5_000;
 
-/** Drop the oldest entries until the map holds at most `max`. A Map keeps insertion order. */
-export function bound<K, V>(map: Map<K, V>, max: number): void {
-  for (const key of map.keys()) {
-    if (map.size <= max) return;
-    map.delete(key);
-  }
-}
-
 /**
  * How much history one process keeps. A filler consultant settles a mission every few seconds
  * for as long as the process runs, so every list that records what happened has a ceiling and
@@ -31,7 +23,7 @@ export const MAX_AGENT_SCORES = 500;
 export const MAX_CONSULTANTS = 5_000;
 /** The most guests the in-process door keeps an anchor for at one time. */
 export const MAX_LOCAL_GUESTS = 1_000;
-/** The most (limit, client) windows the rate limiter remembers. */
+/** The most (limit, client) windows the rate limiter remembers. The shared limiter is given this number. */
 export const MAX_RATE_CLIENTS = 20_000;
 
 /** Drop from the front of a list until it holds at most `max`. Returns how many went. */

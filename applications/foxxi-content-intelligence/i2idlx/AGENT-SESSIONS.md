@@ -91,6 +91,18 @@ bridge. A work reference is scoped to the paired DID and one queued turn. A fini
 cancelled, replaced or expired turn revokes it. Routine-backed sessions require these
 references. Manual sessions use their own driver capability.
 
+## The shared core
+
+The protocol on this page is not the workbench's alone. Sessions, one-use invitations, the
+driver capability, the turn queue with its leases and revisions, and every limit and expiry
+live in `applications/_shared/agent-connection/` (see its README), with no express dependency
+and no workbench naming, so any bridge can let a person connect their own chat session and
+use its subscription instead of an API key. `src/i2idlx-agent-sessions.ts` is a thin
+composition over it: it supplies this workbench's route path, action IRI, signed field names,
+wording and request limits, and passes the background Routine in as an optional wake plug-in.
+Nothing on the wire changed. The coached world (`applications/coached-world`) is the second
+bridge that mounts it.
+
 ## State and authority
 
 The separate `/i2idlx/api/agent-sessions` routes maintain bounded, ephemeral exchanges.
