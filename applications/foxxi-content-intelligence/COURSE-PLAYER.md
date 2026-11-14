@@ -53,8 +53,11 @@ requires that owner session and a fresh proof from the guest key identity still 
 It records the link, copies which activities the guest has satisfied from the guest's lens
 onto the owner's, and stores one statement by the owner, in the owner's lens, that points
 at the guest and at the original statement ids. Linking again copies satisfaction once more
-and does not store another claim. From then on a launch by that guest is recorded as the
-owner, in the owner's lens. Statements already stored for the guest stay in the guest's lens.
+and does not store another claim. A link does not make the guest's browser the owner: a
+guest session holds the guest's key and nothing of the owner's, so it launches as the guest,
+in the guest's lens, after the link as before it. What the guest goes on to satisfy reaches
+the owner when the owner next launches or links again, which takes the owner's own session.
+Statements stored for the guest stay in the guest's lens.
 Reads of either actor return both (`alsoAgents` on the statement query). Admin actor counts
 use the owner. The stored guest statements are unchanged.
 
