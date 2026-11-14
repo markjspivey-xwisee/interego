@@ -7,11 +7,11 @@
  * the public URL, /health, the request limits, and the guest page finding its way back in
  * after the world was restarted.
  */
-import { webcrypto } from 'node:crypto';
+import { createHash, webcrypto } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath, pathToFileURL } from 'node:url';
-import { verifyMessage } from 'ethers';
+import { Wallet, verifyMessage } from 'ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RATE_RULES } from '../src/rate-limit.js';
 import { start } from '../src/server.js';
@@ -485,5 +485,199 @@ describe('the world behind a proxy, on a public address', () => {
       const stale = await (await realFetch(`${after.url}/world`, { headers: { Authorization: `Bearer ${first.token}` } })).json() as { you?: unknown };
       expect(stale.you).toBeUndefined();
     } finally { await after.close(); }
+  }, 30_000);
+});
+
+/**
+ * Connect an agent. A consultant pairs their own AI chat session and it becomes the agent they
+ * coach. Here a scripted driver plays that session against the HTTP protocol. The verifier is
+ * a stand-in passed through the start option that exists for tests; the production verifier
+ * is exercised too, by a request it must refuse.
+ */
+describe('a consultant connects their own agent', () => {
+  const DRIVER = 'did:web:agents.example:fictional-chat-session';
+  /** Believes what it is told. Signatures are the verifier's business, tested where it lives. */
+  const stub = async (body: unknown) => {
+    const b = body as { actor?: unknown; payload?: unknown };
+    return typeof b.actor === 'string' && b.payload && typeof b.payload === 'object'
+      ? { ok: true as const, callerDid: b.actor, payload: b.payload as Record<string, unknown> }
+      : { ok: false as const, status: 401, error: 'unsigned' };
+  };
+  afterEach(() => { vi.unstubAllEnvs(); });
+
+  const send = async (base: string, path: string, body: unknown, token?: string, method = 'POST') => {
+    const response = await fetch(`${base}${path}`, {
+      method, headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
+    });
+    return { status: response.status, body: await response.json() as Record<string, unknown> };
+  };
+  type Mission = { title: string; statements: Array<{ actor: { account: { name: string } }; verb: { id: string }; result?: { response?: string } }>; work?: { state: string; text?: string; by?: string; note?: string } };
+  const missionOf = async (base: string, token: string) => ((await get(base, '/world', token))['you'] as { mission?: Mission }).mission;
+  const until = async <T>(read: () => Promise<T>, done: (value: T) => boolean): Promise<T> => {
+    for (let i = 0; i < 400; i++) { const value = await read(); if (done(value)) return value; await new Promise(resolve => setTimeout(resolve, 15)); }
+    throw new Error('never happened');
+  };
+  /** Open a connection as this consultant and have the scripted driver claim it. */
+  async function pair(base: string, token: string) {
+    const created = await send(base, '/agent-sessions/create', {}, token);
+    expect(created.status).toBe(200);
+    const signed = { connection_operation: 'agent-session', bridge_audience: base, session_id: created.body['session_id'] };
+    const drive = (payload: Record<string, unknown>, actor = DRIVER) => send(base, '/agent-sessions/driver', { actor, payload: { ...signed, ...payload } });
+    const claimed = await drive({ operation: 'claim', invite_token: created.body['invite_token'] });
+    expect(claimed.status).toBe(200);
+    const driverToken = claimed.body['driver_token'];
+    return { created: created.body, drive: (payload: Record<string, unknown>) => drive({ driver_token: driverToken, ...payload }) };
+  }
+
+  it('the mission goes to the paired session, and what it writes is the agent\'s work, recorded as that agent\'s statement', async () => {
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true, agentVerifier: stub, agentAnswerMs: 20_000, agentPollMs: 10 });
+    try {
+      const page = await fetch(`${running.url}/`);
+      expect(page.headers.get('content-security-policy')).toContain("script-src 'self'");
+      const client = await fetch(`${running.url}/agent-connection.js`);
+      expect(client.headers.get('content-type')).toBe('text/javascript; charset=utf-8');
+      expect(await client.text()).toBe(readFileSync(join(here, '../../_shared/agent-connection/browser-client.js'), 'utf8'));
+      expect(readFileSync(join(here, '../public/app.js'), 'utf8')).toContain("from './agent-connection.js'");
+
+      const me = await guest(running.url);
+      await post(running.url, '/faction', { factionId: 'north' }, me.token);
+      expect(await get(running.url, '/agent-sessions')).toEqual({ enabled: true, root: '/agent-sessions' });
+      expect((await get(running.url, '/agent-sessions', me.token))['connection']).toEqual({ state: 'none' });
+      // Only a signed-in consultant opens a connection.
+      expect((await send(running.url, '/agent-sessions/create', {})).status).toBe(401);
+
+      const { created, drive } = await pair(running.url, me.token);
+      expect(String(created['driver_url'])).toBe(`${running.url}/agent-sessions/driver`);
+      expect((await get(running.url, '/agent-sessions', me.token))['connection']).toMatchObject({ state: 'connected', actor: DRIVER });
+      // The page may look and leave. Only the world queues a mission.
+      const fromPage = await send(running.url, '/agent-sessions/browser', { session_id: created['session_id'], operation: 'request', messages: [{ role: 'user', content: 'x' }] }, String(created['browser_token']));
+      expect(fromPage.status).toBe(400);
+      expect((await send(running.url, '/agent-sessions/browser', { session_id: created['session_id'], operation: 'status' }, String(created['browser_token']))).body['state']).toBe('connected');
+
+      const opened = await post(running.url, '/missions', {}, me.token) as unknown as Mission;
+      expect(opened.work).toEqual({ state: 'waiting' });
+      const leased = await drive({ operation: 'next' });
+      const task = leased.body['task'] as { messages: Array<{ role: string; content: string }> };
+      const brief = task.messages.map(m => m.content).join('\n');
+      expect(brief).toContain(opened.title);
+      expect(brief).toContain('Conditions you are working under:');
+      expect(brief).toContain('- nothing yet');
+      // The brief says what the agent ran into, never which cause the pack drew.
+      const orchard = loadPackFile(orchardPath);
+      for (const cause of orchard.causes) expect(brief).not.toContain(cause.label);
+      const wrote = 'I walked the made-up rows twice and counted the fictional crates before noon.';
+      const finished = await drive({ operation: 'finish', turn_id: leased.body['turn_id'], lease_id: leased.body['lease_id'], revision: leased.body['revision'], text: wrote });
+      expect(finished.status).toBe(200);
+
+      const mission = await until(() => missionOf(running.url, me.token), m => m?.work?.state === 'answered');
+      expect(mission?.work).toEqual({ state: 'answered', text: wrote, by: DRIVER });
+      const work = mission?.statements.filter(s => s.result?.response === wrote) ?? [];
+      expect(work).toHaveLength(1);
+      // Recorded by the agent, with a verb the pack names, and never a course result verb.
+      expect(work[0]?.actor.account.name).toBe(mission?.statements[0]?.actor.account.name);
+      expect(work[0]?.verb.id).toBe(`${orchard.profileId}/verbs/${orchard.verbs.progressed}`);
+      expect(running.world.log.entries.some(entry => entry.statement.result?.response === wrote && entry.origin === 'world')).toBe(true);
+      const feed = (await get(running.url, '/world'))['feed'] as Array<{ text: string; kind: string }>;
+      expect(feed.some(item => item.kind === 'agent' && item.text.includes('connected agent'))).toBe(true);
+
+      // The pack's rules still settle it; the work product rides along.
+      const settled = await post(running.url, '/missions/intervene', { diagnosis: 'timing', interventionId: 'calendar' }, me.token);
+      expect((settled['work'] as { state: string }).state).toBe('answered');
+      if (settled['matched'] === true) expect(Number(settled['delta'])).toBeGreaterThan(0); else expect(settled['delta']).toBe(0);
+
+      // The next brief carries what the agent now remembers and what was deployed for it.
+      await post(running.url, '/missions', {}, me.token);
+      const next = await drive({ operation: 'next' });
+      const second = (next.body['task'] as { messages: Array<{ content: string }> }).messages.map(m => m.content).join('\n');
+      expect(second).toContain(String(settled['lesson']));
+      expect(second).toContain(`- ${orchard.interventions.find(i => i.id === 'calendar')?.label}`);
+
+      // One connection per consultant: opening another closes this one, for the page and the driver.
+      const again = await send(running.url, '/agent-sessions/create', {}, me.token);
+      expect(again.status).toBe(200);
+      expect((await drive({ operation: 'next' })).status).toBe(410);
+      expect((await get(running.url, '/agent-sessions', me.token))['connection']).toMatchObject({ state: 'waiting_for_agent' });
+      expect((await send(running.url, '/agent-sessions', {}, me.token, 'DELETE')).body).toEqual({ disconnected: true });
+      expect((await get(running.url, '/agent-sessions', me.token))['connection']).toEqual({ state: 'none' });
+    } finally { await running.close(); }
+  }, 60_000);
+
+  it('a paired session that does not answer in time is withdrawn, and the mission runs simulated and says so', async () => {
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true, agentVerifier: stub, agentAnswerMs: 200, agentPollMs: 10 });
+    try {
+      const me = await guest(running.url);
+      await post(running.url, '/faction', { factionId: 'north' }, me.token);
+      const { drive } = await pair(running.url, me.token);
+      const opened = await post(running.url, '/missions', {}, me.token) as unknown as Mission;
+      expect(opened.work).toEqual({ state: 'waiting' });
+      // The driver picks the turn up and then says nothing.
+      const leased = await drive({ operation: 'next' });
+      const mission = await until(() => missionOf(running.url, me.token), m => m?.work?.state === 'simulated');
+      expect(mission?.work).toEqual({ state: 'simulated', note: 'no answer in time' });
+      expect(mission?.statements.length).toBe(opened.statements.length);
+      const feed = (await get(running.url, '/world'))['feed'] as Array<{ text: string }>;
+      expect(feed.some(item => item.text.includes('did not answer (no answer in time)') && item.text.includes('ran this mission simulated'))).toBe(true);
+      // The late answer is refused, so it can not land on this mission or a later one.
+      const late = await drive({ operation: 'finish', turn_id: leased.body['turn_id'], lease_id: leased.body['lease_id'], revision: leased.body['revision'], text: 'too late' });
+      expect(late.status).toBe(409);
+      expect((await missionOf(running.url, me.token))?.work?.state).toBe('simulated');
+      const settled = await post(running.url, '/missions/intervene', { diagnosis: 'timing', interventionId: 'calendar' }, me.token);
+      expect(typeof settled['delta']).toBe('number');
+      // An agent that says it can not do the work falls back the same way, at once.
+      await post(running.url, '/missions', {}, me.token);
+      const refusedTurn = await drive({ operation: 'next' });
+      await drive({ operation: 'finish', turn_id: refusedTurn.body['turn_id'], lease_id: refusedTurn.body['lease_id'], revision: refusedTurn.body['revision'], error: 'made-up failure' });
+      const failed = await until(() => missionOf(running.url, me.token), m => m?.work?.state === 'simulated');
+      expect(failed?.work?.note).toBe('it reported that it could not do the work');
+    } finally { await running.close(); }
+  }, 60_000);
+
+  it('with no way to verify an agent the door answers 503, the page is told, and missions are as they were', async () => {
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true });
+    try {
+      const me = await guest(running.url);
+      await post(running.url, '/faction', { factionId: 'north' }, me.token);
+      expect(await get(running.url, '/agent-sessions', me.token)).toEqual({ enabled: false, root: '/agent-sessions' });
+      for (const path of ['/agent-sessions/create', '/agent-sessions/browser', '/agent-sessions/driver']) {
+        const refused = await send(running.url, path, {}, me.token);
+        expect(refused.status, path).toBe(503);
+        expect(refused.body['error']).toBe('agent-connect-unconfigured');
+      }
+      const opened = await post(running.url, '/missions', {}, me.token) as unknown as Mission;
+      expect(opened.work).toBeUndefined();
+      expect(opened.statements.length).toBeGreaterThan(1);
+    } finally { await running.close(); }
+  }, 30_000);
+
+  it('in production the door opens on a pod origin, and a claim nobody signed is refused by the real verifier', async () => {
+    vi.stubEnv('CPW_POD_ORIGIN', 'http://pods.example');
+    await expect(start({ packPath: orchardPath, bots: false, forceLocal: true })).rejects.toThrow(/https/);
+    vi.stubEnv('CPW_POD_ORIGIN', 'https://pods.example');
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true });
+    try {
+      const me = await guest(running.url);
+      expect((await get(running.url, '/agent-sessions'))['enabled']).toBe(true);
+      const created = await send(running.url, '/agent-sessions/create', {}, me.token);
+      const payload = { connection_operation: 'agent-session', bridge_audience: running.url, session_id: created.body['session_id'], operation: 'claim', invite_token: created.body['invite_token'] };
+      // The stand-in's shape means nothing here, and neither does a bare payload.
+      for (const body of [{ actor: DRIVER, payload }, payload, { _signature: '0xmade-up', _signed_payload: JSON.stringify({ ...payload, agent_id: DRIVER, timestamp: new Date().toISOString() }) }]) {
+        const refused = await send(running.url, '/agent-sessions/driver', body);
+        expect(refused.status).toBe(401);
+        expect(refused.body['error']).toBe('A verified, delegated Interego agent is required.');
+      }
+      expect((await get(running.url, '/agent-sessions', me.token))['connection']).toMatchObject({ state: 'waiting_for_agent' });
+      // A key that signs the real envelope as itself is believed, with no pod read: the same
+      // envelope the workbench accepts (sha256 of the payload, signed as a personal message).
+      const wallet = Wallet.createRandom();
+      const envelope = async (signer: { signMessage(message: string): Promise<string> }) => {
+        const signedPayload = JSON.stringify({ ...payload, agent_id: `did:ethr:${wallet.address}`, timestamp: new Date().toISOString() });
+        return { _signed_payload: signedPayload, _signature: await signer.signMessage(`sha256:${createHash('sha256').update(signedPayload).digest('hex')}`) };
+      };
+      // Signed by someone else while naming that key: not direct, and no delegation to read.
+      expect((await send(running.url, '/agent-sessions/driver', await envelope(Wallet.createRandom()))).status).toBe(401);
+      const claimed = await send(running.url, '/agent-sessions/driver', await envelope(wallet));
+      expect(claimed.status).toBe(200);
+      expect((await get(running.url, '/agent-sessions', me.token))['connection']).toMatchObject({ state: 'connected', actor: `did:ethr:${wallet.address}` });
+    } finally { await running.close(); }
   }, 30_000);
 });

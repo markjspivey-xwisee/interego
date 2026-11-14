@@ -12,14 +12,20 @@ import { Wallet } from 'ethers';
 import { PlayError } from '../../../deploy/identity/provisional-play.js';
 import { PlayGrantError } from '../../foxxi-content-intelligence/src/play-grant.js';
 import { affordancesManifestTurtle } from '../../_shared/affordance-mcp/index.js';
+import {
+  AGENT_CONNECTION_BROWSER_CLIENT, AgentConnectionError, agentConnectionRoute, handleNodeHttp,
+  type VerifySignedCaller,
+} from '../../_shared/agent-connection/index.js';
 import { WorldError } from './errors.js';
-import { MAX_CHALLENGES, MAX_SESSIONS, bound } from './bounded.js';
+import { RateLimiter, bound, clientKey, healthBody, publicOrigin } from '../../_shared/http-guard/index.js';
+import { MAX_CHALLENGES, MAX_RATE_CLIENTS, MAX_SESSIONS } from './bounded.js';
 import { createLocalDoor, createRelayDoor, type GuestDoor } from './guest-play.js';
 import { FoxxiCourseLauncher } from './course-launch.js';
 import { HttpLrs } from './lrs.js';
 import { loadPackFile } from './pack.js';
-import { publicOrigin } from './public-url.js';
-import { RATE_RULES, RateLimiter, clientKey, rateClassFor } from './rate-limit.js';
+import { RATE_RULES, rateClassFor } from './rate-limit.js';
+import { AGENT_SESSION_PATH, AgentLink } from './agent-link.js';
+import { interegoCallerVerifier } from './agent-verifier.js';
 import { CoachedWorld } from './world.js';
 import { AFFORDANCES } from '../affordances.js';
 
@@ -30,6 +36,8 @@ const FILES: Record<string, { file: string; type: string }> = {
   '/app.css': { file: 'app.css', type: 'text/css; charset=utf-8' },
   '/guest.js': { file: 'guest.js', type: 'text/javascript; charset=utf-8' },
 };
+/** The shared, framework-free browser client, served from here so the page's `script-src 'self'` holds. */
+const AGENT_CLIENT_PATH = '/agent-connection.js';
 
 export interface Running {
   /** Where this process listens. */
@@ -42,7 +50,7 @@ export interface Running {
 
 /** What `GET /health` answers. `build` is the field the deploy verifier compares with the commit it shipped. */
 interface Health {
-  readonly build: string;
+  readonly build: string | undefined;
   readonly startedAt: string;
   readonly pack: { readonly id: string; readonly title: string };
 }
@@ -63,6 +71,15 @@ export async function start(opts: {
   readonly trustProxy?: boolean;
   /** The clock the request limits read. For tests. */
   readonly now?: () => number;
+  /**
+   * How a claim on an agent invitation is verified. FOR TESTS: production leaves it unset and
+   * verifies with `interegoCallerVerifier`, configured by CPW_POD_ORIGIN. With neither, the
+   * Connect door answers 503 and the page hides it.
+   */
+  readonly agentVerifier?: VerifySignedCaller;
+  /** How long a mission waits for the connected agent, and how often it looks. For tests. */
+  readonly agentAnswerMs?: number;
+  readonly agentPollMs?: number;
 } = {}): Promise<Running> {
   const host = opts.host ?? '127.0.0.1';
   // Checked before anything listens: a public URL that is wrong is a refusal to start.
@@ -78,13 +95,13 @@ export async function start(opts: {
   const pack = loadPackFile(opts.packPath ?? join(dirname(fileURLToPath(import.meta.url)), '../packs/mandate.json'));
   const sessions = new Map<string, string>();
   const challenges = new Map<string, number>();
-  const limiter = new RateLimiter(opts.now);
+  const limiter = new RateLimiter(opts.now, MAX_RATE_CLIENTS);
   const health: Health = {
-    build: process.env['INTEREGO_BUILD_SHA'] || 'unset',
+    build: process.env['INTEREGO_BUILD_SHA'],
     startedAt: new Date().toISOString(),
     pack: { id: pack.id, title: pack.title },
   };
-  const live: { door?: GuestDoor; world?: CoachedWorld; timer?: ReturnType<typeof setInterval> } = {};
+  const live: { door?: GuestDoor; world?: CoachedWorld; timer?: ReturnType<typeof setInterval>; agents?: AgentLink; verifier?: VerifySignedCaller } = {};
 
   const server = createServer(async (req, res) => {
     try {
@@ -95,11 +112,13 @@ export async function start(opts: {
       // The deploy verifier asks this as soon as the port is bound, so it answers before the
       // world exists, needs no session, and is not counted against anyone's limit.
       if (req.method === 'GET' && pathname === '/health') {
-        send(res, 200, {
-          status: live.world ? 'ok' : 'starting', build: health.build, service: 'coached-world-bridge',
-          startedAt: health.startedAt, pack: health.pack, consultants: live.world?.consultantCount ?? 0,
-          door: live.door ? (live.door.local ? 'local' : 'relay') : null,
-        });
+        send(res, 200, healthBody({
+          service: 'coached-world-bridge', build: health.build, status: live.world ? 'ok' : 'starting',
+          extra: {
+            startedAt: health.startedAt, pack: health.pack, consultants: live.world?.consultantCount ?? 0,
+            door: live.door ? (live.door.local ? 'local' : 'relay') : null,
+          },
+        }));
         return;
       }
       const limit = rateClassFor(req.method, pathname);
@@ -114,11 +133,14 @@ export async function start(opts: {
         }
       }
       if (!live.door || !live.world) { send(res, 503, { error: 'starting' }); return; }
-      await route(req, res, { door: live.door, world: live.world, sessions, challenges, tick: opts.tick === true });
+      await route(req, res, { door: live.door, world: live.world, sessions, challenges, tick: opts.tick === true, agents: live.agents, verifier: live.verifier,
+        clientOf: request => clientKey(request.headers['x-forwarded-for'], request.socket.remoteAddress, trustProxy),
+      });
     } catch (error) {
       if (error instanceof WorldError) send(res, error.status, { error: error.code, detail: error.message });
       else if (error instanceof PlayError) send(res, error.status, { error: error.code });
       else if (error instanceof PlayGrantError) send(res, error.status, { error: error.code });
+      else if (error instanceof AgentConnectionError) send(res, error.status, { error: error.message });
       else send(res, 500, { error: 'internal' });
     }
   });
@@ -144,6 +166,16 @@ export async function start(opts: {
     ...(lrsUrl ? { lrs: new HttpLrs(lrsUrl, process.env['CPW_LRS_AUTHORIZATION']), actorHomePage: process.env['CPW_LRS_ACTOR_HOME'] } : {}),
     ...(launcher ? { launcher } : {}),
   });
+  // Where agents' own pods live is what verifying a claim needs. Without it (and without a
+  // verifier a test passed in) nobody can become a driver, so the Connect door stays shut.
+  const podOrigin = (process.env['CPW_POD_ORIGIN'] ?? '').trim();
+  live.verifier = opts.agentVerifier ?? (podOrigin ? interegoCallerVerifier({ podOrigin }) : undefined);
+  if (live.verifier) {
+    live.agents = new AgentLink({
+      origin, ...(opts.agentAnswerMs !== undefined ? { answerMs: opts.agentAnswerMs } : {}),
+      ...(opts.agentPollMs !== undefined ? { pollMs: opts.agentPollMs } : {}),
+    });
+  }
   live.world = world;
   if (opts.bots !== false) {
     const ms = opts.botMs ?? 4_000;
@@ -151,7 +183,7 @@ export async function start(opts: {
   }
   return {
     url, origin, world,
-    close: () => new Promise(resolve => { if (live.timer) clearInterval(live.timer); server.close(() => resolve()); }),
+    close: () => new Promise(resolve => { if (live.timer) clearInterval(live.timer); live.agents?.dispose(); server.close(() => resolve()); }),
   };
 }
 
@@ -173,6 +205,7 @@ function didHost(origin: string): string {
 
 async function route(req: IncomingMessage, res: ServerResponse, ctx: {
   door: GuestDoor; world: CoachedWorld; sessions: Map<string, string>; challenges: Map<string, number>; tick: boolean;
+  agents: AgentLink | undefined; verifier: VerifySignedCaller | undefined; clientOf: (req: IncomingMessage) => string;
 }): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
   if (req.method === 'GET' && url.pathname === '/favicon.ico') { res.writeHead(204); res.end(); return; }
@@ -180,6 +213,48 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
   if (req.method === 'GET' && file) {
     res.writeHead(200, { 'Content-Type': file.type, 'Cache-Control': 'no-store', 'Content-Security-Policy': csp(ctx.door) });
     res.end(readFileSync(join(PUBLIC, file.file)));
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === AGENT_CLIENT_PATH) {
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(readFileSync(AGENT_CONNECTION_BROWSER_CLIENT));
+    return;
+  }
+  // ── Connect an agent ───────────────────────────────────────────────────────
+  // GET says whether the door is open and, to a signed-in consultant, what theirs is doing.
+  if (req.method === 'GET' && url.pathname === AGENT_SESSION_PATH) {
+    const id = who(req, ctx.sessions);
+    send(res, 200, { enabled: Boolean(ctx.agents), root: AGENT_SESSION_PATH, ...(ctx.agents && id ? { connection: ctx.agents.state(id) } : {}) });
+    return;
+  }
+  if (url.pathname === AGENT_SESSION_PATH || url.pathname.startsWith(`${AGENT_SESSION_PATH}/`)) {
+    const agents = ctx.agents;
+    if (!agents) throw new WorldError(503, 'agent-connect-unconfigured', 'this world can not verify an agent, so none can be connected');
+    if (req.method === 'DELETE' && url.pathname === AGENT_SESSION_PATH) {
+      const id = who(req, ctx.sessions);
+      if (!id) throw new WorldError(401, 'sign-in');
+      send(res, 200, { disconnected: agents.drop(id) });
+      return;
+    }
+    if (agentConnectionRoute(agents.broker, req.method, url.pathname)) {
+      await handleNodeHttp(req, res, agents.broker, {
+        ...(ctx.verifier ? { verifyCaller: ctx.verifier } : {}),
+        // The server queues missions and reads their answers itself. A page may only look,
+        // renew its invitation, and leave.
+        browserOperations: ['status', 'invite', 'disconnect'],
+        // Only a signed-in consultant opens a session, and it becomes theirs: the one they had is closed.
+        authorizeCreate: request => {
+          const header = request.authorization;
+          const id = header?.startsWith('Bearer ') ? ctx.sessions.get(header.slice(7)) : undefined;
+          if (!id) throw new AgentConnectionError('Sign in before connecting an agent.', 401);
+          return id;
+        },
+        created: (reply, owner) => { agents.adopt(String(owner), reply); },
+        client: ctx.clientOf,
+      });
+      return;
+    }
+    send(res, 404, { error: 'not-found' });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/play/guest') {
@@ -265,7 +340,8 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
     return;
   }
   if (req.method === 'POST' && url.pathname === '/missions') {
-    send(res, 200, await ctx.world.exclusive(() => ctx.world.startMission(id)));
+    const opened = await ctx.world.exclusive(() => ctx.world.startMission(id));
+    send(res, 200, await dispatchToAgent(ctx.world, ctx.agents, id) ?? opened);
     return;
   }
   if (req.method === 'POST' && url.pathname === '/missions/intervene') {
@@ -294,6 +370,42 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
   }
   send(res, 404, { error: 'not-found' });
 }
+
+/**
+ * With an agent connected, the mission just opened becomes a turn for it. Returns the mission
+ * as it now reads (the brief is out, the answer is awaited), or undefined when this consultant
+ * has no connected agent and the mission runs simulated, as it always has.
+ *
+ * The answer is not waited for here: the page is answered at once, and the world takes the
+ * work product when it comes. If it does not come in time the turn is withdrawn and the feed
+ * says the mission ran simulated.
+ */
+async function dispatchToAgent(world: CoachedWorld, agents: AgentLink | undefined, consultantId: string): Promise<Record<string, unknown> | undefined> {
+  if (!agents || agents.state(consultantId).state !== 'connected') return undefined;
+  const brief = await world.exclusive(() => world.briefFor(consultantId));
+  if (!brief) return undefined;
+  const turnId = agents.ask(consultantId, brief);
+  if (!turnId) {
+    await world.exclusive(() => { world.workPending(consultantId, brief.registration); world.workFellBack(consultantId, brief.registration, 'it could not be given the brief'); });
+    return world.exclusive(() => world.view(consultantId)['you'] as { mission?: Record<string, unknown> } | undefined).then(you => you?.mission);
+  }
+  const pending = await world.exclusive(() => world.workPending(consultantId, brief.registration));
+  void agents.answer(consultantId, turnId).then(async answer => {
+    const kept = await world.exclusive(() => answer.ok
+      ? world.attachWork(consultantId, brief.registration, answer.text, answer.by)
+      : world.workFellBack(consultantId, brief.registration, FALLBACK_NOTES[answer.reason]));
+    // The mission was settled, or replaced, while the agent was still writing.
+    if (!kept) agents.cancel(consultantId, turnId);
+  }).catch(() => undefined);
+  return pending;
+}
+
+const FALLBACK_NOTES = {
+  timeout: 'no answer in time',
+  failed: 'it reported that it could not do the work',
+  cancelled: 'the connection changed',
+  disconnected: 'it was disconnected',
+} as const;
 
 function who(req: IncomingMessage, sessions: Map<string, string>): string | undefined {
   const header = req.headers.authorization;

@@ -24,6 +24,27 @@ When `CPW_PLAY_SERVICE_PRIVATE_KEY`, `CPW_PLAY_AUDIENCE` and `CPW_IDENTITY_URL` 
 
 The starter occupies one roster seat. The first tier's cap leaves another seat open, and a promotion stops one seat short of the new cap, so a marketplace transfer can land.
 
+## Connect an agent
+
+Out of the box the agents are simulated: `src/settle.ts` draws a cause and a score, and no model is called. A consultant can instead pair **their own AI chat session** and have it be the agent they coach. The work runs on that session's subscription. This world asks for no API key and still calls no model.
+
+It is the same connect-agent method as the I2IDL-X workbench, from the shared `applications/_shared/agent-connection` (`src/agent-link.ts` composes it):
+
+1. A signed-in consultant opens **Connect an agent** on the coach tab. The page gets a one-use invitation and shows its text.
+2. They paste it into an AI chat that has the Interego connector. That session claims the invitation with a signed request and becomes the driver.
+3. From then on, **Send … on a mission** queues the mission as a turn for that session. The brief (`src/agent-work.ts`) is the mission from the pack, the conditions the agent ran into (the same symptoms the consultant is shown, never the cause the pack drew), the agent's remembered lessons, and the interventions deployed for it so far.
+4. What the session answers is the agent's work product. It is cut to 4,000 characters, recorded as one more xAPI statement by that agent under the mission's registration (the pack's `progressed` verb, through the same builder and profile check as every other statement), and shown on the open mission so the consultant diagnoses from what the agent actually wrote.
+
+**Scoring does not change.** The pack still draws the cause, and a matching intervention still lifts the score. Nothing judges the text; there is no model-based grader. The work product is evidence for the human, not an input to settlement.
+
+**If the session does not answer** within two minutes (`AGENT_ANSWER_MS`), the turn is withdrawn, so a late answer is refused instead of landing on a later mission. The mission stays open and settles exactly as a simulated one does, and the feed says so: `<consultant>'s connected agent did not answer (no answer in time). <agent> ran this mission simulated.` The same happens at once if the session reports it could not do the work, is disconnected, or could not be given the brief.
+
+**Bounded.** One connection per consultant: opening another closes the first. At most 64 connections in the world, 30 minutes each, one turn at a time, 16,000 bytes an answer, all in memory. The page may only read its connection's state, renew the invitation and disconnect; only the server queues a mission. Opening a connection counts against the `door` limit, the page's polling against `read`, and the paired session's signed requests against a `driver` limit of 600 a minute per address (every chat session behind one relay shares that relay's address).
+
+**Verifying the claim** (`src/agent-verifier.ts`) is the workbench's rule, from the same parts: Foxxi's `recoverSignedRequest` reads the signed envelope, and the shared `makeDelegatedCallerVerifier` decides. A request an agent signed with its own key is that agent. A request the relay signed for an agent is believed only if the agent's delegation, read from the agent's own pod, verifies cryptographically and the signer is the key that anchors it. The pod is derived from the agent id on `CPW_POD_ORIGIN` and never taken from the request. That origin is the only setting. **Unset, the Connect door answers `503 agent-connect-unconfigured`, `GET /agent-sessions` says `enabled: false`, the page hides the panel, and agents are simulated as before.**
+
+Routes: `GET /agent-sessions` (is it on, and what is mine doing), `DELETE /agent-sessions` (close mine), `POST /agent-sessions/create | browser | driver` (the shared protocol), `GET /agent-connection.js` (the shared browser client, served from here so the page keeps `script-src 'self'`).
+
 `CPW_PACK` is not read. Pass a pack by starting from code (`start({ packPath })`), or replace `packs/mandate.json` only as data. The engine loads whatever file it is given.
 
 ## Deploy it
@@ -39,6 +60,7 @@ The starter occupies one roster seat. The first tier's cap leaves another seat o
 | `CPW_PLAY_SERVICE_PRIVATE_KEY`, `CPW_IDENTITY_URL` | Together they move guests from the in-process door to the real one (below). `CPW_RELAY_URL` names the relay if it is not the production one. Leave `CPW_PLAY_AUDIENCE` unset: the audience is the public URL, and a different value stops the process at start. |
 | `CPW_LRS_URL`, `CPW_LRS_AUTHORIZATION`, `CPW_LRS_ACTOR_HOME` | The course record the tier gate reads. |
 | `CPW_FOXXI_LAUNCH_URL`, `CPW_FOXXI_LAUNCH_KEY` | Turn on `POST /gate/launch`. |
+| `CPW_POD_ORIGIN` | The https origin agents' own pods live on. Turns on **Connect an agent** (above): it is where a claiming agent's delegation is read from. Not a secret. Unset, the door answers 503 and the page hides it. A value that is not an https origin stops the process at start. |
 | `INTEREGO_BUILD_SHA` | Not set by hand. The image bakes it from the `GIT_SHA` build argument. |
 
 **One container, and the world is in it.** Territories, consultants, sessions and the statement log are memory in this process. Two containers would be two worlds, so the service runs one replica with no overlap on a deploy (`numReplicas` 1 set explicitly, `overlapSeconds` 0, `drainingSeconds` unset). Nothing is written to disk and no volume is needed.
@@ -53,7 +75,7 @@ The starter occupies one roster seat. The first tier's cap leaves another seat o
   "consultants": 0, "door": "local" }
 ```
 
-**Request limits**, per client, in one-minute windows (`src/rate-limit.ts`): 30 for coming in (`POST /session/challenge`, `/play/grant`, `/play/provisional`, `/session`), 120 for writes, 240 for reads. Past a limit the answer is `429` with `Retry-After`. A client is an address: IPv4 whole, IPv6 by its /56. When a public URL is set the process takes itself to be behind a proxy and reads the last `X-Forwarded-For` entry, the one the proxy wrote; when none is set it uses the socket's peer and ignores the header. So set the public URL only where a proxy really is in front. Several people behind one address share that address's limits.
+**Request limits**, per client, in one-minute windows (the classes are `src/rate-limit.ts`; the limiter is the shared `applications/_shared/http-guard`): 30 for coming in (`POST /session/challenge`, `/play/grant`, `/play/provisional`, `/session`, and opening an agent connection), 120 for writes, 240 for reads, 600 for a paired agent's signed requests. Past a limit the answer is `429` with `Retry-After`. A client is an address: IPv4 whole, IPv6 by its /56. When a public URL is set the process takes itself to be behind a proxy and reads the last `X-Forwarded-For` entry, the one the proxy wrote; when none is set it uses the socket's peer and ignores the header. So set the public URL only where a proxy really is in front. Several people behind one address share that address's limits.
 
 **What the process keeps** (`src/bounded.ts`): the newest 2,000 published graphs, the newest 2,000 statements of each origin, 100 lessons and 500 scores per agent, 5,000 consultants (then `world-full`), and 1,000 unexpired guests at the in-process door. `GET /graphs` answers `retained` and `dropped` beside the list. A descriptor's `iep:supersedes` may name one that has been dropped; it is still that descriptor's IRI.
 
@@ -82,10 +104,11 @@ From that merge on, auto-deploy ships it whenever a file its image copies change
 | Tier gate | Foxxi `POST /agent/cmi5/launch` and the LMS `satisfied` statement (`cmi5-lms.ts`, verb `https://w3id.org/xapi/adl/verbs/satisfied`) | `src/course-launch.ts` posts the consultant's own DID as `agent_id`. `refreshGate` promotes when that DID's account, home page included, has a cmi5-category `satisfied` for the course IRI. This world does not edit `applications/practice-evidence` and does not write `passed` or `completed`. |
 | Marketplace | A control change on the agent descriptor, price from the agent's own score history | `transfer` in `src/world.ts` |
 | Leaderboard, season, feed | Derived from the same world index the graphs record | `view`. The clock is `season` in the pack. |
+| A real agent | The shared agent-connection broker (the workbench's connect-agent method) | `src/agent-link.ts`, `src/agent-work.ts`, `src/agent-verifier.ts`. The consultant's own chat session is the driver; its answer is a `progressed` statement by the agent. Settlement still reads only the pack. |
 | Bot consultants | The same `settle` and the same statement builder | `tick`. They are fillers in this process, not pod identities. |
 | Discovery | `iep:Affordance` | `affordances.ts`, `GET /affordances` (JSON or Turtle via `affordancesManifestTurtle`) |
 
-The engine files (`src/settle.ts`, `src/statements.ts`, `src/profile.ts`, `src/world.ts`, `src/graphs.ts`, `src/server.ts`, `src/bounded.ts`, `src/rate-limit.ts`, `src/public-url.ts`) do not name Mandate or a faction. `tests/settle-and-profile.test.ts` reads them to keep it that way. `packs/orchard.json` is the other pack.
+The engine files (`src/settle.ts`, `src/statements.ts`, `src/profile.ts`, `src/world.ts`, `src/graphs.ts`, `src/server.ts`, `src/bounded.ts`, `src/rate-limit.ts`, `src/agent-work.ts`, `src/agent-link.ts`, `src/agent-verifier.ts`) do not name Mandate or a faction. The request limiter, the table ceiling helper, the public-URL check and the `/health` body are no longer this world's own: they are `applications/_shared/http-guard`, for any bridge. `tests/settle-and-profile.test.ts` reads them to keep it that way. `packs/orchard.json` is the other pack.
 
 ## What is genuinely not here
 
@@ -94,6 +117,8 @@ The engine files (`src/settle.ts`, `src/statements.ts`, `src/profile.ts`, `src/w
 - **The course is not launched from here.** Tier `courseIri` values in the Mandate pack are placeholders (`https://example.org/courses/coached-world/...`). Promotion watches the LRS for statements the course sends. Foxxi's player (`cmi5-player.ts`, PRs #866 / #870 / #872) and `GET /cmi5/reviewed` (PR #883) are how a course gets `passed` and `completed` after review. This service must not grow its own copy.
 - **No live LRS in the tests.** `HttpLrs` is the reader. Tests record external statements in process.
 - **Revocable registry** (`applications/foxxi-content-intelligence/src/revocable-registry.ts`) is the right home for a later "this transfer can be undone" grant. A transfer here is a superseding descriptor, not a revocable credential.
+- **Nothing judges a connected agent's work.** The text is recorded and shown; the pack's rules settle the mission. A scorer that reads the work is a later decision, and it would have to be a declared one.
+- **A connected agent's reach is unproven on the live relay.** The driver acts on this world's `/agent-sessions/driver` through the relay's `act`. That the production relay will post to this origin, and that agents' pods are on the configured origin, has been exercised here only with a scripted driver and a stand-in verifier.
 - **PGSL** is not on the write path. Descriptors are the record, which matches the live descriptor-primary path. A lattice projection can sit beside it later without changing settlement.
 - **I2IDL-X** already has its own guest door (`i2idlx/app/src/learning-guest.js`). This page does not go through the learner workbench. Same proofs, different application audience.
 
