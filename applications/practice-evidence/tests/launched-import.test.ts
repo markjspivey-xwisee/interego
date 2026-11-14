@@ -212,8 +212,11 @@ describe('a registration read as a conversation', () => {
 const lrs = {
   answer: (): { status: number; body: unknown } => ({ status: 200, body: { statements: [launchedBy('Normal'), ...call()] } }),
   seen: [] as { url: string; body: Out }[],
+  /** When set, the response itself, for an answer that is not a JSON document of ordinary size. */
+  raw: undefined as (() => Response) | undefined,
   fetchFn: (async (u: RequestInfo | URL, init?: RequestInit) => {
     lrs.seen.push({ url: String(u), body: JSON.parse(String(init?.body)) as Out });
+    if (lrs.raw) return lrs.raw();
     const a = lrs.answer();
     return new Response(JSON.stringify(a.body), { status: a.status, headers: { 'Content-Type': 'application/json' } });
   }) as typeof fetch,
@@ -490,7 +493,14 @@ describe('pev.import_launched_attempt', () => {
     const endedA = stmt(VERB_TERMINATED, 60, { categories: [CMI5] }, { session: A });
     const openB = launchedBy('Normal', { session: B });
     // The first session is still open: the statements can still be sent there.
-    expect(await stays([...held, openB])).toEqual(['the session the statements were fixed for has not ended: they can still be sent in it']);
+    const notEnded = ['the LRS holds no cmi5 terminated for this unit and this learner in the session the statements were fixed for: they can still be sent in it'];
+    expect(await stays([...held, openB])).toEqual(notEnded);
+    // An ending is evidence here, so it has to be cmi5's own, for this unit, by this learner. None of these is.
+    expect(await stays([...held, openB, stmt(VERB_TERMINATED, 60, {}, { session: A })])).toEqual(notEnded);
+    expect(await stays([...held, openB, stmt(VERB_TERMINATED, 60, { categories: [CMI5] }, { session: A, actor: didOf(W.ben.address) })])).toEqual(notEnded);
+    expect(await stays([...held, openB, stmt(VERB_TERMINATED, 60, { categories: [CMI5], object: { objectType: 'Activity', id: `${LMS}/courses/calls/au/2` } }, { session: A })])).toEqual(notEnded);
+    // Nor is an abandoned, even cmi5's own: the read does not show that the LMS stored it.
+    expect(await stays([...held, openB, stmt('https://w3id.org/xapi/adl/verbs/abandoned', 60, { categories: [CMI5] }, { session: A })])).toEqual(notEnded);
     // It ended, but one of the statements handed out is in the LRS: the result was sent.
     const sent = { ...(fixed.statements[0] as Out) };
     expect(await stays([...held, sent, endedA, openB])).toEqual([
@@ -505,6 +515,23 @@ describe('pev.import_launched_attempt', () => {
     // A limit or an order leaves nothing out (a read cut short comes back with `more`, which is refused).
     lrs.answer = () => ({ status: 200, body: { statements: [...held, openB] } });
     expect(ok(await ask(B, readOf(REG, { limit: 200, ascending: true })))['notFixedAgain']).toHaveLength(1);
+    // An answer longer than this bridge reads is cut off as it arrives, counted in bytes, and fixes nothing.
+    let pulled = 0;
+    lrs.raw = () => new Response(new ReadableStream<Uint8Array>({
+      pull(c) { pulled++; c.enqueue(new Uint8Array(64 * 1024).fill(0x20)); },
+    }, { highWaterMark: 0 }), { status: 200 });
+    try {
+      refused(await ask(B), 502, 'lrs-answer-too-large');
+      // 2,000,000 bytes is passed in the 31st chunk of 65,536.
+      expect(pulled).toBeLessThanOrEqual(33);
+    } finally { lrs.raw = undefined; }
+    // One handed out was stored and then voided: the read leaves it out and shows the voiding statement. It was sent.
+    const voiding = (o: Opt = {}): Out => stmt('http://adlnet.gov/expapi/verbs/voided', 61, { object: { objectType: 'StatementRef', id: String((fixed.statements[0] as Out)['id']).toUpperCase() } }, o);
+    expect(await stays([...held, endedA, openB, voiding()])).toEqual(['a statement that was handed out was stored in the LRS and then voided: the result was sent']);
+    // A voiding statement outside the registration says the same, and is itself not a read of this registration.
+    expect(await stays([...held, endedA, openB, voiding({ registration: '11111111-1111-4111-8111-111111111111' })])).toEqual([
+      'a statement that was handed out was stored in the LRS and then voided: the result was sent', 'the LRS returned statements of another registration',
+    ]);
     // It ended with nothing sent, but the new session is not one the LMS opened.
     expect((await stays([...held, endedA]) as string[])[0]).toContain('holds no launched statement from the LMS for this unit and this session');
     expect(pod.store.size).toBe(size);
