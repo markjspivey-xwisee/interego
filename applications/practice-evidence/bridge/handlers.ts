@@ -85,10 +85,10 @@ import {
   scoredWithoutStakes, withStakesOf, STAKES_WITHHELD, type HashMask, type HashScope, type QuotedTurn,
 } from '../src/stakes.js';
 import {
-  buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
+  buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, CMI5_SESSION_EXT, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
   type ProjectionFormat,
 } from '../src/projections.js';
-import { readLaunchedCall, sendingSessionProblems, type LaunchVocabulary } from '../src/launched-import.js';
+import { readLaunchedCall, refixProblems, sendingSessionProblems, type LaunchVocabulary } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
   readCache, readChain, readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship,
@@ -2112,6 +2112,9 @@ const REGISTRATION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a
 /** Names what stood in for a judge prompt when the scores were the unit's own, read from its statements. */
 export const LAUNCHED_JUDGMENT_TEMPLATE_HASH = sha256('practice-evidence: the scores an assignable unit wrote for its own conversation, read from its statements');
 
+/** The keys a read of a whole registration may carry. Every other xAPI statement filter leaves statements out. */
+const LRS_READ_WHOLE_KEYS: ReadonlySet<string> = new Set(['registration', 'limit', 'ascending']);
+
 /** The learner's own signed read of one registration, as the LRS's signed-read route takes it. */
 function lrsReadOf(args: Record<string, unknown>, registration: string): { readonly _signed_payload: string; readonly _signature: string } {
   const r = args['lrs_read'];
@@ -2124,6 +2127,15 @@ function lrsReadOf(args: Record<string, unknown>, registration: string): { reado
   try { query = (JSON.parse(sp) as Record<string, unknown>)['query']; } catch { query = undefined; }
   if (!isObj(query) || query['registration'] !== registration || query['cursor'] !== undefined) {
     throw decline(400, 'lrs_read must ask for this registration, from its start: its signed payload needs query.registration equal to the registration and no cursor.', 'lrs-read-other-registration');
+  }
+  // What the read does not return is taken as not being there: no result sent yet, no statement of
+  // another session. So the read has to be of the whole registration. A filter (a time window, a
+  // verb, an activity, one statement) would leave statements out and the absence would mean nothing.
+  // `limit` and `ascending` narrow nothing: a read cut short by a limit comes back with `more`, which
+  // is refused where the answer is read.
+  const narrowing = Object.keys(query).filter((k) => !LRS_READ_WHOLE_KEYS.has(k)).sort();
+  if (narrowing.length > 0) {
+    throw decline(400, `lrs_read must ask for the whole registration: its query may carry registration, limit and ascending only, and this one also carries ${narrowing.join(', ')}.`, 'lrs-read-narrowed', undefined, { narrowing });
   }
   return { _signed_payload: sp, _signature: sig };
 }
@@ -3189,6 +3201,11 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
  * attempt: every later ask, in whatever session, gets the same documents back, and a review
  * changed afterwards hands out nothing new. This bridge sends nothing to an LRS and does not
  * learn whether the unit sent them.
+ *
+ * One thing can leave them unsendable: the session they were fixed for ends before the unit sends
+ * them. Then the learner, asking for a later session with their own signed read of the LRS, has the
+ * same result fixed again for that session, provided the LRS shows the first session ended with
+ * none of them in it. Only the session changes; the ids, the verbs, the score and the time do not.
  */
 async function launchedStatementsAct(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
@@ -3249,11 +3266,46 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
       send: 'The assignable unit sends these, in this order, inside the session they name, with its own cmi5 credential. If the LRS answers that a statement with one of these ids already exists, read that statement back and compare it with the document here: only an equal one is this result recorded; a different one is another result, and nothing more may be sent for the registration.',
     };
     if (l.handedOut) {
+      // The session they were fixed for may have ended before the unit sent them. The learner, asking
+      // for another session with their own read of the LRS, has the same result fixed for that one.
+      let notFixedAgain: string[] | undefined;
+      if (asLearner && l.handedOut.sessionId !== sessionId && args['lrs_read'] !== undefined) {
+        if (!li) throw decline(501, 'This bridge is not set up to read an LRS, so it cannot tell whether the session is one to send in.', 'launch-import-not-configured');
+        if (li.endpoint !== l.endpoint) throw decline(409, 'This attempt was taken from another LRS than the one this bridge reads.', 'another-lrs');
+        const held = l.handedOut;
+        const now = await statementsOfRegistration(ctx, li, lrsReadOf(args, l.registration));
+        notFixedAgain = refixProblems(now, l, { sessionId: held.sessionId, statementIds: held.statements.map((st) => String(st['id'])) }, sessionId);
+        if (notFixedAgain.length === 0) {
+          notReplayed(h.body, s);
+          const statements = held.statements.map((st) => {
+            const context = isObj(st['context']) ? st['context'] : {};
+            const extensions = isObj(context['extensions']) ? context['extensions'] : {};
+            return { ...st, context: { ...context, extensions: { ...extensions, [CMI5_SESSION_EXT]: sessionId } } };
+          });
+          const problems = statements.flatMap((st) => launchedStatementProblems(st, l, { sessionId }));
+          if (problems.length > 0) {
+            throw decline(500, 'This bridge built a statement that fails its own checks; nothing was recorded.', 'statement-shape', undefined, { problems });
+          }
+          const at = iso(ctx);
+          const body: AttemptBody = {
+            ...h.body, at,
+            lmsLaunch: { ...l, handedOut: { at, sessionId, to: s.signerDid, statements, sessionVouchedBy: 'lrs-read', fixedBefore: [...(held.fixedBefore ?? []), { at: held.at, sessionId: held.sessionId }] } },
+            acts: [...h.body.acts, actOf(s, 'launchedStatements')],
+          };
+          const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
+          return {
+            attemptIri: iri, statements, handedOutAt: at, sessionId, again: false, fixedAgain: true, earlierSession: held.sessionId,
+            usableInSession: true, usableOnlyIn: sessionId, forUnit, lossy: LOSSY_LAUNCHED,
+            descriptorUrl: w.descriptorUrl, practiceEvidence: true, recorded: true,
+          };
+        }
+      }
       return {
         attemptIri: iri, statements: l.handedOut.statements, handedOutAt: l.handedOut.at, sessionId: l.handedOut.sessionId, again: true,
         // A copy for checking what was sent, unless it is asked for the very session it was fixed for.
         usableInSession: l.handedOut.sessionId === sessionId, usableOnlyIn: l.handedOut.sessionId,
-        ...(l.handedOut.sessionId !== sessionId ? { sessionNote: 'These were fixed when they were first handed out, for the session named then; they are not rebuilt for another session. In any other session they are for comparing with what the LRS holds, not for sending.' } : {}),
+        ...(l.handedOut.sessionId !== sessionId ? { sessionNote: 'These were fixed when they were first handed out, for the session named then; they are not rebuilt for another session. In any other session they are for comparing with what the LRS holds, not for sending. If that session ended before they were sent, the learner asks again for the new session with lrs_read, their own signed read of the registration.' } : {}),
+        ...(notFixedAgain !== undefined ? { notFixedAgain } : {}),
         forUnit, lossy: LOSSY_LAUNCHED, practiceEvidence: true, recorded: false,
       };
     }
