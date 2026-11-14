@@ -4,6 +4,19 @@
 
 A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. The `cpw:` vocabulary is published at `docs/applications/coached-world/cpw.ttl`, the same bytes as `applications/coached-world/ontology/cpw.ttl`. Named-graph IRIs go through `turtleIriRef`. The bridge entry installs the shared process safety net, so a rejection nothing awaited is logged and the process keeps serving. See `applications/coached-world/README.md`.
 
+## 2026-11-14 — Foxxi: TLA-X names the reusable launch link
+
+The TLA-X decoration ties each component of ADL's Total Learning Architecture to
+a control in a Foxxi deployment. Its learning event manager named one way to
+launch: a single-use cmi5 launch. It now also names the reusable personal launch
+link (`POST /agent/cmi5/go`), as a control in the catalog and as a capability in
+the proposals.
+
+The decoration is published, and CI holds this source to the live publication,
+so the two graphs were republished with this change: the catalog (Asserted) and
+the proposals (Hypothetical), each superseding the version before it. The other
+four decorations are unchanged and were not republished.
+
 ## 2026-11-14 — Practice Evidence: what the LMS issuer binding rests on
 
 The README now says what an operator must know before setting
