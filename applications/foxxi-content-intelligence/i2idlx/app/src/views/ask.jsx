@@ -10,6 +10,7 @@ import { MiniMarkdown } from "../text.jsx";
 import { useStored } from "../util.js";
 import { AIClientTaskLinks } from "../connection.jsx";
 import { useCourseContext } from "../course-context.jsx";
+import { useAskVoice } from "../voice.jsx";
 
 const { useState, useRef, useEffect, useCallback } = React;
 
@@ -227,6 +228,8 @@ export function Ask({ engine }) {
   const course = useCourseContext(engine), send = course.send, working = busy || course.loading;
   const log = useRef(null);
   const box = useRef(null);
+  // A spoken question fills the box and is asked; when it cannot be asked now it stays in the box.
+  const voice = useAskVoice({ turns, working, onInterim: setDraft, onQuestion: (text) => { setDraft(text); if (!working && !course.blocked) send(text); } });
   useEffect(() => { if (log.current) log.current.scrollTop = log.current.scrollHeight; }, [turns]);
   useEffect(() => { if (box.current) box.current.focus(); }, []);
   if (!available) {
@@ -273,6 +276,8 @@ export function Ask({ engine }) {
         <div className="box">
           <textarea ref={box} rows={1} value={draft} disabled={course.loading} placeholder={course.selected ? "Ask about " + course.selected.title + "…" : "Ask about any term, compare terms, or plan a course glossary…"} onChange={(e) => setDraft(e.target.value)}
             onKeyDown={(e) => { if (e.key === "Enter" && !e.shiftKey) { e.preventDefault(); send(draft); } }} aria-label="Ask" />
+          {voice.supported.input ? <button className={"btn" + (voice.listening ? " primary" : "")} data-testid="ask-voice-mic" onClick={voice.toggleListening} disabled={course.loading} aria-pressed={voice.listening}
+            aria-label={voice.listening ? "Stop listening" : "Speak your question"} title={voice.listening ? "Stop listening" : "Speak your question"}><Icon name="mic" /></button> : null}
           {working ? <button className="btn" onClick={course.stop}><Icon name="stop" />Stop</button> : <button className="btn primary" onClick={() => send(draft)} disabled={!draft.trim() || course.blocked}><Icon name="arrowRight" />Ask</button>}
         </div>
         <div className="row wrap tiny muted">
@@ -280,6 +285,12 @@ export function Ask({ engine }) {
           <span className="grow">Uses your connected model account. Answers can be wrong; check the cited entries.</span>
           {turns.length ? <button className="btn ghost sm" onClick={() => { course.stop(); reset(); }}>New conversation</button> : null}
         </div>
+        {voice.supported.output ? <div className="row wrap tiny">
+          <button className="btn ghost sm" data-testid="ask-voice-read" aria-pressed={voice.reading} onClick={voice.toggleReading}><Icon name="speaker" size={12} />Read aloud: {voice.reading ? "on" : "off"}</button>
+          {voice.state === "speaking" ? <button className="btn ghost sm" data-testid="ask-voice-stop" onClick={voice.stopReading}><Icon name="stop" size={12} />Stop reading</button> : null}
+        </div> : null}
+        {voice.note ? <p className="tiny" role="status" data-testid="ask-voice-status">{voice.note}</p> : null}
+        {voice.supported.input ? <p className="tiny muted" data-testid="ask-voice-notice">{voice.notice}</p> : null}
       </div>
     </div>
   );

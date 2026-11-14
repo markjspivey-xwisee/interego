@@ -16,6 +16,7 @@ import {
   AGENT_CONNECTION_BROWSER_CLIENT, AgentConnectionError, agentConnectionRoute, handleNodeHttp,
   type VerifySignedCaller,
 } from '../../_shared/agent-connection/index.js';
+import { VOICE_BROWSER_MODULE } from '../../_shared/voice/index.js';
 import { WorldError } from './errors.js';
 import { RateLimiter, bound, clientKey, healthBody, publicOrigin } from '../../_shared/http-guard/index.js';
 import { MAX_CHALLENGES, MAX_RATE_CLIENTS, MAX_SESSIONS } from './bounded.js';
@@ -38,6 +39,8 @@ const FILES: Record<string, { file: string; type: string }> = {
 };
 /** The shared, framework-free browser client, served from here so the page's `script-src 'self'` holds. */
 const AGENT_CLIENT_PATH = '/agent-connection.js';
+/** The shared voice module (speech in and out on the browser's own objects), served the same way. */
+const VOICE_MODULE_PATH = '/voice.js';
 
 export interface Running {
   /** Where this process listens. */
@@ -218,6 +221,11 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
   if (req.method === 'GET' && url.pathname === AGENT_CLIENT_PATH) {
     res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
     res.end(readFileSync(AGENT_CONNECTION_BROWSER_CLIENT));
+    return;
+  }
+  if (req.method === 'GET' && url.pathname === VOICE_MODULE_PATH) {
+    res.writeHead(200, { 'Content-Type': 'text/javascript; charset=utf-8', 'Cache-Control': 'no-store' });
+    res.end(readFileSync(VOICE_BROWSER_MODULE));
     return;
   }
   // ── Connect an agent ───────────────────────────────────────────────────────
