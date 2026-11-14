@@ -39,7 +39,7 @@ export class StatementLog {
       && entry.statement.actor.account.homePage === actor.homePage
       && entry.statement.object.id === objectId
       && entry.statement.verb.id === verbId
-      && categoryIds(entry.statement).includes(CMI5_CATEGORY));
+      && categoryIds(entry.statement).some(id => id === CMI5_CATEGORY));
   }
 }
 
