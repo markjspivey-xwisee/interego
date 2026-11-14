@@ -22,6 +22,20 @@ A guest ("provisional owner") has been one per application: the key lives in the
 - **Applications.** The coached world can offer the door beside its own (`CPW_GENERAL_GUEST=1`). Foxxi's bridge can sign door grants, but its learner workbench does not use the door yet, because it re-checks a guest with identity while the session lives and an application cannot re-check a general guest.
 
 A general guest is linkable across applications by design: each one learns the same DID, pod and key thumbprint (identity does not tell one application which others the guest has used). Linking a guest to a registered account, a cross-device link code and a recovery code are not in this change. The rollout order (gate and relay, then identity, then the setting) and what each older service does with the new token are in `deploy/identity/PROVISIONAL-PLAY.md`, "General guest".
+## 2026-11-14 — Coached world: the tier gate takes a satisfied only from the LMS
+
+The tier gate promotes a consultant when the LRS holds a cmi5 `satisfied` for
+the tier's course and that consultant. It matched the verb, the course, the
+actor and the cmi5 category. All four are things a learner writing a statement
+about themselves can supply, on an LRS that lets them.
+
+`CPW_LRS_LMS_AUTHORITY` names the authority account the LMS's own statements
+carry on the LRS. The gate now counts a `satisfied` read from an LRS only under
+that authority. A world that reads an LRS and has not been told the authority
+answers `lms-authority-unset`, asks the LRS nothing and promotes nobody.
+
+A world with no LRS configured is unchanged.
+
 ## 2026-11-14 — Foxxi: the LMS's own statements carry an authority nobody can send
 
 An assignable unit's token was stopped from writing the LMS's verbs earlier

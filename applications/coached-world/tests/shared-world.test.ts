@@ -19,7 +19,7 @@ import { generalGuestUserId, playKeyThumbprint, publicPlayKey } from '../../../d
 import { RETURN_PATH, WORLD, agent, cookieOf, identity, newKey } from './general-guest-identity.js';
 import { CoachedWorld } from '../src/world.js';
 import { FoxxiCourseLauncher } from '../src/course-launch.js';
-import { CMI5_CATEGORY, HttpLrs, SATISFIED, type LrsQuery, type LrsReader } from '../src/lrs.js';
+import { CMI5_CATEGORY, HttpLrs, parseLmsAuthority, SATISFIED, type LrsQuery, type LrsReader } from '../src/lrs.js';
 import { loadPackFile } from '../src/pack.js';
 import type { XapiStatement } from '../src/statements.js';
 
@@ -188,7 +188,7 @@ describe('a shared coached world', () => {
     const recording: LrsReader = { async fetchActor(name, homePage, query) { recordingSeen = { name, homePage, query }; return []; } };
     const world = await CoachedWorld.create({
       pack: { ...loadPackFile(orchardPath), influence: 400 }, base: 'http://world.example/', didHost: 'world.example', seed: 2,
-      lrs: recording, actorHomePage: 'https://foxxi.example',
+      lrs: recording, actorHomePage: 'https://foxxi.example', lmsAuthority: { homePage: 'https://foxxi.example', name: 'the-lms' },
     });
     const consultant = world.admit({ ownerDid: 'did:web:example:users:u-try-play-abc', userId: 'u-try-play-abc', podUrl: 'http://world.example/pods/u/', agentDid: 'did:web:example:agents:mcp' });
     await world.joinFaction(consultant.id, 'north');
@@ -208,7 +208,9 @@ describe('a shared coached world', () => {
     const course = 'https://example.org/courses/orchard-crew';
     const home = 'https://foxxi.example';
     const actor = 'did:web:example:users:u-try-play-page';
+    const LMS = { homePage: 'https://lrs.example', name: 'the-lms' };
     const satisfied: XapiStatement = {
+      authority: { objectType: 'Agent', account: LMS },
       id: 'http://lrs.example/statements/satisfied',
       version: '2.0.0', timestamp: '2026-11-14T00:00:00.000Z',
       actor: { objectType: 'Agent', account: { homePage: home, name: actor } },
@@ -226,7 +228,7 @@ describe('a shared coached world', () => {
     const lrs = new HttpLrs('https://lrs.example/xapi/statements', undefined, fetchImpl);
     const world = await CoachedWorld.create({
       pack: { ...loadPackFile(orchardPath), influence: 400 }, base: 'http://world.example/', didHost: 'world.example', seed: 4,
-      lrs, actorHomePage: home,
+      lrs, actorHomePage: home, lmsAuthority: LMS,
     });
     const consultant = world.admit({ ownerDid: actor, userId: 'u-try-play-page', podUrl: 'http://world.example/pods/p/', agentDid: 'did:web:example:agents:mcp-page' });
     await world.joinFaction(consultant.id, 'north');
@@ -241,7 +243,7 @@ describe('a shared coached world', () => {
     const down = new HttpLrs('https://lrs.example/xapi/statements', undefined, (async () => new Response('down', { status: 503 })) as typeof fetch);
     const stuck = await CoachedWorld.create({
       pack: { ...loadPackFile(orchardPath), influence: 400 }, base: 'http://world.example/', didHost: 'world.example', seed: 5,
-      lrs: down, actorHomePage: home,
+      lrs: down, actorHomePage: home, lmsAuthority: LMS,
     });
     const other = stuck.admit({ ownerDid: actor, userId: 'u-try-play-page', podUrl: 'http://world.example/pods/p/', agentDid: 'did:web:example:agents:mcp-page' });
     await stuck.joinFaction(other.id, 'north');
@@ -253,6 +255,53 @@ describe('a shared coached world', () => {
     const refused = await stuck.refreshGate(other.id);
     expect(refused['lrs']).toBe('unreachable');
     expect(refused['promoted']).toBe(false);
+  });
+
+  it('promotes on what an LRS holds only where the LMS itself stored the satisfied', async () => {
+    const course = 'https://example.org/courses/orchard-crew';
+    const home = 'https://foxxi.example';
+    const actor = 'did:web:example:users:u-try-play-stamp';
+    const LMS = { homePage: 'https://lrs.example', name: 'the-lms' };
+    const satisfied = (authority?: { homePage: string; name: string }): XapiStatement => ({
+      ...(authority ? { authority: { objectType: 'Agent', account: authority } } : {}),
+      id: `http://lrs.example/statements/satisfied-${authority ? `${authority.name}-${encodeURIComponent(authority.homePage)}` : 'unmarked'}`,
+      version: '2.0.0', timestamp: '2026-11-14T00:00:00.000Z',
+      actor: { objectType: 'Agent', account: { homePage: home, name: actor } },
+      verb: { id: SATISFIED, display: { en: 'satisfied' } },
+      object: { objectType: 'Activity', id: course, definition: { type: 'https://w3id.org/xapi/cmi5/activitytype/course' } },
+      context: { registration: '00000000-0000-4000-8000-00000000000a', contextActivities: { category: [{ id: CMI5_CATEGORY }] } },
+    });
+    let asked = 0;
+    const eligible = async (held: XapiStatement[], lmsAuthority: { homePage: string; name: string } | undefined, seed: number) => {
+      const reader: LrsReader = { async fetchActor() { asked++; return held; } };
+      const world = await CoachedWorld.create({
+        pack: { ...loadPackFile(orchardPath), influence: 400 }, base: 'http://world.example/', didHost: 'world.example', seed,
+        lrs: reader, actorHomePage: home, ...(lmsAuthority ? { lmsAuthority } : {}),
+      });
+      const consultant = world.admit({ ownerDid: actor, userId: 'u-try-play-stamp', podUrl: 'http://world.example/pods/s/', agentDid: 'did:web:example:agents:mcp-stamp' });
+      await world.joinFaction(consultant.id, 'north');
+      for (let i = 0; i < 12 && (world.view(consultant.id)['you'] as { gate: string }).gate !== 'eligible'; i++) {
+        await world.startMission(consultant.id);
+        await world.intervene(consultant.id, 'timing', 'calendar');
+      }
+      return world.refreshGate(consultant.id);
+    };
+    // Everything a learner writing about themselves can produce: the verb, the course, their own
+    // actor and the cmi5 category. Stored by anyone but the LMS, it promotes nobody.
+    for (const held of [[satisfied()], [satisfied({ homePage: 'https://lrs.example', name: 'the-lrs' })], [satisfied({ homePage: 'https://elsewhere.example', name: 'the-lms' })]]) {
+      const r = await eligible(held, LMS, 6);
+      expect([r['lrs'], r['satisfied'], r['promoted']]).toEqual(['ok', false, false]);
+    }
+    // The LMS's own does.
+    expect((await eligible([satisfied(LMS)], LMS, 6))['promoted']).toBe(true);
+    // A world reading an LRS without being told the LMS's authority promotes nobody, and does not ask.
+    const before = asked;
+    const untold = await eligible([satisfied(LMS)], undefined, 6);
+    expect([untold['lrs'], untold['promoted']]).toEqual(['lms-authority-unset', false]);
+    expect(asked).toBe(before);
+
+    expect(parseLmsAuthority('{"homePage":"https://lrs.example","name":"the-lms"}')).toEqual(LMS);
+    for (const raw of [undefined, '', 'the-lms', '[]', '{"homePage":"https://lrs.example"}', '{"homePage":"","name":"the-lms"}']) expect(parseLmsAuthority(raw)).toBeUndefined();
   });
 
   it('launches the tier course through Foxxi for this consultant and not a second guest', async () => {
