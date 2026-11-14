@@ -79,11 +79,7 @@ Routes: `GET /agent-sessions` (is it on, and what is mine doing), `DELETE /agent
 
 **What the process keeps** (`src/bounded.ts`): the newest 2,000 published graphs, the newest 2,000 statements of each origin, 100 lessons and 500 scores per agent, 5,000 consultants (then `world-full`), and 1,000 unexpired guests at the in-process door. `GET /graphs` answers `retained` and `dropped` beside the list. A descriptor's `iep:supersedes` may name one that has been dropped; it is still that descriptor's IRI.
 
-**Not a Railway service yet.** `tools/railway-services.mjs` has no `coached-world-bridge` row, on purpose: that table is compared with the live project, and a row for a service that does not exist reads `MISSING` and fails the daily fleet audit. So merging this deploys nothing. To put it up: create the service `coached-world-bridge` from the image, set the settings above and the three singleton settings, give it a domain, then add the row beside `pev-bridge`:
-
-```js
-'coached-world-bridge': { repo: 'interego-coached-world-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
-```
+**The Railway service.** `coached-world-bridge` in the fleet project, created on 2026-11-14 from this image, at `https://coached-world-bridge-production.up.railway.app`. It has a row in `tools/railway-services.mjs`, so a merge that changes it is built and deployed by the pipeline, and the fleet audit checks what that row declares: one replica set explicitly, `overlapSeconds` 0, `drainingSeconds` unset. The row was added after the service existed, because that table is compared with the live project and a row for a service Railway does not have fails the audit.
 
 From that merge on, auto-deploy ships it whenever a file its image copies changes, and verifies `/health`. For real guests, also add this origin to identity's `PROVISIONAL_PLAY_CLIENTS` (see "Decisions for Georgio" below).
 
