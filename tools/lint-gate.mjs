@@ -299,7 +299,15 @@ const UNLINTED_FRONTIER = {
   //    1084 -> 1146: current master plus the enrolled learning review/map/notification
   //    modules cross the measured file-count slack. New modules lint clean; the
   //    error ceiling and all lint targets remain unchanged.
-  applications: { errors: 1452, files: 1205 },
+  //    1146 -> 1206 files (2026-11-14), errors not raised: master had grown to 1204, the top of
+  //    the slack, with the cmi5 course player, personal launch links and the practice-evidence
+  //    launch import. The route by which an activity asks for its reviewed statements
+  //    (src/cmi5-reviewed.ts and its test) adds 2 more. Both lint clean
+  //    (`npx eslint applications/foxxi-content-intelligence/src/cmi5-reviewed.ts
+  //    applications/foxxi-content-intelligence/tests/a-unit-asks-the-lms-for-its-reviewed-statements.test.ts`:
+  //    0 problems).
+  //    Master then re-pinned to 1205 on its own; with these 2 the measured count is 1207.
+  applications: { errors: 1452, files: 1207 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
