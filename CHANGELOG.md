@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-11-14 — Practice Evidence: what shows a session over, and a byte limit on the LRS read
+
+Two follow-ups to the change that lets a learner have a reviewed result fixed
+again for a later session. Both came from the reviewer after it merged.
+
+To fix statements again, the ending of the earlier session is evidence. Any
+terminated or abandoned naming that session was accepted. It now has to be a
+cmi5 terminated or abandoned for this unit, by this learner, carrying the cmi5
+category. One about another unit, by another actor or outside cmi5 frees
+nothing. Refusing a session to send in is unchanged: any ending naming it still
+refuses. Not checked: which credential stored the ending. cmi5 has the LMS
+record abandoned, and the read does not say who stored a statement.
+
+The LRS's answer to the learner's signed read was limited to 2,000,000 bytes
+after the whole answer had been read into a string, and by the string's length.
+It is now counted in bytes as it arrives and cut off past the limit, as the
+Foxxi side does.
+
 ## 2026-11-14 — Practice Evidence: which outcomes close a unit, and a result stranded in an ended session
 
 Two things a reviewer left open on `pev.launched_statements`.
@@ -31,13 +49,6 @@ hide a result already sent. `lrs_read` may now carry `registration`, `limit` and
 `ascending` only; anything else is refused before the LRS is asked (400
 `lrs-read-narrowed`), when an attempt is taken as well as here. Found by Codex
 on this change.
-
-**What shows a session over.** To fix statements again, the ending of the
-earlier session is evidence. It now has to be a cmi5 terminated or abandoned for
-this unit, by this learner, carrying the cmi5 category. One about another unit,
-by another actor or outside cmi5 frees nothing. Not checked: which credential
-stored it; the read does not say. The answer from the LRS is also now limited in
-bytes as it is read, as #889 did on the Foxxi side. Both from the reviewer.
 
 Not changed: an `lms` principal asking for another session still gets the copy.
 The LMS route has no LRS read to show that the earlier session ended unsent.
