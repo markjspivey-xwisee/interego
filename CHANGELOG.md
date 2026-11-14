@@ -1,5 +1,15 @@
 # Changelog
 
+## 2026-11-14 — A test's own text no longer fails the relay's loopback scan
+
+The relay's test chain reads every test in the repository for a server started without naming
+`127.0.0.1` (`deploy/mcp-relay/tests/listen-loopback.test.ts`). The test added with the hosted
+package take-down list quoted the bridge's `listen` call in a string, to check where the list is
+applied, and the scan read that string as a call. So `npm test` in the relay workspace has
+failed on master since that change, on a file the relay does not import. The string is now
+written in two pieces, and the test also checks the call was found at all, which the earlier
+form did not.
+
 ## 2026-11-14 — Foxxi LRS: an assignable unit's token does not speak as the LMS
 
 A cmi5 auth-token is the assignable unit's credential, and it sits in the
