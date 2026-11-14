@@ -11,6 +11,20 @@ A page can now take a spoken question or command and read an answer aloud, using
 - **I2IDL-X workbench.** Ask has a microphone button that fills the question box and asks, and Read aloud for the streamed answer with Stop reading. The page bundle imports the shared file directly, so there is no second copy; `app/tools/ask-voice-check.mjs` runs the hook against fake speech objects in the TypeScript workflow and fails if the bundle stops taking the shared file. The four workbench workflows now also start when the shared module changes.
 - **Not tested**: real microphone audio and a real synthesizer. The tests use fake speech objects in node and in headless Chromium. No response header was changed: neither bridge sends a `Permissions-Policy`, so the microphone is allowed for the page's own origin by default. Nothing is deployed by this change.
 
+## 2026-11-14 — Coached world: the tier gate takes a satisfied only from the LMS
+
+The tier gate promotes a consultant when the LRS holds a cmi5 `satisfied` for
+the tier's course and that consultant. It matched the verb, the course, the
+actor and the cmi5 category. All four are things a learner writing a statement
+about themselves can supply, on an LRS that lets them.
+
+`CPW_LRS_LMS_AUTHORITY` names the authority account the LMS's own statements
+carry on the LRS. The gate now counts a `satisfied` read from an LRS only under
+that authority. A world that reads an LRS and has not been told the authority
+answers `lms-authority-unset`, asks the LRS nothing and promotes nobody.
+
+A world with no LRS configured is unchanged.
+
 ## 2026-11-14 — Foxxi: the LMS's own statements carry an authority nobody can send
 
 An assignable unit's token was stopped from writing the LMS's verbs earlier

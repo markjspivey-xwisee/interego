@@ -26,6 +26,23 @@ export interface LogEntry { readonly statement: XapiStatement; readonly origin: 
  * own stream, which never stops, cannot push out a course record read from outside. What is
  * dropped is counted. `has` is a lookup, not a scan.
  */
+/**
+ * The authority account an LMS's own statements carry on its LRS. `satisfied` is the LMS's to say.
+ * An LRS can hold a `satisfied` somebody else stored, a learner about themselves included, so the
+ * verb does not show who said it. The authority does, where the LRS gives the LMS one of its own.
+ */
+export interface LmsAuthority { readonly homePage: string; readonly name: string }
+
+/** Reads `{"homePage": …, "name": …}`. Undefined for anything else. */
+export function parseLmsAuthority(raw: string | undefined): LmsAuthority | undefined {
+  if (!raw) return undefined;
+  let v: unknown;
+  try { v = JSON.parse(raw); } catch { return undefined; }
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return undefined;
+  const { homePage, name } = v as { homePage?: unknown; name?: unknown };
+  return typeof homePage === 'string' && homePage.length > 0 && typeof name === 'string' && name.length > 0 ? { homePage, name } : undefined;
+}
+
 export class StatementLog {
   private readonly kept: Record<StatementOrigin, LogEntry[]> = { world: [], external: [] };
   private readonly ids = new Map<string, number>();
@@ -60,9 +77,12 @@ export class StatementLog {
   /**
    * An external statement for this actor (name and home page), this activity,
    * and this verb, carrying the cmi5 category. The world did not write it.
+   * With `storedBy`, it also has to carry that authority: the LMS's own, which
+   * says the LMS recorded it and not somebody writing about themselves.
    */
-  sawExternal(actor: { readonly name: string; readonly homePage: string }, objectId: string, verbId: string): boolean {
+  sawExternal(actor: { readonly name: string; readonly homePage: string }, objectId: string, verbId: string, storedBy?: LmsAuthority): boolean {
     return this.kept.external.some(entry => entry.origin === 'external'
+      && (storedBy === undefined || (entry.statement.authority?.account?.homePage === storedBy.homePage && entry.statement.authority?.account?.name === storedBy.name))
       && entry.statement.actor.account.name === actor.name
       && entry.statement.actor.account.homePage === actor.homePage
       && entry.statement.object.id === objectId

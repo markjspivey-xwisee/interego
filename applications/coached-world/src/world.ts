@@ -10,7 +10,7 @@ import {
   agentGraph, factionGraph, interventionGraph, observationGraph, pactGraph, territoryGraph,
   type GraphBundle,
 } from './graphs.js';
-import { StatementLog, SATISFIED, type LrsReader } from './lrs.js';
+import { StatementLog, SATISFIED, type LmsAuthority, type LrsReader } from './lrs.js';
 import type { CourseLauncher, CourseLaunchResult } from './course-launch.js';
 import {
   byId, fill, formatClock, holderOf, publicPack, type CauseDef, type PublicPack, type WorldPack,
@@ -93,6 +93,7 @@ export class CoachedWorld {
   private readonly wallet: Signer;
   private readonly lrs: LrsReader | undefined;
   private readonly actorHomePage: string | undefined;
+  private readonly lmsAuthority: LmsAuthority | undefined;
   private readonly launcher: CourseLauncher | undefined;
   /** The newest published graphs, oldest first, at most MAX_PUBLISHED_GRAPHS. */
   private readonly published: Published[] = [];
@@ -115,7 +116,7 @@ export class CoachedWorld {
 
   private constructor(opts: {
     pack: WorldPack; base: string; didHost: string; now: () => string; wallet: Signer;
-    log: StatementLog; lrs?: LrsReader; actorHomePage?: string; launcher?: CourseLauncher; seed: number;
+    log: StatementLog; lrs?: LrsReader; actorHomePage?: string; lmsAuthority?: LmsAuthority; launcher?: CourseLauncher; seed: number;
   }) {
     this.pack = opts.pack;
     this.base = opts.base.endsWith('/') ? opts.base : `${opts.base}/`;
@@ -125,6 +126,7 @@ export class CoachedWorld {
     this.log = opts.log;
     this.lrs = opts.lrs;
     this.actorHomePage = opts.actorHomePage;
+    this.lmsAuthority = opts.lmsAuthority;
     this.launcher = opts.launcher;
     this.rng = mulberry(opts.seed);
     this.operatorAddress = opts.wallet.address;
@@ -145,13 +147,13 @@ export class CoachedWorld {
   static async create(opts: {
     readonly pack: WorldPack; readonly base: string; readonly didHost: string;
     readonly seed?: number; readonly now?: () => string; readonly wallet?: Signer;
-    readonly log?: StatementLog; readonly lrs?: LrsReader; readonly actorHomePage?: string; readonly launcher?: CourseLauncher;
+    readonly log?: StatementLog; readonly lrs?: LrsReader; readonly actorHomePage?: string; readonly lmsAuthority?: LmsAuthority; readonly launcher?: CourseLauncher;
   }): Promise<CoachedWorld> {
     const world = new CoachedWorld({
       pack: opts.pack, base: opts.base, didHost: opts.didHost,
       now: opts.now ?? (() => new Date().toISOString()),
       wallet: opts.wallet ?? Wallet.createRandom(),
-      log: opts.log ?? new StatementLog(), lrs: opts.lrs, actorHomePage: opts.actorHomePage, launcher: opts.launcher,
+      log: opts.log ?? new StatementLog(), lrs: opts.lrs, actorHomePage: opts.actorHomePage, lmsAuthority: opts.lmsAuthority, launcher: opts.launcher,
       seed: opts.seed ?? hashSeed(opts.pack.id),
     });
     await world.publishOpening();
@@ -619,7 +621,14 @@ export class CoachedWorld {
     if (!course) throw new WorldError(409, 'no-gate', 'this tier has no course');
     if (consultant.gate !== 'eligible') throw new WorldError(409, 'gate-not-open');
     const homePage = this.actorHomePage ?? this.base;
-    let lrs: 'unconfigured' | 'ok' | 'unreachable' | 'actor-home-unset' = 'unconfigured';
+    let lrs: 'unconfigured' | 'ok' | 'unreachable' | 'actor-home-unset' | 'lms-authority-unset' = 'unconfigured';
+    // An LRS holds what anyone with a credential stored there. A `satisfied` read from one is the
+    // LMS's word only under the LMS's authority, so a world that reads an LRS has to be told which
+    // authority that is. Without it nobody is promoted on what the LRS holds.
+    if (this.lrs && this.actorHomePage && !this.lmsAuthority) {
+      lrs = 'lms-authority-unset';
+      return { promoted: false, lrs, satisfied: false, courseIri: course, gate: consultant.gate };
+    }
     if (this.lrs && this.actorHomePage) {
       try {
         const remote = await this.lrs.fetchActor(consultant.ownerDid, this.actorHomePage, { verb: SATISFIED, activity: course });
@@ -634,7 +643,7 @@ export class CoachedWorld {
       lrs = 'actor-home-unset';
       return { promoted: false, lrs, satisfied: false, courseIri: course, gate: consultant.gate };
     }
-    const satisfied = this.log.sawExternal({ name: consultant.ownerDid, homePage }, course, SATISFIED);
+    const satisfied = this.log.sawExternal({ name: consultant.ownerDid, homePage }, course, SATISFIED, this.lrs ? this.lmsAuthority : undefined);
     if (!satisfied) {
       return { promoted: false, lrs, satisfied, courseIri: course, gate: consultant.gate };
     }

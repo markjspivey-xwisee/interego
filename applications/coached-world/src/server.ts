@@ -22,7 +22,7 @@ import { RateLimiter, bound, clientKey, healthBody, publicOrigin } from '../../_
 import { MAX_CHALLENGES, MAX_RATE_CLIENTS, MAX_SESSIONS } from './bounded.js';
 import { createLocalDoor, createRelayDoor, type GuestDoor } from './guest-play.js';
 import { FoxxiCourseLauncher } from './course-launch.js';
-import { HttpLrs } from './lrs.js';
+import { HttpLrs, parseLmsAuthority } from './lrs.js';
 import { loadPackFile } from './pack.js';
 import { RATE_RULES, rateClassFor } from './rate-limit.js';
 import { AGENT_SESSION_PATH, AgentLink } from './agent-link.js';
@@ -166,7 +166,7 @@ export async function start(opts: {
   const launcher = launchLauncher();
   const world = await CoachedWorld.create({
     pack, base: `${origin}/`, didHost: didHost(origin),
-    ...(lrsUrl ? { lrs: new HttpLrs(lrsUrl, process.env['CPW_LRS_AUTHORIZATION']), actorHomePage: process.env['CPW_LRS_ACTOR_HOME'] } : {}),
+    ...(lrsUrl ? { lrs: new HttpLrs(lrsUrl, process.env['CPW_LRS_AUTHORIZATION']), actorHomePage: process.env['CPW_LRS_ACTOR_HOME'], lmsAuthority: parseLmsAuthority(process.env['CPW_LRS_LMS_AUTHORITY']) } : {}),
     ...(launcher ? { launcher } : {}),
   });
   // Where agents' own pods live is what verifying a claim needs. Without it (and without a
