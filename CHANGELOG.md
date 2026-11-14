@@ -4,6 +4,55 @@
 
 A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. The `cpw:` vocabulary is published at `docs/applications/coached-world/cpw.ttl`, the same bytes as `applications/coached-world/ontology/cpw.ttl`. Named-graph IRIs go through `turtleIriRef`. The bridge entry installs the shared process safety net, so a rejection nothing awaited is logged and the process keeps serving. See `applications/coached-world/README.md`.
 
+## 2026-11-14 — Foxxi: the review service's answer is limited as it is read
+
+`GET /cmi5/reviewed` asks a review service and limits its answer to 1,000,000
+bytes. The limit was checked after the whole answer had been read into a string,
+and against the string's length. A service that never stopped sending was
+buffered until the 20-second timeout, and an answer of multi-byte text could be
+up to three times the limit.
+
+The answer is now counted in bytes as it arrives. The read stops at the first
+chunk that passes the limit and the rest is cancelled; an answer that declares a
+longer length is not read at all. The unit gets the same `502` as before.
+
+Found by the reviewer after #883 merged.
+
+## 2026-11-14 — Practice Evidence: which outcomes close a unit, and a result stranded in an ended session
+
+Two things a reviewer left open on `pev.launched_statements`.
+
+**Which statements say a unit already has its result.** The check counted any
+passed, failed or completed whose object was the unit. cmi5's limit of one each
+is on its own defined statements, by the learner the unit was launched for. So
+one now counts only when it also carries the cmi5 category and is by the
+launch's actor. A statement with one of those verbs and no cmi5 category, or
+another actor's, no longer stops a learner's reviewed result from being handed
+out.
+
+**A session that ends before the unit sends.** The statements are fixed for one
+session the first time they are asked for. If that session ended before the unit
+sent them, they could never be sent: every later ask returned a copy marked as
+not for sending. The learner can now ask again for a later session with their
+own signed read of the LRS. The same result is fixed for that session when the
+LRS shows the earlier session ended, none of the statements handed out is in
+the registration, and the new session is one to send in. Only the session
+changes; the ids, verbs, score and timestamp stay, so a statement that did
+reach the LRS still collides on its id. The attempt keeps the sessions it was
+fixed for before (`handedOut.fixedBefore`). Otherwise nothing is written and the
+answer gives the reasons (`notFixedAgain`).
+
+**The read must be of the whole registration.** Both checks take what the
+learner's LRS read does not return as not being there. A read with a time
+window, a verb, an activity or a statement id leaves statements out, so it could
+hide a result already sent. `lrs_read` may now carry `registration`, `limit` and
+`ascending` only; anything else is refused before the LRS is asked (400
+`lrs-read-narrowed`), when an attempt is taken as well as here. Found by Codex
+on this change.
+
+Not changed: an `lms` principal asking for another session still gets the copy.
+The LMS route has no LRS read to show that the earlier session ended unsent.
+
 ## 2026-11-14 — Foxxi: TLA-X names the reusable launch link
 
 The TLA-X decoration ties each component of ADL's Total Learning Architecture to
