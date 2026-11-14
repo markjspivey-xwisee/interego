@@ -47,7 +47,6 @@ export const TLA_X: DecorationSpec = {
     { id: 'courses', part: 'course-catalog', title: 'List the courses this bridge plays', method: 'GET', target: '{+bridge}/agent/scorm/courses', accept: 'application/json', readOnly: true },
     { id: 'catalogs', part: 'course-catalog', title: 'Find course catalogs across pods', method: 'POST', target: '{+bridge}/foxxi/discover_course_catalogs', contentType: 'application/json', auth: AS_AFFORDANCE('urn:iep:action:foxxi:discover-course-catalogs'), readOnly: true },
     { id: 'launch', part: 'learning-event-manager', title: 'Launch a cmi5 activity for yourself', method: 'POST', target: '{+bridge}/agent/cmi5/launch', contentType: 'application/json', auth: AS_AFFORDANCE('urn:iep:action:foxxi:cmi5-launch-signed'), readOnly: false },
-    { id: 'personal-launch', part: 'learning-event-manager', title: 'Mint a reusable cmi5 launch link', method: 'POST', target: '{+bridge}/agent/cmi5/go', contentType: 'application/json', auth: AS_AFFORDANCE('urn:iep:action:foxxi:cmi5-personal-launch-signed'), readOnly: false },
   ],
   alignments: [
     { part: 'tla', relation: 'exactMatch', target: `${I2}total-learning-architecture-tla`, targetLabel: 'Total Learning Architecture (TLA)', rationale: 'I2IDL names the same architecture.' },
@@ -68,7 +67,6 @@ export const TLA_X: DecorationSpec = {
     { part: 'course-catalog', action: 'urn:iep:action:foxxi:discover-course-catalogs', role: 'realizes', rationale: 'Finds course catalogs across pods.' },
     { part: 'course-catalog', action: 'urn:iep:action:foxxi:publish-course-catalog-product', role: 'implements', rationale: 'Publishes the catalog as a federated data product.' },
     { part: 'learning-event-manager', action: 'urn:iep:action:foxxi:cmi5-launch-signed', role: 'realizes', rationale: 'Launches a cmi5 activity and keeps its session.' },
-    { part: 'learning-event-manager', action: 'urn:iep:action:foxxi:cmi5-personal-launch-signed', role: 'realizes', rationale: 'Mints a durable link that opens a fresh or resumed cmi5 session for one learner and one course.' },
     { part: 'learning-event-manager', action: 'urn:iep:action:foxxi:scorm-launch-signed', role: 'realizes', rationale: 'Launches a SCORM course on the sequencing engine.' },
     { part: 'learner-state', action: 'urn:iep:action:foxxi:review-record', role: 'measures', rationale: 'A learner reads where they stand from their own record.' },
   ],
