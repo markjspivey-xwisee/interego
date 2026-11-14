@@ -14,7 +14,8 @@ import { PlayGrantService, type PlayGrantConfig } from '../../foxxi-content-inte
 import {
   PlayError, ProvisionalPlay, type PlayClaims, type PlayClient, type PlayGrant,
 } from '../../../deploy/identity/provisional-play.js';
-import { MAX_CHALLENGES, MAX_LOCAL_GUESTS, bound } from './bounded.js';
+import { bound } from '../../_shared/http-guard/index.js';
+import { MAX_CHALLENGES, MAX_LOCAL_GUESTS } from './bounded.js';
 
 export interface VerifiedGuest {
   readonly ownerDid: string;

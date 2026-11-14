@@ -6,7 +6,8 @@
  */
 import { describe, expect, it } from 'vitest';
 import { HttpLrs, SATISFIED } from '../src/lrs.js';
-import { MAX_CHALLENGES, MAX_SESSIONS, bound } from '../src/bounded.js';
+import { bound } from '../../_shared/http-guard/index.js';
+import { MAX_CHALLENGES, MAX_SESSIONS } from '../src/bounded.js';
 
 const QUERY = { verb: SATISFIED, activity: 'https://courses.example/made-up-course' };
 const page = (body: unknown) => new Response(JSON.stringify(body), { status: 200, headers: { 'Content-Type': 'application/json' } });

@@ -1,8 +1,8 @@
 /**
- * The address people reach this world at, when that is not the address it listens on.
+ * The address people reach a service at, when that is not the address it listens on.
  *
  * Behind a proxy the process binds a private port, and everything it tells a browser about
- * itself (the guest audience, where to bootstrap, the base of every graph IRI, the DID host)
+ * itself (an audience a proof names, where to bootstrap, the base of the IRIs it mints)
  * has to be the public origin instead. That origin is configuration, so it is checked once, at
  * start: an origin and nothing else, over https, or over http only on this machine.
  */
