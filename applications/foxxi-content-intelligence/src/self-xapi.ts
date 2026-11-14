@@ -15,6 +15,10 @@ export interface SelfXapiDependencies {
 const UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{4}-[0-9a-f]{12}$/i;
 const QUERY_KEYS = new Set(['statementId', 'verb', 'activity', 'registration', 'since', 'until', 'ascending', 'limit', 'cursor']);
 const failure = (status: number, error: string): SelfXapiReply => ({ status, body: { ok: false, error } });
+const LMS_ONLY_VERBS: ReadonlySet<string> = new Set([
+  'http://adlnet.gov/expapi/verbs/launched', 'https://w3id.org/xapi/adl/verbs/abandoned',
+  'https://w3id.org/xapi/adl/verbs/waived', 'https://w3id.org/xapi/adl/verbs/satisfied',
+]);
 
 /** Bounded, self-attributed, JSON Activity statements. No attachment/voiding/substatement
  * transport is claimed here; those remain on the standard xAPI surface. Require ids and
@@ -32,6 +36,8 @@ export async function writeSelfXapi(callerDid: string, input: unknown, deps: Sel
     if (typeof s.id !== 'string' || !UUID.test(s.id) || ids.has(s.id)) return failure(400, 'each statement requires a distinct UUID id');
     if (typeof s.timestamp !== 'string') return failure(400, 'each statement requires its observed timestamp');
     if (s.authority !== undefined || s.stored !== undefined) return failure(400, 'authority and stored are assigned by the LRS');
+    // cmi5 has the LMS record these (9.3). Written by the learner about themselves they would read as the LMS's word.
+    if (LMS_ONLY_VERBS.has(String((s.verb as Json | undefined)?.id))) return failure(403, 'launched, abandoned, waived and satisfied are the LMS\'s to record; a learner does not write them about themselves');
     if (s.attachments !== undefined || (s.object as Json).objectType && (s.object as Json).objectType !== 'Activity') return failure(400, 'this signed adapter accepts Activity statements without attachments; use the standard xAPI surface for other transports');
     ids.add(s.id);
   }
