@@ -755,6 +755,11 @@ describe('a rubric fingerprint a caller writes into text comes back as a stand-i
     expect([out.why, out.attempt.kind]).toEqual([`urn:pev:rubric:${v.inText.full(h)}#criterion-x`, `pev/${v.inText.prefix(h16)}/x`]);
     expect(out.cells[0]!.criterionTitle).toBe(`urn:pev:rubric:${m.cells.inText.full(h)} pev/${m.cells.inText.prefix(h16)}/x`);
     expect(hashesIn(maskAnswerHashes(answer, m, scope))).toEqual(hashesIn(out));
+    // Documents handed out to be compared byte for byte are left as they are, whoever asks and however often.
+    const fixed = { statement: { context: { extensions: { rubric: `urn:pev:rubric:${h}` } } }, statements: [{ context: { extensions: { rubric: `urn:pev:rubric:${h}`, note: asText([h]) } } }] };
+    expect(maskAnswerHashes(fixed, m, scope)).toEqual(fixed);
+    expect(maskAnswerHashes(fixed, m)).toEqual(fixed);
+    expect(maskAnswerHashes(fixed, m)).toEqual(maskAnswerHashes(fixed, m));
     // No stand-in in text equals any field's value in any scope, or its first 16 hex, or the bare hash.
     const { keyed, inText } = hashesIn(out);
     expect(inText).toHaveLength(8);

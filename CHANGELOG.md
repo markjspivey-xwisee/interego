@@ -4,6 +4,36 @@
 
 A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. The `cpw:` vocabulary is published at `docs/applications/coached-world/cpw.ttl`, the same bytes as `applications/coached-world/ontology/cpw.ttl`. Named-graph IRIs go through `turtleIriRef`. The bridge entry installs the shared process safety net, so a rejection nothing awaited is logged and the process keeps serving. See `applications/coached-world/README.md`.
 
+## 2026-11-13 — Practice Evidence: the learner takes the reviewed statements for their assignable unit
+
+A conversation an LMS launched could be taken as an attempt and reviewed, and the
+cmi5 passed, failed and completed for it could be built, but only by code: no act
+handed them to anyone.
+
+`pev.launched_statements` does. The learner signs `{attemptIri, sessionId}`,
+naming the session of the registration their unit will send in, and gets the
+statements, for a reviewed attempt on a ratified rubric whose launch is known to
+be Normal.
+
+- cmi5 allows one passed and one completed per registration, so what is handed
+  out is fixed the first time it is asked for and kept on the attempt
+  (`lmsLaunch.handedOut`). Every later ask returns the same documents, whatever
+  session it names, and writes nothing. A review changed afterwards hands out
+  nothing new.
+- Before they are fixed, the session is checked against the LRS through the
+  learner's own signed read: the LMS's `launched` statement for that unit and
+  session, in Normal mode and for the same actor, with the session not ended and
+  nothing passed, failed or completed in the registration. A session typed wrong
+  or already ended fixes nothing.
+- Only the learner may take them. A scored attempt's statements carry its score,
+  so they are refused to a chat assistant, as a projection is.
+- The bridge still sends nothing to an LRS, and does not learn whether the unit
+  sent them.
+
+Not built: a way for a unit that holds only its cmi5 credential to ask for these
+itself. Verified by the vertical's tests on an in-memory pod; no live LMS, LRS or
+assignable unit has used this.
+
 ## 2026-11-14 — Foxxi: the operator of a bridge can take a hosted package down
 
 Taking a hosted package down (`foxxi.remove_hosted_package`) asks for the
