@@ -44,7 +44,8 @@ function coach(world) {
   if (!you?.factionId) return '<div class="card"><p>Pick a faction. You consult for an agent; you do not command one.</p></div>';
   const tier = world.pack.tiers[you.tier];
   const gate = you.gate === 'eligible' ? `<div class="card"><div class="kicker">Course gate · ${esc(world.pack.tiers[you.tier + 1]?.label || '')}</div>
-    <p>This world will not mark the course passed or completed. Launch <code>${esc(you.courseIri || '')}</code> through Foxxi. After Practice Evidence review, the course sends those statements. Then check again.</p>
+    <p>This world does not mark the course passed or completed. It asks Foxxi to launch <code>${esc(you.courseIri || '')}</code> for your own account. When the course's activities meet moveOn, Foxxi records satisfied for that course. Then check the record.</p>
+    <button class="btn" data-act="launch">Open the course</button>
     <button class="btn primary" data-act="gate">Check the record</button></div>` : '';
   const roster = you.roster.map(a => `<div class="choice"><b>${esc(a.name)}</b><div>${esc(a.role)}</div><div>last ${esc(a.hist.at(-1))}</div>${a.memory[0] ? `<div>${esc(a.memory[0].text)}</div>` : ''}</div>`).join('');
   let mission = `<button class="btn primary" data-act="mission">Send ${esc(you.roster[0]?.name || 'the agent')} on a mission</button>`;
@@ -138,6 +139,9 @@ document.getElementById('app').addEventListener('click', async event => {
       const result = await api('/missions/intervene', { method: 'POST', body: { diagnosis: state.diagnosis, interventionId: state.intervention } });
       state.note = result.matched ? `The cause was ${result.cause.label}. The score moved ${result.delta}.` : `No lift. The cause was ${result.cause.label}.`;
       state.diagnosis = ''; state.intervention = '';
+    } else if (target.dataset.act === 'launch') {
+      const launched = await api('/gate/launch', { method: 'POST', body: {} });
+      state.note = `Course opened for this account. ${launched.launchUrl}`;
     } else if (target.dataset.act === 'gate') {
       const result = await api('/gate/refresh', { method: 'POST', body: {} });
       state.note = result.promoted ? `The course record is in. You now hold the next tier.` : 'The course has not sent passed and completed yet.';

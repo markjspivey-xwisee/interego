@@ -9,7 +9,8 @@ import {
   agentGraph, factionGraph, interventionGraph, observationGraph, pactGraph, territoryGraph,
   type GraphBundle,
 } from './graphs.js';
-import { StatementLog, type LrsReader } from './lrs.js';
+import { StatementLog, SATISFIED, type LrsReader } from './lrs.js';
+import type { CourseLauncher, CourseLaunchResult } from './course-launch.js';
 import {
   byId, fill, formatClock, holderOf, publicPack, type CauseDef, type PublicPack, type WorldPack,
 } from './pack.js';
@@ -61,9 +62,6 @@ interface FeedItem { id: number; t: string; text: string; factionId: string; kin
 
 type Signer = { readonly address: string; signMessage(message: string): Promise<string> };
 
-const PASSED = 'http://adlnet.gov/expapi/verbs/passed';
-const COMPLETED = 'http://adlnet.gov/expapi/verbs/completed';
-
 export class CoachedWorld {
   readonly log: StatementLog;
   readonly operatorAddress: string;
@@ -75,6 +73,7 @@ export class CoachedWorld {
   private readonly wallet: Signer;
   private readonly lrs: LrsReader | undefined;
   private readonly actorHomePage: string | undefined;
+  private readonly launcher: CourseLauncher | undefined;
   private readonly published: Published[] = [];
   private readonly heads = new Map<string, string>();
   private readonly consultants = new Map<string, Consultant>();
@@ -93,7 +92,7 @@ export class CoachedWorld {
 
   private constructor(opts: {
     pack: WorldPack; base: string; didHost: string; now: () => string; wallet: Signer;
-    log: StatementLog; lrs?: LrsReader; actorHomePage?: string; seed: number;
+    log: StatementLog; lrs?: LrsReader; actorHomePage?: string; launcher?: CourseLauncher; seed: number;
   }) {
     this.pack = opts.pack;
     this.base = opts.base.endsWith('/') ? opts.base : `${opts.base}/`;
@@ -103,6 +102,7 @@ export class CoachedWorld {
     this.log = opts.log;
     this.lrs = opts.lrs;
     this.actorHomePage = opts.actorHomePage;
+    this.launcher = opts.launcher;
     this.rng = mulberry(opts.seed);
     this.operatorAddress = opts.wallet.address;
     this.minutes = opts.pack.season.startMinutes;
@@ -122,13 +122,13 @@ export class CoachedWorld {
   static async create(opts: {
     readonly pack: WorldPack; readonly base: string; readonly didHost: string;
     readonly seed?: number; readonly now?: () => string; readonly wallet?: Signer;
-    readonly log?: StatementLog; readonly lrs?: LrsReader; readonly actorHomePage?: string;
+    readonly log?: StatementLog; readonly lrs?: LrsReader; readonly actorHomePage?: string; readonly launcher?: CourseLauncher;
   }): Promise<CoachedWorld> {
     const world = new CoachedWorld({
       pack: opts.pack, base: opts.base, didHost: opts.didHost,
       now: opts.now ?? (() => new Date().toISOString()),
       wallet: opts.wallet ?? Wallet.createRandom(),
-      log: opts.log ?? new StatementLog(), lrs: opts.lrs, actorHomePage: opts.actorHomePage,
+      log: opts.log ?? new StatementLog(), lrs: opts.lrs, actorHomePage: opts.actorHomePage, launcher: opts.launcher,
       seed: opts.seed ?? hashSeed(opts.pack.id),
     });
     await world.publishOpening();
@@ -489,32 +489,48 @@ export class CoachedWorld {
     this.log.add(statements, 'external');
   }
 
+  /** Ask Foxxi to launch this tier's course for this consultant's DID. No second guest is minted. */
+  async launchGate(consultantId: string): Promise<CourseLaunchResult> {
+    const consultant = this.require(consultantId);
+    const course = this.pack.tiers[consultant.tier]?.courseIri;
+    if (!course) throw new WorldError(409, 'no-gate', 'this tier has no course');
+    if (!consultant.factionId) throw new WorldError(409, 'pick-a-faction');
+    if (!this.launcher) throw new WorldError(503, 'course-launch-unconfigured');
+    try {
+      return await this.launcher.launch({ learnerDid: consultant.ownerDid, courseId: course, returnUrl: this.base });
+    } catch {
+      throw new WorldError(502, 'course-launch-failed');
+    }
+  }
+
   async refreshGate(consultantId: string): Promise<Record<string, unknown>> {
     const consultant = this.require(consultantId);
     const tier = this.pack.tiers[consultant.tier];
     const course = tier?.courseIri;
     if (!course) throw new WorldError(409, 'no-gate', 'this tier has no course');
     if (consultant.gate !== 'eligible') throw new WorldError(409, 'gate-not-open');
+    const homePage = this.actorHomePage ?? this.base;
     let lrs: 'unconfigured' | 'ok' | 'unreachable' | 'actor-home-unset' = 'unconfigured';
     if (this.lrs && this.actorHomePage) {
       try {
-        const remote = await this.lrs.fetchActor(consultant.ownerDid, this.actorHomePage);
+        const remote = await this.lrs.fetchActor(consultant.ownerDid, this.actorHomePage, { verb: SATISFIED, activity: course });
         const fresh = remote.filter(statement => !this.log.has(statement.id));
         this.log.add(fresh, 'external');
         lrs = 'ok';
       } catch {
         lrs = 'unreachable';
+        return { promoted: false, lrs, satisfied: false, courseIri: course, gate: consultant.gate };
       }
     } else if (this.lrs) {
       lrs = 'actor-home-unset';
+      return { promoted: false, lrs, satisfied: false, courseIri: course, gate: consultant.gate };
     }
-    const passed = this.log.sawExternal(consultant.ownerDid, course, PASSED);
-    const completed = this.log.sawExternal(consultant.ownerDid, course, COMPLETED);
-    if (!passed || !completed) {
-      return { promoted: false, lrs, passed, completed, courseIri: course, gate: consultant.gate };
+    const satisfied = this.log.sawExternal({ name: consultant.ownerDid, homePage }, course, SATISFIED);
+    if (!satisfied) {
+      return { promoted: false, lrs, satisfied, courseIri: course, gate: consultant.gate };
     }
     await this.promote(consultant);
-    return { promoted: true, lrs, passed, completed, courseIri: course, tier: consultant.tier, gate: consultant.gate };
+    return { promoted: true, lrs, satisfied, courseIri: course, tier: consultant.tier, gate: consultant.gate };
   }
 
   private async publishTerritory(territory: TerritoryState): Promise<void> {

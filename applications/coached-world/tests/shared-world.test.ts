@@ -10,7 +10,8 @@ import { verifyMessage } from 'ethers';
 import { describe, expect, it } from 'vitest';
 import { start } from '../src/server.js';
 import { CoachedWorld } from '../src/world.js';
-import { HttpLrs, type LrsReader } from '../src/lrs.js';
+import { FoxxiCourseLauncher } from '../src/course-launch.js';
+import { CMI5_CATEGORY, HttpLrs, SATISFIED, type LrsQuery, type LrsReader } from '../src/lrs.js';
 import { loadPackFile } from '../src/pack.js';
 import type { XapiStatement } from '../src/statements.js';
 
@@ -109,7 +110,7 @@ describe('a shared coached world', () => {
     }
   }, 30_000);
 
-  it('promotes only from an external passed and completed, and a second pack needs no engine change', async () => {
+  it('promotes only from a cmi5 satisfied statement for the course and this consultant', async () => {
     const pack = { ...loadPackFile(orchardPath), influence: 400 };
     const world = await CoachedWorld.create({ pack, base: 'http://world.example/', didHost: 'world.example', seed: 1 });
     const consultant = world.admit({ ownerDid: 'did:web:world.example:users:u-try-play-abc', userId: 'u-try-play-abc', podUrl: 'http://world.example/pods/u/', agentDid: 'did:web:world.example:agents:mcp-client-u-try-play-abc' });
@@ -125,18 +126,25 @@ describe('a shared coached world', () => {
     const refused = await world.refreshGate(consultant.id);
     expect(refused['promoted']).toBe(false);
     const course = 'https://example.org/courses/orchard-crew';
-    const statement = (verb: string): XapiStatement => ({
-      id: `http://world.example/statements/${verb}`,
+    const au = 'https://example.org/courses/orchard-crew/au/1';
+    const statement = (verb: string, objectId: string, homePage = 'http://world.example/', category = CMI5_CATEGORY): XapiStatement => ({
+      id: `http://world.example/statements/${encodeURIComponent(verb)}-${encodeURIComponent(objectId)}-${encodeURIComponent(homePage)}`,
       version: '2.0.0',
       timestamp: '2026-11-14T00:00:00.000Z',
-      actor: { objectType: 'Agent', account: { homePage: 'http://world.example/', name: consultant.ownerDid } },
+      actor: { objectType: 'Agent', account: { homePage, name: consultant.ownerDid } },
       verb: { id: verb, display: { en: verb.split('/').at(-1) ?? verb } },
-      object: { objectType: 'Activity', id: course, definition: { type: 'http://adlnet.gov/expapi/activities/course' } },
-      context: { registration: '00000000-0000-4000-8000-000000000001', contextActivities: { category: [] } },
+      object: { objectType: 'Activity', id: objectId, definition: { type: 'http://adlnet.gov/expapi/activities/course' } },
+      context: { registration: '00000000-0000-4000-8000-000000000001', contextActivities: { category: [{ id: category }] } },
     });
-    world.recordExternal([statement('http://adlnet.gov/expapi/verbs/passed')]);
+    world.recordExternal([
+      statement('http://adlnet.gov/expapi/verbs/passed', au),
+      statement('http://adlnet.gov/expapi/verbs/completed', au),
+      statement(SATISFIED, au),
+      statement(SATISFIED, course, 'https://other.example/'),
+      statement(SATISFIED, course, 'http://world.example/', 'https://example.org/not-cmi5'),
+    ]);
     expect((await world.refreshGate(consultant.id))['promoted']).toBe(false);
-    world.recordExternal([statement('http://adlnet.gov/expapi/verbs/completed')]);
+    world.recordExternal([statement(SATISFIED, course)]);
     const promoted = await world.refreshGate(consultant.id);
     expect(promoted['promoted']).toBe(true);
     expect(promoted['tier']).toBe(1);
@@ -161,12 +169,15 @@ describe('a shared coached world', () => {
       return new Response(JSON.stringify({ statements: [] }), { status: 200, headers: { 'Content-Type': 'application/json' } });
     }) as typeof fetch;
     const lrs = new HttpLrs('https://lrs.example/xapi/statements', undefined, fetchImpl);
-    await lrs.fetchActor('did:web:example:users:u-try-play-abc', 'https://foxxi.example');
-    const agent = JSON.parse(new URL(seen).searchParams.get('agent') ?? '{}') as { account?: { name?: string; homePage?: string } };
+    await lrs.fetchActor('did:web:example:users:u-try-play-abc', 'https://foxxi.example', { verb: SATISFIED, activity: 'https://example.org/courses/orchard-crew' });
+    const queried = new URL(seen);
+    const agent = JSON.parse(queried.searchParams.get('agent') ?? '{}') as { account?: { name?: string; homePage?: string } };
     expect(agent.account).toEqual({ name: 'did:web:example:users:u-try-play-abc', homePage: 'https://foxxi.example' });
+    expect(queried.searchParams.get('verb')).toBe(SATISFIED);
+    expect(queried.searchParams.get('activity')).toBe('https://example.org/courses/orchard-crew');
 
-    let recordingSeen: { name: string; homePage: string } | undefined;
-    const recording: LrsReader = { async fetchActor(name, homePage) { recordingSeen = { name, homePage }; return []; } };
+    let recordingSeen: { name: string; homePage: string; query: LrsQuery } | undefined;
+    const recording: LrsReader = { async fetchActor(name, homePage, query) { recordingSeen = { name, homePage, query }; return []; } };
     const world = await CoachedWorld.create({
       pack: { ...loadPackFile(orchardPath), influence: 400 }, base: 'http://world.example/', didHost: 'world.example', seed: 2,
       lrs: recording, actorHomePage: 'https://foxxi.example',
@@ -179,6 +190,84 @@ describe('a shared coached world', () => {
     }
     const gate = await world.refreshGate(consultant.id);
     expect(gate['lrs']).toBe('ok');
-    expect(recordingSeen).toEqual({ name: consultant.ownerDid, homePage: 'https://foxxi.example' });
+    expect(recordingSeen).toEqual({
+      name: consultant.ownerDid, homePage: 'https://foxxi.example',
+      query: { verb: SATISFIED, activity: 'https://example.org/courses/orchard-crew' },
+    });
+  });
+
+  it('follows the LRS more link and keeps unreachable when the LRS is down', async () => {
+    const course = 'https://example.org/courses/orchard-crew';
+    const home = 'https://foxxi.example';
+    const actor = 'did:web:example:users:u-try-play-page';
+    const satisfied: XapiStatement = {
+      id: 'http://lrs.example/statements/satisfied',
+      version: '2.0.0', timestamp: '2026-11-14T00:00:00.000Z',
+      actor: { objectType: 'Agent', account: { homePage: home, name: actor } },
+      verb: { id: SATISFIED, display: { en: 'satisfied' } },
+      object: { objectType: 'Activity', id: course, definition: { type: 'https://w3id.org/xapi/cmi5/activitytype/course' } },
+      context: { registration: '00000000-0000-4000-8000-000000000009', contextActivities: { category: [{ id: CMI5_CATEGORY }] } },
+    };
+    const fetchImpl = (async (url: string | URL | Request) => {
+      const href = String(url);
+      const page = href.includes('continuationToken=next')
+        ? { statements: [satisfied] }
+        : { statements: [], more: '/xapi/statements?continuationToken=next' };
+      return new Response(JSON.stringify(page), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    const lrs = new HttpLrs('https://lrs.example/xapi/statements', undefined, fetchImpl);
+    const world = await CoachedWorld.create({
+      pack: { ...loadPackFile(orchardPath), influence: 400 }, base: 'http://world.example/', didHost: 'world.example', seed: 4,
+      lrs, actorHomePage: home,
+    });
+    const consultant = world.admit({ ownerDid: actor, userId: 'u-try-play-page', podUrl: 'http://world.example/pods/p/', agentDid: 'did:web:example:agents:mcp-page' });
+    await world.joinFaction(consultant.id, 'north');
+    for (let i = 0; i < 12 && (world.view(consultant.id)['you'] as { gate: string }).gate !== 'eligible'; i++) {
+      await world.startMission(consultant.id);
+      await world.intervene(consultant.id, 'timing', 'calendar');
+    }
+    const promoted = await world.refreshGate(consultant.id);
+    expect(promoted['lrs']).toBe('ok');
+    expect(promoted['promoted']).toBe(true);
+
+    const down = new HttpLrs('https://lrs.example/xapi/statements', undefined, (async () => new Response('down', { status: 503 })) as typeof fetch);
+    const stuck = await CoachedWorld.create({
+      pack: { ...loadPackFile(orchardPath), influence: 400 }, base: 'http://world.example/', didHost: 'world.example', seed: 5,
+      lrs: down, actorHomePage: home,
+    });
+    const other = stuck.admit({ ownerDid: actor, userId: 'u-try-play-page', podUrl: 'http://world.example/pods/p/', agentDid: 'did:web:example:agents:mcp-page' });
+    await stuck.joinFaction(other.id, 'north');
+    for (let i = 0; i < 12 && (stuck.view(other.id)['you'] as { gate: string }).gate !== 'eligible'; i++) {
+      await stuck.startMission(other.id);
+      await stuck.intervene(other.id, 'timing', 'calendar');
+    }
+    stuck.recordExternal([satisfied]);
+    const refused = await stuck.refreshGate(other.id);
+    expect(refused['lrs']).toBe('unreachable');
+    expect(refused['promoted']).toBe(false);
+  });
+
+  it('launches the tier course through Foxxi for this consultant and not a second guest', async () => {
+    let posted: { url: string; body: { _signed_payload?: string } } | undefined;
+    const fetchImpl = (async (url: string | URL | Request, init?: RequestInit) => {
+      posted = { url: String(url), body: JSON.parse(String(init?.body ?? '{}')) as { _signed_payload?: string } };
+      const payload = JSON.parse(posted.body._signed_payload ?? '{}') as { agent_id?: string; course_id?: string };
+      return new Response(JSON.stringify({
+        kind: 'cmi5-launch', launchUrl: 'https://foxxi.example/au?fetch=1', registration: 'reg-1', learner: payload.agent_id,
+      }), { status: 200, headers: { 'Content-Type': 'application/json' } });
+    }) as typeof fetch;
+    const launcher = new FoxxiCourseLauncher('https://foxxi.example/agent/cmi5/launch', async () => '0x' + 'ab'.repeat(65), fetchImpl);
+    const world = await CoachedWorld.create({
+      pack: loadPackFile(orchardPath), base: 'http://world.example/', didHost: 'world.example', seed: 6, launcher,
+    });
+    const consultant = world.admit({ ownerDid: 'did:web:world.example:users:u-try-play-abc', userId: 'u-try-play-abc', podUrl: 'http://world.example/pods/u/', agentDid: 'did:web:world.example:agents:mcp' });
+    await world.joinFaction(consultant.id, 'north');
+    const launched = await world.launchGate(consultant.id);
+    const payload = JSON.parse(posted?.body._signed_payload ?? '{}') as { agent_id?: string; course_id?: string };
+    expect(posted?.url).toBe('https://foxxi.example/agent/cmi5/launch');
+    expect(payload.agent_id).toBe(consultant.ownerDid);
+    expect(payload.course_id).toBe('https://example.org/courses/orchard-crew');
+    expect(launched['learner']).toBe(consultant.ownerDid);
+    expect(launched['launchUrl']).toBe('https://foxxi.example/au?fetch=1');
   });
 });

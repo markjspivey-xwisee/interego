@@ -22,7 +22,7 @@ export interface XapiStatement {
   readonly context: {
     readonly registration: string;
     readonly contextActivities: {
-      readonly category: ReadonlyArray<{ readonly id: string; readonly definition: { readonly type: string } }>;
+      readonly category: ReadonlyArray<{ readonly id: string; readonly definition?: { readonly type: string } }>;
       readonly parent?: ReadonlyArray<{ readonly id: string; readonly definition: { readonly type: string } }>;
     };
   };

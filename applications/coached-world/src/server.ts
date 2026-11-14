@@ -4,15 +4,17 @@
  * the Interego record of the same state.
  */
 import { createServer, type IncomingMessage, type ServerResponse } from 'node:http';
-import { randomBytes } from 'node:crypto';
+import { createHash, randomBytes } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { Wallet } from 'ethers';
 import { PlayError } from '../../../deploy/identity/provisional-play.js';
 import { PlayGrantError } from '../../foxxi-content-intelligence/src/play-grant.js';
 import { affordancesManifestTurtle } from '../../_shared/affordance-mcp/index.js';
 import { WorldError } from './errors.js';
 import { createLocalDoor, createRelayDoor, type GuestDoor } from './guest-play.js';
+import { FoxxiCourseLauncher } from './course-launch.js';
 import { HttpLrs } from './lrs.js';
 import { loadPackFile } from './pack.js';
 import { CoachedWorld } from './world.js';
@@ -68,9 +70,11 @@ export async function start(opts: {
     ? createRelayDoor({ audience: relayAudience, identityUrl, relayUrl: process.env['CPW_RELAY_URL'] ?? 'https://relay.interego.xwisee.com', servicePrivateKey: relayKey })
     : createLocalDoor(origin);
   const lrsUrl = process.env['CPW_LRS_URL'];
+  const launcher = launchLauncher();
   const world = await CoachedWorld.create({
     pack, base: `${origin}/`, didHost: didHost(origin),
     ...(lrsUrl ? { lrs: new HttpLrs(lrsUrl, process.env['CPW_LRS_AUTHORIZATION']), actorHomePage: process.env['CPW_LRS_ACTOR_HOME'] } : {}),
+    ...(launcher ? { launcher } : {}),
   });
   live.world = world;
   if (opts.bots !== false) {
@@ -81,6 +85,17 @@ export async function start(opts: {
     url: origin, world,
     close: () => new Promise(resolve => { if (live.timer) clearInterval(live.timer); server.close(() => resolve()); }),
   };
+}
+
+function launchLauncher(): FoxxiCourseLauncher | undefined {
+  const url = process.env['CPW_FOXXI_LAUNCH_URL'];
+  const key = process.env['CPW_FOXXI_LAUNCH_KEY'];
+  if (!url || !key || !/^0x[0-9a-fA-F]{64}$/.test(key)) return undefined;
+  const wallet = new Wallet(key);
+  return new FoxxiCourseLauncher(url, async payload => {
+    const message = `sha256:${createHash('sha256').update(payload).digest('hex')}`;
+    return wallet.signMessage(message);
+  });
 }
 
 function didHost(origin: string): string {
@@ -160,7 +175,7 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
     return;
   }
   const writes = req.method === 'POST' || req.method === 'DELETE';
-  const known = writes && ['/faction', '/missions', '/missions/intervene', '/market/transfer', '/pacts', '/gate/refresh'].includes(url.pathname);
+  const known = writes && ['/faction', '/missions', '/missions/intervene', '/market/transfer', '/pacts', '/gate/launch', '/gate/refresh'].includes(url.pathname);
   if (!known) { send(res, 404, { error: 'not-found' }); return; }
   const id = who(req, ctx.sessions);
   if (!id) throw new WorldError(401, 'sign-in');
@@ -188,6 +203,10 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
   }
   if (req.method === 'DELETE' && url.pathname === '/pacts') {
     send(res, 200, await ctx.world.exclusive(() => ctx.world.dissolvePact(id, text(body, 'factionId'))));
+    return;
+  }
+  if (req.method === 'POST' && url.pathname === '/gate/launch') {
+    send(res, 200, await ctx.world.exclusive(() => ctx.world.launchGate(id)));
     return;
   }
   if (req.method === 'POST' && url.pathname === '/gate/refresh') {

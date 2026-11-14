@@ -2,7 +2,32 @@
 
 ## 2026-11-14 — Coached world: a shared performance-consulting world on existing primitives
 
-A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`; a tier changes only when those statements are already in the record. Guests are provisional-play owners (`u-try-play-`), the same admission identity already serves. Importing that class into the strict test program needed the attestation regex groups in `deploy/identity/provisional-play.ts` named before use; the check is the same one. The local admission answer's token field is the short marker `unused`; the world session is separate and that field is not a credential. The leaderboard lists every joined consultant. A promotion leaves a roster seat so a transfer can land. A bot settlement publishes the territory graph it changes. An LRS gate query sends the actor's home page with the DID. See `applications/coached-world/README.md`.
+A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. See `applications/coached-world/README.md`.
+
+## 2026-11-14 — Foxxi: the operator of a bridge can take a hosted package down
+
+Taking a hosted package down (`foxxi.remove_hosted_package`) asks for the
+tenant's admin by signature, and nobody else can do it: an agent working for
+the operator, signing through the relay, is refused, and so two superseded
+packages stayed listed after their owner said to remove them. The operator now
+has a path of their own. `FOXXI_HOSTED_PACKAGES_TAKEN_DOWN` lists packages by
+sha-256, separated by commas or spaces. A listed package is removed from the
+tenant pod when the bridge starts, with what described it, and its course is
+forgotten; while it stays listed it is not listed at `/scorm/packages`, opened,
+or kept again, whether or not the pod has removed it yet. An entry that is no
+sha-256 is named in a warning and takes nothing down. What learners recorded of
+a package stays in their own records, as with the signed removal.
+
+## 2026-11-14 — The UI oracle job waits long enough for the build it reads
+
+"Original client oracles and hosted visitor render" waited eight minutes for a
+completed native or golden build of the pull request's head and then failed. On
+recent pull requests that native build finished 6 to 23 minutes after the push,
+queue included, so the job failed on most of them and passed on a manual re-run
+once the build was done; the gated auto-merge refuses a red check, so each of
+those pull requests waited for a person or a session to press re-run. The wait
+is now thirty minutes and the job's limit fifty. A head whose build never
+finishes fails later than before, with the same message.
 
 ## 2026-11-13 — Foxxi: a course player on the existing Interego guest
 
