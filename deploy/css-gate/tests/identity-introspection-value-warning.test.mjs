@@ -70,8 +70,25 @@ async function freePort() {
   return port;
 }
 
-/** A gate holding `value`, started as the image starts it; resolves once its startup lines are out. */
+/**
+ * A gate holding `value`, started as the image starts it; resolves once its startup lines are out.
+ *
+ * The gate takes its port from PORT and has no way to say which port it was given, so the port is
+ * chosen here: opened, read, closed, and handed to the child. Between the close and the child's
+ * listen the port is nobody's, and `node --test` runs the other test files beside this one, each
+ * opening servers on port 0. One of them can be given the same port first, and the child then dies
+ * with EADDRINUSE. That is this test's own race, not a fault in the gate, so it picks another port
+ * and starts again. Any other exit is still a failure.
+ */
 async function startGate(value) {
+  for (let attempt = 1; ; attempt++) {
+    const started = await startGateOnce(value);
+    if (started.gate) return started.gate;
+    if (attempt === 5) throw new Error(`css-gate found its port taken ${attempt} times running:\n${started.out}`);
+  }
+}
+
+async function startGateOnce(value) {
   const port = await freePort();
   const env = {
     PATH: process.env.PATH, PORT: String(port), WRITE_SECRET: 'test-write-secret',
@@ -85,11 +102,14 @@ async function startGate(value) {
   child.stderr.on('data', (d) => { out += String(d); });
   const deadline = Date.now() + 30_000;
   while (!/per-user-bearer cache TTL/.test(out)) {
-    if (child.exitCode !== null) throw new Error(`css-gate exited ${child.exitCode}:\n${out}`);
+    if (child.exitCode !== null) {
+      if (/EADDRINUSE/.test(out)) return { out };
+      throw new Error(`css-gate exited ${child.exitCode}:\n${out}`);
+    }
     if (Date.now() > deadline) throw new Error(`css-gate did not start:\n${out}`);
     await new Promise((resolve) => setTimeout(resolve, 50));
   }
-  return { base: `http://127.0.0.1:${port}`, output: () => out };
+  return { gate: { base: `http://127.0.0.1:${port}`, output: () => out } };
 }
 
 test('the warning fires exactly for the values the gate cannot present, and never shows the value', async () => {

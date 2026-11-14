@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-14 — css-gate: a test no longer fails when another test takes its port
+
+The "Durable LRS" CI job failed twice in two hours, on two pull requests that did
+not touch the gateway, with `listen EADDRINUSE`. The cause is one test,
+`identity-introspection-value-warning.test.mjs`. It starts real gate processes,
+and the gate takes its port from `PORT`, so the test opens a port, reads its
+number, closes it and hands the number to the child. `node --test` runs the
+other test files at the same time, each opening servers on port 0, and one of
+them could be given that port before the child listened.
+
+The test now starts the gate again on another port when the child exits with
+`EADDRINUSE`, up to five times. Any other exit fails as before. The gate itself
+is unchanged.
+
 ## 2026-11-14 — Practice Evidence: what the LMS issuer binding rests on
 
 The README now says what an operator must know before setting
