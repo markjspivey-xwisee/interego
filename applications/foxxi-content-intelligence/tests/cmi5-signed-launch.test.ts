@@ -5,7 +5,8 @@
  * `satisfied` carrying no grading tag, since a cmi5 AU reports its own result.
  */
 import { describe, expect, it } from 'vitest';
-import { buildCmi5Launch, chooseAu, findResumableLaunch, observeCmi5Statement, recordLaunchedStatement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
+import { buildCmi5Launch, chooseAu, findResumableLaunch, launchParametersFrom, observeCmi5Statement, recordLaunchedStatement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
+import { parseCmi5Course } from '../src/cmi5-course.js';
 import { getStatementStore, readStateDocument } from '../src/xapi-lrs.js';
 import { GRADED_TAG_EXT } from '../src/graded-evidence.js';
 import type { Cmi5Course } from '../src/cmi5-course.js';
@@ -132,6 +133,45 @@ describe('the LMS launched statement', () => {
   });
 });
 
+describe('launchParameters', () => {
+  const xml = `<?xml version="1.0"?><courseStructure>
+    <course id="urn:course:params"><title><langstring lang="en-US">Params</langstring></title></course>
+    <au id="https://au.example/with" moveOn="Completed"><title><langstring>With</langstring></title><url>https://content.example/with</url><launchParameters>  mode=practice  </launchParameters></au>
+    <au id="https://au.example/without" moveOn="Completed"><title><langstring>Without</langstring></title><url>https://content.example/without</url></au>
+  </courseStructure>`;
+
+  it('reads the course structure\'s string and lets a launch request replace it', () => {
+    const parsed = parseCmi5Course(xml);
+    expect(parsed.structure.map(n => n.kind === 'au' ? n.launchParameters : undefined)).toEqual(['mode=practice', undefined]);
+    expect(launchParametersFrom('mode=practice', undefined)).toEqual({ ok: true, value: 'mode=practice' });
+    expect(launchParametersFrom('mode=practice', 'mode=exam')).toEqual({ ok: true, value: 'mode=exam' });
+    expect(launchParametersFrom('mode=practice', null)).toEqual({ ok: true });
+    expect(launchParametersFrom('mode=practice', 7)).toEqual({ ok: false, error: expect.stringContaining('string') });
+    expect(() => parseCmi5Course(xml.replace('mode=practice', 'x'.repeat(8193)))).toThrow(/launchParameters/);
+  });
+
+  it('stages the value in LMS.LaunchData, and omits it when the activity has none', async () => {
+    const lens = 'lens:launch-parameters' as TenantId;
+    const withIt = buildCmi5Launch({
+      au: { id: 'https://au.example/with', url: 'https://content.example/with', launchParameters: 'mode=practice' },
+      learner: { id: 'did:ethr:0x1111111111111111111111111111111111111111' },
+      lrsEndpoint: 'https://bridge.example/xapi', fetchBaseUrl: 'https://bridge.example/cmi5/fetch',
+      authoritativeSource: 'did:web:bridge.example', tenant: lens, courseId: course.id,
+    });
+    expect(withIt.launchData.launchParameters).toBe('mode=practice');
+    await stageLaunchData(lens, withIt, 'https://au.example/with');
+    const q = new URL(withIt.launchUrl).searchParams;
+    expect(await readStateDocument(lens, { activityId: 'https://au.example/with', agent: JSON.stringify(JSON.parse(q.get('actor') ?? '{}')), stateId: 'LMS.LaunchData', registration: withIt.registration })).toMatchObject({ launchParameters: 'mode=practice' });
+    const without = buildCmi5Launch({
+      au: { id: 'https://au.example/without', url: 'https://content.example/without' },
+      learner: { id: 'did:ethr:0x1111111111111111111111111111111111111111' },
+      lrsEndpoint: 'https://bridge.example/xapi', fetchBaseUrl: 'https://bridge.example/cmi5/fetch',
+      authoritativeSource: 'did:web:bridge.example', tenant: lens,
+    });
+    expect(without.launchData).not.toHaveProperty('launchParameters');
+  });
+});
+
 describe('the bridge wires the learner\'s own launch', () => {
   it('derives the learner from the signature, launches into their lens, stages launch data, and keeps statements only for the launch\'s own actor', async () => {
     const { readFileSync } = await import('node:fs');
@@ -142,6 +182,7 @@ describe('the bridge wires the learner\'s own launch', () => {
     expect(route).toMatch(/const tenant = lensTenantFor\(actorForPod\(learner\.podUrl, MESH_ACTOR_LABELS\)\)/);
     expect(route).toMatch(/stageLaunchData\(tenant, launch, au\.id\)/);
     expect(route).toMatch(/recordLaunchedStatement\(tenant, launch\.launched\)/);
+    expect(route).toMatch(/launchParametersFrom\(au\.launchParameters, auth\.payload\.launch_parameters\)/);
     const lms = readFileSync(new URL('../src/cmi5-lms.ts', import.meta.url), 'utf8');
     expect(lms).toMatch(/await recordLaunchedStatement\(tenant, launch\.launched\)/);
     const link = readFileSync(new URL('../src/cmi5-personal-link.ts', import.meta.url), 'utf8');

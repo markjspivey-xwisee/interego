@@ -19,8 +19,8 @@
  */
 import { createHash, randomBytes } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
-import { buildCmi5Launch, chooseAu, findResumableLaunch, recordLaunchedStatement, serializeKeyed, whenCmi5Ready, type Cmi5Launch } from './cmi5-lms.js';
-import type { Cmi5Course } from './cmi5-course.js';
+import { buildCmi5Launch, chooseAu, findResumableLaunch, launchParametersFrom, recordLaunchedStatement, serializeKeyed, whenCmi5Ready, type Cmi5Launch } from './cmi5-lms.js';
+import { LAUNCH_PARAMETERS_MAX, type Cmi5Course } from './cmi5-course.js';
 import type { TenantId } from './tenant-context.js';
 import { htmlEscape } from './lti-player.js';
 import { earlierMark, forwardedRateLimit, laterMark, perAddressLimiter, requestAddress, tighterExpiry, withdrawalState } from './revocable-registry.js';
@@ -52,6 +52,8 @@ export interface PersonalLaunchLink {
   readonly delegationExpiresAt?: string;
   opens: number;
   lastOpenAt?: string;
+  /** Set when the mint request replaced the course structure's launchParameters (§10.2.3). Null clears it. */
+  readonly launchParameters?: string | null;
 }
 
 export type PersonalLinkState = 'live' | 'revoked' | 'expired';
@@ -88,6 +90,7 @@ function validLink(v: unknown): v is PersonalLaunchLink {
     && typeof d.opens === 'number' && Number.isFinite(d.opens) && d.opens >= 0
     && (d.auId === undefined || (typeof d.auId === 'string' && d.auId.length <= 2000))
     && (d.returnUrl === undefined || (typeof d.returnUrl === 'string' && d.returnUrl.length <= 2000))
+    && (d.launchParameters === undefined || d.launchParameters === null || (typeof d.launchParameters === 'string' && d.launchParameters.length > 0 && d.launchParameters.length <= LAUNCH_PARAMETERS_MAX))
     && (d.expiresAt === undefined || typeof d.expiresAt === 'string')
     && (d.revokedAt === undefined || typeof d.revokedAt === 'string')
     && (d.lastOpenAt === undefined || typeof d.lastOpenAt === 'string')
@@ -114,7 +117,7 @@ export class PersonalLaunchRegistry {
 
   create(input: {
     actorDid: string; courseId: string; learnerPod: string; mintedBy: string;
-    auId?: string; returnUrl?: string; expiresAt?: string; delegationExpiresAt?: string;
+    auId?: string; returnUrl?: string; expiresAt?: string; delegationExpiresAt?: string; launchParameters?: string | null;
   }, now: number): { link: PersonalLaunchLink; token: string } | { refused: string } {
     this.prune(now);
     if (this.byId.size >= this.max) return { refused: 'this bridge holds as many personal launch links as it can' };
@@ -129,6 +132,7 @@ export class PersonalLaunchRegistry {
       ...(input.auId ? { auId: input.auId } : {}),
       ...(input.returnUrl ? { returnUrl: input.returnUrl } : {}),
       ...(input.expiresAt ? { expiresAt: input.expiresAt } : {}),
+      ...(input.launchParameters !== undefined ? { launchParameters: input.launchParameters } : {}),
       opens: 0,
     };
     this.byId.set(link.id, link);
@@ -343,6 +347,12 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
       }
       const expiry = expiryFrom(auth.payload.expires_in_days, now());
       if (!expiry.ok) { res.status(400).json({ error: expiry.error }); return; }
+      let launchParameters: string | null | undefined;
+      if (auth.payload.launch_parameters !== undefined) {
+        const decided = launchParametersFrom(undefined, auth.payload.launch_parameters);
+        if (!decided.ok) { res.status(400).json({ error: decided.error }); return; }
+        launchParameters = decided.value ?? null;
+      }
       const learner = await actor(auth);
       if (learner instanceof PersonalLinkAuthError) { res.status(learner.status).json({ error: learner.message }); return; }
       let expiresAt = expiry.expiresAt;
@@ -351,6 +361,7 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
         actorDid: learner.did, courseId: course.id, learnerPod: learner.podUrl, mintedBy: auth.callerDid,
         ...(auId ? { auId } : {}), ...(returnUrl ? { returnUrl } : {}), ...(expiresAt ? { expiresAt } : {}),
         ...(learner.delegationExpiresAt ? { delegationExpiresAt: learner.delegationExpiresAt } : {}),
+        ...(launchParameters !== undefined ? { launchParameters } : {}),
       }, now());
       if ('refused' in minted) { res.status(503).json({ error: minted.refused }); return; }
       deps.persist();
@@ -442,6 +453,10 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
       const choice = chooseAu(course, satisfied, link.auId);
       if (!choice.ok) { sendGone(req, res, choice.status, choice.error); return; }
       const au = choice.au;
+      const parameters = link.launchParameters !== undefined
+        ? launchParametersFrom(undefined, link.launchParameters)
+        : launchParametersFrom(au.launchParameters, undefined);
+      if (!parameters.ok) { sendGone(req, res, 400, parameters.error); return; }
       let auUrl: string;
       try { auUrl = new URL(au.url, `${base}/`).toString(); }
       catch { sendGone(req, res, 404, 'This course has no launchable address.'); return; }
@@ -454,6 +469,7 @@ export function attachPersonalLaunchRoutes(app: Express, deps: PersonalLaunchRou
             id: au.id, url: auUrl, moveOn: au.moveOn, title: au.title,
             ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}),
             ...(au.entitlementKey ? { entitlementKey: au.entitlementKey } : {}),
+            ...(parameters.value ? { launchParameters: parameters.value } : {}),
           },
           learner: { id: link.actorDid },
           lrsEndpoint,

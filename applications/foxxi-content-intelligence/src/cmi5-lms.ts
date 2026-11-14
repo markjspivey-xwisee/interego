@@ -37,7 +37,7 @@ import { DEFAULT_TENANT, TenantPartition, type TenantId } from './tenant-context
 import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { buildCmi5Statement, evaluateMoveOn } from './cmi5.js';
 import {
-  parseCmi5Course, auById, precedingAu, flatAus, flatBlocks, blockAuIds,
+  parseCmi5Course, auById, precedingAu, flatAus, flatBlocks, blockAuIds, LAUNCH_PARAMETERS_MAX,
   type Cmi5Course, type Cmi5AuNode,
 } from './cmi5-course.js';
 import { stageStateDocument, storeStatementDurably } from './xapi-lrs.js';
@@ -74,6 +74,8 @@ export interface Cmi5Au {
   title?: string;
   /** The AU's entitlement key from the course structure (§13.1.4), when it has one. */
   entitlementKey?: string;
+  /** cmi5 §10.2.3. From the course structure, unless this launch replaces it. */
+  launchParameters?: string;
 }
 
 export interface Cmi5LaunchRequest {
@@ -372,6 +374,19 @@ function sweepExpired(): void {
 }
 
 /**
+ * cmi5 §10.2.3. The course structure supplies launchParameters. A launch request may replace that
+ * string; it is not parsed, because the AU is what interprets it. Absent or blank sends nothing.
+ */
+export function launchParametersFrom(courseValue: string | undefined, requested: unknown): { ok: true; value?: string } | { ok: false; error: string } {
+  const source = requested !== undefined ? requested : courseValue;
+  if (source === undefined || source === null) return { ok: true };
+  if (typeof source !== 'string') return { ok: false, error: 'launch_parameters must be a string' };
+  const value = source.trim();
+  if (value.length > LAUNCH_PARAMETERS_MAX) return { ok: false, error: `launch_parameters is longer than ${LAUNCH_PARAMETERS_MAX} characters` };
+  return value ? { ok: true, value } : { ok: true };
+}
+
+/**
  * Build a conformant cmi5 launch for a learner + an AU. Registers the
  * one-time fetch token; the caller navigates the learner to `launchUrl`
  * and stages `launchData` into the LRS State resource as `LMS.LaunchData`.
@@ -493,6 +508,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
     ...(typeof req.au.masteryScore === 'number' ? { masteryScore: req.au.masteryScore } : {}),
     ...(req.returnUrl ? { returnURL: req.returnUrl } : {}),
     ...(req.au.entitlementKey ? { entitlementKey: { courseStructure: req.au.entitlementKey } } : {}),
+    ...(req.au.launchParameters ? { launchParameters: req.au.launchParameters } : {}),
   };
 
   // A resumed session already has its launched statement. A new session, including one that
@@ -842,6 +858,9 @@ export function attachCmi5LmsRoutes(app: Express, config: {
       return;
     }
 
+    const launchParameters = launchParametersFrom(auNode?.launchParameters, req.query.launch_parameters);
+    if (!launchParameters.ok) { res.status(400).json({ error: launchParameters.error }); return; }
+
     const lrsEndpoint = (req.query.endpoint as string | undefined)
       ?? config.defaultLrsEndpoint
       ?? `${config.selfBaseUrl}/xapi`;
@@ -874,6 +893,7 @@ export function attachCmi5LmsRoutes(app: Express, config: {
         masteryScore: req.query.mastery_score !== undefined ? Number(req.query.mastery_score) : auNode?.masteryScore,
         title: (req.query.title as string | undefined) ?? auNode?.title,
         ...(auNode?.entitlementKey ? { entitlementKey: auNode.entitlementKey } : {}),
+        ...(launchParameters.value ? { launchParameters: launchParameters.value } : {}),
       },
       learner: { id: learnerId, name: req.query.learner_name as string | undefined },
       lrsEndpoint,
