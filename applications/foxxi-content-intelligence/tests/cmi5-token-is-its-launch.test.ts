@@ -15,7 +15,8 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { IRI } from '@interego/core';
 import { buildCmi5Launch, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerTenant, redeemFetchToken, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
-import { attachXapiLrsRoutes, getStatementStore } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, getStatementStore, lmsStatementAuthority, LMS_AUTHORITY_NAME, storeStatementDurably } from '../src/xapi-lrs.js';
+import { writeSelfXapi } from '../src/self-xapi.js';
 import type { TenantId } from '../src/tenant-context.js';
 
 const tenant = 'lens:token-is-its-launch' as TenantId;
@@ -233,6 +234,45 @@ describe('a cmi5 auth-token is bound to its launch', () => {
       // Reading its own launch is not a write and is unaffected.
       expect((await fetch(`${url}?registration=${A.registration}`, { headers: headers(tokenA) })).status).toBe(200);
     } finally { await new Promise<void>((r) => { s2.close(() => r()); }); }
+  });
+
+  it('marks the LMS\'s own statements with an authority nobody can send', async () => {
+    const SATISFIED = 'https://w3id.org/xapi/adl/verbs/satisfied';
+    const LAUNCHED = 'http://adlnet.gov/expapi/verbs/launched';
+    const store = getStatementStore(tenant);
+    const said = (verb: string, more: Record<string, unknown> = {}) => ({
+      id: randomUUID(), actor: A.actor, verb: { id: verb }, object: { objectType: 'Activity', id: au(1).id }, context: { registration: A.registration }, ...more,
+    });
+    const authorityOf = async (id: string) => ((await store.get(id))!.statement['authority'] as { account: { homePage: string; name: string } }).account;
+
+    // The LMS's own code stores under the LMS's authority, whatever the statement carried in.
+    const mine = await storeStatementDurably(said(SATISFIED, { authority: { objectType: 'Agent', account: { homePage: 'https://elsewhere.example', name: 'someone' } } }), tenant, 'lms');
+    expect(await authorityOf(mine!)).toEqual(lmsStatementAuthority().account);
+    expect(lmsStatementAuthority().account.name).toBe(LMS_AUTHORITY_NAME);
+
+    // Any other internal store does not, and a statement handed to it claiming the authority loses the claim.
+    const plain = await storeStatementDurably(said(SATISFIED), tenant);
+    const claiming = await storeStatementDurably(said(SATISFIED, { authority: lmsStatementAuthority() }), tenant);
+    const shouting = await storeStatementDurably(said(SATISFIED, { authority: { objectType: 'Agent', account: { homePage: 'https://elsewhere.example', name: ' FOXXI-LMS ' } } }), tenant);
+    for (const id of [plain, claiming, shouting]) expect((await authorityOf(id!)).name).toBe('foxxi-lrs');
+
+    // Sent in, the claim is refused: by POST, in a batch, and by PUT.
+    const claim = said('http://adlnet.gov/expapi/verbs/experienced', { authority: lmsStatementAuthority() });
+    const posted = await post(tokenA, claim);
+    expect(posted.status).toBe(403);
+    expect(String((await posted.json() as { error: string }).error)).toContain('is assigned by this LRS');
+    const mixed = [said('http://adlnet.gov/expapi/verbs/experienced'), claim];
+    expect((await post(tokenA, mixed)).status).toBe(403);
+    const body = JSON.stringify(claim);
+    expect((await fetch(`${base}/xapi/statements?statementId=${claim.id}`, { method: 'PUT', headers: headers(tokenA), body })).status).toBe(403);
+    expect(await store.get(claim.id)).toBeFalsy();
+
+    // The signed route by which a learner writes about themselves takes none of the LMS's verbs.
+    const never = { request: async () => { throw new Error('the LRS must not be asked'); }, persist: async () => null };
+    for (const verb of [LAUNCHED, SATISFIED, 'https://w3id.org/xapi/adl/verbs/abandoned', 'https://w3id.org/xapi/adl/verbs/waived']) {
+      const r = await writeSelfXapi(learner.id, [{ ...said(verb), timestamp: '2026-11-14T10:00:00.000Z' }], never as never);
+      expect([verb, r.status]).toEqual([verb, 403]);
+    }
   });
 
   it('keeps the launch\'s whole actor for the pod: its type and both account fields', () => {

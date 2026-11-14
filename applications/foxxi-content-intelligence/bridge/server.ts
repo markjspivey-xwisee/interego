@@ -6022,7 +6022,8 @@ const app = createVerticalBridge({
             (await getStatementStore(tenant).query({ registration: reg, limit: 500 }))
               .statements.map(r => r.statement),
           emit: async (s) => {
-            const id = await storeStatementDurably(s, tenant);
+            // `satisfied` is the LMS's to say, and is stored under the LMS's authority.
+            const id = await storeStatementDurably(s, tenant, 'lms');
             if (!id) throw new Error('cmi5 satisfaction statement was not committed');
             if (own) keepCmi5OnLearnerPod({ ...s, id }, own);
           },
