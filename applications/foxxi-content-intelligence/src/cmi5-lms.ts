@@ -537,7 +537,8 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
 
 /** Store the LMS `launched` statement in the launch's tenant. The id once the LRS holds it. */
 export async function recordLaunchedStatement(tenant: TenantId, statement: Record<string, unknown>): Promise<string> {
-  const id = await storeStatementDurably(statement, tenant);
+  // The LMS's own word, stored under the LMS's authority: a reader tells it from a `launched` anyone else stored.
+  const id = await storeStatementDurably(statement, tenant, 'lms');
   if (!id) throw new Error('cmi5 launched statement was not stored');
   return id;
 }

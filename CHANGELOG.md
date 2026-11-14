@@ -22,6 +22,54 @@ A guest ("provisional owner") has been one per application: the key lives in the
 - **Applications.** The coached world can offer the door beside its own (`CPW_GENERAL_GUEST=1`). Foxxi's bridge can sign door grants, but its learner workbench does not use the door yet, because it re-checks a guest with identity while the session lives and an application cannot re-check a general guest.
 
 A general guest is linkable across applications by design: each one learns the same DID, pod and key thumbprint (identity does not tell one application which others the guest has used). Linking a guest to a registered account, a cross-device link code and a recovery code are not in this change. The rollout order (gate and relay, then identity, then the setting) and what each older service does with the new token are in `deploy/identity/PROVISIONAL-PLAY.md`, "General guest".
+## 2026-11-14 — Foxxi: the LMS's own statements carry an authority nobody can send
+
+An assignable unit's token was stopped from writing the LMS's verbs earlier
+today. A reviewer asked who else can write to a learner's records. There is one
+more writer: the signed route by which a learner, or an agent acting for them,
+writes statements about themselves. It took any verb. And every statement in
+the LRS, the LMS's own included, carried the same authority, so a reader could
+not tell the LMS's `launched` from one a learner wrote.
+
+The LMS's own `launched` and `satisfied` are now stored under an authority of
+their own, `foxxi-lms`. Only the LMS's code can write it: a statement sent in
+naming it is refused (403), and one handed to any other internal store loses
+the claim. The learner's signed route refuses `launched`, `abandoned`, `waived`
+and `satisfied`. A reader that needs the LMS's word can now ask for that
+authority.
+
+Two places in the bridge put a statement record straight into a store, past
+that rule, and both take what a pod holds: the mesh projection's batch landing,
+and the restore of a caller's durable telemetry from the caller's own pod. The
+first now drops a claim to the LMS's authority; the second refuses a record
+that makes one. Found on a reviewer's prompt to check the restore paths.
+
+Not done here: no reader checks the authority yet. Practice Evidence and the
+coached-world gate still read `launched` and `satisfied` by verb, activity and
+actor. Statements the LMS stored before this change carry the old authority.
+Operator credentials can still store any verb; what they store does not carry
+the LMS's authority.
+
+## 2026-11-14 — Connect an agent, shared: any bridge can use a chat session's subscription instead of an API key
+
+The I2IDL-X workbench lets a person pair their own AI chat session with a page, so the page's questions are answered on that session's subscription and no model key is held anywhere. That method lived inside Foxxi. It is now shared code, and the coached world is the second bridge to use it.
+
+- **`applications/_shared/agent-connection/`** holds the protocol: sessions, one-use invitations, the driver capability, the turn queue with leases and revisions, limits and expiry. It has no express dependency and no workbench naming. A bridge supplies a profile (its path, action IRI, field names and wording), how it verifies an Interego-signed caller, and its request limits. Two adapters, for express and for plain `node:http`, wrap one function. A framework-free browser client (an ES module, no build step) opens a session, shows the invitation, follows a turn, cancels and disconnects.
+- **The workbench is unchanged on the wire.** `i2idlx-agent-sessions.ts` is now a thin composition over the shared core: the same routes, wire format, limits and error codes. Its tests were not edited. The provider-specific background Routine stays Foxxi's, passed in as an optional wake plug-in. The workbench page keeps its own bundled client.
+- **`applications/_shared/http-guard/`** holds what the coached world had written for itself and any bridge needs: the per-client request limit (IPv6 by its /56, the last forwarded hop behind a proxy), the ceiling helper for tables callers fill, the check that a public URL is an https origin, and the `/health` body the deploy verifier reads. The coached world imports them from there. Foxxi's express limiters were left as they are.
+- **Coached world: Connect an agent.** A signed-in consultant can pair their own chat session and have it be the agent they coach. A mission then goes to that session as a brief (the mission, the conditions the agent ran into, its remembered lessons, the interventions deployed so far; never the cause). Its answer is recorded as that agent's xAPI statement and shown on the mission. The pack's rules still score it; nothing judges the text. If the session does not answer within two minutes the turn is withdrawn, the mission runs simulated, and the feed says so. One connection per consultant.
+- **Setting.** `CPW_POD_ORIGIN` (the https origin agents' pods live on) turns the door on: it is where a claiming agent's delegation is read to verify it. Unset, the door answers 503, the page hides it and agents are simulated as before. Nothing is deployed by this change.
+
+## 2026-11-14 — A test's own text no longer fails the relay's loopback scan
+
+The relay's test chain reads every test in the repository for a server started without naming
+`127.0.0.1` (`deploy/mcp-relay/tests/listen-loopback.test.ts`). The test added with the hosted
+package take-down list quoted the bridge's `listen` call in a string, to check where the list is
+applied, and the scan read that string as a call. So `npm test` in the relay workspace has
+failed on master since that change, on a file the relay does not import. The string is now
+written in two pieces, and the test also checks the call was found at all, which the earlier
+form did not.
+
 ## 2026-11-14 — Foxxi LRS: an assignable unit's token does not speak as the LMS
 
 A cmi5 auth-token is the assignable unit's credential, and it sits in the

@@ -137,7 +137,7 @@ describe("the bridge's own emitters wait for the store", () => {
     const sites = server.split('\n').filter((l) => l.includes('storeStatementInternal(')).map((l) => l.trim());
     expect(sites).toEqual([]);
     expect(server).toContain('const id = await storeStatementDurably(ev.statement, lensTenantFor(ev.agent));');
-    expect(server).toContain('const id = await storeStatementDurably(s, tenant);');
+    expect(server).toContain("const id = await storeStatementDurably(s, tenant, 'lms');");
     expect(server).toContain('await landMeshEvent(ev);');
     expect(server.match(/emitStatement: \(stmt, tenant\) => storeStatementDurably\(stmt, tenant\),/g)).toHaveLength(2);
   });

@@ -141,13 +141,52 @@ export type XapiStatementRecord = StoredStatement;
  *  internally-emitted statements. homePage is an https IRL in prod. */
 const INTERNAL_LRS_AUTHORITY = { homePage: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080', name: 'foxxi-lrs' };
 
+/**
+ * The account name on the authority of a statement this bridge's own LMS recorded: `launched` when it
+ * launches a unit, `satisfied` when a moveOn is met. It is how a reader tells the LMS's word from a
+ * statement with the same verb that somebody else stored. The LRS assigns it and nobody can send it:
+ * only `storeStatementDurably(…, 'lms')`, called from the LMS's own code, writes it. A statement that
+ * arrives claiming it is refused, and one handed to any other internal store has the claim removed.
+ */
+export const LMS_AUTHORITY_NAME = 'foxxi-lms';
+const INTERNAL_LMS_AUTHORITY = { homePage: INTERNAL_LRS_AUTHORITY.homePage, name: LMS_AUTHORITY_NAME };
+
+/** The authority this bridge's LMS's own statements carry, as a reader compares it. */
+export function lmsStatementAuthority(): { objectType: 'Agent'; account: { homePage: string; name: string } } {
+  return { objectType: 'Agent', account: { ...INTERNAL_LMS_AUTHORITY } };
+}
+
+/** Whether a statement names the LMS's authority, whatever home page it puts beside the name. */
+export function claimsLmsAuthority(stmt: Record<string, unknown>): boolean {
+  const account = (stmt['authority'] as { account?: { name?: unknown } } | undefined)?.account;
+  return typeof account?.name === 'string' && account.name.trim().toLowerCase() === LMS_AUTHORITY_NAME;
+}
+
+/**
+ * A statement as it may be put straight into a store by code that does not go through
+ * `storeStatementDurably`: the same statement, without a claim to the LMS's authority. Some records
+ * reach a store from outside this process's own emission (a projection of what a pod holds, a
+ * record read back from a pod), and a pod is somebody's to write. The LMS's authority is kept only
+ * where the LMS's own code set it, in this process, on the way in.
+ */
+export function withoutLmsAuthorityClaim<T extends Record<string, unknown>>(stmt: T): T {
+  if (!claimsLmsAuthority(stmt)) return stmt;
+  const { authority: _claimed, ...rest } = stmt;
+  return rest as T;
+}
+
 /** An internally emitted statement authored and checked for storage, or null when it is not conformant. */
-function internalRecord(stmt: Record<string, unknown>, emitter: string): StoredStatement | null {
+function internalRecord(stmt: Record<string, unknown>, emitter: string, as: 'lrs' | 'lms' = 'lrs'): StoredStatement | null {
   // Author + structurally validate on the internal emission path too, exactly as
   // the inbound POST /xapi/statements path does — so an internally-stored statement
   // carries an LRS authority (§4.1.9) and is checked against the xAPI shape.
   const timestampAssignedByLrs = typeof stmt.timestamp !== 'string';
-  const enriched = ensureStatementFields(stmt, INTERNAL_LRS_AUTHORITY);
+  // The LMS's authority is given here and only for the LMS's own emission. Several internal stores
+  // keep statements a caller supplied; one of those naming the LMS's authority does not get to keep it.
+  let authored = stmt;
+  if (as === 'lms') authored = { ...stmt, authority: lmsStatementAuthority() };
+  else if (claimsLmsAuthority(stmt)) { const { authority: _claimed, ...rest } = stmt; authored = rest; }
+  const enriched = ensureStatementFields(authored, INTERNAL_LRS_AUTHORITY);
   const id = enriched.id as string;
   const errs = validateStatement(enriched);
   if (errs.length > 0) {
@@ -240,8 +279,8 @@ export function storeStatementInternal(stmt: Record<string, unknown>, tenant: Te
  * null when the statement is not conformant or the write failed. For a caller that must not move
  * on, or report an id, until the record is kept.
  */
-export async function storeStatementDurably(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): Promise<string | null> {
-  const rec = internalRecord(stmt, 'storeStatementDurably');
+export async function storeStatementDurably(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT, as: 'lrs' | 'lms' = 'lrs'): Promise<string | null> {
+  const rec = internalRecord(stmt, 'storeStatementDurably', as);
   if (!rec) return null;
   try {
     await statementStores.for(tenant).put(rec);
@@ -406,6 +445,7 @@ function strayFromRegistration(req: Request, batch: readonly Record<string, unkn
   const reg = boundRegistration(req);
   return reg === undefined ? -1 : batch.findIndex((s) => registrationOfStatement(s) !== reg);
 }
+const LMS_AUTHORITY_NOT_SENT = `the authority ${LMS_AUTHORITY_NAME} is assigned by this LRS to its own LMS's statements and is not accepted on a statement that is sent`;
 const OUTSIDE_LAUNCH = 'a cmi5 auth-token reads and writes only its own launch: context.registration must be the registration it was minted for';
 
 /**
@@ -834,6 +874,8 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   if (stray >= 0) { res.status(403).json({ error: `statement[${stray}]: ${OUTSIDE_LAUNCH}` }); return; }
   const notUnits = notTheUnitsToWrite(req, batch);
   if (notUnits) { res.status(403).json({ error: `statement[${notUnits.index}]: ${notUnits.why}` }); return; }
+  const claimed = batch.findIndex(claimsLmsAuthority);
+  if (claimed >= 0) { res.status(403).json({ error: `statement[${claimed}]: ${LMS_AUTHORITY_NOT_SENT}` }); return; }
   const voidsAnother = await voidsOutsideRegistration(req, batch);
   if (voidsAnother >= 0) { res.status(403).json({ error: `statement[${voidsAnother}] voids a statement of another launch: ${OUTSIDE_LAUNCH}` }); return; }
 
@@ -1064,6 +1106,7 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   if (strayFromRegistration(req, [stmt]) >= 0) { res.status(403).json({ error: OUTSIDE_LAUNCH }); return; }
   const notUnits = notTheUnitsToWrite(req, [stmt]);
   if (notUnits) { res.status(403).json({ error: notUnits.why }); return; }
+  if (claimsLmsAuthority(stmt)) { res.status(403).json({ error: LMS_AUTHORITY_NOT_SENT }); return; }
   if (await voidsOutsideRegistration(req, [stmt]) >= 0) { res.status(403).json({ error: `it voids a statement of another launch: ${OUTSIDE_LAUNCH}` }); return; }
   if (multipartParts) {
     const referenced = collectAttachmentHashes([stmt]);

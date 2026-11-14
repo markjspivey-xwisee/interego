@@ -332,7 +332,8 @@ describe("the relay's client_id is a transport field wherever the relay's fields
     expect(at('applications/agentic-performance-practice/compatibility/private-performance-routes.ts')).toBe(true);
     expect(at('applications/agentic-performance-practice/compatibility/foxxi-performance-routes.ts')).toBe(true);
     expect(at('applications/foxxi-content-intelligence/src/directory-actions.ts')).toBe(true);
-    expect(at('applications/foxxi-content-intelligence/src/i2idlx-agent-sessions.ts')).toBe(true);
+    // The agent-session driver's closed list moved with the protocol core to the shared broker.
+    expect(at('applications/_shared/agent-connection/broker.ts')).toBe(true);
     expect(at('applications/foxxi-content-intelligence/src/lti-own-reconciliation.ts')).toBe(true);
     expect(at('applications/foxxi-content-intelligence/src/lti-own-reconciliation-http.ts')).toBe(true);
     expect(at('applications/foxxi-content-intelligence/src/relay-signed-fields.ts')).toBe(true);
