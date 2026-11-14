@@ -15,6 +15,9 @@ has the LMS record, and a statement whose `actor.account` is not the one it was
 launched for. The LMS's own statements are stored inside the bridge and are not
 affected. A credential that is not a launch's is not held to this.
 
+Where the LRS knows a token is a launch's and cannot tell which actor it was
+launched for, the token writes no statement at all.
+
 Found while answering a reviewer's question about who can write what on this
 LRS, before turning on the route by which the LMS takes reviewed results.
 

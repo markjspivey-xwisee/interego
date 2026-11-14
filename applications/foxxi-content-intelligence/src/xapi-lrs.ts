@@ -103,8 +103,9 @@ export interface XapiLrsConfig {
   /** The launch registration a cmi5 auth-token is bound to. Such a bearer reads and writes only that launch's statements and State. */
   bearerRegistrationResolver?: (token: string) => string | null;
   /**
-   * The actor a cmi5 auth-token was issued for. With it, such a bearer writes statements only as
-   * that actor and never with a verb cmi5 keeps for the LMS.
+   * The actor a cmi5 auth-token was issued for. Such a bearer writes statements only as that actor
+   * and never with a verb cmi5 keeps for the LMS. Where this is not given, or gives no actor for a
+   * token bound to a registration, that token writes no statement at all.
    */
   bearerActorResolver?: (token: string) => { homePage: string; name: string } | null;
   /** Optional: the published tenant directory (user_id + web_id), used to VERIFY
@@ -427,17 +428,21 @@ const LMS_ONLY_VERBS: ReadonlySet<string> = new Set([
 function notTheUnitsToWrite(req: Request, batch: readonly Record<string, unknown>[]): { index: number; why: string } | null {
   if (boundRegistration(req) === undefined) return null;
   const launchActor = (req as Request & { xapiLaunchActor?: { homePage: string; name: string } }).xapiLaunchActor;
+  // A token known to be a launch's, with no actor known for the launch: nothing says whom it may
+  // write as, so it writes nothing. A missing resolver or a launch no longer held refuses; it does
+  // not fall back to writing as anyone.
+  if (!launchActor && batch.length > 0) {
+    return { index: 0, why: 'a cmi5 auth-token writes only as the actor it was launched for, and this LRS cannot tell which actor that is' };
+  }
   for (let index = 0; index < batch.length; index++) {
     const s = batch[index]!;
     const verb = (s['verb'] as { id?: unknown } | undefined)?.id;
     if (typeof verb === 'string' && LMS_ONLY_VERBS.has(verb)) {
       return { index, why: `a cmi5 auth-token is an assignable unit's: ${verb} is the LMS's to record (cmi5 9.3)` };
     }
-    if (launchActor) {
-      const account = (s['actor'] as { account?: { homePage?: unknown; name?: unknown } } | undefined)?.account;
-      if (account?.homePage !== launchActor.homePage || account?.name !== launchActor.name) {
-        return { index, why: 'a cmi5 auth-token writes only as the actor it was launched for: actor.account must be the one in the launch (cmi5 9.2)' };
-      }
+    const account = (s['actor'] as { account?: { homePage?: unknown; name?: unknown } } | undefined)?.account;
+    if (!launchActor || account?.homePage !== launchActor.homePage || account?.name !== launchActor.name) {
+      return { index, why: 'a cmi5 auth-token writes only as the actor it was launched for: actor.account must be the one in the launch (cmi5 9.2)' };
     }
   }
   return null;

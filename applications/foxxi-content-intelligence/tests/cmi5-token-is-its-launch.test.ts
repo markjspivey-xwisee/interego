@@ -214,6 +214,27 @@ describe('a cmi5 auth-token is bound to its launch', () => {
     expect((await post(tokenA, own)).status).toBe(200);
   });
 
+  it('writes nothing where the LRS is not told which actor a launch token is for', async () => {
+    // The same LRS routes, wired as before this rule existed: the registration is known, the actor is not.
+    const bare = express();
+    bare.use(express.json({ limit: '1mb' }));
+    attachXapiLrsRoutes(bare, {
+      podUrl: '', tenantDid: 'did:web:bridge.example' as IRI, basicAuthPairs: '', forwardingTargets: '', selfBaseUrl: 'http://127.0.0.1',
+      bearerTenantResolver: cmi5BearerTenant, bearerRegistrationResolver: cmi5BearerRegistration,
+    });
+    const s2 = bare.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => s2.once('listening', () => r()));
+    try {
+      const url = `http://127.0.0.1:${(s2.address() as AddressInfo).port}/xapi/statements`;
+      const own = JSON.stringify(statement(A.registration, 'experienced'));
+      const r = await fetch(url, { method: 'POST', headers: headers(tokenA), body: own });
+      expect(r.status).toBe(403);
+      expect(String((await r.json() as { error: string }).error)).toContain('cannot tell which actor');
+      // Reading its own launch is not a write and is unaffected.
+      expect((await fetch(`${url}?registration=${A.registration}`, { headers: headers(tokenA) })).status).toBe(200);
+    } finally { await new Promise<void>((r) => { s2.close(() => r()); }); }
+  });
+
   it('keeps the launch\'s whole actor for the pod: its type and both account fields', () => {
     expect(signedLaunchLearner(A.registration, tenant)).toEqual({ did: learner.id, podUrl: 'https://pod.example/eth-222222222222/', homePage: 'did:web:bridge.example' });
   });
