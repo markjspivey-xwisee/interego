@@ -27,6 +27,19 @@ answer gives the reasons (`notFixedAgain`).
 Not changed: an `lms` principal asking for another session still gets the copy.
 The LMS route has no LRS read to show that the earlier session ended unsent.
 
+## 2026-11-14 — Foxxi: TLA-X names the reusable launch link
+
+The TLA-X decoration ties each component of ADL's Total Learning Architecture to
+a control in a Foxxi deployment. Its learning event manager named one way to
+launch: a single-use cmi5 launch. It now also names the reusable personal launch
+link (`POST /agent/cmi5/go`), as a control in the catalog and as a capability in
+the proposals.
+
+The decoration is published, and CI holds this source to the live publication,
+so the two graphs were republished with this change: the catalog (Asserted) and
+the proposals (Hypothetical), each superseding the version before it. The other
+four decorations are unchanged and were not republished.
+
 ## 2026-11-14 — Practice Evidence: what the LMS issuer binding rests on
 
 The README now says what an operator must know before setting
