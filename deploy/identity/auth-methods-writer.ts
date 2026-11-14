@@ -48,6 +48,8 @@
 export const AUTH_METHODS_KEYS: ReadonlySet<string> = new Set([
   '@context', '@id', '@type', 'userId', 'name', 'agentId', 'walletAddresses', 'webAuthnCredentials', 'didKeys',
   'sessionEpoch', 'provisionalPlayAnchor', 'provisionalPlayReceipts', 'termsAcceptance', 'deletedAt', 'provisionalPlayPurgePending',
+  // Guest links (provisional-guest-link.ts): read by normaliseAuthMethods, and written after every other member.
+  'provisionalGuestLinkedTo', 'linkedGuests', 'guestLinkCode',
 ]);
 
 /**

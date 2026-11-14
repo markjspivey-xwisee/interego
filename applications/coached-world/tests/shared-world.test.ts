@@ -556,4 +556,50 @@ describe('a coached world that offers the general guest door', () => {
       expect(second.token).not.toBe(session.token);
     } finally { await running.close(); }
   });
+
+  it('admits a guest linked to an account as that account: two browsers linked to it are one consultant, and an unlinked guest is itself again', async () => {
+    const id = identity();
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true, publicUrl: `${WORLD}/`, trustProxy: false, generalDoor: id.doorFor(WORLD, agent) });
+    try {
+      const arrive = async (key: ReturnType<typeof newKey>) => {
+        const started = await fetch(`${running.url}/play/general/start`, { redirect: 'manual' });
+        const back = await id.page(key, started.headers.get('location')!);
+        const cookie = cookieOf(started);
+        expect((await fetch(`${running.url}${back.pathname}${back.search}`, { redirect: 'manual', headers: { Cookie: cookie } })).status).toBe(302);
+        const session = await (await fetch(`${running.url}/play/general/session`, { method: 'POST', headers: { Cookie: cookie } })).json() as { token: string; ownerDid: string; name: string };
+        const view = await (await fetch(`${running.url}/world`, { headers: { Authorization: `Bearer ${session.token}` } })).json() as { you?: { id: string; ownerDid: string } };
+        return { session, you: view.you! };
+      };
+      const guestDid = (key: ReturnType<typeof newKey>) => `did:web:identity.example:users:${generalGuestUserId(playKeyThumbprint(publicPlayKey(key.publicKey.export({ format: 'jwk' }))))}`;
+      const laptop = newKey(); const phone = newKey(); const stranger = newKey();
+      // Before any link, each browser's guest is its own consultant.
+      const before = await arrive(laptop);
+      expect(before.session.ownerDid).toBe(guestDid(laptop));
+      expect((await arrive(phone)).you.id).not.toBe(before.you.id);
+      // The account's owner links the guests of two browsers to the account.
+      const owner = id.account('u-eth-c0ac4ed00001', 'Fictional Account');
+      const ownerDid = await id.linkGuest(laptop, owner);
+      expect(ownerDid).toBe(`did:web:identity.example:users:${owner}`);
+      await id.linkGuest(phone, owner);
+      const onLaptop = await arrive(laptop);
+      const onPhone = await arrive(phone);
+      expect(onLaptop.session.ownerDid).toBe(ownerDid);
+      expect(onLaptop.you.ownerDid).toBe(ownerDid);
+      expect(onPhone.you.id).toBe(onLaptop.you.id);
+      expect(onPhone.session.name).toBe(onLaptop.session.name);
+      expect(onLaptop.session.name).toBe(`Guest ${owner.slice(-6)}`);
+      // The account's consultant is not the one the laptop's guest had before it was linked: nothing was rewritten.
+      expect(onLaptop.you.id).not.toBe(before.you.id);
+      // A guest nobody linked is not that account, whatever it would like to be.
+      const other = await arrive(stranger);
+      expect(other.session.ownerDid).toBe(guestDid(stranger));
+      expect(other.you.id).not.toBe(onLaptop.you.id);
+      // Unlinked, the laptop's guest is the consultant it was before.
+      await id.general.link.unlink(owner, guestDid(laptop).split(':').pop()!);
+      const after = await arrive(laptop);
+      expect(after.session.ownerDid).toBe(guestDid(laptop));
+      expect(after.you.id).toBe(before.you.id);
+      expect((await arrive(phone)).you.id).toBe(onLaptop.you.id);
+    } finally { await running.close(); }
+  });
 });

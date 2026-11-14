@@ -27,7 +27,7 @@ The facts must be an authority's own answer about the subject (identity's intros
 
 ## Attributing usage to a main account
 
-`canonicalSubject(facts)` answers whom a decision or a usage record belongs to: the main account when the authority states the subject is `linkedTo` one, else the subject itself, with the acting subject in `also`. A vertical keys what it keeps per person (a learner record, a consultant, a quota) on `canonicalSubject(facts).subject` and records `also` beside it, so a guest's usage becomes the main account's the moment the authority states the link, and nothing written before is rewritten. No authority states `linkedTo` yet: identity's link ceremony is not built.
+`canonicalSubject(facts)` answers whom a decision or a usage record belongs to: the main account when the authority states the subject is `linkedTo` one, else the subject itself, with the acting subject in `also`. A vertical keys what it keeps per person (a learner record, a consultant, a quota) on `canonicalSubject(facts).subject` and records `also` beside it, so a guest's usage becomes the main account's the moment the authority states the link, and nothing written before is rewritten. Identity states `linkedTo` for a general guest that its owner linked to a registered account, and only while that account's own record lists the guest (`deploy/identity/PROVISIONAL-PLAY.md`, "Linking a guest to an account"); the coached world admits by it.
 
 ## Adopting it at a decision point: shadow, then enforce
 

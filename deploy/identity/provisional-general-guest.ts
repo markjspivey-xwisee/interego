@@ -31,6 +31,7 @@ import { hostedPrivacyUrl, type HostedTermsPolicy, type TermsAcceptance } from '
 import { DEFAULT_PLAY_NAMESPACE, PlayError, generalGuestUserId, isBase64Url, playKeyThumbprint, playOrigin, publicPlayKey,
   verifyPlayProof, type PlayClaims, type PlayClient, type PlayGrant, type ProvisionalPlay } from './provisional-play.js';
 import type { PlayAnchorDocument, PlayReceipt } from './provisional-play-store.js';
+import { GuestLink, LINK_CODE_MAX_ATTEMPTS, LINK_CODE_TTL_SECONDS } from './provisional-guest-link.js';
 
 export const GENERAL_GUEST_PURPOSE = 'interego-general-guest-v1';
 /** How long a door code lives. The application's backend exchanges it at once. */
@@ -66,6 +67,11 @@ export interface SubjectAttributes {
   admittedBy: string[];
   proofKeyThumbprint: string;
   acceptedTermsVersion?: string;
+  /**
+   * The DID of the registered account this guest is linked to (provisional-guest-link.ts), stated
+   * only while the account's own record lists this guest. Absent otherwise.
+   */
+  linkedTo?: string;
 }
 
 const fail = (status: number, code: string): never => { throw new PlayError(status, code); };
@@ -89,9 +95,10 @@ export function guestApplications(document: PlayAnchorDocument): GuestApplicatio
 /**
  * The subject's attributes as stated to `application` (none for the door's own token), from its
  * opened anchor and its record as read from the pod. Every value is one identity holds; nothing is
- * taken from a request.
+ * taken from a request. `linkedTo` is what GuestLink.confirmed answered for this record: the
+ * account's side of a link is on another record, which the caller has read.
  */
-export function subjectAttributes(claims: PlayClaims, document: PlayAnchorDocument, application?: string): SubjectAttributes {
+export function subjectAttributes(claims: PlayClaims, document: PlayAnchorDocument, application?: string, linkedTo?: string): SubjectAttributes {
   const terms = document['termsAcceptance'] as TermsAcceptance | undefined;
   return {
     subject: claims.ownerDid, provisional: true,
@@ -100,6 +107,7 @@ export function subjectAttributes(claims: PlayClaims, document: PlayAnchorDocume
     admittedBy: guestApplications(document).map(row => row.audience).filter(audience => audience === application),
     proofKeyThumbprint: claims.proofKeyThumbprint,
     ...(terms && typeof terms.version === 'string' ? { acceptedTermsVersion: terms.version } : {}),
+    ...(linkedTo !== undefined ? { linkedTo } : {}),
   };
 }
 
@@ -127,7 +135,11 @@ export interface GeneralGuestDependencies {
    * may throw a PlayError to refuse, and nothing is written then. Throws 401
    * provisional_owner_unavailable where there is no record.
    */
-  update(userId: string, change: (document: PlayAnchorDocument) => void): Promise<PlayAnchorDocument>;
+  update(userId: string, change: (document: PlayAnchorDocument) => void | false): Promise<PlayAnchorDocument>;
+  /** A record as the pod holds it now (a guest's, or the account a guest names), or null where there is none. */
+  read(userId: string): Promise<PlayAnchorDocument | null>;
+  /** `update` for a registered account's record (provisional-guest-link.ts GuestLinkDependencies.updateAccount). */
+  updateAccount(userId: string, change: (document: PlayAnchorDocument) => void | false): Promise<PlayAnchorDocument>;
   issueToken(claims: PlayClaims, grant: GeneralTokenGrant): Promise<{ token: string; expiresAt: string }>;
 }
 
@@ -135,8 +147,12 @@ interface DoorCode { v: 1; userId: string; audience: string; state: string; code
 
 export class GeneralGuest {
   private readonly now: () => number;
+  /** Linking this door's guests to registered accounts (provisional-guest-link.ts). On with the door. */
+  readonly link: GuestLink;
   constructor(private readonly play: ProvisionalPlay, private readonly deps: GeneralGuestDependencies) {
     this.now = deps.now ?? (() => Math.floor(Date.now() / 1000));
+    this.link = new GuestLink({ issuer: deps.issuer, enabled: () => this.enabled, doorOrigin: () => this.doorOrigin, now: this.now,
+      open: anchor => play.open(anchor), read: deps.read, update: deps.update, updateAccount: deps.updateAccount });
   }
   /** On only with the setting and at least one application that opted in. */
   get enabled(): boolean {
@@ -263,6 +279,7 @@ export class GeneralGuest {
       if (!guestApplications(record).some(row => row.audience === audience)) throw new PlayError(401, 'invalid_guest_code');
       record['provisionalGuestCodes'] = codes.filter(row => row.hash !== hash);
     });
+    const linkedTo = await this.link.confirmed(document, claims);
     const token = await this.deps.issueToken(claims, this.applicationGrant(claims, audience));
     return {
       valid: true, provisional: true, general: true, issuer: this.deps.issuer, audience,
@@ -270,7 +287,7 @@ export class GeneralGuest {
       authenticatedAgentId: claims.authenticatedAgentId, authenticatedAgentDid: claims.authenticatedAgentDid,
       proofKeyThumbprint: claims.proofKeyThumbprint, guestExpiresAt: new Date(claims.expiresAt * 1000).toISOString(),
       namespace: this.client(audience)?.namespace ?? DEFAULT_PLAY_NAMESPACE,
-      subjectAttributes: subjectAttributes(claims, document, audience),
+      subjectAttributes: subjectAttributes(claims, document, audience, linkedTo),
       token: token.token, tokenExpiresAt: token.expiresAt,
     };
   }
@@ -302,7 +319,7 @@ export class GeneralGuest {
     const userId = generalGuestUserId(thumbprint);
     const receipt = { hash: GeneralGuest.hash(`${signed}\n${body.proof as string}`), expiresAt };
     let claims!: PlayClaims;
-    await this.deps.update(userId, record => {
+    const document = await this.deps.update(userId, record => {
       claims = this.openGeneral(record, userId);
       if (claims.proofKeyThumbprint !== thumbprint) throw new PlayError(401, 'provisional_owner_unavailable');
       const receipts = (record.provisionalPlayReceipts ?? []).filter(row => Number.isInteger(row.expiresAt) && row.expiresAt > now);
@@ -310,6 +327,9 @@ export class GeneralGuest {
       if (receipts.length >= 16) throw new PlayError(429, 'play_grant_receipt_capacity');
       record.provisionalPlayReceipts = [...receipts, receipt];
     });
+    // A guest linked to an account is kept through that account. Giving it a credential of its own
+    // would make it a second account: the owner unlinks it first.
+    if (await this.link.confirmed(document, claims)) return fail(409, 'guest_linked');
     return this.deps.issueToken(claims, { general: true, door: true, proofKeyThumbprint: thumbprint, expiresAt: claims.expiresAt });
   }
 
@@ -324,6 +344,9 @@ export class GeneralGuest {
       applications: [...this.deps.clients].filter(([, client]) => client.generalGuest === true).map(([audience]) => audience),
       ...(policy ? { terms: { version: policy.version, url: policy.termsUrl, privacyUrl: hostedPrivacyUrl } } : {}),
       linkability: 'One guest per browser across the listed applications: each learns the same owner DID, WebID and pod URL.',
+      // Linking this browser's guest to a registered account: where its owner sends the browser, with a code from the account's dashboard.
+      accountLink: { doorUrl: `${this.doorOrigin}/guest/door#link`, codeEndpoint: `${this.deps.issuer}/guest/link/code`,
+        codeTtlSeconds: LINK_CODE_TTL_SECONDS, codeMaxAttempts: LINK_CODE_MAX_ATTEMPTS },
     };
   }
 }

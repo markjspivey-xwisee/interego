@@ -22,7 +22,7 @@ export interface PlayAnchorStorage {
 
 const listed = (value: unknown) => Array.isArray(value) && value.length > 0;
 /** Whether an owner's document lists a passkey, wallet or DID (a claimed owner). */
-function holdsCredential(document: PlayAnchorDocument): boolean {
+export function holdsCredential(document: PlayAnchorDocument): boolean {
   return listed(document['webAuthnCredentials']) || listed(document['walletAddresses']) || listed(document['didKeys']);
 }
 
@@ -93,14 +93,15 @@ export async function provisionPlayAnchor(storage: PlayAnchorStorage, claims: Pl
 /**
  * Change an existing owner's record, conditionally on the revision read (a general guest's door
  * code being spent, its claim proof being recorded). `change` throws a PlayError to refuse, and
- * nothing is written then. There must be a record: none is created here.
+ * nothing is written then. There must be a record: none is created here. A `change` that returns
+ * `false` found nothing to change: the record is answered as read, and nothing is written.
  */
 export async function updatePlayAnchorDocument(storage: Pick<PlayAnchorStorage, 'read' | 'write' | 'committed'>, userId: string,
-  change: (document: PlayAnchorDocument) => void): Promise<PlayAnchorDocument> {
+  change: (document: PlayAnchorDocument) => void | false): Promise<PlayAnchorDocument> {
   for (let attempt = 0; attempt < 3; attempt++) {
     const existing = await storage.read(userId);
     if (!existing || existing.document.userId !== userId) throw new PlayError(401, 'provisional_owner_unavailable');
-    change(existing.document);
+    if (change(existing.document) === false) return existing.document;
     if (!await storage.write(userId, existing.document, existing.etag)) continue;
     storage.committed(existing.document);
     return existing.document;

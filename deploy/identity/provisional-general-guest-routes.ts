@@ -5,6 +5,8 @@
  *   GET  /guest/door          the door page (this origin holds the guest's key in IndexedDB)
  *   POST /guest/door          the page's request: admit or find the key's guest for an application
  *   POST /guest/door/claim    the page's request: open the claim flow for the key's guest
+ *   POST /guest/door/link     the page's request: say which account a link code names, then link
+ *                             the key's guest to it (provisional-guest-link.ts)
  *   POST /guest/exchange      an application backend's exchange of a door code
  *
  * A DEDICATED DOOR ORIGIN (GENERAL_GUEST_DOOR_ORIGIN) is what production should set. The same
@@ -24,7 +26,7 @@ import type express from 'express';
 import { PlayError, type ProvisionalPlay } from './provisional-play.js';
 
 /** The door's own paths: the only ones answered on a dedicated door origin's host. */
-const DOOR_PATHS: ReadonlySet<string> = new Set(['/guest/door', '/guest/door/claim']);
+const DOOR_PATHS: ReadonlySet<string> = new Set(['/guest/door', '/guest/door/claim', '/guest/door/link']);
 
 /**
  * GENERAL_GUEST_DOOR_ORIGIN as an origin, or undefined where it is unset. It must be an HTTPS origin
@@ -131,13 +133,17 @@ const DOOR_SCRIPT = `'use strict';
     });
   }
 
+  var thumbprintOf = function (jwk) {
+    return crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }))).then(b64url);
+  };
+
   function keep() {
     return readKey().then(function (pair) {
       if (!pair) throw new Error('there is no guest in this browser');
       return publicJwk(pair).then(function (jwk) {
-        return crypto.subtle.digest('SHA-256', new TextEncoder().encode(JSON.stringify({ crv: jwk.crv, kty: jwk.kty, x: jwk.x, y: jwk.y }))).then(function (digest) {
+        return thumbprintOf(jwk).then(function (thumbprint) {
           var expiresAt = Math.floor(Date.now() / 1000) + 60;
-          return sign(pair, 'interego-general-guest-claim-v1\\n' + config.issuer + '\\n' + b64url(digest) + '\\n' + expiresAt).then(function (proof) {
+          return sign(pair, 'interego-general-guest-claim-v1\\n' + config.issuer + '\\n' + thumbprint + '\\n' + expiresAt).then(function (proof) {
             return post('/guest/door/claim', { publicKeyJwk: jwk, expiresAt: expiresAt, proof: proof });
           });
         });
@@ -149,11 +155,74 @@ const DOOR_SCRIPT = `'use strict';
     });
   }
 
+  // Linking this browser's guest to an account the visitor already has. The code comes from that
+  // account's dashboard, on a device signed in to it. The key signs twice: once to be told which
+  // account the code names, and once, with that account in the signed bytes, to link.
+  function askLink(code, account) {
+    return readKey().then(function (pair) {
+      if (!pair) throw new Error('there is no guest in this browser');
+      return publicJwk(pair).then(function (jwk) {
+        return thumbprintOf(jwk).then(function (thumbprint) {
+          var expiresAt = Math.floor(Date.now() / 1000) + 60;
+          var text = (account ? 'interego-general-guest-link-v1' : 'interego-general-guest-link-preview-v1')
+            + '\\n' + config.issuer + '\\n' + thumbprint + '\\n' + code + '\\n' + expiresAt + (account ? '\\n' + account : '');
+          return sign(pair, text).then(function (proof) {
+            var body = { publicKeyJwk: jwk, code: code, expiresAt: expiresAt, proof: proof };
+            if (account) body.account = account;
+            return post('/guest/door/link', body);
+          });
+        });
+      });
+    }).then(function (result) {
+      if (!result.ok || !result.answer.account || typeof result.answer.account.did !== 'string') throw new Error(result.answer.error || 'the code could not be checked');
+      return result.answer;
+    });
+  }
+  // What a person typed, in the one form the server takes: the account as written, the secret in
+  // capitals without spaces or hyphens, and the letters this alphabet leaves out read as the digits they resemble.
+  function canonicalCode(text) {
+    text = text.trim(); var at = text.lastIndexOf(':');
+    if (at < 1) return null;
+    return text.slice(0, at).trim() + ':' + text.slice(at + 1).toUpperCase().replace(/[\\s-]/g, '').replace(/O/g, '0').replace(/[IL]/g, '1');
+  }
+
   var button = $('go');
   var run = function (work, again) {
     button.disabled = true; status('Working...');
     work().catch(function (error) { status('Not done: ' + (error && error.message ? error.message : 'unknown error') + '.'); button.disabled = !again; });
   };
+  if (fragment === 'link' || fragment.indexOf('link=') === 0) {
+    var field = $('code'); var shown = null;
+    $('who').textContent = 'Link the guest this browser holds to an account you already have. On a device where you are signed in to that account, ask its dashboard for a guest link code, and enter it here.';
+    $('coderow').hidden = false;
+    try { field.value = decodeURIComponent(fragment.slice(5)); } catch (e) { /* typed instead */ }
+    button.textContent = 'Check this code'; button.disabled = false;
+    var linked = function (account) {
+      $('account').hidden = true; field.disabled = true; button.disabled = true;
+      status('Linked. The guest in this browser now acts as the account ' + account.name + ' (' + account.did + '). You can close this page.');
+    };
+    field.addEventListener('input', function () { shown = null; $('account').hidden = true; button.textContent = 'Check this code'; });
+    button.addEventListener('click', function () {
+      var code = canonicalCode(field.value);
+      if (!code) { status('Enter the whole code, as the dashboard shows it.'); return; }
+      if (shown && shown.code === code) {
+        // The second click: the account on the screen is in the bytes the key signs.
+        run(function () { return askLink(code, shown.account.did).then(function (answer) { linked(answer.account); }); }, true);
+        return;
+      }
+      run(function () {
+        return askLink(code).then(function (answer) {
+          if (answer.linked) { linked(answer.account); return; }
+          shown = { code: code, account: answer.account };
+          $('account').textContent = 'This code is for the account "' + answer.account.name + '" (' + answer.account.did + '). Linking makes the guest in this browser act as that account in every application that offers guest access, and what the guest does there becomes that account\\'s. Continue only if this is your own account and you asked for this code yourself, just now. If someone else gave you this code, stop.';
+          $('account').hidden = false;
+          button.textContent = 'Link this guest to ' + answer.account.name;
+          button.disabled = false; status('');
+        });
+      }, true);
+    });
+    return;
+  }
   if (fragment === 'claim') {
     $('who').textContent = 'Keep the guest this browser holds by adding a passkey or wallet to it.';
     button.textContent = 'Keep this guest';
@@ -179,7 +248,9 @@ const DOOR_SCRIPT = `'use strict';
 
 const DOOR_STYLE = 'body{font:16px/1.5 system-ui,sans-serif;margin:0;background:#111;color:#eee}main{max-width:34rem;margin:12vh auto;padding:0 1.25rem}'
   + 'button{font:inherit;padding:.6rem 1.1rem;border-radius:.4rem;border:1px solid #6ae66a;background:#173417;color:#eee;cursor:pointer}'
-  + 'button:disabled{opacity:.5;cursor:default}a{color:#8ecbff}#status{min-height:1.5em;color:#bbb}';
+  + 'button:disabled{opacity:.5;cursor:default}a{color:#8ecbff}#status{min-height:1.5em;color:#bbb}'
+  + 'input{font:inherit;width:100%;box-sizing:border-box;margin-top:.3rem;padding:.5rem;border-radius:.4rem;border:1px solid #555;background:#1b1b1b;color:#eee}'
+  + '#account{border-left:3px solid #e6c36a;padding-left:.8rem}';
 
 /** The door page and the Content-Security-Policy that names its one script and one style sheet by hash. */
 export function generalGuestDoorPage(config: { issuer: string; terms?: { version: string; url: string; privacyUrl: string } }): { html: string; csp: string } {
@@ -194,6 +265,8 @@ export function generalGuestDoorPage(config: { issuer: string; terms?: { version
 <body><main><h1>Continue as a guest</h1>
 <p id="who">Checking...</p>
 ${terms}
+<p id="coderow" hidden><label for="code">Guest link code</label><input id="code" autocomplete="off" autocapitalize="none" spellcheck="false" maxlength="100"></p>
+<p id="account" hidden></p>
 <p>A guest is temporary. It is held by this browser, it identifies no person, and it ends at its deadline unless you keep it.</p>
 <p><button id="go" type="button" disabled>Continue as a guest</button></p>
 <p id="status" role="status"></p>
@@ -204,11 +277,11 @@ ${terms}
 
 /**
  * Mount the door. Does nothing, and adds no route, unless the door is on. `limiters`: the page, its
- * two requests (the door's is the one that can admit a guest), and the exchange (counted against an
- * application backend's address).
+ * requests (the door's is the one that can admit a guest; the link's is the one a code is guessed
+ * through), and the exchange (counted against an application backend's address).
  */
 export function mountGeneralGuest(app: express.Express, play: ProvisionalPlay,
-  limiters: { page: express.RequestHandler; door: express.RequestHandler; claim: express.RequestHandler; exchange: express.RequestHandler },
+  limiters: { page: express.RequestHandler; door: express.RequestHandler; claim: express.RequestHandler; link: express.RequestHandler; exchange: express.RequestHandler },
   log: (message: string) => void): boolean {
   const general = play.general;
   if (!general?.enabled) return false;
@@ -243,6 +316,7 @@ export function mountGeneralGuest(app: express.Express, play: ProvisionalPlay,
   };
   app.post('/guest/door', onDoor, limiters.door, route(req => general.door(req.body, req.get('origin'))));
   app.post('/guest/door/claim', onDoor, limiters.claim, route(req => general.claim(req.body, req.get('origin'))));
+  app.post('/guest/door/link', onDoor, limiters.link, route(req => general.link.link(req.body, req.get('origin'))));
   app.post('/guest/exchange', limiters.exchange, route(req => general.exchange(req.body)));
   return true;
 }

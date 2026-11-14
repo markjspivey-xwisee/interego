@@ -16,6 +16,7 @@ import { WorldError } from './errors.js';
 import { MAX_CHALLENGES, MAX_SESSIONS, bound } from './bounded.js';
 import { createLocalDoor, createRelayDoor, type GeneralGuestDoor, type GuestDoor } from './guest-play.js';
 import { GuestDoorError } from '../../_shared/guest-access/door.js';
+import { canonicalSubject } from '@interego/abac/portable';
 import { FoxxiCourseLauncher } from './course-launch.js';
 import { HttpLrs } from './lrs.js';
 import { loadPackFile } from './pack.js';
@@ -204,6 +205,12 @@ function setDoorCookie(door: GuestDoor, value: string, maxAge: number): string {
  * `start` with a cookie that binds the visit to it, comes back to the registered return path, and
  * the page then collects its world session once, with that cookie, from `session`. No bearer is
  * ever in an address. Returns false where the path is not one of these.
+ *
+ * The consultant is the guest's CANONICAL subject (`canonicalSubject` over what identity stated):
+ * the registered account identity states the guest is linked to, else the guest itself. So a guest
+ * linked to an account is that account's consultant from the visit after the link, from whichever
+ * browser it comes, and what the guest did before the link stays the guest's: nothing is rewritten.
+ * The pod and agent recorded for a new consultant are those of the subject that arrived.
  */
 async function generalGuestRoute(req: IncomingMessage, res: ServerResponse, url: URL, ctx: {
   door: GuestDoor; world: CoachedWorld; sessions: Map<string, string>; arrivals: Map<string, Arrival>;
@@ -219,14 +226,18 @@ async function generalGuestRoute(req: IncomingMessage, res: ServerResponse, url:
   if (req.method === 'GET' && url.pathname === GENERAL_GUEST_RETURN_PATH) {
     const binding = doorCookie(req);
     const guest = await general.finish({ code: url.searchParams.get('code'), state: url.searchParams.get('state'), binding });
-    const consultant = await ctx.world.exclusive(() => ctx.world.admit({ ownerDid: guest.ownerDid, userId: guest.userId, podUrl: guest.podUrl, agentDid: guest.agentDid }));
+    // Identity's own statement decides who this is. An answer that builds no attribute graph was
+    // already refused by the door (finish), so this does not throw for a guest it let in.
+    const who = canonicalSubject(guest.attributes);
+    const consultant = await ctx.world.exclusive(() => ctx.world.admit({ ownerDid: who.subject,
+      userId: who.linked ? who.subject.slice(who.subject.lastIndexOf(':') + 1) : guest.userId, podUrl: guest.podUrl, agentDid: guest.agentDid }));
     const token = randomBytes(32).toString('base64url');
     bound(ctx.sessions, MAX_SESSIONS - 1);
     ctx.sessions.set(token, consultant.id);
     const now = Date.now();
     for (const [key, arrival] of ctx.arrivals) if (arrival.expiresAt <= now) ctx.arrivals.delete(key);
     bound(ctx.arrivals, MAX_CHALLENGES - 1);
-    ctx.arrivals.set(binding!, { token, ownerDid: guest.ownerDid, name: consultant.name, expiresAt: now + 60_000 });
+    ctx.arrivals.set(binding!, { token, ownerDid: consultant.ownerDid, name: consultant.name, expiresAt: now + 60_000 });
     // The address the browser is left on carries neither the code nor any bearer: only a flag that
     // tells the page a session is waiting for it to collect.
     res.writeHead(302, { Location: '/?arrived=general', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
