@@ -182,28 +182,36 @@ describe('a cmi5 auth-token is bound to its launch', () => {
       id: randomUUID(), actor, verb: { id: verb }, object: { objectType: 'Activity', id: au(1).id }, context: { registration: A.registration },
     });
     // cmi5 has the LMS record these. From the unit's token each would be the learner's browser speaking as the LMS.
-    for (const verb of ['http://adlnet.gov/expapi/verbs/launched', 'https://w3id.org/xapi/adl/verbs/abandoned', 'https://w3id.org/xapi/adl/verbs/waived', 'https://w3id.org/xapi/adl/verbs/satisfied']) {
+    // Verb ids, not addresses anything here dials: every request below goes to the loopback LRS.
+    const LAUNCHED = 'http://adlnet.gov/expapi/verbs/launched';
+    const SATISFIED = 'https://w3id.org/xapi/adl/verbs/satisfied';
+    const COMPLETED = 'http://adlnet.gov/expapi/verbs/completed';
+    for (const verb of [LAUNCHED, 'https://w3id.org/xapi/adl/verbs/abandoned', 'https://w3id.org/xapi/adl/verbs/waived', SATISFIED]) {
       const r = await post(tokenA, as(verb));
       expect([verb, r.status]).toEqual([verb, 403]);
       expect(String((await r.json() as { error: string }).error)).toContain('is the LMS\'s to record');
     }
     // In a batch, with the scheme an AU uses, and by PUT: the same.
-    expect((await post(tokenA, [as('http://adlnet.gov/expapi/verbs/completed'), as('https://w3id.org/xapi/adl/verbs/satisfied')])).status).toBe(403);
-    const basic = await fetch(`${base}/xapi/statements`, { method: 'POST', headers: { ...headers(tokenA), Authorization: `Basic ${tokenA}` }, body: JSON.stringify(as('https://w3id.org/xapi/adl/verbs/satisfied')) });
+    const batch = [as(COMPLETED), as(SATISFIED)];
+    expect((await post(tokenA, batch)).status).toBe(403);
+    const asLms = JSON.stringify(as(SATISFIED));
+    const basic = await fetch(`${base}/xapi/statements`, { method: 'POST', headers: { ...headers(tokenA), Authorization: `Basic ${tokenA}` }, body: asLms });
     expect(basic.status).toBe(403);
-    const one = as('http://adlnet.gov/expapi/verbs/launched');
+    const one = as(LAUNCHED);
     expect((await fetch(`${base}/xapi/statements?statementId=${one.id}`, { method: 'PUT', headers: headers(tokenA), body: JSON.stringify(one) })).status).toBe(403);
     // As another learner, or as the same name under another homePage: refused.
     const other = { objectType: 'Agent', account: { homePage: 'did:web:bridge.example', name: 'did:ethr:0x9999999999bb00000000000000000000000beef9' } };
     const elsewhere = { objectType: 'Agent', account: { homePage: 'did:web:another-lms.example', name: learner.id } };
     for (const actor of [other, elsewhere, { objectType: 'Agent', mbox: 'mailto:someone@example.org' }]) {
-      const r = await post(tokenA, as('http://adlnet.gov/expapi/verbs/completed', actor));
+      const wrong = as(COMPLETED, actor);
+      const r = await post(tokenA, wrong);
       expect(r.status).toBe(403);
       expect(String((await r.json() as { error: string }).error)).toContain('only as the actor it was launched for');
     }
     // None of it was stored, and the unit's own statements still are.
     expect((await store.query({ registration: A.registration })).statements.length).toBe(before);
-    expect((await post(tokenA, as('http://adlnet.gov/expapi/verbs/experienced'))).status).toBe(200);
+    const own = as('http://adlnet.gov/expapi/verbs/experienced');
+    expect((await post(tokenA, own)).status).toBe(200);
   });
 
   it('keeps the launch\'s whole actor for the pod: its type and both account fields', () => {
