@@ -18,6 +18,23 @@ affected. A credential that is not a launch's is not held to this.
 Where the LRS knows a token is a launch's and cannot tell which actor it was
 launched for, the token writes no statement at all.
 
+That closed one writer. A reviewer asked who else can write to a learner's
+records, and there is one more: the signed route by which a learner, or an
+agent acting for them, writes statements about themselves. It took any verb.
+And every statement in the LRS, the LMS's own included, carried the same
+authority, so a reader could not tell the LMS's `launched` from one a learner
+wrote.
+
+The LMS's own `launched` and `satisfied` are now stored under an authority of
+their own, `foxxi-lms`. Only the LMS's code can write it: a statement sent in
+naming it is refused (403), and one handed to any other internal store loses
+the claim. The learner's signed route refuses the four LMS verbs. A reader that
+needs the LMS's word can now ask for that authority.
+
+Not done here: no reader checks the authority yet. Practice Evidence and the
+coached-world gate still read `launched` and `satisfied` by verb, activity and
+actor. Statements the LMS stored before this change carry the old authority.
+
 Found while answering a reviewer's question about who can write what on this
 LRS, before turning on the route by which the LMS takes reviewed results.
 
