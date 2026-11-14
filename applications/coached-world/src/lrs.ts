@@ -4,6 +4,7 @@
  * reads the course-level cmi5 `satisfied` statement Foxxi's LMS writes for the
  * course IRI. The world does not write that verb.
  */
+import { MAX_STATEMENTS } from './bounded.js';
 import type { XapiStatement } from './statements.js';
 
 export type StatementOrigin = 'world' | 'external';
@@ -18,15 +19,42 @@ function categoryIds(statement: XapiStatement): string[] {
   return list.map(item => item.id);
 }
 
+export interface LogEntry { readonly statement: XapiStatement; readonly origin: StatementOrigin }
+
+/**
+ * The newest statements, at most `max` per origin. The two origins are kept apart so the world's
+ * own stream, which never stops, cannot push out a course record read from outside. What is
+ * dropped is counted. `has` is a lookup, not a scan.
+ */
 export class StatementLog {
-  readonly entries: Array<{ statement: XapiStatement; origin: StatementOrigin }> = [];
+  private readonly kept: Record<StatementOrigin, LogEntry[]> = { world: [], external: [] };
+  private readonly ids = new Map<string, number>();
+  private gone = 0;
+
+  constructor(private readonly max: number = MAX_STATEMENTS) {}
+
+  /** What is retained: the world's own statements, oldest first, then the external ones. */
+  get entries(): readonly LogEntry[] { return [...this.kept.world, ...this.kept.external]; }
+  get retained(): number { return this.kept.world.length + this.kept.external.length; }
+  get dropped(): number { return this.gone; }
 
   add(statements: readonly XapiStatement[], origin: StatementOrigin): void {
-    for (const statement of statements) this.entries.push({ statement, origin });
+    const list = this.kept[origin];
+    for (const statement of statements) {
+      list.push({ statement, origin });
+      this.ids.set(statement.id, (this.ids.get(statement.id) ?? 0) + 1);
+    }
+    const over = list.length - this.max;
+    if (over <= 0) return;
+    for (const old of list.splice(0, over)) {
+      const left = (this.ids.get(old.statement.id) ?? 1) - 1;
+      if (left > 0) this.ids.set(old.statement.id, left); else this.ids.delete(old.statement.id);
+    }
+    this.gone += over;
   }
 
   has(id: string): boolean {
-    return this.entries.some(entry => entry.statement.id === id);
+    return this.ids.has(id);
   }
 
   /**
@@ -34,7 +62,7 @@ export class StatementLog {
    * and this verb, carrying the cmi5 category. The world did not write it.
    */
   sawExternal(actor: { readonly name: string; readonly homePage: string }, objectId: string, verbId: string): boolean {
-    return this.entries.some(entry => entry.origin === 'external'
+    return this.kept.external.some(entry => entry.origin === 'external'
       && entry.statement.actor.account.name === actor.name
       && entry.statement.actor.account.homePage === actor.homePage
       && entry.statement.object.id === objectId
