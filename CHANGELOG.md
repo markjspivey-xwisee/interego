@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-14 — Foxxi: the statement a recorded performance becomes is built in one place
+
+`foxxi.record_performance` and its signed form each built their xAPI statement
+inline in the bridge server, the same shape written out twice, where no test
+could call it; the tests checked statements assembled from the same helpers
+instead. The statement is now built by `buildPerformanceStatement`
+(`src/performance-statement.ts`), which both routes call, and the test checks
+what that function returns against the profile under the specification's
+algorithm, for a generic task, a domain type, a course and a lesson, completed
+and failed. The statements the routes produce are unchanged.
+
 ## 2026-11-14 — Foxxi: a performance recorded against a course or a lesson is that course's or lesson's outcome
 
 The last pair of Foxxi's statement templates one statement could match
