@@ -24,6 +24,14 @@ export interface PlayProviderOptions {
   doorOrigin?: string;
   /** Issues a general guest's token with the marker given. Required while the door is on. */
   issueGuestToken?(claims: PlayClaims, grant: GeneralTokenGrant): Promise<{ token: string; expiresAt: string }>;
+  /**
+   * Changes a REGISTERED account's record for a guest link (provisional-guest-link.ts), under its
+   * lock and conditionally on the revision read: `change` throws a PlayError to refuse and returns
+   * false to leave the record as it is; 401 provisional_owner_unavailable where there is no live
+   * record. Identity passes its own record writer, so an account's record keeps the form its other
+   * writes give it. Default: the conditional write a guest's record gets.
+   */
+  updateAccount?(userId: string, change: (document: PlayAnchorDocument) => void | false): Promise<PlayAnchorDocument>;
   fetcher?: typeof fetch;
   /** Share the identity host's owner lock with credential mutations and cleanup. */
   withOwnerLock<T>(userId: string, work: () => Promise<T>): Promise<T>;
@@ -134,6 +142,9 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
     ...(options.doorOrigin ? { doorOrigin: options.doorOrigin } : {}),
     provision: (claims, attestation, maxPods, receipt, acceptance, code) => provision(claims, attestation, maxPods, receipt, acceptance, code),
     update: (userId, change) => options.withOwnerLock(userId, () => updatePlayAnchorDocument({ read, write, committed: options.committed }, userId, change)),
+    read: async userId => (await read(userId))?.document ?? null,
+    updateAccount: options.updateAccount
+      ?? ((userId, change) => options.withOwnerLock(userId, () => updatePlayAnchorDocument({ read, write, committed: options.committed }, userId, change))),
     issueToken: async (claims, grant) => {
       if (!options.issueGuestToken) throw new Error('General guest token issuer unavailable');
       return options.issueGuestToken(claims, grant);

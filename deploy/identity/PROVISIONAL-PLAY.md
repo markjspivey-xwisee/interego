@@ -44,7 +44,7 @@ A per-application guest is one owner per application: its key lives in the appli
   "generalGuest":true,"generalGuestReturnPath":"/guest/return"}}
 ```
 
-`generalGuestReturnPath` is the one path on that origin the door sends a browser back to: absolute, plain segments, no query or fragment, at most 128 characters. `"generalGuest": true` without a valid one stops identity at start. With the setting off these fields are read and ignored: there is no door, no exchange, the metadata at `/.well-known/play-provisional` has no `generalGuest` member, a per-application guest's id, token, paths and record are what they were, and the door's four paths answer as any path that never existed (`provisional-general-guest-routes.test.ts` compares them with one). An identity from before this change ignores both fields.
+`generalGuestReturnPath` is the one path on that origin the door sends a browser back to: absolute, plain segments, no query or fragment, at most 128 characters. `"generalGuest": true` without a valid one stops identity at start. With the setting off these fields are read and ignored: there is no door, no exchange, the metadata at `/.well-known/play-provisional` has no `generalGuest` member, a per-application guest's id, token, paths and record are what they were, and the door's paths and the guest link's answer as any path that never existed (`provisional-general-guest-routes.test.ts` and `provisional-guest-link-routes.test.ts` compare them with one). An identity from before this change ignores both fields.
 
 **What is the same.** The anchor, the admission ledger with its deployment and per-application caps, the fixed deadline (`PROVISIONAL_PLAY_TTL_SECONDS`), the hosted-terms gate, the 16 live grant receipts, the claim with a passkey, wallet or DID, the janitor and the cleanup are the per-application guest's, through the same code. The first application to send a browser pays the admission from its own `maxPods` and from the total; an application the same guest reaches later pays nothing. The ledger entry's attestation names the application that paid.
 
@@ -86,7 +86,7 @@ An application must bind a visit to the browser that started it (an HttpOnly coo
  "admittedBy":["https://play.example"],"proofKeyThumbprint":"…","acceptedTermsVersion":"2026-11-06-r2"}
 ```
 
-These are the facts `@interego/abac/portable`'s `subjectAttributeGraph` takes, and the same model serves every principal: a registered owner, a delegated agent and a service account are subjects with other values (`provisional:false`, `roles`, `onBehalfOf`, `linkedTo`), not other mechanisms. Identity states them today for a general guest only. `claimed` is true once the record lists a passkey, wallet or DID. Times are Unix seconds. `admittedBy` holds only the asking application's own origin: an application learns that it is among those the subject was admitted to, not which others there are. It is published in the exchange answer and, for a general guest's token, in `POST /tokens/verify` beside `provisionalPlay`. Neither answer is signed separately: both are identity's own HTTPS answers, authoritative as introspection already is.
+These are the facts `@interego/abac/portable`'s `subjectAttributeGraph` takes, and the same model serves every principal: a registered owner, a delegated agent and a service account are subjects with other values (`provisional:false`, `roles`, `onBehalfOf`, `linkedTo`), not other mechanisms. Identity states them today for a general guest only. `linkedTo` is present only for a guest linked to a registered account ("Linking a guest to an account" below). `claimed` is true once the record lists a passkey, wallet or DID. Times are Unix seconds. `admittedBy` holds only the asking application's own origin: an application learns that it is among those the subject was admitted to, not which others there are. It is published in the exchange answer and, for a general guest's token, in `POST /tokens/verify` beside `provisionalPlay`. Neither answer is signed separately: both are identity's own HTTPS answers, authoritative as introspection already is.
 
 ### Tokens
 
@@ -105,8 +105,8 @@ The policies are `iep:AccessControlPolicy` records with the predicate shapes of 
 
 Set `GENERAL_GUEST_DOOR_ORIGIN` in production: an HTTPS origin of its own (another host name routed to the same identity service), not identity's. The door's origin holds every general guest's key, and although the key cannot be exported, any script running on that origin can use it. Identity's own origin serves pages whose Content-Security-Policy allows inline script (`/connect`, `/dashboard`, `/sign-action`), so a script injection there would reach the keys if the door lived beside them. With the setting:
 
-- on the door's host the server answers `GET /guest/door`, `POST /guest/door` and `POST /guest/door/claim` and nothing else: every other path is a 404 before any route sees it, the sign-in pages and the metadata included, whether or not the door is on;
-- on identity's own host those three paths do not exist, so identity's origin never creates or holds a guest key; the exchange, introspection and the claim page stay there;
+- on the door's host the server answers `GET /guest/door`, `POST /guest/door`, `POST /guest/door/claim` and `POST /guest/door/link` and nothing else: every other path is a 404 before any route sees it, the sign-in pages and the metadata included, whether or not the door is on;
+- on identity's own host those four paths do not exist, so identity's origin never creates or holds a guest key; the exchange, introspection and the claim page stay there;
 - the door's requests are answered only for an `Origin` that is the door's; identity sets no cookie, so the two origins share none;
 - the page's policy is hash-only (`default-src 'none'`, one script and one style sheet by hash, `connect-src 'self'`, `frame-ancestors 'none'`);
 - `/.well-known/play-provisional` names the door's address in `generalGuest.doorUrl`, and an application sends browsers there (`GeneralGuestDoor`'s `doorOrigin`, the coached world's `CPW_GENERAL_GUEST_DOOR_ORIGIN`).
@@ -116,6 +116,63 @@ A value that is not an HTTPS origin with no path, or that is identity's own orig
 ### Linkability
 
 A general guest is linkable across applications by design. Every application the browser enters through the door learns the same owner DID, WebID, pod URL and key thumbprint, when the guest was created and when it ends, whether it has been claimed, and that it is itself among the applications the guest was admitted to. Identity does not tell an application which other applications the guest has used, but two applications that compare notes can tell they are serving the same browser. Pod reads are not gated by the css-gate, so what an application writes to the pod is as readable as any pod content; the checkpoint documents must be owner-encrypted envelopes. A visitor who does not want that link uses an application's own guest door, which is unchanged. The door page says this before the click.
+
+### Linking a guest to an account
+
+A guest can be kept in two ways. **Claiming** it (above: `<door>/guest/door#claim`) gives the guest a passkey, wallet or DID of its own, and it becomes a registered account. **Linking** it attaches it to a registered account the visitor already has: identity then states the guest's `linkedTo`, and an application that attributes by `canonicalSubject` treats the guest as that account. The two exclude each other: a claimed guest is not linked, and the door does not open the claim flow for a linked one (`409 guest_linked`) until its owner unlinks it. Should a credential reach a linked guest all the same (through a door token issued before the link), the guest is claimed, and its link is no longer stated. Linking is part of the general guest and exists only while the door is on.
+
+**The ceremony** is one, whether the guest is in the same browser as the signed-in account or on another device:
+
+1. *On a device signed in to the account.* The dashboard's "Link a guest to this account" section (served only while the door is on) asks `POST /guest/link/prepare` (`{action:"code", method:"wallet", address, chainId}` or `{action:"code", method:"passkey"}`) and then `POST /guest/link/code` with the wallet's signature over the message it was given, or the passkey's assertion over the challenge. Both need the account's bearer and are answered for identity's own origin only. The fresh proof is verified by the function the local-key link uses (`verifyLinkStepUp`): a credential already on the account, read from the pod under the account's lock, for the session that prepared it. No sign-in path, credential or token is added. A bearer alone gets no code. The answer is `{code, expiresAt, account, doorUrl}`. The code is `<account id>:<12 characters>` (60 bits, an alphabet without `I`, `L`, `O`, `U`), lives 300 seconds, and replaces the account's previous one. The account's record holds its hash, its expiry and a count of wrong attempts (`guestLinkCode`), written conditionally on the record read; the code itself is stored nowhere.
+2. *In the browser that holds the guest.* The visitor opens `<door>/guest/door#link` (the code may follow as `#link=<code>`) and enters the code. On the first click the guest's key signs
+
+   ```text
+   interego-general-guest-link-preview-v1
+   {issuer}
+   {key thumbprint}
+   {code}
+   {expiresAt}
+   ```
+
+   and the page posts `{publicKeyJwk, code, expiresAt, proof}` to `POST /guest/door/link`, a door path: answered only on the door's host, only for an `Origin` that is the door's, and rate-limited. Identity verifies the proof and the code and answers `{linked:false, account:{did, userId, name}}`. The page shows that account, by name and DID, with what linking means, and only then offers the second click, on which the key signs
+
+   ```text
+   interego-general-guest-link-v1
+   {issuer}
+   {key thumbprint}
+   {code}
+   {expiresAt}
+   {account DID as shown}
+   ```
+
+   and the page posts the same members with `account`. `expiresAt` is at most 120 seconds ahead.
+3. *Identity* verifies the proof and the code again, then writes the guest's record (`provisionalGuestLinkedTo: {userId, linkedAt}`), refusing a claimed guest (`409 guest_already_claimed`) and one linked to another account (`409 guest_already_linked`), and then the account's record: the guest joins `linkedGuests` (`{userId, proofKeyThumbprint, linkedAt, standingUntil}`) and the code is removed, in one write. Both writes are conditional on the record read, under that record's lock, and neither lock is held across the other. The account's record is written by identity's own record writer, like every other change to it.
+
+**Why the code goes from the account to the guest.** The other direction (the guest's browser shows a code, the signed-in owner types it) would let anyone who can put a code in front of a signed-in owner attach *their own* guest to that owner's account, after which that guest acts as the owner in every application. In the direction built, the party who must be careful is the one holding the guest, and the page tells them whose account the code is for before anything is linked.
+
+**Retries and half-written links.** The link is stated only while both records agree (below), so the guest's record alone, written first, states nothing. If the account's write fails, the code is still unspent: the same request again finds the guest's side written and completes. If the code expires first, the guest's side stays as a leftover that confirms nothing and that a later link, to the same account or another, replaces. A request repeated after it succeeded is answered `linked:true` again and changes nothing. One code links one guest: a second guest presenting it finds it spent (`401 invalid_link_code`). A wrong code is counted on the account's record; after 5 the code is over, the right code included (`429 link_code_attempts_exceeded`), and the owner asks for another. A request naming an account that does not exist, is deleted, holds no credential or has no live code is answered as a wrong code and writes nothing.
+
+**When `linkedTo` is stated.** In `subjectAttributes` (the exchange answer and `POST /tokens/verify`), as the account's DID, only while: the guest's record names the account, the account's record lists that guest id *and* that key, the account's record is not a tombstone and still holds a credential, and the guest is unclaimed. The account's record is read from the pod for each answer; when it cannot be read the answer is a 503 or an introspection failure (try again), never a guest stated as unlinked. An account's deletion (its tombstone lists nobody) therefore ends its guests' links at once.
+
+**Unlink.** `POST /guest/link/prepare` with `{action:"unlink", guest:"u-try-guest-…"}` and `POST /guest/link/unlink` with the proof: owner only, with a fresh proof bound to that guest (a proof prepared for a code does not unlink, and the reverse). The account's side is removed first, which ends the statement, then the guest's; a retry finishes an unlink whose second write failed. `GET /guest/link/guests` lists an account's live linked guests. A guest cannot unlink itself in this version: it stops using the door, or lets its deadline pass.
+
+**What linking does not do.** It does not extend the guest's deadline, move its pod or copy its data: the guest is still a provisional owner with its own pod, cleaned up at its deadline, and the account's `linkedGuests` entry is dropped once the guest's standing has ended (at the account's next code). It gives the guest no access to the account's pod, credentials or tokens, and the account's bearer no access to the guest's pod. It rewrites nothing recorded before it: `canonicalSubject` attributes what happens from the link on. An account holds at most 16 live linked guests.
+
+**An unlinked account is unchanged.** `linkedGuests` and `guestLinkCode` exist on a record only while there is a guest or a live code; both are removed when empty, and `normaliseAuthMethods` carries them only where present and after every other member. An account that never linked a guest is written as before, and one whose guest was unlinked is byte-for-byte the record it was before it asked for a code (`provisional-guest-link-routes.test.ts`). An expired, unused code stays on the record until the account's next code replaces it. Sign-in, enrolment, sign-out everywhere and deletion do not read these members.
+
+**Per-application guests are out of scope for this version.** A per-application guest (`u-try-play-…`) cannot be linked: its key lives in its application's origin, not the door's, identity states no `subjectAttributes` for it, and nothing reads a `linkedTo` for it. It is kept as before, by claiming it with a passkey, wallet or DID, or by the application's own copy-and-confirm into an existing owner.
+
+**Not built in this version.** A passkey registered on another relying party (the relay's sign-in window) is not offered for the proof; such an account uses a wallet. The proof's pending steps are held in the identity process that prepared them (as the local-key link's are), so both of the owner's requests must reach the same instance; the code itself is on the pod and is redeemed through any instance.
+
+**Threat notes.**
+
+- *A victim's guest to an attacker's account.* An attacker sends a victim a code for the attacker's own account. The page names that account before the link, by DID and id as well as by its display name (which the attacker chose), and says to stop if the code came from someone else; the link signature covers the account shown. Identity cannot stop a visitor who reads that and continues. What the attacker gains is what the victim's guest does in applications *after* the link, attributed to the attacker's account; nothing from before is moved, and the victim's own account is not involved.
+- *An attacker's guest to a victim's account.* It needs a code for the victim's account, which needs the victim's bearer and a fresh proof by the victim's credential. Guessing is bounded to 5 tries against 60 bits per code, and each code lives 5 minutes. An owner who reads their code aloud to someone, or pastes it into another site, has linked that party's guest: the code is a bearer secret for five minutes, and the dashboard says so beside it.
+- *Spending someone's attempts.* Anyone who knows an account's id and holds any guest key can use up the 5 attempts of that account's live code, so the owner must ask again. It costs the owner a retry and links nothing; the door's rate limit bounds it per address.
+- *A stolen bearer.* It gets no code and unlinks nothing without the credential's fresh proof.
+- *The door origin.* The link request is answered for the door's origin only, and the guest's key lives there, so the considerations of "A dedicated door origin" apply unchanged: a script running on the door's origin could link the guest it holds.
+- *Replay.* The link proof names the code, which is spent by the link, and the account; the preview proof links nothing. A recorded request replayed after an unlink finds the code gone.
+- *The account's name.* It is told only to a caller who presents a live code for that account with a guest key's proof, never by account id alone.
 
 ### Rollout order and mixed versions
 
@@ -137,7 +194,9 @@ So the order is:
 
 Turning the setting off again ends every general guest's tokens at once and removes the door; their pods are cleaned up at their deadlines as usual. A css-gate with this change in front of an identity without it sees no general token and no `subjectAttributes`, and changes nothing.
 
-**Applications.** The coached world offers the door beside its own when `CPW_GENERAL_GUEST=1` (with its relay door configured; return path `/play/general/return`). Foxxi's bridge can sign door grants (`PlayGrantService.generalGuestGrant`) but its learner workbench does not use the door yet: its guest sessions are re-checked with identity while they live, and an application token cannot be re-checked by the application.
+The guest link needs no ordering of its own. A css-gate with the general guest already reads `linkedTo` as a known attribute and grants nothing by it; an identity rolled back to before the link keeps `linkedGuests`, `guestLinkCode` and `provisionalGuestLinkedTo` on the records as members it does not read, and states no `linkedTo`, so a linked guest is simply itself until the newer identity returns.
+
+**Applications.** The coached world offers the door beside its own when `CPW_GENERAL_GUEST=1` (with its relay door configured; return path `/play/general/return`). It admits a general guest under `canonicalSubject` of what identity stated, so a guest linked to an account is that account's consultant from its next visit, from any browser linked to it, and is itself again once unlinked. Foxxi's bridge can sign door grants (`PlayGrantService.generalGuestGrant`) but its learner workbench does not use the door yet: its guest sessions are re-checked with identity while they live, and an application token cannot be re-checked by the application. A world session made for a linked guest ends after ten minutes, so an unlink reaches a browser that was already in at its next return through the door. A linked guest is not claimed: the door's token is no bearer once the link is confirmed, and the record's writer refuses it a credential of its own until the owner unlinks it.
 
 ## Configuration and protocol
 

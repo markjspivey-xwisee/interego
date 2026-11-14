@@ -391,9 +391,9 @@ test('the door page is a top-level document that runs one script, named by hash,
   const style = /<style>([\s\S]*?)<\/style>/.exec(page.html)![1]!;
   assert.equal(directives['style-src'], `'sha256-${crypto.createHash('sha256').update(style, 'utf8').digest('base64')}'`);
   const script = scripts[0]!;
-  // The key is generated non-extractable, and the page reaches nothing but its own two routes.
+  // The key is generated non-extractable, and the page reaches nothing but its own three routes.
   assert.match(script, /generateKey\(\{ name: 'ECDSA', namedCurve: 'P-256' \}, false, \['sign'\]\)/);
-  assert.deepEqual([...script.matchAll(/post\('([^']+)'/g)].map(m => m[1]), ['/guest/door', '/guest/door/claim']);
+  assert.deepEqual([...script.matchAll(/post\('([^']+)'/g)].map(m => m[1]), ['/guest/door', '/guest/door/claim', '/guest/door/link']);
   // Apart from its configuration (the issuer and the terms links), the script names no address at all.
   assert.doesNotMatch(script.replace(/^ {2}var config = .*$/m, ''), /https?:\/\//);
   assert.doesNotMatch(script, /localStorage|sessionStorage|document\.cookie|postMessage|innerHTML|eval\(/);

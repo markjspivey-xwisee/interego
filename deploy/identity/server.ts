@@ -76,10 +76,12 @@ import { AccountIndex, MAX_HOLDERS, enrolledAt } from './credential-index.js';
 import { createCredentialDecisions, type Turn } from './credential-decisions.js';
 import { createRecordWatchers } from './record-watch.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
-import { parsePlayClients } from './provisional-play.js';
+import { PlayError, parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
 import { guestApplications, subjectAttributes, type GeneralTokenGrant, type SubjectAttributes } from './provisional-general-guest.js';
 import { doorHostGuard, mountGeneralGuest, parseDoorOrigin } from './provisional-general-guest-routes.js';
+import { mountGuestLink } from './provisional-guest-link-routes.js';
+import { guestLinkDashboard } from './provisional-guest-link-dashboard.js';
 import { advertisesNativeDelete, playGameDataResidue, purgeProvisionalPlayPod, type PlayGameDataResidue } from './provisional-play-cleanup.js';
 import { isAdmissionLedger, readAdmissionLedger } from './provisional-play-admission.js';
 import { hostedBetaNotice, hostedPrivacyUrl, hostedTermsPolicy, readTermsAcceptance, type TermsAcceptance } from './hosted-terms.js';
@@ -508,6 +510,15 @@ interface AuthMethods {
   provisionalGuestApplications?: Array<{ audience: string; admittedAt: number }>;
   /** A general guest's record only: its door codes not yet exchanged, by hash. */
   provisionalGuestCodes?: Array<{ hash: string; expiresAt: number }>;
+  /**
+   * A general guest's record only (provisional-guest-link.ts): the registered account it is linked
+   * to. Stated as the guest's `linkedTo` only while that account's record lists it (linkedGuests).
+   */
+  provisionalGuestLinkedTo?: { userId: string; linkedAt: number };
+  /** A registered account's record: the general guests linked to it. Absent while there is none. */
+  linkedGuests?: Array<{ userId: string; proofKeyThumbprint: string; linkedAt: number; standingUntil: number }>;
+  /** A registered account's record: its one live guest link code, by hash, with its wrong attempts. Absent once spent. */
+  guestLinkCode?: { hash: string; expiresAt: number; attempts: number };
   /** The server's receipt from the hosted enrollment ceremony. */
   termsAcceptance?: TermsAcceptance;
   /**
@@ -1156,6 +1167,10 @@ const authMethodsWriter: WriterDeps<AuthMethods> = {
   isTombstone: m => isTombstone(m),
   empty: userId => emptyAuthMethods(userId),
   playGuard: (userId, m) => playOwnerWritable(userId, m),
+  // A guest whose record names an account it is linked to is kept through that account: it gains
+  // no credential of its own (the owner unlinks it first). Checked here, under the record's lock,
+  // so a claim opened before the link cannot finish after it.
+  playChangeRefused: (_userId, read, draft) => !!draft.provisionalGuestLinkedTo && !hasAnyCredential(read) && hasAnyCredential(draft),
   conflicted: (userId, context, attempts) => logWriteConflict(userId, context, attempts),
 };
 
@@ -1746,6 +1761,11 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
     ...(termsAcceptance ? { termsAcceptance } : {}),
     ...(typeof src.deletedAt === 'string' ? { deletedAt: src.deletedAt } : {}),
     ...(src.provisionalPlayPurgePending === true ? { provisionalPlayPurgePending: true as const } : {}),
+    // Guest links (provisional-guest-link.ts). Carried only where the record holds them, and after
+    // every other member, so an account that never linked a guest is written as it always was.
+    ...(src.provisionalGuestLinkedTo && typeof src.provisionalGuestLinkedTo === 'object' ? { provisionalGuestLinkedTo: src.provisionalGuestLinkedTo } : {}),
+    ...(Array.isArray(src.linkedGuests) ? { linkedGuests: src.linkedGuests } : {}),
+    ...(src.guestLinkCode && typeof src.guestLinkCode === 'object' ? { guestLinkCode: src.guestLinkCode } : {}),
   };
 }
 
@@ -2707,9 +2727,17 @@ async function verifyToken(token: string, options: { generalGuest?: boolean } = 
           return { valid: false, reason: 'Provisional owner binding mismatch' };
         }
         const record = methods as unknown as import('./provisional-play-store.js').PlayAnchorDocument;
-        const facts = subjectAttributes(owner, record, guest.application);
+        // The account this guest is linked to, where that account's own record confirms it. An
+        // account that cannot be read now is a "try again", never a guest stated as unlinked.
+        let linkedTo: string | undefined;
+        try { linkedTo = await general.link.confirmed(record, owner); }
+        catch { return { valid: false, reason: 'Provisional owner unavailable', unreadable: true }; }
+        const facts = subjectAttributes(owner, record, guest.application, linkedTo);
         if (guest.door === true) {
           if (guest.application !== undefined || guest.namespace !== undefined) return { valid: false, reason: 'Provisional owner binding mismatch' };
+          // The door's token opens the claim flow, and a linked guest is not claimed: a token
+          // issued before the link stops being a bearer once the link is confirmed.
+          if (linkedTo !== undefined) return { valid: false, reason: 'Guest is linked to an account' };
         } else {
           // The application is one that opted in, that this guest was admitted to or has used, and
           // whose namespace now is the one the token carries.
@@ -5293,6 +5321,32 @@ const provisionalPlay = createProvisionalPlayProvider({
     return { token: record.token, expiresAt: record.expiresAt };
   },
   withOwnerLock: withIdentityPodMutex,
+  // A guest link's writes to a REGISTERED account's record (its link code, its linked guests) go
+  // through this server's own record writer: read from the pod under the account's lock, written
+  // conditionally on that read and never otherwise, in the form every other write gives the record.
+  updateAccount: async (userId, change) => {
+    type Document = import('./provisional-play-store.js').PlayAnchorDocument;
+    let refusal: PlayError | undefined;
+    let read: Document | undefined;
+    let result: UpdateResult<AuthMethods>;
+    try {
+      result = await updateAuthMethodsWith(localLinkWriter, userId, 'guest-link', draft => {
+        refusal = undefined;
+        read = draft as unknown as Document;
+        try { return change(read) === false ? NoWrite('guest-link-unchanged') : Write; }
+        catch (error) {
+          if (!(error instanceof PlayError)) throw error;
+          refusal = error;
+          return NoWrite('guest-link-refused');
+        }
+      });
+    } catch (error) {
+      if (error instanceof AccountDeletedError || error instanceof AccountRecordMissingError || error instanceof PlayOwnerUnavailableError) throw new PlayError(401, 'provisional_owner_unavailable');
+      throw error;
+    }
+    if (refusal) throw refusal;
+    return (result.written ? result.record : read!) as unknown as Document;
+  },
   empty: claims => emptyAuthMethods(claims.userId, 'Play guest', claims.authenticatedAgentId) as unknown as import('./provisional-play-store.js').PlayAnchorDocument,
   // Runs inside the owner's lock, once the anchor's conditional write has landed.
   committed: document => {
@@ -5316,6 +5370,8 @@ if (mountGeneralGuest(app, provisionalPlay, {
   // Each request here can admit a guest (within the admission caps) or bring one back to an application.
   door: rateLimit('general-guest-door', { windowMs: 60 * 60 * 1000, max: 20 }),
   claim: rateLimit('general-guest-claim', { windowMs: 60 * 60 * 1000, max: 10 }),
+  // Each request holds a typed code to an account's record; a code also ends after five wrong ones.
+  link: rateLimit('general-guest-link', { windowMs: 60 * 60 * 1000, max: 30 }),
   exchange: rateLimit('general-guest-exchange', { windowMs: 60 * 1000, max: 120 }),
 }, log)) log(`General guest door: on${GENERAL_GUEST_DOOR_ORIGIN ? ` at ${GENERAL_GUEST_DOOR_ORIGIN}` : ' on this origin (set GENERAL_GUEST_DOOR_ORIGIN in production)'}`);
 
@@ -6273,15 +6329,24 @@ async function availableLocalLinkDid(did: string, ownerId: string): Promise<void
     }
   }));
 }
+/** A registered owner's bearer as a link session. A guest's token, of either kind, is refused. */
+async function authenticateLinkSession(token: string): Promise<LinkSession> {
+  const verified = await verifyToken(token); const signed = parseAndVerifySignature(token);
+  if (!verified.valid || !verified.record || verified.record.provisionalPlay || signed.valid !== true
+    || !Number.isSafeInteger(signed.payload.epoch) || signed.payload.epoch < 0) throw linkRefused();
+  return { userId: verified.record.userId, epoch: signed.payload.epoch, sessionHash: crypto.createHash('sha256').update(token).digest('base64url') };
+}
+// Linking a general guest to this account (PROVISIONAL-PLAY.md, "Linking a guest to an account").
+// Adds no route unless the general guest door is on. The fresh proof it requires is the one the
+// local-key link below requires, verified by the same function.
+mountGuestLink(app, provisionalPlay, {
+  identityOrigin: localLinkOrigin, limiter: rateLimit('guest-link-owner', { windowMs: 60_000, max: 30 }), authenticate: authenticateLinkSession, account: linkAccount,
+  walletAddress: async value => (await loadEthers()).getAddress(value), verifyStepUp: verifyLinkStepUp,
+}, log);
 mountLocalIdentityLink(app, {
   identityOrigin: localLinkOrigin, trustedPasskeyOrigins: localLinkPasskeyOrigins, limiter: authEnrollLimiter,
   pollLimiter: rateLimit('local-identity-link-poll', { windowMs: 60_000, max: 180 }),
-  authenticate: async token => {
-    const verified = await verifyToken(token); const signed = parseAndVerifySignature(token);
-    if (!verified.valid || !verified.record || verified.record.provisionalPlay || signed.valid !== true
-      || !Number.isSafeInteger(signed.payload.epoch) || signed.payload.epoch < 0) throw linkRefused();
-    return { userId: verified.record.userId, epoch: signed.payload.epoch, sessionHash: crypto.createHash('sha256').update(token).digest('base64url') };
-  },
+  authenticate: authenticateLinkSession,
   account: linkAccount,
   walletAddress: async value => (await loadEthers()).getAddress(value),
   verifyStepUp: verifyLinkStepUp,
@@ -7782,7 +7847,7 @@ ${returningPasskeyLoginDashboard(localLinkOrigin, returningRelay)}
     });
   }
 </script>
-${localIdentityLinkDashboard()}
+${localIdentityLinkDashboard()}${provisionalPlay.general?.enabled ? guestLinkDashboard(`${provisionalPlay.general.doorOrigin}/guest/door#link`) : ''}
 </body>
 </html>`);
 });

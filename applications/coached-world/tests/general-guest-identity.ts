@@ -10,6 +10,8 @@ import { GeneralGuestDoor, type DoorFetch } from '../../_shared/guest-access/doo
 import { createProvisionalPlayProvider } from '../../../deploy/identity/provisional-play-provider.js';
 import { PlayError, type PlayClaims } from '../../../deploy/identity/provisional-play.js';
 import { doorProofPayload } from '../../../deploy/identity/provisional-general-guest.js';
+import { linkPreviewPayload, linkProofPayload } from '../../../deploy/identity/provisional-guest-link.js';
+import { playKeyThumbprint, publicPlayKey } from '../../../deploy/identity/provisional-play.js';
 
 /** The world's registered return path (src/server.ts GENERAL_GUEST_RETURN_PATH; shared-world.test.ts holds the two equal). */
 export const RETURN_PATH = '/play/general/return';
@@ -76,7 +78,28 @@ export function identity() {
     const answer = await general.door({ playGrant, publicKeyJwk: key.publicKey.export({ format: 'jwk' }), proof }, ISSUER);
     return new URL(answer.redirect);
   };
-  return { general, doorFor, page, exchanges };
+  /** A fictional registered account, by its record alone (a wallet is its credential). */
+  const account = (userId: string, name: string): string => {
+    documents.set(`https://css.internal.example/${userId}/auth-methods.jsonld`, { revision: 1,
+      body: JSON.stringify({ userId, name, walletAddresses: [`0x${'5a'.repeat(20)}`], webAuthnCredentials: [], didKeys: [] }) });
+    return userId;
+  };
+  /**
+   * The link ceremony for the guest `key` holds: the account's owner asks for a code (identity has
+   * verified their fresh credential proof by then), and the door page's two clicks follow.
+   */
+  const linkGuest = async (key: { privateKey: KeyObject; publicKey: KeyObject }, ownerId: string): Promise<string> => {
+    const jwk = key.publicKey.export({ format: 'jwk' });
+    const thumbprint = playKeyThumbprint(publicPlayKey(jwk));
+    const { code } = await general.link.issueCode(ownerId);
+    const expiresAt = Math.floor(Date.now() / 1000) + 60;
+    const proof = (text: string) => signWith('sha256', Buffer.from(text), { key: key.privateKey, dsaEncoding: 'ieee-p1363' }).toString('base64url');
+    const shown = await general.link.link({ publicKeyJwk: jwk, code, expiresAt, proof: proof(linkPreviewPayload(ISSUER, thumbprint, code, expiresAt)) }, ISSUER);
+    await general.link.link({ publicKeyJwk: jwk, code, expiresAt, account: shown.account.did,
+      proof: proof(linkProofPayload(ISSUER, thumbprint, code, expiresAt, shown.account.did)) }, ISSUER);
+    return shown.account.did;
+  };
+  return { general, doorFor, page, exchanges, account, linkGuest };
 }
 export const newKey = () => generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
 export const cookieOf = (response: Response) => (response.headers.get('set-cookie') ?? '').split(';')[0]!;

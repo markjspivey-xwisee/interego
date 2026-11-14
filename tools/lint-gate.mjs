@@ -209,7 +209,7 @@ const UNLINTED_FRONTIER = {
   // Master reached 276 inside the slack (local identity links, returning passkeys, the dashboard
   // inbox). identity's key-encoding.ts and its suite take the committed census to 278. Both lint
   // clean; the error pin stays.
-  deploy: { errors: 356, files: 278 },
+  deploy: { errors: 356, files: 296 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
