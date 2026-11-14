@@ -473,7 +473,7 @@ import {
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
-import { attachXapiLrsRoutes, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
@@ -2053,7 +2053,8 @@ async function landMeshBatch(events: ProjectedMeshEvent[]): Promise<number> {
        */
       if (await store.get(id)) continue;
       const storedAt = new Date().toISOString();
-      await store.put({ id, statement: { ...ev.statement, stored: storedAt }, stored: storedAt, voided: false } as StoredStatement);
+      // Projected from what a pod holds, and put straight into the store: it does not keep a claim to the LMS's authority.
+      await store.put({ id, statement: { ...withoutLmsAuthorityClaim(ev.statement as Record<string, unknown>), stored: storedAt }, stored: storedAt, voided: false } as StoredStatement);
       landed++;
     } catch (err) {
       bridgeWarn(`[foxxi-bridge][mesh] put failed for ${id} (${ev.mode}):`, (err as Error).message);
@@ -6022,7 +6023,8 @@ const app = createVerticalBridge({
             (await getStatementStore(tenant).query({ registration: reg, limit: 500 }))
               .statements.map(r => r.statement),
           emit: async (s) => {
-            const id = await storeStatementDurably(s, tenant);
+            // `satisfied` is the LMS's to say, and is stored under the LMS's authority.
+            const id = await storeStatementDurably(s, tenant, 'lms');
             if (!id) throw new Error('cmi5 satisfaction statement was not committed');
             if (own) keepCmi5OnLearnerPod({ ...s, id }, own);
           },
@@ -9907,6 +9909,9 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
           },
           restore: async statement => {
             if (!statement.stored || !statement.authority) throw new Error('durable record is missing its LRS-assigned envelope');
+            // Read back from the caller's own pod, which the caller can write. A record there naming the
+            // LMS's authority was not put there by the LMS, and is not restored as if it had been.
+            if (claimsLmsAuthority(statement)) throw new Error('durable record names an authority only this LMS assigns');
             await getStatementStore(tenant).put({ id: String(statement.id), statement, stored: String(statement.stored), voided: false });
           },
           request: createSelfXapiRequest({ port: PORT, principal, secret, timeoutMs: signedXapiTimeoutMs }),
