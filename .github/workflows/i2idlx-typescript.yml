@@ -10,7 +10,6 @@ on:
       - 'applications/foxxi-content-intelligence/src/ns/**'
       - 'applications/foxxi-content-intelligence/src/i2idlx-workbench.ts'
       - 'applications/foxxi-content-intelligence/src/i2idlx-agent-sessions.ts'
-      # The agent-session router is a composition over this shared core.
       - 'applications/_shared/agent-connection/**'
       - 'applications/foxxi-content-intelligence/src/i2idlx-user-courses.ts'
       - 'applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts'
