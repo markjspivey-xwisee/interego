@@ -68,10 +68,16 @@ RUN npm ci
 # Only what this bridge imports, file by file where it reaches outside its own directory, so a
 # change elsewhere in Foxxi or in identity is not a reason to redeploy the world:
 #   packages/                      the @interego/core substrate (descriptors, Turtle, canonical JSON)
-#   applications/_shared/          affordance-mcp (the /affordances manifest), vertical-bridge/route-errors
+#   applications/_shared/          affordance-mcp (the /affordances manifest), vertical-bridge/route-errors,
+#                                  http-guard (request limits, public URL, /health), agent-connection
+#                                  (the Connect-an-agent broker and the browser client the page imports),
+#                                  voice (the browser module the page imports for speech in and out)
 #   applications/coached-world/    the vertical: src/, bridge/, affordances.ts, packs/, public/, ontology/
 #   foxxi play-grant.ts            the relay-signed guest grant (PlayGrantService)
 #   foxxi xapi-profile-supplied.ts the check every statement passes before it is kept
+#   foxxi auth.ts                  recoverSignedRequest: the signed envelope an agent claims a connection with
+#   foxxi session-key.ts           imported by auth.ts
+#   foxxi ssrf-guard.ts            guards the fetch of an agent's delegation, made before it is authorized
 #   identity provisional-play.ts   the guest proofs and the in-process door, the same class identity serves
 #   identity hosted-terms.ts       imported by provisional-play.ts
 # tests/a-bridge-image-carries-what-it-imports.test.ts follows these imports and fails if one is
@@ -84,6 +90,9 @@ COPY applications/_shared/ ./applications/_shared/
 COPY applications/coached-world/ ./applications/coached-world/
 COPY applications/foxxi-content-intelligence/src/play-grant.ts ./applications/foxxi-content-intelligence/src/play-grant.ts
 COPY applications/foxxi-content-intelligence/src/xapi-profile-supplied.ts ./applications/foxxi-content-intelligence/src/xapi-profile-supplied.ts
+COPY applications/foxxi-content-intelligence/src/auth.ts ./applications/foxxi-content-intelligence/src/auth.ts
+COPY applications/foxxi-content-intelligence/src/session-key.ts ./applications/foxxi-content-intelligence/src/session-key.ts
+COPY applications/foxxi-content-intelligence/src/ssrf-guard.ts ./applications/foxxi-content-intelligence/src/ssrf-guard.ts
 COPY deploy/identity/provisional-play.ts ./deploy/identity/provisional-play.ts
 COPY deploy/identity/hosted-terms.ts ./deploy/identity/hosted-terms.ts
 
@@ -92,8 +101,11 @@ COPY deploy/identity/hosted-terms.ts ./deploy/identity/hosted-terms.ts
 ARG PREBUILT=0
 RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then echo "prebuilt packages present; skipping the build"; else (npm run build:core && npm run build:leaves); fi
 
+# @interego/solid reads and verifies an agent's delegation (src/agent-verifier.ts); it needs pgsl.
 RUN mkdir -p node_modules/@interego \
-  && ln -sfn /app/packages/core node_modules/@interego/core
+  && ln -sfn /app/packages/core node_modules/@interego/core \
+  && ln -sfn /app/packages/solid node_modules/@interego/solid \
+  && ln -sfn /app/packages/pgsl node_modules/@interego/pgsl
 
 EXPOSE 6191
 ENV PORT=6191
@@ -128,6 +140,12 @@ ENV CPW_BOTS=1
 #   CPW_LRS_ACTOR_HOME            the home page on the course actor's account
 #   CPW_FOXXI_LAUNCH_URL          Foxxi's POST /agent/cmi5/launch
 #   CPW_FOXXI_LAUNCH_KEY          the key Foxxi accepts launches from
+#   CPW_POD_ORIGIN                the https origin agents' own pods live on. It turns on "Connect an
+#                                 agent": a consultant pairs their own AI chat session and it becomes
+#                                 the agent they coach, on that session's subscription. No model key
+#                                 is involved. The origin is where a claiming agent's delegation is
+#                                 read from to verify it. Unset, the Connect door answers 503 and the
+#                                 page hides it; agents stay simulated. Not a secret.
 ENV CPW_PLAY_SERVICE_PRIVATE_KEY=
 ENV CPW_IDENTITY_URL=
 ENV CPW_LRS_URL=
@@ -135,6 +153,7 @@ ENV CPW_LRS_AUTHORIZATION=
 ENV CPW_LRS_ACTOR_HOME=
 ENV CPW_FOXXI_LAUNCH_URL=
 ENV CPW_FOXXI_LAUNCH_KEY=
+ENV CPW_POD_ORIGIN=
 
 # The commit this image was built from, answered at /health as `build` so a deploy can be
 # VERIFIED rather than assumed: tools/railway-redeploy.mjs polls that field for the sha it shipped.

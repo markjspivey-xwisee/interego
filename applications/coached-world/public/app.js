@@ -1,9 +1,31 @@
 import { signIn, generalGuestOffer, collectGeneralGuest } from './guest.js';
+import { createAgentConnectionClient } from './agent-connection.js';
+import { createVoice, matchSpoken } from './voice.js';
 
 const esc = s => String(s).replace(/[&<>"']/g, c => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' }[c]));
 const hue = (pack, id) => (pack.factions.findIndex(f => f.id === id) + 6) % 6;
 
-const state = { token: sessionStorage.getItem('cpw-token') || '', tab: 'world', world: null, note: '', diagnosis: '', intervention: '', general: null };
+const state = { token: sessionStorage.getItem('cpw-token') || '', tab: 'world', world: null, note: '', diagnosis: '', intervention: '', agent: { enabled: false }, invite: '', readAloud: false, heard: '', voiceNote: '', spokenWork: '', general: null };
+
+// The shared voice module, served by this bridge. Speech in and out are the browser's own; this
+// page sends no audio anywhere and asks no model what was said. The microphone opens only from
+// the button below, and what is heard is matched against the labels on screen.
+const voice = createVoice({
+  onInterim: text => { state.heard = text; render(); },
+  onFinal: text => command(text),
+  onState: () => render(),
+  onError: error => { state.voiceNote = error.message; render(); },
+});
+
+// The shared agent-connection client, served by this bridge. Opening a session needs this
+// consultant's sign-in; everything after it uses the capability the session itself returned,
+// which stays in this tab.
+const agentClient = createAgentConnectionClient({
+  root: '/agent-sessions',
+  createHeaders: () => ({ Authorization: `Bearer ${state.token}` }),
+  page: 'this coached-world tab',
+  purpose: 'Each task is one mission for the agent I coach in a game world, and your answer is that agent\'s work product.',
+});
 
 async function api(path, options = {}) {
   const response = await fetch(path, {
@@ -39,6 +61,85 @@ function feed(world) {
   return `<div class="card"><div class="kicker">Live feed</div><div class="feed">${items || '<p>The front is quiet.</p>'}</div></div>`;
 }
 
+function agentPanel(world) {
+  // Hidden when this world can not verify an agent: there is nothing to connect.
+  if (!state.agent.enabled || !world.you?.factionId) return '';
+  const link = state.agent.connection || { state: 'none' };
+  const name = esc(world.you.roster[0]?.name || 'your agent');
+  if (link.state === 'connected') {
+    return `<div class="card"><div class="kicker">Connected agent</div>
+      <p>${name} is now your own chat session, on its own subscription. Each mission goes to it as a brief, and what it writes is what you diagnose from. No API key is held here.</p>
+      <p><code>${esc(link.actor || '')}</code></p>
+      <button class="btn" data-act="agent-off">Disconnect</button></div>`;
+  }
+  if (link.state === 'waiting_for_agent') {
+    const text = state.invite
+      ? `<p>Paste this into an AI chat that has the Interego connector. It can be used once.</p><textarea class="invite" readonly rows="6">${esc(state.invite)}</textarea>
+        <button class="btn primary" data-act="agent-copy">Copy the invitation</button>`
+      : '<p>An invitation is open in another tab. Open a new one here to see its text.</p>';
+    return `<div class="card"><div class="kicker">Connect an agent · waiting for your chat session</div>${text}
+      <button class="btn" data-act="agent-on">New invitation</button>
+      <button class="btn" data-act="agent-off">Cancel</button></div>`;
+  }
+  return `<div class="card"><div class="kicker">Connect an agent</div>
+    <p>Have your own AI chat session be ${name}. It works on that session's subscription; this world asks for no API key and calls no model. Until you connect one, ${name} is simulated.</p>
+    <button class="btn" data-act="agent-on">Connect an agent</button></div>`;
+}
+
+function work(m) {
+  if (!m.work) return '';
+  if (m.work.state === 'waiting') return '<div class="work"><div class="kicker">Connected agent</div><p>The brief is with your connected agent. Its work will appear here.</p></div>';
+  if (m.work.state === 'answered') return `<div class="work"><div class="kicker">What ${esc(m.agent)} wrote</div><pre>${esc(m.work.text || '')}</pre></div>`;
+  return `<div class="work"><div class="kicker">Connected agent</div><p>It did not answer (${esc(m.work.note || 'no answer')}), so this mission ran simulated.</p></div>`;
+}
+
+function voicePanel() {
+  // Each half is shown only where this browser has it. With neither, there is no card.
+  const { input, output } = voice.supported;
+  if (!input && !output) return '';
+  const listening = voice.state === 'listening' || voice.listeningRequested;
+  const read = output ? `<button class="btn ${state.readAloud ? 'primary' : ''}" data-act="read-aloud" aria-pressed="${state.readAloud}">Read aloud: ${state.readAloud ? 'on' : 'off'}</button>
+    ${voice.state === 'speaking' ? '<button class="btn" data-act="voice-stop">Stop reading</button>' : ''}` : '';
+  const mic = input ? `<button class="btn ${listening ? 'primary' : ''}" data-act="voice-listen" aria-pressed="${listening}">${listening ? 'Stop listening' : 'Say a command'}</button>` : '';
+  const status = voice.state === 'listening' ? `Listening. Say the name of a choice on this page.${state.heard ? ` Hearing: ${state.heard}` : ''}` : state.voiceNote;
+  return `<div class="card voice"><div class="kicker">Voice</div><div class="voice-row">${mic}${read}</div>
+    <p class="fine" data-voice-status role="status">${esc(status)}</p>
+    ${input ? `<p class="fine" data-voice-notice>${esc(voice.notice)}</p>` : ''}</div>`;
+}
+
+/** What can be said right now: every enabled button on the page that carries data-say. */
+function speakable() {
+  return [...document.querySelectorAll('#app button[data-say]:not(:disabled)')].map(button => ({
+    button,
+    label: (button.querySelector('b') || button).textContent.trim(),
+    aliases: button.dataset.say.split('|').filter(Boolean),
+  }));
+}
+
+function command(text) {
+  state.heard = '';
+  const { match, ambiguous } = matchSpoken(text, speakable());
+  if (match) {
+    state.voiceNote = `Heard "${text}". Chose: ${match.label}.`;
+    match.button.click();
+  } else {
+    state.voiceNote = ambiguous.length
+      ? `Heard "${text}". That fits more than one choice (${ambiguous.map(option => option.label).join(', ')}), so nothing was done.`
+      : `Heard "${text}". That matches nothing on this page, so nothing was done.`;
+  }
+  render();
+}
+
+/** The connected agent's work on the open mission, read once when it arrives. */
+function announceWork(force = false) {
+  const m = state.world?.you?.mission;
+  if (m?.work?.state !== 'answered') return;
+  const key = `${m.title}\n${m.work.text || ''}`;
+  if (key === state.spokenWork && !force) return;
+  state.spokenWork = key;
+  if (state.readAloud) voice.speak(`${m.agent} wrote: ${m.work.text || ''}`);
+}
+
 function coach(world) {
   const you = world.you;
   if (!you?.factionId) return '<div class="card"><p>Pick a faction. You consult for an agent; you do not command one.</p></div>';
@@ -48,21 +149,21 @@ function coach(world) {
     <button class="btn" data-act="launch">Open the course</button>
     <button class="btn primary" data-act="gate">Check the record</button></div>` : '';
   const roster = you.roster.map(a => `<div class="choice"><b>${esc(a.name)}</b><div>${esc(a.role)}</div><div>last ${esc(a.hist.at(-1))}</div>${a.memory[0] ? `<div>${esc(a.memory[0].text)}</div>` : ''}</div>`).join('');
-  let mission = `<button class="btn primary" data-act="mission">Send ${esc(you.roster[0]?.name || 'the agent')} on a mission</button>`;
+  let mission = `<button class="btn primary" data-act="mission" data-say="send the agent on a mission|mission">Send ${esc(you.roster[0]?.name || 'the agent')} on a mission</button>`;
   if (you.mission) {
     const m = you.mission;
     const lines = m.statements.map(s => `<div class="stmt"><span></span><span><b>${esc(s.verb.display.en)}</b> ${esc(s.result?.response || s.object.definition?.name?.en || '')}</span></div>`).join('');
-    const causes = world.pack.causes.map(c => `<button class="choice ${state.diagnosis === c.id ? 'on' : ''}" data-diag="${esc(c.id)}" ${c.minTier > you.tier ? 'disabled' : ''}><b>${esc(c.label)}</b><div>${esc(c.bem)}</div></button>`).join('');
-    const ivs = world.pack.interventions.map(i => `<button class="choice ${state.intervention === i.id ? 'on' : ''}" data-iv="${esc(i.id)}" ${i.minTier > you.tier ? 'disabled' : ''}><b>${esc(i.label)}</b> <span>${i.cost}</span><div>${esc(i.composes)}</div></button>`).join('');
+    const causes = world.pack.causes.map(c => `<button class="choice ${state.diagnosis === c.id ? 'on' : ''}" data-diag="${esc(c.id)}" data-say ${c.minTier > you.tier ? 'disabled' : ''}><b>${esc(c.label)}</b><div>${esc(c.bem)}</div></button>`).join('');
+    const ivs = world.pack.interventions.map(i => `<button class="choice ${state.intervention === i.id ? 'on' : ''}" data-iv="${esc(i.id)}" data-say ${i.minTier > you.tier ? 'disabled' : ''}><b>${esc(i.label)}</b> <span>${i.cost}</span><div>${esc(i.composes)}</div></button>`).join('');
     mission = `<div class="kicker">${esc(m.type)} · ${esc(m.territory)}</div><h2>${esc(m.title)}</h2><p>${esc(m.agent)} · ${esc(m.kpi)} · baseline ${esc(m.before)}</p>
       <div class="choices">${m.co.map(c => `<span class="choice">${esc(c.agent)} · ${esc(c.name)} · ${c.ally ? 'ally' : 'rival'}</span>`).join('')}</div>
-      <div>${lines}</div>
+      <div>${lines}</div>${work(m)}
       <div class="kicker">Diagnose</div><div class="choices">${causes}</div>
       <div class="kicker">Intervene</div><div class="choices">${ivs}</div>
-      <button class="btn primary" data-act="intervene" ${state.diagnosis && state.intervention ? '' : 'disabled'}>Deploy and measure</button>`;
+      <button class="btn primary" data-act="intervene" data-say="deploy" ${state.diagnosis && state.intervention ? '' : 'disabled'}>Deploy and measure</button>`;
   }
   return `${gate}<div class="card"><div class="row"><div class="kicker">${esc(tier?.label || '')} · ${you.roster.length}/${you.rosterCap}</div><div>${esc(you.influence)} influence · rank ${esc(you.rank)}</div></div><div class="choices">${roster}</div></div>
-    <div class="card">${mission}</div>`;
+    ${agentPanel(world)}${voicePanel()}<div class="card">${mission}</div>`;
 }
 
 function market(world) {
@@ -112,7 +213,11 @@ function render() {
 
 async function refresh() {
   state.world = await api('/world');
+  // Whether an agent can be connected here and, when signed in, what this consultant's is doing.
+  state.agent = await api('/agent-sessions').catch(() => ({ enabled: false }));
+  if ((state.agent.connection?.state || 'none') === 'none') state.invite = '';
   if (state.world.you && !state.world.you.factionId) state.tab = 'world';
+  announceWork();
   render();
 }
 
@@ -124,6 +229,18 @@ document.getElementById('app').addEventListener('click', async event => {
     if (target.dataset.diag) { state.diagnosis = target.dataset.diag; render(); return; }
     if (target.dataset.iv) { state.intervention = target.dataset.iv; render(); return; }
     if (target.dataset.act === 'general-guest') { location.assign(state.general.startUrl); return; }
+    if (target.dataset.act === 'voice-listen') {
+      // The only place the microphone is opened: this click.
+      state.voiceNote = '';
+      if (voice.state === 'listening' || voice.listeningRequested) voice.stopListening(); else voice.startListening();
+      render(); return;
+    }
+    if (target.dataset.act === 'read-aloud') {
+      state.readAloud = !state.readAloud;
+      if (state.readAloud) announceWork(true); else voice.stop();
+      render(); return;
+    }
+    if (target.dataset.act === 'voice-stop') { voice.stop(); render(); return; }
     if (target.dataset.act === 'guest') {
       const session = await signIn();
       state.token = session.token;
@@ -133,12 +250,26 @@ document.getElementById('app').addEventListener('click', async event => {
       await api('/faction', { method: 'POST', body: { factionId: target.dataset.join } });
       state.tab = 'coach';
       state.note = 'Your agent is on its pod. Read what it does, then change what it works with.';
+    } else if (target.dataset.act === 'agent-on') {
+      // A new session each time: the one before it, and whoever was paired with it, is closed.
+      await agentClient.disconnect();
+      state.invite = await agentClient.connect();
+      state.note = 'Paste the invitation into your AI chat. It expires in five minutes.';
+    } else if (target.dataset.act === 'agent-copy') {
+      await navigator.clipboard.writeText(state.invite);
+      state.note = 'Invitation copied.';
+    } else if (target.dataset.act === 'agent-off') {
+      await agentClient.disconnect();
+      await api('/agent-sessions', { method: 'DELETE', body: {} });
+      state.invite = '';
+      state.note = 'Agent disconnected. Missions are simulated again.';
     } else if (target.dataset.act === 'mission') {
       await api('/missions', { method: 'POST', body: {} });
       state.diagnosis = ''; state.intervention = '';
     } else if (target.dataset.act === 'intervene') {
       const result = await api('/missions/intervene', { method: 'POST', body: { diagnosis: state.diagnosis, interventionId: state.intervention } });
       state.note = result.matched ? `The cause was ${result.cause.label}. The score moved ${result.delta}.` : `No lift. The cause was ${result.cause.label}.`;
+      if (state.readAloud) voice.speak(state.note);
       state.diagnosis = ''; state.intervention = '';
     } else if (target.dataset.act === 'launch') {
       const launched = await api('/gate/launch', { method: 'POST', body: {} });

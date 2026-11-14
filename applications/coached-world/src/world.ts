@@ -10,14 +10,15 @@ import {
   agentGraph, factionGraph, interventionGraph, observationGraph, pactGraph, territoryGraph,
   type GraphBundle,
 } from './graphs.js';
-import { StatementLog, SATISFIED, type LrsReader } from './lrs.js';
+import { StatementLog, SATISFIED, type LmsAuthority, type LrsReader } from './lrs.js';
 import type { CourseLauncher, CourseLaunchResult } from './course-launch.js';
 import {
   byId, fill, formatClock, holderOf, publicPack, type CauseDef, type PublicPack, type WorldPack,
 } from './pack.js';
 import { hashSeed, mulberry, pick } from './rng.js';
 import { baseline, drawCause, openingSymptoms, settle } from './settle.js';
-import { buildMissionStatements, type XapiStatement } from './statements.js';
+import { buildMissionStatements, buildWorkStatement, type XapiStatement } from './statements.js';
+import { workProduct, type MissionBrief } from './agent-work.js';
 import { buildProfile, type ProfileDocument } from './profile.js';
 
 export interface GuestPrincipal {
@@ -45,6 +46,20 @@ interface AgentState {
   hist: number[]; memory: Lesson[]; version: number;
   /** Every cause this agent has a matched lesson for. `memory` keeps only the newest lessons; this keeps what they taught. */
   learned: Set<string>;
+  /** The interventions deployed for this agent, newest first, at most MAX_AGENT_LESSONS. */
+  deployed: string[];
+}
+/**
+ * What a consultant's connected agent wrote for an open mission, or why there is nothing:
+ * `waiting` while the paired session has the brief, `answered` with its text, `simulated` when
+ * it did not answer and the mission ran as it does with no agent connected.
+ */
+export interface MissionWork {
+  readonly state: 'waiting' | 'answered' | 'simulated';
+  readonly text?: string;
+  /** The verified identity of the session that wrote it. */
+  readonly by?: string;
+  readonly note?: string;
 }
 interface TerritoryState { id: string; name: string; q: number; r: number; control: Record<string, number>; version: number }
 interface BotState { id: string; name: string; factionId: string; tier: number; roi: number; growth: number; agents: number }
@@ -58,7 +73,10 @@ interface LiveMission {
   id: string; consultantId: string; missionId: string; agentId: string; territoryId: string;
   cause: CauseDef; before: number; allies: number; rivals: number;
   co: Array<{ name: string; factionId: string; agent: string }>;
-  statements: readonly XapiStatement[]; registration: string;
+  statements: XapiStatement[]; registration: string;
+  /** What the agent ran into, as the brief for a connected agent words it. The cause is not in it. */
+  conditions: string[];
+  work?: MissionWork;
 }
 interface FeedItem { id: number; t: string; text: string; factionId: string; kind: string; mine: boolean }
 
@@ -75,6 +93,7 @@ export class CoachedWorld {
   private readonly wallet: Signer;
   private readonly lrs: LrsReader | undefined;
   private readonly actorHomePage: string | undefined;
+  private readonly lmsAuthority: LmsAuthority | undefined;
   private readonly launcher: CourseLauncher | undefined;
   /** The newest published graphs, oldest first, at most MAX_PUBLISHED_GRAPHS. */
   private readonly published: Published[] = [];
@@ -97,7 +116,7 @@ export class CoachedWorld {
 
   private constructor(opts: {
     pack: WorldPack; base: string; didHost: string; now: () => string; wallet: Signer;
-    log: StatementLog; lrs?: LrsReader; actorHomePage?: string; launcher?: CourseLauncher; seed: number;
+    log: StatementLog; lrs?: LrsReader; actorHomePage?: string; lmsAuthority?: LmsAuthority; launcher?: CourseLauncher; seed: number;
   }) {
     this.pack = opts.pack;
     this.base = opts.base.endsWith('/') ? opts.base : `${opts.base}/`;
@@ -107,6 +126,7 @@ export class CoachedWorld {
     this.log = opts.log;
     this.lrs = opts.lrs;
     this.actorHomePage = opts.actorHomePage;
+    this.lmsAuthority = opts.lmsAuthority;
     this.launcher = opts.launcher;
     this.rng = mulberry(opts.seed);
     this.operatorAddress = opts.wallet.address;
@@ -127,13 +147,13 @@ export class CoachedWorld {
   static async create(opts: {
     readonly pack: WorldPack; readonly base: string; readonly didHost: string;
     readonly seed?: number; readonly now?: () => string; readonly wallet?: Signer;
-    readonly log?: StatementLog; readonly lrs?: LrsReader; readonly actorHomePage?: string; readonly launcher?: CourseLauncher;
+    readonly log?: StatementLog; readonly lrs?: LrsReader; readonly actorHomePage?: string; readonly lmsAuthority?: LmsAuthority; readonly launcher?: CourseLauncher;
   }): Promise<CoachedWorld> {
     const world = new CoachedWorld({
       pack: opts.pack, base: opts.base, didHost: opts.didHost,
       now: opts.now ?? (() => new Date().toISOString()),
       wallet: opts.wallet ?? Wallet.createRandom(),
-      log: opts.log ?? new StatementLog(), lrs: opts.lrs, actorHomePage: opts.actorHomePage, launcher: opts.launcher,
+      log: opts.log ?? new StatementLog(), lrs: opts.lrs, actorHomePage: opts.actorHomePage, lmsAuthority: opts.lmsAuthority, launcher: opts.launcher,
       seed: opts.seed ?? hashSeed(opts.pack.id),
     });
     await world.publishOpening();
@@ -219,7 +239,7 @@ export class CoachedWorld {
 
   private async putAgent(input: {
     id: string; name: string; role: string; factionId?: string; consultantId?: string; controllerDid?: string;
-    hist: number[]; memory: Lesson[]; learned?: Set<string>;
+    hist: number[]; memory: Lesson[]; learned?: Set<string>; deployed?: string[];
   }): Promise<AgentState> {
     const previous = this.agents.get(input.id);
     const version = (previous?.version ?? 0) + 1;
@@ -227,6 +247,7 @@ export class CoachedWorld {
       id: input.id, name: input.name, role: input.role, did: this.did(input.id),
       podUrl: `${this.base}pods/${input.id}/`, hist: input.hist, memory: input.memory, version,
       learned: input.learned ?? previous?.learned ?? new Set<string>(),
+      deployed: input.deployed ?? previous?.deployed ?? [],
       ...(input.factionId ? { factionId: input.factionId } : {}),
       ...(input.consultantId ? { consultantId: input.consultantId } : {}),
       ...(input.controllerDid ? { controllerDid: input.controllerDid } : {}),
@@ -314,7 +335,8 @@ export class CoachedWorld {
     const allies = co.filter(c => this.allied(factionId, c.factionId)).length;
     const live: LiveMission = {
       id: built.registration, consultantId, missionId: mission.id, agentId: agent.id, territoryId: territory.id,
-      cause, before, allies, rivals: co.length - allies, co, statements: built.statements, registration: built.registration,
+      cause, before, allies, rivals: co.length - allies, co, statements: [...built.statements], registration: built.registration,
+      conditions: (herring ? [...symptoms, herring] : symptoms).map(s => `${s.verb} ${mission.object}: ${s.result}`),
     };
     this.missions.set(consultantId, live);
     return this.missionView(live, agent.name, territory.name, mission);
@@ -327,7 +349,75 @@ export class CoachedWorld {
       agent: agentName, territory: territoryName,
       co: live.co.map(c => ({ ...c, ally: this.allied(factionId, c.factionId) })),
       statements: live.statements,
+      ...(live.work ? { work: live.work } : {}),
     };
+  }
+
+  /** What a connected agent is told about the consultant's open mission. Undefined when none is open. */
+  briefFor(consultantId: string): MissionBrief | undefined {
+    const live = this.missions.get(consultantId);
+    const mission = live ? byId(this.pack.missions, live.missionId) : undefined;
+    const agent = live ? this.agents.get(live.agentId) : undefined;
+    const territory = live ? this.territories.find(t => t.id === live.territoryId) : undefined;
+    if (!live || !mission || !agent || !territory) return undefined;
+    return {
+      registration: live.registration, agentName: agent.name, role: agent.role,
+      missionType: mission.type, missionTitle: mission.title, missionObject: mission.object, kpi: mission.kpi,
+      territory: territory.name, conditions: live.conditions,
+      lessons: agent.memory.map(lesson => lesson.text), interventions: agent.deployed,
+    };
+  }
+
+  private openWork(consultantId: string, registration: string): LiveMission | undefined {
+    const live = this.missions.get(consultantId);
+    return live && live.registration === registration ? live : undefined;
+  }
+
+  /** The brief went to the consultant's connected agent. Returns the mission as the page shows it. */
+  workPending(consultantId: string, registration: string): Record<string, unknown> | undefined {
+    const live = this.openWork(consultantId, registration);
+    const mission = live ? byId(this.pack.missions, live.missionId) : undefined;
+    const agent = live ? this.agents.get(live.agentId) : undefined;
+    const territory = live ? this.territories.find(t => t.id === live.territoryId) : undefined;
+    if (!live || !mission || !agent || !territory) return undefined;
+    live.work = { state: 'waiting' };
+    return this.missionView(live, agent.name, territory.name, mission);
+  }
+
+  /**
+   * Keep what the connected agent wrote: one statement by that agent under the mission's
+   * registration, through the same builder and profile check as every other statement, and the
+   * text on the open mission so the consultant diagnoses from it. Settlement is unchanged.
+   * False when that mission is no longer the open one.
+   */
+  attachWork(consultantId: string, registration: string, text: string, by: string): boolean {
+    const live = this.openWork(consultantId, registration);
+    const consultant = this.consultants.get(consultantId);
+    const mission = live ? byId(this.pack.missions, live.missionId) : undefined;
+    const agent = live ? this.agents.get(live.agentId) : undefined;
+    if (!live || !consultant || !mission || !agent || live.work?.state !== 'waiting') return false;
+    const kept = workProduct(text);
+    if (!kept) return this.workFellBack(consultantId, registration, 'the connected agent sent nothing to keep');
+    const statement = buildWorkStatement({
+      pack: this.pack, homePage: this.base, actorDid: agent.did, missionId: mission.id, missionTitle: mission.title,
+      response: kept, timestamp: this.now(), registration,
+    });
+    this.log.add([statement], 'world');
+    live.statements.push(statement);
+    live.work = { state: 'answered', text: kept, by };
+    this.pushFeed(`${agent.name} did this mission through ${consultant.name}'s connected agent.`, consultant.factionId ?? '', 'agent', true);
+    return true;
+  }
+
+  /** The connected agent did not answer. The mission stays open and settles as a simulated one does. */
+  workFellBack(consultantId: string, registration: string, note: string): boolean {
+    const live = this.openWork(consultantId, registration);
+    const consultant = this.consultants.get(consultantId);
+    const agent = live ? this.agents.get(live.agentId) : undefined;
+    if (!live || !consultant || !agent || live.work?.state === 'answered') return false;
+    live.work = { state: 'simulated', note };
+    this.pushFeed(`${consultant.name}'s connected agent did not answer (${note}). ${agent.name} ran this mission simulated.`, consultant.factionId ?? '', 'agent', true);
+    return true;
   }
 
   async intervene(consultantId: string, diagnosisId: string, interventionId: string): Promise<Record<string, unknown>> {
@@ -365,6 +455,8 @@ export class CoachedWorld {
     agent.memory.unshift({ text: result.lesson, causeId: live.cause.id, matched: result.matched });
     if (agent.memory.length > MAX_AGENT_LESSONS) agent.memory.length = MAX_AGENT_LESSONS;
     if (result.matched) agent.learned.add(live.cause.id);
+    agent.deployed.unshift(intervention.label);
+    if (agent.deployed.length > MAX_AGENT_LESSONS) agent.deployed.length = MAX_AGENT_LESSONS;
     const at = this.now();
     const measured = buildMissionStatements({
       pack: this.pack, homePage: this.base, actorDid: agent.did, missionId: mission.id,
@@ -396,6 +488,7 @@ export class CoachedWorld {
       delta: result.delta, roi: result.roi, gain: result.gain, flipped: Boolean(result.flippedTo),
       cause: { id: live.cause.id, label: live.cause.label }, lesson: result.lesson,
       statements: measured.statements, influence: consultant.influence, gate: consultant.gate,
+      ...(live.work ? { work: live.work } : {}),
     };
   }
 
@@ -528,7 +621,14 @@ export class CoachedWorld {
     if (!course) throw new WorldError(409, 'no-gate', 'this tier has no course');
     if (consultant.gate !== 'eligible') throw new WorldError(409, 'gate-not-open');
     const homePage = this.actorHomePage ?? this.base;
-    let lrs: 'unconfigured' | 'ok' | 'unreachable' | 'actor-home-unset' = 'unconfigured';
+    let lrs: 'unconfigured' | 'ok' | 'unreachable' | 'actor-home-unset' | 'lms-authority-unset' = 'unconfigured';
+    // An LRS holds what anyone with a credential stored there. A `satisfied` read from one is the
+    // LMS's word only under the LMS's authority, so a world that reads an LRS has to be told which
+    // authority that is. Without it nobody is promoted on what the LRS holds.
+    if (this.lrs && this.actorHomePage && !this.lmsAuthority) {
+      lrs = 'lms-authority-unset';
+      return { promoted: false, lrs, satisfied: false, courseIri: course, gate: consultant.gate };
+    }
     if (this.lrs && this.actorHomePage) {
       try {
         const remote = await this.lrs.fetchActor(consultant.ownerDid, this.actorHomePage, { verb: SATISFIED, activity: course });
@@ -543,7 +643,7 @@ export class CoachedWorld {
       lrs = 'actor-home-unset';
       return { promoted: false, lrs, satisfied: false, courseIri: course, gate: consultant.gate };
     }
-    const satisfied = this.log.sawExternal({ name: consultant.ownerDid, homePage }, course, SATISFIED);
+    const satisfied = this.log.sawExternal({ name: consultant.ownerDid, homePage }, course, SATISFIED, this.lrs ? this.lmsAuthority : undefined);
     if (!satisfied) {
       return { promoted: false, lrs, satisfied, courseIri: course, gate: consultant.gate };
     }

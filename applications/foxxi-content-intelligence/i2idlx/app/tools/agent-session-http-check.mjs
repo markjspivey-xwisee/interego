@@ -7,9 +7,16 @@
 import assert from 'node:assert/strict';
 import { createServer } from 'node:http';
 import express from 'express';
+import { register } from 'node:module';
 import { setTimeout as pause } from 'node:timers/promises';
-import { attachAgentSessionRoutes, AGENT_SESSION_PATH } from '../../../src/i2idlx-agent-sessions.ts';
 import { createAgentSessionClient } from '../src/agent-session.js';
+
+// The router is now a thin composition over applications/_shared/agent-connection, whose
+// TypeScript files import each other with `.js` specifiers, as the rest of the repository does.
+// Node's type stripping does not map those to `.ts`, so one resolve hook does, and the router is
+// imported after it is registered. Every check below is what it was.
+register('./ts-specifiers.mjs', import.meta.url);
+const { attachAgentSessionRoutes, AGENT_SESSION_PATH } = await import('../../../src/i2idlx-agent-sessions.ts');
 
 const FIXTURE_ACTOR = 'did:web:fixture.invalid:agents:http-integration';
 const app = express();

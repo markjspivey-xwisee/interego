@@ -471,9 +471,10 @@ import {
   type CallerContext,
   type AccessDecisionTrace,
 } from '../src/policy.js';
+import { abacMode, mayAdministerTenant } from '../src/tenant-admin-policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
-import { attachXapiLrsRoutes, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
@@ -679,6 +680,19 @@ const tenantProfileDid = process.env.FOXXI_TENANT_PROFILE_DID ?? authoritativeSo
 const tenantProfileName = process.env.FOXXI_TENANT_PROFILE_NAME ?? 'Acme Training Co L&D';
 const walletSeed = process.env.FOXXI_WALLET_SEED;
 const requireAuth = (process.env.FOXXI_REQUIRE_AUTH ?? 'true').toLowerCase() !== 'false';
+
+// The admin-only gates decide by the fixed rule (role admin) with the substrate's ABAC policy
+// evaluated beside it (src/tenant-admin-policy.ts). SHADOW unless this is exactly `enforce`: the
+// fixed rule's answer is what is returned, and a disagreement is one line on stderr. No
+// deployment sets it.
+const tenantAdminAbacMode = abacMode(process.env.FOXXI_ABAC_MODE);
+/** The admin-only gate. `point` is the tool it stands in. Never throws, never changes a shadow answer. */
+function mayAdminister(ctx: CallerContext, point: string): boolean {
+  return mayAdministerTenant(ctx, {
+    point, mode: tenantAdminAbacMode,
+    log: record => bridgeWarn(`[foxxi-bridge] ${JSON.stringify(record)}`),
+  });
+}
 
 // Learning Engineer role — comma-separated list of WebIDs that get the
 // learning-engineer role. LE = cohort + content analytics read-only.
@@ -1114,7 +1128,7 @@ async function assertTenantOwnerWrite(args: Record<string, unknown>, targetPod: 
     // `sign_request` exit; flattening it to prose put the 401 back at HTTP 200 for every
     // affordance gated here, and dropped the one field an agent can act on. Propagate it.
     if ('error' in resolved) return resolved;
-    if (resolved.ctx.role !== 'admin') {
+    if (!mayAdminister(resolved.ctx, 'foxxi.tenant_owner_write')) {
       return {
         kind: 'refusal' as const,
         'iep:refusalStatus': 403,
@@ -2053,7 +2067,8 @@ async function landMeshBatch(events: ProjectedMeshEvent[]): Promise<number> {
        */
       if (await store.get(id)) continue;
       const storedAt = new Date().toISOString();
-      await store.put({ id, statement: { ...ev.statement, stored: storedAt }, stored: storedAt, voided: false } as StoredStatement);
+      // Projected from what a pod holds, and put straight into the store: it does not keep a claim to the LMS's authority.
+      await store.put({ id, statement: { ...withoutLmsAuthorityClaim(ev.statement as Record<string, unknown>), stored: storedAt }, stored: storedAt, voided: false } as StoredStatement);
       landed++;
     } catch (err) {
       bridgeWarn(`[foxxi-bridge][mesh] put failed for ${id} (${ev.mode}):`, (err as Error).message);
@@ -3226,7 +3241,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') {
+    if (!mayAdminister(ctx, 'foxxi.issue_completion_credential')) {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.issue_completion_credential', decision: 'deny', appliedPolicies: ['admin-full-access'] });
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue completion credentials (caller role: ${ctx.role})`, accessDecision: trace };
     }
@@ -4383,7 +4398,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') {
+    if (!mayAdminister(ctx, 'foxxi.query_experience_index')) {
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — federated xAPI queries are admin-only (per learner privacy policy)' };
     }
     const endpoints = (args.endpoints as Array<{ label: string; endpoint: string; username: string; password: string }>).map<FederatedLrsEndpoint>(e => ({
@@ -4398,7 +4413,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx, admin } = resolved;
-    if (ctx.role !== 'admin') {
+    if (!mayAdminister(ctx, 'foxxi.push_to_cass')) {
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can push frameworks to CaSS' };
     }
     // Synthesize a framework from the tenant catalog (same as export_case_framework).
@@ -4446,7 +4461,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx, admin } = resolved;
-    if (ctx.role !== 'admin') {
+    if (!mayAdminister(ctx, 'foxxi.export_case_framework')) {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.export_case_framework', decision: 'deny', appliedPolicies: ['admin-full-access'] });
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can export the competency framework`, accessDecision: trace };
     }
@@ -4481,7 +4496,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue BBS+ credentials` };
+    if (!mayAdminister(ctx, 'foxxi.issue_bbs_credential')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue BBS+ credentials` };
     if (!issuerKeySeed) return notConfigured('FOXXI_ISSUER_KEY_SEED unset');
     const issued = await issueBbsCompletionCredential({
       subject: {
@@ -4682,7 +4697,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can countersign assessments' };
+    if (!mayAdminister(ctx, 'foxxi.countersign_assessment')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can countersign assessments' };
     return countersignAssessment({ // was: return { error: 'forbidden — admin only' }
       assessment: args.assessment as CompetencyAssessment,
       humanIssuerSeed: args.human_seed as string,
@@ -4693,7 +4708,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — audit trails are admin-only' };
+    if (!mayAdminister(ctx, 'foxxi.audit_compliance_trail')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — audit trails are admin-only' };
     return composeAuditTrail({
       learnerDid: args.learner_did as string,
       learnerPodUrl: (args.learner_pod_url as string) || tenantPodUrl,
@@ -4706,7 +4721,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can declare framework alignments' };
+    if (!mayAdminister(ctx, 'foxxi.declare_framework_alignment')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can declare framework alignments' };
     const alignment: FrameworkAlignment = {
       ownItemIri: args.own_item_iri as string,
       ownItemLabel: args.own_item_label as string,
@@ -5050,7 +5065,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
+    if (!mayAdminister(ctx, 'foxxi.scorm_cloud_pull')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
     const secretKey = process.env.FOXXI_SCORM_CLOUD_SECRET_KEY;
     if (!appId || !secretKey) {
@@ -5075,7 +5090,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
+    if (!mayAdminister(ctx, 'foxxi.scorm_cloud_register')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
     const secretKey = process.env.FOXXI_SCORM_CLOUD_SECRET_KEY;
     if (!appId || !secretKey) return notConfigured('SCORM Cloud credentials not configured.');
@@ -5197,7 +5212,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — DPIA generation is admin-only' };
+    if (!mayAdminister(ctx, 'foxxi.generate_dpia')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — DPIA generation is admin-only' };
     const chain = await composeAuditTrail({
       learnerDid: args.learner_did as string,
       learnerPodUrl: (args.learner_pod_url as string) || tenantPodUrl,
@@ -5230,7 +5245,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — backup is admin-only' };
+    if (!mayAdminister(ctx, 'foxxi.backup_tenant_pod')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — backup is admin-only' };
     return backupTenantPod({ podUrl: tenantPodUrl });
   },
 
@@ -6022,7 +6037,8 @@ const app = createVerticalBridge({
             (await getStatementStore(tenant).query({ registration: reg, limit: 500 }))
               .statements.map(r => r.statement),
           emit: async (s) => {
-            const id = await storeStatementDurably(s, tenant);
+            // `satisfied` is the LMS's to say, and is stored under the LMS's authority.
+            const id = await storeStatementDurably(s, tenant, 'lms');
             if (!id) throw new Error('cmi5 satisfaction statement was not committed');
             if (own) keepCmi5OnLearnerPod({ ...s, id }, own);
           },
@@ -9907,6 +9923,9 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
           },
           restore: async statement => {
             if (!statement.stored || !statement.authority) throw new Error('durable record is missing its LRS-assigned envelope');
+            // Read back from the caller's own pod, which the caller can write. A record there naming the
+            // LMS's authority was not put there by the LMS, and is not restored as if it had been.
+            if (claimsLmsAuthority(statement)) throw new Error('durable record names an authority only this LMS assigns');
             await getStatementStore(tenant).put({ id: String(statement.id), statement, stored: String(statement.stored), voided: false });
           },
           request: createSelfXapiRequest({ port: PORT, principal, secret, timeoutMs: signedXapiTimeoutMs }),

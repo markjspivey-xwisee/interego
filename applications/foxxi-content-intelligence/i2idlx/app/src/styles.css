@@ -601,7 +601,9 @@ button.chip { cursor: pointer; }
 .cref:hover { background: var(--accent-soft); color: var(--accent-ink); }
 .ask-in { padding: 12px 20px 18px; border-top: 1px solid var(--rule); background: var(--bg); display: grid; gap: 8px; }
 .ask-in .box { display: flex; gap: 8px; align-items: flex-end; padding: 8px; border: 1px solid var(--rule-2); border-radius: 14px; background: var(--surface); box-shadow: var(--shadow); }
-.ask-in textarea { flex: 1; border: 0; background: transparent; resize: none; min-height: 40px; max-height: 180px; padding: 8px; outline: none; font-size: 15px; line-height: 1.45; }
+/* The question box holds a microphone button as well where the browser can listen: let it narrow on a phone. */
+.ask-in > * { min-width: 0; }
+.ask-in textarea { flex: 1; min-width: 0; border: 0; background: transparent; resize: none; min-height: 40px; max-height: 180px; padding: 8px; outline: none; font-size: 15px; line-height: 1.45; }
 .suggests { display: flex; flex-wrap: wrap; gap: 6px; }
 .thinking { display: inline-flex; gap: 4px; align-items: center; color: var(--muted); font-size: 13px; }
 .thinking i { width: 6px; height: 6px; border-radius: 50%; background: var(--faint); animation: blink 1.2s infinite ease-in-out; }

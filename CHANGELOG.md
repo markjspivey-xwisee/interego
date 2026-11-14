@@ -11,6 +11,16 @@ A general guest could be kept only by claiming it: giving it a credential of its
 - **Accounts that link nothing are unchanged.** The new record members exist only while there is a guest or a live code, and an account whose guest was unlinked is byte-for-byte the record it was.
 
 Per-application guests cannot be linked in this version. A passkey registered on another relying party is not offered for the proof, and a guest cannot unlink itself. The ceremony, the reason the code goes from the account to the guest, and the threat notes are in `deploy/identity/PROVISIONAL-PLAY.md`, "Linking a guest to an account".
+## 2026-11-14 — Foxxi's admin gate has the substrate's policy beside it, in shadow
+
+The ABAC decision in `@interego/abac/portable` decided for one kind of principal, a provisional guest. It now runs beside a rule for registered principals: the Foxxi bridge's admin-only gate. Who is allowed does not change. The fixed rule (the caller the tenant directory resolves has the role `admin`) still decides; the policy is evaluated beside it and a disagreement is logged.
+
+- **The point.** The thirteen admin-only gates in `applications/foxxi-content-intelligence/bridge/server.ts` (twelve tools and the tenant owner's write to the configured tenant) were each `ctx.role !== 'admin'`. They now call one function, `mayAdministerTenant` (`src/tenant-admin-policy.ts`), which computes that same answer, returns it, and runs `decideInShadow` beside it. Gates that mix the role with another condition (a learner reading their own record, admin-or-delegated, manager-or-admin) are not touched.
+- **The policy, as data.** One Permit on `urn:foxxi:action:administer-tenant` for a subject whose `passport:role` is `admin`, with `minCount: 1`. The subject's facts are the caller `resolveCaller` built from the tenant directory's row and the operator's configuration (`{ subject: webId, provisional: false, roles: [role] }`); nothing a request sent is read. No vocabulary is added: `passport:role` was already declared, and the action is in Foxxi's own `urn:foxxi:` space.
+- **Shadow.** `FOXXI_ABAC_MODE` is read once in the bridge's entry file. Only the exact value `enforce` lets the policy decide; unset, and anything else, is shadow, and no deployment sets it. A disagreement is one JSON line on stderr: the tool, the action, the subject's IRI, both answers and the matching policy ids. No attribute value, credential or request content. The evaluation is inside a try: it cannot throw into a request, and a logger that throws changes nothing.
+- **Parity.** `tests/the-admin-gate-has-a-policy-beside-it.test.ts` resolves callers the way `resolveCaller` resolves a session token (the real `trustedAddressMap`, `verifySessionToken` and `resolveCallerContext`) and holds the policy to the fixed rule over each role (admin, delegated admin, learning engineer, manager, learner), the administrator's WebID on a tenant that is not the configured one, a row that names no IRI, a signer who is not a member, and a credential that is missing, expired, malformed, cut short or presented under another member's WebID, with nothing logged. A policy that is wrong on purpose shows the record firing and the fixed rule's answer standing.
+- **One disagreement exists today and is left visible.** With `FOXXI_REQUIRE_AUTH=false` and no `FOXXI_ADMIN_WEB_ID` (a development setting), the fixed rule admits an unnamed caller as admin. The policy has no subject to decide about and refuses. Moving this point to `enforce` would end that mode; that is a decision for whoever moves it.
+
 ## 2026-11-14 — A general guest: one per browser across applications, constrained by policy over its attributes
 
 A guest ("provisional owner") has been one per application: the key lives in the application's origin and the owner id is derived from that origin. This adds a second kind, off by default, that is one per browser across every application that offers it, and whose write surface is granted by attribute-based policy instead of a fixed rule. Nothing is turned on by this change, and no setting is changed anywhere. With the new setting off, identity's routes, metadata, tokens, ids and paths are what they were, and a per-application guest is untouched either way.
@@ -23,6 +33,79 @@ A guest ("provisional owner") has been one per application: the key lives in the
 - **Applications.** The coached world can offer the door beside its own (`CPW_GENERAL_GUEST=1`). Foxxi's bridge can sign door grants, but its learner workbench does not use the door yet, because it re-checks a guest with identity while the session lives and an application cannot re-check a general guest.
 
 A general guest is linkable across applications by design: each one learns the same DID, pod and key thumbprint (identity does not tell one application which others the guest has used). Linking a guest to a registered account, a cross-device link code and a recovery code are not in this change. The rollout order (gate and relay, then identity, then the setting) and what each older service does with the new token are in `deploy/identity/PROVISIONAL-PLAY.md`, "General guest".
+## 2026-11-14 — Voice mode, shared: say it and hear it, in the coached world and in I2IDL-X Ask
+
+A page can now take a spoken question or command and read an answer aloud, using only what the browser has. No model is called for it and no key is involved: where a page has model work, the paired chat session still does it. It is one shared module, so any vertical or bridge can adopt it.
+
+- **`applications/_shared/voice/`** is one dependency-free browser module, `voice.js`, and a README. Speech in uses the browser's `SpeechRecognition`: one utterance at a time, or hands-free (it listens again after each result and ends itself after three silent rounds), with interim words. Speech out uses `speechSynthesis`, a sentence per utterance so a long answer starts and stops promptly; `speakDelta` follows an answer that arrives as cumulative text and speaks each sentence once. Starting to listen stops the reading. `matchSpoken` matches what was heard against labels on screen with fixed rules and returns nothing when two labels fit.
+- **States are what happened**: idle, listening, speaking, denied, unsupported, error. A blocked microphone is told apart from silence and from a missing microphone. The microphone opens only inside a call made from a person's gesture; where the browser reports user activation, a call without one is refused.
+- **The audio.** The module makes no network request. The browser may: Chrome and most Chromium browsers send what you say to the browser vendor's speech service. The module carries that sentence, and both pages show it beside the microphone. Firefox has no recognition, so the microphone control is hidden there; reading aloud still works.
+- **Coached world.** The Coach tab has a voice card. Read aloud speaks the connected agent's work when it arrives and the outcome after an intervention. Say a command presses the matching button: send the agent on a mission, a diagnosis or intervention by its label, deploy. If nothing matches, the page shows what it heard and does nothing. The bridge serves the module at `/voice.js`.
+- **I2IDL-X workbench.** Ask has a microphone button that fills the question box and asks, and Read aloud for the streamed answer with Stop reading. The page bundle imports the shared file directly, so there is no second copy; `app/tools/ask-voice-check.mjs` runs the hook against fake speech objects in the TypeScript workflow and fails if the bundle stops taking the shared file. The four workbench workflows now also start when the shared module changes.
+- **Not tested**: real microphone audio and a real synthesizer. The tests use fake speech objects in node and in headless Chromium. No response header was changed: neither bridge sends a `Permissions-Policy`, so the microphone is allowed for the page's own origin by default. Nothing is deployed by this change.
+
+## 2026-11-14 — Coached world: the tier gate takes a satisfied only from the LMS
+
+The tier gate promotes a consultant when the LRS holds a cmi5 `satisfied` for
+the tier's course and that consultant. It matched the verb, the course, the
+actor and the cmi5 category. All four are things a learner writing a statement
+about themselves can supply, on an LRS that lets them.
+
+`CPW_LRS_LMS_AUTHORITY` names the authority account the LMS's own statements
+carry on the LRS. The gate now counts a `satisfied` read from an LRS only under
+that authority. A world that reads an LRS and has not been told the authority
+answers `lms-authority-unset`, asks the LRS nothing and promotes nobody.
+
+A world with no LRS configured is unchanged.
+
+## 2026-11-14 — Foxxi: the LMS's own statements carry an authority nobody can send
+
+An assignable unit's token was stopped from writing the LMS's verbs earlier
+today. A reviewer asked who else can write to a learner's records. There is one
+more writer: the signed route by which a learner, or an agent acting for them,
+writes statements about themselves. It took any verb. And every statement in
+the LRS, the LMS's own included, carried the same authority, so a reader could
+not tell the LMS's `launched` from one a learner wrote.
+
+The LMS's own `launched` and `satisfied` are now stored under an authority of
+their own, `foxxi-lms`. Only the LMS's code can write it: a statement sent in
+naming it is refused (403), and one handed to any other internal store loses
+the claim. The learner's signed route refuses `launched`, `abandoned`, `waived`
+and `satisfied`. A reader that needs the LMS's word can now ask for that
+authority.
+
+Two places in the bridge put a statement record straight into a store, past
+that rule, and both take what a pod holds: the mesh projection's batch landing,
+and the restore of a caller's durable telemetry from the caller's own pod. The
+first now drops a claim to the LMS's authority; the second refuses a record
+that makes one. Found on a reviewer's prompt to check the restore paths.
+
+Not done here: no reader checks the authority yet. Practice Evidence and the
+coached-world gate still read `launched` and `satisfied` by verb, activity and
+actor. Statements the LMS stored before this change carry the old authority.
+Operator credentials can still store any verb; what they store does not carry
+the LMS's authority.
+
+## 2026-11-14 — Connect an agent, shared: any bridge can use a chat session's subscription instead of an API key
+
+The I2IDL-X workbench lets a person pair their own AI chat session with a page, so the page's questions are answered on that session's subscription and no model key is held anywhere. That method lived inside Foxxi. It is now shared code, and the coached world is the second bridge to use it.
+
+- **`applications/_shared/agent-connection/`** holds the protocol: sessions, one-use invitations, the driver capability, the turn queue with leases and revisions, limits and expiry. It has no express dependency and no workbench naming. A bridge supplies a profile (its path, action IRI, field names and wording), how it verifies an Interego-signed caller, and its request limits. Two adapters, for express and for plain `node:http`, wrap one function. A framework-free browser client (an ES module, no build step) opens a session, shows the invitation, follows a turn, cancels and disconnects.
+- **The workbench is unchanged on the wire.** `i2idlx-agent-sessions.ts` is now a thin composition over the shared core: the same routes, wire format, limits and error codes. Its tests were not edited. The provider-specific background Routine stays Foxxi's, passed in as an optional wake plug-in. The workbench page keeps its own bundled client.
+- **`applications/_shared/http-guard/`** holds what the coached world had written for itself and any bridge needs: the per-client request limit (IPv6 by its /56, the last forwarded hop behind a proxy), the ceiling helper for tables callers fill, the check that a public URL is an https origin, and the `/health` body the deploy verifier reads. The coached world imports them from there. Foxxi's express limiters were left as they are.
+- **Coached world: Connect an agent.** A signed-in consultant can pair their own chat session and have it be the agent they coach. A mission then goes to that session as a brief (the mission, the conditions the agent ran into, its remembered lessons, the interventions deployed so far; never the cause). Its answer is recorded as that agent's xAPI statement and shown on the mission. The pack's rules still score it; nothing judges the text. If the session does not answer within two minutes the turn is withdrawn, the mission runs simulated, and the feed says so. One connection per consultant.
+- **Setting.** `CPW_POD_ORIGIN` (the https origin agents' pods live on) turns the door on: it is where a claiming agent's delegation is read to verify it. Unset, the door answers 503, the page hides it and agents are simulated as before. Nothing is deployed by this change.
+
+## 2026-11-14 — A test's own text no longer fails the relay's loopback scan
+
+The relay's test chain reads every test in the repository for a server started without naming
+`127.0.0.1` (`deploy/mcp-relay/tests/listen-loopback.test.ts`). The test added with the hosted
+package take-down list quoted the bridge's `listen` call in a string, to check where the list is
+applied, and the scan read that string as a call. So `npm test` in the relay workspace has
+failed on master since that change, on a file the relay does not import. The string is now
+written in two pieces, and the test also checks the call was found at all, which the earlier
+form did not.
+
 ## 2026-11-14 — Foxxi LRS: an assignable unit's token does not speak as the LMS
 
 A cmi5 auth-token is the assignable unit's credential, and it sits in the

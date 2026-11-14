@@ -19,6 +19,7 @@ on:
     paths:
       - 'applications/foxxi-content-intelligence/i2idlx/**'
       - 'applications/foxxi-content-intelligence/src/**'
+      - 'applications/_shared/voice/**'
       - 'packages/core/**'
       - 'package.json'
       - 'package-lock.json'

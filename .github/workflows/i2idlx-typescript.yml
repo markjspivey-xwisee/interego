@@ -10,6 +10,8 @@ on:
       - 'applications/foxxi-content-intelligence/src/ns/**'
       - 'applications/foxxi-content-intelligence/src/i2idlx-workbench.ts'
       - 'applications/foxxi-content-intelligence/src/i2idlx-agent-sessions.ts'
+      - 'applications/_shared/agent-connection/**'
+      - 'applications/_shared/voice/**'
       - 'applications/foxxi-content-intelligence/src/i2idlx-user-courses.ts'
       - 'applications/foxxi-content-intelligence/tests/workbench-owner-binding.test.ts'
       - 'applications/foxxi-content-intelligence/src/decorations/**'
@@ -134,6 +136,7 @@ jobs:
           node applications/foxxi-content-intelligence/i2idlx/app/tools/agent-session-check.mjs
           node applications/foxxi-content-intelligence/i2idlx/app/tools/orc-report-provenance-check.mjs
           node applications/foxxi-content-intelligence/i2idlx/app/tools/ask-engine-check.mjs
+          node applications/foxxi-content-intelligence/i2idlx/app/tools/ask-voice-check.mjs
           node applications/foxxi-content-intelligence/i2idlx/app/tools/user-course-check.mjs
           node applications/foxxi-content-intelligence/i2idlx/app/tools/learning-context-check.mjs
           node applications/foxxi-content-intelligence/i2idlx/app/tools/learning-link-ui-check.mjs

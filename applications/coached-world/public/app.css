@@ -55,3 +55,8 @@ td, th { padding: 6px 4px; border-top: 1px solid var(--line); }
 .edge4 { border-top: 4px solid #3d5a3a; } .edge5 { border-top: 4px solid #8d2b2b; }
 .fill0 { fill: #1f4d3a; } .fill1 { fill: #8a4b12; } .fill2 { fill: #1d4e89; }
 .fill3 { fill: #6b3a5a; } .fill4 { fill: #3d5a3a; } .fill5 { fill: #8d2b2b; }
+.invite { width: 100%; box-sizing: border-box; font: inherit; font-size: 12px; margin: 8px 0; resize: vertical; }
+.work { border-left: 3px solid currentColor; padding: 4px 12px; margin: 12px 0; }
+.work pre { white-space: pre-wrap; word-break: break-word; font: inherit; margin: 6px 0 0; }
+.voice-row { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0; }
+.fine { font-size: 12px; line-height: 1.4; color: var(--muted); margin: 4px 0 0; }

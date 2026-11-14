@@ -12,6 +12,8 @@ import { buildProfile, missionActivityType, symptomActivityType, type ProfileDoc
 import { WorldError } from './errors.js';
 
 export interface XapiStatement {
+  /** Who stored it, as the LRS says. Set by an LRS on what it returns; this world sets none on what it writes. */
+  readonly authority?: { readonly objectType?: string; readonly account?: { readonly homePage?: string; readonly name?: string } };
   readonly id: string;
   readonly version: '2.0.0';
   readonly timestamp: string;
@@ -138,4 +140,43 @@ export function buildMissionStatements(input: {
     });
   }
   return { registration, statements, profile };
+}
+
+/**
+ * One statement for work an agent actually wrote, under the registration its mission opened.
+ *
+ * The verb is the pack's `progressed`: the agent got somewhere on the mission, and `response`
+ * is what it wrote. It passes the same profile check as every other statement, and the gate
+ * verbs are refused here as they are above.
+ */
+export function buildWorkStatement(input: {
+  readonly pack: WorldPack;
+  readonly homePage: string;
+  readonly actorDid: string;
+  readonly missionId: string;
+  readonly missionTitle: string;
+  readonly response: string;
+  readonly timestamp: string;
+  readonly registration: string;
+}): XapiStatement {
+  const { pack } = input;
+  const statement: XapiStatement = {
+    version: '2.0.0',
+    timestamp: input.timestamp,
+    actor: actor(input.homePage, input.actorDid),
+    id: `${input.homePage}statements/${randomUUID()}`,
+    verb: { id: verbId(pack, 'progressed'), display: { en: pack.verbs.progressed } },
+    object: {
+      objectType: 'Activity', id: `${pack.profileId}/missions/${input.missionId}`,
+      definition: { type: missionActivityType(pack), name: { en: input.missionTitle } },
+    },
+    result: { response: input.response },
+    context: { registration: input.registration, contextActivities: { category: category(pack) } },
+  };
+  assertNotAGateVerb(statement.verb.id);
+  const checked = validateAgainstSuppliedProfile(statement as unknown as Record<string, unknown>, buildProfile(pack) as unknown as Record<string, unknown>);
+  if (checked.matchedTemplates.length === 0) {
+    throw new WorldError(500, 'profile-mismatch', checked.violations.map(v => v.message).join('; ') || 'statement matched no template');
+  }
+  return statement;
 }
