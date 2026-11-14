@@ -464,6 +464,24 @@ test('an unclaimed Play owner whose anchor no longer opens is refused, and a mis
   }
 });
 
+test('a change the Play guard refuses is not written: a linked guest gains no credential of its own, under the record\'s lock', async () => {
+  const guestId = `u-try-guest-${'c'.repeat(32)}`;
+  // The stand-in pod keeps only the members this suite names, so "names an account" is told to the
+  // guard beside it; the server's guard reads it from the record (server.ts playChangeRefused).
+  const linkedGuests = new Set([guestId]);
+  const refuse = (id: string, read: Record_, draft: Record_) => linkedGuests.has(id) && !hasAnyCredential(read) && hasAnyCredential(draft);
+  const p = pod({ ...empty(guestId), provisionalPlayAnchor: 'live' } as Record_, guestId);
+  await assert.rejects(updateAuthMethods({ ...p.deps, playChangeRefused: refuse }, guestId, 'test', addWallet('0xbbb')), PlayOwnerUnavailableError);
+  assert.deepEqual(p.log, ['GET'], 'nothing was written');
+  // A change that adds no credential is still written (a sign-out, say).
+  const bump = (draft: Record_) => { draft.sessionEpoch = 1; return Write; };
+  assert.equal((await updateAuthMethods({ ...p.deps, playChangeRefused: refuse }, guestId, 'test', bump)).written, true);
+  // A guest that names no account is claimed as before.
+  linkedGuests.clear();
+  const free = pod({ ...empty(guestId), provisionalPlayAnchor: 'live' } as Record_, guestId);
+  assert.equal((await updateAuthMethods({ ...free.deps, playChangeRefused: refuse }, guestId, 'test', addWallet('0xbbb'))).written, true);
+});
+
 test('a deletion closes a Play owner whatever its anchor says, and leaves its tombstone where the pod has none', async () => {
   // Only a deletion (tombstone: 'replace'): it used to be refused for an owner whose anchor had
   // expired (PlayOwnerUnavailableError) and for one with no document (AccountRecordMissingError).

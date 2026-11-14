@@ -14,7 +14,7 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Wallet, verifyMessage } from 'ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RATE_RULES } from '../src/rate-limit.js';
-import { start, GENERAL_GUEST_RETURN_PATH } from '../src/server.js';
+import { start, GENERAL_GUEST_RETURN_PATH, LINKED_SESSION_MS } from '../src/server.js';
 import { generalGuestUserId, playKeyThumbprint, publicPlayKey } from '../../../deploy/identity/provisional-play.js';
 import { RETURN_PATH, WORLD, agent, cookieOf, identity, newKey } from './general-guest-identity.js';
 import { CoachedWorld } from '../src/world.js';
@@ -649,6 +649,40 @@ describe('a coached world that offers the general guest door', () => {
       expect(after.session.ownerDid).toBe(guestDid(laptop));
       expect(after.you.id).toBe(before.you.id);
       expect((await arrive(phone)).you.id).toBe(onLaptop.you.id);
+    } finally { await running.close(); }
+  });
+
+  it('ends a linked guest\'s session after a bounded time, so an unlink reaches a browser that was already in', async () => {
+    const id = identity();
+    let clock = Date.now();
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true, publicUrl: `${WORLD}/`, trustProxy: false, generalDoor: id.doorFor(WORLD, agent), now: () => clock });
+    try {
+      const arrive = async (key: ReturnType<typeof newKey>) => {
+        const started = await fetch(`${running.url}/play/general/start`, { redirect: 'manual' });
+        const back = await id.page(key, started.headers.get('location')!);
+        const cookie = cookieOf(started);
+        await fetch(`${running.url}${back.pathname}${back.search}`, { redirect: 'manual', headers: { Cookie: cookie } });
+        return await (await fetch(`${running.url}/play/general/session`, { method: 'POST', headers: { Cookie: cookie } })).json() as { token: string; ownerDid: string };
+      };
+      const you = async (token: string) => (await (await fetch(`${running.url}/world`, { headers: { Authorization: `Bearer ${token}` } })).json() as { you?: { ownerDid: string } }).you;
+      const laptop = newKey(); const plain = newKey();
+      const unlinked = await arrive(plain);
+      // A guest exists once a browser has been through the door; only then can it be linked.
+      await arrive(laptop);
+      const owner = id.account('u-eth-c0ac4ed00002', 'Fictional Account Two');
+      const ownerDid = await id.linkGuest(laptop, owner);
+      const linked = await arrive(laptop);
+      expect((await you(linked.token))?.ownerDid).toBe(ownerDid);
+      // The owner unlinks. The world is not told; the session it gave is still the account's, for now.
+      await id.general.link.unlink(owner, generalGuestUserId(playKeyThumbprint(publicPlayKey(laptop.publicKey.export({ format: 'jwk' })))));
+      clock += LINKED_SESSION_MS - 1000;
+      expect((await you(linked.token))?.ownerDid).toBe(ownerDid);
+      // Past the bound the session is gone, and the door then answers the guest as itself.
+      clock += 2000;
+      expect(await you(linked.token)).toBeUndefined();
+      expect((await arrive(laptop)).ownerDid).not.toBe(ownerDid);
+      // A guest that was never linked acts only as itself, and its session is not ended by this bound.
+      expect((await you(unlinked.token))?.ownerDid).toBe(unlinked.ownerDid);
     } finally { await running.close(); }
   });
 });

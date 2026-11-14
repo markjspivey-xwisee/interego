@@ -31,7 +31,7 @@ import { hostedPrivacyUrl, type HostedTermsPolicy, type TermsAcceptance } from '
 import { DEFAULT_PLAY_NAMESPACE, PlayError, generalGuestUserId, isBase64Url, playKeyThumbprint, playOrigin, publicPlayKey,
   verifyPlayProof, type PlayClaims, type PlayClient, type PlayGrant, type ProvisionalPlay } from './provisional-play.js';
 import type { PlayAnchorDocument, PlayReceipt } from './provisional-play-store.js';
-import { GuestLink, LINK_CODE_MAX_ATTEMPTS, LINK_CODE_TTL_SECONDS } from './provisional-guest-link.js';
+import { GuestLink, LINKED_TO_FIELD, LINK_CODE_MAX_ATTEMPTS, LINK_CODE_TTL_SECONDS, guestLinkedTo } from './provisional-guest-link.js';
 
 export const GENERAL_GUEST_PURPOSE = 'interego-general-guest-v1';
 /** How long a door code lives. The application's backend exchanges it at once. */
@@ -330,6 +330,16 @@ export class GeneralGuest {
     // A guest linked to an account is kept through that account. Giving it a credential of its own
     // would make it a second account: the owner unlinks it first.
     if (await this.link.confirmed(document, claims)) return fail(409, 'guest_linked');
+    // A guest's side of a link that no account confirms is what a failed write left. It is cleared
+    // before the claim opens: the record's writer refuses a credential to a guest that names an
+    // account (server.ts playChangeRefused), and a leftover must not hold back a claim for good.
+    if (guestLinkedTo(document)) {
+      await this.deps.update(userId, record => {
+        if (!guestLinkedTo(record)) return false;
+        delete record[LINKED_TO_FIELD];
+        return;
+      });
+    }
     return this.deps.issueToken(claims, { general: true, door: true, proofKeyThumbprint: thumbprint, expiresAt: claims.expiresAt });
   }
 

@@ -1167,6 +1167,10 @@ const authMethodsWriter: WriterDeps<AuthMethods> = {
   isTombstone: m => isTombstone(m),
   empty: userId => emptyAuthMethods(userId),
   playGuard: (userId, m) => playOwnerWritable(userId, m),
+  // A guest whose record names an account it is linked to is kept through that account: it gains
+  // no credential of its own (the owner unlinks it first). Checked here, under the record's lock,
+  // so a claim opened before the link cannot finish after it.
+  playChangeRefused: (_userId, read, draft) => !!draft.provisionalGuestLinkedTo && !hasAnyCredential(read) && hasAnyCredential(draft),
   conflicted: (userId, context, attempts) => logWriteConflict(userId, context, attempts),
 };
 
@@ -2731,6 +2735,9 @@ async function verifyToken(token: string, options: { generalGuest?: boolean } = 
         const facts = subjectAttributes(owner, record, guest.application, linkedTo);
         if (guest.door === true) {
           if (guest.application !== undefined || guest.namespace !== undefined) return { valid: false, reason: 'Provisional owner binding mismatch' };
+          // The door's token opens the claim flow, and a linked guest is not claimed: a token
+          // issued before the link stops being a bearer once the link is confirmed.
+          if (linkedTo !== undefined) return { valid: false, reason: 'Guest is linked to an account' };
         } else {
           // The application is one that opted in, that this guest was admitted to or has used, and
           // whose namespace now is the one the token carries.

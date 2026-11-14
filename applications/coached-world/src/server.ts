@@ -103,6 +103,7 @@ export async function start(opts: {
   const sessions = new Map<string, string>();
   const challenges = new Map<string, number>();
   const arrivals = new Map<string, Arrival>();
+  const sessionEnds = new Map<string, number>();
   const limiter = new RateLimiter(opts.now, MAX_RATE_CLIENTS);
   const health: Health = {
     build: process.env['INTEREGO_BUILD_SHA'],
@@ -141,7 +142,7 @@ export async function start(opts: {
         }
       }
       if (!live.door || !live.world) { send(res, 503, { error: 'starting' }); return; }
-      await route(req, res, { door: live.door, world: live.world, sessions, challenges, arrivals, tick: opts.tick === true, agents: live.agents, verifier: live.verifier,
+      await route(req, res, { door: live.door, world: live.world, sessions, sessionEnds, now: opts.now ?? Date.now, challenges, arrivals, tick: opts.tick === true, agents: live.agents, verifier: live.verifier,
         clientOf: request => clientKey(request.headers['x-forwarded-for'], request.socket.remoteAddress, trustProxy),
       });
     } catch (error) {
@@ -218,6 +219,15 @@ function didHost(origin: string): string {
   return url.port ? `${url.hostname}%3A${url.port}` : url.hostname;
 }
 
+/** How long a world session made for a LINKED guest lasts before the link is read again at the door. */
+export const LINKED_SESSION_MS = 10 * 60 * 1000;
+/** End the sessions whose time is up, and forget the ends of sessions that are gone. Run before any session is looked up. */
+function endLapsedSessions(sessions: Map<string, string>, ends: Map<string, number>, now: number): void {
+  for (const [token, end] of ends) {
+    if (end <= now || !sessions.has(token)) { ends.delete(token); if (end <= now) sessions.delete(token); }
+  }
+}
+
 /** A session made on the general guest door's return, waiting for the page to collect it once. */
 interface Arrival { token: string; ownerDid: string; name: string; expiresAt: number }
 /** Where identity returns a general guest's browser. Registered with identity as this application's `generalGuestReturnPath`. */
@@ -248,7 +258,7 @@ function setDoorCookie(door: GuestDoor, value: string, maxAge: number): string {
  * The pod and agent recorded for a new consultant are those of the subject that arrived.
  */
 async function generalGuestRoute(req: IncomingMessage, res: ServerResponse, url: URL, ctx: {
-  door: GuestDoor; world: CoachedWorld; sessions: Map<string, string>; arrivals: Map<string, Arrival>;
+  door: GuestDoor; world: CoachedWorld; sessions: Map<string, string>; sessionEnds: Map<string, number>; now: () => number; arrivals: Map<string, Arrival>;
 }): Promise<boolean> {
   const general = ctx.door.general;
   if (!general) return false;
@@ -270,6 +280,10 @@ async function generalGuestRoute(req: IncomingMessage, res: ServerResponse, url:
     bound(ctx.sessions, MAX_SESSIONS - 1);
     ctx.sessions.set(token, consultant.id);
     const now = Date.now();
+    // A session that acts as an ACCOUNT because identity stated a link is only as good as that
+    // statement, and this world is not told when the owner unlinks. So it ends after
+    // LINKED_SESSION_MS and the browser comes back through the door, where the link is read again.
+    if (who.linked) ctx.sessionEnds.set(token, ctx.now() + LINKED_SESSION_MS);
     for (const [key, arrival] of ctx.arrivals) if (arrival.expiresAt <= now) ctx.arrivals.delete(key);
     bound(ctx.arrivals, MAX_CHALLENGES - 1);
     ctx.arrivals.set(binding!, { token, ownerDid: consultant.ownerDid, name: consultant.name, expiresAt: now + 60_000 });
@@ -292,10 +306,11 @@ async function generalGuestRoute(req: IncomingMessage, res: ServerResponse, url:
 }
 
 async function route(req: IncomingMessage, res: ServerResponse, ctx: {
-  door: GuestDoor; world: CoachedWorld; sessions: Map<string, string>; challenges: Map<string, number>; arrivals: Map<string, Arrival>; tick: boolean;
+  door: GuestDoor; world: CoachedWorld; sessions: Map<string, string>; challenges: Map<string, number>; arrivals: Map<string, Arrival>; sessionEnds: Map<string, number>; now: () => number; tick: boolean;
   agents: AgentLink | undefined; verifier: VerifySignedCaller | undefined; clientOf: (req: IncomingMessage) => string;
 }): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
+  endLapsedSessions(ctx.sessions, ctx.sessionEnds, ctx.now());
   if (req.method === 'GET' && url.pathname === '/favicon.ico') { res.writeHead(204); res.end(); return; }
   const file = FILES[url.pathname];
   if (req.method === 'GET' && file) {

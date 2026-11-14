@@ -173,6 +173,12 @@ export interface WriterDeps<M> {
    * with a credential) always may; an unclaimed one only while its anchor opens to its id.
    */
   playGuard(userId: string, live: M): boolean;
+  /**
+   * A change to a Play owner's record that must not be written, decided under the lock from the
+   * record as read and as the change left it (a linked guest gaining a credential of its own).
+   * Refused as an unavailable owner. Optional: a writer without it refuses nothing more.
+   */
+  playChangeRefused?(userId: string, read: M, draft: M): boolean;
   /** Every attempt met another writer's change: called once, before AuthMethodsConflictError. */
   conflicted?(userId: string, context: string, attempts: number): void;
 }
@@ -227,6 +233,10 @@ export async function applyUpdate<M>(
     }
     const draft = structuredClone(read ?? deps.empty(userId)) as M;
     const outcome = await delta(draft, read);
+    if (outcome.kind !== 'no-write' && read !== null && isPlayOwner(userId) && !deletion && deps.playChangeRefused?.(userId, read, draft)) {
+      deps.install(userId, read);
+      throw new PlayOwnerUnavailableError(`${userId}: Provisional owner unavailable`);
+    }
     if (outcome.kind === 'no-write') {
       deps.install(userId, read ?? deps.empty(userId));
       return outcome.detail === undefined

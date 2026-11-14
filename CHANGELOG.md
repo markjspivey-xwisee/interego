@@ -10,6 +10,8 @@ A general guest could be kept only by claiming it: giving it a credential of its
 - **The coached world** admits a general guest under `canonicalSubject` of what identity stated, so a linked guest is the same consultant as its account from any browser linked to it.
 - **Accounts that link nothing are unchanged.** The new record members exist only while there is a guest or a live code, and an account whose guest was unlinked is byte-for-byte the record it was.
 
+**After review.** Two gaps a linked guest could have slipped through are closed. A coached-world session made for a linked guest ends after ten minutes (`LINKED_SESSION_MS`), so the browser returns through the door, where the link is read again: an unlink reaches a browser that was already in. And a linked guest gains no credential of its own: the door's token stops being a bearer once the link is confirmed, the record's writer refuses, under the record's lock, a change that would give a credential to a guest that names an account, and a claim clears a guest-side link no account confirms before it opens.
+
 Per-application guests cannot be linked in this version. A passkey registered on another relying party is not offered for the proof, and a guest cannot unlink itself. The ceremony, the reason the code goes from the account to the guest, and the threat notes are in `deploy/identity/PROVISIONAL-PLAY.md`, "Linking a guest to an account".
 ## 2026-11-14 — Foxxi's admin gate has the substrate's policy beside it, in shadow
 

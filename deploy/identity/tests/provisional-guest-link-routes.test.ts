@@ -308,6 +308,12 @@ test('the ceremony on the running server: a code from the signed-in account, ent
   assert.equal(visit.subjectAttributes['linkedTo'], undefined);
   assert.equal((await introspect(on, visit.token))['valid'], true);
 
+  // A claim opened BEFORE the link: the door's token for this guest, which is its bearer for now.
+  const early = Math.floor(Date.now() / 1000) + 59;
+  const doorToken = (await call(on, 'POST', '/guest/door/claim', { origin: on.base,
+    body: { publicKeyJwk: jwkOf(pair), expiresAt: early, proof: sign(pair, claimProofPayload(on.base, thumbprintOf(pair), early)) } })).body['token'] as string;
+  assert.equal((await introspect(on, doorToken))['valid'], true);
+
   const code = await codeFor(on, wallet, owner.token);
   assert.equal(code.split(':')[0], owner.userId);
   // The door's link request is the door page's alone.
@@ -330,6 +336,11 @@ test('the ceremony on the running server: a code from the signed-in account, ent
   assert.equal((await enter(on, pair)).subjectAttributes['linkedTo'], ownerDid);
   const guests = await call(on, 'GET', '/guest/link/guests', { bearer: owner.token, origin: on.base });
   assert.deepEqual((guests.body['guests'] as Array<{ userId: string }>).map(row => row.userId), [guestId]);
+  // The claim opened before the link is over: its token is no bearer once the guest is linked, so
+  // it cannot go on to give the guest a credential of its own.
+  const lapsed = await introspect(on, doorToken);
+  assert.equal(lapsed['valid'], false);
+  assert.equal(lapsed['reason'], 'Guest is linked to an account');
   // The code is spent: a second guest with it gets nothing.
   const second = newPair(); await enter(on, second);
   assert.equal((await doorLink(on, second, code)).body['error'], 'invalid_link_code');
