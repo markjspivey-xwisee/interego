@@ -160,10 +160,12 @@ export class ProvisionalPlay {
   open(attestation: unknown, allowExpired = false): PlayClaims {
     if (typeof attestation !== 'string' || attestation.length > 8192) return fail(400, 'invalid_attestation');
     const match = /^ipa1_([A-Za-z0-9_-]+)\.([A-Za-z0-9_-]+)$/.exec(attestation);
-    if (!match || !b64(match[2], 32)) return fail(401, 'invalid_attestation');
-    const expected = crypto.createHmac('sha256', this.deps.signingKey).update(`interego-play-attestation-v1\0${match[1]}`).digest();
-    if (!crypto.timingSafeEqual(expected, Buffer.from(match[2], 'base64url'))) return fail(401, 'invalid_attestation');
-    let c: PlayClaims; try { c = JSON.parse(Buffer.from(match[1], 'base64url').toString('utf8')); }
+    const encoded = match?.[1];
+    const signature = match?.[2];
+    if (!encoded || !signature || !b64(signature, 32)) return fail(401, 'invalid_attestation');
+    const expected = crypto.createHmac('sha256', this.deps.signingKey).update(`interego-play-attestation-v1\0${encoded}`).digest();
+    if (!crypto.timingSafeEqual(expected, Buffer.from(signature, 'base64url'))) return fail(401, 'invalid_attestation');
+    let c: PlayClaims; try { c = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')); }
     catch { return fail(401, 'invalid_attestation'); }
     if (c.version !== 1 || c.provisional !== true || c.issuer !== this.deps.issuer || (!allowExpired && !this.deps.clients.has(c.audience))
       || c.userId !== provisionalUserId(c.audience, c.proofKeyThumbprint)

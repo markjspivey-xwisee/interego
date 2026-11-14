@@ -300,7 +300,9 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // 2026-11-13: the tracked tree reached 698 (the statement-marker and compressed-lattice tests among
 // them), which used the whole 34 of slack over 664, so the next module would have failed CI.
 // 672 leaves seven modules of headroom. Nothing was removed, excluded or skipped.
-export const MIN_TEST_MODULES = 672;
+// 2026-11-14: the tracked tree reached 706 with the coached-world tests, the whole 34 of slack
+// over 672. 680 leaves eight modules of headroom. Nothing was removed, excluded or skipped.
+export const MIN_TEST_MODULES = 680;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a
