@@ -341,7 +341,11 @@ The cmi5 statements are built for such an attempt only where the launch is known
 
 Which verb says "an exchange" and which extensions carry the lines, the criterion and the rubric belong to the xAPI Profile the unit follows. They are a setting (`PEV_LAUNCH_VOCABULARY`), and nothing in the code names a profile, a course or a player. A level is read from `result.score.raw`: the value of exactly one level where the criterion's levels have values, otherwise the level's position, lowest 0.
 
-Taken on trust, and recorded as such: the statements are what the LRS returned to the learner's signed read; the other person's lines and the scores are the unit's own; the actor is matched to the signer by the DID the LMS named them with. Never run: no live LRS or assignable unit. The act is tested against a fetch double standing in for the signed-read route, with a made-up vocabulary. Not built: an act that serves the reviewed statements to the unit and keeps what it handed out; a reviewer-signed import (the signed read only sees its signer's own statements).
+Taken on trust, and recorded as such: the statements are what the LRS returned to the learner's signed read; the other person's lines and the scores are the unit's own; the actor is matched to the signer by the DID the LMS named them with. Never run: no live LRS or assignable unit. The act is tested against a fetch double standing in for the signed-read route, with a made-up vocabulary. Not built: a reviewer-signed import (the signed read only sees its signer's own statements).
+
+**Handing the reviewed statements out (`pev.launched_statements`).** The learner of an attempt taken from a launch signs `{attemptIri, sessionId}`, naming the session of the registration their unit will send in, and gets the cmi5 statements above. cmi5 allows one passed and one completed per registration, so what is handed out is fixed the first time it is asked for and kept on the attempt (`lmsLaunch.handedOut`: when, for which session, to whom, and the documents). Every later ask returns the same documents, whatever session it names, and writes nothing; a review changed afterwards hands out nothing new. Refused: anyone but the learner (403 `not-the-learner`); an attempt no LMS launched (409 `no-lms-launch`); an attempt not reviewed on a ratified rubric, with the same codes a projection gives; and an attempt `launchedRefusals` refuses (409 `launched-statements-refused`, with the reasons: a launch mode not known to be Normal, or a result that contradicts the launch's masteryScore). A scored attempt's statements carry its score, so they are refused to a chat assistant exactly as a projection is. The bridge sends nothing to an LRS and does not learn whether the unit sent them: an LRS that already holds a statement with one of these ids has it recorded.
+
+Not built: a way for a unit that holds only its cmi5 credential to ask for these itself. Today the learner, or their own agent, takes them and hands them to the unit.
 
 ## What it does not do yet
 
@@ -352,7 +356,7 @@ Taken on trust, and recorded as such: the statements are what the LRS returned t
 - Streaming replies; the other person speaking first beyond the authored first line; behaviour triggers, moods and reply-length settings for the other person.
 - Attempt limits set per scenario (only the bridge's hourly limits exist); a results dashboard with rates and averages.
 - UI languages other than English, and an accessibility review of the web UI.
-- Send statements to a learning record store; LTI grade passback; SCORM; serving the reviewed cmi5 statements to the assignable unit (they are built, and a launched conversation can be taken as an attempt; the act that hands them to the unit is not built).
+- Send statements to a learning record store; LTI grade passback; SCORM; a route by which an assignable unit holding only its cmi5 credential takes its reviewed statements (the learner takes them with `pev.launched_statements` and hands them over).
 - Packages for authoring tools.
 - Voice, avatars, coaches, knowledge retrieval.
 - Encrypted holder copies; writing pod access-control documents.

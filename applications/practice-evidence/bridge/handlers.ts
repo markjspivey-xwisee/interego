@@ -84,7 +84,10 @@ import {
   assessmentWithoutStakes, hashMask, judgmentWithoutStakes, maskAnswerHashes, quoteReadingsAsStored, reviewWithoutStakes, rubricWithoutStakes, sameRubricShape,
   scoredWithoutStakes, withStakesOf, STAKES_WITHHELD, type HashMask, type HashScope, type QuotedTurn,
 } from '../src/stakes.js';
-import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
+import {
+  buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
+  type ProjectionFormat,
+} from '../src/projections.js';
 import { readLaunchedCall, type LaunchVocabulary } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
@@ -3168,6 +3171,73 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
 }
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+//  The reviewed statements of a launched attempt, for its assignable unit to send
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+/**
+ * cmi5 gives passed, failed and completed to the assignable unit to send, one of each per
+ * registration. So what is handed out is fixed the first time it is asked for and kept on the
+ * attempt: every later ask, in whatever session, gets the same documents back, and a review
+ * changed afterwards hands out nothing new. This bridge sends nothing to an LRS and does not
+ * learn whether the unit sent them.
+ */
+async function launchedStatementsAct(call: Call, args: Record<string, unknown>): Promise<Out> {
+  const { ctx } = call;
+  const s = await signedAct(call, args, 'launchedStatements', {
+    write: true,
+    checks: (p) => { needAttemptIri(p); needText(p, 'sessionId', 200); },
+  });
+  const iri = needAttemptIri(s.payload);
+  const sessionId = String(s.payload['sessionId']);
+  return locked(call, `${s.pod}|${iri}`, async () => {
+    const h = await attemptHead(call, s.pod, iri);
+    if (!samePrincipal(h.body.learner.address, s.signer)) {
+      throw decline(403, 'Only the learner takes the statements of their own launched attempt.', 'not-the-learner');
+    }
+    const l = h.body.lmsLaunch;
+    if (!l) throw decline(409, 'No LMS launched this attempt: it satisfies no assignable unit.', 'no-lms-launch');
+    // They carry the score and whether it met the pass mark: refused to a caller who does not read the stakes.
+    if (scoredUse(h.body.scenarioSpec) && !(await showsStakes(call, s))) {
+      throw stakesNotHere(call, 'The statements of a scored session carry its score and whether it met the pass mark.');
+    }
+    const forUnit = {
+      registration: l.registration, activityId: l.activityId, lrsEndpoint: l.endpoint,
+      send: 'The assignable unit sends these, in this order, inside a session of the registration, with its own cmi5 credential. An LRS that already holds a statement with one of these ids has it recorded: read it back and go on.',
+    };
+    if (l.handedOut) {
+      return {
+        attemptIri: iri, statements: l.handedOut.statements, handedOutAt: l.handedOut.at, sessionId: l.handedOut.sessionId, again: true,
+        ...(l.handedOut.sessionId !== sessionId ? { sessionNote: 'These were fixed when they were first handed out, for the session named then; they are not rebuilt for another session.' } : {}),
+        forUnit, lossy: LOSSY_LAUNCHED, practiceEvidence: true, recorded: false,
+      };
+    }
+    notReplayed(h.body, s);
+    const e = await eligibility(call, s.pod, h);
+    if (!e.eligible) {
+      throw decline(409, `These statements are available only for a reviewed attempt on a ratified rubric: ${e.why}.`, e.code, e.resolvedBy);
+    }
+    const refusals = launchedRefusals(h.body);
+    if (refusals.length > 0) {
+      throw decline(409, 'No cmi5 statement may be built for this attempt.', 'launched-statements-refused', undefined, { problems: refusals });
+    }
+    const statements = buildLaunchedStatements({ attempt: h.body, headDescriptorUrl: h.rec.descriptorUrl, homePage: ctx.homePage, ratifiedBy: e.ratifiedBy }, { sessionId });
+    const problems = statements.flatMap((st) => launchedStatementProblems(st, l, { sessionId }));
+    if (problems.length > 0) {
+      throw decline(500, 'This bridge built a statement that fails its own checks; nothing was recorded.', 'statement-shape', undefined, { problems });
+    }
+    const at = iso(ctx);
+    const body: AttemptBody = {
+      ...h.body, at, lmsLaunch: { ...l, handedOut: { at, sessionId, to: s.signerDid, statements } }, acts: [...h.body.acts, actOf(s, 'launchedStatements')],
+    };
+    const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
+    return {
+      attemptIri: iri, statements, handedOutAt: at, sessionId, again: false, forUnit, lossy: LOSSY_LAUNCHED,
+      descriptorUrl: w.descriptorUrl, practiceEvidence: true, recorded: true,
+    };
+  });
+}
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
 //  The learner's record: holder copy, export, redaction
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -3547,6 +3617,7 @@ export function createPevHandlers(deps: PevDeps): Record<string, AffordanceHandl
     'pev.calibration': run(calibrationAct),
     'pev.scenario_results': run(scenarioResultsAct),
     'pev.project_attempt': run(projectAttempt),
+    'pev.launched_statements': run(launchedStatementsAct),
     'pev.holder_copy': run(holderCopy),
     'pev.export_record': run(exportRecord),
     'pev.redact_attempt': run(redactAttempt),

@@ -328,6 +328,17 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     outputs: out('The statement, what it leaves out, and the audit descriptor. A scored statement carries the score, so a scored attempt is refused, before anything is written, to ' + STAKES_LEFT_OUT_FOR + ' (stakes-not-in-chat, with what to do in remedy).', ['statementId', 'auditDescriptorUrl']),
   },
   {
+    action: PEV_ACTION.launchedStatements as IRI,
+    toolName: 'pev.launched_statements',
+    title: 'Take the reviewed statements for the assignable unit to send',
+    description: 'The learner of an attempt taken from an LMS launch takes the cmi5 statements its assignable unit sends once a reviewer has countersigned or overridden it on a ratified rubric: passed or failed for a pass gate, then completed; completed alone for feedback only. Payload: {attemptIri, sessionId}, where sessionId is the session of the registration the unit will send them in. They are fixed the first time they are asked for and kept on the attempt: every later ask returns the same documents, whatever session it names, and a review changed afterwards hands out nothing new. This bridge sends nothing to an LRS and does not learn whether the unit sent them. Refused for an attempt no LMS launched, one not yet reviewed, a launch not known to be Normal, and a reviewed result that contradicts the masteryScore of the launch. The statements of a scored attempt carry the score, so they are refused to a chat assistant, as a projection is.',
+    method: 'POST',
+    targetTemplate: '{base}/pev/launched_statements',
+    annotations: hints('Statements for the unit', false, false, true, true),
+    inputs: [...ENVELOPE],
+    outputs: out('The statements, when they were fixed, and what the unit does with them.', ['attemptIri', 'statements', 'handedOutAt']),
+  },
+  {
     action: PEV_ACTION.holderCopy as IRI,
     toolName: 'pev.holder_copy',
     title: 'Copy your record to your own pod',

@@ -50,6 +50,7 @@ export const PEV_ACTION = {
   calibration: 'urn:iep:action:pev:calibration',
   scenarioResults: 'urn:iep:action:pev:scenario-results',
   projectAttempt: 'urn:iep:action:pev:project-attempt',
+  launchedStatements: 'urn:iep:action:pev:launched-statements',
   holderCopy: 'urn:iep:action:pev:holder-copy',
   exportRecord: 'urn:iep:action:pev:export-record',
   redactAttempt: 'urn:iep:action:pev:redact-attempt',

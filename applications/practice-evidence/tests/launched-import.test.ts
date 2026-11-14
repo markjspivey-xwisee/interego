@@ -254,6 +254,7 @@ describe('pev.import_launched_attempt', () => {
     ok(await act(H, 'pev.register_role', W.admin, { address: W.author.address, role: 'author', change: 'add' }));
     const p = ok(await act(H, 'pev.author_scenario', W.author, { scenario: demoScenarioInput('missed-deadline', 1), status: 'published', draftAssistance: { used: false } }));
     S['scenario'] = String(p['scenarioIri']);
+    S['scenarioHash'] = String(p['scenarioHash']);
     expect(p['version']).toBe(1);
   }, SLOW);
 
@@ -382,5 +383,47 @@ describe('pev.import_launched_attempt', () => {
     expect((out[0]!['actor'] as { account: Out }).account).toEqual({ homePage: LMS, name: didOf(W.ana.address) });
     // The activity keeps the definition the unit gave it, so a profile that selects on its type still matches.
     expect(out.map((x) => x['object'])).toEqual([0, 1].map(() => ({ objectType: 'Activity', id: AU, definition: { type: `${P}/activity-types/roleplay-scenario` } })));
+  }, SLOW);
+  it('hands the reviewed statements to the learner, fixed the first time, and to no one else', async () => {
+    const A = 'c0ffee00-1111-4222-8333-444455556666';
+    const B = 'c0ffee00-1111-4222-8333-777788889999';
+    // A key reads a scored session's result only once an admin registered it.
+    ok(await act(H, 'pev.register_role', W.admin, { address: W.ana.address, role: 'learner', change: 'add' }));
+    // Reviewed, but the rubric is not ratified yet: nothing is handed out, and nothing is written.
+    const before = pod.store.size;
+    const early = await act(H, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'], sessionId: A });
+    expect([early['kind'], early['iep:refusalStatus']]).toEqual(['refusal', 409]);
+    expect(pod.store.size).toBe(before);
+    ok(await act(H, 'pev.ratify_scenario', W.ben, { scenarioIri: S['scenario'], version: 1, scenarioHash: S['scenarioHash'] }));
+    // The reviewer is not the learner.
+    refused(await act(H, 'pev.launched_statements', W.ben, { attemptIri: S['attempt'], sessionId: A }), 403, 'not-the-learner');
+    refused(await act(H, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'] }), 400, 'payload-shape');
+
+    const first = ok(await act(H, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'], sessionId: A }));
+    const statements = first['statements'] as Out[];
+    expect(statements.map((x) => (x['verb'] as Out)['id'])).toEqual([VERB_PASSED, VERB_COMPLETED]);
+    expect([first['again'], first['recorded'], first['sessionId']]).toEqual([false, true, A]);
+    expect((first['forUnit'] as Out)['registration']).toBe(REG);
+    expect(((statements[0]!['context'] as { extensions: Out }).extensions)[SESSION_EXT]).toBe(A);
+
+    // Asked again for another session: the same documents, byte for byte, and nothing new is written.
+    const size = pod.store.size;
+    const second = ok(await act(H, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'], sessionId: B }));
+    expect(second['statements']).toEqual(statements);
+    expect([second['again'], second['recorded'], second['sessionId'], second['handedOutAt']]).toEqual([true, false, A, first['handedOutAt']]);
+    expect(String(second['sessionNote'])).toContain('not rebuilt for another session');
+    expect(pod.store.size).toBe(size);
+
+    // What was handed out is on the attempt, which still conforms to the published shapes.
+    const a = (await readHead(POD, S['attempt']!, TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    expect(a.lmsLaunch!.handedOut).toMatchObject({ sessionId: A, to: didOf(W.ana.address), at: first['handedOutAt'] });
+    expect(a.lmsLaunch!.handedOut!.statements).toEqual(statements);
+    expect(a.state).toBe('overridden');
+    expect(validateAgainstShape(recordGraphTurtle(a), readShapesTurtle(), { entailment: 'rdfs' }).conforms).toBe(true);
+  }, SLOW);
+
+  it('hands out nothing for an attempt no LMS launched, or one whose launch mode was only assumed', async () => {
+    const started = ok(await act(H, 'pev.start_attempt', W.ana, { scenarioIri: S['scenario'], scenarioVersion: 1, coached: false }));
+    refused(await act(H, 'pev.launched_statements', W.ana, { attemptIri: started['attemptIri'], sessionId: 'any-session' }), 409, 'no-lms-launch');
   }, SLOW);
 });
