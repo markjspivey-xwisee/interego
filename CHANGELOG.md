@@ -13,6 +13,28 @@ so the two graphs were republished with this change: the catalog (Asserted) and
 the proposals (Hypothetical), each superseding the version before it. The other
 four decorations are unchanged and were not republished.
 
+## 2026-11-14 — Foxxi: an activity judged after its session asks the LMS for what it may now send
+
+Some activities are judged after the session ends: a practice conversation whose
+result a person reviews. cmi5 gives `passed`, `failed` and `completed` to the
+activity to send, so it sends them in a later session of the same registration,
+once the review stands. The review lives in another service, and an activity in a
+browser holds only its cmi5 credential, which only this LMS can check.
+
+`GET /cmi5/reviewed` takes that credential as a Bearer token. The LMS answers for
+what only it knows (the credential is one it issued; its session is open and was
+launched Normal) and asks a review service for the rest, signing with its own key
+a request that names the registration and the session. It hands back the documents
+the service fixed, or says there is nothing to send yet. The LMS writes none of
+these statements itself. A credential speaks only for the session it was issued
+in: one from an earlier session of the registration is refused, and nobody is
+asked about the current session on its word.
+
+Which service to ask is a setting (`FOXXI_REVIEW_STATEMENTS_URL`, `_POD` and
+`_ACTION`, with `FOXXI_BRIDGE_PRIVATE_KEY`); without it the route answers 501. No
+review service, course or profile is named in code. Verified with a fetch double
+for the service; no live service has been asked.
+
 ## 2026-11-13 — Practice Evidence: the learner takes the reviewed statements for their assignable unit
 
 A conversation an LMS launched could be taken as an attempt and reviewed, and the
