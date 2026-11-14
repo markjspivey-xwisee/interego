@@ -280,6 +280,7 @@ export function sendingSessionProblems(statements: readonly unknown[], launch: L
 }
 
 const CMI5_DEFINED_CATEGORY = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
+const VERB_VOIDED = 'http://adlnet.gov/expapi/verbs/voided';
 
 /**
  * The passed, failed and completed statements that count against this launch: cmi5 allows one of
@@ -318,8 +319,15 @@ function cmi5DefinedFor(s: Record<string, unknown>, launch: LmsLaunch): boolean 
  * unit, by this launch's actor, carrying the cmi5 category. A terminated about another unit, by
  * another actor, or outside cmi5 does not show this session over.
  *
- * Not checked: who stored the statement. cmi5 has the LMS, not the unit, record abandoned, and the
- * read does not say which credential a statement came in under.
+ * Only terminated counts. cmi5 has the LMS, not the unit, record abandoned, and the read does not
+ * say which credential a statement came in under, so an abandoned cannot be told from one another
+ * writer stored. Until the LRS can show that, an abandoned frees nothing.
+ *
+ * A statement that was stored and then voided is still a statement that was sent. An LRS leaves a
+ * voided statement out of a read and may return the voiding statement in its place, so a voiding
+ * statement that points at a handed-out id counts as that id being there. What this cannot see is a
+ * handed-out statement voided by a voiding statement the read does not return. The ids never
+ * change, so such a statement still collides when the unit sends, and nothing is recorded twice.
  */
 export function refixProblems(
   statements: readonly unknown[], launch: LmsLaunch, fixed: { readonly sessionId: string; readonly statementIds: readonly string[] }, sessionId: string,
@@ -329,12 +337,18 @@ export function refixProblems(
   const sessionOf = (s: Record<string, unknown>): unknown => objOf(objOf(s['context'])['extensions'])[CMI5_SESSION_EXT];
   const ended = mine.some((s) => {
     const verb = objOf(s['verb'])['id'];
-    return (verb === VERB_TERMINATED || verb === VERB_ABANDONED) && sessionOf(s) === fixed.sessionId && cmi5DefinedFor(s, launch);
+    return verb === VERB_TERMINATED && sessionOf(s) === fixed.sessionId && cmi5DefinedFor(s, launch);
   });
-  if (!ended) p.push('the LRS holds no cmi5 terminated or abandoned for this unit and this learner in the session the statements were fixed for: they can still be sent in it');
+  if (!ended) p.push('the LRS holds no cmi5 terminated for this unit and this learner in the session the statements were fixed for: they can still be sent in it');
   const ids = new Set(fixed.statementIds.map((x) => x.toLowerCase()));
   if (mine.some((s) => typeof s['id'] === 'string' && ids.has((s['id'] as string).toLowerCase()))) {
     p.push('a statement that was handed out is already in the LRS: the result was sent');
   }
+  // Whatever registration the voiding statement carries, or none: it is about one of these ids.
+  const voidedOne = statements.filter(isObj).some((s) => {
+    const o = objOf(s['object']);
+    return objOf(s['verb'])['id'] === VERB_VOIDED && o['objectType'] === 'StatementRef' && typeof o['id'] === 'string' && ids.has((o['id'] as string).toLowerCase());
+  });
+  if (voidedOne) p.push('a statement that was handed out was stored in the LRS and then voided: the result was sent');
   return [...p, ...sendingSessionProblems(statements, launch, sessionId)];
 }

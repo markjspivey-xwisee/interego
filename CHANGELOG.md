@@ -13,6 +13,13 @@ nothing. Refusing a session to send in is unchanged: any ending naming it still
 refuses. Not checked: which credential stored the ending. cmi5 has the LMS
 record abandoned, and the read does not say who stored a statement.
 
+After a second read by the reviewer: an abandoned no longer counts as that
+ending at all, only a terminated, until an LRS can show that the LMS stored it.
+And a voiding statement in the read that points at a handed-out id counts as
+that statement having been sent, since an LRS leaves a voided statement out of
+a read. A voiding statement the read does not return cannot be seen; the ids do
+not change, so such a statement still collides when the unit sends.
+
 The LRS's answer to the learner's signed read was limited to 2,000,000 bytes
 after the whole answer had been read into a string, and by the string's length.
 It is now counted in bytes as it arrives and cut off past the limit, as the
