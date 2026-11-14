@@ -4,6 +4,27 @@
 
 A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. The `cpw:` vocabulary is published at `docs/applications/coached-world/cpw.ttl`, the same bytes as `applications/coached-world/ontology/cpw.ttl`. Named-graph IRIs go through `turtleIriRef`. The bridge entry installs the shared process safety net, so a rejection nothing awaited is logged and the process keeps serving. See `applications/coached-world/README.md`.
 
+## 2026-11-14 — Foxxi: a linked guest's browser is not the owner
+
+The course player let an owner link a guest they still held the key for. After
+that link, every later launch from the guest's browser was recorded as the
+owner: the owner's actor, the owner's lens and pod, the owner's open attempt
+resumed. It checked only that the link existed. No owner session was needed, the
+link did not expire, and nothing but deleting either party's records undid it.
+On a shared computer, someone who signed in, linked the guest that browser kept
+and signed out left the next person who pressed Start recording under their name.
+
+A guest session now launches as the guest, in the guest's lens, linked or not.
+What the guest satisfies after a link still reaches the owner, when the owner
+next launches or links again, both of which take the owner's own session. Making
+a link is unchanged: it needs the owner's session and a fresh proof from the
+guest's key.
+
+Found by a review of the player after it merged. Not fixed here: a guest's
+deletion removes from the owner every activity the guest had satisfied, including
+any the owner satisfied themselves; and a deletion whose pod copy failed reports
+nothing deleted when it is tried again.
+
 ## 2026-11-14 — Foxxi: an activity judged after its session asks the LMS for what it may now send
 
 Some activities are judged after the session ends: a practice conversation whose
