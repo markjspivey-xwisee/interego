@@ -13,6 +13,20 @@ so the two graphs were republished with this change: the catalog (Asserted) and
 the proposals (Hypothetical), each superseding the version before it. The other
 four decorations are unchanged and were not republished.
 
+## 2026-11-14 — Foxxi: the operator of a bridge can take a hosted package down
+
+Taking a hosted package down (`foxxi.remove_hosted_package`) asks for the
+tenant's admin by signature, and nobody else can do it: an agent working for
+the operator, signing through the relay, is refused, and so two superseded
+packages stayed listed after their owner said to remove them. The operator now
+has a path of their own. `FOXXI_HOSTED_PACKAGES_TAKEN_DOWN` lists packages by
+sha-256, separated by commas or spaces. A listed package is removed from the
+tenant pod when the bridge starts, with what described it, and its course is
+forgotten; while it stays listed it is not listed at `/scorm/packages`, opened,
+or kept again, whether or not the pod has removed it yet. An entry that is no
+sha-256 is named in a warning and takes nothing down. What learners recorded of
+a package stays in their own records, as with the signed removal.
+
 ## 2026-11-14 — The UI oracle job waits long enough for the build it reads
 
 "Original client oracles and hosted visitor render" waited eight minutes for a

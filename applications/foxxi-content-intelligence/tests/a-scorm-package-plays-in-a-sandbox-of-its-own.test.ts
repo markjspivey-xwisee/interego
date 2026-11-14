@@ -626,7 +626,7 @@ describe('the bridge hosts what is uploaded, and restores it after a restart', (
     const lookup = server.slice(server.indexOf('async function publishedCmi5Course'), server.indexOf("app.post('/agent/cmi5/launch'"));
     expect(lookup).toMatch(/restorePublishedCourse\(DEFAULT_TENANT, courseId\);[^\n]*\n\s+if \(!getCmi5Course\(DEFAULT_TENANT, courseId\)\) await restoreHostedPackage\(courseId\);\n\s+return getCmi5Course\(DEFAULT_TENANT, courseId\);/);
     expect(server).toMatch(/attachHostedPackageRoutes\(app, \{\n\s+packages: hostedPackages,\n\s+bridgeBaseUrl,/);
-    expect(server).toContain('const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage });');
+    expect(server).toContain('const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage, takenDown: hostedPackagesTakenDown.shas });');
   });
 
   it('keeps what an upload is beside it, and restores from that, describing a package itself as an upload is parsed', () => {
