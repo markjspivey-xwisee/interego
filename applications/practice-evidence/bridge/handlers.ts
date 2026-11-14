@@ -88,7 +88,7 @@ import {
   buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, CMI5_SESSION_EXT, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
   type ProjectionFormat,
 } from '../src/projections.js';
-import { readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary, type LmsAuthority } from '../src/launched-import.js';
+import { launchNotVerified, readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary, type LmsAuthority } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
   readCache, readChain, readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship,
@@ -3289,6 +3289,13 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
       throw decline(403, 'Only the learner, or the LMS that launched the attempt, takes its statements.', 'not-the-learner');
     }
     if (!l) throw decline(409, 'No LMS launched this attempt: it satisfies no assignable unit.', 'no-lms-launch');
+    // The launch is not read from the LRS again here: what was decided when the attempt was taken
+    // is what is gone by, for the learner and for the LMS, and for statements already fixed. So an
+    // attempt whose launch was decided without the check this bridge now makes hands out nothing.
+    const unverified = launchNotVerified(l, li?.lmsAuthority);
+    if (unverified !== null) {
+      throw decline(409, 'The launch of this attempt was not checked against the LMS\'s own record; nothing is handed out for it.', 'launch-not-verified', undefined, { problems: [unverified] });
+    }
     // They carry the score and whether it met the pass mark: refused to a caller who does not read the stakes.
     if (scoredUse(h.body.scenarioSpec) && !(await showsStakes(call, s))) {
       throw stakesNotHere(call, 'The statements of a scored session carry its score and whether it met the pass mark.');

@@ -144,6 +144,20 @@ export function lmsAuthorityProblems(v: unknown): string[] {
   return p;
 }
 
+/**
+ * Why an attempt's recorded launch is not one this bridge has checked, or null. The launch mode is
+ * decided once, when the attempt is taken, and kept. A bridge told the LMS's authority goes by that
+ * decision only where it was made under the same authority: an attempt taken before the check, or
+ * by a bridge told another authority or none, was decided from a `launched` anyone could have stored.
+ */
+export function launchNotVerified(launch: LmsLaunch, lmsAuthority: LmsAuthority | undefined): string | null {
+  if (lmsAuthority === undefined) return null;
+  const u = launch.launchedUnder;
+  if (u === undefined) return 'the launch mode of this attempt was read from a launched statement whose recorder was not checked: it was taken before this bridge checked who records them, or with no launched statement at all';
+  if (u.homePage !== lmsAuthority.homePage || u.name !== lmsAuthority.name) return 'the launch mode of this attempt was read from a launched statement recorded under another authority than the one this bridge is told is the LMS\'s';
+  return null;
+}
+
 /** Whether the LMS recorded this statement, as far as its authority says. Where no authority is known to ask for, every statement passes. */
 function recordedByLms(s: Record<string, unknown>, lms: LmsAuthority | undefined): boolean {
   if (lms === undefined) return true;
@@ -279,6 +293,9 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
   const launch: LmsLaunch = {
     registration: i.registration, sessionId, activityId: first.objectId, actor: { homePage, name }, endpoint: i.endpoint,
     launchMode: launched ? (mode as LmsLaunch['launchMode']) : 'Normal',
+    // Which authority the launched statement carried, where that was checked. It is what a later
+    // hand-out goes by: the launch is not read from the LRS again.
+    ...(launched && i.lmsAuthority ? { launchedUnder: { homePage: i.lmsAuthority.homePage, name: i.lmsAuthority.name } } : {}),
     ...(typeof mastery === 'number' ? { masteryScore: mastery } : {}),
     ...(Object.keys(template).length > 0 ? { contextTemplate: template } : {}),
     ...(isObj(objOf(first.s['object'])['definition']) ? { activityDefinition: objOf(first.s['object'])['definition'] as Record<string, unknown> } : {}),

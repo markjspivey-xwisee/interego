@@ -16,6 +16,14 @@ with its launch mode not known, and no cmi5 result can be built for it.
 `PEV_LAUNCH_LMS_ISSUERS` now needs it. The bridge does not start with the LMS
 binding and no authority.
 
+The launch mode is decided once, when an attempt is taken, and a hand-out goes
+by that without reading the LRS again. So an attempt now records the authority
+its `launched` was read under, and a bridge told the authority hands out
+nothing for an attempt that records none, or another (409
+`launch-not-verified`). That holds for the learner, for the LMS, and for
+statements already fixed, and it covers every attempt taken before the setting
+was on. Such an attempt is not revalidated.
+
 Without the setting nothing changes. Not covered: `terminated`, the exchanges
 and the scores are the unit's own statements and are not the LMS's to mark.
 
