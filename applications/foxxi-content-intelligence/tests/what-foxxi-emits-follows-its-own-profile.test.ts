@@ -99,10 +99,8 @@ describe('what is not a descriptor projection', () => {
     // Anything else is a performance record, as before.
     expect(check(recorded('https://example.org/types/Move', true))).toMatchObject({ outcome: 'success', templates: [T('production-performance-completed')] });
     expect(check(recorded(`${FOXXI_NS}ProductionTask`, false))).toMatchObject({ outcome: 'success', templates: [T('production-performance-failed')] });
-    // One rule is left to say no: a failed lesson states its score, whoever records it.
-    const scoreless = check(recorded(lesson, false));
-    expect(scoreless.outcome).toBe('invalid');
-    expect(scoreless.templates).toEqual([T('lesson-failed')]);
+    // A failed lesson nobody scored is still that lesson's failure: the score is recommended, not required.
+    expect(check(recorded(lesson, false))).toMatchObject({ outcome: 'success', templates: [T('lesson-failed')] });
   });
 
   it('no outcome Foxxi records can match a learning template and the performance template together', () => {
@@ -131,6 +129,16 @@ describe('what is not a descriptor projection', () => {
     expect(check(built(course, false))).toMatchObject({ outcome: 'success', templates: [T('course-failed')] });
     expect(check(built(lesson, true))).toMatchObject({ outcome: 'success', templates: [T('lesson-completed')] });
     expect(check(built(lesson, false, { quality: 0.3 }))).toMatchObject({ outcome: 'success', templates: [T('lesson-failed')] });
+    // A failure nobody scored: the routes keep quality optional, so the statement states no score,
+    // and the lesson template recommends one without requiring it.
+    const unscored = built(lesson, false);
+    expect(check(unscored)).toMatchObject({ outcome: 'success', templates: [T('lesson-failed')] });
+    expect((unscored as { result: unknown }).result).toEqual({ success: false });
+    // Every kind of thing, each outcome, scored and not: none is refused by the profile.
+    for (const type of [course, lesson, undefined, 'urn:made-up:Move'])
+      for (const success of [true, false])
+        for (const quality of [undefined, 0.4])
+          expect(check(built(type, success, quality === undefined ? {} : { quality })).outcome, `${String(type)} ${success} ${String(quality)}`).toBe('success');
 
     // The shape itself, where the two routes used to spell it out separately.
     const s = built('urn:made-up:Move', true, { quality: 0.8, evidence: { binding: 'shape-validated', shapeIri: 'https://example.org/shapes/made-up' }, workTrajectory: [{ step: 1 }] }) as {
