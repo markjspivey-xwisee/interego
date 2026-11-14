@@ -239,6 +239,10 @@ const HSTS_SOURCE: Record<string, string | typeof NOT_PUBLIC> = {
   // image for the reason given at wsp-bridge above.
   'interego-wrd-bridge': 'applications/_shared/vertical-bridge/index.ts',
   'interego-pev-bridge': 'applications/_shared/vertical-bridge/index.ts',
+  // The coached world is plain node:http, not the shared factory, so it sets the header itself:
+  // first thing in its request handler, before the rate limit and before any body is read, so a
+  // 429 and a refused body carry it too (applications/coached-world/tests/shared-world.test.ts).
+  'interego-coached-world-bridge': 'applications/coached-world/src/server.ts',
   'interego-microsite': SHARED_CONF,
   'interego-main': SHARED_CONF,
   'interego-foxxi-dashboard': SHARED_CONF,

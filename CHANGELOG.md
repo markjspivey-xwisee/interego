@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-14 — Coached world: an image, a public URL, request limits and a ceiling on what it keeps
+
+The coached world ran only on a developer's machine. It can now be built as an image and put behind a proxy on a public address. Nothing is deployed by this change: there is no Railway service yet, and no service row, so the pipeline has nothing to roll out.
+
+- **Public URL.** Behind a proxy the process cannot know the address people use, and it had been using its listen address (`http://0.0.0.0:<port>`) as the guest audience, the bootstrap address, the base of every graph IRI and the DID host. `BRIDGE_DEPLOYMENT_URL` (or `CPW_PUBLIC_URL`) now names it. It must be an https origin with no path, or the process does not start. Unset, nothing changes.
+- **`GET /health`** answers `build` (the commit the image was built from, which the deploy verifier compares with the one it shipped), the pack, how many consultants are in the world and which guest door is in use. It needs no session and is never rate limited.
+- **Request limits.** Each client gets 30 requests a minute for coming in, 120 for writes and 240 for reads, and a `429` with `Retry-After` past that. A client is an address (IPv6 by its /56); behind a proxy it is the last `X-Forwarded-For` entry.
+- **A ceiling on history.** A filler consultant publishes a territory graph every four seconds, and the list of published graphs and the statement log grew for as long as the process ran. Both now keep the newest 2,000 and count what they drop; `GET /graphs` says so (`retained`, `dropped`). The current head of each territory, pact and agent is looked up directly instead of by scanning the list, so a descriptor still supersedes the right one after that one has been dropped. An agent's descriptor carries its newest 100 lessons; which causes it has learned is kept apart, so settlement is unchanged. The world admits at most 5,000 consultants, and the in-process guest door forgets guests and spent grants once they have expired.
+- **Restarts.** The world is memory in one process, so a restart or redeploy starts a new one and, with the in-process door, the attestations browsers kept stop working. The guest page already tried a fresh grant when its kept attestation was refused; that is now tested by running the page against a world that was restarted on the same public address.
+- **Image.** `deploy/Dockerfile.coached-world-bridge` and its `deploy/images.json` row. It copies the vertical, `applications/_shared`, `packages/`, and four single files from Foxxi and identity. The test that checks a bridge image carries what its bridge imports now also follows imports that leave `applications/`, accepts a `COPY` of exactly the imported file, and follows what those files import in turn.
+
+Still to do by hand, in this order: create the Railway service `coached-world-bridge` as a single replica with no deploy overlap, set `BRIDGE_DEPLOYMENT_URL`, then add its row to `tools/railway-services.mjs`. The steps and every setting are in `applications/coached-world/README.md`.
+
 ## 2026-11-14 — Practice Evidence: a launched unit may name the scenario version as its rubric
 
 Taking an attempt from an LMS launch requires every scored statement to name

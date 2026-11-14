@@ -41,7 +41,7 @@ describe('a world pack is the policy', () => {
   });
 
   it('keeps Mandate, and every faction name, out of the engine', () => {
-    for (const file of ['settle.ts', 'statements.ts', 'profile.ts', 'world.ts', 'graphs.ts', 'server.ts']) {
+    for (const file of ['settle.ts', 'statements.ts', 'profile.ts', 'world.ts', 'graphs.ts', 'server.ts', 'bounded.ts', 'rate-limit.ts', 'public-url.ts']) {
       const source = readFileSync(join(here, '../src', file), 'utf8');
       expect(source, file).not.toMatch(/Mandate|meridian|Juno-7|Gilbert/);
     }

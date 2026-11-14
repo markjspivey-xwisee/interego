@@ -14,6 +14,7 @@ import { PlayGrantService, type PlayGrantConfig } from '../../foxxi-content-inte
 import {
   PlayError, ProvisionalPlay, type PlayClaims, type PlayClient, type PlayGrant,
 } from '../../../deploy/identity/provisional-play.js';
+import { MAX_CHALLENGES, MAX_LOCAL_GUESTS, bound } from './bounded.js';
 
 export interface VerifiedGuest {
   readonly ownerDid: string;
@@ -41,27 +42,41 @@ export function createLocalDoor(origin: string): GuestDoor {
   const agentDid = `did:web:${didHost(origin)}:agents:coached-world-service`;
   const podUrl = `${origin}/service/`;
   const clients = new Map<string, PlayClient>([[origin, { agentDid, podUrl }]]);
-  const anchors = new Map<string, string>();
-  const receipts = new Set<string>();
+  // Both tables are filled by callers nobody has verified yet, so both forget what has expired
+  // and both have a ceiling. A spent grant only has to be remembered while it could still be
+  // replayed; a guest's anchor only while its attestation is still good.
+  const anchors = new Map<string, { attestation: string; expiresAt: number }>();
+  const receipts = new Map<string, number>();
+  const seconds = () => Math.floor(Date.now() / 1000);
+  const forget = () => {
+    const now = seconds();
+    for (const [hash, expiresAt] of receipts) if (expiresAt <= now) receipts.delete(hash);
+    for (const [userId, anchor] of anchors) if (anchor.expiresAt <= now) anchors.delete(userId);
+  };
   const play = new ProvisionalPlay({
     issuer: origin,
     publicPodBase: `${origin}/pods/`,
     signingKey: randomBytes(32),
     clients,
     ttlSeconds: 86_400,
-    maxPods: 100,
+    maxPods: MAX_LOCAL_GUESTS,
     verifyGrantSignature: async grant => {
       const message = `sha256:${createHash('sha256').update(grant._signed_payload, 'utf8').digest('hex')}`;
       try { return verifyMessage(message, grant._signature).toLowerCase() === wallet.address.toLowerCase(); }
       catch { return false; }
     },
-    readAnchor: async userId => anchors.get(userId) ?? null,
+    readAnchor: async userId => anchors.get(userId)?.attestation ?? null,
     provision: async (claims, attestation, _maxPods, receipt) => {
+      forget();
       if (receipts.has(receipt.hash)) throw new PlayError(409, 'play_grant_already_used');
-      receipts.add(receipt.hash);
+      // A grant lives 90 seconds and the door's limit is per client, so this table stays small;
+      // the ceiling is for the case where it does not.
+      bound(receipts, MAX_CHALLENGES - 1);
+      receipts.set(receipt.hash, receipt.expiresAt);
       const first = anchors.get(claims.userId);
-      if (first) return first;
-      anchors.set(claims.userId, attestation);
+      if (first) return first.attestation;
+      if (anchors.size >= MAX_LOCAL_GUESTS) throw new PlayError(503, 'play_capacity_reached');
+      anchors.set(claims.userId, { attestation, expiresAt: claims.expiresAt });
       return attestation;
     },
     issueCredential: async (claims: PlayClaims) => ({

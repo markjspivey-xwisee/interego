@@ -5,6 +5,7 @@
  */
 import { Wallet } from 'ethers';
 import { WorldError } from './errors.js';
+import { MAX_AGENT_LESSONS, MAX_AGENT_SCORES, MAX_CONSULTANTS, MAX_PUBLISHED_GRAPHS, trim } from './bounded.js';
 import {
   agentGraph, factionGraph, interventionGraph, observationGraph, pactGraph, territoryGraph,
   type GraphBundle,
@@ -42,15 +43,16 @@ interface AgentState {
   id: string; name: string; role: string; did: string; podUrl: string;
   controllerDid?: string; consultantId?: string; factionId?: string;
   hist: number[]; memory: Lesson[]; version: number;
+  /** Every cause this agent has a matched lesson for. `memory` keeps only the newest lessons; this keeps what they taught. */
+  learned: Set<string>;
 }
 interface TerritoryState { id: string; name: string; q: number; r: number; control: Record<string, number>; version: number }
 interface BotState { id: string; name: string; factionId: string; tier: number; roi: number; growth: number; agents: number }
 interface Consultant {
   id: string; ownerDid: string; userId: string; podUrl: string; agentDid: string;
   name: string; factionId: string | null; tier: number; influence: number;
-  successes: number; diagTotal: number; diagCorrect: number; rois: number[]; growth: number;
+  successes: number; diagTotal: number; diagCorrect: number; roiSum: number; roiCount: number; growth: number;
   roster: string[]; gate: 'none' | 'eligible'; runs: number;
-  log: Array<{ mission: string; cause: string; diagnosis: string; intervention: string; delta: number; roi: number }>;
 }
 interface LiveMission {
   id: string; consultantId: string; missionId: string; agentId: string; territoryId: string;
@@ -74,7 +76,10 @@ export class CoachedWorld {
   private readonly lrs: LrsReader | undefined;
   private readonly actorHomePage: string | undefined;
   private readonly launcher: CourseLauncher | undefined;
+  /** The newest published graphs, oldest first, at most MAX_PUBLISHED_GRAPHS. */
   private readonly published: Published[] = [];
+  private droppedGraphs = 0;
+  /** The current descriptor of each versioned thing. Not history: one entry per territory, pact, faction and agent. */
   private readonly heads = new Map<string, string>();
   private readonly consultants = new Map<string, Consultant>();
   private readonly byOwner = new Map<string, string>();
@@ -167,7 +172,15 @@ export class CoachedWorld {
       canonical: bundle.canonical, signature, ...(bundle.data.supersedes?.[0] ? { supersedes: bundle.data.supersedes[0] } : {}),
     };
     this.published.push(row);
-    this.heads.set(`${kind}:${bundle.id.split('/v/')[0]}`, bundle.id);
+    this.droppedGraphs += trim(this.published, MAX_PUBLISHED_GRAPHS);
+    // Only a versioned descriptor has a head. An observation or an intervention is written once.
+    const cut = bundle.id.lastIndexOf('/v/');
+    if (cut >= 0) this.heads.set(bundle.id.slice(0, cut), bundle.id);
+  }
+
+  /** The descriptor that currently stands for this thing, whether or not it is still in the retained list. */
+  private head(kind: 'agent' | 'pact' | 'territory', key: string): string | undefined {
+    return this.heads.get(`${this.base}descriptors/${kind}/${key}`);
   }
 
   private async publishOpening(): Promise<void> {
@@ -206,18 +219,19 @@ export class CoachedWorld {
 
   private async putAgent(input: {
     id: string; name: string; role: string; factionId?: string; consultantId?: string; controllerDid?: string;
-    hist: number[]; memory: Lesson[];
+    hist: number[]; memory: Lesson[]; learned?: Set<string>;
   }): Promise<AgentState> {
     const previous = this.agents.get(input.id);
     const version = (previous?.version ?? 0) + 1;
     const agent: AgentState = {
       id: input.id, name: input.name, role: input.role, did: this.did(input.id),
       podUrl: `${this.base}pods/${input.id}/`, hist: input.hist, memory: input.memory, version,
+      learned: input.learned ?? previous?.learned ?? new Set<string>(),
       ...(input.factionId ? { factionId: input.factionId } : {}),
       ...(input.consultantId ? { consultantId: input.consultantId } : {}),
       ...(input.controllerDid ? { controllerDid: input.controllerDid } : {}),
     };
-    const head = previous ? this.published.filter(p => p.kind === 'agent' && p.id.includes(`/agent/${input.id}/`)).at(-1)?.id : undefined;
+    const head = previous ? this.head('agent', input.id) : undefined;
     await this.publish(agentGraph({
       base: this.base, agentId: agent.id, name: agent.name, did: agent.did, podUrl: agent.podUrl,
       controllerDid: agent.controllerDid, version, at: this.now(), lessons: agent.memory,
@@ -234,12 +248,13 @@ export class CoachedWorld {
       if (!found) throw new WorldError(500, 'missing-consultant');
       return found;
     }
+    if (this.consultants.size >= MAX_CONSULTANTS) throw new WorldError(503, 'world-full');
     const consultant: Consultant = {
       id: `c-${this.consultants.size + 1}`, ownerDid: principal.ownerDid, userId: principal.userId,
       podUrl: principal.podUrl, agentDid: principal.agentDid,
       name: `Guest ${principal.userId.slice(-6)}`, factionId: null, tier: 0,
-      influence: this.pack.influence, successes: 0, diagTotal: 0, diagCorrect: 0, rois: [], growth: 0,
-      roster: [], gate: 'none', runs: 0, log: [],
+      influence: this.pack.influence, successes: 0, diagTotal: 0, diagCorrect: 0, roiSum: 0, roiCount: 0, growth: 0,
+      roster: [], gate: 'none', runs: 0,
     };
     this.consultants.set(consultant.id, consultant);
     this.byOwner.set(principal.ownerDid, consultant.id);
@@ -281,7 +296,7 @@ export class CoachedWorld {
     if (!agent) throw new WorldError(409, 'no-agent');
     const territory = pick(this.territories, this.rng);
     const cause = drawCause(this.pack, mission, consultant.tier, this.rng);
-    const remembered = agent.memory.some(lesson => lesson.causeId === cause.id && lesson.matched);
+    const remembered = agent.learned.has(cause.id);
     const before = baseline(this.pack, mission, consultant.tier, remembered, this.rng);
     const { symptoms, herring } = openingSymptoms(this.pack, cause, this.rng);
     const co: LiveMission['co'] = [];
@@ -335,10 +350,10 @@ export class CoachedWorld {
     consultant.successes += result.matched ? 1 : 0;
     consultant.diagTotal += 1;
     consultant.diagCorrect += result.diagnosed ? 1 : 0;
-    consultant.rois.push(result.roi);
+    consultant.roiSum += result.roi;
+    consultant.roiCount += 1;
     consultant.growth += Math.max(0, result.delta);
     consultant.runs += 1;
-    consultant.log.push({ mission: mission.title, cause: live.cause.id, diagnosis: diagnosisId, intervention: intervention.label, delta: result.delta, roi: result.roi });
     const tier = this.pack.tiers[consultant.tier];
     if (tier?.gateAfterSuccesses !== undefined && consultant.successes >= tier.gateAfterSuccesses && consultant.gate === 'none' && consultant.tier < this.pack.tiers.length - 1) {
       consultant.gate = 'eligible';
@@ -346,7 +361,10 @@ export class CoachedWorld {
     territory.control = result.control;
     territory.version += 1;
     agent.hist.push(result.after);
+    trim(agent.hist, MAX_AGENT_SCORES);
     agent.memory.unshift({ text: result.lesson, causeId: live.cause.id, matched: result.matched });
+    if (agent.memory.length > MAX_AGENT_LESSONS) agent.memory.length = MAX_AGENT_LESSONS;
+    if (result.matched) agent.learned.add(live.cause.id);
     const at = this.now();
     const measured = buildMissionStatements({
       pack: this.pack, homePage: this.base, actorDid: agent.did, missionId: mission.id,
@@ -438,7 +456,7 @@ export class CoachedWorld {
     const key = this.pactKey(a, b);
     const version = (this.pactVersion.get(key) ?? 0) + 1;
     this.pactVersion.set(key, version);
-    const head = this.published.filter(p => p.kind === 'pact' && p.id.includes(`/pact/${[a, b].sort().join('--')}/`)).at(-1)?.id;
+    const head = this.head('pact', [a, b].sort().join('--'));
     await this.publish(pactGraph({
       base: this.base, a, b, version, at: this.now(), writerDid: this.did('world'), ended,
       ...(head ? { supersedes: head } : {}),
@@ -534,7 +552,7 @@ export class CoachedWorld {
   }
 
   private async publishTerritory(territory: TerritoryState): Promise<void> {
-    const head = this.published.filter(p => p.kind === 'territory' && p.id.includes(`/territory/${territory.id}/`)).at(-1)?.id;
+    const head = this.head('territory', territory.id);
     await this.publish(territoryGraph({
       pack: this.pack, base: this.base, territoryId: territory.id, name: territory.name, control: territory.control,
       version: territory.version, at: this.now(), writerDid: this.did('world'), ...(head ? { supersedes: head } : {}),
@@ -601,7 +619,7 @@ export class CoachedWorld {
     const rows = this.bots.map(b => ({ name: b.name, factionId: b.factionId, tier: b.tier, roi: b.roi, growth: b.growth, you: false }));
     for (const consultant of this.consultants.values()) {
       if (!consultant.factionId) continue;
-      const roi = consultant.rois.length ? consultant.rois.reduce((a, b) => a + b, 0) / consultant.rois.length : 0;
+      const roi = consultant.roiCount ? consultant.roiSum / consultant.roiCount : 0;
       rows.push({ name: consultant.name, factionId: consultant.factionId, tier: consultant.tier, roi, growth: consultant.growth, you: consultant.id === you?.id });
     }
     return rows.sort((a, b) => this.score(b.roi, b.growth) - this.score(a.roi, a.growth));
@@ -627,5 +645,10 @@ export class CoachedWorld {
     };
   }
 
+  /** The graphs still retained, oldest first. `graphStats` says how many older ones were dropped. */
   graphs(): readonly Published[] { return this.published; }
+  graphStats(): { readonly retained: number; readonly dropped: number } {
+    return { retained: this.published.length, dropped: this.droppedGraphs };
+  }
+  get consultantCount(): number { return this.consultants.size; }
 }

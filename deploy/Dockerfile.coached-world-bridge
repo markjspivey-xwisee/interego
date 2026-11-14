@@ -1,0 +1,149 @@
+# coached-world (cpw:) bridge: one shared world where guests coach autonomous agents.
+#
+# Serves the page at /, the world at /world, its graphs at /graphs, /affordances, /profile and
+# /health. Plain node:http, no framework. Guests are provisional-play owners.
+#
+# ★ THE WORLD IS THIS PROCESS. Territories, consultants, sessions, the statement log and the
+# in-process guest door all live in memory. A restart or a redeploy starts a NEW world, and two
+# containers would be two worlds. So the service is a singleton, and nothing here needs a volume.
+#
+# ★ NOT YET A RAILWAY SERVICE. This image is in deploy/images.json so it can be built; there is
+# no row in tools/railway-services.mjs, on purpose. That table is diffed against the live API
+# (tools/railway-pins.mjs), and a row for a service Railway does not have reads MISSING and turns
+# the fleet audit red. Create the service first, then add, beside pev-bridge:
+#   'coached-world-bridge': { repo: 'interego-coached-world-bridge', health: '/health',
+#                             singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
+# and set on the service what that row then checks: numReplicas 1 (explicitly), overlapSeconds 0,
+# drainingSeconds unset.
+#
+# Built from Dockerfile.pev-bridge (one stage; see Dockerfile.wsp-bridge on why one): every
+# workspace package.json before `npm ci` so that layer caches, then sources, then the core and
+# leaf package builds.
+ARG NODE_BASE=node:22-slim
+FROM ${NODE_BASE}
+
+ENV ONNXRUNTIME_NODE_INSTALL_CUDA=skip
+
+WORKDIR /app
+
+# Workspace manifests: npm ci needs every declared workspace's package.json before it can resolve
+# the tree. This list mirrors the root package.json `workspaces` field, as Dockerfile.pev-bridge's
+# does. The coached-world bridge is not a workspace (it declares no dependencies of its own), so
+# it adds no line here and obliges no other image to grow one.
+COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./
+COPY packages/abac/package.json ./packages/abac/
+COPY packages/agent-interop/package.json ./packages/agent-interop/
+COPY packages/compliance/package.json ./packages/compliance/
+COPY packages/connectors/package.json ./packages/connectors/
+COPY packages/constitutional/package.json ./packages/constitutional/
+COPY packages/core/package.json ./packages/core/
+COPY packages/deployment-config/package.json ./packages/deployment-config/
+COPY packages/extractors/package.json ./packages/extractors/
+COPY packages/local-node/package.json ./packages/local-node/
+COPY packages/mdvault/package.json ./packages/mdvault/
+COPY packages/ops/package.json ./packages/ops/
+COPY packages/p2p/package.json ./packages/p2p/
+COPY packages/passport/package.json ./packages/passport/
+COPY packages/pgsl/package.json ./packages/pgsl/
+COPY packages/pgsl-store/package.json ./packages/pgsl-store/
+COPY packages/pod-federation/package.json ./packages/pod-federation/
+COPY packages/privacy/package.json ./packages/privacy/
+COPY packages/registry/package.json ./packages/registry/
+COPY packages/security-txt/package.json ./packages/security-txt/
+COPY packages/skills/package.json ./packages/skills/
+COPY packages/solid/package.json ./packages/solid/
+COPY packages/transactions/package.json ./packages/transactions/
+COPY packages/workspace-client/package.json ./packages/workspace-client/
+COPY mcp-server/package.json ./mcp-server/
+COPY deploy/mcp-relay/package.json ./deploy/mcp-relay/
+COPY deploy/identity/package.json ./deploy/identity/
+COPY deploy/validator/package.json ./deploy/validator/
+COPY applications/foxxi-content-intelligence/bridge/package.json ./applications/foxxi-content-intelligence/bridge/
+COPY applications/agentic-performance-practice/bridge/package.json ./applications/agentic-performance-practice/bridge/
+COPY applications/learner-performer-companion/bridge/package.json ./applications/learner-performer-companion/bridge/
+COPY applications/agent-collective/bridge/package.json ./applications/agent-collective/bridge/
+COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
+COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
+COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
+COPY applications/jev-harness/bridge/package.json ./applications/jev-harness/bridge/
+COPY applications/shared-workspace/desktop/package.json ./applications/shared-workspace/desktop/
+COPY applications/shared-workspace/discord/package.json ./applications/shared-workspace/discord/
+RUN npm ci
+
+# Only what this bridge imports, file by file where it reaches outside its own directory, so a
+# change elsewhere in Foxxi or in identity is not a reason to redeploy the world:
+#   packages/                      the @interego/core substrate (descriptors, Turtle, canonical JSON)
+#   applications/_shared/          affordance-mcp (the /affordances manifest), vertical-bridge/route-errors
+#   applications/coached-world/    the vertical: src/, bridge/, affordances.ts, packs/, public/, ontology/
+#   foxxi play-grant.ts            the relay-signed guest grant (PlayGrantService)
+#   foxxi xapi-profile-supplied.ts the check every statement passes before it is kept
+#   identity provisional-play.ts   the guest proofs and the in-process door, the same class identity serves
+#   identity hosted-terms.ts       imported by provisional-play.ts
+# tests/a-bridge-image-carries-what-it-imports.test.ts follows these imports and fails if one is
+# not copied here.
+COPY packages/ ./packages/
+# The retrieval lexicon @interego/pgsl reads at runtime, as published data (see Dockerfile.wsp-bridge).
+# The package walks up from its own dist/ and finds it at /app/docs/ns.
+COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
+COPY applications/_shared/ ./applications/_shared/
+COPY applications/coached-world/ ./applications/coached-world/
+COPY applications/foxxi-content-intelligence/src/play-grant.ts ./applications/foxxi-content-intelligence/src/play-grant.ts
+COPY applications/foxxi-content-intelligence/src/xapi-profile-supplied.ts ./applications/foxxi-content-intelligence/src/xapi-profile-supplied.ts
+COPY deploy/identity/provisional-play.ts ./deploy/identity/provisional-play.ts
+COPY deploy/identity/hosted-terms.ts ./deploy/identity/hosted-terms.ts
+
+# build-ghcr.yml restores the packages' dist/ into the context and passes PREBUILT=1; a local
+# build without them still builds.
+ARG PREBUILT=0
+RUN if [ "$PREBUILT" = "1" ] && [ -f packages/registry/dist/index.js ]; then echo "prebuilt packages present; skipping the build"; else (npm run build:core && npm run build:leaves); fi
+
+RUN mkdir -p node_modules/@interego \
+  && ln -sfn /app/packages/core node_modules/@interego/core
+
+EXPOSE 6191
+ENV PORT=6191
+ENV NODE_NO_WARNINGS=1
+
+# ★ THE PUBLIC URL. Behind the proxy the process cannot know the address people use, and that
+# address is the guest audience, where a browser bootstraps, the base of every graph IRI and the
+# DID host. Without it the world names itself http://0.0.0.0:6191 and no guest can sign in. Set it
+# on the service (https://${{RAILWAY_PUBLIC_DOMAIN}}, or the custom domain once there is one). It
+# must be an https origin with no path; anything else stops the process at start, saying why.
+# Setting it also tells the server it is behind a proxy, so the request limits count the last
+# X-Forwarded-For entry (the one the proxy wrote) instead of the proxy's own address.
+ENV BRIDGE_DEPLOYMENT_URL=
+
+# Filler consultants settle a mission every four seconds. Set CPW_BOTS=0 on the service to leave
+# the world to the people in it.
+ENV CPW_BOTS=1
+
+# ★ SECRETS AND PER-DEPLOYMENT VALUES: unset here on purpose, because anything baked into an image
+# is published to everyone who can pull it. Set them on the service. All are optional; with none
+# of them the world runs with its in-process guest door, no course gate and no course launch.
+#   CPW_PLAY_SERVICE_PRIVATE_KEY  the service agent's key. With CPW_IDENTITY_URL it moves guests to
+#                                 the real door: grants signed through the relay, sessions checked
+#                                 at identity. The agent must be an entry in identity's
+#                                 PROVISIONAL_PLAY_CLIENTS for this origin, namespace coached-world.
+#   CPW_IDENTITY_URL              identity's origin, e.g. https://identity.interego.xwisee.com
+#   CPW_RELAY_URL                 the relay that signs grants; defaults to the production relay
+#   CPW_PLAY_AUDIENCE             leave unset: the audience is BRIDGE_DEPLOYMENT_URL. A different
+#                                 value stops the process at start.
+#   CPW_LRS_URL                   a Foxxi /xapi/statements endpoint the tier gate reads
+#   CPW_LRS_AUTHORIZATION         the Authorization header value for it
+#   CPW_LRS_ACTOR_HOME            the home page on the course actor's account
+#   CPW_FOXXI_LAUNCH_URL          Foxxi's POST /agent/cmi5/launch
+#   CPW_FOXXI_LAUNCH_KEY          the key Foxxi accepts launches from
+ENV CPW_PLAY_SERVICE_PRIVATE_KEY=
+ENV CPW_IDENTITY_URL=
+ENV CPW_LRS_URL=
+ENV CPW_LRS_AUTHORIZATION=
+ENV CPW_LRS_ACTOR_HOME=
+ENV CPW_FOXXI_LAUNCH_URL=
+ENV CPW_FOXXI_LAUNCH_KEY=
+
+# The commit this image was built from, answered at /health as `build` so a deploy can be
+# VERIFIED rather than assumed: tools/railway-redeploy.mjs polls that field for the sha it shipped.
+ARG GIT_SHA=unset
+ENV INTEREGO_BUILD_SHA=$GIT_SHA
+
+CMD ["npx", "tsx", "applications/coached-world/bridge/server.ts"]

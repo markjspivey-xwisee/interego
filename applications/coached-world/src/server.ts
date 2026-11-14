@@ -18,6 +18,8 @@ import { createLocalDoor, createRelayDoor, type GuestDoor } from './guest-play.j
 import { FoxxiCourseLauncher } from './course-launch.js';
 import { HttpLrs } from './lrs.js';
 import { loadPackFile } from './pack.js';
+import { publicOrigin } from './public-url.js';
+import { RATE_RULES, RateLimiter, clientKey, rateClassFor } from './rate-limit.js';
 import { CoachedWorld } from './world.js';
 import { AFFORDANCES } from '../affordances.js';
 
@@ -30,23 +32,87 @@ const FILES: Record<string, { file: string; type: string }> = {
 };
 
 export interface Running {
+  /** Where this process listens. */
   readonly url: string;
+  /** What the world calls itself: the public URL when one was given, otherwise `url`. */
+  readonly origin: string;
   readonly world: CoachedWorld;
   close(): Promise<void>;
+}
+
+/** What `GET /health` answers. `build` is the field the deploy verifier compares with the commit it shipped. */
+interface Health {
+  readonly build: string;
+  readonly startedAt: string;
+  readonly pack: { readonly id: string; readonly title: string };
 }
 
 export async function start(opts: {
   readonly port?: number; readonly host?: string; readonly packPath?: string;
   readonly bots?: boolean; readonly tick?: boolean; readonly botMs?: number; readonly forceLocal?: boolean;
+  /**
+   * The origin people reach this world at, when it is not the listen address (behind a proxy).
+   * It becomes the guest audience, the bootstrap address, the base of every graph IRI and the
+   * DID host. Unset, all of those are the listen address, as before.
+   */
+  readonly publicUrl?: string;
+  /**
+   * Read the caller's address from the last entry of `X-Forwarded-For`. Defaults to whether a
+   * public URL was given: a process with one is behind a proxy, and one without is not.
+   */
+  readonly trustProxy?: boolean;
+  /** The clock the request limits read. For tests. */
+  readonly now?: () => number;
 } = {}): Promise<Running> {
   const host = opts.host ?? '127.0.0.1';
+  // Checked before anything listens: a public URL that is wrong is a refusal to start.
+  const publicUrl = opts.publicUrl ? publicOrigin(opts.publicUrl) : undefined;
+  const trustProxy = opts.trustProxy ?? publicUrl !== undefined;
+  // With a public URL the guest audience is that URL: it is what the browser's proofs name and
+  // what identity has this application registered under. A different value could not work, so
+  // it is refused here instead of at the first guest.
+  const statedAudience = process.env['CPW_PLAY_AUDIENCE'];
+  if (!opts.forceLocal && publicUrl && statedAudience && statedAudience !== publicUrl) {
+    throw new Error(`CPW_PLAY_AUDIENCE (${statedAudience}) is not the public URL (${publicUrl}). Unset it, or make them the same.`);
+  }
   const pack = loadPackFile(opts.packPath ?? join(dirname(fileURLToPath(import.meta.url)), '../packs/mandate.json'));
   const sessions = new Map<string, string>();
   const challenges = new Map<string, number>();
+  const limiter = new RateLimiter(opts.now);
+  const health: Health = {
+    build: process.env['INTEREGO_BUILD_SHA'] || 'unset',
+    startedAt: new Date().toISOString(),
+    pack: { id: pack.id, title: pack.title },
+  };
   const live: { door?: GuestDoor; world?: CoachedWorld; timer?: ReturnType<typeof setInterval> } = {};
 
   const server = createServer(async (req, res) => {
     try {
+      // Before anything that can throw or read a body, so a refusal carries it too.
+      res.setHeader('Strict-Transport-Security', 'max-age=31536000');
+      res.setHeader('X-Content-Type-Options', 'nosniff');
+      const pathname = new URL(req.url ?? '/', 'http://localhost').pathname;
+      // The deploy verifier asks this as soon as the port is bound, so it answers before the
+      // world exists, needs no session, and is not counted against anyone's limit.
+      if (req.method === 'GET' && pathname === '/health') {
+        send(res, 200, {
+          status: live.world ? 'ok' : 'starting', build: health.build, service: 'coached-world-bridge',
+          startedAt: health.startedAt, pack: health.pack, consultants: live.world?.consultantCount ?? 0,
+          door: live.door ? (live.door.local ? 'local' : 'relay') : null,
+        });
+        return;
+      }
+      const limit = rateClassFor(req.method, pathname);
+      if (limit) {
+        const verdict = limiter.take(limit, clientKey(req.headers['x-forwarded-for'], req.socket.remoteAddress, trustProxy), RATE_RULES[limit]);
+        if (!verdict.ok) {
+          res.setHeader('Retry-After', String(verdict.retryAfterSeconds));
+          // The body is not read: the connection is closed after the answer instead.
+          res.setHeader('Connection', 'close');
+          send(res, 429, { error: 'rate-limited', retryAfterSeconds: verdict.retryAfterSeconds });
+          return;
+        }
+      }
       if (!live.door || !live.world) { send(res, 503, { error: 'starting' }); return; }
       await route(req, res, { door: live.door, world: live.world, sessions, challenges, tick: opts.tick === true });
     } catch (error) {
@@ -63,10 +129,11 @@ export async function start(opts: {
   });
   const address = server.address();
   if (!address || typeof address === 'string') throw new Error('no port');
-  const origin = `http://${host}:${address.port}`;
+  const url = `http://${host.includes(':') ? `[${host}]` : host}:${address.port}`;
+  const origin = publicUrl ?? url;
   const relayKey = process.env['CPW_PLAY_SERVICE_PRIVATE_KEY'];
-  const relayAudience = process.env['CPW_PLAY_AUDIENCE'];
   const identityUrl = process.env['CPW_IDENTITY_URL'];
+  const relayAudience = statedAudience || publicUrl;
   live.door = !opts.forceLocal && relayKey && relayAudience && identityUrl
     ? createRelayDoor({ audience: relayAudience, identityUrl, relayUrl: process.env['CPW_RELAY_URL'] ?? 'https://relay.interego.xwisee.com', servicePrivateKey: relayKey })
     : createLocalDoor(origin);
@@ -83,7 +150,7 @@ export async function start(opts: {
     if (ms > 0) live.timer = setInterval(() => { void world.exclusive(() => world.tick()).catch(() => undefined); }, ms);
   }
   return {
-    url: origin, world,
+    url, origin, world,
     close: () => new Promise(resolve => { if (live.timer) clearInterval(live.timer); server.close(() => resolve()); }),
   };
 }
@@ -163,8 +230,13 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
   }
   if (req.method === 'GET' && url.pathname === '/profile') { send(res, 200, ctx.world.profile); return; }
   if (req.method === 'GET' && url.pathname === '/graphs') {
-    const graphs = await ctx.world.exclusive(() => ctx.world.graphs());
-    send(res, 200, { graphs: graphs.map(g => ({ id: g.id, kind: g.kind, version: g.version, turtle: g.turtle, graph: g.graph, canonical: g.canonical, signature: g.signature, supersedes: g.supersedes ?? null })) });
+    // The newest graphs only: older ones are dropped, and the answer says how many. A `supersedes`
+    // may name one of those; it is still that descriptor's IRI.
+    const { graphs, stats } = await ctx.world.exclusive(() => ({ graphs: [...ctx.world.graphs()], stats: ctx.world.graphStats() }));
+    send(res, 200, {
+      retained: stats.retained, dropped: stats.dropped,
+      graphs: graphs.map(g => ({ id: g.id, kind: g.kind, version: g.version, turtle: g.turtle, graph: g.graph, canonical: g.canonical, signature: g.signature, supersedes: g.supersedes ?? null })),
+    });
     return;
   }
   if (req.method === 'GET' && url.pathname === '/affordances') {
