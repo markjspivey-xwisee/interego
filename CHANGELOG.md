@@ -13,7 +13,9 @@ what only it knows (the credential is one it issued; its session is open and was
 launched Normal) and asks a review service for the rest, signing with its own key
 a request that names the registration and the session. It hands back the documents
 the service fixed, or says there is nothing to send yet. The LMS writes none of
-these statements itself.
+these statements itself. A credential speaks only for the session it was issued
+in: one from an earlier session of the registration is refused, and nobody is
+asked about the current session on its word.
 
 Which service to ask is a setting (`FOXXI_REVIEW_STATEMENTS_URL`, `_POD` and
 `_ACTION`, with `FOXXI_BRIDGE_PRIVATE_KEY`); without it the route answers 501. No

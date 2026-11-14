@@ -23,14 +23,16 @@ export interface ReviewedSession {
   readonly registration: string;
   readonly sessionId: string;
   readonly launchMode: 'Normal' | 'Browse' | 'Review';
-  /** True once the session was terminated, abandoned or waived. */
+  /** True once the session was terminated, abandoned or waived, or the registration has a later session. */
   readonly closed: boolean;
+  /** True when the registration has moved on to a later session than the one this credential is for. */
+  readonly superseded: boolean;
 }
 
 export interface ReviewAnswer { readonly status: number; readonly body: unknown }
 
 export interface ReviewedStatementsDeps {
-  /** The open session a cmi5 auth-token was issued for, or null for a token this LMS did not issue. */
+  /** The session a cmi5 auth-token was issued for (never another session of its registration), or null for a token this LMS did not issue. */
   session(token: string): ReviewedSession | null;
   /** Ask the review service. Absent when this deployment has none configured. */
   ask?: (q: { registration: string; sessionId: string }) => Promise<ReviewAnswer>;
@@ -109,6 +111,8 @@ export function attachReviewedStatementsRoute(app: Express, deps: ReviewedStatem
     if (!session) { res.status(401).json({ error: 'cmi5_credential_required', note: 'Send the cmi5 auth-token this LMS issued for the session, as a Bearer credential.' }); return; }
     if (!deps.ask) { res.status(501).json({ error: 'no_review_service', note: 'This LMS is not set up to ask a review service.' }); return; }
     // The LMS answers for what only it knows; anything else is the review service's to decide.
+    // A credential speaks for the session it was issued in. One from an earlier session of the registration is not asked about the current one.
+    if (session.superseded) { res.status(409).json({ error: 'credential_of_an_earlier_session', note: 'This credential was issued for an earlier session of the registration. Use the credential of the session that is open now.' }); return; }
     if (session.closed) { res.status(409).json({ error: 'session_ended', note: 'This session has ended; a statement cannot be sent in it. Launch again to open a new session of the registration.' }); return; }
     if (session.launchMode !== 'Normal') { res.status(409).json({ error: 'not_a_normal_launch', note: 'cmi5 allows passed, failed and completed only in a Normal launch.' }); return; }
     let answer: ReviewAnswer;
@@ -122,7 +126,9 @@ export function attachReviewedStatementsRoute(app: Express, deps: ReviewedStatem
         // False when they were fixed earlier for another session: then they are for comparing with what the LRS holds, not for sending.
         usableInSession: body['usableInSession'] === true,
         ...(typeof body['usableOnlyIn'] === 'string' ? { usableOnlyIn: body['usableOnlyIn'] } : {}),
-        note: 'Send these in this order, in this session, with this credential. If the LRS answers that a statement with one of these ids already exists, read it back and compare: only an equal one is this result recorded.',
+        note: body['usableInSession'] === true
+          ? 'Send these in this order, in this session, with this credential. If the LRS answers that a statement with one of these ids already exists, read it back and compare: only an equal one is this result recorded.'
+          : 'Do not send these. They were fixed for another session of the registration and are here only to compare with what the LRS already holds.',
       });
       return;
     }

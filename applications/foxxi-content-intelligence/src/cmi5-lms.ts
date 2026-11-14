@@ -127,6 +127,8 @@ interface FetchTokenRecord {
   authToken: string;
   tenant: TenantId;
   registration: string;
+  /** The session this launch opened or reopened: the one its auth-token is for. */
+  sessionId: string;
   auId: string;
   expiresAt: number;
   redeemed: boolean;
@@ -139,7 +141,7 @@ const fetchTokens = new Map<string, FetchTokenRecord>();
  * touch. A learner's launches all share their lens tenant, so the tenant alone let one launch's
  * token read another's statements and write `passed` into it (the automated review of #478).
  */
-const authTokenLaunch = new Map<string, { tenant: TenantId; registration: string }>();
+const authTokenLaunch = new Map<string, { tenant: TenantId; registration: string; sessionId: string }>();
 const FETCH_TOKEN_TTL_MS = 30 * 60_000; // a launch must be fetched within 30 min
 
 // ── moveOn orchestration state ──────────────────────────────────────
@@ -439,7 +441,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
   const fetchToken = `ft-${randomUUID()}`;
   const authToken = `cmi5-${tenant === DEFAULT_TENANT ? 'd' : '0'}-${randomUUID()}`;
   fetchTokens.set(fetchToken, {
-    authToken, tenant, registration, auId: req.au.id,
+    authToken, tenant, registration, sessionId, auId: req.au.id,
     expiresAt: Date.now() + FETCH_TOKEN_TTL_MS, redeemed: false,
   });
 
@@ -598,7 +600,7 @@ export function redeemFetchToken(token: string):
     return { ok: false, status: 401, body: { 'error-code': '4', 'error-text': 'fetch token already used (single-use, cmi5 §8)' } };
   }
   rec.redeemed = true;
-  authTokenLaunch.set(rec.authToken, { tenant: rec.tenant, registration: rec.registration });
+  authTokenLaunch.set(rec.authToken, { tenant: rec.tenant, registration: rec.registration, sessionId: rec.sessionId });
   return { ok: true, body: { 'auth-token': rec.authToken } };
 }
 
@@ -617,15 +619,21 @@ export function cmi5BearerRegistration(token: string): string | null {
 }
 
 /**
- * The session a cmi5-issued auth-token belongs to, as this LMS holds it now: the registration the
- * token is bound to, that registration's current session, how it was launched and whether it has
- * ended. Null for a token this LMS did not issue, or a registration with no session kept.
+ * The session a cmi5-issued auth-token was issued for, as this LMS holds it now: the registration
+ * and the session the token is bound to, how the registration was launched, and whether that
+ * session is still the one to act in. A token is for one session. Once the registration has moved
+ * on to a later session, an earlier session's token is `superseded`: its own session is over, and
+ * it says nothing about the later one. Null for a token this LMS did not issue.
  */
-export function cmi5BearerSession(token: string): { registration: string; sessionId: string; launchMode: Cmi5LaunchMode; closed: boolean } | null {
+export function cmi5BearerSession(token: string): { registration: string; sessionId: string; launchMode: Cmi5LaunchMode; closed: boolean; superseded: boolean } | null {
   const bound = authTokenLaunch.get(token);
   const launch = bound ? launches.get(bound.registration) : undefined;
   if (!bound || !launch || launch.tenant !== bound.tenant || !launch.sessionId) return null;
-  return { registration: launch.registration, sessionId: launch.sessionId, launchMode: launch.launchMode ?? 'Normal', closed: launch.sessionClosed !== undefined };
+  const superseded = launch.sessionId !== bound.sessionId;
+  return {
+    registration: launch.registration, sessionId: bound.sessionId, launchMode: launch.launchMode ?? 'Normal',
+    closed: superseded || launch.sessionClosed !== undefined, superseded,
+  };
 }
 
 // ── moveOn orchestration — closing the cmi5 loop ─────────────────────

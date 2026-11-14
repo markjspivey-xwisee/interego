@@ -105,7 +105,7 @@ describe('GET /cmi5/reviewed', () => {
   it('asks the review service as itself, for the registration and session the credential belongs to', async () => {
     const first = open();
     const session = cmi5BearerSession(first.token)!;
-    expect(session).toMatchObject({ registration: first.launch.registration, launchMode: 'Normal', closed: false });
+    expect(session).toMatchObject({ registration: first.launch.registration, launchMode: 'Normal', closed: false, superseded: false });
 
     // Not reviewed yet: the unit is told it has nothing to send, with the service's reason and none of its other words.
     const waiting = await get(first.token);
@@ -137,7 +137,11 @@ describe('GET /cmi5/reviewed', () => {
     expect(r.body).toMatchObject({ kind: 'cmi5-reviewed-statements', registration: first.launch.registration, statements, usableInSession: true });
     expect(r.body['forUnit']).toBeUndefined();
     service.answer = () => ({ status: 200, body: { statements, usableInSession: false, usableOnlyIn: 'an-earlier-session' } });
-    expect((await get(first.token)).body).toMatchObject({ usableInSession: false, usableOnlyIn: 'an-earlier-session' });
+    const copy = (await get(first.token)).body;
+    expect(copy).toMatchObject({ usableInSession: false, usableOnlyIn: 'an-earlier-session' });
+    // A copy for comparing is never worded as something to send.
+    expect(String(copy['note'])).toMatch(/^Do not send these/);
+    expect(String(r.body['note'])).toMatch(/^Send these/);
     // A refusal that arrives as 200, or an answer with no statements, hands out nothing.
     service.answer = () => ({ status: 200, body: { kind: 'refusal', statements } });
     expect((await get(first.token)).status).toBe(502);
@@ -159,6 +163,18 @@ describe('GET /cmi5/reviewed', () => {
     await get(second.token);
     const payload = JSON.parse(service.seen[seen]!.body['_signed_payload']!) as { registration: string; sessionId: string };
     expect([payload.registration, payload.sessionId]).toEqual([first.launch.registration, session.sessionId]);
+    // The first session's credential is for the first session. It is not asked about the second, and nobody is asked.
+    const old = cmi5BearerSession(first.token)!;
+    expect([old.superseded, old.closed]).toEqual([true, true]);
+    expect(old.sessionId).not.toBe(session.sessionId);
+    const asked = service.seen.length;
+    const stale = await get(first.token);
+    expect([stale.status, stale.body['error']]).toEqual([409, 'credential_of_an_earlier_session']);
+    expect(service.seen.length).toBe(asked);
+    // Reopening a session that is still open gives a second credential for the same session; both speak for it.
+    const reopened = open('Normal', { registration: second.launch.registration, sessionId: session.sessionId } as never);
+    expect(cmi5BearerSession(reopened.token)).toMatchObject({ sessionId: session.sessionId, superseded: false, closed: false });
+    expect(cmi5BearerSession(second.token)).toMatchObject({ sessionId: session.sessionId, superseded: false, closed: false });
   });
 
   it('signs what it says it signs', async () => {
