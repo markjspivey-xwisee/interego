@@ -57,6 +57,28 @@ export interface ReviewServiceSettings {
 const ANSWER_MAX_BYTES = 1_000_000;
 
 /**
+ * The text of an answer of at most `max` bytes, or null for a longer one. The count is of bytes as
+ * they arrive, not of the decoded string, and the read stops at the first chunk that passes the
+ * limit: the rest is cancelled, not buffered. An answer that declares a longer length is not read.
+ */
+async function textWithin(res: globalThis.Response, max: number): Promise<string | null> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) { await res.body?.cancel().catch(() => undefined); return null; }
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let seen = 0;
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    seen += value.byteLength;
+    if (seen > max) { await reader.cancel().catch(() => undefined); return null; }
+    text += decoder.decode(value, { stream: true });
+  }
+}
+
+/**
  * The request the LMS signs: a signed-request envelope (`_signed_payload`, `_signature`: EIP-191
  * over `sha256:` and the hex sha256 of the exact payload JSON), by the LMS's own key.
  */
@@ -82,8 +104,8 @@ export function reviewServiceAsk(s: ReviewServiceSettings): NonNullable<Reviewed
       method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body),
       redirect: 'error', signal: AbortSignal.timeout(s.timeoutMs ?? 20_000),
     });
-    const text = await res.text();
-    if (text.length > ANSWER_MAX_BYTES) return { status: 502, body: null };
+    const text = await textWithin(res, ANSWER_MAX_BYTES);
+    if (text === null) return { status: 502, body: null };
     let parsed: unknown = null;
     try { parsed = JSON.parse(text); } catch { /* answered below as unusable */ }
     return { status: res.status, body: parsed };
