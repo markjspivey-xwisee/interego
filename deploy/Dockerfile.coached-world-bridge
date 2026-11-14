@@ -7,14 +7,9 @@
 # in-process guest door all live in memory. A restart or a redeploy starts a NEW world, and two
 # containers would be two worlds. So the service is a singleton, and nothing here needs a volume.
 #
-# ★ NOT YET A RAILWAY SERVICE. This image is in deploy/images.json so it can be built; there is
-# no row in tools/railway-services.mjs, on purpose. That table is diffed against the live API
-# (tools/railway-pins.mjs), and a row for a service Railway does not have reads MISSING and turns
-# the fleet audit red. Create the service first, then add, beside pev-bridge:
-#   'coached-world-bridge': { repo: 'interego-coached-world-bridge', health: '/health',
-#                             singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
-# and set on the service what that row then checks: numReplicas 1 (explicitly), overlapSeconds 0,
-# drainingSeconds unset.
+# The Railway service is `coached-world-bridge` (tools/railway-services.mjs), created on
+# 2026-11-14 after this image existed. Its row declares it a singleton, and the fleet audit holds
+# the service to that: numReplicas 1 (explicitly), overlapSeconds 0, drainingSeconds unset.
 #
 # Built from Dockerfile.pev-bridge (one stage; see Dockerfile.wsp-bridge on why one): every
 # workspace package.json before `npm ci` so that layer caches, then sources, then the core and

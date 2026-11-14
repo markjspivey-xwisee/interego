@@ -11,6 +11,51 @@ A guest ("provisional owner") has been one per application: the key lives in the
 - **Applications.** The coached world can offer the door beside its own (`CPW_GENERAL_GUEST=1`). Foxxi's bridge can sign door grants, but its learner workbench does not use the door yet, because it re-checks a guest with identity while the session lives and an application cannot re-check a general guest.
 
 A general guest is linkable across applications by design: each one learns the same DID, pod and key thumbprint, and which other applications the guest has used. The rollout order (gate and relay, then identity, then the setting) and what each older service does with the new token are in `deploy/identity/PROVISIONAL-PLAY.md`, "General guest".
+## 2026-11-14 — Coached world: the service is in the deploy table
+
+The coached world runs at `https://coached-world-bridge-production.up.railway.app`, as the
+Railway service `coached-world-bridge`, created from the image the last change added. It now has
+its row in `tools/railway-services.mjs`, after the service existed, as the other bridges' rows
+were added: a singleton with no deploy overlap, because the world is held in process and a second
+container would be a second world. With the row, a merge that changes the application is built
+and deployed by the pipeline, and the fleet audit checks the service against what the row
+declares. The service has one setting, its public URL; guests are local to it until identity is
+given an entry for its origin.
+
+## 2026-11-14 — Practice Evidence: a role-play player whose result waits for its review
+
+The voice role-play player existed only as a package hosted on a bridge, with
+no source in this repository. It wrote one `scored` per criterion and its own
+`completed`, and no statement for what was said. So a practice call could not be
+taken as an attempt: there was no conversation for a reviewer to read, and the
+unit had already declared its result.
+
+The player is now in `docs/applications/practice-evidence/roleplay-player/`,
+served with the documentation, and changed:
+
+- it writes one statement per exchange: the other person's line on the
+  activity, the learner's answer in `result.response`;
+- each score is keyed by the rubric criterion's id, and every statement names
+  the scenario version it was scored against;
+- where the scenario sets `resultAfterReview`, it sends no `completed`, labels
+  its own score as unreviewed, and tells the learner the course is not complete;
+- launched again in the same registration, it asks the LMS for the reviewed
+  statements (`GET /cmi5/reviewed`) and sends them.
+
+Three things a review of the page found, fixed before it merged. Sending the
+reviewed statements stops at the first one the LRS does not take, keeps the
+session open and offers to try again, so a `completed` is never stored without
+the `passed` or `failed` before it. An id the LRS already holds counts as this
+result only when the stored statement says everything the issued one says. And
+a practice starts only when the LMS answers that nothing is under review: when
+it cannot be asked, the page says so and starts nothing.
+
+Checked by hand in a browser against a loopback stand-in for the LMS: a practice
+wrote `initialized`, a consent, 5 exchanges, 5 scores and `terminated`, and this
+application's own reader took those statements as one conversation; a second
+launch sent `passed` and `completed`. Not yet run against a deployed LMS. The
+test added here checks the scenario file and the page's text, not the page
+running.
 
 ## 2026-11-14 — Coached world: an image, a public URL, request limits and a ceiling on what it keeps
 
