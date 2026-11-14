@@ -20,6 +20,8 @@ export interface PlayProviderOptions {
   hostedTerms?: HostedTermsPolicy;
   /** PROVISIONAL_GENERAL_GUEST=1: the general guest door (provisional-general-guest.ts). Off by default. */
   generalGuest?: boolean;
+  /** GENERAL_GUEST_DOOR_ORIGIN, validated (provisional-general-guest-routes.ts parseDoorOrigin): the door page's own origin. */
+  doorOrigin?: string;
   /** Issues a general guest's token with the marker given. Required while the door is on. */
   issueGuestToken?(claims: PlayClaims, grant: GeneralTokenGrant): Promise<{ token: string; expiresAt: string }>;
   fetcher?: typeof fetch;
@@ -129,6 +131,7 @@ export function createProvisionalPlayProvider(options: PlayProviderOptions): Pro
   play.general = new GeneralGuest(play, {
     issuer: options.issuer, publicPodBase: options.publicPodBase, signingKey: options.signingKey, clients,
     enabled: generalGuest, hostedTerms: options.hostedTerms, verifyGrantSignature,
+    ...(options.doorOrigin ? { doorOrigin: options.doorOrigin } : {}),
     provision: (claims, attestation, maxPods, receipt, acceptance, code) => provision(claims, attestation, maxPods, receipt, acceptance, code),
     update: (userId, change) => options.withOwnerLock(userId, () => updatePlayAnchorDocument({ read, write, committed: options.committed }, userId, change)),
     issueToken: async (claims, grant) => {

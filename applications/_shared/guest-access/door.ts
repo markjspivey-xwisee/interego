@@ -7,7 +7,8 @@
  * browser to (a top-level navigation; the grant rides in the fragment). `finish()` takes what the
  * browser brought back to the registered return path, exchanges the code with identity, and
  * answers the guest only if identity's answer is this application's, well formed, and permitted by
- * the application's policies over the guest's attributes (default-deny).
+ * the application's policies over the subject's attributes, decided by `@interego/abac/portable`
+ * (default-deny).
  *
  * A visit is bound to the browser that started it by `binding`, a random value the caller keeps in
  * an HttpOnly cookie and hands back to `finish()`: a return address carrying someone else's code
@@ -17,7 +18,7 @@
  * its own origin, and how its service agent signs.
  */
 import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
-import { GUEST_ACTIONS, decide, guestAttributeGraph, guestPolicies, type GuestFacts, type GuestPolicySet } from './guest-access.mjs';
+import { ACTIONS, decide, provisionalSubjectPolicies, subjectAttributeGraph, type PolicySet, type SubjectFacts } from '@interego/abac/portable';
 
 export const GENERAL_GUEST_PURPOSE = 'interego-general-guest-v1';
 const VISIT_MS = 10 * 60 * 1000;
@@ -29,12 +30,14 @@ export type DoorFetch = (url: string, init: { method: 'POST'; headers: Record<st
 export interface GeneralGuestDoorOptions {
   /** Identity's origin. */
   readonly identityUrl: string;
+  /** The door page's own origin, where identity serves it from a dedicated one (its metadata's `doorUrl`). Default: identity's. */
+  readonly doorOrigin?: string;
   /** This application's origin, as identity's PROVISIONAL_PLAY_CLIENTS names it. */
   readonly audience: string;
   /** Has the application's service agent sign the grant (the relay's sign_request). */
   signGrant(request: { purpose: string; audience: string; state: string; codeChallenge: string; expiresAt: number }): Promise<DoorGrant>;
   /** What a guest must satisfy to be let in. Default: the standard set, a live provisional guest this application admitted may use it. */
-  readonly policies?: GuestPolicySet;
+  readonly policies?: PolicySet;
   readonly fetch?: DoorFetch;
   readonly now?: () => number;
   /** Most visits in progress at once. Default 1024. */
@@ -51,7 +54,7 @@ export interface GeneralGuestSession {
   readonly namespace: string;
   /** Unix milliseconds. */
   readonly guestExpiresAt: number;
-  readonly attributes: GuestFacts;
+  readonly attributes: SubjectFacts;
   /** Identity's token for this guest in this application. Kept by the backend; never sent to a browser by this module. */
   readonly token: string;
   readonly tokenExpiresAt: string;
@@ -76,17 +79,19 @@ const same = (a: string, b: string): boolean => {
 
 export class GeneralGuestDoor {
   readonly identityUrl: string;
+  readonly doorOrigin: string;
   readonly audience: string;
   private readonly visits = new Map<string, { verifier: string; binding: string; expiresAt: number }>();
-  private readonly policies: GuestPolicySet;
+  private readonly policies: PolicySet;
   private readonly now: () => number;
   private readonly fetch: DoorFetch;
   private readonly maxVisits: number;
 
   constructor(private readonly options: GeneralGuestDoorOptions) {
     this.identityUrl = origin(options.identityUrl, 'The identity URL');
+    this.doorOrigin = options.doorOrigin ? origin(options.doorOrigin, 'The door origin') : this.identityUrl;
     this.audience = origin(options.audience, 'The application audience');
-    this.policies = options.policies ?? guestPolicies({ application: this.audience, provisionalMay: [GUEST_ACTIONS.useApplication] });
+    this.policies = options.policies ?? provisionalSubjectPolicies({ service: this.audience, provisionalMay: [ACTIONS.useService] });
     this.now = options.now ?? Date.now;
     this.fetch = options.fetch ?? ((url, init) => fetch(url, init));
     this.maxVisits = options.maxVisits ?? 1024;
@@ -117,7 +122,7 @@ export class GeneralGuestDoor {
     }
     this.visits.set(state, { verifier, binding, expiresAt: now + VISIT_MS });
     const fragment = Buffer.from(JSON.stringify({ _signed_payload: grant._signed_payload, _signature: grant._signature })).toString('base64url');
-    return { url: `${this.identityUrl}/guest/door#grant=${fragment}`, state, binding };
+    return { url: `${this.doorOrigin}/guest/door#grant=${fragment}`, state, binding };
   }
 
   /**
@@ -145,7 +150,7 @@ export class GeneralGuestDoor {
       body = parsed && typeof parsed === 'object' && !Array.isArray(parsed) ? parsed as Record<string, unknown> : {};
     } catch { throw new GuestDoorError(503, 'guest_door_unavailable'); }
     if (response.status >= 500) throw new GuestDoorError(503, 'guest_door_unavailable');
-    const facts = body['guestAttributes'] as GuestFacts | undefined;
+    const facts = body['subjectAttributes'] as SubjectFacts | undefined;
     const expires = Date.parse(String(body['guestExpiresAt'] ?? ''));
     if (!response.ok || body['valid'] !== true || body['provisional'] !== true || body['general'] !== true
       || body['issuer'] !== this.identityUrl || body['audience'] !== this.audience
@@ -154,12 +159,12 @@ export class GeneralGuestDoor {
       || !text(body['webId'], 2048) || !text(body['podUrl'], 2048) || !text(body['authenticatedAgentDid'], 2048)
       || !text(body['namespace'], 32) || !text(body['token'], 4096) || !text(body['tokenExpiresAt'], 64)
       || !Number.isFinite(expires) || expires <= this.now()
-      || !facts || typeof facts !== 'object' || facts.subject !== body['ownerDid'] || facts.expiresAt * 1000 !== expires) {
+      || !facts || typeof facts !== 'object' || facts.subject !== body['ownerDid'] || Number(facts.standingUntil) * 1000 !== expires) {
       throw new GuestDoorError(401, 'guest_door_exchange_refused');
     }
     // The application's own decision over what identity stated, default-deny. A malformed answer builds no graph.
     let allowed = false;
-    try { allowed = decide(GUEST_ACTIONS.useApplication, this.policies, guestAttributeGraph(facts, this.now())).allowed; } catch { allowed = false; }
+    try { allowed = decide(ACTIONS.useService, this.policies, subjectAttributeGraph(facts, this.now())).allowed; } catch { allowed = false; }
     if (!allowed) throw new GuestDoorError(403, 'guest_access_denied');
     return { userId: body['userId'], ownerDid: body['ownerDid'], webId: body['webId'], podUrl: body['podUrl'],
       agentDid: body['authenticatedAgentDid'], namespace: body['namespace'], guestExpiresAt: expires, attributes: facts,

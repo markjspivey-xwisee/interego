@@ -78,8 +78,8 @@ import { createRecordWatchers } from './record-watch.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
-import { guestAttributes, type GeneralTokenGrant, type GuestAttributes } from './provisional-general-guest.js';
-import { mountGeneralGuest } from './provisional-general-guest-routes.js';
+import { guestApplications, subjectAttributes, type GeneralTokenGrant, type SubjectAttributes } from './provisional-general-guest.js';
+import { doorHostGuard, mountGeneralGuest, parseDoorOrigin } from './provisional-general-guest-routes.js';
 import { advertisesNativeDelete, playGameDataResidue, purgeProvisionalPlayPod, type PlayGameDataResidue } from './provisional-play-cleanup.js';
 import { isAdmissionLedger, readAdmissionLedger } from './provisional-play-admission.js';
 import { hostedBetaNotice, hostedPrivacyUrl, hostedTermsPolicy, readTermsAcceptance, type TermsAcceptance } from './hosted-terms.js';
@@ -2645,7 +2645,7 @@ const SIGNED_OUT_DURING_ADD = 'Invalid bearer token: Token revoked (signed out e
  * `epochOnPod`, on a valid Play guest token: the session epoch of the owner's record as read from
  * the pod for this check (POST /tokens issues the renewal at it).
  */
-async function verifyToken(token: string, options: { generalGuest?: boolean } = {}): Promise<{ valid: boolean; record?: TokenRecord; reason?: string; unreadable?: boolean; epochOnPod?: number; guestAttributes?: GuestAttributes }> {
+async function verifyToken(token: string, options: { generalGuest?: boolean } = {}): Promise<{ valid: boolean; record?: TokenRecord; reason?: string; unreadable?: boolean; epochOnPod?: number; subjectAttributes?: SubjectAttributes }> {
   const parsed = parseAndVerifySignature(token);
   if (parsed.valid !== true) {
     return { valid: false, reason: (parsed as { valid: false; reason: string }).reason };
@@ -2669,7 +2669,7 @@ async function verifyToken(token: string, options: { generalGuest?: boolean } = 
   // A Play guest token's session epoch is checked against the owner's record as read here from the
   // pod, never against this server's copy (below): see the end of this branch.
   let epochOnPod: number | undefined;
-  let guestFacts: GuestAttributes | undefined;
+  let guestFacts: SubjectAttributes | undefined;
   if (payload.provisionalPlay) {
     try {
       const body = await readPodJson(podFetch, podAuthMethodsUrl(payload.userId));
@@ -2706,14 +2706,15 @@ async function verifyToken(token: string, options: { generalGuest?: boolean } = 
           || owner.proofKeyThumbprint !== guest.proofKeyThumbprint || owner.expiresAt !== guest.expiresAt) {
           return { valid: false, reason: 'Provisional owner binding mismatch' };
         }
-        const facts = guestAttributes(owner, methods as unknown as import('./provisional-play-store.js').PlayAnchorDocument);
+        const record = methods as unknown as import('./provisional-play-store.js').PlayAnchorDocument;
+        const facts = subjectAttributes(owner, record, guest.application);
         if (guest.door === true) {
           if (guest.application !== undefined || guest.namespace !== undefined) return { valid: false, reason: 'Provisional owner binding mismatch' };
         } else {
           // The application is one that opted in, that this guest was admitted to or has used, and
           // whose namespace now is the one the token carries.
           if (typeof guest.application !== 'string' || !general.client(guest.application)
-            || !facts.admittedBy.includes(guest.application)
+            || !guestApplications(record).some(row => row.audience === guest.application)
             || general.client(guest.application)!.namespace !== guest.namespace) return { valid: false, reason: 'Provisional owner binding mismatch' };
           if (options.generalGuest !== true) return { valid: false, reason: 'General guest application token: introspection only' };
         }
@@ -2794,7 +2795,7 @@ async function verifyToken(token: string, options: { generalGuest?: boolean } = 
     expiresAt: payload.expiresAt,
     ...(payload.provisionalPlay ? { provisionalPlay: payload.provisionalPlay } : {}),
   };
-  return { valid: true, record, ...(epochOnPod !== undefined ? { epochOnPod } : {}), ...(guestFacts ? { guestAttributes: guestFacts } : {}) };
+  return { valid: true, record, ...(epochOnPod !== undefined ? { epochOnPod } : {}), ...(guestFacts ? { subjectAttributes: guestFacts } : {}) };
 }
 
 // ── DID Document Builder ────────────────────────────────────
@@ -3005,6 +3006,12 @@ app.use(corsMiddleware({
   allowMethods: 'GET, POST, OPTIONS',
   allowHeaders: 'Accept, Content-Type, Authorization',
 }));
+
+// The general guest door's dedicated origin, where one is configured (PROVISIONAL-PLAY.md, "General
+// guest"): on that host this server answers the door's own paths and nothing else. Unset, no
+// request is touched.
+const GENERAL_GUEST_DOOR_ORIGIN = parseDoorOrigin(process.env['GENERAL_GUEST_DOOR_ORIGIN'], BASE_URL);
+if (GENERAL_GUEST_DOOR_ORIGIN) app.use(doorHostGuard(GENERAL_GUEST_DOOR_ORIGIN));
 
 app.get('/.well-known/hosted-interego-terms', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -5277,6 +5284,7 @@ const provisionalPlay = createProvisionalPlayProvider({
   hostedTerms: hostedTerms ?? undefined,
   // The general guest door (PROVISIONAL-PLAY.md, "General guest"). Off unless set to exactly 1.
   generalGuest: process.env['PROVISIONAL_GENERAL_GUEST'] === '1',
+  ...(GENERAL_GUEST_DOOR_ORIGIN ? { doorOrigin: GENERAL_GUEST_DOOR_ORIGIN } : {}),
   issueGuestToken: async (claims, grant) => {
     const user = identities.get(claims.userId);
     if (!user || user.type !== 'user') throw new Error('Provisional owner unavailable');
@@ -5309,7 +5317,7 @@ if (mountGeneralGuest(app, provisionalPlay, {
   door: rateLimit('general-guest-door', { windowMs: 60 * 60 * 1000, max: 20 }),
   claim: rateLimit('general-guest-claim', { windowMs: 60 * 60 * 1000, max: 10 }),
   exchange: rateLimit('general-guest-exchange', { windowMs: 60 * 1000, max: 120 }),
-}, log)) log('General guest door: on');
+}, log)) log(`General guest door: on${GENERAL_GUEST_DOOR_ORIGIN ? ` at ${GENERAL_GUEST_DOOR_ORIGIN}` : ' on this origin (set GENERAL_GUEST_DOOR_ORIGIN in production)'}`);
 
 // ── Token response helper (shared across auth methods) ──────
 /**
@@ -5575,8 +5583,9 @@ app.post('/tokens/verify', async (req, res) => {
       webId: `${BASE_URL.replace(/\/$/, '')}/users/${result.record!.userId}/profile#me`,
       podUrl: `${process.env['CSS_PUBLIC_URL'] ?? CSS_URL}${result.record!.userId}/`,
       ...(result.record!.provisionalPlay ? { provisionalPlay: result.record!.provisionalPlay } : {}),
-      // A general guest's attributes, read from its record on the pod by this check (never from the token).
-      ...(result.guestAttributes ? { guestAttributes: result.guestAttributes } : {}),
+      // What identity states about the subject (a general guest's, so far), read from its record on the
+      // pod by this check, never from the token: the facts an ABAC decision point builds its graph from.
+      ...(result.subjectAttributes ? { subjectAttributes: result.subjectAttributes } : {}),
     });
   } else {
     res.json({ valid: false, reason: result.reason });

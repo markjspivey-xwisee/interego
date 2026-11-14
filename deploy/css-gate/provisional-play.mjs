@@ -1,5 +1,5 @@
 import { createHash } from 'node:crypto';
-import { GUEST_ACTIONS, decide, guestAttributeGraph, guestPolicies } from './guest-access.mjs';
+import { ACTIONS, decide, provisionalSubjectPolicies, subjectAttributeGraph } from './abac-portable.mjs';
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const REVISION = /^sha256:[a-f0-9]{64}$/;
@@ -82,7 +82,7 @@ const ORIGIN = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/;
  * A general guest's credential: one provisional owner per browser key across applications (identity's
  * provisional-general-guest.ts). Its id has its own prefix and its marker names the application the
  * token is for (`application`), or is the door's own (`door`, which may write nothing here). The
- * guest's attributes are identity's answer beside the marker (`data.guestAttributes`), kept as they
+ * subject's attributes are identity's answer beside the marker (`data.subjectAttributes`), kept as they
  * came: what the guest may write is decided from them by policy (generalGuestMayWrite), not here.
  * Anything malformed refuses the credential; it never becomes ordinary ownership or a
  * per-application guest.
@@ -105,26 +105,27 @@ function verifiedGeneralGuest(data, marker, now) {
   return Object.freeze({ general: true, ...(door ? { door: true } : { application: marker.application }),
     audience: GENERAL_GUEST_BUDGET_AUDIENCE, proofKeyThumbprint: marker.proofKeyThumbprint,
     expiresAt: marker.expiresAt, userId: data.userId, ownerDid: data.ownerDid,
-    namespace: marker.namespace ?? DEFAULT_PLAY_NAMESPACE, guestAttributes: data.guestAttributes });
+    namespace: marker.namespace ?? DEFAULT_PLAY_NAMESPACE, subjectAttributes: data.subjectAttributes });
 }
 
 /**
  * Whether a general guest may write its application's checkpoints, decided by policy from the
- * attributes identity stated: the standard policy set of the token's application (a provisional
- * guest that application admitted, whose deadline has not passed, may write checkpoints), default
- * deny. The attributes must be this guest's and this token's (same owner, key and deadline), or
+ * attributes identity stated about the subject, with the substrate's own evaluator
+ * (abac-portable.mjs, a byte-identical copy of packages/abac/portable/abac-portable.mjs): the
+ * standard policy set for provisional subjects at the token's application (a provisional subject
+ * that application admitted, whose standing has not ended, may publish), default deny. The attributes must be this guest's and this token's (same owner, key and deadline), or
  * nothing is decided from them. Returns the decision; `allowed` is false for anything else.
  */
 export function generalGuestMayWrite(claims, now = Date.now()) {
   const refused = reason => ({ allowed: false, verdict: 'Indeterminate', reason, matchedPolicies: [] });
   if (!claims || claims.general !== true || claims.door === true || typeof claims.application !== 'string') return refused('default-deny: not an application\'s guest credential');
-  const facts = claims.guestAttributes;
+  const facts = claims.subjectAttributes;
   if (!facts || facts.subject !== claims.ownerDid || facts.proofKeyThumbprint !== claims.proofKeyThumbprint
-    || facts.expiresAt !== claims.expiresAt) return refused('default-deny: the attributes are not this credential\'s');
+    || facts.standingUntil !== claims.expiresAt) return refused('default-deny: the attributes are not this credential\'s');
   try {
-    return decide(GUEST_ACTIONS.writeCheckpoint,
-      guestPolicies({ application: claims.application, provisionalMay: [GUEST_ACTIONS.writeCheckpoint] }),
-      guestAttributeGraph(facts, now));
+    return decide(ACTIONS.publish,
+      provisionalSubjectPolicies({ service: claims.application, provisionalMay: [ACTIONS.publish] }),
+      subjectAttributeGraph(facts, now));
   } catch { return refused('default-deny: the attributes are malformed'); }
 }
 

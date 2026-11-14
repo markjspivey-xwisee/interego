@@ -137,6 +137,24 @@ abac:cacheValidUntil a owl:DatatypeProperty ;
     rdfs:domain abac:DecisionCache ;
     rdfs:range xsd:dateTime .
 
+# ── What an evaluator derives, and the coarse action ────────
+
+abac:secondsRemaining a owl:DatatypeProperty ;
+    rdfs:label "seconds remaining" ;
+    rdfs:comment "Derived by the evaluator when it builds a subject's attribute graph: the end of the subject's standing minus the evaluator's clock. Zero or less once the standing has ended. A predicate bounds it with a plain number, which a date literal does not allow." ;
+    rdfs:domain abac:PolicyContext ;
+    rdfs:range xsd:integer .
+
+abac:ageSeconds a owl:DatatypeProperty ;
+    rdfs:label "age in seconds" ;
+    rdfs:comment "Derived by the evaluator: its clock minus the start of the subject's standing, never below zero." ;
+    rdfs:domain abac:PolicyContext ;
+    rdfs:range xsd:integer .
+
+abac:useService a owl:NamedIndividual ;
+    rdfs:label "use service" ;
+    rdfs:comment "The coarsest action a decision point guards: using a service as this subject at all. Finer actions are the service's own IRIs or the L1 affordances (iep:canRead, iep:canPublish, ...)." .
+
 # ── Alignments ──────────────────────────────────────────────
 
 abac:EvaluationRecord rdfs:seeAlso iep:TrustFacet ;

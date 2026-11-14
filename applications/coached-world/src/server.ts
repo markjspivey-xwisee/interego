@@ -144,7 +144,8 @@ export async function start(opts: {
   // "generalGuest": true and the return path /play/general/return. Unset, nothing changes.
   live.door = !opts.forceLocal && relayKey && relayAudience && identityUrl
     ? createRelayDoor({ audience: relayAudience, identityUrl, relayUrl: process.env['CPW_RELAY_URL'] ?? 'https://relay.interego.xwisee.com', servicePrivateKey: relayKey },
-      { generalGuest: process.env['CPW_GENERAL_GUEST'] === '1' })
+      { generalGuest: process.env['CPW_GENERAL_GUEST'] === '1',
+        ...(process.env['CPW_GENERAL_GUEST_DOOR_ORIGIN'] ? { doorOrigin: process.env['CPW_GENERAL_GUEST_DOOR_ORIGIN'] } : {}) })
     : createLocalDoor(origin);
   if (opts.generalDoor) live.door = { ...live.door, general: opts.generalDoor };
   const lrsUrl = process.env['CPW_LRS_URL'];

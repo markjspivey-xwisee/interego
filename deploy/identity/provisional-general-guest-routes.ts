@@ -7,6 +7,14 @@
  *   POST /guest/door/claim    the page's request: open the claim flow for the key's guest
  *   POST /guest/exchange      an application backend's exchange of a door code
  *
+ * A DEDICATED DOOR ORIGIN (GENERAL_GUEST_DOOR_ORIGIN) is what production should set. The same
+ * process then answers two host names. On the door's host it serves the door page and its two
+ * requests and NOTHING else (doorHostGuard: every other path is a 404, the sign-in pages included,
+ * so no page with a looser Content-Security-Policy ever runs on the origin that holds the keys). On
+ * identity's own host the door's three paths do not exist, so identity's origin never holds a
+ * guest key. Identity sets no cookie, so the two origins share none. Unset, the door is served on
+ * identity's own origin, which is for development.
+ *
  * The page is a top-level document only (frame-ancestors 'none'), runs one inline script named by
  * its hash in the Content-Security-Policy, connects nowhere but this origin, and navigates only to
  * the address this server answered, which it checks against the application the grant names.
@@ -14,6 +22,39 @@
 import * as crypto from 'node:crypto';
 import type express from 'express';
 import { PlayError, type ProvisionalPlay } from './provisional-play.js';
+
+/** The door's own paths: the only ones answered on a dedicated door origin's host. */
+const DOOR_PATHS: ReadonlySet<string> = new Set(['/guest/door', '/guest/door/claim']);
+
+/**
+ * GENERAL_GUEST_DOOR_ORIGIN as an origin, or undefined where it is unset. It must be an HTTPS origin
+ * (http only on localhost or 127.0.0.1) with no path, and not identity's own: a value that is
+ * anything else stops the server at start.
+ */
+export function parseDoorOrigin(raw: string | undefined, issuer: string): string | undefined {
+  const value = raw?.trim();
+  if (!value) return undefined;
+  let url: URL;
+  try { url = new URL(value); } catch { throw new Error('GENERAL_GUEST_DOOR_ORIGIN is not a URL'); }
+  const local = url.protocol === 'http:' && ['localhost', '127.0.0.1'].includes(url.hostname);
+  if (url.origin !== value || (url.protocol !== 'https:' && !local)) throw new Error('GENERAL_GUEST_DOOR_ORIGIN must be an HTTPS origin with no path');
+  if (url.origin === new URL(issuer).origin) throw new Error('GENERAL_GUEST_DOOR_ORIGIN must not be the identity server\'s own origin: leave it unset to serve the door there');
+  return url.origin;
+}
+
+/**
+ * On the door origin's host, nothing but the door: every other path answers 404 before any route
+ * sees it. Mounted before every route whenever a door origin is configured, whether or not the door
+ * is on (with it off, that host serves nothing at all).
+ */
+export function doorHostGuard(doorOrigin: string): express.RequestHandler {
+  const host = new URL(doorOrigin).host;
+  return (req, res, next) => {
+    if ((req.get('host') ?? '').toLowerCase() !== host || DOOR_PATHS.has(req.path)) { next(); return; }
+    res.setHeader('Cache-Control', 'no-store');
+    res.status(404).json({ error: 'not_found' });
+  };
+}
 
 const escapeHtml = (value: string) => value.replace(/[&<>"']/g, c => `&#${c.charCodeAt(0)};`);
 
@@ -103,7 +144,8 @@ const DOOR_SCRIPT = `'use strict';
       });
     }).then(function (result) {
       if (!result.ok || typeof result.answer.token !== 'string') throw new Error(result.answer.error || 'the guest could not be found');
-      location.assign('/connect?claim=' + encodeURIComponent(result.answer.token));
+      // The claim itself is identity's own page, on identity's origin (which may not be this one).
+      location.assign(config.issuer + '/connect?claim=' + encodeURIComponent(result.answer.token));
     });
   }
 
@@ -170,9 +212,16 @@ export function mountGeneralGuest(app: express.Express, play: ProvisionalPlay,
   log: (message: string) => void): boolean {
   const general = play.general;
   if (!general?.enabled) return false;
+  // Where the door has an origin of its own, its paths exist on that host alone.
+  const doorHost = new URL(general.doorOrigin).host;
+  const dedicated = general.doorOrigin !== new URL(play.metadata().issuer).origin;
+  const onDoor: express.RequestHandler = (req, _res, next) => {
+    if (dedicated && (req.get('host') ?? '').toLowerCase() !== doorHost) { next('route'); return; }
+    next();
+  };
   const policy = play.metadata().terms;
   const page = generalGuestDoorPage({ issuer: play.metadata().issuer, ...(policy ? { terms: policy } : {}) });
-  app.get('/guest/door', limiters.page, (_req, res) => {
+  app.get('/guest/door', onDoor, limiters.page, (_req, res) => {
     res.setHeader('Content-Security-Policy', page.csp);
     res.setHeader('X-Frame-Options', 'DENY');
     res.setHeader('Cache-Control', 'no-store');
@@ -192,8 +241,8 @@ export function mountGeneralGuest(app: express.Express, play: ProvisionalPlay,
       res.status(503).json({ valid: false, error: 'general_guest_unavailable' });
     }
   };
-  app.post('/guest/door', limiters.door, route(req => general.door(req.body, req.get('origin'))));
-  app.post('/guest/door/claim', limiters.claim, route(req => general.claim(req.body, req.get('origin'))));
+  app.post('/guest/door', onDoor, limiters.door, route(req => general.door(req.body, req.get('origin'))));
+  app.post('/guest/door/claim', onDoor, limiters.claim, route(req => general.claim(req.body, req.get('origin'))));
   app.post('/guest/exchange', limiters.exchange, route(req => general.exchange(req.body)));
   return true;
 }

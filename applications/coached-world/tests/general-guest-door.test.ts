@@ -5,7 +5,7 @@
  */
 import { describe, expect, it } from 'vitest';
 import { GeneralGuestDoor, GuestDoorError } from '../../_shared/guest-access/door.js';
-import { GUEST_ACTIONS, guestPolicies } from '../../_shared/guest-access/index.js';
+import { ACTIONS, provisionalSubjectPolicies } from '@interego/abac/portable';
 import { generalGuestUserId, playKeyThumbprint, publicPlayKey } from '../../../deploy/identity/provisional-play.js';
 import { ISSUER, OTHER, RETURN_PATH, WORLD, agent, identity, newKey, otherAgent } from './general-guest-identity.js';
 
@@ -54,12 +54,12 @@ describe('the general guest door client', () => {
     await expect(door.finish({ code: theirBack.searchParams.get('code'), state: mine.state, binding: mine.binding }))
       .rejects.toMatchObject({ status: 401, code: 'guest_door_exchange_refused' });
     // An application whose policies ask for more than the guest has is told no, by default-deny.
-    const strict = id.doorFor(WORLD, agent, { policies: guestPolicies({ application: WORLD, provisionalMay: [GUEST_ACTIONS.useApplication], hostedTermsVersion: '2026-01-15' }) });
+    const strict = id.doorFor(WORLD, agent, { policies: provisionalSubjectPolicies({ service: WORLD, provisionalMay: [ACTIONS.useService], acceptedTermsVersion: '2026-01-15' }) });
     const visit = await strict.start();
     const back = await id.page(key, visit.url);
     await expect(strict.finish({ code: back.searchParams.get('code'), state: back.searchParams.get('state'), binding: visit.binding }))
       .rejects.toMatchObject({ status: 403, code: 'guest_access_denied' });
-    const claimedOnly = id.doorFor(WORLD, agent, { policies: guestPolicies({ application: WORLD, claimedMay: [GUEST_ACTIONS.useApplication] }) });
+    const claimedOnly = id.doorFor(WORLD, agent, { policies: provisionalSubjectPolicies({ service: WORLD, claimedMay: [ACTIONS.useService] }) });
     const second = await claimedOnly.start();
     const secondBack = await id.page(key, second.url);
     await expect(claimedOnly.finish({ code: secondBack.searchParams.get('code'), state: secondBack.searchParams.get('state'), binding: second.binding }))

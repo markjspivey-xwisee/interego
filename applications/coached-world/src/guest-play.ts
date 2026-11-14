@@ -114,14 +114,14 @@ export function createLocalDoor(origin: string): GuestDoor {
   };
 }
 
-export function createRelayDoor(config: PlayGrantConfig, options: { generalGuest?: boolean } = {}): GuestDoor {
+export function createRelayDoor(config: PlayGrantConfig, options: { generalGuest?: boolean; doorOrigin?: string } = {}): GuestDoor {
   const grants = new PlayGrantService(config);
   return {
     audience: config.audience,
     identityUrl: config.identityUrl,
     local: false,
     ...(options.generalGuest === true ? { general: new GeneralGuestDoor({ audience: config.audience, identityUrl: config.identityUrl,
-      signGrant: request => grants.generalGuestGrant(request) }) } : {}),
+      ...(options.doorOrigin ? { doorOrigin: options.doorOrigin } : {}), signGrant: request => grants.generalGuestGrant(request) }) } : {}),
     async grant(thumbprint, challenge) {
       const granted = await grants.grant({ publicKeyThumbprint: thumbprint, challenge });
       return { playGrant: granted.playGrant };

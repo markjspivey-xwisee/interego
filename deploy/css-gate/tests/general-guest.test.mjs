@@ -1,7 +1,7 @@
 /**
  * A general guest at the css-gate: one provisional owner per browser key across applications
  * (identity's provisional-general-guest.ts). Its write surface is its application's two checkpoint
- * documents, granted by POLICY over the attributes identity stated (guest-access.mjs: a provisional
+ * documents, granted by POLICY over the attributes identity stated (abac-portable.mjs: a provisional
  * guest that application admitted, whose deadline has not passed), default-deny. A per-application
  * guest's hard-coded check is not involved and is covered by the provisional-play-*.test.mjs files.
  *
@@ -25,10 +25,10 @@ const thumbprint = 'T'.repeat(43);
 const nowSeconds = Math.floor(Date.now() / 1000);
 const deadline = nowSeconds + 3600;
 const marker = (over = {}) => ({ general: true, application: game, proofKeyThumbprint: thumbprint, expiresAt: deadline, ...over });
-const attributes = (over = {}) => ({ subject: ownerDid, provisional: true, claimed: false, createdAt: nowSeconds - 60, expiresAt: deadline,
+const attributes = (over = {}) => ({ subject: ownerDid, provisional: true, claimed: false, establishedAt: nowSeconds - 60, standingUntil: deadline,
   admittedBy: [game], proofKeyThumbprint: thumbprint, ...over });
 const answer = (markerOver = {}, attributeOver = {}, top = {}) => ({ valid: true, userId, ownerDid,
-  provisionalPlay: marker(markerOver), guestAttributes: attributes(attributeOver), ...top });
+  provisionalPlay: marker(markerOver), subjectAttributes: attributes(attributeOver), ...top });
 const initial = { 'content-type': 'application/vnd.interego.native-commit+json', 'if-none-match': '*' };
 
 test('a general guest\'s marker is checked on its own, and a malformed one refuses the credential', () => {
@@ -63,19 +63,19 @@ test('the write surface is granted by policy over the guest\'s attributes, and b
   const allowed = generalGuestMayWrite(verifiedProvisional(answer()));
   assert.equal(allowed.allowed, true);
   assert.equal(allowed.verdict, 'Allowed');
-  assert.deepEqual(allowed.matchedPolicies, [`urn:interego:guest-access:${game}#permit-provisional-guest:guest:WriteCheckpoint`]);
+  assert.deepEqual(allowed.matchedPolicies, [`urn:interego:abac:provisional-subject:${game}#permit-provisional:iep:canPublish`]);
   const denied = [
     ['not admitted by this application', answer({}, { admittedBy: [learn] })],
     ['admitted by no application', answer({}, { admittedBy: [] })],
     ['an application whose origin only begins like the admitted one', answer({ application: 'https://game.example.evil.example' })],
-    ['no attributes at all', answer({}, {}, { guestAttributes: undefined })],
-    ['attributes that are not an object', answer({}, {}, { guestAttributes: 'provisional' })],
+    ['no attributes at all', answer({}, {}, { subjectAttributes: undefined })],
+    ['attributes that are not an object', answer({}, {}, { subjectAttributes: 'provisional' })],
     ['attributes of another owner', answer({}, { subject: `did:web:identity.example:users:u-try-guest-${'b'.repeat(32)}` })],
     ['attributes of another key', answer({}, { proofKeyThumbprint: 'U'.repeat(43) })],
-    ['attributes with another deadline', answer({}, { expiresAt: deadline + 60 })],
+    ['attributes with another deadline', answer({}, { standingUntil: deadline + 60 })],
     ['attributes that do not say provisional', answer({}, { provisional: false })],
     ['malformed attributes', answer({}, { admittedBy: game })],
-    ['a malformed creation time', answer({}, { createdAt: 'yesterday' })],
+    ['a malformed creation time', answer({}, { establishedAt: 'yesterday' })],
   ];
   for (const [name, data] of denied) {
     const claims = verifiedProvisional(data);
@@ -84,7 +84,7 @@ test('the write surface is granted by policy over the guest\'s attributes, and b
     assert.throws(() => checkProvisionalTarget(claims, 'PUT', target, initial), error => error.status === 403 && error.code === 'provisional_play_scope', name);
   }
   // The door's own token is no application's: it writes nothing.
-  const door = verifiedProvisional({ valid: true, userId, ownerDid, guestAttributes: attributes(),
+  const door = verifiedProvisional({ valid: true, userId, ownerDid, subjectAttributes: attributes(),
     provisionalPlay: { general: true, door: true, proofKeyThumbprint: thumbprint, expiresAt: deadline } });
   assert.equal(generalGuestMayWrite(door).allowed, false);
   assert.throws(() => checkProvisionalTarget(door, 'PUT', new URL(provisionalCheckpointPaths(door)[0], 'https://gate.example'), initial), error => error.status === 403);
@@ -123,8 +123,8 @@ test('once the policy permits, the surface has the per-application guest\'s shap
 
 test('the gate\'s image carries the decision helper', () => {
   const dockerfile = readFileSync(new URL('../../Dockerfile.css-gate', import.meta.url), 'utf8');
-  assert.match(dockerfile, /^COPY deploy\/css-gate\/guest-access\.mjs \/app\/guest-access\.mjs$/m);
-  const helper = readFileSync(new URL('../guest-access.mjs', import.meta.url), 'utf8');
+  assert.match(dockerfile, /^COPY deploy\/css-gate\/abac-portable\.mjs \/app\/abac-portable\.mjs$/m);
+  const helper = readFileSync(new URL('../abac-portable.mjs', import.meta.url), 'utf8');
   assert.doesNotMatch(helper, /^\s*import\s|\bimport\(|\brequire\(/m, 'no import: the image holds nothing else of the repository');
 });
 
@@ -141,8 +141,8 @@ const tokens = {
   'game-token': answer(),
   'learn-token': answer({ application: learn, namespace: 'foxxi' }, { admittedBy: [game, learn] }),
   'not-admitted': answer({ application: learn, namespace: 'foxxi' }),
-  'no-attributes': answer({}, {}, { guestAttributes: undefined }),
-  'door-token': { valid: true, userId, ownerDid, guestAttributes: attributes(), provisionalPlay: { general: true, door: true, proofKeyThumbprint: thumbprint, expiresAt: deadline } },
+  'no-attributes': answer({}, {}, { subjectAttributes: undefined }),
+  'door-token': { valid: true, userId, ownerDid, subjectAttributes: attributes(), provisionalPlay: { general: true, door: true, proofKeyThumbprint: thumbprint, expiresAt: deadline } },
   'with-audience': answer({ audience: game }),
 };
 const identity = await listenLoopback(createServer(async (req, res) => {

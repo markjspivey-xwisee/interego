@@ -25,10 +25,11 @@
 </head>
 <body>
   <h1>abac: — ABAC evaluation pattern <span class="mono ns">abac:</span></h1>
-  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/abac#</code> &middot; 15 terms.</p>
+  <p class="sub">Namespace <code>https://markjspivey-xwisee.github.io/interego/ns/abac#</code> &middot; 18 terms.</p>
   <p>L2 pattern ontology for attribute-based access-control evaluation on top of iep:AccessControlPolicy descriptors. Specifies evaluator, attribute resolver, decision cache, and audit record as constructions over L1 primitives.</p>
   <p><strong>Machine-readable form:</strong> <a href="abac.ttl" rel="alternate">abac.ttl</a> (Turtle) — the authoritative source. This page is a human-readable projection of it; each term below is identified by a hash IRI under this base (e.g. <code>abac:Allowed</code> = <code>https://markjspivey-xwisee.github.io/interego/ns/abac#Allowed</code>).</p>
   <h2>Terms</h2>
+  <div id="ageSeconds" class="term"><code>abac:ageSeconds</code> <span class="kind">Datatype property</span><div class="c">Derived by the evaluator: its clock minus the start of the subject's standing, never below zero.</div></div>
   <div id="Allowed" class="term"><code>abac:Allowed</code> <span class="kind">Individual</span><div class="c">Evaluation result: the governed action MAY proceed. Possibly with duties.</div></div>
   <div id="AttributeResolver" class="term"><code>abac:AttributeResolver</code> <span class="kind">Class</span><div class="c">Builds the subject's attribute graph by aggregating facets from: the subject's own descriptor(s), peer-issued attestations cited via provenance, and any trust attestations (e.g. amta:TrustAttestation) reachable from the subject. A natural transformation from a subject IRI to an attribute graph, grounded in the facet lattice.</div></div>
   <div id="cacheValidUntil" class="term"><code>abac:cacheValidUntil</code> <span class="kind">Datatype property</span><div class="c">Upper bound on when this decision's cached form remains valid. After this instant, re-evaluation is required.</div></div>
@@ -43,6 +44,8 @@
   <div id="Policy" class="term"><code>abac:Policy</code> <span class="kind">Class</span><div class="c">The pattern-level name for an attribute-based access-control policy. Structurally identical to the L1 iep:AccessControlPolicy (a first-class context descriptor carrying a SHACL predicate, a governed action, a deontic mode, and optional duties); declared here so verticals can type a policy graph in the abac: vocabulary while remaining a iep:AccessControlPolicy for every L1 reader.</div></div>
   <div id="PolicyContext" class="term"><code>abac:PolicyContext</code> <span class="kind">Class</span><div class="c">The ambient state for one policy evaluation: the subject's attribute graph, the resource being accessed, the environmental facets (time, federation origin, etc.), and any pre-resolved attestations. Constructed from the seven L1 facets of the invoking request.</div></div>
   <div id="resolvedAttributes" class="term"><code>abac:resolvedAttributes</code> <span class="kind">Object property</span><div class="c">The attribute graph resolved for one evaluation, as a set of facet IRIs.</div></div>
+  <div id="secondsRemaining" class="term"><code>abac:secondsRemaining</code> <span class="kind">Datatype property</span><div class="c">Derived by the evaluator when it builds a subject's attribute graph: the end of the subject's standing minus the evaluator's clock. Zero or less once the standing has ended. A predicate bounds it with a plain number, which a date literal does not allow.</div></div>
+  <div id="useService" class="term"><code>abac:useService</code> <span class="kind">Individual</span><div class="c">The coarsest action a decision point guards: using a service as this subject at all. Finer actions are the service's own IRIs or the L1 affordances (iep:canRead, iep:canPublish, ...).</div></div>
   <div id="verdict" class="term"><code>abac:verdict</code> <span class="kind">Object property</span><div class="c">The decision: abac:Allowed, abac:Denied, or abac:Indeterminate.</div></div>
 </body>
 </html>

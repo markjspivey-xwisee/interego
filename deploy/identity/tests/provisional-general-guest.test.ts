@@ -176,13 +176,13 @@ test('the door returns the browser to the registered path with a one-use code, a
   assert.equal(guest.podUrl, `https://pods.example/${userId}/`);
   assert.equal(guest.audience, game);
   assert.equal(guest.namespace, 'hallowmarch');
-  const attributes = guest.guestAttributes as Record<string, unknown>;
-  assert.deepEqual({ ...attributes, createdAt: 0, expiresAt: 0 }, { subject: guest.ownerDid, provisional: true, claimed: false, createdAt: 0, expiresAt: 0,
+  const attributes = guest.subjectAttributes as Record<string, unknown>;
+  assert.deepEqual({ ...attributes, establishedAt: 0, standingUntil: 0 }, { subject: guest.ownerDid, provisional: true, claimed: false, establishedAt: 0, standingUntil: 0,
     admittedBy: [game], proofKeyThumbprint: thumbprint });
-  assert.equal((attributes.expiresAt as number) - (attributes.createdAt as number), 86400);
+  assert.equal((attributes.standingUntil as number) - (attributes.establishedAt as number), 86400);
   // The application's token: the marker has no audience, so a service that knows only per-application guests refuses it.
   assert.equal(guest.token, 'guest-token-1');
-  assert.deepEqual(d.tokens[0]!.grant, { general: true, application: game, proofKeyThumbprint: thumbprint, expiresAt: attributes.expiresAt });
+  assert.deepEqual(d.tokens[0]!.grant, { general: true, application: game, proofKeyThumbprint: thumbprint, expiresAt: attributes.standingUntil });
   assert.ok(!('audience' in d.tokens[0]!.grant));
   assert.ok(!('attestation' in guest), 'the anchor is not handed to an application');
   // One use.
@@ -216,7 +216,7 @@ test('a code is bound to its application, its state and the verifier whose chall
   await assert.rejects(d.exchange(entered, { code: forged2 }), code('guest_code_already_used'));
 });
 
-test('a second application finds the same guest: the first paid the admission, and both are among its attributes', async () => {
+test('a second application finds the same guest: the first paid the admission, and each is told only of itself', async () => {
   const d = deployment({ clients: { [game]: { ...gameAgent, ...general, maxPods: 5 }, [learn]: { ...learnAgent, namespace: 'foxxi', ...general, maxPods: 1 } } });
   const pair = newPair();
   const first = await d.exchange(await d.enter(pair, game, gameAgent));
@@ -224,10 +224,12 @@ test('a second application finds the same guest: the first paid the admission, a
   assert.equal(second.userId, first.userId);
   assert.equal(second.podUrl, first.podUrl);
   assert.equal(second.namespace, 'foxxi');
-  assert.deepEqual((second.guestAttributes as { admittedBy: string[] }).admittedBy, [game, learn]);
-  assert.equal((second.guestAttributes as { expiresAt: number }).expiresAt, (first.guestAttributes as { expiresAt: number }).expiresAt, 'the deadline is the first admission\'s');
+  // Each application is told only that it is itself among those the subject was admitted to: not which others there are.
+  assert.deepEqual((second.subjectAttributes as { admittedBy: string[] }).admittedBy, [learn]);
+  assert.deepEqual((first.subjectAttributes as { admittedBy: string[] }).admittedBy, [game]);
+  assert.equal((second.subjectAttributes as { standingUntil: number }).standingUntil, (first.subjectAttributes as { standingUntil: number }).standingUntil, 'the deadline is the first admission\'s');
   assert.deepEqual(d.tokens[1]!.grant, { general: true, application: learn, proofKeyThumbprint: first.proofKeyThumbprint,
-    expiresAt: (first.guestAttributes as { expiresAt: number }).expiresAt, namespace: 'foxxi' });
+    expiresAt: (first.subjectAttributes as { standingUntil: number }).standingUntil, namespace: 'foxxi' });
   assert.deepEqual(Object.keys(d.ledger()), [first.userId], 'one admission');
   assert.equal(d.play.open(d.ledger()[first.userId as string]!, true).audience, game, 'charged to the application that sent the browser first');
   // The second application's own cap of one is still whole: it admits a new browser, then no other.
@@ -310,7 +312,7 @@ test('hosted terms gate a new general guest as they gate a per-application one',
   assert.equal(Object.keys(d.ledger()).length, 0, 'refused before an admission is reserved');
   await assert.rejects(d.enter(pair, game, gameAgent, { terms: '2020-01-01' }), code('hosted_terms_required'));
   const guest = await d.exchange(await d.enter(pair, game, gameAgent, { terms: '2026-01-15' }));
-  assert.equal((guest.guestAttributes as { hostedTermsVersion?: string }).hostedTermsVersion, '2026-01-15');
+  assert.equal((guest.subjectAttributes as { acceptedTermsVersion?: string }).acceptedTermsVersion, '2026-01-15');
   assert.equal(d.play.metadata().generalGuest?.terms?.version, '2026-01-15');
 });
 
@@ -322,8 +324,8 @@ test('a guest that enrolled a credential is claimed in its attributes', async ()
   const stored = d.documents.get(url)!;
   d.documents.set(url, { body: JSON.stringify({ ...JSON.parse(stored.body), walletAddresses: [`0x${'ab'.repeat(20)}`] }), revision: stored.revision + 1 });
   const again = await d.exchange(await d.enter(pair, game, gameAgent));
-  assert.equal((again.guestAttributes as { claimed: boolean }).claimed, true);
-  assert.equal((first.guestAttributes as { claimed: boolean }).claimed, false);
+  assert.equal((again.subjectAttributes as { claimed: boolean }).claimed, true);
+  assert.equal((first.subjectAttributes as { claimed: boolean }).claimed, false);
 });
 
 test('the claim flow answers a door token for the guest the key holds, once per proof, on this origin only', async () => {
@@ -338,7 +340,7 @@ test('the claim flow answers a door token for the guest the key holds, once per 
   const body = request();
   const token = await d.door.claim(body, ISSUER);
   assert.equal(token.token, 'guest-token-2');
-  assert.deepEqual(d.tokens[1]!.grant, { general: true, door: true, proofKeyThumbprint: thumbprint, expiresAt: (guest.guestAttributes as { expiresAt: number }).expiresAt });
+  assert.deepEqual(d.tokens[1]!.grant, { general: true, door: true, proofKeyThumbprint: thumbprint, expiresAt: (guest.subjectAttributes as { standingUntil: number }).standingUntil });
   assert.equal(d.tokens[1]!.claims.userId, guest.userId);
   await assert.rejects(d.door.claim(body, ISSUER), code('play_grant_already_used'));
   await assert.rejects(d.door.claim(request(newPair()), ISSUER), code('provisional_owner_unavailable'));
@@ -419,7 +421,7 @@ test('the janitor and the cleanup take up a general guest as they take up a per-
   const writer = readFileSync(new URL('../auth-methods-writer.ts', import.meta.url), 'utf8');
   assert.match(writer, /const isPlayOwner = \(userId: string\) => \/\^u-try-\(\?:play\|guest\)-\/\.test\(userId\);/);
   // The setting is read as exactly "1", and only where the provider is built.
-  assert.equal(server.match(/PROVISIONAL_GENERAL_GUEST/g)?.length, 2);
+  assert.equal(server.match(/process\.env\['PROVISIONAL_GENERAL_GUEST'\]/g)?.length, 1);
   assert.match(server, /generalGuest: process\.env\['PROVISIONAL_GENERAL_GUEST'\] === '1',/);
   // An application's general guest token is answered where introspection asks, and nowhere else.
   assert.equal(server.match(/verifyToken\([^)]*\{ generalGuest: true \}\)/g)?.length, 1);

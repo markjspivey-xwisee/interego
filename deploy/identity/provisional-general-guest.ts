@@ -51,16 +51,21 @@ export interface GeneralTokenGrant {
 }
 /** One application that admitted or has used a general guest (the owner record's provisionalGuestApplications). */
 export interface GuestApplication { audience: string; admittedAt: number }
-/** What identity states about a general guest, in its exchange and introspection answers. Times in Unix seconds. */
-export interface GuestAttributes {
+/**
+ * What identity states about a subject, in its exchange and introspection answers: the facts
+ * `@interego/abac/portable`'s `subjectAttributeGraph` takes (docs/ns/passport.ttl). Times in Unix
+ * seconds. `admittedBy` holds only the asking application's own origin, where it is one this
+ * subject was admitted to or has used: an application is not told which others there are.
+ */
+export interface SubjectAttributes {
   subject: string;
   provisional: true;
   claimed: boolean;
-  createdAt: number;
-  expiresAt: number;
+  establishedAt: number;
+  standingUntil: number;
   admittedBy: string[];
   proofKeyThumbprint: string;
-  hostedTermsVersion?: string;
+  acceptedTermsVersion?: string;
 }
 
 const fail = (status: number, code: string): never => { throw new PlayError(status, code); };
@@ -82,18 +87,19 @@ export function guestApplications(document: PlayAnchorDocument): GuestApplicatio
     && typeof (row as GuestApplication).audience === 'string' && Number.isInteger((row as GuestApplication).admittedAt)).slice(0, 64);
 }
 /**
- * The guest's attributes, from its opened anchor and its record as read from the pod. Every value
- * is one identity holds; nothing is taken from a request.
+ * The subject's attributes as stated to `application` (none for the door's own token), from its
+ * opened anchor and its record as read from the pod. Every value is one identity holds; nothing is
+ * taken from a request.
  */
-export function guestAttributes(claims: PlayClaims, document: PlayAnchorDocument): GuestAttributes {
+export function subjectAttributes(claims: PlayClaims, document: PlayAnchorDocument, application?: string): SubjectAttributes {
   const terms = document['termsAcceptance'] as TermsAcceptance | undefined;
   return {
     subject: claims.ownerDid, provisional: true,
     claimed: listed(document['webAuthnCredentials']) || listed(document['walletAddresses']) || listed(document['didKeys']),
-    createdAt: claims.issuedAt, expiresAt: claims.expiresAt,
-    admittedBy: guestApplications(document).map(row => row.audience),
+    establishedAt: claims.issuedAt, standingUntil: claims.expiresAt,
+    admittedBy: guestApplications(document).map(row => row.audience).filter(audience => audience === application),
     proofKeyThumbprint: claims.proofKeyThumbprint,
-    ...(terms && typeof terms.version === 'string' ? { hostedTermsVersion: terms.version } : {}),
+    ...(terms && typeof terms.version === 'string' ? { acceptedTermsVersion: terms.version } : {}),
   };
 }
 
@@ -104,6 +110,12 @@ export interface GeneralGuestDependencies {
   clients: ReadonlyMap<string, PlayClient>;
   /** PROVISIONAL_GENERAL_GUEST=1. */
   enabled: boolean;
+  /**
+   * The dedicated origin the door page is served from (GENERAL_GUEST_DOOR_ORIGIN), where one is
+   * configured: the only origin whose requests the door and the claim answer, and the origin that
+   * holds every guest key. Unset, the door is on identity's own origin (development).
+   */
+  doorOrigin?: string;
   hostedTerms?: HostedTermsPolicy;
   now?: () => number;
   verifyGrantSignature(grant: PlayGrant, client: PlayClient): Promise<boolean>;
@@ -135,6 +147,8 @@ export class GeneralGuest {
     const client = this.deps.clients.get(audience);
     return client?.generalGuest === true ? client : undefined;
   }
+  /** The origin the door page is served from, and the only one its requests are answered for. */
+  get doorOrigin(): string { return this.deps.doorOrigin ?? new URL(this.deps.issuer).origin; }
   /** The marker of an application's token for this guest: its namespace from configuration, as for a per-application guest. */
   applicationGrant(claims: PlayClaims, audience: string): GeneralTokenGrant {
     const namespace = this.client(audience)?.namespace;
@@ -166,8 +180,8 @@ export class GeneralGuest {
   async door(input: unknown, requestOrigin: unknown): Promise<{ redirect: string }> {
     if (!this.enabled) return fail(404, 'general_guest_disabled');
     // The door page is the only caller: a page of any other origin has no business here, and could
-    // not hold the key this origin keeps anyway.
-    if (requestOrigin !== new URL(this.deps.issuer).origin) return fail(403, 'general_guest_door_origin');
+    // not hold the key the door's origin keeps anyway.
+    if (requestOrigin !== this.doorOrigin) return fail(403, 'general_guest_door_origin');
     const body = input as { playGrant?: PlayGrant; publicKeyJwk?: unknown; proof?: unknown; termsVersion?: unknown };
     const key = publicPlayKey(body?.publicKeyJwk);
     const grant = body?.playGrant;
@@ -256,7 +270,7 @@ export class GeneralGuest {
       authenticatedAgentId: claims.authenticatedAgentId, authenticatedAgentDid: claims.authenticatedAgentDid,
       proofKeyThumbprint: claims.proofKeyThumbprint, guestExpiresAt: new Date(claims.expiresAt * 1000).toISOString(),
       namespace: this.client(audience)?.namespace ?? DEFAULT_PLAY_NAMESPACE,
-      guestAttributes: guestAttributes(claims, document),
+      subjectAttributes: subjectAttributes(claims, document, audience),
       token: token.token, tokenExpiresAt: token.expiresAt,
     };
   }
@@ -276,7 +290,7 @@ export class GeneralGuest {
    */
   async claim(input: unknown, requestOrigin: unknown): Promise<{ token: string; expiresAt: string }> {
     if (!this.enabled) return fail(404, 'general_guest_disabled');
-    if (requestOrigin !== new URL(this.deps.issuer).origin) return fail(403, 'general_guest_door_origin');
+    if (requestOrigin !== this.doorOrigin) return fail(403, 'general_guest_door_origin');
     const body = input as { publicKeyJwk?: unknown; expiresAt?: unknown; proof?: unknown };
     const key = publicPlayKey(body?.publicKeyJwk);
     const now = this.now();
@@ -303,7 +317,7 @@ export class GeneralGuest {
   metadata() {
     const policy = this.deps.hostedTerms;
     return {
-      doorUrl: `${this.deps.issuer}/guest/door`, exchangeEndpoint: `${this.deps.issuer}/guest/exchange`,
+      doorUrl: `${this.doorOrigin}/guest/door`, exchangeEndpoint: `${this.deps.issuer}/guest/exchange`,
       grantPurpose: GENERAL_GUEST_PURPOSE, grantFields: ['purpose', 'audience', 'state', 'codeChallenge', 'expiresAt'],
       doorFragment: 'grant={base64url(JSON {_signed_payload,_signature})}',
       codeChallengeMethod: 'S256', codeTtlSeconds: GUEST_CODE_TTL_SECONDS,
