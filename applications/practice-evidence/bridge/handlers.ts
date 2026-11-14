@@ -226,6 +226,15 @@ export interface LaunchImport {
   /** The profile terms the unit's statements use. */
   readonly vocabulary: LaunchVocabulary;
   readonly fetchFn?: typeof fetch;
+  /**
+   * Which LMS each `lms` principal speaks for: the principal (an address, or a user DID), to the
+   * account homePage that LMS puts on the actors it launches. An LRS endpoint can sit in front of
+   * several LMSs or tenants, each issuing registrations of its own, so the role `lms` alone names
+   * no issuer: a principal takes the statements only of attempts whose launch actor carries its
+   * homePage. A principal not listed here speaks for no LMS, whatever its role. server.ts reads
+   * PEV_LAUNCH_LMS_ISSUERS.
+   */
+  readonly lmsIssuers?: Readonly<Record<string, string>>;
 }
 
 /** A per-hour limit for one signer and for everyone together. */
@@ -3185,16 +3194,51 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
   const { ctx } = call;
   const s = await signedAct(call, args, 'launchedStatements', {
     write: true,
-    checks: (p) => { needAttemptIri(p); needText(p, 'sessionId', 200); },
+    checks: (p) => {
+      // The learner names their attempt. The LMS knows only the registration it issued.
+      if (p['attemptIri'] === undefined && p['registration'] !== undefined) {
+        if (!REGISTRATION_UUID.test(needText(p, 'registration', 36))) throw decline(400, 'registration must be the UUID the LMS issued.', 'registration-not-a-uuid');
+      } else needAttemptIri(p);
+      needText(p, 'sessionId', 200);
+    },
   });
-  const iri = needAttemptIri(s.payload);
   const sessionId = String(s.payload['sessionId']);
+  const roles = (await rolesOn(call, s.pod)).of(s.signer);
+  const li = ctx.deps.launchImport;
+  // The LMS this signer speaks for, if any: registered with the role by an admin, and bound to an
+  // issuer by the operator. Either without the other speaks for nobody.
+  const issuer = roles.has('lms') && !roles.has('agent') && li?.lmsIssuers
+    ? Object.entries(li.lmsIssuers).find(([principal]) => principalKey(principal) === principalKey(s.signer))?.[1]
+    : undefined;
+  let iri: string;
+  if (typeof s.payload['attemptIri'] === 'string') iri = needAttemptIri(s.payload);
+  else {
+    // By registration: for the LMS only. Anyone else would learn from the answer whether a registration was taken.
+    if (!roles.has('lms')) throw decline(403, 'Only the LMS that issued a registration asks by it; a learner names their attempt.', 'not-the-lms');
+    if (!li) throw decline(501, 'This bridge is not set up to take attempts from an LMS.', 'launch-import-not-configured');
+    if (issuer === undefined) throw decline(403, 'This principal holds the role lms, and this bridge is not told which LMS it speaks for.', 'lms-issuer-unbound');
+    const registration = String(s.payload['registration']).toLowerCase();
+    const every = await attemptBodies(call, s.pod, 'which attempt was taken from this registration');
+    // Only among the attempts its own LMS launched: another issuer's registration is, to this principal, not there.
+    const found = every.bodies.find((b) => b.lmsLaunch !== undefined && b.lmsLaunch.registration.toLowerCase() === registration
+      && b.lmsLaunch.endpoint === li.endpoint && b.lmsLaunch.actor.homePage === issuer);
+    // Not finding it among the attempts that could be read is not finding it only when all of them were read.
+    if (!found && !every.complete) {
+      throw decline(503, 'Not every attempt on this pod could be read, so this bridge cannot tell whether an attempt was taken from this registration.', 'registration-search-incomplete', undefined, every.limit);
+    }
+    if (!found) throw decline(404, 'No attempt was taken from this registration.', 'registration-not-taken');
+    iri = found.attemptIri;
+  }
   return locked(call, `${s.pod}|${iri}`, async () => {
     const h = await attemptHead(call, s.pod, iri);
-    if (!samePrincipal(h.body.learner.address, s.signer)) {
-      throw decline(403, 'Only the learner takes the statements of their own launched attempt.', 'not-the-learner');
-    }
     const l = h.body.lmsLaunch;
+    const asLearner = samePrincipal(h.body.learner.address, s.signer);
+    // The LMS a launch came from may take the statements for the unit it launched: it is the party the
+    // unit's own credential is checked by. It has to be the LMS this bridge reads, and no agent role.
+    const asLms = !asLearner && issuer !== undefined && li !== undefined && l !== undefined && l.endpoint === li.endpoint && l.actor.homePage === issuer;
+    if (!asLearner && !asLms) {
+      throw decline(403, 'Only the learner, or the LMS that launched the attempt, takes its statements.', 'not-the-learner');
+    }
     if (!l) throw decline(409, 'No LMS launched this attempt: it satisfies no assignable unit.', 'no-lms-launch');
     // They carry the score and whether it met the pass mark: refused to a caller who does not read the stakes.
     if (scoredUse(h.body.scenarioSpec) && !(await showsStakes(call, s))) {
@@ -3225,13 +3269,16 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
     // What is fixed now is fixed for good, so the session has to be one the LMS opened for this unit
     // and this learner, still open, with nothing yet sent for the registration. The LRS says so, read
     // through the learner's own signed read, as when the attempt was taken.
-    const li = ctx.deps.launchImport;
-    if (!li) throw decline(501, 'This bridge is not set up to read an LRS, so it cannot tell whether the session is one to send in.', 'launch-import-not-configured');
-    if (li.endpoint !== l.endpoint) throw decline(409, 'This attempt was taken from another LRS than the one this bridge reads.', 'another-lrs');
-    const now = await statementsOfRegistration(ctx, li, lrsReadOf(args, l.registration));
-    const sessionProblems = sendingSessionProblems(now, l, sessionId);
-    if (sessionProblems.length > 0) {
-      throw decline(409, 'The session named is not one these statements can be sent in; nothing was fixed.', 'not-a-sending-session', undefined, { problems: sessionProblems });
+    // The LMS opened the session and holds the unit's credential for it, so its signed word stands in
+    // for the read; it is recorded as the LMS's word.
+    if (!asLms) {
+      if (!li) throw decline(501, 'This bridge is not set up to read an LRS, so it cannot tell whether the session is one to send in.', 'launch-import-not-configured');
+      if (li.endpoint !== l.endpoint) throw decline(409, 'This attempt was taken from another LRS than the one this bridge reads.', 'another-lrs');
+      const now = await statementsOfRegistration(ctx, li, lrsReadOf(args, l.registration));
+      const sessionProblems = sendingSessionProblems(now, l, sessionId);
+      if (sessionProblems.length > 0) {
+        throw decline(409, 'The session named is not one these statements can be sent in; nothing was fixed.', 'not-a-sending-session', undefined, { problems: sessionProblems });
+      }
     }
     const statements = buildLaunchedStatements({ attempt: h.body, headDescriptorUrl: h.rec.descriptorUrl, homePage: ctx.homePage, ratifiedBy: e.ratifiedBy }, { sessionId });
     const problems = statements.flatMap((st) => launchedStatementProblems(st, l, { sessionId }));
@@ -3240,7 +3287,7 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
     }
     const at = iso(ctx);
     const body: AttemptBody = {
-      ...h.body, at, lmsLaunch: { ...l, handedOut: { at, sessionId, to: s.signerDid, statements } }, acts: [...h.body.acts, actOf(s, 'launchedStatements')],
+      ...h.body, at, lmsLaunch: { ...l, handedOut: { at, sessionId, to: s.signerDid, statements, sessionVouchedBy: asLms ? 'lms' : 'lrs-read', ...(asLms ? { issuer } : {}) } }, acts: [...h.body.acts, actOf(s, 'launchedStatements')],
     };
     const w = await writeRecord(call, { pod: s.pod, body, seq: h.seq, prev: h.rec, nonce: s.nonce });
     return {
