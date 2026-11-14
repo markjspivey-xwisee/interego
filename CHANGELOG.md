@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-14 — Coached world: the service is in the deploy table
+
+The coached world runs at `https://coached-world-bridge-production.up.railway.app`, as the
+Railway service `coached-world-bridge`, created from the image the last change added. It now has
+its row in `tools/railway-services.mjs`, after the service existed, as the other bridges' rows
+were added: a singleton with no deploy overlap, because the world is held in process and a second
+container would be a second world. With the row, a merge that changes the application is built
+and deployed by the pipeline, and the fleet audit checks the service against what the row
+declares. The service has one setting, its public URL; guests are local to it until identity is
+given an entry for its origin.
+
 ## 2026-11-14 — Coached world: an image, a public URL, request limits and a ceiling on what it keeps
 
 The coached world ran only on a developer's machine. It can now be built as an image and put behind a proxy on a public address. Nothing is deployed by this change: there is no Railway service yet, and no service row, so the pipeline has nothing to roll out.

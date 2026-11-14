@@ -54,7 +54,7 @@ export const IMAGE_PREFIX = 'ghcr.io/markjspivey-xwisee';
  * them gets a specific refusal instead of "unknown service", which reads like a typo.
  */
 export const SERVICES = {
-  // ★ NINETEEN of the twenty-three rows below have an image that really is `interego-<service>`;
+  // ★ TWENTY of the twenty-four rows below have an image that really is `interego-<service>`;
   // the four that do not are css (interego-css-pgsl), postgres/redis (upstream images,
   // repo null) and health-bridge (built by Railway from source, repo null). This said "Thirteen" and the table has grown since - the numbers are stated
   // here because the whole point of the file is that the mapping is NOT derivable, and a
@@ -96,6 +96,10 @@ export const SERVICES = {
   // container's SIGTERM, during which a replayed envelope could be accepted once more.
   'wrd-bridge': { repo: 'interego-wrd-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
   'pev-bridge': { repo: 'interego-pev-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
+  // The coached world: one shared world, held in process. Added after the service was created
+  // (2026-11-14), like the bridges above. A singleton for a plainer reason than theirs: a second
+  // container would be a second world, with its own map, feed and guests.
+  'coached-world-bridge': { repo: 'interego-coached-world-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
   bridge: { repo: 'interego-bridge', health: '/health' },
   dashboard: { repo: 'interego-dashboard', health: '/health' },
   'pgsl-browser': { repo: 'interego-pgsl-browser', health: '/health' },
