@@ -267,7 +267,7 @@ test('a bearer alone gets no code and unlinks nothing: each needs a fresh proof 
   assert.equal((await post('/guest/link/prepare', { action: 'unlink', guest: owner.userId, method: 'wallet', address: wallet.address, chainId: 1 })).status, 400);
   // A prepared step with no signature, and with another wallet's signature: no code, and the step is spent.
   const unsigned = await prepare(on, wallet, owner.token, { action: 'code' });
-  assert.match(unsigned.message, new RegExp(`Authorize a code that links one guest to ${didOf(on, owner.userId).replace(/[.%]/g, '\\$&')}`));
+  assert.ok(unsigned.message.includes(`Authorize a code that links one guest to ${didOf(on, owner.userId)}`));
   assert.equal((await post('/guest/link/code', { stepUpId: unsigned.stepUpId })).body['error'], 'link_proof_required');
   assert.equal((await post('/guest/link/code', { stepUpId: unsigned.stepUpId, signature: unsigned.signature })).body['error'], 'link_expired', 'a step is finished once, however it ended');
   const forged = await prepare(on, wallet, owner.token, { action: 'code' });
@@ -276,7 +276,7 @@ test('a bearer alone gets no code and unlinks nothing: each needs a fresh proof 
   // A proof for one action is not a proof for the other.
   const guest = newPair();
   const toUnlink = await prepare(on, wallet, owner.token, { action: 'unlink', guest: guestIdOf(guest) });
-  assert.match(toUnlink.message, new RegExp(`Authorize unlinking the guest ${guestIdOf(guest)} from `));
+  assert.ok(toUnlink.message.includes(`Authorize unlinking the guest ${guestIdOf(guest)} from `));
   assert.equal((await post('/guest/link/code', { stepUpId: toUnlink.stepUpId, signature: toUnlink.signature })).body['error'], 'link_expired');
   const toCode = await prepare(on, wallet, owner.token, { action: 'code' });
   assert.equal((await post('/guest/link/unlink', { stepUpId: toCode.stepUpId, signature: toCode.signature })).body['error'], 'link_expired');
