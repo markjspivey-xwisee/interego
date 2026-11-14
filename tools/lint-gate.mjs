@@ -306,7 +306,8 @@ const UNLINTED_FRONTIER = {
   //    (`npx eslint applications/foxxi-content-intelligence/src/cmi5-reviewed.ts
   //    applications/foxxi-content-intelligence/tests/a-unit-asks-the-lms-for-its-reviewed-statements.test.ts`:
   //    0 problems).
-  applications: { errors: 1452, files: 1206 },
+  //    Master then re-pinned to 1205 on its own; with these 2 the measured count is 1207.
+  applications: { errors: 1452, files: 1207 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
