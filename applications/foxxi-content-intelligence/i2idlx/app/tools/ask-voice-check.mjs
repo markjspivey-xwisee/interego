@@ -163,5 +163,22 @@ assert.equal(spokenText('A **store** [[record-store]] holds [[record-store|state
   assert.equal(spoken.at(-1).text, 'A fresh answer.');
   h.unmount();
 }
+{ // A cleared conversation takes its reading with it: nothing that left the screen is still heard.
+  spoken.length = 0;
+  const base = { onInterim() {}, onQuestion() {} };
+  const h = harness(useAskVoice);
+  h.render({ ...base, turns: [], working: false });
+  h.out.toggleReading();
+  h.render({ ...base, turns: [{ role: 'user', content: 'Long?' }, { role: 'assistant', content: 'First sentence. Second sentence. Third', pending: false }], working: true });
+  assert.equal(spoken.length, 1);
+  assert.equal(h.out.state, 'speaking');
+  const before = cancels;
+  h.render({ ...base, turns: [], working: false });
+  assert.equal(cancels, before + 1, 'the reading went on after the conversation was cleared');
+  assert.equal(h.out.state, 'idle');
+  spoken[0].onend();
+  assert.equal(spoken.length, 1, 'a sentence of the cleared answer was still spoken');
+  h.unmount();
+}
 await rm(scratch, { recursive: true, force: true });
 console.log('PASS Ask voice: shared module bundled from applications/_shared/voice, hidden without speech objects, microphone only on press, spoken question delivered, streamed answer read once per sentence, stop and barge-in');

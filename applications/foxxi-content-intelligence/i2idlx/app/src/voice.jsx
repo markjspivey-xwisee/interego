@@ -40,6 +40,9 @@ export function useAskVoice({ turns, working, onInterim, onQuestion }) {
   const from = useRef(0), following = useRef(-1);
   useEffect(() => {
     if (turns.length < from.current) from.current = 0;
+    // The answer being read is gone (a new conversation, another source, an expired course):
+    // stop reading it, so nothing that left the screen is still heard.
+    if (following.current >= turns.length) { following.current = -1; voice.stop(); voice.resetDelta(); }
     if (!reading) return;
     const index = turns.length - 1, last = turns[index];
     if (!last || last.role !== "assistant" || index < from.current || !last.content) return;
