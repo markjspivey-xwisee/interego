@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-14 — Practice Evidence: the LMS that launched an attempt may take its reviewed statements
+
+A unit in a browser holds only its cmi5 credential, which the LMS checks and this
+bridge cannot. So only the learner could take the reviewed statements for the
+unit, and a player had no way to ask for them itself.
+
+A new role, `lms`, is for the LMS's own signing key. An admin registers it like
+any other role. That principal signs `pev.launched_statements` with
+`{registration, sessionId}` and gets the same documents the learner would, under
+the same eligibility and refusals, fixed once.
+
+- It asks by the registration it issued. No one else may (403), so the answer
+  tells no one whether a registration was taken.
+- It needs no read of the LRS for the session: it opened the session, and its
+  signed word is recorded as the LMS's word (`handedOut.sessionVouchedBy`).
+- The role works only for attempts taken from the LRS this bridge reads, never
+  together with the role `agent`, and gives no other right: an `lms` principal
+  reviews nothing and reads no attempt.
+
+Whoever holds a registered `lms` key can take the reviewed result of any attempt
+taken from that LMS. The LMS's own route that takes the unit's credential and
+makes this request is not part of this change. Verified on an in-memory pod only.
+
 ## 2026-11-13 — Practice Evidence: the learner takes the reviewed statements for their assignable unit
 
 A conversation an LMS launched could be taken as an attempt and reviewed, and the
