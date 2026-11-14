@@ -11,6 +11,27 @@ A guest ("provisional owner") has been one per application: the key lives in the
 - **Applications.** The coached world can offer the door beside its own (`CPW_GENERAL_GUEST=1`). Foxxi's bridge can sign door grants, but its learner workbench does not use the door yet, because it re-checks a guest with identity while the session lives and an application cannot re-check a general guest.
 
 A general guest is linkable across applications by design: each one learns the same DID, pod and key thumbprint, and which other applications the guest has used. The rollout order (gate and relay, then identity, then the setting) and what each older service does with the new token are in `deploy/identity/PROVISIONAL-PLAY.md`, "General guest".
+## 2026-11-14 — Foxxi LRS: an assignable unit's token does not speak as the LMS
+
+A cmi5 auth-token is the assignable unit's credential, and it sits in the
+learner's browser. The LRS held it to its own registration and to nothing else.
+Whoever held one could store, in that registration, a `launched` naming another
+launch mode, an `abandoned`, a `waived`, or a `satisfied` for the course, and
+could write as any actor. A reader that takes those verbs as the LMS's word was
+taking the learner's: the coached-world tier gate promotes on a course's
+`satisfied`, and Practice Evidence reads the launch mode from `launched`.
+
+Such a bearer is now refused (403) a statement with one of the four verbs cmi5
+has the LMS record, and a statement whose `actor.account` is not the one it was
+launched for. The LMS's own statements are stored inside the bridge and are not
+affected. A credential that is not a launch's is not held to this.
+
+Where the LRS knows a token is a launch's and cannot tell which actor it was
+launched for, the token writes no statement at all.
+
+Found while answering a reviewer's question about who can write what on this
+LRS, before turning on the route by which the LMS takes reviewed results.
+
 ## 2026-11-14 — Coached world: the service is in the deploy table
 
 The coached world runs at `https://coached-world-bridge-production.up.railway.app`, as the
