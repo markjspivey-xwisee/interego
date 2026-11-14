@@ -17,6 +17,7 @@ import { attachClientTaskRoutes } from './i2idlx-client-tasks.js';
 import { agentSessionRoutine, attachAgentSessionRoutes } from './i2idlx-agent-sessions.js';
 import { attachUserCourseRoutes } from './i2idlx-user-courses.js';
 import { attachLearningRoutes } from './i2idlx-learning-routes.js';
+import { bindCoursePlayerAuth } from './cmi5-player.js';
 import type { LearningRepository } from './i2idlx-learning-connections.js';
 import type { GuestGrantSigner } from './i2idlx-learning-auth.js';
 import type { LearningContextService } from './i2idlx-learning-context.js';
@@ -340,11 +341,13 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
     routine: input => agentSessionRoutine(input, config.fetch),
     openLearningAccess: (receipt, identity, messages) => learningContext.openTaskAccess(receipt, identity, messages),
   });
-  const learningContext: LearningContextService = attachLearningRoutes(app, {
+  const learning = attachLearningRoutes(app, {
     baseUrl: base, relayOrigin: config.learning?.relayOrigin ?? '', identityOrigin: config.learning?.identityOrigin ?? '',
     podOrigin: config.learning?.podOrigin ?? '', repository: config.learning?.repository, guestGrant: config.learning?.guestGrant,
     sessions: agentSessions, taskConfig: { baseUrl: base, appDataFile: config.appDataFile, checkOperations }, fetch: config.fetch,
-  }).context;
+  });
+  bindCoursePlayerAuth(learning.auth);
+  const learningContext: LearningContextService = learning.context;
   attachUserCourseRoutes(app, {
     baseUrl: base,
     sessions: agentSessions,

@@ -41,6 +41,7 @@ import { readFileSync } from 'node:fs';
 import AdmZip from 'adm-zip';
 import type { Express, Response as ExpressResponse } from 'express';
 import type { Cmi5Course } from './cmi5-course.js';
+import { browserWantsPlayer, playerLocation } from './cmi5-player.js';
 
 /** A package's id: the sha-256 of its zip, in lowercase hex. */
 export const PACKAGE_SHA = /^[0-9a-f]{64}$/;
@@ -575,6 +576,7 @@ export function attachHostedPackageRoutes(app: Express, deps: {
     try {
       const sha = PACKAGE_RECORD.exec(req.path)?.[1] ?? '';
       const course = await deps.courseFor(sha);
+      if (course && browserWantsPlayer(req)) { res.redirect(303, playerLocation(course.id)); return; }
       if (!course) {
         // An authoring tool's own export is kept here too, with no course: its record says how to fold it.
         const about = await deps.packages.about(sha);
