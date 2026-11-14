@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-11-14 — Practice Evidence: which outcomes close a unit, and a result stranded in an ended session
+
+Two things a reviewer left open on `pev.launched_statements`.
+
+**Which statements say a unit already has its result.** The check counted any
+passed, failed or completed whose object was the unit. cmi5's limit of one each
+is on its own defined statements, by the learner the unit was launched for. So
+one now counts only when it also carries the cmi5 category and is by the
+launch's actor. A statement with one of those verbs and no cmi5 category, or
+another actor's, no longer stops a learner's reviewed result from being handed
+out.
+
+**A session that ends before the unit sends.** The statements are fixed for one
+session the first time they are asked for. If that session ended before the unit
+sent them, they could never be sent: every later ask returned a copy marked as
+not for sending. The learner can now ask again for a later session with their
+own signed read of the LRS. The same result is fixed for that session when the
+LRS shows the earlier session ended, none of the statements handed out is in
+the registration, and the new session is one to send in. Only the session
+changes; the ids, verbs, score and timestamp stay, so a statement that did
+reach the LRS still collides on its id. The attempt keeps the sessions it was
+fixed for before (`handedOut.fixedBefore`). Otherwise nothing is written and the
+answer gives the reasons (`notFixedAgain`).
+
+Not changed: an `lms` principal asking for another session still gets the copy.
+The LMS route has no LRS read to show that the earlier session ended unsent.
+
 ## 2026-11-14 — Practice Evidence: what the LMS issuer binding rests on
 
 The README now says what an operator must know before setting

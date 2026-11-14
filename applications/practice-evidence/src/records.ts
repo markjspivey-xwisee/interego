@@ -229,6 +229,11 @@ export interface LmsLaunch {
     readonly sessionVouchedBy?: 'lrs-read' | 'lms';
     /** When the LMS vouched: the account homePage it speaks for, which is the launch actor's. */
     readonly issuer?: string;
+    /**
+     * The sessions these statements were fixed for before this one, oldest first. Each ended with
+     * none of them in the LRS, which is why they were fixed again. The result they carry never changed.
+     */
+    readonly fixedBefore?: readonly { readonly at: string; readonly sessionId: string }[];
   };
 }
 

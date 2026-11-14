@@ -275,9 +275,53 @@ export function sendingSessionProblems(statements: readonly unknown[], launch: L
   }
   // A session ends when the unit terminates it, or when the LMS says it was abandoned.
   if (mine.some((s) => (verbOf(s) === VERB_TERMINATED || verbOf(s) === VERB_ABANDONED) && sessionOf(s) === sessionId)) p.push('the session has already ended: a statement cannot be sent in it');
-  // cmi5 allows one passed, one failed and one completed per unit in a registration. A registration can
-  // cover a whole course, so another unit's outcome says nothing about this one.
-  const closed = [VERB_PASSED, VERB_FAILED, VERB_COMPLETED].filter((v) => mine.some((s) => verbOf(s) === v && objOf(s['object'])['id'] === launch.activityId));
-  if (closed.length > 0) p.push('the registration already holds a passed, failed or completed statement for this unit: cmi5 allows one of each');
+  if (unitOutcomes(mine, launch).length > 0) p.push('the registration already holds a passed, failed or completed statement for this unit: cmi5 allows one of each');
   return p;
+}
+
+const CMI5_DEFINED_CATEGORY = 'https://w3id.org/xapi/cmi5/context/categories/cmi5';
+
+/**
+ * The passed, failed and completed statements that count against this launch: cmi5 allows one of
+ * each per unit in a registration, and means its own defined statements, by the learner the unit
+ * was launched for. So one counts only when it is for this unit, by the launch's actor, and carries
+ * the cmi5 category. A registration can cover a whole course, so another unit's outcome is not this
+ * unit's; a statement with one of these verbs and no cmi5 category is a cmi5 allowed statement, which
+ * the limit does not cover; and another actor's is not this learner's.
+ */
+function unitOutcomes(mine: readonly Record<string, unknown>[], launch: LmsLaunch): Record<string, unknown>[] {
+  return mine.filter((s) => {
+    const verb = objOf(s['verb'])['id'];
+    if (verb !== VERB_PASSED && verb !== VERB_FAILED && verb !== VERB_COMPLETED) return false;
+    if (objOf(s['object'])['id'] !== launch.activityId) return false;
+    const a = objOf(objOf(s['actor'])['account']);
+    if (a['homePage'] !== launch.actor.homePage || a['name'] !== launch.actor.name) return false;
+    const category = objOf(objOf(s['context'])['contextActivities'])['category'];
+    return Array.isArray(category) && category.some((c) => objOf(c)['id'] === CMI5_DEFINED_CATEGORY);
+  });
+}
+
+/**
+ * Why statements fixed for one session may not be fixed again for another. They may be only when
+ * the LRS shows that the first session is over with none of them in it: the session they were fixed
+ * for has ended, no statement with one of their ids is in the registration, and the new session is
+ * itself one to send in (`sendingSessionProblems`, which also finds an outcome sent some other way).
+ * Empty when they may.
+ */
+export function refixProblems(
+  statements: readonly unknown[], launch: LmsLaunch, fixed: { readonly sessionId: string; readonly statementIds: readonly string[] }, sessionId: string,
+): string[] {
+  const p: string[] = [];
+  const mine = statements.filter(isObj).filter((s) => objOf(s['context'])['registration'] === launch.registration);
+  const sessionOf = (s: Record<string, unknown>): unknown => objOf(objOf(s['context'])['extensions'])[CMI5_SESSION_EXT];
+  const ended = mine.some((s) => {
+    const verb = objOf(s['verb'])['id'];
+    return (verb === VERB_TERMINATED || verb === VERB_ABANDONED) && sessionOf(s) === fixed.sessionId;
+  });
+  if (!ended) p.push('the session the statements were fixed for has not ended: they can still be sent in it');
+  const ids = new Set(fixed.statementIds.map((x) => x.toLowerCase()));
+  if (mine.some((s) => typeof s['id'] === 'string' && ids.has((s['id'] as string).toLowerCase()))) {
+    p.push('a statement that was handed out is already in the LRS: the result was sent');
+  }
+  return [...p, ...sendingSessionProblems(statements, launch, sessionId)];
 }
