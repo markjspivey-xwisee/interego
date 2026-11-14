@@ -502,14 +502,16 @@ const templates = [
   {
     id: `${FOXXI_PROFILE_ID}/templates/lesson-failed`,
     prefLabel: { en: 'lesson-failed' },
-    definition: { en: 'A failed cmi5 Assignable Unit (lesson). Selected by objectActivityType=lesson. A measured score is recommended, not required: cmi5 §9.3.3 constrains a score a failed statement carries and does not demand one, and a failure nobody scored is recorded without one.' },
+    definition: { en: 'A failed cmi5 Assignable Unit (lesson). Selected by objectActivityType=lesson. It states result.success false (cmi5 §9.5.2). A measured score is recommended, not required: cmi5 §9.3.3 constrains a score a failed statement carries and does not demand one, and a failure nobody scored is recorded without one.' },
     verb: `${ADL}/verbs/failed`,
     objectActivityType: `${ADL}/activities/lesson`,
     rules: [
       // Not `included`: a failure recorded with no measured quality has no score to state, and
       // the record keeps that absence instead of a number nobody measured.
       { location: 'result.score.scaled', presence: 'recommended' },
-      { location: 'result.success', presence: 'recommended', any: [false] },
+      // What the template does require, so a bare `failed` with no result is still refused:
+      // cmi5 §9.5.2 has a failed statement state success false.
+      { location: 'result.success', presence: 'included', any: [false] },
     ],
   },
 
