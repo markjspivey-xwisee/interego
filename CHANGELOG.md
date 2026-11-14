@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-13 — Foxxi: cmi5 launchParameters
+
+`launchParameters` was described in the cmi5 model and never read or written. A course structure's `<launchParameters>` is now kept on the AU and staged in `LMS.LaunchData` (cmi5 §10.2.3). A signed one-shot launch, a personal launch link, or `GET /cmi5/launch` may replace that string with `launch_parameters`; the value is not interpreted. It is whatever the course, or that request, says.
+
 ## 2026-11-13 — Foxxi: the LMS records cmi5 launched
 
 A cmi5 launch now stores the LMS `launched` statement before the AU runs. It uses the launch's actor and registration, verb `http://adlnet.gov/expapi/verbs/launched`, the AU as object, and the cmi5 context category. The context extensions are the session id, launch mode, the AU's URL without the cmi5 query, moveOn, and mastery score when the course structure sets one. It is written into the launch's tenant, which for a signed launch and a personal link is the learner's lens, so `foxxi.read_xapi_statements_signed` returns it with the AU's statements. A resumed session does not record another. A new session does, including one that keeps the registration after `terminated` left moveOn unmet.
