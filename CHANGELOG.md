@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-14 — Role-play player: a visit's start is confirmed before a reviewed result is sent
+
+Three follow-ups to the role-play player, from a reviewer's read after it merged.
+
+On a visit that records a reviewed result, the player sent `initialized` and
+then the reviewed statements without waiting to learn whether the first was
+taken. It now sends nothing reviewed until the LRS has taken `initialized`, and
+says so and offers to try again where it has not.
+
+The message for a result issued for another visit said that visit "ended before
+it was recorded". The player knows only that the result was issued for a
+different visit, not what was recorded in it. The message now says that.
+
+Trying again after a start that could not be confirmed sent a new `initialized`
+with a new id. If the first had been stored and only its answer lost, the visit
+would have had two. The player now keeps the visit's `initialized` and sends
+that same statement again; where the LRS answers that it already holds the id,
+the stored statement is read back and compared, and counts once.
+
+A statement the LRS refused once and took on a second try left its first error
+behind, and the page then said the visit had not saved. Only the last answer
+for a statement is kept.
+
 ## 2026-11-14 — Voice mode, shared: say it and hear it, in the coached world and in I2IDL-X Ask
 
 A page can now take a spoken question or command and read an answer aloud, using only what the browser has. No model is called for it and no key is involved: where a page has model work, the paired chat session still does it. It is one shared module, so any vertical or bridge can adopt it.
