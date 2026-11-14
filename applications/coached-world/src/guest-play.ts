@@ -65,7 +65,7 @@ export function createLocalDoor(origin: string): GuestDoor {
       return attestation;
     },
     issueCredential: async (claims: PlayClaims) => ({
-      token: 'not-a-world-session', userId: claims.userId, did: claims.ownerDid, webId: claims.webId,
+      token: 'unused', userId: claims.userId, did: claims.ownerDid, webId: claims.webId,
       podUrl: claims.podUrl, agentId: claims.authenticatedAgentId, agentDid: claims.authenticatedAgentDid,
       provisional: true,
     }),
