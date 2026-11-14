@@ -36,6 +36,56 @@ A general guest is linkable across applications by design: each one learns the s
 
 **After review.** The door page now stores a new browser key only if the stored one is still the one that tab saw, in one transaction, so two tabs that start together use one key and a browser never admits a guest whose key it did not keep. `GeneralGuestDoor.start` counts visits whose grant is still being signed toward its ceiling. The page's inline configuration escapes every character that could end the script element or a source line, and the tests read that script by position instead of by a tag pattern.
 
+## 2026-11-14 — Practice Evidence: a launched counts only under the LMS's authority
+
+Practice Evidence reads a `launched` statement in two places: for the launch
+mode of an attempt taken from an LMS launch, and to check that a session a
+reviewed result will be sent in was opened by the LMS. It took one by verb,
+actor, unit and session. On an LRS where a learner can store statements about
+themselves, a learner can produce that.
+
+`PEV_LAUNCH_LMS_AUTHORITY` names the authority account the LMS's own statements
+carry on the LRS. With it set, a `launched` counts only under that authority.
+One without it is nobody's word about the launch: the attempt is still taken,
+with its launch mode not known, and no cmi5 result can be built for it.
+
+`PEV_LAUNCH_LMS_ISSUERS` now needs it. The bridge does not start with the LMS
+binding and no authority.
+
+The launch mode is decided once, when an attempt is taken, and a hand-out goes
+by that without reading the LRS again. So an attempt now records the authority
+its `launched` was read under, and a bridge told the authority hands out
+nothing for an attempt that records none, or another (409
+`launch-not-verified`). That holds for the learner, for the LMS, and for
+statements already fixed, and it covers every attempt taken before the setting
+was on. Such an attempt is not revalidated.
+
+Without the setting nothing changes. Not covered: `terminated`, the exchanges
+and the scores are the unit's own statements and are not the LMS's to mark.
+
+## 2026-11-14 — Role-play player: a visit's start is confirmed before a reviewed result is sent
+
+Three follow-ups to the role-play player, from a reviewer's read after it merged.
+
+On a visit that records a reviewed result, the player sent `initialized` and
+then the reviewed statements without waiting to learn whether the first was
+taken. It now sends nothing reviewed until the LRS has taken `initialized`, and
+says so and offers to try again where it has not.
+
+The message for a result issued for another visit said that visit "ended before
+it was recorded". The player knows only that the result was issued for a
+different visit, not what was recorded in it. The message now says that.
+
+Trying again after a start that could not be confirmed sent a new `initialized`
+with a new id. If the first had been stored and only its answer lost, the visit
+would have had two. The player now keeps the visit's `initialized` and sends
+that same statement again; where the LRS answers that it already holds the id,
+the stored statement is read back and compared, and counts once.
+
+A statement the LRS refused once and took on a second try left its first error
+behind, and the page then said the visit had not saved. Only the last answer
+for a statement is kept.
+
 ## 2026-11-14 — Voice mode, shared: say it and hear it, in the coached world and in I2IDL-X Ask
 
 A page can now take a spoken question or command and read an answer aloud, using only what the browser has. No model is called for it and no key is involved: where a page has model work, the paired chat session still does it. It is one shared module, so any vertical or bridge can adopt it.

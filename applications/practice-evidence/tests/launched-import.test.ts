@@ -15,7 +15,7 @@ import { PEV_ACTION, readShapesTurtle, toolNameOf } from '../src/ontology.js';
 import { coerceScenario, rubricHash, type ScenarioSpec } from '../src/practice.js';
 import { didOf, recordGraphTurtle, signEnvelope, type AttemptBody } from '../src/records.js';
 import {
-  launchVocabularyProblems, readLaunchedCall, scenarioVersionRef, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary,
+  launchNotVerified, launchVocabularyProblems, lmsAuthorityProblems, readLaunchedCall, scenarioVersionRef, sendingSessionProblems, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary,
 } from '../src/launched-import.js';
 import { buildLaunchedStatements, launchedRefusals, VERB_COMPLETED, VERB_PASSED } from '../src/projections.js';
 
@@ -201,6 +201,39 @@ describe('a registration read as a conversation', () => {
     // Thirteen exchanges are over the scenario's limit of twelve.
     const long = [c[0]!, ...Array.from({ length: 13 }, (_, i) => turn(1 + i, `Line ${i}.`, `Answer ${i}.`)), ...c.slice(3)];
     expect(problemsOf(long)).toEqual(['the session has 13 exchanges, over the scenario\'s limit of 12']);
+  });
+
+  it('takes a launched as the LMS\'s word only under the LMS\'s authority, where the LRS marks one', () => {
+    const LMS_AUTHORITY = { homePage: `${LMS}`, name: 'the-lms' };
+    const by = (account: Out | undefined): Out => ({ ...launchedBy('Normal'), ...(account ? { authority: { objectType: 'Agent', account } } : {}) });
+    const from = (launched: Out): unknown => {
+      const r = readLaunchedCall([launched, ...call()], { ...INPUT, lmsAuthority: LMS_AUTHORITY });
+      return 'call' in r ? [r.call.launchModeFrom, r.call.launch.launchMode] : r.problems;
+    };
+    // The LMS's own: its mode is known.
+    expect(from(by(LMS_AUTHORITY))).toEqual(['launched-statement', 'Normal']);
+    // The same statement stored by anyone else says nothing about how the unit was launched.
+    expect(from(by(undefined))).toEqual(['assumed', 'Normal']);
+    expect(from(by({ homePage: `${LMS}`, name: 'the-lrs' }))).toEqual(['assumed', 'Normal']);
+    expect(from(by({ homePage: 'https://another.example', name: 'the-lms' }))).toEqual(['assumed', 'Normal']);
+    // A learner's own Review-mode claim beside the LMS's Normal launch does not make the mode unknown.
+    const both = readLaunchedCall([by(LMS_AUTHORITY), launchedBy('Review'), ...call()], { ...INPUT, lmsAuthority: LMS_AUTHORITY });
+    expect('call' in both && both.call.launchModeFrom).toBe('launched-statement');
+    // With no authority to ask for, a launched is taken as before.
+    const before = readLaunchedCall([launchedBy('Normal'), ...call()], INPUT);
+    expect('call' in before && before.call.launchModeFrom).toBe('launched-statement');
+
+    // The same for a session to send in: the LMS has to have opened it.
+    const A = 'c0ffee00-1111-4222-8333-444455556666';
+    const launch = ('call' in before ? before.call.launch : undefined)!;
+    const opened = (account: Out | undefined): Out => ({ ...launchedBy('Normal', { session: A }), ...(account ? { authority: { objectType: 'Agent', account } } : {}) });
+    expect(sendingSessionProblems([...call(), opened(LMS_AUTHORITY)], launch, A, LMS_AUTHORITY)).toEqual([]);
+    expect(sendingSessionProblems([...call(), opened(undefined)], launch, A, LMS_AUTHORITY)[0]).toContain('holds no launched statement from the LMS for this unit and this session');
+    expect(sendingSessionProblems([...call(), opened(undefined)], launch, A)).toEqual([]);
+
+    expect(lmsAuthorityProblems(LMS_AUTHORITY)).toEqual([]);
+    expect(lmsAuthorityProblems('the-lms')).toEqual(['must be an object with homePage and name']);
+    expect(lmsAuthorityProblems({ homePage: 'lms', name: '', also: 1 })).toEqual(['homePage must be an absolute IRI', 'name must be a string of 1 to 200 characters', 'unknown keys: also']);
   });
 
   it('checks a launch vocabulary before a bridge starts with it', () => {
@@ -636,6 +669,60 @@ describe('pev.import_launched_attempt', () => {
 
     // The role is for this and nothing else: the LMS reviews nothing and reads no attempt.
     refused(await act(H, 'pev.override_attempt', W.lms, { attemptIri: S['attempt'], target: seen['currentTarget'], levels, sawJudgeLevelsFirst: true }), 403, 'not-a-reviewer');
+  }, SLOW);
+
+  it('learns no launch mode from a launched the LMS did not record, where the bridge is told the LMS\'s authority', async () => {
+    const LMS_AUTHORITY = { homePage: `${LMS}`, name: 'the-lms' };
+    const marked = createPevHandlers({ ...base, launchImport: { ...IMPORT, lmsAuthority: LMS_AUTHORITY } }) as Handlers;
+    const REG11 = '5e11a7c0-0a1b-4c2d-8e3f-9a8b7c6d5e51';
+    const REG12 = '5e11a7c0-0a1b-4c2d-8e3f-9a8b7c6d5e52';
+    const o = (registration: string) => ({ registration, session: '5e11a7c0-0a1b-4c2d-8e3f-9a8b7c6d5e5f' });
+    // Anyone's launched: taken as an attempt, with the mode not known, so nothing can be built for the unit.
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', o(REG11)), ...call(o(REG11))] } });
+    const unmarked = ok(await act(marked, 'pev.import_launched_attempt', W.ana, pay({ registration: REG11 }), readOf(REG11)));
+    expect(unmarked['launchModeFrom']).toBe('assumed');
+    // The LMS's own: the mode is known.
+    lrs.answer = () => ({ status: 200, body: { statements: [{ ...launchedBy('Normal', o(REG12)), authority: { objectType: 'Agent', account: LMS_AUTHORITY } }, ...call(o(REG12))] } });
+    const own = ok(await act(marked, 'pev.import_launched_attempt', W.ana, pay({ registration: REG12 }), readOf(REG12)));
+    expect(own['launchModeFrom']).toBe('launched-statement');
+  }, SLOW);
+
+  it('hands out nothing for an attempt whose launch was decided before the bridge checked who recorded it', async () => {
+    const LMS_AUTHORITY = { homePage: `${LMS}`, name: 'the-lms' };
+    // The same bridge before and after it is told the LMS's authority, and one told another authority.
+    const after = createPevHandlers({ ...base, launchImport: { ...IMPORT, lmsAuthority: LMS_AUTHORITY, lmsIssuers: { [W.lms.address]: LMS } } }) as Handlers;
+    const elsewhere = createPevHandlers({ ...base, launchImport: { ...IMPORT, lmsAuthority: { homePage: 'https://another.example', name: 'the-lms' } } }) as Handlers;
+    const A = 'c0ffee00-1111-4222-8333-444455556666';
+
+    // S['attempt'] was taken, reviewed and had its statements fixed by the bridge as it was: no authority asked for.
+    const legacy = (await readHead(POD, S['attempt']!, TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    expect([legacy.lmsLaunch!.launchModeFrom, legacy.lmsLaunch!.launchedUnder, legacy.lmsLaunch!.handedOut !== undefined]).toEqual(['launched-statement', undefined, true]);
+    expect(launchNotVerified(legacy.lmsLaunch!, undefined)).toBeNull();
+    expect(launchNotVerified(legacy.lmsLaunch!, LMS_AUTHORITY)).toContain('whose recorder was not checked');
+    // Before: its fixed statements come back. After: nothing, to the learner or to the LMS, and nothing is written or read.
+    expect(ok(await act(H, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'], sessionId: A }))['again']).toBe(true);
+    const size = pod.store.size;
+    const reads = lrs.seen.length;
+    const toLearner = refused(await act(after, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'], sessionId: A }, readOf(REG)), 409, 'launch-not-verified');
+    expect((toLearner['problems'] as string[])[0]).toContain('whose recorder was not checked');
+    expect(toLearner['statements']).toBeUndefined();
+    refused(await act(after, 'pev.launched_statements', W.lms, { registration: REG, sessionId: A }), 409, 'launch-not-verified');
+    expect([pod.store.size, lrs.seen.length]).toEqual([size, reads]);
+
+    // An attempt taken after, from the LMS's own launched, records the authority it was read under and is gone by.
+    const REG13 = '5e11a7c0-0a1b-4c2d-8e3f-9a8b7c6d5e61';
+    const o = { registration: REG13, session: '5e11a7c0-0a1b-4c2d-8e3f-9a8b7c6d5e6f' };
+    lrs.answer = () => ({ status: 200, body: { statements: [{ ...launchedBy('Normal', o), authority: { objectType: 'Agent', account: LMS_AUTHORITY } }, ...call(o)] } });
+    const taken = ok(await act(after, 'pev.import_launched_attempt', W.ana, pay({ registration: REG13 }), readOf(REG13)));
+    const fresh = (await readHead(POD, String(taken['attemptIri']), TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    expect(fresh.lmsLaunch!.launchedUnder).toEqual(LMS_AUTHORITY);
+    expect(launchNotVerified(fresh.lmsLaunch!, LMS_AUTHORITY)).toBeNull();
+    expect(validateAgainstShape(recordGraphTurtle(fresh), readShapesTurtle(), { entailment: 'rdfs' }).conforms).toBe(true);
+    // Not reviewed yet, so it is refused for that reason and not for its launch.
+    const early = await act(after, 'pev.launched_statements', W.ana, { attemptIri: taken['attemptIri'], sessionId: A }, readOf(REG13));
+    expect(early['iep:refusalReason']).not.toBe('launch-not-verified');
+    // A bridge told a different authority does not go by it.
+    refused(await act(elsewhere, 'pev.launched_statements', W.ana, { attemptIri: taken['attemptIri'], sessionId: A }, readOf(REG13)), 409, 'launch-not-verified');
   }, SLOW);
 
   it('takes a call whose scores name the scenario version instead of the rubric hash', async () => {
