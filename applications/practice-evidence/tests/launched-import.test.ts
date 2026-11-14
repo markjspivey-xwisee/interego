@@ -416,10 +416,18 @@ describe('pev.import_launched_attempt', () => {
     expect(await notOne([...held, launchedBy('Normal', { session: A, actor: didOf(W.ben.address) })], A)).toEqual(['the session was launched for another actor']);
     expect(await notOne([...held, stmt(VERB_LAUNCHED, 50, { contextExt: { [LAUNCH_MODE_EXT]: 'Normal' }, object: { objectType: 'Activity', id: `${LMS}/courses/calls/au/2` } }, { session: A })], A)).toHaveLength(1);
     expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt(VERB_TERMINATED, 60, {}, { session: A })], A)).toEqual(['the session has already ended: a statement cannot be sent in it']);
-    expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt(VERB_COMPLETED, 60, {}, { session: A })], A)).toEqual(['the registration already holds a passed, failed or completed statement: cmi5 allows one of each']);
+    expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt('https://w3id.org/xapi/adl/verbs/abandoned', 60, {}, { session: A })], A)).toEqual(['the session has already ended: a statement cannot be sent in it']);
+    expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt(VERB_COMPLETED, 60, {}, { session: A })], A)).toEqual(['the registration already holds a passed, failed or completed statement for this unit: cmi5 allows one of each']);
     expect(pod.store.size).toBe(untouched);
 
-    lrs.answer = () => ({ status: 200, body: { statements: [...held, launchedBy('Normal', { session: A })] } });
+    // Another unit of the same course, completed and passed in this registration, and another session abandoned: neither is this unit's.
+    const elsewhere = { objectType: 'Activity', id: `${LMS}/courses/calls/au/2` };
+    lrs.answer = () => ({ status: 200, body: { statements: [
+      ...held, launchedBy('Normal', { session: A }),
+      stmt(VERB_COMPLETED, 5, { object: elsewhere }, { session: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
+      stmt(VERB_PASSED, 6, { object: elsewhere }, { session: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
+      stmt('https://w3id.org/xapi/adl/verbs/abandoned', 7, { object: elsewhere }, { session: 'aaaaaaaa-0000-4000-8000-00000000000b' }),
+    ] } });
     const first = ok(await ask(A));
     const statements = first['statements'] as Out[];
     expect(statements.map((x) => (x['verb'] as Out)['id'])).toEqual([VERB_PASSED, VERB_COMPLETED]);
