@@ -291,6 +291,8 @@ export interface CoursePlayerDeps {
   resolveCourse(courseId: string): Promise<Cmi5Course | null>;
   satisfied(tenant: TenantId, learnerId: string): readonly string[];
   stageLaunch(tenant: TenantId, launch: Cmi5Launch, auId: string): Promise<void>;
+  /** Store the LMS's `launched` statement for a new session in the learner's lens. */
+  recordLaunched(tenant: TenantId, statement: Record<string, unknown>, learner: { did: string; podUrl: string }): Promise<void>;
   /** Void statements whose actor is this DID, in that learner's lens. Returns how many. */
   forgetActor(did: string, tenant: TenantId): Promise<number>;
   /** Keep a statement in that learner's lens. Absent in a deployment that is not writing statements. */
@@ -434,6 +436,13 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
       }
       const tenant = tenantOf(learner);
       const requested = typeof body.au_id === 'string' ? body.au_id.trim() : undefined;
+      // A guest this learner linked keeps their own lens, and may have gone on to satisfy more there
+      // after the link. What they have satisfied is brought over each time the owner launches, so the
+      // owner is not held at an activity their own guest already passed.
+      for (const link of book.linksFor(learner.did)) {
+        if (!link.guestPodUrl || link.guestDid === learner.did) continue;
+        copyLearnerSatisfaction(tenantOf({ did: link.guestDid, podUrl: link.guestPodUrl }), link.guestDid, tenant, learner.did);
+      }
       const satisfied = new Set(deps.satisfied(tenant, learner.did));
       const choice = chooseAu(course, satisfied, requested || undefined);
       if (!choice.ok) { res.status(choice.status).json({ error: choice.error, ...(choice.missingPrerequisites ? { missingPrerequisites: choice.missingPrerequisites } : {}) }); return; }
@@ -457,20 +466,26 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
         learnerPod: learner.podUrl,
         returnUrl,
       };
-      const prior = findResumableLaunch({ tenant, learnerId: learner.did, courseId: course.id, auId: au.id })
-        ?? book.open(learner.did, course.id, au.id);
+      // Only the LMS's own record says whether an attempt continues: its open session, or the same
+      // registration in a new session when the last one ended before moveOn was met. The book's row
+      // is not asked: a row left by a finished attempt would pass for one to resume, the launch would
+      // carry no mode, and a satisfied activity would reopen as Normal.
+      const prior = findResumableLaunch({ tenant, learnerId: learner.did, courseId: course.id, auId: au.id });
       const launch = buildCmi5Launch({
         ...launchRequest,
-        ...(prior ? { resume: { registration: prior.registration, sessionId: prior.sessionId } } : { launchMode: satisfied.has(au.id) ? 'Review' : 'Normal' }),
+        ...(prior ? { resume: prior } : { launchMode: satisfied.has(au.id) ? 'Review' : 'Normal' }),
       });
-      const continued = !!prior && launch.registration === prior.registration;
+      const sessionId = cmi5SessionId(launch.launchData);
+      if (!sessionId) { res.status(503).json({ error: 'player_launch_unavailable' }); return; }
+      // The same session, reopened. A new session of the same registration is not that: it has its own id.
+      const continued = !!prior && !prior.newSession && launch.registration === prior.registration && sessionId === prior.sessionId;
       if (!continued) {
-        const sessionId = cmi5SessionId(launch.launchData);
-        if (!sessionId) { res.status(503).json({ error: 'player_launch_unavailable' }); return; }
         book.remember({ learnerDid: learner.did, courseId: course.id, auId: au.id, registration: launch.registration, sessionId });
         deps.onChange?.();
       }
       await deps.stageLaunch(tenant, launch, au.id);
+      // The LMS's own statement that it launched this session, in the learner's lens with the rest.
+      if (launch.launched) await deps.recordLaunched(tenant, launch.launched, learner);
       res.set('Cache-Control', 'no-store').set('Referrer-Policy', 'no-referrer').json({
         kind: 'cmi5-player-launch',
         resumed: continued,
@@ -494,6 +509,8 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
       const recorded = book.link(guest.did, learner.did, new Date(now()).toISOString(), guest.podUrl);
       if ('refused' in recorded) { res.status(recorded.refused === 'player_link_capacity' ? 503 : 409).json({ error: recorded.refused }); return; }
       if (recorded.already) {
+        // Linking again brings over what the guest has satisfied since.
+        copyLearnerSatisfaction(tenantOf(guest), guest.did, tenantOf(learner), learner.did);
         res.json({ kind: 'cmi5-player-link', guest: guest.did, owner: learner.did, already: true, statementsUnchanged: true });
         return;
       }

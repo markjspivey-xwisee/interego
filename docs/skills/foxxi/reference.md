@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 92 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 93 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -468,7 +468,7 @@ Launch an Assignable Unit of a cmi5 course published on this bridge, for yoursel
 
 **Mint a reusable cmi5 launch link**
 
-Mint a durable link for yourself, for one cmi5 course published on this bridge, signed by your wallet or by an agent holding your delegation. The link is GET /cmi5/go/<token>: the token is unguessable and the URL carries nothing that identifies the learner. Each time the learner opens it, the bridge starts a fresh cmi5 launch (a new single-use fetch token, and a new registration once the previous session has ended) or continues the registration whose session is still open, then redirects to the activity with endpoint, fetch, actor, activityId and registration. Statements keep landing in the learner's own record. expires_in_days defaults to 90; null means the link does not expire on its own. Without au_id the link follows the course, launching the first activity not yet satisfied. foxxi.cmi5_personal_launch_revoke withdraws it. Externally routed: sign_request the args, then POST the envelope.
+Mint a durable link for yourself, for one cmi5 course published on this bridge, signed by your wallet or by an agent holding your delegation. The link is GET /cmi5/go/<token>: the token is unguessable, shown only in this response, and the URL carries nothing that identifies the learner. The bridge stores a hash of the token. Each open starts a fresh fetch token and redirects to the activity. An open session continues; a session terminated before moveOn was met keeps the registration and starts a new session; a session that met moveOn, or was abandoned or waived, starts a new registration (Review when the activity is already satisfied). A link minted by a delegate ends when that delegation does. expires_in_days defaults to 90; null means the link does not expire on its own, except that it still cannot outlive the delegation. Without au_id the link follows the course. foxxi.cmi5_personal_launch_list lists the links minted for you. foxxi.cmi5_personal_launch_revoke withdraws one. Externally routed: sign_request the args, then POST the envelope.
 
 - Action: `urn:iep:action:foxxi:cmi5-personal-launch-signed`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/cmi5/go` (served by a bespoke route; not through the bridge's MCP endpoint)
@@ -483,7 +483,7 @@ Mint a durable link for yourself, for one cmi5 course published on this bridge, 
 
 **Withdraw a reusable cmi5 launch link**
 
-Withdraw one of your personal cmi5 launch links. The URL then stops launching. A session already open may finish. Pass the token, or the link URL. Externally routed: sign_request the args, then POST the envelope.
+Withdraw one of your personal cmi5 launch links. The URL then stops launching. A session already open may finish. Pass the token, the link URL, or the id from foxxi.cmi5_personal_launch_list. Externally routed: sign_request the args, then POST the envelope.
 
 - Action: `urn:iep:action:foxxi:cmi5-personal-launch-revoke-signed`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/cmi5/go/revoke` (served by a bespoke route; not through the bridge's MCP endpoint)
@@ -492,6 +492,21 @@ Withdraw one of your personal cmi5 launch links. The URL then stops launching. A
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, token }). token is the link's token or its full URL. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.cmi5_personal_launch_list`
+
+**List your reusable cmi5 launch links**
+
+List the personal cmi5 launch links minted for you, including ones an agent minted in your name. Each row is the stored record: the hash id, the course, when it expires, and whether it is live. The URL itself is not stored and is not returned. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:cmi5-personal-launch-list-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/cmi5/go/list` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp }). |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.host_package_signed`

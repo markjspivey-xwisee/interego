@@ -4,6 +4,258 @@
 
 A browser that opens a hosted package or a published activity, with no cmi5 launch on the URL, gets a player for that course. Start does not mint a Foxxi identity. It uses the provisional Interego guest the learning account already signs in (`u-try-play-`, browser key) or an existing owner, and the xAPI actor is that owner's DID. Agreeing to the recording is required before the launch, and that agreement is kept against the learner and the course. The statements, the satisfied activities and a later deletion are kept in that learner's own lens, the same one a signed read uses. The published course stays in the shared catalogue. The same browser continues the same owner and, while the attempt is open, the same registration. Adding a passkey, wallet or DID keeps that owner (`/connect?claim=`), and the page can ask identity for a fresh token for that key after the activity, because the first one is not kept. Signing in as a different existing owner records a link and leaves the guest's statements as they were. Deleting a guest recording stores a voiding statement and then marks the original with that statement's id. Unclaimed guests still expire on identity's own deadline.
 
+## 2026-11-13 — Foxxi: the LMS records cmi5 launched
+
+A cmi5 launch now stores the LMS `launched` statement before the AU runs. It uses the launch's actor and registration, verb `http://adlnet.gov/expapi/verbs/launched`, the AU as object, and the cmi5 context category. The context extensions are the session id, launch mode, the AU's URL without the cmi5 query, moveOn, and mastery score when the course structure sets one. It is written into the launch's tenant, which for a signed launch and a personal link is the learner's lens, so `foxxi.read_xapi_statements_signed` returns it with the AU's statements. A resumed session does not record another. A new session does, including one that keeps the registration after `terminated` left moveOn unmet.
+
+## 2026-11-13 — Foxxi: a reusable personal cmi5 launch link
+
+`POST /agent/cmi5/launch` returns one launch URL. Its fetch token is single-use and expires after 30 minutes, so a trainee who bookmarks it cannot get back into the activity. A signed caller can now mint `GET /cmi5/go/<token>` (`POST /agent/cmi5/go`) for themselves and one course. The token is 32 random bytes and the URL does not carry the learner. The pod file `foxxi-lattice/cmi5-personal-links.json` stores the sha-256 of that token, keyed by the hash, so a copy of the file cannot open the link. Each open builds a fresh cmi5 launch and redirects to the AU: a new fetch token every time; the same registration and session while that session is open; the same registration and a new session when the earlier one was terminated before moveOn was met; and a new registration after abandoned, waived, or terminated once moveOn was met (Review when the activity is already satisfied). A Review or Browse launch keeps its mode when it is relaunched. `POST /agent/cmi5/go/revoke` withdraws a link. `POST /agent/cmi5/go/list` lists the links minted for the signed person, including ones a delegate minted, without the secret. A link minted by a delegate expires when that delegation does, and a delegation that cannot be read does not bind the link to the agent. Opens are rate-limited per address and per token. Mint, list and revoke are limited on the route before the signature is checked, keyed on the forwarded client rather than the proxy. Links expire in 90 days unless `expires_in_days` says otherwise. Withdrawn and expired records are dropped when another link is minted, so they do not fill the cap, and an open is counted in memory without rewriting the file. A read of the file that fails is not treated as success and is not followed by a write; an open answers 503 until a read has succeeded. The link is not tied to one course or one person: the course is whichever published course the request names, the actor is whoever signed (or the person a delegation names), and the activity's moveOn and mastery are that course's own structure. Withdrawal, expiry, the forwarded-client limit and the read-before-write are the same ones a SCORM dispatch uses.
+
+## 2026-11-14 — Foxxi: a performance recorded against a course or a lesson is that course's or lesson's outcome
+
+The last pair of Foxxi's statement templates one statement could match
+together. A performance recorded against an activity typed as a course or a
+lesson matched the course or lesson template by its object type and the
+performance template by its marker, and had to follow both; a completion failed
+the first for want of `result.completion`.
+
+The object type now decides (`performanceCategoriesFor`, `outcomeResultFor` in
+`src/xapi-profile.ts`). Recorded against a course or a lesson, the statement
+carries no performance marker and, when it is a completion, states
+`completion: true`; it is held to the course or lesson template alone.
+Recorded against anything else it is a performance record, as before. This
+applies to `record_performance`, its signed form, agent activity and a
+descriptor projected as an outcome. One rule is left to refuse: a failed lesson
+states its score, whoever records it.
+
+`POST /xapi/profile/validate` against Foxxi's own profile now also returns
+`specification`, the outcome of the specification's algorithm for the same
+statement, beside its own verdict, which accepts any one template selected by
+verb and object type.
+
+## 2026-11-13 — Practice Evidence: launch-mode evidence must be for the imported unit and session
+
+Taking a conversation an LMS launched as an attempt read the launch mode from the
+first `launched` statement in the registration, whatever unit or session it was
+for. A registration can cover several of each, so another session's Normal launch
+could stand in for this one's. That fix was pushed to the pull request after it
+had merged, so it is here.
+
+- Only a `launched` statement whose object is the unit of the conversation's
+  `initialized` statement, and whose session id is that session, says how the
+  conversation was launched.
+- Where several match, they have to agree on the mode and on the masteryScore.
+  Which of two records came first no longer decides whether a result may be
+  called passed.
+- With none, with several that disagree, or with one that names no valid mode,
+  the mode stays recorded as assumed. The attempt can still be reviewed, and no
+  cmi5 passed, failed or completed is built for it.
+
+Verified by the vertical's tests against fictional statements only.
+
+## 2026-11-13 — Persisted lattices are written compressed
+
+The writers of persisted lattices now gzip the plaintext before sealing it,
+unless told not to. The reader for that format shipped first, with the writer
+off, because services deploy separately and a reader built before it cannot
+open a compressed body; this turns the writer on now that the reader is live.
+Setting `PGSL_LATTICE_COMPRESSION=none` on a service returns it to plain JSON
+writes without a code change, and a caller can pass `compression: 'none'`.
+Readers accept both forms either way, so resources already stored are read as
+before and are rewritten compressed the next time they are written.
+
+Measured on a made-up artifact with one 120-triple subject: 43.82 MB as plain
+JSON, 1.35 MB compressed. Node identity, holon addresses and the snapshot
+digest do not depend on the stored form.
+## 2026-11-13 — Practice Evidence: an attempt under an LMS launch can count toward its assignable unit
+
+Practice Evidence refused, by design, to put a cmi5 defined category on anything:
+practice could not satisfy an assignable unit, and its registration was derived
+from the attempt. The owner has decided that a practice conversation run under an
+LMS launch does count. This is the first piece of that, as pure functions and the
+record's shape, and the act that takes a launched conversation as an attempt.
+
+- An attempt record may carry the launch it ran under (`lmsLaunch`): the
+  registration, session, actor and activity id the LMS issued, the LRS endpoint,
+  the launch mode, and the masteryScore and contextTemplate when the launch data
+  had them. `lmsLaunchProblems` says what is wrong with one. The record graph
+  writes it as a `pev:LmsLaunch`, declared in `pev.ttl` with a shape in
+  `pev-shapes.ttl`.
+- `buildLaunchedStatements` builds the cmi5 defined statements for a reviewed
+  attempt that has a launch: `passed` or `failed` for a pass gate, then
+  `completed`; `completed` alone for feedback only. They are on the LMS's
+  registration, actor and activity, carry the cmi5 and moveOn categories and the
+  contextTemplate, and name the session they are sent in, which can be a later
+  session of the registration than the conversation's. A statement's id is
+  fixed by the attempt, the registration and the verb, and its timestamp is the
+  time of the review, so a retry is the same document and an LRS refuses a second,
+  different passed or completed for the registration. cmi5 gives these statements
+  to the assignable unit to send, so the bridge still posts nothing, keeps no copy
+  of what was sent and confirms no delivery.
+- `launchedRefusals` gives the reason when none may be built: no launch, a launch
+  that was not Normal, no standing review, or a reviewed result that meets the
+  rubric's pass rule below the launch's masteryScore (or misses it at or above),
+  which cmi5 can call neither passed nor failed. `launchedStatementProblems`
+  checks a statement against its launch.
+
+- `pev.import_launched_attempt` takes a conversation an assignable unit already
+  held under an LMS launch. The learner signs it and passes their own signed read
+  of the registration, which the bridge forwards unchanged to the LRS's signed-read
+  route (`PEV_LAUNCH_READ_URL`); the bridge holds no LRS credential and does not
+  keep the read. The exchanges become turns read from statements, the unit's score
+  per criterion becomes a scripted judgment with nothing verified, and the attempt
+  is written `judged` on the LMS's registration for a reviewer to decide. The
+  profile terms the unit's statements use are a setting (`PEV_LAUNCH_VOCABULARY`);
+  no profile, course or player is named in code. A registration that is not one
+  whole conversation against the scenario version's rubric is refused with every
+  reason, as are another actor's statements and a registration already taken on
+  the pod against any scenario. The cmi5 statements are built only where the LMS's
+  own `launched` statement says the launch was Normal; a mode that was only
+  assumed is refused.
+- A turn may now be an `lrs-statement`, and the other person's lines may be
+  controlled by an `assignable-unit`; both are in `pev.ttl` and its shapes.
+
+An attempt started in Practice Evidence itself has no launch, projects exactly as
+before and satisfies nothing. Verified by the vertical's tests against fictional
+fixtures only, with a fetch double for the LRS: no live LMS, LRS or assignable
+unit has used this. Not built: the act that serves the reviewed statements to the
+unit and keeps what it handed out.
+
+## 2026-11-13 — A persisted lattice can be read compressed; writing it that way is off for now
+
+A PGSL lattice is kept as one sealed pod resource whose plaintext is
+`JSON.stringify({ topUri, nodes })`. That text is highly redundant: every
+fragment repeats its full list of item URIs, about 91 characters each, and the
+same provenance object sits on every node. For a made-up artifact of 485
+triples the plaintext was 13.9 MB and the pod PUT 18.5 MB, while gzip of the
+same plaintext is about 0.57 MB. Sealing the compressed bytes directly takes
+that PUT to roughly 0.77 MB; carrying them as base64 inside a string plaintext
+would have been about 1.02 MB.
+
+Every reader of these resources (`resolveLatticeFromPodDetailed`,
+`resolveLatticeFromPod`, `resolveHolonFromPod`, and through them Foxxi's shared
+lattice and the private performance store) now opens both forms. The two are
+told apart by the first byte of the authenticated plaintext: a plain one is
+JSON text and begins with `{`; a compressed one begins with a NUL byte, which
+no JSON text can, followed by a marker, a version, a codec, the exact inflated
+length and one gzip stream. Once the first byte says compressed, everything
+after it has to check out or the read is refused as unreadable, with the
+reason. It is never retried as JSON, so a writer will not take a damaged body
+for an empty lattice and write over it. Inflation is capped at 256 MiB
+(`MAX_LATTICE_INFLATED_BYTES`), enforced inside zlib, so a small body cannot
+make a reader allocate without limit.
+
+The writers can compress, and do not unless asked: pass
+`{ compression: 'gzip' }` to a `promote*Encrypted*` writer (or
+`latticeCompression: 'gzip'` to `composeIntoSharedLattice`), or set
+`PGSL_LATTICE_COMPRESSION=gzip`. Unset, a writer seals the same plain JSON it
+always has. That is deliberate. The services that read these resources deploy
+separately, and a reader built before this change cannot open a compressed
+body, so every reader has to be live before any writer emits one. The default
+flips in a later change.
+
+To seal bytes without base64-ing them first, `@interego/core` gains
+`createEncryptedEnvelopeFromBytes` and `openEncryptedEnvelopeBytes` (with
+`encryptContentBytes` and `decryptContentBytes` beneath them). The string
+functions are now thin wrappers over these; an envelope made from a string has
+the same shape and seals the same bytes as before. The zlib use is in a
+Node-only module of `@interego/pgsl`; core stays free of it.
+
+Node URIs are content-addressed and do not depend on how the body is stored:
+the nodes read back from a compressed body are deep-equal to those from a
+plain one, and the snapshot digest that lets a duplicate compose skip its
+write is computed over the nodes, so it is unchanged.
+
+Separately, `composeIntoSharedLattice` takes an opt-in `maxGroupWidth`. An
+ingest over a group of width W builds W(W+1)/2 fragments, so one wide subject
+dominates an artifact, and the existing fold at eight applies only to the top
+level list of groups. With `maxGroupWidth` set, a group with more children
+than that folds into sub-holons of at most that width, recursively. No caller
+sets it: folding is part of the composition, so it changes the holon URI of
+any artifact with a group that wide, and existing memories, courses and
+ontologies keep their URIs only because it is unset.
+
+Measured on one made-up artifact with a 120-triple subject and thirty
+4-triple subjects: 9,227 nodes, 32.9 MB plaintext and a 43.8 MB PUT as
+written today; a 1.35 MB PUT with compression; 2,574 nodes and a 2.2 MB PUT
+with groups folded at eight; 0.15 MB with both.
+
+## 2026-11-13 — Foxxi statements say which kind they are, and its profile selects on that
+
+Under the xAPI Profiles specification a statement must follow every template it
+matches, and it matches on determining properties only. Three families of
+Foxxi's templates shared a verb and took any object type, so a statement of one
+kind matched the templates written for another and failed them: a course
+completion against the performance template, an ingested production run against
+the descriptor templates, a plain voiding against the descriptor voiding.
+
+Statements Foxxi emits now carry a typed context activity saying which kind
+they are, and the templates select on its type:
+
+- a category of type `foxxi:activities/descriptor-projection` on every statement
+  projected from a context descriptor (`performed-descriptor`,
+  `superseding-descriptor`, `voided-descriptor`);
+- a category of type `foxxi:activities/performance-record` on every recorded
+  unit of performance: `record_performance`, its signed form, agent activity,
+  and a descriptor projected as an outcome (`production-performance-completed`,
+  `production-performance-failed`);
+- type `foxxi:activities/superseded-descriptor` on the `other` activity naming
+  the descriptor a statement revises (`superseding-descriptor`).
+
+`performed-production` now names its object type, `foxxi:ProductionTask`, which
+its two emitters already used. The three activity types are declared in the
+profile and in the Foxxi vocabulary.
+
+The Foxxi vocabulary takes a new version for them, 2026.11.0, released and
+archived on its own (backward compatible with 2026.10.1). The archive test
+counted imports per release as if every release carried every document; it now
+counts the releases that archived a shapes graph.
+
+A new test runs what the descriptor projector and the run ingest really emit
+through the specification's validation: each validates, against the template
+for its own kind. Statements stored before this carry no marker: a stored
+production completion or descriptor projection matches no template under the
+specification's reading, and is not rewritten. Foxxi's own validator, which
+selects by verb and object type and accepts any one template, is unchanged. One
+case left: a performance recorded against an activity typed as a course or a
+lesson matches both the course template and the performance template, and has
+to follow both.
+
+## 2026-11-13 — Foxxi's xAPI Profile: two templates the specification's matching could not use
+
+The specification matches a statement to a template on its determining
+properties, and a statement that matches several templates has to follow every
+one. Two of Foxxi's templates were written for a looser reading and went wrong
+under it:
+
+- `launched` named the cmi5 category in `contextCategoryActivityType`. That
+  property is the type of a category activity; the cmi5 category is an
+  activity id and carries no type, so the template matched no statement. The
+  property is gone; the rule on the category id is what requires it.
+- `experienced-activity` had no `objectActivityType` and a rule that the object
+  be a course or a performance. It therefore matched every `experienced`
+  statement, and made each fragment and slide statement invalid. It is now the
+  course template, with a new `experienced-performance` beside it.
+
+Of 26 statements this application's own tests treat as conformant, 21 now
+validate under the specification's algorithm (16 before). The other five need a
+decision about what Foxxi emits, and are unchanged: `completed` and `failed`
+for a course or lesson against the production-performance templates,
+`performed` for an ingested production run against the descriptor templates,
+and a plain `voided` against `voided-descriptor`. Each pair shares a verb with
+nothing in the statement to tell them apart.
+## 2026-11-13 — A guest test stopped passing when the clock reached the guest's expiry
+
+`a-guest-is-kept-by-their-browser.test.ts` runs a deployment at a fixed instant
+(2026-11-12T10:00Z) with a guest that expires a day later. The storage gate's
+`checkProvisionalTarget` compared that expiry with the machine's clock, so the
+test passed until 2026-11-13T10:00Z and has answered 401 on every run since,
+on every pull request. `checkProvisionalTarget` now takes `now` as a parameter,
+defaulting to the machine's clock as before, the way `verifiedProvisional`
+already does; the test passes the deployment's clock. The gate's behaviour in
+service is unchanged.
+
 ## 2026-11-13 — Foxxi's own xAPI Profile states its rule locations as JSONPath
 
 Found on the live Profile Server the day it shipped: `/validate_templates`
@@ -94,6 +346,8 @@ server, several small transactions each.
 ## 2026-11-13 — Foxxi: a reusable personal cmi5 launch link
 
 `POST /agent/cmi5/launch` returns one launch URL. Its fetch token is single-use and expires after 30 minutes, so a trainee who bookmarks it cannot get back into the activity. A signed caller can now mint `GET /cmi5/go/<token>` (`POST /agent/cmi5/go`) for themselves and one course. The token is 32 random bytes and the URL does not carry the learner. Each open builds a fresh cmi5 launch and redirects to the AU: a new fetch token every time, the same registration and session while that session has not been terminated, abandoned or waived, and a new registration afterwards (Review when the activity is already satisfied). `POST /agent/cmi5/go/revoke` withdraws it. Opens are rate-limited per address and per token. Links expire in 90 days unless `expires_in_days` says otherwise, and they are kept on the tenant pod at `foxxi-lattice/cmi5-personal-links.json`. A read of that file that fails is not followed by a write, so a pod that cannot be read is not replaced by this process's copy. Withdrawn and expired links stay recorded and do not count toward the learner's limit. Mint and revoke are also limited on the route, before the signature is checked. The link is not tied to one course or one person: the course is whichever published course the request names, the actor is whoever signed, and the activity's moveOn and mastery are that course's own structure. Withdrawal, expiry and the per-address limit are the same ones a SCORM dispatch uses, and both registries refuse to overwrite the pod when a read fails.
+
+
 
 ## 2026-11-13 — Foxxi is an xAPI Profile Server
 

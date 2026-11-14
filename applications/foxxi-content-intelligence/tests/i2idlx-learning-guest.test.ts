@@ -94,7 +94,7 @@ async function fixture(options: { guests?: boolean; termsVersion?: string; signe
     requireLearner: (req) => learnerFromPlayerAuth(learning.auth, req),
     verifyGuest: async () => { throw new Error('unused'); },
     resolveCourse: async (id) => id === 'https://workbench.example/course' ? { id, title: 'Any course', structure: [{ kind: 'au', id: 'https://workbench.example/au', title: 'One', url: 'https://workbench.example/au.html', moveOn: 'Completed' }] } : null,
-    satisfied: () => [], stageLaunch: async () => undefined, forgetActor: async () => 0,
+    satisfied: () => [], stageLaunch: async () => undefined, recordLaunched: async () => undefined, forgetActor: async () => 0,
   });
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); const address = server.address(); assert.ok(address && typeof address !== 'string');
   const local = `http://127.0.0.1:${address.port}`;

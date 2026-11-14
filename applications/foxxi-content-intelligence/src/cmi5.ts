@@ -102,6 +102,17 @@ export interface Cmi5StatementInput {
   session: Cmi5Session;
   result?: Cmi5Result;
   timestamp?: string;
+  /**
+   * The LMS's launched statement (cmi5 §9.3.1). The session id is already on `session`.
+   * `launchUrl` is the AU's address before the LMS appends endpoint, fetch, actor,
+   * activityId and registration. `masteryScore` is omitted when the course structure sets none.
+   */
+  launched?: {
+    launchMode: 'Normal' | 'Browse' | 'Review';
+    launchUrl: string;
+    moveOn: string;
+    masteryScore?: number;
+  };
 }
 
 export interface Cmi5Statement {
@@ -187,6 +198,17 @@ export function buildCmi5Statement(input: Cmi5StatementInput): Cmi5Statement {
       // dereferenceable Foxxi namespace, not the cmi5 IRI prefix, so emitted
       // statements don't claim a cmi5 extension the cmi5 ontology doesn't define.
       stmt.context.extensions[`${FOXXI_NS}publisherId`] = input.session.publisherId;
+    }
+  }
+
+  if (input.verb === 'launched' && input.launched) {
+    stmt.context.extensions = stmt.context.extensions ?? {};
+    const ext = stmt.context.extensions;
+    ext['https://w3id.org/xapi/cmi5/context/extensions/launchmode'] = input.launched.launchMode;
+    ext['https://w3id.org/xapi/cmi5/context/extensions/launchurl'] = input.launched.launchUrl;
+    ext['https://w3id.org/xapi/cmi5/context/extensions/moveon'] = input.launched.moveOn;
+    if (typeof input.launched.masteryScore === 'number') {
+      ext['https://w3id.org/xapi/cmi5/context/extensions/masteryscore'] = input.launched.masteryScore;
     }
   }
 

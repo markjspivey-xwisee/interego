@@ -4,7 +4,14 @@ import { Wallet } from 'ethers';
 import { createHash } from 'node:crypto';
 import { recoverSignedRequest } from '../src/auth.js';
 import type { AddressInfo } from 'node:net';
-import { generateKeyPair, openEncryptedEnvelope, createEncryptedEnvelope } from '@interego/core';
+import { generateKeyPair, openEncryptedEnvelopeBytes, createEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
+import { decodeLatticePlaintext } from '@interego/pgsl';
+
+/** A stored lattice's JSON text, whether it was sealed plain or compressed; null when the key does not open it. */
+const opened = (envelope: EncryptedEnvelope, key: EncryptionKeyPair): string | null => {
+  const bytes = openEncryptedEnvelopeBytes(envelope, key);
+  return bytes ? decodeLatticePlaintext(bytes) : null;
+};
 import { PrivatePerformanceStore } from '../../agentic-performance-practice/src/private-performance-store.js';
 import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
 import { publicSpellingOf } from '../src/store-origins.js';
@@ -176,14 +183,15 @@ describe('private encrypted CAS persistence', () => {
     const raw = [...pod.files.values()][0]!.body;
     expect(raw).not.toContain('Rule application'); expect(raw).not.toContain('learner-A');
     const envelope = JSON.parse(raw);
-    expect(openEncryptedEnvelope(envelope, pod.owner)).toContain('learner-A');
-    expect(openEncryptedEnvelope(envelope, pod.bridge)).toContain('learner-A');
-    expect(openEncryptedEnvelope(envelope, generateKeyPair())).toBeNull();
+    // The stored lattice is compressed before it is sealed; `opened` reads either form.
+    expect(opened(envelope, pod.owner)).toContain('learner-A');
+    expect(opened(envelope, pod.bridge)).toContain('learner-A');
+    expect(opened(envelope, generateKeyPair())).toBeNull();
   });
   it('refuses owner-reencrypted forged server plan even after content hashes are recomputed', async () => {
     const { pod, store } = await seed();
     const [url, record] = [...pod.files.entries()][0]!;
-    const payload = JSON.parse(openEncryptedEnvelope(JSON.parse(record.body), pod.owner)!);
+    const payload = JSON.parse(opened(JSON.parse(record.body), pod.owner)!);
     for (const node of Object.values(payload.nodes) as Array<{ kind: string; value?: string }>) {
       if (!node.value?.startsWith('__foxxi_private_performance_v1__:')) continue;
       const state = JSON.parse(node.value.slice('__foxxi_private_performance_v1__:'.length));

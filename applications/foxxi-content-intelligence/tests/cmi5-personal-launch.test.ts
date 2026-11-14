@@ -1,7 +1,8 @@
 /**
  * A personal cmi5 launch link: one unguessable URL per learner and course, opened as many times
  * as the learner needs. Each open mints a fresh fetch token and redirects to the AU. An open
- * session is resumed; a terminated, abandoned or waived one starts a new registration.
+ * session is resumed. terminated before moveOn keeps the registration and starts a new session.
+ * Abandoned, waived, or terminated after moveOn starts a new registration.
  */
 import { afterAll, describe, expect, it } from 'vitest';
 import express from 'express';
@@ -9,12 +10,14 @@ import { readFileSync } from 'node:fs';
 import { createServer, type Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import {
-  PersonalLaunchRegistry, attachPersonalLaunchRoutes, mergePersonalLink, personalLinkState, readDurableRegistry,
+  PersonalLinkAuthError, PersonalLaunchRegistry, attachPersonalLaunchRoutes, hashPersonalLaunchToken, mergePersonalLink, personalLinkState, readDurableRegistry,
   type PersonalLaunchLink, type PersonalLaunchRouteDeps,
 } from '../src/cmi5-personal-link.js';
+import { commitDurableRegistry } from '../src/revocable-registry.js';
 import {
   buildCmi5Launch, cmi5BearerRegistration, findResumableLaunch, observeCmi5Statement, redeemFetchToken,
 } from '../src/cmi5-lms.js';
+import { getStatementStore } from '../src/xapi-lrs.js';
 import type { Cmi5Course } from '../src/cmi5-course.js';
 import type { TenantId } from '../src/tenant-context.js';
 
@@ -43,24 +46,32 @@ const solo: Cmi5Course = {
   structure: [{ kind: 'au', id: 'https://au.example/solo', title: 'Only', url: 'https://content.example/solo', moveOn: 'Passed', masteryScore: 0.5 }],
 };
 
-function made(link: PersonalLaunchLink | { refused: string }): PersonalLaunchLink {
+function unpacked(link: { link: PersonalLaunchLink; token: string } | { refused: string }): { link: PersonalLaunchLink; token: string } {
   if ('refused' in link) throw new Error(link.refused);
   return link;
 }
+function made(link: { link: PersonalLaunchLink; token: string } | { refused: string }): PersonalLaunchLink {
+  return unpacked(link).link;
+}
 
 describe('the personal-link registry', () => {
-  it('mints an unguessable token that does not carry the learner, and knows live, revoked and expired', () => {
+  it('mints an unguessable token, stores only its hash, and knows live, revoked and expired', () => {
     const registry = new PersonalLaunchRegistry();
     const now = Date.parse('2026-11-13T00:00:00Z');
-    const link = made(registry.create({ actorDid: LEARNER, courseId: course.id, learnerPod: POD, mintedBy: LEARNER, expiresAt: '2026-11-14T00:00:00.000Z' }, now));
-    expect(link.id).toMatch(/^pl-[A-Za-z0-9_-]{43}$/);
-    expect(link.id).not.toContain('did');
-    expect(link.id).not.toContain(LEARNER);
-    expect(personalLinkState(link, now)).toBe('live');
-    expect(personalLinkState(link, Date.parse('2026-11-14T00:00:00Z'))).toBe('expired');
-    registry.revoke(link.id, now);
-    expect(personalLinkState(link, now)).toBe('revoked');
-    expect(made(registry.create({ actorDid: LEARNER, courseId: course.id, learnerPod: POD, mintedBy: LEARNER }, now)).id).not.toBe(link.id);
+    const minted = unpacked(registry.create({ actorDid: LEARNER, courseId: course.id, learnerPod: POD, mintedBy: LEARNER, expiresAt: '2026-11-14T00:00:00.000Z' }, now));
+    expect(minted.token).toMatch(/^pl-[A-Za-z0-9_-]{43}$/);
+    expect(minted.link.id).toMatch(/^[a-f0-9]{64}$/);
+    expect(minted.link.id).toBe(hashPersonalLaunchToken(minted.token));
+    expect(JSON.stringify(registry.toJSON())).not.toContain(minted.token);
+    expect(registry.lookup(minted.token)?.id).toBe(minted.link.id);
+    expect(personalLinkState(minted.link, now)).toBe('live');
+    expect(personalLinkState(minted.link, Date.parse('2026-11-14T00:00:00Z'))).toBe('expired');
+    registry.revoke(minted.link.id, now);
+    expect(personalLinkState(minted.link, now)).toBe('revoked');
+    registry.dirty = false;
+    registry.noteOpen(minted.link.id, now);
+    expect(minted.link.opens).toBe(1);
+    expect(registry.dirty).toBe(false);
   });
 
   it('merges a durable copy: the earlier withdrawal and expiry, the larger open count, malformed entries skipped', () => {
@@ -71,9 +82,9 @@ describe('the personal-link registry', () => {
       [link.id]: { ...link, opens: 4, expiresAt: '2026-12-01T00:00:00.000Z', revokedAt: '2026-11-20T00:00:00.000Z', lastOpenAt: '2026-11-13T00:00:00.000Z' },
       junk: { id: 'not-a-token' },
     };
+    const never = made(registry.create({ actorDid: OTHER, courseId: course.id, learnerPod: POD, mintedBy: OTHER }, 0));
     expect(registry.load(JSON.parse(JSON.stringify(durable)))).toBe(1);
     expect(registry.get(link.id)).toMatchObject({ opens: 4, expiresAt: '2026-12-01T00:00:00.000Z', revokedAt: '2026-11-20T00:00:00.000Z' });
-    const never = made(registry.create({ actorDid: OTHER, courseId: course.id, learnerPod: POD, mintedBy: OTHER }, 0));
     expect(mergePersonalLink(never, { ...never, expiresAt: '2026-12-01T00:00:00.000Z', opens: 2 }).expiresAt).toBe('2026-12-01T00:00:00.000Z');
     expect(new PersonalLaunchRegistry().load(JSON.parse(JSON.stringify(registry)))).toBe(2);
   });
@@ -88,20 +99,51 @@ describe('the personal-link registry', () => {
     expect(registry.get(firstLink.id)?.actorDid).toBe(LEARNER);
   });
 
-  it('frees a learner\'s quota when a link is withdrawn or has expired, and keeps the record', () => {
-    const registry = new PersonalLaunchRegistry(10, 1);
+  it('drops a withdrawn or expired link when the next one is minted, so neither fills the cap', () => {
+    const registry = new PersonalLaunchRegistry(2, 1);
     const now = Date.parse('2026-11-13T00:00:00Z');
     const live = made(registry.create({ actorDid: LEARNER, courseId: 'c', learnerPod: POD, mintedBy: LEARNER }, now));
     expect(registry.create({ actorDid: LEARNER, courseId: 'c', learnerPod: POD, mintedBy: LEARNER }, now)).toEqual({ refused: 'a learner may hold 1 personal launch links; withdraw one you no longer need' });
     registry.revoke(live.id, now);
-    expect(registry.get(live.id)?.revokedAt).toBeTruthy();
     const again = made(registry.create({ actorDid: LEARNER, courseId: 'c', learnerPod: POD, mintedBy: LEARNER }, now));
+    expect(registry.get(live.id)).toBeUndefined();
     expect(again.id).not.toBe(live.id);
+    expect(registry.size).toBe(1);
 
     const expired = made(registry.create({ actorDid: OTHER, courseId: 'c', learnerPod: POD, mintedBy: OTHER, expiresAt: '2026-11-01T00:00:00.000Z' }, now));
     expect(personalLinkState(expired, now)).toBe('expired');
-    expect(made(registry.create({ actorDid: OTHER, courseId: 'c', learnerPod: POD, mintedBy: OTHER }, now)).actorDid).toBe(OTHER);
-    expect(registry.get(expired.id)?.expiresAt).toBe('2026-11-01T00:00:00.000Z');
+    expect(registry.size).toBe(2);
+    const replacement = made(registry.create({ actorDid: OTHER, courseId: 'c', learnerPod: POD, mintedBy: OTHER }, now));
+    expect(registry.get(expired.id)).toBeUndefined();
+    expect(replacement.actorDid).toBe(OTHER);
+    expect(registry.size).toBe(2);
+  });
+
+  it('ends a delegate\'s link when the delegation ends, and a failed read does not write', async () => {
+    const registry = new PersonalLaunchRegistry();
+    const now = Date.parse('2026-11-13T00:00:00Z');
+    const delegated = made(registry.create({
+      actorDid: LEARNER, courseId: 'c', learnerPod: POD, mintedBy: 'did:key:agent',
+      expiresAt: '2027-01-01T00:00:00.000Z', delegationExpiresAt: '2026-11-20T00:00:00.000Z',
+    }, now));
+    expect(personalLinkState(delegated, now)).toBe('live');
+    expect(personalLinkState(delegated, Date.parse('2026-11-20T00:00:00Z'))).toBe('expired');
+    const other = made(registry.create({ actorDid: OTHER, courseId: 'c', learnerPod: POD, mintedBy: OTHER, delegationExpiresAt: '2026-12-01T00:00:00.000Z' }, now));
+    expect(mergePersonalLink(other, { ...other, delegationExpiresAt: '2026-11-15T00:00:00.000Z' }).delegationExpiresAt).toBe('2026-11-15T00:00:00.000Z');
+
+    const calls: string[] = [];
+    const wrote = await commitDurableRegistry({
+      resource: 'https://pod.example/foxxi-lattice/cmi5-personal-links.json',
+      fetch: async (_url, init) => {
+        calls.push(init?.method ?? 'GET');
+        if (!init?.method || init.method === 'GET') return { ok: false, status: 503, json: async () => ({ secret: true }) };
+        return { ok: true, status: 201, json: async () => ({}) };
+      },
+      load: () => { throw new Error('a failed read must not be loaded'); },
+      body: () => { throw new Error('a failed read must not be written'); },
+    });
+    expect(wrote).toBe(false);
+    expect(calls).toEqual(['GET']);
   });
 
   it('treats a missing registry as absent and a failed read as not safe to overwrite', async () => {
@@ -134,6 +176,20 @@ describe('an open session is the registration a later launch continues', () => {
     expect(again.fetchToken).not.toBe(launch.fetchToken);
     expect(again.launchData).toMatchObject({ launchMode: 'Normal', contextTemplate: { extensions: { [SESSION]: (launch.launchData.contextTemplate as { extensions: Record<string, string> }).extensions[SESSION] } } });
     const deps = { statementsForRegistration: async () => [] as Record<string, unknown>[], emit: () => undefined };
+    const reviewOpen = buildCmi5Launch({ ...req, learner: { id: learner + '-review-open' }, launchMode: 'Review' });
+    const reviewKept = buildCmi5Launch({ ...req, learner: { id: learner + '-review-open' }, resume: findResumableLaunch({ ...scope, learnerId: learner + '-review-open' }) });
+    expect(reviewKept.registration).toBe(reviewOpen.registration);
+    expect(reviewKept.launchData).toMatchObject({ launchMode: 'Review' });
+
+    const stopped = buildCmi5Launch({ ...req, learner: { id: learner + '-stopped' } });
+    const stoppedSession = (stopped.launchData.contextTemplate as { extensions: Record<string, string> }).extensions[SESSION];
+    await observeCmi5Statement({ verb: { id: V_TERMINATED }, context: { registration: stopped.registration } }, TENANT, deps);
+    const continued = findResumableLaunch({ ...scope, learnerId: learner + '-stopped' });
+    expect(continued).toEqual({ registration: stopped.registration, newSession: true });
+    const restarted = buildCmi5Launch({ ...req, learner: { id: learner + '-stopped' }, resume: continued });
+    expect(restarted.registration).toBe(stopped.registration);
+    expect((restarted.launchData.contextTemplate as { extensions: Record<string, string> }).extensions[SESSION]).not.toBe(stoppedSession);
+
     await observeCmi5Statement({ verb: { id: V_ABANDONED }, context: { registration: launch.registration } }, TENANT, deps);
     expect(findResumableLaunch(scope)).toBeUndefined();
 
@@ -233,9 +289,10 @@ describe('minting, opening and withdrawing a personal launch link', () => {
     expect(forever.body.state).toBe('live');
   });
 
-  it('redirects each open to a conformant launch, resumes the open registration, and starts a new one after terminated', async () => {
+  it('redirects each open to a conformant launch, resumes the open registration, and keeps it after terminated', async () => {
     const learner = 'did:ethr:0x5555555555555555555555555555555555555555';
-    const s = await start();
+    let writes = 0;
+    const s = await start({ persist: () => { writes++; } });
     const minted = await mint(s, { course_id: course.id, au_id: first }, learner);
     expect(minted.status).toBe(201);
     const token = minted.body.token as string;
@@ -274,8 +331,14 @@ describe('minting, opening and withdrawing a personal launch link', () => {
     await observeCmi5Statement({ verb: { id: V_TERMINATED }, context: { registration } }, TENANT, { statementsForRegistration: async () => [], emit: () => undefined });
     const third = await (await open(s, token)).json() as { resumed: boolean; registration: string };
     expect(third.resumed).toBe(false);
-    expect(third.registration).not.toBe(registration);
-    expect(s.registry.get(token)?.opens).toBe(3);
+    expect(third.registration).toBe(registration);
+    expect(s.registry.lookup(token)?.opens).toBe(3);
+    expect(writes).toBe(1);
+    const held = await getStatementStore(TENANT).query({ registration, limit: 20 });
+    const launched = held.statements.filter(row => (row.statement.verb as { id?: string }).id === 'http://adlnet.gov/expapi/verbs/launched');
+    expect(launched).toHaveLength(2);
+    const sessions = launched.map(row => (row.statement.context as { extensions: Record<string, string> }).extensions[SESSION]);
+    expect(new Set(sessions).size).toBe(2);
   });
 
   it('follows the course: the next unsatisfied activity, then Review once the only one is satisfied and closed', async () => {
@@ -349,11 +412,11 @@ describe('minting, opening and withdrawing a personal launch link', () => {
     const token = (await mint(s, { course_id: solo.id })).body.token as string;
     const preview = await open(s, token, { Accept: 'application/json', 'Sec-Purpose': 'prefetch' });
     expect(preview.status).toBe(204);
-    expect(s.registry.get(token)?.opens).toBe(0);
+    expect(s.registry.lookup(token)?.opens).toBe(0);
     const head = await fetch(`${s.base}/cmi5/go/${token}`, { method: 'HEAD', redirect: 'manual' });
     expect(head.status).toBe(200);
     expect(head.headers.get('location')).toBeNull();
-    expect(s.registry.get(token)?.opens).toBe(0);
+    expect(s.registry.lookup(token)?.opens).toBe(0);
 
     const guessed = 'pl-' + 'a'.repeat(43);
     const html = await open(s, guessed, { Accept: 'text/html' });
@@ -387,14 +450,14 @@ describe('minting, opening and withdrawing a personal launch link', () => {
 
   it('reads a link this process does not hold yet, and does not say why a launch failed', async () => {
     const held = new PersonalLaunchRegistry();
-    const link = made(held.create({ actorDid: LEARNER, courseId: solo.id, learnerPod: POD, mintedBy: LEARNER, expiresAt: '2027-01-01T00:00:00.000Z' }, Date.parse('2026-11-13T12:00:00Z')));
+    const minted = unpacked(held.create({ actorDid: LEARNER, courseId: solo.id, learnerPod: POD, mintedBy: LEARNER, expiresAt: '2027-01-01T00:00:00.000Z' }, Date.parse('2026-11-13T12:00:00Z')));
     let reloaded = 0;
     const s = await start({
       reload: async () => { reloaded++; s.registry.load(held.toJSON()); },
     });
     expect((await open(s, 'not-a-token', { Accept: 'application/json' })).status).toBe(404);
     expect(reloaded).toBe(0);
-    const found = await open(s, link.id);
+    const found = await open(s, minted.token);
     expect(found.status).toBe(200);
     expect(reloaded).toBe(1);
     expect((await found.json() as { launchUrl: string }).launchUrl).toContain('endpoint=');
@@ -404,6 +467,50 @@ describe('minting, opening and withdrawing a personal launch link', () => {
     const failed = await open(broken, brokenToken);
     expect(failed.status).toBe(503);
     expect(await failed.text()).not.toContain('secret.pod');
+
+    const unread = await start({ reload: async () => 'failed' });
+    const missing = 'pl-' + 'b'.repeat(43);
+    const unavailable = await open(unread, missing, { Accept: 'application/json' });
+    expect(unavailable.status).toBe(503);
+    expect((await unavailable.json() as { error: string }).error).toMatch(/could not be read/);
+  });
+
+  it('limits minting per forwarded client, lists the person\'s links, and does not bind a link when the delegation cannot be read', async () => {
+    const limited = await start({ signedRequestsPerWindow: 1 });
+    const headers = { ...jsonHeaders, 'X-Forwarded-For': '198.51.100.8, 10.0.0.1' };
+    const first = await fetch(`${limited.base}/agent/cmi5/go`, { method: 'POST', headers, body: JSON.stringify({ course_id: solo.id }) });
+    expect(first.status).toBe(201);
+    const second = await fetch(`${limited.base}/agent/cmi5/go`, { method: 'POST', headers, body: JSON.stringify({ course_id: solo.id }) });
+    expect(second.status).toBe(429);
+    const other = await fetch(`${limited.base}/agent/cmi5/go`, { method: 'POST', headers: { ...jsonHeaders, 'X-Forwarded-For': '198.51.100.9' }, body: JSON.stringify({ course_id: course.id }) });
+    expect(other.status).toBe(201);
+
+    const person = 'did:ethr:0x8888888888888888888888888888888888888888';
+    const agent = 'did:key:z6Mkdelegate';
+    const listed = await start({
+      learnerOf: async (auth) => {
+        if (auth.callerDid === agent) throw new PersonalLinkAuthError(503, 'the delegation could not be read just now; the link was not bound to the agent');
+        return { did: person, podUrl: POD, via: auth.callerDid, delegationExpiresAt: '2026-11-20T00:00:00.000Z' };
+      },
+    });
+    const before = listed.registry.size;
+    const refused = await mint(listed, { course_id: solo.id }, agent);
+    expect(refused.status).toBe(503);
+    expect(listed.registry.size).toBe(before);
+    const minted = await mint(listed, { course_id: solo.id, expires_in_days: null }, person);
+    expect(minted.status).toBe(201);
+    expect(minted.body.expiresAt).toBe('2026-11-20T00:00:00.000Z');
+    expect(typeof minted.body.url).toBe('string');
+    const list = await fetch(`${listed.base}/agent/cmi5/go/list`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ callerDid: person }) });
+    expect(list.status).toBe(200);
+    const body = await list.json() as { learner: string; count: number; links: Array<{ id: string; token?: string; url?: string }> };
+    expect(body.learner).toBe(person);
+    expect(body.count).toBe(1);
+    expect(body.links[0]?.token).toBeUndefined();
+    expect(body.links[0]?.url).toBeUndefined();
+    expect(body.links[0]?.id).toBe(hashPersonalLaunchToken(minted.body.token as string));
+    const byId = await fetch(`${listed.base}/agent/cmi5/go/revoke`, { method: 'POST', headers: jsonHeaders, body: JSON.stringify({ callerDid: person, token: body.links[0]?.id }) });
+    expect(byId.status).toBe(200);
   });
 });
 
@@ -413,11 +520,15 @@ describe('the bridge wires the personal link the way it wires a signed launch', 
     const block = src.slice(src.indexOf('const PERSONAL_LINKS_RESOURCE'), src.indexOf('// ── Composable content'));
     expect(block).toContain("foxxi-lattice/cmi5-personal-links.json");
     expect(block).toContain('verifyCaller: verifyDelegatedCaller');
-    expect(block).toContain('learnerOf: signedLearner');
+    expect(block).toContain('learnerOf: signedLearnerForLink');
     expect(block).toContain('stageLaunch: stageLaunchData');
     expect(block).toContain('persist: persistPersonalLinks');
     expect(block).toContain('registryWriter(writePersonalLinks)');
-    expect(block).toContain("if (read === 'failed') { personalLaunchLinks.dirty = true; return false; }");
+    expect(block).toContain('commitDurableRegistry');
+    expect(block).toContain("if (read !== 'failed') personalLinksReadAt = Date.now()");
+    const auth = src.slice(src.indexOf('async function signedLearnerForLink'), src.indexOf('/** Who a signed caller is learning as'));
+    expect(auth).toContain('throw new PersonalLinkAuthError(503');
+    expect(auth).toContain("throw new PersonalLinkAuthError(401, 'this agent has no delegation to act as a person')");
     expect(block).toMatch(/opensPerMinute: positiveLimit\(process\.env\.FOXXI_CMI5_GO_PER_IP, 60\)/);
     expect(block).toMatch(/opensPerTokenPerMinute: positiveLimit\(process\.env\.FOXXI_CMI5_GO_PER_TOKEN, 12\)/);
   });

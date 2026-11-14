@@ -206,7 +206,24 @@ export function generateContentKey(): ContentKey {
  * Uses nacl.secretbox (XSalsa20-Poly1305) — authenticated encryption.
  */
 export function encryptContent(plaintext: string, contentKey: ContentKey): EncryptedContent {
-  const message = textToUtf8(plaintext);
+  return encryptContentBytes(textToUtf8(plaintext), contentKey);
+}
+
+/**
+ * Encrypt RAW BYTES with a symmetric key — the bytes-capable twin of
+ * {@link encryptContent}, which is now a thin wrapper over this (text is
+ * UTF-8 encoded exactly as before, so a string caller's output is unchanged
+ * in shape and construction).
+ *
+ * Exists so a caller can seal a binary plaintext (e.g. a compressed body)
+ * without first base64-ing it into a string, which would cost a third again
+ * before the envelope's own base64 of the ciphertext.
+ *
+ * A reader that expects text MUST NOT open a bytes envelope with
+ * {@link decryptContent}: use {@link decryptContentBytes} and decide from the
+ * bytes what they are.
+ */
+export function encryptContentBytes(message: Uint8Array, contentKey: ContentKey): EncryptedContent {
   const key = fromBase64(contentKey.key);
   const nonce = nacl.randomBytes(24);
 
@@ -226,14 +243,23 @@ export function encryptContent(plaintext: string, contentKey: ContentKey): Encry
  * Returns null if decryption fails (wrong key, tampered ciphertext).
  */
 export function decryptContent(encrypted: EncryptedContent, contentKey: ContentKey): string | null {
+  const plaintext = decryptContentBytes(encrypted, contentKey);
+  if (!plaintext) return null;
+
+  return utf8ToText(plaintext);
+}
+
+/**
+ * Decrypt content to RAW BYTES, with no text decoding. Returns null if
+ * decryption fails (wrong key, tampered ciphertext). The authenticated bytes
+ * are returned exactly as sealed, whether the writer sealed text or binary.
+ */
+export function decryptContentBytes(encrypted: EncryptedContent, contentKey: ContentKey): Uint8Array | null {
   const ciphertext = fromBase64(encrypted.ciphertext);
   const nonce = fromBase64(encrypted.nonce);
   const key = fromBase64(contentKey.key);
 
-  const plaintext = nacl.secretbox.open(ciphertext, nonce, key);
-  if (!plaintext) return null;
-
-  return utf8ToText(plaintext);
+  return nacl.secretbox.open(ciphertext, nonce, key);
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -306,11 +332,25 @@ export function createEncryptedEnvelope(
   recipientPublicKeys: readonly string[],
   senderKeyPair: EncryptionKeyPair,
 ): EncryptedEnvelope {
+  return createEncryptedEnvelopeFromBytes(textToUtf8(plaintext), recipientPublicKeys, senderKeyPair);
+}
+
+/**
+ * Bytes-capable twin of {@link createEncryptedEnvelope}: seal RAW BYTES and
+ * wrap the key for each recipient. The envelope has the same shape, version
+ * and algorithms — only the sealed plaintext is binary instead of UTF-8 text.
+ * Open with {@link openEncryptedEnvelopeBytes}.
+ */
+export function createEncryptedEnvelopeFromBytes(
+  plaintext: Uint8Array,
+  recipientPublicKeys: readonly string[],
+  senderKeyPair: EncryptionKeyPair,
+): EncryptedEnvelope {
   // Generate a random content key
   const contentKey = generateContentKey();
 
   // Encrypt the content with the symmetric key
-  const content = encryptContent(plaintext, contentKey);
+  const content = encryptContentBytes(plaintext, contentKey);
 
   // Wrap the content key for each recipient
   const wrappedKeys = recipientPublicKeys.map(pubKey =>
@@ -335,6 +375,21 @@ export function openEncryptedEnvelope(
   envelope: EncryptedEnvelope,
   recipientKeyPair: EncryptionKeyPair,
 ): string | null {
+  const bytes = openEncryptedEnvelopeBytes(envelope, recipientKeyPair);
+  return bytes ? utf8ToText(bytes) : null;
+}
+
+/**
+ * Open an encrypted envelope to RAW BYTES (no text decoding). Works on any
+ * envelope, whether sealed from text or from bytes.
+ *
+ * @returns The authenticated plaintext bytes, or null if not authorized /
+ *   decryption fails
+ */
+export function openEncryptedEnvelopeBytes(
+  envelope: EncryptedEnvelope,
+  recipientKeyPair: EncryptionKeyPair,
+): Uint8Array | null {
   // Find the wrapped key for this recipient
   const myWrappedKey = envelope.wrappedKeys.find(
     wk => wk.recipientPublicKey === recipientKeyPair.publicKey
@@ -347,7 +402,7 @@ export function openEncryptedEnvelope(
   if (!contentKey) return null; // Unwrapping failed
 
   // Decrypt the content
-  return decryptContent(envelope.content, contentKey);
+  return decryptContentBytes(envelope.content, contentKey);
 }
 
 /**
@@ -407,12 +462,14 @@ export function reEncryptForRecipients(
   ownerKeyPair: EncryptionKeyPair,
   newRecipientPublicKeys: readonly string[],
 ): EncryptedEnvelope | null {
-  // Decrypt with owner's key
-  const plaintext = openEncryptedEnvelope(envelope, ownerKeyPair);
+  // Decrypt with owner's key. As BYTES: the plaintext is not always text (a compressed lattice is
+  // a binary container), and decoding it as UTF-8 threw, so such an envelope could not have a
+  // recipient revoked. Bytes in, the same bytes out, whatever they are.
+  const plaintext = openEncryptedEnvelopeBytes(envelope, ownerKeyPair);
   if (!plaintext) return null;
 
   // Re-encrypt for new recipient set (with a new random content key)
-  return createEncryptedEnvelope(plaintext, newRecipientPublicKeys, ownerKeyPair);
+  return createEncryptedEnvelopeFromBytes(plaintext, newRecipientPublicKeys, ownerKeyPair);
 }
 
 // ═════════════════════════════════════════════════════════════

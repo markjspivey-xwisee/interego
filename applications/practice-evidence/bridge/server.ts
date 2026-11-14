@@ -106,6 +106,16 @@
  *                                   Anything else is ignored with a warning that does not print
  *                                   an address. Unset or ignored, they go to the guide's contact
  *                                   section. Set it on the service; never bake it into an image
+ *   PEV_LAUNCH_READ_URL, PEV_LAUNCH_LRS_ENDPOINT, PEV_LAUNCH_VOCABULARY
+ *                                   taking an attempt from an LMS launch
+ *                                   (pev.import_launched_attempt): the LRS's signed-read route a
+ *                                   learner's own signed read is forwarded to, the LRS endpoint
+ *                                   recorded on the attempt, and the profile terms the unit's
+ *                                   statements use, as JSON {turnVerb, counterpartLineExt,
+ *                                   criterionKeyExt, rubricExt}, each an absolute IRI. All three or
+ *                                   none: with none the act answers 501; with some, or a value that
+ *                                   is not an https URL (http on loopback) or not that JSON, the
+ *                                   bridge does not start. This bridge holds no LRS credential
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
  *                                   route (this bridge never picks a model)
@@ -124,10 +134,11 @@ import { contactForLog } from '../../_shared/contact-link/index.js';
 import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
+import { launchVocabularyProblems, type LaunchVocabulary } from '../src/launched-import.js';
 import { attemptIriSecret, freshNonce, iriKeyFingerprint, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
 import { cachedDidDocuments, isUserDid, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import {
-  createPevHandlers, describeStartup, DECISIVE_ACTS, DECISIVE_ON_ANOTHERS_ATTEMPT, DEFAULT_BUDGETS, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX,
+  createPevHandlers, describeStartup, type LaunchImport, DECISIVE_ACTS, DECISIVE_ON_ANOTHERS_ATTEMPT, DEFAULT_BUDGETS, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX,
   type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
 } from './handlers.js';
 import { didDocumentFetch, operatorPodFetch } from './pod-helpers.js';
@@ -314,6 +325,29 @@ async function main(): Promise<void> {
   const uiSignIn = relayUrl !== undefined && relayAddresses.length > 0 && identityHost !== undefined;
   const relayIsLoopback = relayUrl !== undefined && ((): boolean => { try { return LOOPBACK.has(new URL(relayUrl).hostname); } catch { return false; } })();
 
+  const launchReadUrl = env('PEV_LAUNCH_READ_URL');
+  const launchEndpoint = env('PEV_LAUNCH_LRS_ENDPOINT');
+  const launchVocabularyRaw = env('PEV_LAUNCH_VOCABULARY');
+  let launchImport: LaunchImport | undefined;
+  if (launchReadUrl !== undefined || launchEndpoint !== undefined || launchVocabularyRaw !== undefined) {
+    const httpsOrLoopback = (v: string | undefined): boolean => {
+      if (v === undefined) return false;
+      try { const u = new URL(v); return u.protocol === 'https:' || (u.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)); } catch { return false; }
+    };
+    let vocabulary: unknown;
+    try { vocabulary = launchVocabularyRaw !== undefined ? JSON.parse(launchVocabularyRaw) : undefined; } catch { vocabulary = undefined; }
+    const bad = [
+      ...(httpsOrLoopback(launchReadUrl) ? [] : ['PEV_LAUNCH_READ_URL takes the https URL of the LRS\'s signed-read route']),
+      ...(httpsOrLoopback(launchEndpoint) ? [] : ['PEV_LAUNCH_LRS_ENDPOINT takes the https URL of the LRS endpoint']),
+      ...launchVocabularyProblems(vocabulary).map((x) => `PEV_LAUNCH_VOCABULARY: ${x}`),
+    ];
+    if (bad.length > 0) {
+      warn(`Taking an attempt from an LMS launch needs PEV_LAUNCH_READ_URL, PEV_LAUNCH_LRS_ENDPOINT and PEV_LAUNCH_VOCABULARY together, or none of them. ${bad.join('; ')}. Not listening.`);
+      process.exitCode = 1;
+      return;
+    }
+    launchImport = { readUrl: launchReadUrl as string, endpoint: launchEndpoint as string, vocabulary: vocabulary as LaunchVocabulary };
+  }
   const llmKey = env('PEV_LLM_API_KEY') ?? env('ANTHROPIC_API_KEY');
   const llmModel = env('PEV_LLM_MODEL');
   const model: TextModel | undefined = llmKey && llmModel
@@ -374,6 +408,7 @@ async function main(): Promise<void> {
     bridgeModelFor: modelFor, budgets,
     ...(model ? { model } : {}),
     ...(demoSigner ? { demoSigner } : {}),
+    ...(launchImport ? { launchImport: { ...launchImport, fetchFn: baseFetch } } : {}),
   };
   const handlers = createPevHandlers(deps);
 

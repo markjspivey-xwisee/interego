@@ -7,6 +7,7 @@
  * and the durable-read check live here for the same reason. A course or an actor is never named.
  */
 import type { Request } from 'express';
+import { ipKeyGenerator, rateLimit } from 'express-rate-limit';
 
 export interface Withdrawable {
   readonly expiresAt?: string;
@@ -73,6 +74,49 @@ export function perAddressLimiter(max: number, windowMs: number, now: () => numb
     if (seen.size > 10_000) for (const [k, v] of seen) if (v.resetAt < t) seen.delete(k);
     return ++entry.count > max ? { ok: false, retryAfterSeconds: Math.max(1, Math.ceil((entry.resetAt - t) / 1000)) } : { ok: true };
   };
+}
+
+/**
+ * A route limit keyed on the client, not the proxy. The last forwarded hop is the address the
+ * bridge already treats as the client; `req.ip` behind that proxy is one shared bucket.
+ */
+export function forwardedRateLimit(opts: { windowMs: number; limit: number; identifier: string }) {
+  return rateLimit({
+    windowMs: opts.windowMs,
+    limit: opts.limit,
+    identifier: opts.identifier,
+    standardHeaders: 'draft-8',
+    legacyHeaders: false,
+    message: { error: 'too_many_requests' },
+    // ipKeyGenerator still folds an IPv6 client to its subnet. The address is the forwarded hop.
+    keyGenerator: (req) => ipKeyGenerator(requestAddress(req), 56),
+    validate: { xForwardedForHeader: false, keyGeneratorIpFallback: false },
+  });
+}
+
+/**
+ * Write a registry only after its current durable copy was read or confirmed absent. A failed
+ * read returns false and does not PUT.
+ */
+export async function commitDurableRegistry(opts: {
+  resource: string;
+  fetch: (url: string, init?: { method?: string; headers?: Record<string, string>; body?: string }) => Promise<{ ok: boolean; status: number; json: () => Promise<unknown> }>;
+  load: (json: unknown) => void;
+  /** Called after a successful read, so the body includes what the pod already held. */
+  body: () => string;
+}): Promise<boolean> {
+  const read = await readDurableRegistry(
+    async () => {
+      const response = await opts.fetch(opts.resource, { headers: { Accept: 'application/json' } });
+      return { status: response.status, json: () => response.json() };
+    },
+    opts.load,
+  );
+  if (read === 'failed') return false;
+  const container = opts.resource.replace(/[^/]+$/, '');
+  await opts.fetch(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+  const written = await opts.fetch(opts.resource, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: opts.body() });
+  return written.ok;
 }
 
 /** The client address the bridge already decided, else the last hop of x-forwarded-for. */

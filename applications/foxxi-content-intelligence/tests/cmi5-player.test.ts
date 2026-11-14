@@ -45,6 +45,7 @@ async function player(options: { perMinute?: number; who?: PlayerLearner; verify
   let who = options.who ?? learner(GUEST, true);
   const statements: Array<{ id: string; voided: boolean; statement: Record<string, unknown> }> = [];
   const staged: Array<{ launchMode?: unknown; registration: string }> = [];
+  const launchedSeen: Array<Record<string, unknown>> = [];
   const app = express();
   app.use(express.json());
   attachCoursePlayerRoutes(app, {
@@ -54,6 +55,7 @@ async function player(options: { perMinute?: number; who?: PlayerLearner; verify
     resolveCourse: async (id) => id === course.id ? course : null,
     satisfied: (tenant, id) => learnerSatisfiedAus(tenant, id),
     stageLaunch: async (_tenant, launch) => { staged.push({ launchMode: launch.launchData.launchMode, registration: launch.registration }); },
+    recordLaunched: async (_tenant, statement) => { launchedSeen.push(statement); },
     forgetActor: async (did) => {
       let n = 0;
       for (const rec of statements) {
@@ -76,7 +78,7 @@ async function player(options: { perMinute?: number; who?: PlayerLearner; verify
   if (!address || typeof address === 'string') throw new Error('no port');
   const base = `http://127.0.0.1:${address.port}`;
   return {
-    base, book, staged, statements, setWho: (next: PlayerLearner) => { who = next; },
+    base, book, staged, statements, launchedSeen, setWho: (next: PlayerLearner) => { who = next; },
     close: () => new Promise<void>(resolve => server.close(() => resolve())),
   };
 }
@@ -143,6 +145,68 @@ describe('the course player', () => {
     } finally { await launched.close(); }
   });
 
+  it('reopens a finished activity in Review for a learner with no other launch in memory', async () => {
+    // A learner nothing else in this file has launched, so no open launch left by another test can stand in for a resume.
+    const solo = learner('did:web:identity.example:users:u-try-play-' + '51'.repeat(16), true);
+    const launched = await player({ who: solo });
+    try {
+      const body = { course_id: course.id, tracking_consent: true };
+      const post = async () => (await fetch(`${launched.base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as Promise<{ registration: string; resumed: boolean }>;
+      const first = await post();
+      expect(first.resumed).toBe(false);
+      expect(launched.staged.at(-1)).toMatchObject({ launchMode: 'Normal' });
+      // The LMS said it launched the session: the unit's activity, this registration, the session the launch opened.
+      expect(launched.launchedSeen).toHaveLength(1);
+      const said = launched.launchedSeen[0] as { verb: { id: string }; object: { id: string }; context: { registration: string; extensions: Record<string, unknown> } };
+      const auId = course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0].id : '';
+      expect([said.verb.id, said.object.id, said.context.registration]).toEqual(['http://adlnet.gov/expapi/verbs/launched', auId, first.registration]);
+      expect(said.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/sessionid']).toBe(launched.book.open(solo.did, course.id, auId)?.sessionId);
+      expect(said.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/launchmode']).toBe('Normal');
+      const completed = { verb: { id: 'http://adlnet.gov/expapi/verbs/completed' }, object: { id: auId }, context: { registration: first.registration }, result: { completion: true } };
+      const deps = { statementsForRegistration: async () => [completed], emit: () => undefined };
+      expect((await observeCmi5Statement(completed, DEFAULT_TENANT, deps))?.satisfied).toBe(true);
+      await observeCmi5Statement({ verb: { id: 'http://adlnet.gov/expapi/verbs/terminated' }, object: { id: auId }, context: { registration: first.registration } }, DEFAULT_TENANT, deps);
+      // The book still holds the finished attempt's row. It is not what decides the mode.
+      expect(launched.book.open(solo.did, course.id, auId)?.registration).toBe(first.registration);
+      const review = await post();
+      expect(review.resumed).toBe(false);
+      expect(review.registration).not.toBe(first.registration);
+      expect(launched.staged.at(-1)).toMatchObject({ launchMode: 'Review', registration: review.registration });
+      expect(launched.launchedSeen).toHaveLength(2);
+    } finally { await launched.close(); }
+  });
+
+  it('continues the registration in a new session when the last one ended before the activity was satisfied', async () => {
+    const solo = learner('did:web:identity.example:users:u-try-play-' + '52'.repeat(16), true);
+    const launched = await player({ who: solo });
+    try {
+      const body = { course_id: course.id, tracking_consent: true };
+      const post = async () => (await fetch(`${launched.base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as Promise<{ registration: string; resumed: boolean }>;
+      const auId = course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0].id : '';
+      const first = await post();
+      const firstSession = launched.book.open(solo.did, course.id, auId)?.sessionId;
+      // Reopened while the session is open: the same session, and the LMS does not say launched again.
+      const same = await post();
+      expect([same.resumed, same.registration]).toEqual([true, first.registration]);
+      expect(launched.book.open(solo.did, course.id, auId)?.sessionId).toBe(firstSession);
+      expect(launched.launchedSeen).toHaveLength(1);
+      // Terminated with nothing completed: the next open is the same registration, a new session, and its own launched.
+      const deps = { statementsForRegistration: async () => [], emit: () => undefined };
+      await observeCmi5Statement({ verb: { id: 'http://adlnet.gov/expapi/verbs/terminated' }, object: { id: auId }, context: { registration: first.registration } }, DEFAULT_TENANT, deps);
+      const next = await post();
+      expect(next.registration).toBe(first.registration);
+      expect(next.resumed).toBe(false);
+      const nextSession = launched.book.open(solo.did, course.id, auId)?.sessionId;
+      expect(nextSession).toBeTruthy();
+      expect(nextSession).not.toBe(firstSession);
+      expect(launched.launchedSeen).toHaveLength(2);
+      const said = launched.launchedSeen[1] as { context: { registration: string; extensions: Record<string, unknown> } };
+      expect(said.context.registration).toBe(first.registration);
+      expect(said.context.extensions['https://w3id.org/xapi/cmi5/context/extensions/sessionid']).toBe(nextSession);
+      expect(launched.staged.at(-1)).toMatchObject({ launchMode: 'Normal', registration: first.registration });
+    } finally { await launched.close(); }
+  });
+
   it('links an existing owner to a guest without changing the guest statements', async () => {
     const launched = await player();
     try {
@@ -167,6 +231,30 @@ describe('the course player', () => {
       expect((await forgotten.json() as { forgotten: number }).forgotten).toBeGreaterThan(0);
       expect(launched.statements[0]!.voided).toBe(true);
       expect(original.actor.account.name).toBe(GUEST);
+    } finally { await launched.close(); }
+  });
+
+  it('brings over what a linked guest satisfies after the link, when the owner next launches', async () => {
+    const guest = learner('did:web:identity.example:users:u-try-play-' + '53'.repeat(16), true);
+    const owner = learner('did:web:identity.example:users:u-pk-53owner53owner', false);
+    const launched = await player({ who: guest, verifyGuest: async () => guest });
+    try {
+      const body = { course_id: course.id, tracking_consent: true };
+      const post = async () => (await fetch(`${launched.base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as Promise<{ registration: string }>;
+      const auId = course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0].id : '';
+      const asGuest = await post();
+      // Linked while the guest has satisfied nothing.
+      launched.setWho(owner);
+      expect((await fetch(`${launched.base}/learn/link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(200);
+      expect(learnerSatisfiedAus(DEFAULT_TENANT, owner.did)).toEqual([]);
+      // The guest goes on and completes the activity.
+      const completed = { verb: { id: 'http://adlnet.gov/expapi/verbs/completed' }, object: { id: auId }, context: { registration: asGuest.registration }, result: { completion: true } };
+      expect((await observeCmi5Statement(completed, DEFAULT_TENANT, { statementsForRegistration: async () => [completed], emit: () => undefined }))?.satisfied).toBe(true);
+      expect(learnerSatisfiedAus(DEFAULT_TENANT, owner.did)).toEqual([]);
+      // The owner's next launch finds it satisfied, so it opens in Review.
+      await post();
+      expect(learnerSatisfiedAus(DEFAULT_TENANT, owner.did)).toEqual([auId]);
+      expect(launched.staged.at(-1)).toMatchObject({ launchMode: 'Review' });
     } finally { await launched.close(); }
   });
 
@@ -289,7 +377,7 @@ describe('the course player', () => {
       verifyGuest: async () => guest,
       resolveCourse: async (id) => id === course.id ? course : null,
       satisfied: (tenant, id) => learnerSatisfiedAus(tenant, id),
-      stageLaunch: async () => undefined,
+      stageLaunch: async () => undefined, recordLaunched: async () => undefined,
       forgetActor: async (did, tenant) => {
         const result = await voidActorStatements({
           did, homePage: SOURCE,
@@ -361,7 +449,7 @@ describe('the course player', () => {
       verifyGuest: async () => guest,
       resolveCourse: async (id) => id === course.id ? course : null,
       satisfied: (tenant, id) => learnerSatisfiedAus(tenant, id),
-      stageLaunch: async () => undefined,
+      stageLaunch: async () => undefined, recordLaunched: async () => undefined,
       forgetActor: async () => 0,
       statementIds: async (did, tenant) => (await listStoredStatements(tenant))
         .filter(rec => !rec.voided && (rec.statement.actor as { account?: { name?: string } }).account?.name === did)
