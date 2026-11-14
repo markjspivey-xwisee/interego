@@ -31,7 +31,13 @@ export interface Cmi5AuNode {
   /** The AU's entitlement key from the course structure (§13.1.4), which the LMS passes on in its
    *  launch data (§10.2.7.1). */
   entitlementKey?: string;
+  /** Static launch parameters from the course structure (§13.1.4). The LMS copies them into
+   *  LMS.LaunchData, and may pass a different value (§10.2.3). */
+  launchParameters?: string;
 }
+
+/** cmi5 does not bound this string. This keeps a course, or a launch request, from staging an unbounded document. */
+export const LAUNCH_PARAMETERS_MAX = 8_192;
 
 /** A block node — groups AUs and nested blocks. */
 export interface Cmi5BlockNode {
@@ -148,6 +154,7 @@ function toCourseNode(n: XmlNode): Cmi5Node | null {
       ...(n.attrs.launchMethod === 'OwnWindow' || n.attrs.launchMethod === 'AnyWindow'
         ? { launchMethod: n.attrs.launchMethod } : {}),
       ...(child(n, 'entitlementKey')?.text.trim() ? { entitlementKey: child(n, 'entitlementKey')!.text.trim() } : {}),
+      ...launchParametersOf(child(n, 'launchParameters')?.text),
     };
   }
   if (n.tag === 'block') {
@@ -159,6 +166,13 @@ function toCourseNode(n: XmlNode): Cmi5Node | null {
     };
   }
   return null;
+}
+
+function launchParametersOf(text: string | undefined): { launchParameters: string } | Record<string, never> {
+  const value = text?.trim();
+  if (!value) return {};
+  if (value.length > LAUNCH_PARAMETERS_MAX) throw new Error(`launchParameters is longer than ${LAUNCH_PARAMETERS_MAX} characters`);
+  return { launchParameters: value };
 }
 
 function isMoveOn(v: string | undefined): v is Cmi5MoveOn {
