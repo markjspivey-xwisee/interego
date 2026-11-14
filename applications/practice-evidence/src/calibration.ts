@@ -63,7 +63,7 @@ export interface OutcomeRow {
   readonly judgeRoute: InferenceRoute; readonly promptTemplateHash: string; readonly judgmentIndex: number; readonly repeat: boolean;
   /** For a repeat: the level index the repeated judgment chose for this criterion. */
   readonly repeatOfJudgedIndex: number | null;
-  readonly chosenBy: JudgeChosenBy; readonly counterpartControlledBy: 'platform' | 'learner-model' | 'learner';
+  readonly chosenBy: JudgeChosenBy; readonly counterpartControlledBy: 'platform' | 'learner-model' | 'learner' | 'assignable-unit';
   readonly loopJudgment: LoopJudgment; readonly loopOutcome: LoopOutcome; readonly judgedIndex: number; readonly finalIndex: number;
   readonly levelCount: number; readonly unverified: boolean; readonly auditSample: boolean; readonly sawJudgeLevelsFirst: boolean;
   readonly reviewerDid: string; readonly reviewIndex: number; readonly demo: boolean;
@@ -75,7 +75,7 @@ export interface OutcomeRow {
  */
 export function outcomeRows(a: {
   attemptIri: string; scenarioSpec: ScenarioSpec; rubricHash: string; judgments: readonly JudgmentResult[];
-  standingReview: ReviewResult | null; counterpartControlledBy: 'platform' | 'learner-model' | 'learner';
+  standingReview: ReviewResult | null; counterpartControlledBy: 'platform' | 'learner-model' | 'learner' | 'assignable-unit';
   demo: boolean; authorTest?: boolean; criterionContentHashes?: Readonly<Record<string, string>>;
 }): OutcomeRow[] {
   const review = a.standingReview;
@@ -312,7 +312,7 @@ const UNDECLARED_UNCERTAINTY = 0.2;
 export interface QueueCandidate {
   readonly attemptIri: string; readonly state: 'judged' | 'contested' | 'review-retracted'; readonly judgedAt: string;
   readonly scenarioSpec: ScenarioSpec; readonly rubricHash: string; readonly judgments: readonly JudgmentResult[];
-  readonly counterpartControlledBy: 'platform' | 'learner-model' | 'learner'; readonly learnerDid: string;
+  readonly counterpartControlledBy: 'platform' | 'learner-model' | 'learner' | 'assignable-unit'; readonly learnerDid: string;
   /** The learner, the judge signers and earlier reviewers, as principal keys (`principalKey`). */
   readonly excludedReviewers: readonly string[];
   readonly currentTarget: RecordTarget;

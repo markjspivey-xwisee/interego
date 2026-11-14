@@ -1,4 +1,52 @@
 import { FOXXI_NS } from './foxxi-vocab.js';
+
+// ── What tells one kind of Foxxi statement from another ───────────────────────────────────────
+//
+// The specification matches a statement to a template on its determining properties only (verb,
+// object activity type, the types of its context activities), and a statement that matches
+// several templates has to follow every one. Several of these templates share a verb and took
+// any object type, so one statement matched all of them and failed the ones written for another
+// kind. A statement now says which kind it is with a typed context activity, and the template
+// selects on that type:
+//
+//   a category of type DESCRIPTOR_PROJECTION_TYPE   the statement projects a context descriptor
+//   a category of type PERFORMANCE_RECORD_TYPE      the statement records a unit of performance
+//   an `other` of type SUPERSEDED_DESCRIPTOR_TYPE   the descriptor it revises
+//
+// Statements stored before this carry none of them and match the unmarked templates only.
+export const DESCRIPTOR_PROJECTION_TYPE = `${FOXXI_NS}activities/descriptor-projection`;
+export const PERFORMANCE_RECORD_TYPE = `${FOXXI_NS}activities/performance-record`;
+export const SUPERSEDED_DESCRIPTOR_TYPE = `${FOXXI_NS}activities/superseded-descriptor`;
+type ContextActivity = { id: string; objectType: 'Activity'; definition: { type: string } };
+/** The category a statement projected from a context descriptor carries. */
+export const descriptorProjectionCategory = (): ContextActivity =>
+  ({ id: `${FOXXI_NS}categories/descriptor-projection`, objectType: 'Activity', definition: { type: DESCRIPTOR_PROJECTION_TYPE } });
+/** The category a statement recording a unit of performance (production, training, performance support) carries. */
+export const performanceRecordCategory = (): ContextActivity =>
+  ({ id: `${FOXXI_NS}categories/performance-record`, objectType: 'Activity', definition: { type: PERFORMANCE_RECORD_TYPE } });
+
+/** Object activity types the course and lesson templates select on. */
+const LEARNING_ACTIVITY_TYPES: ReadonlySet<string> = new Set(['http://adlnet.gov/expapi/activities/course', 'http://adlnet.gov/expapi/activities/lesson']);
+/** True when an outcome about this object type is a course or lesson outcome, whoever records it. */
+export const isLearningActivityType = (objectType: unknown): boolean => typeof objectType === 'string' && LEARNING_ACTIVITY_TYPES.has(objectType);
+/**
+ * The categories a recorded performance carries, by what it is about.
+ *
+ * A performance recorded against an activity typed as a course or a lesson used to be both: it
+ * matched the course or lesson template by its object type and the performance template by its
+ * marker, and had to follow the two rule sets at once. The object type decides. About a course or
+ * a lesson it is that course's or lesson's outcome and carries no performance marker; about
+ * anything else it is a performance record.
+ */
+export const performanceCategoriesFor = (objectType: unknown): ContextActivity[] =>
+  isLearningActivityType(objectType) ? [] : [performanceRecordCategory()];
+/**
+ * What a recorded outcome adds to its statement's result, by what it is about. A completion of a
+ * course or a lesson states `completion: true`, which those templates require and the `completed`
+ * verb already says; anything else adds nothing.
+ */
+export const outcomeResultFor = (objectType: unknown, completed: boolean): { completion?: true } =>
+  isLearningActivityType(objectType) && completed ? { completion: true } : {};
 // Re-exported: xapi-instrumentation.ts has always imported FOXXI_NS from here, and
 // that stays true — but the string is DEFINED once, in foxxi-vocab.ts. This module
 // used to declare its own copy of it, which is how the namespace drifted onto a dead
@@ -95,6 +143,9 @@ const activityTypes = [
   { id: `${ADL}/activities/cmi.interaction`, prefLabel: { en: 'interaction' }, definition: { en: 'A question as an interaction activity: its interactionType, description and choices, source, target or scale. Foxxi never sends its correctResponsesPattern.' } },
   { id: `${FOXXI_NS}activities/fragment`,         prefLabel: { en: 'fragment' },         definition: { en: 'Foxxi extension — a piece of teaching or support whose IRI is the hash of its content, one of the alternatives a composition position offers' } },
   { id: `${FOXXI_NS}activities/composition`,      prefLabel: { en: 'composition' },      definition: { en: 'Foxxi extension — a lesson, module, course or curriculum: a path of positions resolved per learner from their own record' } },
+  { id: DESCRIPTOR_PROJECTION_TYPE, prefLabel: { en: 'descriptor projection' }, definition: { en: 'Foxxi extension — the type of the category activity carried by a statement projected from a context descriptor. Statement templates for descriptor projections select on it.' } },
+  { id: PERFORMANCE_RECORD_TYPE, prefLabel: { en: 'performance record' }, definition: { en: 'Foxxi extension — the type of the category activity carried by a statement recording a unit of performance work: production, training or performance support. The performance templates select on it.' } },
+  { id: SUPERSEDED_DESCRIPTOR_TYPE, prefLabel: { en: 'superseded descriptor' }, definition: { en: 'Foxxi extension — the type of the `other` context activity naming the descriptor a statement revises or closes.' } },
   { id: `${FOXXI_NS}activities/scene`,            prefLabel: { en: 'scene' },            definition: { en: 'Foxxi extension — a course scene grouping multiple slides under a sub-theme' } },
   { id: `${FOXXI_NS}activities/concept-graph-node`, prefLabel: { en: 'concept-graph-node' }, definition: { en: 'Foxxi extension — a single concept in the course\'s knowledge graph; carries prereq edges + slide-membership' } },
   { id: `${FOXXI_NS}activities/credential`,       prefLabel: { en: 'credential' },       definition: { en: 'Foxxi extension — a Verifiable Credential / Open Badge 3.0' } },
@@ -185,7 +236,10 @@ const templates = [
     // NB: objectActivityType is a SINGLE IRI per the xAPI Profile spec — a verb that applies to
     // BOTH a course and a lesson/AU is not pinned here; the object type is enforced by an
     // object.definition.type rule (rules MAY carry multiple `any` values, unlike objectActivityType).
-    contextCategoryActivityType: [`${CMI5}/context/categories/cmi5`],
+    // No contextCategoryActivityType: that property names the TYPE of a category activity, and
+    // the cmi5 category is an activity ID that carries no type in a statement. Stating the id
+    // there meant the specification's matching found this template for no statement at all.
+    // The category rule below is what requires it.
     rules: [
       { location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/lesson`] },
       // Enforced determining property (present, not just value-checked-when-present): a
@@ -218,10 +272,17 @@ const templates = [
     // and the content-delivery job-aid/deliver paths (experienced+performance). Selected by
     // objectActivityType; no slide-specific rules (those belong to slide-viewed).
     id: `${FOXXI_PROFILE_ID}/templates/experienced-activity`,
-    prefLabel: { en: 'experienced (course / performance-support)' },
-    definition: { en: 'A course-catalog experience or a performance-support artifact was experienced. Object type is a course OR a performance activity — enforced by an object.definition.type rule (objectActivityType stays a single IRI per spec).' },
+    prefLabel: { en: 'experienced (course)' },
+    definition: { en: 'A course-catalog experience: a course was experienced. One template per object activity type, because a template with no objectActivityType matches every `experienced` statement under the specification, a fragment or a slide included, and each would then have to follow its rules too.' },
     verb: `${ADL}/verbs/experienced`,
-    rules: [{ location: 'object.definition.type', presence: 'included', any: [`${ADL}/activities/course`, `${ADL}/activities/performance`] }],
+    objectActivityType: `${ADL}/activities/course`,
+  },
+  {
+    id: `${FOXXI_PROFILE_ID}/templates/experienced-performance`,
+    prefLabel: { en: 'experienced (performance support)' },
+    definition: { en: 'A performance-support artifact (a job aid, a delivered reference) was experienced.' },
+    verb: `${ADL}/verbs/experienced`,
+    objectActivityType: `${ADL}/activities/performance`,
   },
   {
     // The Context Companion (POST /content/ask) records an `interacted` with an interaction
@@ -325,6 +386,7 @@ const templates = [
     prefLabel: { en: 'performed-descriptor' },
     definition: { en: 'An agent performed a unit of work by asserting a context descriptor. objectActivityType is unconstrained — it is the descriptor\'s own conformsTo IRI, passed through. Carries the substrate cross-link + actorKind=agent. No outcome is fabricated.' },
     verb: `${FOXXI_NS}performed`,
+    contextCategoryActivityType: [DESCRIPTOR_PROJECTION_TYPE],
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', any: ['agent'] },
@@ -353,6 +415,8 @@ const templates = [
     prefLabel: { en: 'superseding-descriptor' },
     definition: { en: 'A performed-descriptor that revises/closes a prior one — carries the iep:supersedes link as supersededDescriptor + contextActivities.other. Domain-agnostic: a code-review revision, a contract amendment, a resolution closing a finding, a game state superseding the prior — all the same structural arc.' },
     verb: `${FOXXI_NS}performed`,
+    contextCategoryActivityType: [DESCRIPTOR_PROJECTION_TYPE],
+    contextOtherActivityType: [SUPERSEDED_DESCRIPTOR_TYPE],
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'supersededDescriptor"]', presence: 'included' },
       { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
@@ -363,6 +427,7 @@ const templates = [
     prefLabel: { en: 'voided-descriptor' },
     definition: { en: 'A Retracted context descriptor projects as an xAPI voiding statement targeting the statement for the descriptor it retracts (the protocol-native Retracted mapping).' },
     verb: `${ADL}/verbs/voided`,
+    contextCategoryActivityType: [DESCRIPTOR_PROJECTION_TYPE],
     rules: [
       { location: 'object.objectType', any: ['StatementRef'] },
       { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
@@ -380,6 +445,7 @@ const templates = [
     prefLabel: { en: 'performance (completed)' },
     definition: { en: 'A successful unit of contextualized performance work — production, training, or performance-support. MOM Level 1 `completed`. Does NOT pin an object activity type (the work carries its own domain conformsTo); instead it discriminates by REQUIRING a context.extensions contextKind be PRESENT (any of production/training/performance-support). This covers the record_performance + mesh-projected emitters (varying domain object types) without over-matching a bare course/lesson completion (which carries no contextKind and instead satisfies the course/lesson `completed` template). A completed with an unknown object type AND no contextKind matches nothing → correctly non-conformant.' },
     verb: `${ADL}/verbs/completed`,
+    contextCategoryActivityType: [PERFORMANCE_RECORD_TYPE],
     rules: [
       // REQUIRED discriminator (present, any value): keeps this from being a universal
       // acceptor while covering every contextKind the emitters use (production/training/
@@ -394,6 +460,7 @@ const templates = [
     prefLabel: { en: 'performance (failed)' },
     definition: { en: 'An unsuccessful unit of contextualized performance work. MOM Level 1 `failed`. Requires a contextKind be PRESENT (any value) so the whole `failed` verb is not vacuously conformant, while covering production/training/performance-support. A bare `failed` with an unknown object type and no contextKind is correctly non-conformant.' },
     verb: `${ADL}/verbs/failed`,
+    contextCategoryActivityType: [PERFORMANCE_RECORD_TYPE],
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production', 'training', 'performance-support'] },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', presence: 'recommended' },
@@ -466,7 +533,7 @@ const templates = [
   // record_external_agent_run (agent-run-ingest) emits a task-level `performed` with object
   // type ProductionTask + contextKind=production + actorKind=agent, but NO substrateDescriptorIri
   // (it is an ingested external run, not a substrate descriptor). Discriminate on contextKind.
-  { id: `${FOXXI_PROFILE_ID}/templates/performed-production`, prefLabel: { en: 'performed (production run)' }, definition: { en: 'An agent performed a unit of production work recorded as an external run (no substrate descriptor). Discriminated by contextKind=production + actorKind=agent.' }, verb: `${FOXXI_NS}performed`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production', 'training', 'performance-support'] }, { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', any: ['agent'] }] },
+  { id: `${FOXXI_PROFILE_ID}/templates/performed-production`, prefLabel: { en: 'performed (production run)' }, definition: { en: 'An agent performed a unit of production work recorded as an external run (no substrate descriptor). Discriminated by contextKind=production + actorKind=agent.' }, verb: `${FOXXI_NS}performed`, objectActivityType: `${FOXXI_NS}ProductionTask`, rules: [{ location: 'context.extensions["' + FOXXI_NS + 'contextKind"]', presence: 'included', any: ['production', 'training', 'performance-support'] }, { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', any: ['agent'] }] },
   // A plain xAPI voiding (a StatementRef with no Foxxi substrate cross-link) — the standard
   // §4.1.7 voiding the bridge's own conformance self-test emits, distinct from voided-descriptor.
   { id: `${FOXXI_PROFILE_ID}/templates/voided-statement`, prefLabel: { en: 'voided (statement)' }, definition: { en: 'A standard xAPI voiding statement targeting a StatementRef (xAPI §4.1.7). No Foxxi substrate cross-link required.' }, verb: `${ADL}/verbs/voided`, rules: [{ location: 'object.objectType', presence: 'included', any: ['StatementRef'] }] },
@@ -669,7 +736,7 @@ export function buildProfileDoc(spec: ProfileSpec): Record<string, unknown> {
     versions: [{ id: versionId, generatedAtTime: spec.generatedAt }],
     author: spec.author,
     concepts: withMeta(spec.concepts, 'Verb'),
-    templates: withMeta(spec.templates, 'StatementTemplate'),
+    templates: withMeta(spec.templates, 'StatementTemplate').map(withJsonPathRules),
     patterns: withMeta(spec.patterns, 'Pattern'),
   };
 }
@@ -691,8 +758,27 @@ interface TemplateRule { location: string; presence?: string; any?: unknown[]; a
 
 /** Resolve an xAPI Profile rule `location` (a JSONPath subset: dot segments,
  *  ["quoted keys"], and [*] over arrays) to the array of values it selects. */
+/**
+ * A rule location as the published document states it. The specification makes `location` a
+ * JSONPath, which starts at `$`; the templates in this file are written without it
+ * (`context.registration`), and were published that way, so the specification's own algorithm
+ * refused every one of them: "a JSONPath starts at $". The document now says
+ * `$.context.registration` and `$.context.extensions['…']`. `resolveLocation` reads both forms.
+ */
+export function asJsonPath(location: string): string {
+  if (location.trimStart().startsWith('$')) return location;
+  return `$.${location}`.replace(/\["([^"\]]*)"\]/g, (_m, key: string) => `['${key}']`);
+}
+function withJsonPathRules<T extends object>(template: T): T {
+  const rules = (template as { rules?: unknown }).rules;
+  if (!Array.isArray(rules)) return template;
+  return { ...template, rules: rules.map(r => (r && typeof r === 'object' && typeof (r as { location?: unknown }).location === 'string')
+    ? { ...r, location: asJsonPath((r as { location: string }).location) } : r) };
+}
+
 function resolveLocation(root: unknown, location: string): unknown[] {
   const tokens: string[] = [];
+  location = location.trim().replace(/^\$\.?/, '');
   const re = /\[\s*(?:"([^"]*)"|'([^']*)'|(\*))\s*\]|([^.[\]]+)/g;
   let m: RegExpExecArray | null;
   while ((m = re.exec(location)) !== null) {
@@ -759,8 +845,12 @@ export function validateAgainstProfileTemplates(stmt: Record<string, unknown>): 
     return out;
   };
   const perTemplate = matched.map(t => ({ id: t.id, violations: violationsFor(t) }));
-  // A Statement FOLLOWS the profile if it fully satisfies AT LEAST ONE matched template
-  // (xAPI Profile spec §5 — overlapping templates for the same verb are OR-ed, not AND-ed).
+  // This validator's own, looser reading: a Statement passes if it fully satisfies AT LEAST ONE
+  // template selected by verb and object type. The specification's algorithm (Part Three, 2.1) is
+  // stricter and is what /xapi/profiles/validate_templates runs: it also matches on context
+  // activity types, and a statement must follow EVERY template it matches. The templates are
+  // written to hold under that reading; tests/what-foxxi-emits-follows-its-own-profile.test.ts
+  // checks what Foxxi emits against it.
   const anySatisfied = perTemplate.some(pt => pt.violations.length === 0);
   let violations: ProfileTemplateResult['violations'] = [];
   if (matched.length > 0 && !anySatisfied) {

@@ -91,6 +91,10 @@ pev:Redaction a owl:Class ; rdfs:subClassOf prov:Entity ;
     rdfs:label "Redaction" ;
     rdfs:comment "The removal of an attempt's text from the operator pod. Hashes and levels remain, so a copy the learner holds can still be checked." .
 
+pev:LmsLaunch a owl:Class ; rdfs:subClassOf prov:Entity ;
+    rdfs:label "LMS launch" ;
+    rdfs:comment "The cmi5 launch an attempt ran under, as the LMS issued it. Only an attempt taken from an LMS launch has one; an attempt started here has none and satisfies no assignable unit." .
+
 # The role registry.
 pev:RoleAssignment a owl:Class ; rdfs:subClassOf prov:Entity ;
     rdfs:label "Role assignment" ;
@@ -268,6 +272,19 @@ pev:hasRedaction a owl:ObjectProperty ;
     rdfs:comment "The redaction of the attempt's text." ;
     rdfs:domain pev:Attempt ;
     rdfs:range pev:Redaction .
+pev:lmsLaunch a owl:ObjectProperty ;
+    rdfs:label "LMS launch" ;
+    rdfs:comment "The cmi5 launch the attempt ran under." ;
+    rdfs:domain pev:Attempt ;
+    rdfs:range pev:LmsLaunch .
+pev:lmsActivity a owl:ObjectProperty ;
+    rdfs:label "launched activity" ;
+    rdfs:comment "The assignable unit's activity id, as the launch gave it." ;
+    rdfs:domain pev:LmsLaunch .
+pev:lmsEndpoint a owl:ObjectProperty ;
+    rdfs:label "LRS endpoint" ;
+    rdfs:comment "The LRS endpoint the launch named, where the session's statements are." ;
+    rdfs:domain pev:LmsLaunch .
 pev:redactedBy a owl:ObjectProperty ;
     rdfs:label "redacted by" ;
     rdfs:comment "Who removed the text: the learner, or an admin with a why." ;
@@ -495,8 +512,24 @@ pev:transcriptHash a owl:DatatypeProperty ;
     rdfs:range xsd:string .
 pev:counterpartControlledBy a owl:DatatypeProperty ;
     rdfs:label "other person's lines controlled by" ;
-    rdfs:comment "platform, learner-model or learner: the most learner-controlled route that wrote the other person's lines." ;
+    rdfs:comment "platform, learner-model, learner or assignable-unit: the most learner-controlled route that wrote the other person's lines, or the unit an LMS launched when the conversation was read from its statements." ;
     rdfs:range xsd:string .
+pev:lmsRegistration a owl:DatatypeProperty ;
+    rdfs:label "LMS registration" ;
+    rdfs:comment "The registration the LMS issued for the launch." ;
+    rdfs:range xsd:string .
+pev:lmsSessionId a owl:DatatypeProperty ;
+    rdfs:label "LMS session id" ;
+    rdfs:comment "The session the LMS issued for the conversation." ;
+    rdfs:range xsd:string .
+pev:lmsLaunchMode a owl:DatatypeProperty ;
+    rdfs:label "launch mode" ;
+    rdfs:comment "Normal, Browse or Review. Only a Normal launch can be passed, failed or completed." ;
+    rdfs:range xsd:string .
+pev:lmsMasteryScore a owl:DatatypeProperty ;
+    rdfs:label "mastery score" ;
+    rdfs:comment "The scaled score the launch data required for a pass, when it carried one." ;
+    rdfs:range xsd:decimal .
 pev:judgmentCount a owl:DatatypeProperty ;
     rdfs:label "judgment count" ;
     rdfs:comment "How many judgments the attempt holds." ;
@@ -545,7 +578,7 @@ pev:textSha256 a owl:DatatypeProperty ;
     rdfs:range xsd:string .
 pev:turnSource a owl:DatatypeProperty ;
     rdfs:label "turn source" ;
-    rdfs:comment "authored-first-line, learner-signed, bridge-model, scripted or client-packet." ;
+    rdfs:comment "authored-first-line, learner-signed, bridge-model, scripted, client-packet or lrs-statement (read from a statement an assignable unit wrote to an LRS)." ;
     rdfs:range xsd:string .
 pev:endSignal a owl:DatatypeProperty ;
     rdfs:label "end signal" ;

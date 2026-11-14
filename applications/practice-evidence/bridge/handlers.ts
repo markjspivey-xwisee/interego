@@ -85,6 +85,7 @@ import {
   scoredWithoutStakes, withStakesOf, STAKES_WITHHELD, type HashMask, type HashScope, type QuotedTurn,
 } from '../src/stakes.js';
 import { buildStatement, statementProblems, LOSSY, LRS_REQUEST_NOTE, PROJECTION_FORMATS, type ProjectionFormat } from '../src/projections.js';
+import { readLaunchedCall, type LaunchVocabulary } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
   readCache, readChain, readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship,
@@ -203,6 +204,25 @@ export interface PevDeps {
    * bridge serves (or a holder pod it is asked to copy to), never for one it does not serve.
    */
   readonly assertPublicPod?: (podUrl: string) => Promise<void>;
+  /**
+   * Taking an attempt from an LMS launch (pev.import_launched_attempt). Absent: the act is refused
+   * with 501. server.ts reads PEV_LAUNCH_READ_URL, PEV_LAUNCH_LRS_ENDPOINT and PEV_LAUNCH_VOCABULARY.
+   */
+  readonly launchImport?: LaunchImport;
+}
+
+export interface LaunchImport {
+  /**
+   * The LRS's signed-read route. The learner's own signed read is forwarded to it unchanged
+   * (POST, JSON {_signed_payload, _signature}); it answers {statements, more?} for that signer only.
+   * This bridge holds no LRS credential.
+   */
+  readonly readUrl: string;
+  /** The LRS endpoint the statements live at, recorded on the attempt. */
+  readonly endpoint: string;
+  /** The profile terms the unit's statements use. */
+  readonly vocabulary: LaunchVocabulary;
+  readonly fetchFn?: typeof fetch;
 }
 
 /** A per-hour limit for one signer and for everyone together. */
@@ -2070,6 +2090,184 @@ async function conversationHead(call: Call, s: Signed, iri: string, turnIndex: n
 }
 
 /** Append one exchange and apply the end rules (§6.4). */
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  Taking an attempt from an LMS launch
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+const LRS_READ_MAX_BYTES = 2_000_000;
+const LRS_READ_TIMEOUT_MS = 20_000;
+const REGISTRATION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+/** Names what stood in for a judge prompt when the scores were the unit's own, read from its statements. */
+export const LAUNCHED_JUDGMENT_TEMPLATE_HASH = sha256('practice-evidence: the scores an assignable unit wrote for its own conversation, read from its statements');
+
+/** The learner's own signed read of one registration, as the LRS's signed-read route takes it. */
+function lrsReadOf(args: Record<string, unknown>, registration: string): { readonly _signed_payload: string; readonly _signature: string } {
+  const r = args['lrs_read'];
+  const sp = isObj(r) ? r['_signed_payload'] : undefined;
+  const sig = isObj(r) ? r['_signature'] : undefined;
+  if (typeof sp !== 'string' || typeof sig !== 'string' || sp.length === 0 || sp.length > 20_000 || sig.length === 0 || sig.length > 2_000) {
+    throw decline(400, 'lrs_read is required: your own signed read of this registration, {_signed_payload, _signature}, as the LRS\'s signed-read route takes it.', 'lrs-read-missing');
+  }
+  let query: unknown;
+  try { query = (JSON.parse(sp) as Record<string, unknown>)['query']; } catch { query = undefined; }
+  if (!isObj(query) || query['registration'] !== registration || query['cursor'] !== undefined) {
+    throw decline(400, 'lrs_read must ask for this registration, from its start: its signed payload needs query.registration equal to the registration and no cursor.', 'lrs-read-other-registration');
+  }
+  return { _signed_payload: sp, _signature: sig };
+}
+
+async function statementsOfRegistration(ctx: Ctx, li: LaunchImport, body: { readonly _signed_payload: string; readonly _signature: string }): Promise<unknown[]> {
+  let res: Response;
+  try {
+    res = await (li.fetchFn ?? ctx.deps.byokFetch ?? fetch)(li.readUrl, {
+      method: 'POST', headers: { 'Content-Type': 'application/json', Accept: 'application/json' }, body: JSON.stringify(body),
+      redirect: 'error', signal: AbortSignal.timeout(LRS_READ_TIMEOUT_MS),
+    });
+  } catch {
+    throw decline(502, 'The LRS did not answer; nothing was recorded.', 'lrs-unreachable');
+  }
+  const text = await res.text().catch(() => '');
+  if (!res.ok) {
+    throw decline(502, `The LRS refused the read (${res.status}); nothing was recorded. A signed read is fresh for a short time only: sign a new one and try again.`, 'lrs-read-refused', undefined, { lrsStatus: res.status });
+  }
+  if (text.length > LRS_READ_MAX_BYTES) throw decline(502, 'The LRS answered with more than this bridge reads for one registration; nothing was recorded.', 'lrs-answer-too-large');
+  let parsed: unknown;
+  try { parsed = JSON.parse(text); } catch { parsed = undefined; }
+  const statements = isObj(parsed) ? parsed['statements'] : undefined;
+  if (!Array.isArray(statements)) throw decline(502, 'The LRS answer is not a statement result; nothing was recorded.', 'lrs-answer-unusable');
+  if (isObj(parsed) && typeof parsed['more'] === 'string' && parsed['more'] !== '') {
+    throw decline(409, 'The registration holds more statements than one read returns; this bridge takes a conversation only whole.', 'registration-too-large');
+  }
+  return statements as unknown[];
+}
+
+async function importLaunchedAttempt(call: Call, args: Record<string, unknown>): Promise<Out> {
+  const { ctx } = call;
+  const li = ctx.deps.launchImport;
+  if (!li) throw decline(501, 'This bridge is not set up to take an attempt from an LMS launch.', 'launch-import-not-configured');
+  const s = await signedAct(call, args, 'importLaunchedAttempt', {
+    write: true,
+    checks: (p) => {
+      if (typeof p['coached'] !== 'boolean') throw decline(400, 'Say whether you were coached (true or false); silence is not the same as unassisted.', 'coached-undeclared');
+      needText(p, 'scenarioIri', 200);
+      needInt(p, 'scenarioVersion', 1, 1_000_000);
+      if (!REGISTRATION_UUID.test(needText(p, 'registration', 36))) throw decline(400, 'registration must be the UUID the LMS issued.', 'registration-not-a-uuid');
+    },
+  });
+  const registration = String(s.payload['registration']).toLowerCase();
+  const lrsRead = lrsReadOf(args, String(s.payload['registration']));
+  const sIri = String(s.payload['scenarioIri']);
+  const h = await scenarioHead(call, s.pod, sIri);
+  if (!h) throw decline(404, 'No scenario with this IRI is on this pod.', 'scenario-not-found');
+  const roles = await rolesOn(call, s.pod);
+  const sb = h.body;
+  if (s.payload['scenarioVersion'] !== sb.version) {
+    throw decline(409, `The scenario is now at version ${sb.version}; read the scenario again.`, 'scenario-revised', undefined, { currentVersion: sb.version });
+  }
+  const isAuthor = sb.versionAuthors.some((x) => samePrincipal(x, s.signer));
+  if (sb.status === 'draft' && !isAuthor) throw decline(409, 'This scenario is a draft; learners practise published versions only.', 'scenario-not-published');
+  const spec = sb.scenario;
+
+  const statements = await statementsOfRegistration(ctx, li, lrsRead);
+  const readOut = readLaunchedCall(statements, {
+    registration: String(s.payload['registration']), spec, rubricHash: sb.rubricHash, rubricIri: sb.rubricIri, vocabulary: li.vocabulary, endpoint: li.endpoint,
+  });
+  if ('problems' in readOut) {
+    throw decline(422, 'The registration is not one whole practice conversation against this scenario version; nothing was recorded.', 'registration-not-a-conversation',
+      undefined, { problems: readOut.problems });
+  }
+  const c = readOut.call;
+  // The LRS answered the signer of lrs_read with their own statements. That signer has to be the
+  // person signing this act: the actor the LMS launched is named by the same DID.
+  if (c.launch.actor.name !== s.signerDid) {
+    throw decline(403, 'The registration\'s statements name another actor than the one signing this act; a learner takes only their own conversation.', 'not-your-registration');
+  }
+
+  const keys = attemptKeysOf(ctx, s.pod, sIri, s.signer);
+  const key = keys[0]!;
+  // One attempt per registration of an LRS on this pod, whatever scenario it is taken against: an
+  // attempt's IRI is numbered within one learner's attempts on one scenario, so two scenarios with
+  // the same rubric would otherwise each take the same call, and each could later build a passed
+  // for the one registration. The registration is locked first, then every attempt on the pod is read.
+  return locked(call, `${s.pod}|launch-registration|${li.endpoint}|${registration}`, () => locked(call, `${s.pod}|attempts|${key}`, async () => {
+    const all = await podEntries(s.pod, call.read, call.cache);
+    const mismatch = keyMismatchIn(ctx, keyMarksOf(all, s.pod));
+    if (mismatch) throw keyMismatchDecline(ctx, mismatch);
+    const prefixes = keys.map((k) => `urn:pev:attempt:${k}-`);
+    const mine = [...new Set(all.flatMap((e) => e.describes.filter((d) => prefixes.some((p) => d.startsWith(p)))))];
+    await notAStartedEnvelope(call, s, all, mine);
+    const every = await attemptBodies(call, s.pod, 'whether this registration was already taken');
+    const prior = every.bodies.find((b) => b.lmsLaunch !== undefined && b.lmsLaunch.registration.toLowerCase() === registration && b.lmsLaunch.endpoint === li.endpoint);
+    if (prior) {
+      // Whose attempt it is, and against which scenario, is told only to its own learner.
+      const own = samePrincipal(prior.learner.address, s.signer);
+      throw decline(409, 'This registration was already taken as an attempt.', 'registration-already-imported', undefined,
+        own ? { attemptIri: prior.attemptIri, state: prior.state, scenarioIri: prior.scenario.scenarioIri } : {});
+    }
+    if (!every.complete) {
+      throw decline(503, 'Not every attempt on this pod could be read, so this bridge cannot tell whether the registration was already taken; nothing was recorded.', 'registration-use-unknown', undefined, every.limit);
+    }
+    const taken = ctx.attemptBudget.take(s.signer, ctx.now().getTime());
+    if (!taken.ok) {
+      throw decline(429,
+        taken.scope === 'signer'
+          ? `You have started ${ctx.attemptBudget.limit.perSigner} attempts in the last hour; try again in ${taken.retryAfterSeconds} s.`
+          : `${ctx.attemptBudget.limit.total} attempts have been started on this bridge in the last hour; try again in ${taken.retryAfterSeconds} s.`,
+        'attempt-budget-spent', undefined, { scope: taken.scope, retryAfterSeconds: taken.retryAfterSeconds });
+    }
+    const n = mine.length + 1;
+    const iri = attemptIriOf(key, mine.filter((g) => g.startsWith(prefixes[0]!)).length + 1);
+    const at = iso(ctx);
+    const turns: Turn[] = c.turns.map((t, index) => ({
+      index, speaker: t.speaker, text: t.text, textSha256: sha256(t.text), at: t.at, source: 'lrs-statement', statementId: t.statementId,
+    }));
+    const tHash = transcriptHash(turns);
+    const judgeId = `unit:${c.launch.activityId}`;
+    const disclosure: InferenceDisclosure = {
+      provider: 'assignable-unit', model: c.launch.activityId, keySource: 'none', route: 'scripted', promptTemplateHash: LAUNCHED_JUDGMENT_TEMPLATE_HASH,
+    };
+    const j = assembleJudgment(spec, turns, {
+      criteria: c.scores.map((sc) => ({
+        criterionId: sc.criterionId, level: sc.levelId, quotes: [],
+        rationale: sc.note ?? `Scored ${sc.raw} by the assignable unit, which gave no note and no quote (statement ${sc.statementId}).`,
+      })),
+    }, {
+      index: 0, judgedAt: at, judge: { id: judgeId, kind: 'agent' }, disclosure, route: 'scripted',
+      promptTemplateHash: LAUNCHED_JUDGMENT_TEMPLATE_HASH, chosenBy: 'learner', requestedBy: { did: s.signerDid, role: 'learner' },
+      repeatOf: null, rubricHash: sb.rubricHash, transcriptHash: tHash,
+    });
+    const body: AttemptBody = {
+      v: 1, kind: 'attempt', podUrl: s.pod, keyKind: ctx.deps.platformKeyKind, platformSigner: ctx.platform.address, at,
+      attemptIri: iri, state: 'judged', evidenceKind: 'practice',
+      scenario: {
+        scenarioIri: sIri, version: sb.version, scenarioHash: sb.scenarioHash, rubricHash: sb.rubricHash,
+        descriptorUrl: h.rec.descriptorUrl, title: spec.title, statusAtStart: sb.status,
+      },
+      scenarioSpec: spec,
+      learner: { ...s.actor, kind: roles.of(s.signer).has('agent') ? 'agent' : 'person' },
+      attemptNumber: n, coached: s.payload['coached'] === true, authorTest: isAuthor,
+      startedAt: c.startedAt, endedAt: c.endedAt, endedBy: 'learner', turns, counterpartControlledBy: counterpartControl(turns), transcriptHash: tHash,
+      judgments: [j], reviews: [], reopenings: [],
+      lmsLaunch: { ...c.launch, unitSent: c.unitSent, launchModeFrom: c.launchModeFrom, statementIds: c.statementIds },
+      startEnvelope: s.stored, acts: [actOf(s, 'importLaunchedAttempt')],
+    };
+    const stakes = await showsStakes(call, s);
+    const w = await writeRecord(call, { pod: s.pod, body, seq: 1, prev: null, nonce: s.nonce });
+    return {
+      attemptIri: iri, descriptorUrl: w.descriptorUrl, state: body.state, attemptNumber: n, coached: body.coached, authorTest: body.authorTest,
+      assessmentUse: spec.assessmentUse, rubricRatified: sb.status === 'ratified', scenario: body.scenario,
+      registration: c.launch.registration, lmsSessionId: c.launch.sessionId, launchMode: c.launch.launchMode, launchModeFrom: c.launchModeFrom,
+      turnsRead: turns.length, statementsRead: c.statementIds.length, counterpartControlledBy: body.counterpartControlledBy,
+      unitJudgment: { judgeId, route: 'scripted', criteria: j.criteria.length, unverifiedCriteria: j.unverifiedCriteria },
+      taken: {
+        fromLrs: li.endpoint,
+        onTrust: 'The lines and the scores are what the LRS returned for the registration; the other person\'s lines and the scores are the assignable unit\'s own. A reviewer decides every level.',
+      },
+      nextActions: nextFor(ctx, body, s, roles.of(s.signer), false, stakes), recorded: true,
+    };
+  }));
+}
+
 function withExchange(a: AttemptBody, learner: Turn, counterpart: Turn, endAfter: boolean, act: AttemptAct, at: string): AttemptBody {
   const turns = [...a.turns, learner, counterpart];
   const { endProposedAtTurn: _cleared, ...rest } = a;
@@ -3333,6 +3531,7 @@ export function createPevHandlers(deps: PevDeps): Record<string, AffordanceHandl
     'pev.ratify_scenario': run(ratifyScenario),
     'pev.list_scenarios': run(listScenarios),
     'pev.start_attempt': run(startAttempt),
+    'pev.import_launched_attempt': run(importLaunchedAttempt),
     'pev.say': run(say),
     'pev.counterpart_packet': run(counterpartPacketAct),
     'pev.record_turns': run(recordTurns),

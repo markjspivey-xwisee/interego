@@ -538,8 +538,8 @@ import { releasedVersion, releasedVersions, versionLinks } from '../src/ns/relea
 import type { PublishedKind } from '../src/ns/published.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
-import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
-import { validateAgainstSuppliedProfile, whyNotAProfile } from '../src/xapi-profile-supplied.js';
+import { validateAgainstProfileTemplates, performanceCategoriesFor, outcomeResultFor } from '../src/xapi-profile.js';
+import { answerSuppliedProfileRequest } from '../src/xapi-profile-patterns.js';
 import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 /** Credential-format models registered as DATA (not bespoke handlers): the generic
  *  /ns/<module> loop mounts GET/shapes/validate/term + composes them into the lattice,
@@ -3670,6 +3670,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // attesting observer (provenance). Any authenticated caller may
     // record a performance event — the observer is on the record.
     const outcomeVerb = momOutcomeVerb(args.success as boolean);
+    const recordedActivityType = (typeof args.activity_type === 'string' && args.activity_type.trim())
+      ? args.activity_type.trim()
+      : `${FOXXI_NS}ProductionTask`;
     const statement: Record<string, unknown> = {
       id: randomUUID(),
       version: '2.0.0',
@@ -3685,13 +3688,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
           // competency by this type across instances. Absent one, it falls back to
           // the generic ProductionTask wrapper (the competency then keys off
           // task_name — the skill the caller explicitly named).
-          type: (typeof args.activity_type === 'string' && args.activity_type.trim())
-            ? args.activity_type.trim()
-            : `${FOXXI_NS}ProductionTask`,
+          type: recordedActivityType,
         },
       },
       result: {
         success: args.success,
+        ...outcomeResultFor(recordedActivityType, args.success === true),
         ...(quality !== undefined ? { score: { scaled: quality } } : {}),
         ...(args.duration_iso ? { duration: args.duration_iso as string } : {}),
       },
@@ -3699,7 +3701,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         // A per-performance registration + the published xAPI Profile as a
         // category, so every statement references the profile it conforms to.
         registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }] },
+        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, ...performanceCategoriesFor(recordedActivityType)] },
         extensions: {
           [PERF_EXT.observedBy]: ctx.webId,
           [PERF_EXT.contextKind]: 'production',
@@ -6550,29 +6552,25 @@ const app = createVerticalBridge({
       // With a `profile` beside the statement, the check is against that profile's templates
       // (src/xapi-profile-supplied.ts): the caller's own xAPI Profile, read from the request and
       // neither stored nor fetched. Without one it is Foxxi's own profile, as before.
-      const supplied = (req.body && typeof req.body === 'object') ? (req.body as Record<string, unknown>).profile : undefined;
-      if (supplied !== undefined) {
-        const why = whyNotAProfile(supplied);
-        if (why) { res.status(400).json({ ok: false, error: why }); return; }
-        const body = req.body as Record<string, unknown>;
-        const statement = (body.instance ?? body.statement) as unknown;
-        if (!statement || typeof statement !== 'object' || Array.isArray(statement)) { res.status(400).json({ ok: false, error: 'send the statement as `instance` (or `statement`) beside `profile`' }); return; }
-        const s = validateAgainstSuppliedProfile(statement as Record<string, unknown>, supplied as Record<string, unknown>);
-        // A template with no violation found but a part not evaluated settles nothing: the verdict
-        // says so, and `conforms` stays false, since conformance was not established.
-        const verdict = !s.applicable ? (s.verbDeclared ? 'no-applicable-template' : 'unknown-verb')
-          : s.matchedTemplates.length ? 'conformant' : s.partiallyCheckedTemplates.length ? 'not-fully-checked' : 'non-conformant';
-        // The same statement and templates through the specification's own algorithm
-        // (src/xapi-profile-server/processor.ts), which the Profile Server's /validate_templates
-        // answers with. The two differ by design in one place: this route picks templates by
-        // verb and reports each rule; the algorithm matches on every determining property.
-        let specification: Record<string, unknown> | undefined;
-        try {
-          const templates = Array.isArray((supplied as Record<string, unknown>).templates) ? (supplied as { templates: unknown[] }).templates : [];
-          const r = profileValidates(statement as never, templates as never);
-          specification = { outcome: r.outcome, templates: r.templates, findings: r.findings, ...(r.skipped.length ? { notChecked: r.skipped } : {}) };
-        } catch (e) { specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
-        res.json({ ok: true, profileSource: 'supplied', ...s, verdict, conforms: s.matchedTemplates.length > 0, specification });
+      // With `statements` (the ordered statements of one registration) in place of one statement,
+      // the check is against that profile's patterns (src/xapi-profile-patterns.ts). Both are on
+      // demand: nothing here refuses or alters what the LRS keeps.
+      const sent = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body as Record<string, unknown> : undefined;
+      if (sent && (sent.profile !== undefined || sent.statements !== undefined)) {
+        const answer = answerSuppliedProfileRequest(sent);
+        if (answer.status === 200 && answer.body.checked === undefined) {
+          // One statement: the same statement and templates through the specification's own
+          // algorithm (src/xapi-profile-server/processor.ts), which the Profile Server's
+          // /validate_templates answers with. The two differ by design in one place: this route
+          // picks templates by verb and reports each rule; the algorithm matches on every
+          // determining property.
+          try {
+            const templates = Array.isArray((sent.profile as Record<string, unknown>).templates) ? (sent.profile as { templates: unknown[] }).templates : [];
+            const r = profileValidates((sent.instance ?? sent.statement) as never, templates as never);
+            answer.body.specification = { outcome: r.outcome, templates: r.templates, findings: r.findings, ...(r.skipped.length ? { notChecked: r.skipped } : {}) };
+          } catch (e) { answer.body.specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
+        }
+        res.status(answer.status).json(answer.body);
         return;
       }
       const r = validateAgainstProfileTemplates(readInstance(req));
@@ -6581,12 +6579,22 @@ const app = createVerticalBridge({
       const verdict = !r.verbDeclared ? 'unknown-verb'
         : !r.applicable ? 'no-applicable-template'
           : (r.violations.length === 0 ? 'conformant' : 'non-conformant');
+      // The same statement through the specification's own algorithm, which matches on every
+      // determining property and requires every matched template to be followed; this route's own
+      // verdict accepts any one template selected by verb and object type.
+      let specification: Record<string, unknown>;
+      try {
+        const own = ownXapiProfileDoc({ generatedAt: OWN_XAPI_PROFILE_GENERATED_AT }) as { templates?: unknown[] };
+        const s = profileValidates(readInstance(req) as never, (own.templates ?? []) as never);
+        specification = { outcome: s.outcome, templates: s.templates, findings: s.findings, ...(s.skipped.length ? { notChecked: s.skipped } : {}) };
+      } catch (e) { specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
       res.json({
         ok: true, profile: xapiProfileUrl, verb: r.verb,
         verbDeclared: r.verbDeclared, applicable: r.applicable, verdict,
         matchedTemplates: r.matchedTemplates,
         conforms: r.applicable && r.violations.length === 0,
         violations: r.violations,
+        specification,
       });
     });
 
@@ -9399,12 +9407,13 @@ app.post('/agent/record-performance', async (req, res) => {
       object: { objectType: 'Activity', id: taskId, definition: { name: { en: taskName }, type: activityType } },
       result: {
         success: p.success,
+        ...outcomeResultFor(activityType, p.success === true),
         ...(quality !== undefined ? { score: { scaled: quality } } : {}),
         ...(typeof p.duration_iso === 'string' && p.duration_iso ? { duration: p.duration_iso } : {}),
       },
       context: {
         registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }] },
+        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, ...performanceCategoriesFor(activityType)] },
         extensions: {
           [PERF_EXT.observedBy]: callerDid,
           [PERF_EXT.contextKind]: 'production',
@@ -10236,7 +10245,7 @@ async function emitAgentActivity(args: {
       verb: { id: args.verbIri, display: { en: args.verbDisplay } },
       object: { objectType: 'Activity', id: args.objectId, definition: { name: { en: args.objectName }, type: args.objectType } },
       ...(args.result ? { result: args.result } : {}),
-      context: { extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
+      context: { contextActivities: { category: performanceCategoriesFor(args.objectType) }, extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
       timestamp: new Date().toISOString(),
     };
     const id = await storeStatementDurably(statement, lens);

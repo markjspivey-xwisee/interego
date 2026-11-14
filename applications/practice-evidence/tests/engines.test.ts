@@ -38,6 +38,7 @@ import {
   modelAgentIri, NonceLedger, nextActionsFor, nextActionView, recordBodyFromGraph, recordGraphTurtle, recordIdFor,
   redactBody, registryIri, rubricIriOf, scenarioIri, signDraftReceipt, signEnvelope, signedRequestEnvelope, slugFor,
   standingReview, verifyDraftReceipt, LIFECYCLE_STATES, REDACTION_NOTE, EXPORT_VERIFY_STEPS,
+  lmsLaunchProblems, type LmsLaunch,
   type AttemptBody, type EnvelopeOk, type LifecycleState, type NextActionView, type ProjectionAuditBody,
   type ReviewResult, type RoleRegistryBody, type ScenarioBody, type StoredEnvelope,
 } from '../src/records.js';
@@ -48,6 +49,8 @@ import {
 } from '../src/calibration.js';
 import {
   buildStatement, deterministicUuid, statementProblems, CMI5_CATEGORY_PREFIX, LOSSY, PRACTICE_MARKER, VERB_COMPLETED,
+  buildLaunchedStatements, launchedRefusals, launchedStatementProblems, CMI5_CATEGORY, CMI5_MASTERY_EXT, CMI5_MOVEON_CATEGORY,
+  CMI5_SESSION_EXT, LOSSY_LAUNCHED, VERB_FAILED, VERB_PASSED,
 } from '../src/projections.js';
 import { demoScenarioInput } from '../demo/run.js';
 
@@ -1396,6 +1399,152 @@ describe('statements', () => {
     expect(LOSSY.cmi5.join(' ')).toContain('not issued by an LMS');
     expect(LOSSY.scorm[0]).toContain('not built');
   });
+
+  // A fictional launch: the registration, session, actor and activity are an LMS's, not derived from the attempt.
+  const LAUNCH: LmsLaunch = {
+    registration: '6f1c2f6e-3b1a-4c53-9d2e-0a4b7c9d1e2f', sessionId: 'b7e1a9c4-52d3-4f60-8a17-3c5d9e0f1a2b',
+    activityId: 'https://lms.example/courses/calls/au/1', actor: { homePage: 'https://lms.example', name: 'learner-7' },
+    endpoint: 'https://lms.example/xapi', launchMode: 'Normal',
+    contextTemplate: {
+      contextActivities: { grouping: [{ objectType: 'Activity', id: 'https://lms.example/courses/calls' }] },
+      extensions: { 'https://lms.example/ext/tenant': 'north' },
+    },
+  };
+  const LATER = { sessionId: 'c0ffee00-1111-4222-8333-444455556666', at: at(900) };
+  const launched = (a: AttemptBody, l: Partial<LmsLaunch> = {}): AttemptBody => ({ ...a, lmsLaunch: { ...LAUNCH, ...l } });
+  const NONE = { 'specific-observation': 'none', 'asks-their-view': 'no', 'agrees-next-step': 'none' };
+  const failedGate = attemptOf({ spec: MD2, state: 'overridden', turns: ATTEMPT1, judgments: [jMd], reviews: [reviewOf(MD2, jMd, 0, NONE)] });
+  const verbsOf = (ss: readonly Record<string, unknown>[]): unknown[] => ss.map((x) => (x['verb'] as Record<string, unknown>)['id']);
+  const clone = (s: Record<string, unknown>): Record<string, unknown> => JSON.parse(JSON.stringify(s)) as Record<string, unknown>;
+
+  it('builds passed and completed for a launched pass gate, on the registration, actor and activity the LMS issued', () => {
+    const ss = buildLaunchedStatements(input(launched(gate)), LATER);
+    expect(verbsOf(ss)).toEqual([VERB_PASSED, VERB_COMPLETED]);
+    for (const st of ss) expect(launchedStatementProblems(st, LAUNCH, LATER)).toEqual([]);
+    expect(buildLaunchedStatements(input(launched(gate)), LATER)).toEqual(ss);
+    const [passed, completed] = ss as [Record<string, unknown>, Record<string, unknown>];
+    expect(passed['actor']).toEqual({ objectType: 'Agent', account: LAUNCH.actor });
+    expect((passed['object'] as Record<string, unknown>)['id']).toBe(LAUNCH.activityId);
+    expect(passed['timestamp']).toBe(gate.reviews[0]!.reviewedAt);
+    expect(passed['result']).toMatchObject({ success: true, score: { scaled: 1, min: 0 } });
+    expect((passed['result'] as Record<string, unknown>)['completion']).toBeUndefined();
+    expect(completed['result']).toMatchObject({ completion: true });
+    expect((completed['result'] as Record<string, unknown>)['score']).toBeUndefined();
+    const ctx = passed['context'] as Record<string, unknown>;
+    expect(ctx['registration']).toBe(LAUNCH.registration);
+    const cext = ctx['extensions'] as Record<string, unknown>;
+    // Sent in a later session of the same registration; the session of the conversation is kept beside it.
+    expect(cext[CMI5_SESSION_EXT]).toBe(LATER.sessionId);
+    expect(cext[`${PEV_NS}lmsSessionId`]).toBe(LAUNCH.sessionId);
+    expect(cext[PRACTICE_MARKER]).toBe(true);
+    expect(cext['https://lms.example/ext/tenant']).toBe('north');
+    const ca = ctx['contextActivities'] as Record<string, unknown>;
+    expect(ca['grouping']).toEqual([{ objectType: 'Activity', id: 'https://lms.example/courses/calls' }]);
+    expect((ca['category'] as { id: string }[]).map((c) => c.id)).toEqual([CMI5_CATEGORY, CMI5_MOVEON_CATEGORY]);
+    // One id per verb for the registration, whatever session sends it and whichever record head it was built from:
+    // a retry is the same document, and a second passed for the registration cannot be stored beside the first.
+    expect(passed['id']).not.toBe(completed['id']);
+    const retry = buildLaunchedStatements(input(launched(gate)), { sessionId: LATER.sessionId });
+    expect(retry).toEqual(ss);
+    const otherSession = buildLaunchedStatements(input(launched(gate)), { sessionId: LAUNCH.sessionId });
+    expect(otherSession.map((x) => x['id'])).toEqual(ss.map((x) => x['id']));
+    expect(otherSession.map((x) => x['timestamp'])).toEqual(ss.map((x) => x['timestamp']));
+    const otherHead = buildLaunchedStatements({ ...input(launched(gate)), headDescriptorUrl: `${POD}pev/records/later-head.ttl` }, LATER);
+    expect(otherHead.map((x) => x['id'])).toEqual(ss.map((x) => x['id']));
+    // A result reviewed again as a fail takes the id the pass had: an LRS holding the pass refuses it.
+    expect(buildLaunchedStatements(input(launched(failedGate)), LATER)[0]!['id']).toBe(passed['id']);
+    // Another registration is another assignable unit attempt, with ids of its own.
+    expect(buildLaunchedStatements(input(launched(gate, { registration: deterministicUuid('another launch') })), LATER)[0]!['id']).not.toBe(passed['id']);
+    expect(LOSSY_LAUNCHED.join(' ')).toContain('this bridge posts nothing');
+  });
+
+  it('builds failed for a reviewed result below the pass rule, and completed alone for feedback only', () => {
+    const f = buildLaunchedStatements(input(launched(failedGate)), LATER);
+    expect(verbsOf(f)).toEqual([VERB_FAILED, VERB_COMPLETED]);
+    expect(f[0]!['result']).toMatchObject({ success: false, score: { scaled: 0 } });
+    for (const st of f) expect(launchedStatementProblems(st, LAUNCH, LATER)).toEqual([]);
+    const fb = buildLaunchedStatements(input(launched(feedback)), LATER);
+    expect(verbsOf(fb)).toEqual([VERB_COMPLETED]);
+    expect(launchedStatementProblems(fb[0], LAUNCH, LATER)).toEqual([]);
+  });
+
+  it('carries the masteryScore of the launch, and refuses a result cmi5 can call neither passed nor failed', () => {
+    const withMastery = { ...LAUNCH, masteryScore: 0.8 };
+    const ss = buildLaunchedStatements(input(launched(gate, { masteryScore: 0.8 })), LATER);
+    expect(((ss[0]!['context'] as Record<string, unknown>)['extensions'] as Record<string, unknown>)[CMI5_MASTERY_EXT]).toBe(0.8);
+    for (const st of ss) expect(launchedStatementProblems(st, withMastery, LATER)).toEqual([]);
+    // Fails the rule of the rubric with a scaled score of 0, yet the launch asks for 0: cmi5 allows no failed at or above it.
+    const low = launched(failedGate, { masteryScore: 0 });
+    expect(launchedRefusals(low)).toHaveLength(1);
+    expect(launchedRefusals(low)[0]).toContain('cmi5 allows no failed at or above it');
+    expect(() => buildLaunchedStatements(input(low), LATER)).toThrow(/no failed at or above/);
+    // The checker holds the same line against a statement edited by hand.
+    const edited = clone(ss[0]!); ((edited['result'] as Record<string, unknown>)['score'] as Record<string, unknown>)['scaled'] = 0.5;
+    expect(launchedStatementProblems(edited, withMastery, LATER)).toEqual(['passed needs a scaled score at or above the masteryScore']);
+  });
+
+  it('refuses an attempt no LMS launched, a launch that was not Normal, and one no reviewer stands behind', () => {
+    expect(launchedRefusals(gate)).toEqual(['no LMS launched this attempt: it satisfies no assignable unit']);
+    expect(() => buildLaunchedStatements(input(gate), LATER)).toThrow(/no LMS launched/);
+    expect(launchedRefusals(launched(gate, { launchMode: 'Review' }))[0]).toContain('only in a Normal launch');
+    expect(launchedRefusals(launched({ ...gate, state: 'judged', reviews: [] }))).toEqual(['the attempt has no standing review']);
+    expect(launchedRefusals(launched(gate, { registration: 'not-a-uuid' }))).toEqual(['the stored launch is not usable: registration must be a UUID']);
+    expect(launchedRefusals(launched(gate))).toEqual([]);
+    // An attempt with no launch still projects as before, with no cmi5 defined category.
+    expect(statementProblems(buildStatement('cmi5', input(gate)), 'cmi5', 'pass-gate')).toEqual([]);
+  });
+
+  it('finds each way a launched statement can stray from its launch', () => {
+    const [passed] = buildLaunchedStatements(input(launched(gate)), LATER) as [Record<string, unknown>];
+    const one = (edit: (s: Record<string, unknown>) => void): string[] => { const c = clone(passed); edit(c); return launchedStatementProblems(c, LAUNCH, LATER); };
+    expect(one((s) => { (s['actor'] as { account: { name: string } }).account.name = 'someone-else'; })).toEqual(['actor must be the account the LMS launched']);
+    expect(one((s) => { (s['object'] as Record<string, unknown>)['id'] = 'https://lms.example/other'; })).toEqual(['object must be the launched activity']);
+    expect(one((s) => { (s['context'] as Record<string, unknown>)['registration'] = deterministicUuid('x'); })).toEqual(['context.registration must be the registration the LMS issued']);
+    expect(one((s) => { ((s['context'] as Record<string, unknown>)['contextActivities'] as Record<string, unknown>)['category'] = [{ id: CMI5_CATEGORY }]; })).toEqual([`context must carry the category ${CMI5_MOVEON_CATEGORY} once`]);
+    expect(one((s) => { ((s['context'] as Record<string, unknown>)['extensions'] as Record<string, unknown>)[CMI5_SESSION_EXT] = LAUNCH.sessionId; })).toEqual(['the session id extension must be the session the statement is sent in']);
+    expect(one((s) => { ((s['context'] as Record<string, unknown>)['extensions'] as Record<string, unknown>)['https://lms.example/ext/tenant'] = 'south'; })).toEqual(['the contextTemplate extension https://lms.example/ext/tenant must be carried unchanged']);
+    const activities = (s: Record<string, unknown>): Record<string, unknown> => (s['context'] as Record<string, unknown>)['contextActivities'] as Record<string, unknown>;
+    expect(one((s) => { delete activities(s)['grouping']; })).toEqual(['the contextTemplate grouping activities must be carried unchanged']);
+    expect(one((s) => { activities(s)['grouping'] = [{ objectType: 'Activity', id: 'https://lms.example/courses/other' }]; })).toEqual(['the contextTemplate grouping activities must be carried unchanged']);
+    // A category the template gave is kept beside the two cmi5 ones, and a statement that drops it is found.
+    const tagged = { ...LAUNCH, contextTemplate: { contextActivities: { category: [{ objectType: 'Activity', id: 'https://lms.example/tags/pilot' }], parent: [{ objectType: 'Activity', id: 'https://lms.example/blocks/1' }] } } };
+    const [withTag] = buildLaunchedStatements(input(launched(gate, tagged)), LATER) as [Record<string, unknown>];
+    expect(launchedStatementProblems(withTag, tagged, LATER)).toEqual([]);
+    expect((activities(withTag)['category'] as { id: string }[]).map((c) => c.id)).toEqual(['https://lms.example/tags/pilot', CMI5_CATEGORY, CMI5_MOVEON_CATEGORY]);
+    const dropped = clone(withTag); activities(dropped)['category'] = [{ objectType: 'Activity', id: CMI5_CATEGORY }, { objectType: 'Activity', id: CMI5_MOVEON_CATEGORY }]; delete activities(dropped)['parent'];
+    expect(launchedStatementProblems(dropped, tagged, LATER)).toEqual(['the contextTemplate category activities must be carried unchanged', 'the contextTemplate parent activities must be carried unchanged']);
+    expect(one((s) => { (s['result'] as Record<string, unknown>)['success'] = false; })).toEqual(['passed needs result.success true']);
+    expect(one((s) => { delete (s['result'] as Record<string, unknown>)['duration']; })).toEqual(['a cmi5 defined statement needs result.duration as PT<seconds>S']);
+    expect(one((s) => { (s['verb'] as Record<string, unknown>)['id'] = 'http://adlnet.gov/expapi/verbs/attempted'; })).toEqual(['verb must be passed, failed or completed']);
+    expect(one((s) => { s['timestamp'] = 'yesterday'; })).toEqual(['timestamp must be ISO 8601 with an offset']);
+  });
+
+  it('says what is wrong with a launch before an attempt may carry it', () => {
+    expect(lmsLaunchProblems(LAUNCH)).toEqual([]);
+    expect(lmsLaunchProblems(null)).toEqual(['the launch is not an object']);
+    expect(lmsLaunchProblems({ ...LAUNCH, sessionId: '' })).toEqual(['sessionId must be a non-empty string']);
+    expect(lmsLaunchProblems({ ...LAUNCH, activityId: 'relative/path' })).toEqual(['activityId must be an absolute IRI']);
+    expect(lmsLaunchProblems({ ...LAUNCH, actor: { homePage: 'lms.example', name: '' } })).toEqual(['actor.homePage must be an absolute http(s) URL', 'actor.name must be non-empty']);
+    expect(lmsLaunchProblems({ ...LAUNCH, endpoint: 'ftp://lms.example/xapi' })).toEqual(['endpoint must be an absolute http(s) URL']);
+    expect(lmsLaunchProblems({ ...LAUNCH, launchMode: 'normal' })).toEqual(['launchMode must be Normal, Browse or Review']);
+    expect(lmsLaunchProblems({ ...LAUNCH, masteryScore: 80 })).toEqual(['masteryScore must be a number from 0 to 1']);
+    expect(lmsLaunchProblems({ ...LAUNCH, contextTemplate: [] })).toEqual(['contextTemplate must be an object']);
+  });
+
+  it('writes the launch into the record graph, which conforms and reads back whole', () => {
+    const a = launched(gate, { masteryScore: 0.8 });
+    const ttl = recordGraphTurtle(a);
+    expect(conforms(ttl).results).toEqual([]);
+    expect(ttl).toContain('pev:LmsLaunch');
+    expect(ttl).toContain(`pev:lmsRegistration "${LAUNCH.registration}"`);
+    const back = recordBodyFromGraph(ttl);
+    expect('body' in back && (back.body as AttemptBody).lmsLaunch).toEqual(a.lmsLaunch);
+    expect(recordGraphTurtle(gate)).not.toContain('LmsLaunch');
+    // A launch with no registration is refused by the published shape.
+    const without = ttl.replace(`pev:lmsRegistration "${LAUNCH.registration}"`, `pev:lmsSessionId "${LAUNCH.sessionId}"`);
+    expect(without).not.toBe(ttl);
+    expect(conforms(without).conforms).toBe(false);
+  });
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -1962,8 +2111,8 @@ describe('ontology files', () => {
 
   it('gives every action a pev tool name and keeps the export steps in substrate terms', () => {
     const actions = Object.values(PEV_ACTION);
-    expect(actions).toHaveLength(27);
-    expect(new Set(actions.map((a) => toolNameOf(a))).size).toBe(27);
+    expect(actions).toHaveLength(28);
+    expect(new Set(actions.map((a) => toolNameOf(a))).size).toBe(28);
     expect(toolNameOf(PEV_ACTION.registerRole)).toBe('pev.register_role');
     expect(toolNameOf('urn:iep:action:other:x')).toBeNull();
     expect(EXPORT_VERIFY_STEPS.join(' ')).toContain('verifySignedAuthorship');

@@ -447,13 +447,16 @@ export function nextLevelGuidance(r: Rubric, levels: Readonly<Record<string, str
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 export type Speaker = 'learner' | 'counterpart';
-export type TurnSource = 'authored-first-line' | 'learner-signed' | 'bridge-model' | 'scripted' | 'client-packet';
+/** `lrs-statement`: the line was read from an assignable unit's statement in an LRS, not said or generated here. */
+export type TurnSource = 'authored-first-line' | 'learner-signed' | 'bridge-model' | 'scripted' | 'client-packet' | 'lrs-statement';
 export interface Turn {
   readonly index: number; readonly speaker: Speaker;
   /** Absent once the attempt is redacted; `textSha256` stays. */
   readonly text?: string;
   readonly textSha256: string; readonly at: string; readonly source: TurnSource; readonly endSignal?: boolean;
   readonly disclosure?: InferenceDisclosure; readonly envelope?: StoredEnvelope;
+  /** Set on an `lrs-statement` turn: the statement the line was read from. */
+  readonly statementId?: string;
 }
 
 export const END_SIGNAL = '(end of conversation)';
@@ -589,8 +592,10 @@ export function learnerTurnCount(turns: readonly Pick<Turn, 'speaker'>[]): numbe
 }
 
 /** Who controlled the other person's lines: the most learner-controlled route used wins. */
-export function counterpartControl(turns: readonly Turn[]): 'platform' | 'learner-model' | 'learner' {
+export function counterpartControl(turns: readonly Turn[]): 'platform' | 'learner-model' | 'learner' | 'assignable-unit' {
   const theirs = turns.filter((t) => t.speaker === 'counterpart');
+  // A conversation read from an LRS was scripted by the unit an LMS launched: neither this bridge nor the learner wrote those lines.
+  if (theirs.some((t) => t.source === 'lrs-statement')) return 'assignable-unit';
   if (theirs.some((t) => t.source === 'client-packet')) return 'learner';
   if (theirs.some((t) => t.source === 'bridge-model' && t.disclosure?.keySource === 'per-request-byok')) return 'learner-model';
   return 'platform';
