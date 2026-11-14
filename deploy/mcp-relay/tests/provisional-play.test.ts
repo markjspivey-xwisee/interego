@@ -352,6 +352,21 @@ test('a second application\'s guest binds and reads only its own two graphs, nev
     assert.throws(() => validateProvisionalTool('get_current_head', { urn: graph }, foxxiPrincipal), code('provisional_graph_forbidden'));
   }
 });
+test('a general guest\'s marker is refused whole: the relay offers a general guest nothing', () => {
+  const thumbprint = play.proofKeyThumbprint; const expiresAt = play.expiresAt;
+  for (const marker of [
+    // As identity issues them: an application's token and the door's own. Neither has an audience.
+    { general: true, application: 'https://learn.example', proofKeyThumbprint: thumbprint, expiresAt },
+    { general: true, application: 'https://learn.example', proofKeyThumbprint: thumbprint, expiresAt, namespace: 'foxxi' },
+    { general: true, door: true, proofKeyThumbprint: thumbprint, expiresAt },
+    // And one that also carries a per-application marker's fields is still a general guest's.
+    { ...play, general: true }, { ...play, general: false }, { ...play, general: null },
+  ]) {
+    assert.throws(() => parseProvisionalPlay(marker), code('invalid_provisional_authority'), JSON.stringify(marker));
+    const forged = { ...principal, provisionalPlay: marker as unknown as typeof play };
+    assert.throws(() => validateProvisionalTool('get_pod_status', {}, forged), code('invalid_provisional_authority'), JSON.stringify(marker));
+  }
+});
 test('the namespace survives parsing, and a malformed one refuses the authority instead of becoming the default', () => {
   assert.deepEqual(parseProvisionalPlay({ ...play, namespace: 'foxxi', extra: 1 }), { ...play, namespace: 'foxxi' });
   for (const namespace of ['', 'f', 'Foxxi', '1foxxi', '../hallowmarch', 'foxxi:player-profile', 'foxxi/x', 'a'.repeat(33), null, 7, ['foxxi']]) {

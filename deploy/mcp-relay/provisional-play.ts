@@ -54,7 +54,11 @@ export const playHash = (value: string) => createHash('sha256').update(value, 'u
 export function parseProvisionalPlay(value: unknown): ProvisionalPlay | undefined {
   if (value === undefined) return undefined;
   const p = value as ProvisionalPlay;
-  if (!p || typeof p.audience !== 'string' || !p.audience || p.audience.length > 256
+  // A general guest's marker (identity's provisional-general-guest.ts: `general`, and no `audience`)
+  // is refused here: the relay offers a general guest nothing. It was already refused for want of
+  // an audience; the first test says so in its own words, whatever else the marker carries.
+  if (!p || (p as { general?: unknown }).general !== undefined
+    || typeof p.audience !== 'string' || !p.audience || p.audience.length > 256
     || typeof p.proofKeyThumbprint !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(p.proofKeyThumbprint)
     || !Number.isSafeInteger(p.expiresAt) || p.expiresAt <= 0
     // A namespace that is present and malformed refuses the authority: it never becomes the default application's.

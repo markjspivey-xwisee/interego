@@ -183,7 +183,7 @@ function deepFreeze<T>(value: T): T {
   return value;
 }
 
-const isPlayOwner = (userId: string) => userId.startsWith('u-try-play-');
+const isPlayOwner = (userId: string) => /^u-try-(?:play|guest)-/.test(userId);
 
 /**
  * The read-modify-write itself, for a caller that already holds the account's lock (an

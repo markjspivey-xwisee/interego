@@ -14,6 +14,7 @@ import { PlayGrantService, type PlayGrantConfig } from '../../foxxi-content-inte
 import {
   PlayError, ProvisionalPlay, type PlayClaims, type PlayClient, type PlayGrant,
 } from '../../../deploy/identity/provisional-play.js';
+import { GeneralGuestDoor } from '../../_shared/guest-access/door.js';
 import { bound } from '../../_shared/http-guard/index.js';
 import { MAX_CHALLENGES, MAX_LOCAL_GUESTS } from './bounded.js';
 
@@ -31,6 +32,12 @@ export interface GuestDoor {
   grant(thumbprint: string, challenge: string): Promise<{ playGrant: PlayGrant }>;
   verify(body: unknown): Promise<VerifiedGuest>;
   bootstrap?(body: unknown): Promise<Record<string, unknown>>;
+  /**
+   * Identity's general guest door, where this world offers it beside its own guest door: one guest
+   * per browser across Interego applications (deploy/identity/PROVISIONAL-PLAY.md, "General guest").
+   * Absent unless the operator turned it on, and never on the local door.
+   */
+  readonly general?: GeneralGuestDoor;
 }
 
 function didHost(origin: string): string {
@@ -108,12 +115,14 @@ export function createLocalDoor(origin: string): GuestDoor {
   };
 }
 
-export function createRelayDoor(config: PlayGrantConfig): GuestDoor {
+export function createRelayDoor(config: PlayGrantConfig, options: { generalGuest?: boolean; doorOrigin?: string } = {}): GuestDoor {
   const grants = new PlayGrantService(config);
   return {
     audience: config.audience,
     identityUrl: config.identityUrl,
     local: false,
+    ...(options.generalGuest === true ? { general: new GeneralGuestDoor({ audience: config.audience, identityUrl: config.identityUrl,
+      ...(options.doorOrigin ? { doorOrigin: options.doorOrigin } : {}), signGrant: request => grants.generalGuestGrant(request) }) } : {}),
     async grant(thumbprint, challenge) {
       const granted = await grants.grant({ publicKeyThumbprint: thumbprint, challenge });
       return { playGrant: granted.playGrant };
@@ -132,4 +141,4 @@ export function createRelayDoor(config: PlayGrantConfig): GuestDoor {
   };
 }
 
-export { PlayError };
+export { PlayError, GeneralGuestDoor };

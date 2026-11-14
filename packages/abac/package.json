@@ -12,9 +12,13 @@
     ".": {
       "import": "./dist/index.js",
       "types": "./dist/index.d.ts"
+    },
+    "./portable": {
+      "import": "./portable/abac-portable.mjs",
+      "types": "./portable/abac-portable.d.mts"
     }
   },
-  "files": ["dist/", "src/", "README.md"],
+  "files": ["dist/", "src/", "portable/", "README.md"],
   "scripts": { "build": "tsc", "watch": "tsc --watch", "clean": "rm -rf dist/" },
   "engines": { "node": ">=20.0.0" },
   "dependencies": {

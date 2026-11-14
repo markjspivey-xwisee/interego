@@ -20,7 +20,8 @@ import { VOICE_BROWSER_MODULE } from '../../_shared/voice/index.js';
 import { WorldError } from './errors.js';
 import { RateLimiter, bound, clientKey, healthBody, publicOrigin } from '../../_shared/http-guard/index.js';
 import { MAX_CHALLENGES, MAX_RATE_CLIENTS, MAX_SESSIONS } from './bounded.js';
-import { createLocalDoor, createRelayDoor, type GuestDoor } from './guest-play.js';
+import { createLocalDoor, createRelayDoor, type GeneralGuestDoor, type GuestDoor } from './guest-play.js';
+import { GuestDoorError } from '../../_shared/guest-access/door.js';
 import { FoxxiCourseLauncher } from './course-launch.js';
 import { HttpLrs, parseLmsAuthority } from './lrs.js';
 import { loadPackFile } from './pack.js';
@@ -74,6 +75,8 @@ export async function start(opts: {
   readonly trustProxy?: boolean;
   /** The clock the request limits read. For tests. */
   readonly now?: () => number;
+  /** A general guest door to offer beside the world's own, already built. For tests: production builds it from its settings. */
+  readonly generalDoor?: GeneralGuestDoor;
   /**
    * How a claim on an agent invitation is verified. FOR TESTS: production leaves it unset and
    * verifies with `interegoCallerVerifier`, configured by CPW_POD_ORIGIN. With neither, the
@@ -98,6 +101,7 @@ export async function start(opts: {
   const pack = loadPackFile(opts.packPath ?? join(dirname(fileURLToPath(import.meta.url)), '../packs/mandate.json'));
   const sessions = new Map<string, string>();
   const challenges = new Map<string, number>();
+  const arrivals = new Map<string, Arrival>();
   const limiter = new RateLimiter(opts.now, MAX_RATE_CLIENTS);
   const health: Health = {
     build: process.env['INTEREGO_BUILD_SHA'],
@@ -136,13 +140,14 @@ export async function start(opts: {
         }
       }
       if (!live.door || !live.world) { send(res, 503, { error: 'starting' }); return; }
-      await route(req, res, { door: live.door, world: live.world, sessions, challenges, tick: opts.tick === true, agents: live.agents, verifier: live.verifier,
+      await route(req, res, { door: live.door, world: live.world, sessions, challenges, arrivals, tick: opts.tick === true, agents: live.agents, verifier: live.verifier,
         clientOf: request => clientKey(request.headers['x-forwarded-for'], request.socket.remoteAddress, trustProxy),
       });
     } catch (error) {
       if (error instanceof WorldError) send(res, error.status, { error: error.code, detail: error.message });
       else if (error instanceof PlayError) send(res, error.status, { error: error.code });
       else if (error instanceof PlayGrantError) send(res, error.status, { error: error.code });
+      else if (error instanceof GuestDoorError) send(res, error.status, { error: error.code });
       else if (error instanceof AgentConnectionError) send(res, error.status, { error: error.message });
       else send(res, 500, { error: 'internal' });
     }
@@ -159,9 +164,15 @@ export async function start(opts: {
   const relayKey = process.env['CPW_PLAY_SERVICE_PRIVATE_KEY'];
   const identityUrl = process.env['CPW_IDENTITY_URL'];
   const relayAudience = statedAudience || publicUrl;
+  // CPW_GENERAL_GUEST=1 also offers identity's general guest door (one guest per browser across
+  // applications). Only with the relay door: identity must name this world's origin with
+  // "generalGuest": true and the return path /play/general/return. Unset, nothing changes.
   live.door = !opts.forceLocal && relayKey && relayAudience && identityUrl
-    ? createRelayDoor({ audience: relayAudience, identityUrl, relayUrl: process.env['CPW_RELAY_URL'] ?? 'https://relay.interego.xwisee.com', servicePrivateKey: relayKey })
+    ? createRelayDoor({ audience: relayAudience, identityUrl, relayUrl: process.env['CPW_RELAY_URL'] ?? 'https://relay.interego.xwisee.com', servicePrivateKey: relayKey },
+      { generalGuest: process.env['CPW_GENERAL_GUEST'] === '1',
+        ...(process.env['CPW_GENERAL_GUEST_DOOR_ORIGIN'] ? { doorOrigin: process.env['CPW_GENERAL_GUEST_DOOR_ORIGIN'] } : {}) })
     : createLocalDoor(origin);
+  if (opts.generalDoor) live.door = { ...live.door, general: opts.generalDoor };
   const lrsUrl = process.env['CPW_LRS_URL'];
   const launcher = launchLauncher();
   const world = await CoachedWorld.create({
@@ -206,8 +217,71 @@ function didHost(origin: string): string {
   return url.port ? `${url.hostname}%3A${url.port}` : url.hostname;
 }
 
+/** A session made on the general guest door's return, waiting for the page to collect it once. */
+interface Arrival { token: string; ownerDid: string; name: string; expiresAt: number }
+/** Where identity returns a general guest's browser. Registered with identity as this application's `generalGuestReturnPath`. */
+export const GENERAL_GUEST_RETURN_PATH = '/play/general/return';
+const DOOR_COOKIE = 'cpw-guest-door';
+
+function doorCookie(req: IncomingMessage): string | undefined {
+  for (const part of String(req.headers.cookie ?? '').split(';')) {
+    const [name, ...value] = part.trim().split('=');
+    if (name === DOOR_COOKIE) return value.join('=');
+  }
+  return undefined;
+}
+function setDoorCookie(door: GuestDoor, value: string, maxAge: number): string {
+  return `${DOOR_COOKIE}=${value}; Path=/play/general; Max-Age=${maxAge}; HttpOnly; SameSite=Lax${door.audience.startsWith('https://') ? '; Secure' : ''}`;
+}
+
+/**
+ * The general guest door, where the world offers it. The browser leaves for identity's door from
+ * `start` with a cookie that binds the visit to it, comes back to the registered return path, and
+ * the page then collects its world session once, with that cookie, from `session`. No bearer is
+ * ever in an address. Returns false where the path is not one of these.
+ */
+async function generalGuestRoute(req: IncomingMessage, res: ServerResponse, url: URL, ctx: {
+  door: GuestDoor; world: CoachedWorld; sessions: Map<string, string>; arrivals: Map<string, Arrival>;
+}): Promise<boolean> {
+  const general = ctx.door.general;
+  if (!general) return false;
+  if (req.method === 'GET' && url.pathname === '/play/general/start') {
+    const visit = await general.start();
+    res.writeHead(302, { Location: visit.url, 'Set-Cookie': setDoorCookie(ctx.door, visit.binding, 600), 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    res.end();
+    return true;
+  }
+  if (req.method === 'GET' && url.pathname === GENERAL_GUEST_RETURN_PATH) {
+    const binding = doorCookie(req);
+    const guest = await general.finish({ code: url.searchParams.get('code'), state: url.searchParams.get('state'), binding });
+    const consultant = await ctx.world.exclusive(() => ctx.world.admit({ ownerDid: guest.ownerDid, userId: guest.userId, podUrl: guest.podUrl, agentDid: guest.agentDid }));
+    const token = randomBytes(32).toString('base64url');
+    bound(ctx.sessions, MAX_SESSIONS - 1);
+    ctx.sessions.set(token, consultant.id);
+    const now = Date.now();
+    for (const [key, arrival] of ctx.arrivals) if (arrival.expiresAt <= now) ctx.arrivals.delete(key);
+    bound(ctx.arrivals, MAX_CHALLENGES - 1);
+    ctx.arrivals.set(binding!, { token, ownerDid: guest.ownerDid, name: consultant.name, expiresAt: now + 60_000 });
+    // The address the browser is left on carries neither the code nor any bearer: only a flag that
+    // tells the page a session is waiting for it to collect.
+    res.writeHead(302, { Location: '/?arrived=general', 'Cache-Control': 'no-store', 'Referrer-Policy': 'no-referrer' });
+    res.end();
+    return true;
+  }
+  if (req.method === 'POST' && url.pathname === '/play/general/session') {
+    const binding = doorCookie(req);
+    const arrival = binding ? ctx.arrivals.get(binding) : undefined;
+    if (binding) ctx.arrivals.delete(binding);
+    res.setHeader('Set-Cookie', setDoorCookie(ctx.door, '', 0));
+    if (!arrival || arrival.expiresAt <= Date.now()) { send(res, 401, { error: 'no_general_guest_arrival' }); return true; }
+    send(res, 200, { token: arrival.token, ownerDid: arrival.ownerDid, name: arrival.name });
+    return true;
+  }
+  return false;
+}
+
 async function route(req: IncomingMessage, res: ServerResponse, ctx: {
-  door: GuestDoor; world: CoachedWorld; sessions: Map<string, string>; challenges: Map<string, number>; tick: boolean;
+  door: GuestDoor; world: CoachedWorld; sessions: Map<string, string>; challenges: Map<string, number>; arrivals: Map<string, Arrival>; tick: boolean;
   agents: AgentLink | undefined; verifier: VerifySignedCaller | undefined; clientOf: (req: IncomingMessage) => string;
 }): Promise<void> {
   const url = new URL(req.url ?? '/', 'http://localhost');
@@ -266,9 +340,11 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
     return;
   }
   if (req.method === 'GET' && url.pathname === '/play/guest') {
-    send(res, 200, { enabled: true, audience: ctx.door.audience, identityUrl: ctx.door.identityUrl, bootstrapUrl: `${ctx.door.identityUrl}/play/provisional`, local: ctx.door.local });
+    send(res, 200, { enabled: true, audience: ctx.door.audience, identityUrl: ctx.door.identityUrl, bootstrapUrl: `${ctx.door.identityUrl}/play/provisional`, local: ctx.door.local,
+      ...(ctx.door.general ? { general: { startUrl: '/play/general/start', sessionUrl: '/play/general/session' } } : {}) });
     return;
   }
+  if (await generalGuestRoute(req, res, url, ctx)) return;
   if (req.method === 'POST' && url.pathname === '/play/grant') {
     const body = await readJson(req);
     const thumbprint = body['publicKeyThumbprint'];

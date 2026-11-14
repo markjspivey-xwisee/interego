@@ -1,6 +1,7 @@
 /** Browser-key provisional owners. All authoritative state is a signed pod anchor. */
 import * as crypto from 'node:crypto';
 import { hostedPrivacyUrl, type HostedTermsPolicy, type TermsAcceptance } from './hosted-terms.js';
+import type { GeneralGuest } from './provisional-general-guest.js';
 
 export type PublicPlayKey = { kty: 'EC'; crv: 'P-256'; x: string; y: string };
 /**
@@ -9,7 +10,18 @@ export type PublicPlayKey = { kty: 'EC'; crv: 'P-256'; x: string; y: string };
  * DEFAULT_PLAY_NAMESPACE. `maxPods`: this application's own lifetime admission cap, inside the
  * deployment's (PlayDependencies.maxPods). Absent means only the deployment's cap applies.
  */
-export type PlayClient = { agentDid: string; podUrl: string; namespace?: string; maxPods?: number };
+export type PlayClient = { agentDid: string; podUrl: string; namespace?: string; maxPods?: number;
+  /**
+   * Whether this application may send browsers through identity's general guest door
+   * (provisional-general-guest.ts), and the one path on its origin the door returns them to.
+   * Both absent unless the entry says `"generalGuest": true`; they change nothing for the
+   * application's own per-application guests.
+   */
+  generalGuest?: true; generalGuestReturnPath?: string };
+/** A return path: absolute on the application's origin, plain segments only, no query or fragment. */
+export function isGuestReturnPath(value: unknown): value is string {
+  return typeof value === 'string' && /^\/[A-Za-z0-9._~/-]{0,127}$/.test(value) && !value.includes('//') && !value.split('/').includes('..');
+}
 /** The namespace of an application that configures none: the first application's, kept byte-identical. */
 export const DEFAULT_PLAY_NAMESPACE = 'hallowmarch';
 /** Names a guest pod already uses (the relay's descriptors and registry, the pod's profile), never an application's. */
@@ -36,6 +48,13 @@ export interface PlayClaims {
   expiresAt: number;
   capabilities: readonly ['human-play', 'own-pod-checkpoint'];
   provisional: true;
+  /**
+   * Set (true) on the anchor of a general guest: one owner per browser key across applications,
+   * its id derived from the key alone (generalGuestUserId). `audience` is then the application
+   * that admitted it, whose budget paid. Absent on a per-application guest, whose anchor is
+   * unchanged.
+   */
+  general?: true;
 }
 export class PlayError extends Error {
   constructor(readonly status: number, readonly code: string) { super(code); }
@@ -60,6 +79,17 @@ export function playKeyThumbprint(key: PublicPlayKey): string {
 export function provisionalUserId(audience: string, thumbprint: string): string {
   return `u-try-play-${crypto.createHash('sha256').update(`${audience}\n${thumbprint}`).digest('hex').slice(0, 32)}`;
 }
+/**
+ * The owner id of a general guest: a function of the key thumbprint alone, under a prefix no
+ * per-application guest (`u-try-play-`) and no evaluation account (`u-try-<12 hex>`) can have.
+ */
+export function generalGuestUserId(thumbprint: string): string {
+  return `u-try-guest-${crypto.createHash('sha256').update(`interego-general-guest-v1\n${thumbprint}`).digest('hex').slice(0, 32)}`;
+}
+/** Whether `id` is a provisional owner's, per-application or general: what the janitor and the cleanup take up. */
+export function isProvisionalOwnerId(id: string): boolean {
+  return /^u-try-(?:play|guest)-[a-f0-9]{32}$/.test(id);
+}
 export function bootstrapProofPayload(grant: PlayGrant, termsVersion?: string): string {
   const proof = `interego-play-provisional-v1\n${grant._signed_payload}\n${grant._signature}`;
   return termsVersion ? `${proof}\nHosted-Interego-Terms: ${termsVersion}` : proof;
@@ -82,6 +112,10 @@ function origin(value: unknown): string {
     && ['localhost', '127.0.0.1'].includes(url.hostname)))) return fail(400, 'invalid_audience');
   return value;
 }
+/** `value` as an application origin (https, or http on loopback), or a 400. */
+export const playOrigin = (value: unknown): string => origin(value);
+/** Whether `value` is unpadded base64url, of exactly `bytes` decoded bytes where given. */
+export const isBase64Url = (value: unknown, bytes?: number): value is string => b64(value, bytes);
 export function parsePlayClients(raw: string | undefined): ReadonlyMap<string, PlayClient> {
   if (!raw) return new Map();
   const parsed = JSON.parse(raw);
@@ -98,9 +132,13 @@ export function parsePlayClients(raw: string | undefined): ReadonlyMap<string, P
     if (value.namespace !== undefined && !isPlayNamespace(value.namespace)) throw new Error('Invalid provisional Play namespace');
     if (value.maxPods !== undefined && (!Number.isInteger(value.maxPods) || value.maxPods < 1 || value.maxPods > 1000))
       throw new Error('Invalid provisional Play application limit');
+    const general = (value as { generalGuest?: unknown }).generalGuest;
+    if (general !== undefined && typeof general !== 'boolean') throw new Error('Invalid provisional Play general guest setting');
+    if (general === true && !isGuestReturnPath(value.generalGuestReturnPath)) throw new Error('Invalid provisional Play general guest return path');
     clients.set(audience, { agentDid: value.agentDid, podUrl: pod.href,
       ...(value.namespace !== undefined && value.namespace !== DEFAULT_PLAY_NAMESPACE ? { namespace: value.namespace } : {}),
-      ...(value.maxPods !== undefined ? { maxPods: value.maxPods } : {}) });
+      ...(value.maxPods !== undefined ? { maxPods: value.maxPods } : {}),
+      ...(general === true ? { generalGuest: true as const, generalGuestReturnPath: value.generalGuestReturnPath } : {}) });
   }
   return clients;
 }
@@ -113,6 +151,11 @@ export interface PlayDependencies {
   ttlSeconds: number;
   maxPods: number;
   hostedTerms?: HostedTermsPolicy;
+  /**
+   * Whether the general guest door is on (PROVISIONAL_GENERAL_GUEST=1). Off, a general guest's
+   * anchor opens only for the cleanup (`allowExpired`), and nothing here issues or accepts one.
+   */
+  generalGuest?: boolean;
   now?: () => number;
   /** Uses a fixed configured relay and configured principal/pod, never caller URLs. */
   verifyGrantSignature(grant: PlayGrant, client: PlayClient): Promise<boolean>;
@@ -127,6 +170,8 @@ export interface PlayDependencies {
 export class ProvisionalPlay {
   readonly ttlSeconds: number;
   readonly maxPods: number;
+  /** The general guest door (provisional-play-provider.ts sets it). On only with its setting. */
+  general?: GeneralGuest;
   private readonly now: () => number;
   constructor(private readonly deps: PlayDependencies) {
     if (deps.signingKey.byteLength < 32) throw new Error('Provisional Play signing key must be stable and at least 32 bytes');
@@ -152,7 +197,8 @@ export class ProvisionalPlay {
     return { audience: claims.audience, proofKeyThumbprint: claims.proofKeyThumbprint, expiresAt: claims.expiresAt,
       ...(namespace !== undefined ? { namespace } : {}) };
   }
-  private seal(claims: PlayClaims): string {
+  /** Signs an anchor. Called only by bootstrap here and by the general guest door. */
+  seal(claims: PlayClaims): string {
     const encoded = Buffer.from(JSON.stringify(claims)).toString('base64url');
     const signature = crypto.createHmac('sha256', this.deps.signingKey).update(`interego-play-attestation-v1\0${encoded}`).digest('base64url');
     return `ipa1_${encoded}.${signature}`;
@@ -167,8 +213,13 @@ export class ProvisionalPlay {
     if (!crypto.timingSafeEqual(expected, Buffer.from(signature, 'base64url'))) return fail(401, 'invalid_attestation');
     let c: PlayClaims; try { c = JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')); }
     catch { return fail(401, 'invalid_attestation'); }
-    if (c.version !== 1 || c.provisional !== true || c.issuer !== this.deps.issuer || (!allowExpired && !this.deps.clients.has(c.audience))
-      || c.userId !== provisionalUserId(c.audience, c.proofKeyThumbprint)
+    // A general guest's anchor (c.general) opens only while the door is on; its admitting application
+    // may have left the allowlist since (the guest is other applications' too). It never opens as a
+    // per-application guest's, nor that as a general one: the two ids are derived differently.
+    if (c.version !== 1 || c.provisional !== true || c.issuer !== this.deps.issuer
+      || (c.general !== undefined && c.general !== true)
+      || (!allowExpired && (c.general ? this.deps.generalGuest !== true : !this.deps.clients.has(c.audience)))
+      || c.userId !== (c.general ? generalGuestUserId(c.proofKeyThumbprint) : provisionalUserId(c.audience, c.proofKeyThumbprint))
       || c.proofKeyThumbprint !== playKeyThumbprint(publicPlayKey(c.publicKeyJwk))
       || !Number.isInteger(c.issuedAt) || !Number.isInteger(c.expiresAt) || c.expiresAt <= c.issuedAt
       || c.expiresAt - c.issuedAt > 604800 || c.issuedAt > this.now() + 5) return fail(401, 'invalid_attestation');
@@ -229,6 +280,9 @@ export class ProvisionalPlay {
   async verify(input: unknown): Promise<Omit<PlayClaims, 'expiresAt'> & { valid: true; expiresAt: string }> {
     const body = input as { attestation?: unknown; audience?: unknown; challenge?: unknown; proof?: unknown };
     const claims = this.open(body?.attestation);
+    // A general guest's key lives on identity's origin and proves itself at the door only: no
+    // application holds its attestation, and this route answers none.
+    if (claims.general) return fail(401, 'invalid_attestation');
     const audience = origin(body.audience);
     if (claims.audience !== audience || !b64(body.challenge) || body.challenge.length < 20 || body.challenge.length > 128)
       return fail(401, 'invalid_browser_proof');
@@ -255,6 +309,8 @@ export class ProvisionalPlay {
       storageLimits: { maxWriteBytes: 4194304, lifetimeWriteBytes: 33554432, lifetimeWriteAttempts: 1024 },
       capabilities: ['human-play', 'own-pod-checkpoint'],
       assurance: 'Browser key possession; does not identify a human or authorize autonomous agents.',
+      // Absent unless the general guest door is on: the metadata of a deployment without it is unchanged.
+      ...(this.general?.enabled ? { generalGuest: this.general.metadata() } : {}),
     };
   }
 }

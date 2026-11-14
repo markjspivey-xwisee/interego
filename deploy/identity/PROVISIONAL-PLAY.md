@@ -35,6 +35,110 @@ A second application also needs its origin in `PROVISIONAL_PLAY_CLIENTS` (which 
 
 **Foxxi.** Foxxi is not configured as an application here by default. Its bridge can issue grants and its dashboard can keep a guest in a provisional pod once an operator turns that on (`applications/foxxi-content-intelligence/DURABLE-GUEST.md`); nothing in this document changes for it. Its dashboard's "Start as a guest" makes a secp256k1 wallet in the tab (`applications/foxxi-content-intelligence/dashboard-app/src/auth/session.ts`, `connectAsGuest`) and signs each request to the Foxxi bridge with it, as `did:ethr:<address>`. It calls neither identity nor the relay: no identity account, no pod, no guest deadline, no admission budget, and the key is gone with the tab unless the guest wrote down its recovery phrase. (This paragraph first said the wallet signed in through SIWE and created a `u-eth-` account. It does not.) A provisional guest is the opposite trade: a `u-try-play-` owner with a fixed deadline, a lifetime admission cap, two bounded encrypted documents, and a key that survives a reload (IndexedDB) and can later be claimed with a passkey or wallet. Foxxi's I2IDL-X learner sign-in through the relay still refuses any account that carries the provisional marker (`applications/foxxi-content-intelligence/src/i2idlx-learning-auth.ts`): a kept guest is a dashboard guest. Separately, the I2IDL-X workbench can admit a provisional guest to its learner operations only, by the other door this provider offers: the guest's browser key signs a workbench challenge and the workbench asks `/play/provisional/verify`. The workbench is a second application, with its own origin, service account and entry in `PROVISIONAL_PLAY_CLIENTS`, and is off unless the bridge is given that service's key (`applications/foxxi-content-intelligence/i2idlx/LEARNING-CONNECTIONS.md`, "Guest learners"). Those routes write nothing to the guest's pod.
 
+## General guest
+
+A per-application guest is one owner per application: its key lives in the application's origin, and its id is derived from that origin. A **general guest** is one owner per browser across every application that offers it. It is off unless identity is started with `PROVISIONAL_GENERAL_GUEST=1` (exactly `1`), and an application takes part only when its entry in `PROVISIONAL_PLAY_CLIENTS` says so:
+
+```json
+{"https://play.example":{"agentDid":"did:web:identity.example:agents:game-service","podUrl":"https://pods.example/game/",
+  "generalGuest":true,"generalGuestReturnPath":"/guest/return"}}
+```
+
+`generalGuestReturnPath` is the one path on that origin the door sends a browser back to: absolute, plain segments, no query or fragment, at most 128 characters. `"generalGuest": true` without a valid one stops identity at start. With the setting off these fields are read and ignored: there is no door, no exchange, the metadata at `/.well-known/play-provisional` has no `generalGuest` member, a per-application guest's id, token, paths and record are what they were, and the door's four paths answer as any path that never existed (`provisional-general-guest-routes.test.ts` compares them with one). An identity from before this change ignores both fields.
+
+**What is the same.** The anchor, the admission ledger with its deployment and per-application caps, the fixed deadline (`PROVISIONAL_PLAY_TTL_SECONDS`), the hosted-terms gate, the 16 live grant receipts, the claim with a passkey, wallet or DID, the janitor and the cleanup are the per-application guest's, through the same code. The first application to send a browser pays the admission from its own `maxPods` and from the total; an application the same guest reaches later pays nothing. The ledger entry's attestation names the application that paid.
+
+**What is different.**
+
+- The owner id is `u-try-guest-<32 hex>`, the first 32 hex characters of `sha256("interego-general-guest-v1\n" + thumbprint)`: a function of the key alone. A per-application guest's is `u-try-play-…`, derived from the application origin and the key, so the same key is two different owners and the two kinds never collide. The anchor carries `general: true`, and neither kind's anchor opens as the other's.
+- The key lives on the door's origin: a dedicated one in production ("A dedicated door origin" below), identity's own otherwise. `GET /guest/door` is a page that creates a non-extractable P-256 key in that origin's IndexedDB (`interego-general-guest`) and signs with it. It is a top-level document only (`frame-ancestors 'none'`, `X-Frame-Options: DENY`), runs one inline script named by hash in its Content-Security-Policy, connects to this origin alone, and proceeds only on a click.
+- Each application that sends the browser is recorded on the owner's record (`provisionalGuestApplications`); that an application is on that list is one of the subject's attributes as stated to it.
+
+### The door and the exchange
+
+1. The application's backend makes a `state` (20 to 128 base64url characters) and a PKCE verifier it keeps, and has its service agent sign, through the relay's `sign_request` as for a per-application grant:
+
+   ```json
+   {"purpose":"interego-general-guest-v1","audience":"https://play.example","state":"<state>","codeChallenge":"<base64url sha256 of the verifier>","expiresAt":1800000060}
+   ```
+
+   The relay adds `agent_id`, `subject_pod_url` and `timestamp`, and `client_id` where its operator turned that on (identity does not read it). The purpose differs from a per-application grant's, so neither is accepted in the other's place. `applications/_shared/guest-access/door.ts` (`GeneralGuestDoor`) does this step and the last, and `PlayGrantService.generalGuestGrant` signs.
+2. It sends the browser, by a top-level navigation, to `<identity>/guest/door#grant=<base64url(JSON {_signed_payload,_signature})>`. The grant is in the fragment: identity's server and its logs never see it in a request line, and the page removes it from the address at once.
+3. The page shows the application's origin and waits for a click. It then signs these bytes with the browser's key and posts `{playGrant, publicKeyJwk, proof, termsVersion?}` to `POST /guest/door`:
+
+   ```text
+   interego-general-guest-door-v1
+   {playGrant._signed_payload}
+   {playGrant._signature}
+   ```
+
+   (with `\nHosted-Interego-Terms: <version>` appended where terms are active). Identity answers only a request whose `Origin` is the door's own. It verifies the grant as it verifies a per-application one (the configured principal and pod, through the configured relay), admits the key's guest or finds it, records the application, and answers `{redirect}`: the application's origin, its registered return path, `?code=…&state=…`. The address is built from configuration; nothing in the request names it. The page navigates there only if its origin is the grant's audience.
+4. The application's backend posts `{code, codeVerifier, audience, state}` to `POST /guest/exchange`. The code lives 60 seconds, is signed by identity, names its audience and state, and is spent on the owner's record by a conditional write, so it is used once on every instance (`guest_code_already_used` after that). The verifier must hash to the challenge the application's service agent signed. The answer is `valid:true`, `provisional:true`, `general:true`, the issuer and audience, `userId`, `ownerDid`, `webId`, public `podUrl`, the default agent's id and DID, `proofKeyThumbprint`, ISO `guestExpiresAt`, the application's `namespace`, `subjectAttributes`, and `token` with `tokenExpiresAt`. It does not include the anchor: no application ever holds a general guest's attestation, and `POST /play/provisional/verify` answers none (`invalid_attestation`).
+
+An application must bind a visit to the browser that started it (an HttpOnly cookie set when it redirects to the door, checked on return), or a return address carrying someone else's code and state would sign a visitor in as that someone. `GeneralGuestDoor` requires that binding.
+
+### Attributes
+
+`subjectAttributes` is what identity holds about the subject, read from the owner's record on the pod, never from a request or from the token:
+
+```json
+{"subject":"did:web:identity.example:users:u-try-guest-…","provisional":true,"claimed":false,"establishedAt":1800000000,"standingUntil":1800086400,
+ "admittedBy":["https://play.example"],"proofKeyThumbprint":"…","acceptedTermsVersion":"2026-11-06-r2"}
+```
+
+These are the facts `@interego/abac/portable`'s `subjectAttributeGraph` takes, and the same model serves every principal: a registered owner, a delegated agent and a service account are subjects with other values (`provisional:false`, `roles`, `onBehalfOf`, `linkedTo`), not other mechanisms. Identity states them today for a general guest only. `claimed` is true once the record lists a passkey, wallet or DID. Times are Unix seconds. `admittedBy` holds only the asking application's own origin: an application learns that it is among those the subject was admitted to, not which others there are. It is published in the exchange answer and, for a general guest's token, in `POST /tokens/verify` beside `provisionalPlay`. Neither answer is signed separately: both are identity's own HTTPS answers, authoritative as introspection already is.
+
+### Tokens
+
+A general guest's token carries `provisionalPlay` **without an `audience`**:
+
+- an application token: `{general:true, application:"https://play.example", proofKeyThumbprint, expiresAt, namespace?}`. Identity answers it on `POST /tokens/verify` only, while the application is still opted in, is on the guest's record, and its namespace is the one the token carries. Every other route of identity refuses it (401): it cannot read `/me`, renew itself, register an agent, enrol a credential, sign out or delete the account. An application that needs a fresh one sends the browser through the door again.
+- a door token: `{general:true, door:true, proofKeyThumbprint, expiresAt}`, answered only to the door page by `POST /guest/door/claim` after the key signs `interego-general-guest-claim-v1\n{issuer}\n{thumbprint}\n{expiresAt}` (`expiresAt` within 120 s; each proof is used once). It is the guest's bearer for the existing claim flow: the page opens `/connect?claim=<token>` on identity's own origin, and what follows is the add-device flow described below. `<identity>/guest/door#claim` is the address an application links to for it. The css-gate grants a door token no write.
+
+### Policy at the css-gate
+
+What a general guest may write is decided by policy over its attributes, with the substrate's own evaluator, not by a branch for it. The single source is `packages/abac/portable/abac-portable.mjs` (`@interego/abac/portable`: no imports, so any deployable can load it); the gate's image cannot carry the package, so `deploy/css-gate/abac-portable.mjs` is a byte-identical copy, and `tests/abac-portable.test.ts` holds the copy to those bytes and the portable evaluator to the package's `evaluate` on the same policies and graphs. The gate reads `subjectAttributes` from identity's introspection answer, builds the subject's attribute graph, and evaluates the standard policy set for provisional subjects at the token's application: a provisional subject that this application admitted, whose standing has not ended, may `iep:canPublish`; one whose standing has ended is denied by an explicit Deny; everything else is refused, because the decision is default-deny (no applicable Permit is a refusal, as is a missing or malformed attribute). The attributes must be the token's own (same owner, key and deadline). Once the policy permits, the write is held to the per-application surface's shape by the same code: the two documents `<pod>/<namespace>/checkpoints/<sha256('urn:graph:<namespace>:<kind>:<sha256(ownerDid)>')>.json`, a conditional native commit, 4 MiB per write. The lifetime budget (`play-budget.json`, 32 MiB and 1024 attempts) is one per pod, shared by every application that writes to it. A per-application guest's check is unchanged and does not go through the policy. The gate also refuses a general guest's token any read of the pod's private documents (`auth-methods.jsonld`, `play-budget.json`): the record lists the owner's credentials and the other applications it has used, and an application learns of those only what identity states in `subjectAttributes`.
+
+The policies are `iep:AccessControlPolicy` records with the predicate shapes of `abac:`. The attribute paths are declared where the other L2 terms are: an identity's standing in `docs/ns/passport.ttl` (`passport:provisional`, `passport:claimed`, `passport:establishedAt`, `passport:standingUntil`, `passport:admittedBy`, `passport:linkedTo`, `passport:role`, `passport:acceptedTermsVersion`, `passport:proofKeyThumbprint`), and what an evaluator derives in `docs/ns/abac.ttl` (`abac:secondsRemaining`, `abac:ageSeconds`, and the coarse action `abac:useService`). None is an L1 term. `packages/abac/README.md` shows how any other service adopts the same decision beside a rule it already has (shadow, then enforce). The relay offers a general guest nothing: its parser refuses the marker.
+
+### A dedicated door origin
+
+Set `GENERAL_GUEST_DOOR_ORIGIN` in production: an HTTPS origin of its own (another host name routed to the same identity service), not identity's. The door's origin holds every general guest's key, and although the key cannot be exported, any script running on that origin can use it. Identity's own origin serves pages whose Content-Security-Policy allows inline script (`/connect`, `/dashboard`, `/sign-action`), so a script injection there would reach the keys if the door lived beside them. With the setting:
+
+- on the door's host the server answers `GET /guest/door`, `POST /guest/door` and `POST /guest/door/claim` and nothing else: every other path is a 404 before any route sees it, the sign-in pages and the metadata included, whether or not the door is on;
+- on identity's own host those three paths do not exist, so identity's origin never creates or holds a guest key; the exchange, introspection and the claim page stay there;
+- the door's requests are answered only for an `Origin` that is the door's; identity sets no cookie, so the two origins share none;
+- the page's policy is hash-only (`default-src 'none'`, one script and one style sheet by hash, `connect-src 'self'`, `frame-ancestors 'none'`);
+- `/.well-known/play-provisional` names the door's address in `generalGuest.doorUrl`, and an application sends browsers there (`GeneralGuestDoor`'s `doorOrigin`, the coached world's `CPW_GENERAL_GUEST_DOOR_ORIGIN`).
+
+A value that is not an HTTPS origin with no path, or that is identity's own origin, stops the server at start. Unset, the door is served on identity's origin, which is for development: the server's start line says so.
+
+### Linkability
+
+A general guest is linkable across applications by design. Every application the browser enters through the door learns the same owner DID, WebID, pod URL and key thumbprint, when the guest was created and when it ends, whether it has been claimed, and that it is itself among the applications the guest was admitted to. Identity does not tell an application which other applications the guest has used, but two applications that compare notes can tell they are serving the same browser. Pod reads are not gated by the css-gate, so what an application writes to the pod is as readable as any pod content; the checkpoint documents must be owner-encrypted envelopes. A visitor who does not want that link uses an application's own guest door, which is unchanged. The door page says this before the click.
+
+### Rollout order and mixed versions
+
+The three services deploy independently. Every combination is safe, because each service from before this change refuses a general guest's token outright:
+
+| Service version | What it does with a general guest's token |
+| --- | --- |
+| css-gate before this change | `verifiedProvisional` requires `provisionalPlay.audience` to parse as an https origin and the owner id to match `^u-try-play-[a-f0-9]{32}$`. Neither holds: `401 provisional_play_invalid`. It never becomes ordinary ownership, because the marker is present. |
+| relay before this change | `parseProvisionalPlay` requires a non-empty string `audience`: `invalid_provisional_authority`, and the bearer is not authenticated. The relay's own guest exchange also needs `/me` and `/play/provisional/verify`, which identity refuses for this token and this guest. |
+| identity before this change (a rollback) | The owner's anchor does not open (its id is not the per-application derivation): `Provisional owner unavailable`. Its janitor treats `u-try-guest-…` as an evaluation account and removes an unclaimed one after `TRY_USER_TTL_MS` through the ordinary deletion, which leaves game data the native delete would have removed until an identity with this change runs its backfill. |
+| identity with this change, setting off | No door. A general guest's anchor opens for the cleanup alone, so its tokens are refused and the janitor still removes it at its deadline. |
+
+So the order is:
+
+1. Deploy the css-gate and the relay with this change. Without a general token in circulation they behave as before.
+2. Deploy identity with this change, the setting still off.
+3. Route the door's host name to identity and set `GENERAL_GUEST_DOOR_ORIGIN`. Until the door is on, that host answers 404 to everything.
+4. Add `generalGuest` and `generalGuestReturnPath` to the applications that want it, deploy those applications with their return path and the door's origin, and only then set `PROVISIONAL_GENERAL_GUEST=1`.
+
+Turning the setting off again ends every general guest's tokens at once and removes the door; their pods are cleaned up at their deadlines as usual. A css-gate with this change in front of an identity without it sees no general token and no `subjectAttributes`, and changes nothing.
+
+**Applications.** The coached world offers the door beside its own when `CPW_GENERAL_GUEST=1` (with its relay door configured; return path `/play/general/return`). Foxxi's bridge can sign door grants (`PlayGrantService.generalGuestGrant`) but its learner workbench does not use the door yet: its guest sessions are re-checked with identity while they live, and an application token cannot be re-checked by the application.
+
 ## Configuration and protocol
 
 Identity also needs its existing stable `TOKEN_SIGNING_KEY`, `CSS_URL`, `RELAY_URL`, and canonical HTTPS `CSS_PUBLIC_URL`. The allowlisted application origins are added to identity's existing explicit CORS allowlist. No wildcard or shared Play secret is introduced.

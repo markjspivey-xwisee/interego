@@ -78,6 +78,8 @@ import { createRecordWatchers } from './record-watch.js';
 import { createProvisionalPlayProvider } from './provisional-play-provider.js';
 import { parsePlayClients } from './provisional-play.js';
 import { mountProvisionalPlay } from './provisional-play-routes.js';
+import { guestApplications, subjectAttributes, type GeneralTokenGrant, type SubjectAttributes } from './provisional-general-guest.js';
+import { doorHostGuard, mountGeneralGuest, parseDoorOrigin } from './provisional-general-guest-routes.js';
 import { advertisesNativeDelete, playGameDataResidue, purgeProvisionalPlayPod, type PlayGameDataResidue } from './provisional-play-cleanup.js';
 import { isAdmissionLedger, readAdmissionLedger } from './provisional-play-admission.js';
 import { hostedBetaNotice, hostedPrivacyUrl, hostedTermsPolicy, readTermsAcceptance, type TermsAcceptance } from './hosted-terms.js';
@@ -502,6 +504,10 @@ interface AuthMethods {
   /** Provider-signed immutable Play owner anchor; not an enrolled human credential. */
   provisionalPlayAnchor?: string;
   provisionalPlayReceipts?: Array<{ hash: string; expiresAt: number }>;
+  /** A general guest's record only (provisional-general-guest.ts): the applications that admitted or have used it. */
+  provisionalGuestApplications?: Array<{ audience: string; admittedAt: number }>;
+  /** A general guest's record only: its door codes not yet exchanged, by hash. */
+  provisionalGuestCodes?: Array<{ hash: string; expiresAt: number }>;
   /** The server's receipt from the hosted enrollment ceremony. */
   termsAcceptance?: TermsAcceptance;
   /**
@@ -572,7 +578,14 @@ interface TokenRecord {
   provisionalPlay?: ProvisionalTokenGrant;
 }
 
-interface ProvisionalTokenGrant {
+/**
+ * A guest token's marker: a per-application guest's (PlayTokenGrant, unchanged), or a general
+ * guest's (GeneralTokenGrant: `general: true` and no `audience`, so a relay or css-gate that knows
+ * only the first kind refuses it).
+ */
+type ProvisionalTokenGrant = PlayTokenGrant | GeneralTokenGrant;
+interface PlayTokenGrant {
+  general?: undefined;
   audience: string;
   proofKeyThumbprint: string;
   expiresAt: number;
@@ -1728,6 +1741,8 @@ function normaliseAuthMethods(raw: unknown, userId: string): AuthMethods {
     ...(Number.isInteger(src.sessionEpoch) ? { sessionEpoch: src.sessionEpoch } : {}),
     ...(typeof src.provisionalPlayAnchor === 'string' ? { provisionalPlayAnchor: src.provisionalPlayAnchor } : {}),
     ...(Array.isArray(src.provisionalPlayReceipts) ? { provisionalPlayReceipts: src.provisionalPlayReceipts } : {}),
+    ...(Array.isArray(src.provisionalGuestApplications) ? { provisionalGuestApplications: src.provisionalGuestApplications } : {}),
+    ...(Array.isArray(src.provisionalGuestCodes) ? { provisionalGuestCodes: src.provisionalGuestCodes } : {}),
     ...(termsAcceptance ? { termsAcceptance } : {}),
     ...(typeof src.deletedAt === 'string' ? { deletedAt: src.deletedAt } : {}),
     ...(src.provisionalPlayPurgePending === true ? { provisionalPlayPurgePending: true as const } : {}),
@@ -1979,7 +1994,7 @@ async function loadAccountFromPod(userId: string): Promise<boolean> {
   if (body === null) return false;
   const m = normaliseAuthMethods(body, userId);
   // A janitor's purge of this Play owner that did not finish (purgePlayOwner): its next pass does.
-  if (isTombstone(m) && m.provisionalPlayPurgePending && userId.startsWith('u-try-play-')) unfinishedPlayPurges.add(userId);
+  if (isTombstone(m) && m.provisionalPlayPurgePending && /^u-try-(?:play|guest)-/.test(userId)) unfinishedPlayPurges.add(userId);
   if (!holdsAnAccount(userId, m)) return false;
   return adoptAccount(userId, m);
 }
@@ -2630,7 +2645,7 @@ const SIGNED_OUT_DURING_ADD = 'Invalid bearer token: Token revoked (signed out e
  * `epochOnPod`, on a valid Play guest token: the session epoch of the owner's record as read from
  * the pod for this check (POST /tokens issues the renewal at it).
  */
-async function verifyToken(token: string): Promise<{ valid: boolean; record?: TokenRecord; reason?: string; unreadable?: boolean; epochOnPod?: number }> {
+async function verifyToken(token: string, options: { generalGuest?: boolean } = {}): Promise<{ valid: boolean; record?: TokenRecord; reason?: string; unreadable?: boolean; epochOnPod?: number; subjectAttributes?: SubjectAttributes }> {
   const parsed = parseAndVerifySignature(token);
   if (parsed.valid !== true) {
     return { valid: false, reason: (parsed as { valid: false; reason: string }).reason };
@@ -2654,6 +2669,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
   // A Play guest token's session epoch is checked against the owner's record as read here from the
   // pod, never against this server's copy (below): see the end of this branch.
   let epochOnPod: number | undefined;
+  let guestFacts: SubjectAttributes | undefined;
   if (payload.provisionalPlay) {
     try {
       const body = await readPodJson(podFetch, podAuthMethodsUrl(payload.userId));
@@ -2677,9 +2693,39 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
         return { valid: false, reason: 'Account deleted' };
       }
       const owner = provisionalPlay.open(methods.provisionalPlayAnchor);
+      const marker = payload.provisionalPlay;
+      if (marker.general !== undefined || owner.general) {
+        // A general guest's token (provisional-general-guest.ts). An application's is answered on
+        // introspection only (`generalGuest`): presented to any other route of this server it is
+        // refused, so it cannot enrol a credential, delete the account, renew itself or read /me.
+        // The door's own token (`door`) is the guest's bearer for the claim flow on this origin.
+        const general = provisionalPlay.general;
+        const guest = marker.general === true ? marker as GeneralTokenGrant : undefined;
+        if (!guest || owner.general !== true || !general?.enabled
+          || owner.userId !== payload.userId || owner.authenticatedAgentId !== payload.agentId
+          || owner.proofKeyThumbprint !== guest.proofKeyThumbprint || owner.expiresAt !== guest.expiresAt) {
+          return { valid: false, reason: 'Provisional owner binding mismatch' };
+        }
+        const record = methods as unknown as import('./provisional-play-store.js').PlayAnchorDocument;
+        const facts = subjectAttributes(owner, record, guest.application);
+        if (guest.door === true) {
+          if (guest.application !== undefined || guest.namespace !== undefined) return { valid: false, reason: 'Provisional owner binding mismatch' };
+        } else {
+          // The application is one that opted in, that this guest was admitted to or has used, and
+          // whose namespace now is the one the token carries.
+          if (typeof guest.application !== 'string' || !general.client(guest.application)
+            || !guestApplications(record).some(row => row.audience === guest.application)
+            || general.client(guest.application)!.namespace !== guest.namespace) return { valid: false, reason: 'Provisional owner binding mismatch' };
+          if (options.generalGuest !== true) return { valid: false, reason: 'General guest application token: introspection only' };
+        }
+        if (payload.epoch < (methods.sessionEpoch ?? 0)) return { valid: false, reason: 'Token revoked (signed out everywhere)' };
+        epochOnPod = methods.sessionEpoch ?? 0;
+        guestFacts = facts;
+      } else {
+      const play = marker as PlayTokenGrant;
       if (owner.userId !== payload.userId || owner.authenticatedAgentId !== payload.agentId
-        || owner.audience !== payload.provisionalPlay.audience || owner.proofKeyThumbprint !== payload.provisionalPlay.proofKeyThumbprint
-        || owner.expiresAt !== payload.provisionalPlay.expiresAt
+        || owner.audience !== play.audience || owner.proofKeyThumbprint !== play.proofKeyThumbprint
+        || owner.expiresAt !== play.expiresAt
         // The marker's namespace is the one configured for the owner's application now: a token
         // issued before an operator changed it does not carry the old write surface on.
         || provisionalPlay.namespaceFor(owner.audience) !== payload.provisionalPlay.namespace) return { valid: false, reason: 'Provisional owner binding mismatch' };
@@ -2692,6 +2738,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
       // instance that never held a copy.
       if (payload.epoch < (methods.sessionEpoch ?? 0)) return { valid: false, reason: 'Token revoked (signed out everywhere)' };
       epochOnPod = methods.sessionEpoch ?? 0;
+      }
     } catch (err) {
       // An owner's record the pod could not read is a "try again" (a 503: refuseUnverifiedBearer,
       // refuseBearer), not a refusal: only an anchor that does not open to this owner is.
@@ -2748,7 +2795,7 @@ async function verifyToken(token: string): Promise<{ valid: boolean; record?: To
     expiresAt: payload.expiresAt,
     ...(payload.provisionalPlay ? { provisionalPlay: payload.provisionalPlay } : {}),
   };
-  return { valid: true, record, ...(epochOnPod !== undefined ? { epochOnPod } : {}) };
+  return { valid: true, record, ...(epochOnPod !== undefined ? { epochOnPod } : {}), ...(guestFacts ? { subjectAttributes: guestFacts } : {}) };
 }
 
 // ── DID Document Builder ────────────────────────────────────
@@ -2959,6 +3006,12 @@ app.use(corsMiddleware({
   allowMethods: 'GET, POST, OPTIONS',
   allowHeaders: 'Accept, Content-Type, Authorization',
 }));
+
+// The general guest door's dedicated origin, where one is configured (PROVISIONAL-PLAY.md, "General
+// guest"): on that host this server answers the door's own paths and nothing else. Unset, no
+// request is touched.
+const GENERAL_GUEST_DOOR_ORIGIN = parseDoorOrigin(process.env['GENERAL_GUEST_DOOR_ORIGIN'], BASE_URL);
+if (GENERAL_GUEST_DOOR_ORIGIN) app.use(doorHostGuard(GENERAL_GUEST_DOOR_ORIGIN));
 
 app.get('/.well-known/hosted-interego-terms', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
@@ -5229,6 +5282,16 @@ const provisionalPlay = createProvisionalPlayProvider({
   ttlSeconds: Number(process.env['PROVISIONAL_PLAY_TTL_SECONDS'] ?? 86400),
   maxPods: Number(process.env['PROVISIONAL_PLAY_MAX_PODS'] ?? 100),
   hostedTerms: hostedTerms ?? undefined,
+  // The general guest door (PROVISIONAL-PLAY.md, "General guest"). Off unless set to exactly 1.
+  generalGuest: process.env['PROVISIONAL_GENERAL_GUEST'] === '1',
+  ...(GENERAL_GUEST_DOOR_ORIGIN ? { doorOrigin: GENERAL_GUEST_DOOR_ORIGIN } : {}),
+  issueGuestToken: async (claims, grant) => {
+    const user = identities.get(claims.userId);
+    if (!user || user.type !== 'user') throw new Error('Provisional owner unavailable');
+    const agent = ensureSurfaceAgent(user, undefined);
+    const record = await issueToken(user.id, agent.id, agent.scope ?? 'ReadWrite', grant);
+    return { token: record.token, expiresAt: record.expiresAt };
+  },
   withOwnerLock: withIdentityPodMutex,
   empty: claims => emptyAuthMethods(claims.userId, 'Play guest', claims.authenticatedAgentId) as unknown as import('./provisional-play-store.js').PlayAnchorDocument,
   // Runs inside the owner's lock, once the anchor's conditional write has landed.
@@ -5247,6 +5310,14 @@ const provisionalPlay = createProvisionalPlayProvider({
 mountProvisionalPlay(app, provisionalPlay,
   rateLimit('provisional-play', { windowMs: 60 * 60 * 1000, max: 5 }),
   rateLimit('provisional-play-verify', { windowMs: 60 * 1000, max: 120 }), log);
+// Adds no route unless PROVISIONAL_GENERAL_GUEST=1 and an application opted in.
+if (mountGeneralGuest(app, provisionalPlay, {
+  page: rateLimit('general-guest-page', { windowMs: 60 * 60 * 1000, max: 120 }),
+  // Each request here can admit a guest (within the admission caps) or bring one back to an application.
+  door: rateLimit('general-guest-door', { windowMs: 60 * 60 * 1000, max: 20 }),
+  claim: rateLimit('general-guest-claim', { windowMs: 60 * 60 * 1000, max: 10 }),
+  exchange: rateLimit('general-guest-exchange', { windowMs: 60 * 1000, max: 120 }),
+}, log)) log(`General guest door: on${GENERAL_GUEST_DOOR_ORIGIN ? ` at ${GENERAL_GUEST_DOOR_ORIGIN}` : ' on this origin (set GENERAL_GUEST_DOOR_ORIGIN in production)'}`);
 
 // ── Token response helper (shared across auth methods) ──────
 /**
@@ -5499,7 +5570,8 @@ app.post('/tokens/verify', async (req, res) => {
     return;
   }
 
-  const result = await verifyToken(token);
+  // Introspection is the one place an application's general guest token is answered (verifyToken).
+  const result = await verifyToken(token, { generalGuest: true });
   if (result.valid) {
     res.json({
       valid: true,
@@ -5511,6 +5583,9 @@ app.post('/tokens/verify', async (req, res) => {
       webId: `${BASE_URL.replace(/\/$/, '')}/users/${result.record!.userId}/profile#me`,
       podUrl: `${process.env['CSS_PUBLIC_URL'] ?? CSS_URL}${result.record!.userId}/`,
       ...(result.record!.provisionalPlay ? { provisionalPlay: result.record!.provisionalPlay } : {}),
+      // What identity states about the subject (a general guest's, so far), read from its record on the
+      // pod by this check, never from the token: the facts an ABAC decision point builds its graph from.
+      ...(result.subjectAttributes ? { subjectAttributes: result.subjectAttributes } : {}),
     });
   } else {
     res.json({ valid: false, reason: result.reason });
@@ -6294,6 +6369,9 @@ function unfinishedDeletion(token: string): Identity | null {
   const parsed = parseAndVerifySignature(token);
   if (parsed.valid !== true) return null;
   const { userId, expiresAt } = parsed.payload;
+  // An application's general guest token acts on no account (verifyToken): it retries no deletion either.
+  const marker = parsed.payload.provisionalPlay;
+  if (marker?.general === true && (marker as GeneralTokenGrant).door !== true) return null;
   if (new Date(expiresAt) < new Date() || deletedUserIds.has(userId)) return null;
   const user = identities.get(userId);
   const copy = authMethodsCache.get(userId)?.value;
@@ -6523,7 +6601,7 @@ app.post('/tokens/me/sign-out-everywhere', tokenLimiter, async (req, res) => {
     // An account shell this server holds with no document on its pod keeps its tokens
     // verifying until a restart, so the epoch is made durable by creating the document. A Play
     // owner's is never re-created (a purged owner has nothing to sign out).
-    }, { absent: user.id.startsWith('u-try-play-') ? 'refuse' : 'create' });
+    }, { absent: /^u-try-(?:play|guest)-/.test(user.id) ? 'refuse' : 'create' });
   } catch (err) {
     // The pod may have taken the bump without confirming it: an epoch there at or above the one
     // written ends every token issued before, so the sign-out is done.
@@ -6674,7 +6752,7 @@ async function deleteUserCompletely(
         // A Play owner's deletion nothing could settle: the pod may hold its tombstone, and the
         // route answers 503 and asks for the retry, which the janitor leaves it to until its guest
         // deadline.
-        if (!opts.playPurge && userId.startsWith('u-try-play-') && err instanceof AuthMethodsWriteError && err.unknownOutcome && after === undefined) {
+        if (!opts.playPurge && /^u-try-(?:play|guest)-/.test(userId) && err instanceof AuthMethodsWriteError && err.unknownOutcome && after === undefined) {
           unconfirmedPlayDeletions.set(userId, playGuestDeadline(writtenOver as Readonly<AuthMethods> | null));
         }
         throw err;
@@ -6682,7 +6760,7 @@ async function deleteUserCompletely(
       closedOn = after;
       log(`WARN: deletion of ${userId}: the pod took the tombstone without confirming it (${(err as Error).message})`);
     }
-    if (!userId.startsWith('u-try-play-')) deletedUserIds.add(userId);
+    if (!/^u-try-(?:play|guest)-/.test(userId)) deletedUserIds.add(userId);
     // Token revocation: the tombstone has no credentials, so the account does not load and
     // verifyToken refuses its tokens; its session epoch is above every token issued, too.
     authMethodsCache.delete(userId);
@@ -6929,7 +7007,7 @@ type PlayReopen = { deadline: number; run: { nativeDelete?: boolean }; purging?:
 // How long after an owner's guest deadline the backfill waits before it marks its tombstone again:
 // clock skew with the css-gate, which refuses a guest's writes from that deadline on.
 const PLAY_BACKFILL_MARGIN_MS = 3_600_000;
-const PLAY_OWNER_ID = /^u-try-play-[a-f0-9]{32}$/;
+const PLAY_OWNER_ID = /^u-try-(?:play|guest)-[a-f0-9]{32}$/;
 
 /** A request of a Play pod made under its owner's lock, bounded as provisional-play-cleanup.ts bounds its own. */
 const playPodRequest = (url: string, init: RequestInit = {}) =>
@@ -8139,7 +8217,7 @@ app.listen(PORT, () => {
       // save it — the exact opposite of what the promise says.
       for (const u of identities.values()) {
         if (u.type !== 'user' || !u.id.startsWith('u-try-')) continue;
-        if (u.id.startsWith('u-try-play-')) {
+        if (/^u-try-(?:play|guest)-/.test(u.id)) {
           // A deletion answered 503 here is left to its guest's retry until its guest deadline, and
           // not read meanwhile (unconfirmedPlayDeletions).
           if (awaitsGuestRetry(u.id)) continue;
@@ -8177,7 +8255,7 @@ app.listen(PORT, () => {
       if (toPurge.size === 0) return;
       log(`Janitor: purging ${toPurge.size} stale user(s) (test + try-it)`);
       for (const uid of toPurge) {
-        if (uid.startsWith('u-try-play-')) {
+        if (/^u-try-(?:play|guest)-/.test(uid)) {
           void purgePlayOwner(uid);
           continue;
         }

@@ -1150,6 +1150,19 @@ const server = createServer(async (req, res) => {
         }));
         return;
       }
+      if (!isWrite && verified.provisionalPlay?.general) {
+        // The only reads that need a bearer are a pod's private documents (its sign-in record and its
+        // write budget). A general guest's token is held by an application's backend, or is the
+        // door's: neither is the owner reading its own record, which lists the owner's credentials
+        // and the other applications it has used. Identity states what an application may know
+        // (subjectAttributes); the record itself is not read with this token.
+        res.writeHead(403, { 'Content-Type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({
+          error: 'sign-in record is not readable with a general guest credential',
+          detail: `${upstreamUrl.pathname} is private to pod "${pod}"; a general guest's application credential reads none of it`,
+        }));
+        return;
+      }
       if (isWrite && verified.provisionalPlay) {
         try {
           const expectedRevision = checkProvisionalTarget(verified.provisionalPlay, method, upstreamUrl, req.headers);

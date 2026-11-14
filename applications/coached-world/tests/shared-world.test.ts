@@ -14,7 +14,9 @@ import { fileURLToPath, pathToFileURL } from 'node:url';
 import { Wallet, verifyMessage } from 'ethers';
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RATE_RULES } from '../src/rate-limit.js';
-import { start } from '../src/server.js';
+import { start, GENERAL_GUEST_RETURN_PATH } from '../src/server.js';
+import { generalGuestUserId, playKeyThumbprint, publicPlayKey } from '../../../deploy/identity/provisional-play.js';
+import { RETURN_PATH, WORLD, agent, cookieOf, identity, newKey } from './general-guest-identity.js';
 import { CoachedWorld } from '../src/world.js';
 import { FoxxiCourseLauncher } from '../src/course-launch.js';
 import { CMI5_CATEGORY, HttpLrs, parseLmsAuthority, SATISFIED, type LrsQuery, type LrsReader } from '../src/lrs.js';
@@ -535,6 +537,74 @@ describe('the world behind a proxy, on a public address', () => {
       expect(stale.you).toBeUndefined();
     } finally { await after.close(); }
   }, 30_000);
+});
+
+describe('a coached world that offers the general guest door', () => {
+  it('registers the return path the fixture names', () => { expect(GENERAL_GUEST_RETURN_PATH).toBe(RETURN_PATH); });
+
+  it('without it, the world is as it was: no offer, and the door\'s paths are not routes', async () => {
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true });
+    try {
+      const offer = await (await fetch(`${running.url}/play/guest`)).json() as Record<string, unknown>;
+      expect(Object.keys(offer)).toEqual(['enabled', 'audience', 'identityUrl', 'bootstrapUrl', 'local']);
+      const unknown = await fetch(`${running.url}/play/nothing-here`, { redirect: 'manual' });
+      for (const [method, path] of [['GET', '/play/general/start'], ['GET', `${GENERAL_GUEST_RETURN_PATH}?code=a&state=b`], ['POST', '/play/general/session']] as const) {
+        const answered = await fetch(`${running.url}${path}`, { method, redirect: 'manual' });
+        const same = method === 'GET' ? unknown : await fetch(`${running.url}/play/nothing-here`, { method });
+        expect([answered.status, await answered.text()], path).toEqual([same.status, await same.clone().text()]);
+        expect(answered.headers.get('set-cookie')).toBeNull();
+      }
+    } finally { await running.close(); }
+  });
+
+  it('takes a browser through identity\'s door and back into a world session, with no bearer in any address', async () => {
+    const id = identity();
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true, publicUrl: `${WORLD}/`, trustProxy: false, generalDoor: id.doorFor(WORLD, agent) });
+    try {
+      const offer = await (await fetch(`${running.url}/play/guest`)).json() as { general?: { startUrl: string; sessionUrl: string } };
+      expect(offer.general).toEqual({ startUrl: '/play/general/start', sessionUrl: '/play/general/session' });
+      const key = newKey();
+      const enter = async () => {
+        const started = await fetch(`${running.url}/play/general/start`, { redirect: 'manual' });
+        expect(started.status).toBe(302);
+        const setCookie = started.headers.get('set-cookie')!;
+        expect(setCookie).toMatch(/^cpw-guest-door=[A-Za-z0-9_-]{43}; Path=\/play\/general; Max-Age=600; HttpOnly; SameSite=Lax; Secure$/);
+        const back = await id.page(key, started.headers.get('location')!);
+        return { cookie: cookieOf(started), back };
+      };
+      const first = await enter();
+      const returnPath = first.back.pathname + first.back.search;
+      // Without the cookie of the browser that started the visit, or with another visit's, the return finishes nothing.
+      const stranger = await enter();
+      expect((await fetch(`${running.url}${first.back.pathname}${first.back.search}`, { redirect: 'manual' })).status).toBe(401);
+      expect((await fetch(`${running.url}${first.back.pathname}${first.back.search}`, { redirect: 'manual', headers: { Cookie: stranger.cookie } })).status).toBe(401);
+      // A return address planted on this browser (another visit's code and state) signs it in to nothing.
+      expect((await fetch(`${running.url}${stranger.back.pathname}${stranger.back.search}`, { redirect: 'manual', headers: { Cookie: first.cookie } })).status).toBe(401);
+      const arrived = await fetch(`${running.url}${returnPath}`, { redirect: 'manual', headers: { Cookie: first.cookie } });
+      expect(arrived.status).toBe(302);
+      expect(arrived.headers.get('location')).toBe('/?arrived=general');
+      // The session is collected once, by the browser holding the cookie.
+      expect((await fetch(`${running.url}/play/general/session`, { method: 'POST' })).status).toBe(401);
+      expect((await fetch(`${running.url}/play/general/session`, { method: 'POST', headers: { Cookie: 'cpw-guest-door=someone-else' } })).status).toBe(401);
+      const collected = await fetch(`${running.url}/play/general/session`, { method: 'POST', headers: { Cookie: first.cookie } });
+      expect(collected.status).toBe(200);
+      expect(collected.headers.get('set-cookie')).toMatch(/^cpw-guest-door=; Path=\/play\/general; Max-Age=0;/);
+      const session = await collected.json() as { token: string; ownerDid: string; name: string };
+      const userId = generalGuestUserId(playKeyThumbprint(publicPlayKey(key.publicKey.export({ format: 'jwk' }))));
+      expect(session.ownerDid).toBe(`did:web:identity.example:users:${userId}`);
+      expect((await fetch(`${running.url}/play/general/session`, { method: 'POST', headers: { Cookie: first.cookie } })).status).toBe(401);
+      const view = await (await fetch(`${running.url}/world`, { headers: { Authorization: `Bearer ${session.token}` } })).json() as { you?: { name: string } };
+      expect(view.you?.name).toBe(session.name);
+      // The return address is spent with its code.
+      expect((await fetch(`${running.url}${returnPath}`, { redirect: 'manual', headers: { Cookie: first.cookie } })).status).toBe(401);
+      // The same browser key coming back is the same consultant.
+      const again = await enter();
+      await fetch(`${running.url}${again.back.pathname}${again.back.search}`, { redirect: 'manual', headers: { Cookie: again.cookie } });
+      const second = await (await fetch(`${running.url}/play/general/session`, { method: 'POST', headers: { Cookie: again.cookie } })).json() as { name: string; token: string };
+      expect(second.name).toBe(session.name);
+      expect(second.token).not.toBe(session.token);
+    } finally { await running.close(); }
+  });
 });
 
 /**
