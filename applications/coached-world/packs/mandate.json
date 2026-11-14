@@ -1,0 +1,100 @@
+{
+  "id": "https://markjspivey-xwisee.github.io/interego/applications/coached-world/worlds/mandate",
+  "title": "Mandate",
+  "tagline": "Coach the agents. Win the world.",
+  "profileId": "https://markjspivey-xwisee.github.io/interego/applications/coached-world/profiles/coached-performance",
+  "verbs": { "initialized": "initialized", "observed": "observed", "progressed": "progressed", "measured": "measured" },
+  "season": { "name": "Season 3", "startDay": 41, "lengthDays": 90, "startMinutes": 840, "tickMinutes": 20 },
+  "hexRadius": 2,
+  "centerName": "The Spindle",
+  "homeBias": 40,
+  "territoryNames": ["Ridgeback", "Saltmarsh", "Glasswater", "Ember Exchange", "Shardfields", "Hollow Reach", "Cinder Gate", "Vantage", "Low Meridian", "Kestrel Pass", "Driftmoor", "Ironwake", "Lanternfall", "Quarry Nine", "Sable Coast", "Northwatch", "Mirefold", "Copperline", "Ashen Ford"],
+  "factions": [
+    { "id": "meridian", "name": "Meridian Compact", "motto": "Measure twice, ship once", "doctrine": "Data-first diagnosis" },
+    { "id": "ashfall", "name": "Ashfall Syndicate", "motto": "Fix the tool, not the hand", "doctrine": "Tooling and environment" },
+    { "id": "tidewright", "name": "Tidewright League", "motto": "Every lesson federated", "doctrine": "Shared memory and treaties" },
+    { "id": "corvid", "name": "Corvid Assembly", "motto": "Incentives move worlds", "doctrine": "Policy and incentives" }
+  ],
+  "initialPacts": [["ashfall", "corvid"]],
+  "causes": [
+    { "id": "skill", "label": "Skill / knowledge", "bem": "Gilbert: repertory of behavior", "minTier": 0, "allyLift": 1.5,
+      "symptoms": [
+        { "verb": "attempted", "result": "failed · wrong procedure order", "tone": "bad" },
+        { "verb": "retried", "result": "sequence error at step 4", "tone": "bad" },
+        { "verb": "asked", "result": "unsure how to proceed", "tone": "meh" }
+      ] },
+    { "id": "info", "label": "Information / feedback", "bem": "Gilbert: data and feedback", "minTier": 0, "allyLift": 1.5,
+      "symptoms": [
+        { "verb": "progressed", "result": "acted on a stale map", "tone": "bad" },
+        { "verb": "completed", "result": "no feedback on the prior run", "tone": "meh" },
+        { "verb": "waited", "result": "idle · awaiting a status update", "tone": "meh" }
+      ] },
+    { "id": "tools", "label": "Tools / environment", "bem": "Gilbert: instruments and resources", "minTier": 0, "allyLift": 1.5,
+      "symptoms": [
+        { "verb": "interacted", "result": "tool error · route planner timeout", "tone": "bad" },
+        { "verb": "abandoned", "result": "manifest service crashed mid-task", "tone": "bad" },
+        { "verb": "finished", "result": "manual workaround, triple duration", "tone": "meh" }
+      ] },
+    { "id": "incentive", "label": "Incentives / motivation", "bem": "Gilbert: incentives and motives", "minTier": 0, "allyLift": 1.5,
+      "symptoms": [
+        { "verb": "skipped", "result": "optional quality step skipped · unrewarded", "tone": "meh" },
+        { "verb": "finished", "result": "minimum path, quality left on the table", "tone": "meh" },
+        { "verb": "preferred", "result": "took a rival bounty over the mission", "tone": "bad" }
+      ] },
+    { "id": "coord", "label": "Coordination", "bem": "Cross-agent handoffs", "minTier": 1, "allyLift": 4,
+      "symptoms": [
+        { "verb": "handed-off", "result": "handoff dropped · partner not ready", "tone": "bad" },
+        { "verb": "duplicated", "result": "overlapped an allied agent", "tone": "meh" },
+        { "verb": "waited", "result": "blocked on another consultant's agent", "tone": "bad" }
+      ] }
+  ],
+  "interventions": [
+    { "id": "practice", "label": "Practice scenario", "addresses": "skill", "cost": 30, "minTier": 0, "composes": "Practice Evidence: a scenario, a ratified rubric, a review" },
+    { "id": "jobaid", "label": "Job aid and feedback", "addresses": "info", "cost": 20, "minTier": 0, "composes": "A descriptor on the agent's pod, and the LRS as the feedback loop" },
+    { "id": "toolfix", "label": "Tool fix", "addresses": "tools", "cost": 40, "minTier": 0, "composes": "A tool manifest update on the agent's pod" },
+    { "id": "policy", "label": "Incentive policy", "addresses": "incentive", "cost": 25, "minTier": 0, "composes": "A signed policy descriptor" },
+    { "id": "protocol", "label": "Handoff protocol", "addresses": "coord", "cost": 35, "minTier": 1, "composes": "A federated plan across the agents' pods" }
+  ],
+  "missions": [
+    { "id": "supply", "type": "Logistics", "title": "Supply run across the front", "object": "supply convoy", "kpi": "On-time delivery", "base": 58, "minTier": 0, "weights": { "tools": 3, "skill": 2, "info": 1, "incentive": 1 } },
+    { "id": "recon", "type": "Recon", "title": "Map the contested fault line", "object": "recon sweep", "kpi": "Coverage", "base": 52, "minTier": 0, "weights": { "info": 3, "skill": 2, "tools": 1 } },
+    { "id": "trade", "type": "Trade", "title": "Broker salt for silicon", "object": "trade offer", "kpi": "Margin captured", "base": 47, "minTier": 0, "weights": { "incentive": 3, "skill": 1, "info": 1 } },
+    { "id": "envoy", "type": "Diplomacy", "title": "Escort an envoy to border talks", "object": "envoy escort", "kpi": "Talks completed", "base": 55, "minTier": 0, "weights": { "skill": 3, "info": 1, "incentive": 1 } },
+    { "id": "relay", "type": "Logistics", "title": "Night relay with allied squads", "object": "relay handoff", "kpi": "Clean handoffs", "base": 50, "minTier": 1, "weights": { "coord": 4, "tools": 1, "info": 1 } },
+    { "id": "sweep", "type": "Recon", "title": "Joint sweep, shared sector", "object": "joint sweep", "kpi": "Sector cleared", "base": 49, "minTier": 1, "weights": { "coord": 3, "info": 2, "skill": 1 } }
+  ],
+  "tiers": [
+    { "id": "agent", "label": "Agent", "rosterCap": 1, "gateAfterSuccesses": 3, "courseIri": "https://example.org/courses/coached-world/squad" },
+    { "id": "squad", "label": "Squad", "rosterCap": 3, "gateAfterSuccesses": 6, "courseIri": "https://example.org/courses/coached-world/company" },
+    { "id": "company", "label": "Company", "rosterCap": 6, "gateAfterSuccesses": 10, "courseIri": "https://example.org/courses/coached-world/command" },
+    { "id": "command", "label": "Faction command", "rosterCap": 12 }
+  ],
+  "roles": ["Logistics runner", "Recon scout", "Trade broker", "Envoy"],
+  "agentNames": ["Juno", "Kite", "Mara", "Orrin", "Vesper", "Tally", "Bix", "Rook", "Sable", "Nyx", "Pell", "Quill", "Arlo", "Cove", "Ember", "Flint"],
+  "givenNames": ["Ada", "Bram", "Cyra", "Dex", "Eli", "Fen", "Gia", "Hal", "Ines", "Jun", "Kesh", "Lio", "Mara", "Nico", "Oona", "Pax"],
+  "familyNames": ["Varro", "Okafor", "Lind", "Sato", "Reyes", "Moreau", "Quill", "Hart", "Adebayo", "Novak"],
+  "starter": { "name": "Juno-7", "role": "Logistics runner", "baseline": 54 },
+  "influence": 160,
+  "botCount": 24,
+  "marketCount": 8,
+  "pactProposalCost": 25,
+  "scoring": {
+    "matchLiftBase": 13, "matchLiftSpan": 11, "memoryBaselineLift": 6, "tierBaseline": 3,
+    "baselineJitter": 8, "scoreFloor": 5, "scoreCeil": 99, "roiScale": 3, "gainScale": 3.2,
+    "matchGainBonus": 15, "rivalBlunt": 0.1, "territoryScale": 0.9, "rankRoiWeight": 40,
+    "poachPriceMultiplier": 1.4, "promoteInfluence": 60, "botAccuracy": 0.72,
+    "marketPriceBase": 30, "marketPricePerPoint": 0.9, "pactAccept": 0.45
+  },
+  "templates": {
+    "lessonMatched": "{type}: {cause} gap fixed with {intervention} · {delta} {kpi}",
+    "lessonMissed": "{type}: tried {intervention} but the root cause was {cause} · no lift",
+    "feedIntervene": "{who} deployed {intervention} on {agent} at {territory} · {delta} {kpi}",
+    "feedJoin": "{who} joined {faction}",
+    "feedFlip": "{faction} took {territory}",
+    "feedPact": "{a} and {b} signed a federation pact",
+    "feedDissolve": "{a} dissolved its federation pact with {b}",
+    "feedTransfer": "{who} took on {agent}",
+    "feedPoach": "{who} poached {agent} from {faction}",
+    "feedPromote": "{who} reached {tier} after a reviewed course"
+  }
+}

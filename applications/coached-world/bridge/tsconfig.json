@@ -1,0 +1,20 @@
+{
+  "extends": "../../../tsconfig.base.json",
+  "compilerOptions": {
+    "noEmit": true,
+    "declaration": false,
+    "declarationMap": false,
+    "sourceMap": false,
+    "rootDir": "../../..",
+    "noUnusedLocals": false,
+    "noUnusedParameters": false
+  },
+  "include": [
+    "server.ts",
+    "../affordances.ts",
+    "../src/**/*.ts",
+    "../demo/**/*.ts",
+    "../../_shared/affordance-mcp/**/*.ts"
+  ],
+  "exclude": ["node_modules", "dist"]
+}
