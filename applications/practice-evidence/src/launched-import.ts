@@ -22,6 +22,7 @@ export const VERB_INITIALIZED = 'http://adlnet.gov/expapi/verbs/initialized';
 export const VERB_TERMINATED = 'http://adlnet.gov/expapi/verbs/terminated';
 export const VERB_SCORED = 'http://adlnet.gov/expapi/verbs/scored';
 export const VERB_LAUNCHED = 'http://adlnet.gov/expapi/verbs/launched';
+export const VERB_ABANDONED = 'https://w3id.org/xapi/adl/verbs/abandoned';
 const VERB_PASSED = 'http://adlnet.gov/expapi/verbs/passed';
 const VERB_FAILED = 'http://adlnet.gov/expapi/verbs/failed';
 const VERB_COMPLETED = 'http://adlnet.gov/expapi/verbs/completed';
@@ -250,8 +251,8 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
  * Why a session may not be the one a launched attempt's reviewed statements are sent in; [] when
  * it may. `statements` is what the LRS returned for the registration now. The evidence asked for
  * is the LMS's own: its launched statement for this unit and this session, in Normal mode, by the
- * same actor, with no terminated in that session yet, and no passed, failed or completed anywhere
- * in the registration. A session named by mistake, one already ended, or one of another unit
+ * same actor, with no terminated or abandoned in that session yet, and no passed, failed or
+ * completed for this unit in the registration. A session named by mistake, one already ended, or one of another unit
  * would otherwise fix the statements for good.
  */
 export function sendingSessionProblems(statements: readonly unknown[], launch: LmsLaunch, sessionId: string): string[] {
@@ -272,8 +273,11 @@ export function sendingSessionProblems(statements: readonly unknown[], launch: L
     });
     if (!sameActor) p.push('the session was launched for another actor');
   }
-  if (mine.some((s) => verbOf(s) === VERB_TERMINATED && sessionOf(s) === sessionId)) p.push('the session has already ended: a statement cannot be sent in it');
-  const closed = [VERB_PASSED, VERB_FAILED, VERB_COMPLETED].filter((v) => mine.some((s) => verbOf(s) === v));
-  if (closed.length > 0) p.push('the registration already holds a passed, failed or completed statement: cmi5 allows one of each');
+  // A session ends when the unit terminates it, or when the LMS says it was abandoned.
+  if (mine.some((s) => (verbOf(s) === VERB_TERMINATED || verbOf(s) === VERB_ABANDONED) && sessionOf(s) === sessionId)) p.push('the session has already ended: a statement cannot be sent in it');
+  // cmi5 allows one passed, one failed and one completed per unit in a registration. A registration can
+  // cover a whole course, so another unit's outcome says nothing about this one.
+  const closed = [VERB_PASSED, VERB_FAILED, VERB_COMPLETED].filter((v) => mine.some((s) => verbOf(s) === v && objOf(s['object'])['id'] === launch.activityId));
+  if (closed.length > 0) p.push('the registration already holds a passed, failed or completed statement for this unit: cmi5 allows one of each');
   return p;
 }
