@@ -65,7 +65,16 @@ export interface RecordedLink {
   ownerDid: string;
   /** The guest's pod, so their lens can be found again without using the owner's. */
   guestPodUrl?: string;
+  /** The owner's pod. After the link, this guest's later records are written there. */
+  ownerPodUrl?: string;
+  ownerWebId?: string;
   at: string;
+}
+
+export interface LinkPlace {
+  guestPodUrl?: string;
+  ownerPodUrl?: string;
+  ownerWebId?: string;
 }
 
 const ATTEMPT_MAX = 50_000;
@@ -119,14 +128,22 @@ export class PlayerBook {
     this.touch();
     this.publish();
   }
-  link(guestDid: string, ownerDid: string, at: string, guestPodUrl?: string): (RecordedLink & { already: boolean }) | { refused: string } {
+  link(guestDid: string, ownerDid: string, at: string, place?: string | LinkPlace): (RecordedLink & { already: boolean }) | { refused: string } {
     if (guestDid === ownerDid) return { refused: 'player_same_actor' };
     if (this.links.size >= LINK_MAX && !this.links.has(guestDid)) return { refused: 'player_link_capacity' };
     const held = this.links.get(guestDid);
     if (held && held.ownerDid !== ownerDid) return { refused: 'player_link_held' };
-    if (held) return { ...held, already: true as const };
+    const pods = typeof place === 'string' ? { guestPodUrl: place } : place;
+    if (held) {
+      let filled = false;
+      if (pods?.guestPodUrl && !held.guestPodUrl) { held.guestPodUrl = pods.guestPodUrl; filled = true; }
+      if (pods?.ownerPodUrl && !held.ownerPodUrl) { held.ownerPodUrl = pods.ownerPodUrl; filled = true; }
+      if (pods?.ownerWebId && !held.ownerWebId) { held.ownerWebId = pods.ownerWebId; filled = true; }
+      if (filled) { this.touch(); this.publish(); }
+      return { ...held, already: true as const };
+    }
     this.removedLinks.delete(guestDid);
-    const link = { guestDid, ownerDid, at, ...(guestPodUrl ? { guestPodUrl } : {}), already: false as const };
+    const link = { guestDid, ownerDid, at, ...(pods?.guestPodUrl ? { guestPodUrl: pods.guestPodUrl } : {}), ...(pods?.ownerPodUrl ? { ownerPodUrl: pods.ownerPodUrl } : {}), ...(pods?.ownerWebId ? { ownerWebId: pods.ownerWebId } : {}), already: false as const };
     this.links.set(guestDid, link);
     this.touch();
     this.publish();
@@ -134,6 +151,10 @@ export class PlayerBook {
   }
   linksFor(ownerDid: string): RecordedLink[] {
     return [...this.links.values()].filter(link => link.ownerDid === ownerDid);
+  }
+  /** The link that names this guest, when one was recorded. */
+  ownerFor(guestDid: string): RecordedLink | undefined {
+    return this.links.get(guestDid);
   }
   hasConsent(learnerDid: string, courseId: string): boolean {
     return this.consents.has(`${learnerDid}\n${courseId}`);
@@ -240,6 +261,25 @@ export async function voidActorStatements(args: {
   return { forgotten, voids };
 }
 
+/**
+ * Keep each void on the learner's pod and say so. An empty list is nothing to keep. A copy that
+ * does not land is a failure: the caller must not report the deletion as finished.
+ */
+export async function persistVoidCopies(voids: readonly Record<string, unknown>[], keep: (statement: Record<string, unknown>) => Promise<boolean>): Promise<void> {
+  if (voids.length === 0) return;
+  const kept = await Promise.all(voids.map(statement => keep(statement)));
+  if (kept.some(ok => !ok)) throw new PlayerError(503, 'player_forget_incomplete');
+}
+
+/** A claim statement this owner stored for this guest: the verb is claimed and an extension names the guest. */
+export function statementNamesGuest(statement: Record<string, unknown>, guestDid: string): boolean {
+  const verb = (statement.verb as { id?: unknown } | undefined)?.id;
+  if (typeof verb !== 'string' || !verb.endsWith('#claimed')) return false;
+  const extensions = (statement.context as { extensions?: unknown } | undefined)?.extensions;
+  if (!extensions || typeof extensions !== 'object' || Array.isArray(extensions)) return false;
+  return Object.values(extensions as Record<string, unknown>).some(value => value === guestDid || (Array.isArray(value) && value.includes(guestDid)));
+}
+
 function validAttempt(row: unknown): row is OpenAttempt {
   if (!row || typeof row !== 'object') return false;
   const d = row as Record<string, unknown>;
@@ -254,7 +294,9 @@ function validLink(row: unknown): row is RecordedLink {
   const d = row as Record<string, unknown>;
   return typeof d.guestDid === 'string' && typeof d.ownerDid === 'string' && d.guestDid !== d.ownerDid
     && typeof d.at === 'string' && d.guestDid.length <= 500 && d.ownerDid.length <= 500
-    && (d.guestPodUrl === undefined || (typeof d.guestPodUrl === 'string' && d.guestPodUrl.length <= 2000));
+    && (d.guestPodUrl === undefined || (typeof d.guestPodUrl === 'string' && d.guestPodUrl.length <= 2000))
+    && (d.ownerPodUrl === undefined || (typeof d.ownerPodUrl === 'string' && d.ownerPodUrl.length <= 2000))
+    && (d.ownerWebId === undefined || (typeof d.ownerWebId === 'string' && d.ownerWebId.length <= 2000));
 }
 
 /** A browser navigation, and not a cmi5 launch (those already carry endpoint, fetch and registration). */
@@ -292,8 +334,12 @@ export interface CoursePlayerDeps {
   stageLaunch(tenant: TenantId, launch: Cmi5Launch, auId: string): Promise<void>;
   /** Store the LMS's `launched` statement for a new session in the learner's lens. */
   recordLaunched(tenant: TenantId, statement: Record<string, unknown>, learner: { did: string; podUrl: string }): Promise<void>;
-  /** Void statements whose actor is this DID, in that learner's lens. Returns how many. */
-  forgetActor(did: string, tenant: TenantId): Promise<number>;
+  /** Void statements whose actor is this DID, in that learner's lens. Returns how many. `where` is the pod the voids are kept on. */
+  forgetActor(did: string, tenant: TenantId, where: { podUrl: string }): Promise<number>;
+  /** Remove activities from a learner's satisfied set. Used when a linked guest deletes the copy on the owner's lens. */
+  dropSatisfaction?(tenant: TenantId, learnerId: string, auIds: readonly string[]): void;
+  /** Void the owner's claim statement that names this guest, in the owner's lens. Returns how many. */
+  voidClaims?(ownerDid: string, tenant: TenantId, guestDid: string, where: { podUrl: string }): Promise<number>;
   /** Keep a statement in that learner's lens. Absent in a deployment that is not writing statements. */
   storeStatement?(statement: Record<string, unknown>, tenant: TenantId): Promise<string | null>;
   /** Statements already stored for this actor in their lens, so the claim can name them. */
@@ -367,6 +413,12 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
   const base = deps.baseUrl.replace(/\/$/, '');
   const book = deps.book ?? new PlayerBook();
   const tenantOf = (learner: { did: string; podUrl: string }): TenantId => deps.tenantFor?.(learner) ?? DEFAULT_TENANT;
+  /** After a link, the guest's later records are the owner's: that actor, that lens. Records from before the link stay where they were. */
+  const recordedOwner = (learner: PlayerLearner): PlayerLearner => {
+    const link = book.ownerFor(learner.did);
+    if (!link?.ownerPodUrl || link.ownerDid === learner.did) return learner;
+    return { did: link.ownerDid, webId: link.ownerWebId || learner.webId, podUrl: link.ownerPodUrl, userId: learner.userId, guest: false };
+  };
   const now = deps.now ?? Date.now;
   const pageLimit = limit('course-player-page', 120);
   const launchLimit = limit('course-player-launch', deps.launchesPerMinute ?? 30);
@@ -404,7 +456,8 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
 
   app.post('/learn/launch', launchLimit, async (req, res) => {
     try {
-      const learner = await deps.requireLearner(req);
+      const session = await deps.requireLearner(req);
+      const learner = recordedOwner(session);
       const body = (req.body ?? {}) as Record<string, unknown>;
       if (body.tracking_consent !== true) { res.status(400).json({ error: 'player_consent_required' }); return; }
       const courseId = typeof body.course_id === 'string' ? body.course_id.trim() : '';
@@ -427,9 +480,8 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
       }
       const tenant = tenantOf(learner);
       const requested = typeof body.au_id === 'string' ? body.au_id.trim() : undefined;
-      // A guest this learner linked keeps their own lens, and may have gone on to satisfy more there
-      // after the link. What they have satisfied is brought over each time the owner launches, so the
-      // owner is not held at an activity their own guest already passed.
+      // An activity the guest satisfied before the link, or through a launch that was already open,
+      // still sits in the guest's lens. Bring it over before choosing the activity.
       for (const link of book.linksFor(learner.did)) {
         if (!link.guestPodUrl || link.guestDid === learner.did) continue;
         copyLearnerSatisfaction(tenantOf({ did: link.guestDid, podUrl: link.guestPodUrl }), link.guestDid, tenant, learner.did);
@@ -486,7 +538,7 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
         auId: au.id,
         moveOn: au.moveOn,
         learner: learner.did,
-        guest: learner.guest,
+        guest: session.guest,
       });
     } catch (error) { send(res, error); }
   });
@@ -497,17 +549,17 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
       if (learner.guest) { res.status(409).json({ error: 'player_use_existing_sign_in' }); return; }
       const guest = await deps.verifyGuest(req);
       if (!guest.userId.startsWith('u-try-play-')) { res.status(400).json({ error: 'player_not_a_guest' }); return; }
-      const recorded = book.link(guest.did, learner.did, new Date(now()).toISOString(), guest.podUrl);
+      const recorded = book.link(guest.did, learner.did, new Date(now()).toISOString(), { guestPodUrl: guest.podUrl, ownerPodUrl: learner.podUrl, ownerWebId: learner.webId });
       if ('refused' in recorded) { res.status(recorded.refused === 'player_link_capacity' ? 503 : 409).json({ error: recorded.refused }); return; }
+      const guestTenant = tenantOf(guest);
+      const ownerTenant = tenantOf(learner);
+      // A repeat link copies again. The copy adds only what is not already there.
+      copyLearnerSatisfaction(guestTenant, guest.did, ownerTenant, learner.did);
       if (recorded.already) {
-        // Linking again brings over what the guest has satisfied since.
-        copyLearnerSatisfaction(tenantOf(guest), guest.did, tenantOf(learner), learner.did);
+        deps.onChange?.();
         res.json({ kind: 'cmi5-player-link', guest: guest.did, owner: learner.did, already: true, statementsUnchanged: true });
         return;
       }
-      const guestTenant = tenantOf(guest);
-      const ownerTenant = tenantOf(learner);
-      copyLearnerSatisfaction(guestTenant, guest.did, ownerTenant, learner.did);
       const ids = (await deps.statementIds?.(guest.did, guestTenant)) ?? [];
       let claimStatementId: string | null = null;
       if (deps.storeStatement) {
@@ -536,17 +588,30 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
   app.post('/learn/forget', forgetLimit, async (req, res) => {
     try {
       const learner = await deps.requireLearner(req);
-      // The caller's own actor, including a guest who has since signed in as that same owner,
-      // plus any other guest they have linked.
-      const targets = new Map<string, TenantId>([[learner.did, tenantOf(learner)]]);
-      for (const link of book.linksFor(learner.did)) {
-        if (!link.guestPodUrl || targets.has(link.guestDid)) continue;
-        targets.set(link.guestDid, tenantOf({ did: link.guestDid, podUrl: link.guestPodUrl }));
-      }
       let forgotten = 0;
-      for (const [did, tenant] of targets) {
-        forgotten += await deps.forgetActor(did, tenant);
-        book.forgetLearner(did);
+      const linked = book.ownerFor(learner.did);
+      if (linked?.ownerPodUrl && linked.ownerDid !== learner.did) {
+        // The guest's own forget. Pre-link records stay in the guest lens and are voided there.
+        // Satisfaction copied onto the owner, and the owner's claim that names this guest, go too.
+        // The owner's other statements stay.
+        const guestTenant = tenantOf(learner);
+        const ownerTenant = tenantOf({ did: linked.ownerDid, podUrl: linked.ownerPodUrl });
+        const copied = deps.satisfied(guestTenant, learner.did);
+        deps.dropSatisfaction?.(ownerTenant, linked.ownerDid, copied);
+        if (deps.voidClaims) forgotten += await deps.voidClaims(linked.ownerDid, ownerTenant, learner.did, { podUrl: linked.ownerPodUrl });
+        forgotten += await deps.forgetActor(learner.did, guestTenant, { podUrl: learner.podUrl });
+        book.forgetLearner(learner.did);
+      } else {
+        // The caller's own actor, plus any guest they have linked.
+        const targets = new Map<string, { tenant: TenantId; podUrl: string }>([[learner.did, { tenant: tenantOf(learner), podUrl: learner.podUrl }]]);
+        for (const link of book.linksFor(learner.did)) {
+          if (!link.guestPodUrl || targets.has(link.guestDid)) continue;
+          targets.set(link.guestDid, { tenant: tenantOf({ did: link.guestDid, podUrl: link.guestPodUrl }), podUrl: link.guestPodUrl });
+        }
+        for (const [did, where] of targets) {
+          forgotten += await deps.forgetActor(did, where.tenant, { podUrl: where.podUrl });
+          book.forgetLearner(did);
+        }
       }
       deps.onChange?.();
       const identityOrigin = coursePlayerAuth()?.identityOrigin;

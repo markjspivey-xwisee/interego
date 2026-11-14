@@ -52,14 +52,19 @@ Signing in as a different existing owner does not rewrite those statements. `POS
 requires that owner session and a fresh proof from the guest key identity still accepts.
 It records the link, copies which activities the guest has satisfied from the guest's lens
 onto the owner's, and stores one statement by the owner, in the owner's lens, that points
-at the guest and at the original statement ids.
+at the guest and at the original statement ids. Linking again copies satisfaction once more
+and does not store another claim. From then on a launch by that guest is recorded as the
+owner, in the owner's lens. Statements already stored for the guest stay in the guest's lens.
 Reads of either actor return both (`alsoAgents` on the statement query). Admin actor counts
 use the owner. The stored guest statements are unchanged.
 
-`POST /learn/forget` voids the guest's statements on this bridge (the statement body is not
-rewritten; the record is marked voided) and drops the link and the open attempts. Closing the
-guest account itself is identity's `POST /users/me/delete`, which the page calls with the
-token when it still has one.
+`POST /learn/forget` voids the caller's statements on this bridge (the statement body is not
+rewritten; the record is marked voided), keeps those voids on the learner's pod, and clears
+that learner's State documents, including `LMS.LaunchData` and suspend data. A linked guest's
+own deletion also removes the satisfaction copied onto the owner and the owner's claim that
+names the guest, and leaves the owner's other statements. It drops the link and the open
+attempts. Closing the guest account itself is identity's `POST /users/me/delete`, which the
+page calls with the token when it still has one.
 
 ## What was already here
 

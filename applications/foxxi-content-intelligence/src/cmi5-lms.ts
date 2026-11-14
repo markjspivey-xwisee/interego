@@ -954,3 +954,15 @@ export function copyLearnerSatisfaction(fromTenant: TenantId, fromLearnerId: str
   for (const id of ids) markAuSatisfied(toTenant, toLearnerId, id);
   return ids;
 }
+
+/** Remove activities from one learner's satisfied set. The snapshot is marked when any are removed. */
+export function dropLearnerSatisfaction(tenant: TenantId, learnerId: string, auIds: readonly string[]): string[] {
+  const byLearner = satisfiedAus.get(tenant);
+  const set = byLearner?.get(learnerId);
+  if (!set) return [];
+  const removed: string[] = [];
+  for (const id of auIds) if (set.delete(id)) removed.push(id);
+  if (set.size === 0) byLearner!.delete(learnerId);
+  if (removed.length) cmi5PodDirty();
+  return removed;
+}

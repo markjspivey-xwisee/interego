@@ -10,11 +10,11 @@ import express from 'express';
 import { afterEach, describe, expect, it } from 'vitest';
 import { actorAliases, canonicalActorName, setActorAliasSource } from '../src/actor-alias.js';
 import { actorForPod } from '../src/mesh-event-projector.js';
-import { attachCoursePlayerRoutes, browserWantsPlayer, playerLocation, PlayerBook, voidActorStatements, type PlayerLearner } from '../src/cmi5-player.js';
+import { attachCoursePlayerRoutes, browserWantsPlayer, persistVoidCopies, playerLocation, PlayerBook, statementNamesGuest, voidActorStatements, type PlayerLearner } from '../src/cmi5-player.js';
 import { attachHostedPackageRoutes } from '../src/scorm-hosting.js';
-import { cmi5BearerTenant, forgetCmi5Learner, learnerSatisfiedAus, observeCmi5Statement, redeemFetchToken, registerCmi5Course, buildCmi5Launch } from '../src/cmi5-lms.js';
+import { cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, learnerSatisfiedAus, observeCmi5Statement, redeemFetchToken, registerCmi5Course, buildCmi5Launch } from '../src/cmi5-lms.js';
 import { matchesFilter } from '../src/statement-store.js';
-import { clearStatementStore, getStatementStore, internalRefusalOf, listStoredStatements, storeStatementDurably } from '../src/xapi-lrs.js';
+import { clearActorStateDocuments, clearStatementStore, getStatementStore, internalRefusalOf, listStoredStatements, readStateDocument, stageStateDocument, storeStatementDurably } from '../src/xapi-lrs.js';
 import { DEFAULT_TENANT } from '../src/tenant-context.js';
 import type { Cmi5Course } from '../src/cmi5-course.js';
 
@@ -32,6 +32,15 @@ const course: Cmi5Course = {
 /** The same lens a signed launch and `foxxi.read_xapi_statements_signed` use: `lens:` plus the pod's actor. */
 function lensTenant(person: PlayerLearner) {
   return `lens:${actorForPod(person.podUrl)}` as typeof DEFAULT_TENANT;
+}
+
+function markStored(rows: Array<{ id: string; voided: boolean; statement: Record<string, unknown> }>, targetId: string, voidingId: string): boolean {
+  const rec = rows.find(row => row.id === targetId);
+  const voider = rows.find(row => row.id === voidingId);
+  const object = voider?.statement.object as { objectType?: string; id?: string } | undefined;
+  if (!rec || rec.voided || !voider || voidingId === targetId || object?.objectType !== 'StatementRef' || object.id !== targetId) return false;
+  rec.voided = true;
+  return true;
 }
 
 function learner(did: string, guest: boolean): PlayerLearner {
@@ -56,13 +65,34 @@ async function player(options: { perMinute?: number; who?: PlayerLearner; verify
     satisfied: (tenant, id) => learnerSatisfiedAus(tenant, id),
     stageLaunch: async (_tenant, launch) => { staged.push({ launchMode: launch.launchData.launchMode, registration: launch.registration }); },
     recordLaunched: async (_tenant, statement) => { launchedSeen.push(statement); },
-    forgetActor: async (did) => {
-      let n = 0;
-      for (const rec of statements) {
-        const name = (rec.statement.actor as { account?: { name?: string } }).account?.name;
-        if (!rec.voided && name === did) { rec.voided = true; n++; }
-      }
-      return n;
+    forgetActor: async (did, tenant = DEFAULT_TENANT) => {
+      const result = await voidActorStatements({
+        did, homePage: SOURCE,
+        list: async () => statements,
+        store: async (statement) => {
+          const id = randomUUID();
+          statements.push({ id, voided: false, statement });
+          return id;
+        },
+        mark: (targetId, voidingId) => Promise.resolve(markStored(statements, targetId, voidingId)),
+      });
+      forgetCmi5Learner(tenant, did);
+      await clearActorStateDocuments(tenant, { homePage: SOURCE, name: did });
+      return result.forgotten;
+    },
+    dropSatisfaction: (tenant, id, auIds) => { dropLearnerSatisfaction(tenant, id, auIds); },
+    voidClaims: async (ownerDid, _tenant, guestDid) => {
+      const result = await voidActorStatements({
+        did: ownerDid, homePage: SOURCE,
+        list: async () => statements.filter(rec => statementNamesGuest(rec.statement, guestDid)),
+        store: async (statement) => {
+          const id = randomUUID();
+          statements.push({ id, voided: false, statement });
+          return id;
+        },
+        mark: (targetId, voidingId) => Promise.resolve(markStored(statements, targetId, voidingId)),
+      });
+      return result.forgotten;
     },
     statementIds: async (did) => statements.filter(rec => !rec.voided && (rec.statement.actor as { account?: { name?: string } }).account?.name === did).map(rec => rec.id),
     storeStatement: async (statement) => {
@@ -125,10 +155,15 @@ describe('the course player', () => {
   });
 
   it('opens a finished attempt in Review and keeps that mode when the review is resumed', async () => {
-    const launched = await player();
+    // A learner no other test launches, and nothing of theirs left in the LMS, so a passed review cannot be a leftover open session.
+    const solo = learner('did:web:identity.example:users:u-try-play-' + '54'.repeat(16), true);
+    forgetCmi5Learner(DEFAULT_TENANT, solo.did);
+    const launched = await player({ who: solo });
     try {
       const body = { course_id: course.id, tracking_consent: true };
-      const first = await (await fetch(`${launched.base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as { registration: string };
+      const first = await (await fetch(`${launched.base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as { registration: string; resumed: boolean };
+      expect(first.resumed).toBe(false);
+      expect(launched.staged.at(-1)).toMatchObject({ launchMode: 'Normal', registration: first.registration });
       const auId = course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0].id : '';
       const completed = { verb: { id: 'http://adlnet.gov/expapi/verbs/completed' }, object: { id: auId }, context: { registration: first.registration }, result: { completion: true } };
       const deps = { statementsForRegistration: async () => [completed], emit: () => undefined };
@@ -142,7 +177,10 @@ describe('the course player', () => {
       expect(again.resumed).toBe(true);
       expect(again.registration).toBe(review.registration);
       expect(launched.staged.at(-1)).toMatchObject({ launchMode: 'Review' });
-    } finally { await launched.close(); }
+    } finally {
+      forgetCmi5Learner(DEFAULT_TENANT, solo.did);
+      await launched.close();
+    }
   });
 
   it('reopens a finished activity in Review for a learner with no other launch in memory', async () => {
@@ -255,7 +293,114 @@ describe('the course player', () => {
       await post();
       expect(learnerSatisfiedAus(DEFAULT_TENANT, owner.did)).toEqual([auId]);
       expect(launched.staged.at(-1)).toMatchObject({ launchMode: 'Review' });
-    } finally { await launched.close(); }
+    } finally {
+      forgetCmi5Learner(DEFAULT_TENANT, guest.did);
+      forgetCmi5Learner(DEFAULT_TENANT, owner.did);
+      await launched.close();
+    }
+  });
+
+  it('records a linked guest\'s later launch as the owner, and the guest\'s forget removes the copy and the claim', async () => {
+    const guest = learner('did:web:identity.example:users:u-try-play-' + '55'.repeat(16), true);
+    const owner = learner('did:web:identity.example:users:u-pk-55owner55owner', false);
+    const launched = await player({ who: guest, verifyGuest: async () => guest });
+    const auId = course.structure[0] && course.structure[0].kind === 'au' ? course.structure[0].id : '';
+    const guestAgent = JSON.stringify({ objectType: 'Agent', account: { homePage: SOURCE, name: guest.did } });
+    const ownerAgent = JSON.stringify({ objectType: 'Agent', account: { homePage: SOURCE, name: owner.did } });
+    try {
+      const body = { course_id: course.id, tracking_consent: true };
+      const post = async () => (await fetch(`${launched.base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as Promise<{ registration: string; actor: { account: { name: string } } }>;
+      const first = await post();
+      expect(first.actor.account.name).toBe(guest.did);
+      const completed = { verb: { id: 'http://adlnet.gov/expapi/verbs/completed' }, object: { id: auId }, context: { registration: first.registration }, result: { completion: true } };
+      expect((await observeCmi5Statement(completed, DEFAULT_TENANT, { statementsForRegistration: async () => [completed], emit: () => undefined }))?.satisfied).toBe(true);
+      launched.setWho(owner);
+      expect((await fetch(`${launched.base}/learn/link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(200);
+      expect(learnerSatisfiedAus(DEFAULT_TENANT, owner.did)).toContain(auId);
+      dropLearnerSatisfaction(DEFAULT_TENANT, owner.did, [auId]);
+      const repeat = await (await fetch(`${launched.base}/learn/link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json() as { already?: boolean };
+      expect(repeat.already).toBe(true);
+      expect(learnerSatisfiedAus(DEFAULT_TENANT, owner.did)).toContain(auId);
+      expect(launched.statements.filter(rec => statementNamesGuest(rec.statement, guest.did))).toHaveLength(1);
+      launched.setWho(guest);
+      const later = await post();
+      expect(later.actor.account.name).toBe(owner.did);
+      await stageStateDocument(DEFAULT_TENANT, { activityId: auId, agent: guestAgent, stateId: 'LMS.LaunchData', registration: first.registration }, { launchMode: 'Normal' });
+      await stageStateDocument(DEFAULT_TENANT, { activityId: auId, agent: guestAgent, stateId: 'suspend', registration: first.registration }, { at: 1 });
+      await stageStateDocument(DEFAULT_TENANT, { activityId: auId, agent: ownerAgent, stateId: 'LMS.LaunchData', registration: 'kept' }, { launchMode: 'Review' });
+      const kept = { id: randomUUID(), actor: { objectType: 'Agent', account: { homePage: SOURCE, name: owner.did } }, verb: { id: 'http://adlnet.gov/expapi/verbs/experienced' }, object: { id: auId } };
+      launched.statements.push({ id: kept.id, voided: false, statement: kept });
+      const forgotten = await (await fetch(`${launched.base}/learn/forget`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).json() as { forgotten: number };
+      expect(forgotten.forgotten).toBeGreaterThan(0);
+      expect(learnerSatisfiedAus(DEFAULT_TENANT, owner.did)).not.toContain(auId);
+      expect(learnerSatisfiedAus(DEFAULT_TENANT, guest.did)).toEqual([]);
+      expect(launched.statements.find(rec => statementNamesGuest(rec.statement, guest.did))?.voided).toBe(true);
+      expect(launched.statements.find(rec => rec.id === kept.id)?.voided).toBe(false);
+      expect(await readStateDocument(DEFAULT_TENANT, { activityId: auId, agent: guestAgent, stateId: 'LMS.LaunchData', registration: first.registration })).toBeUndefined();
+      expect(await readStateDocument(DEFAULT_TENANT, { activityId: auId, agent: guestAgent, stateId: 'suspend', registration: first.registration })).toBeUndefined();
+      expect(await readStateDocument(DEFAULT_TENANT, { activityId: auId, agent: ownerAgent, stateId: 'LMS.LaunchData', registration: 'kept' })).toEqual({ launchMode: 'Review' });
+    } finally {
+      forgetCmi5Learner(DEFAULT_TENANT, guest.did);
+      forgetCmi5Learner(DEFAULT_TENANT, owner.did);
+      await clearActorStateDocuments(DEFAULT_TENANT, { homePage: SOURCE, name: owner.did });
+      await launched.close();
+    }
+  });
+
+  it('writes a linked guest\'s later statement into the owner lens and leaves the earlier one in the guest lens', async () => {
+    const guest = learner('did:web:identity.example:users:u-try-play-' + '56'.repeat(16), true);
+    const owner = learner('did:web:identity.example:users:u-pk-56owner56owner', false);
+    const guestLens = lensTenant(guest);
+    const ownerLens = lensTenant(owner);
+    registerCmi5Course(DEFAULT_TENANT, course);
+    let who = guest;
+    const app = express();
+    app.use(express.json());
+    attachCoursePlayerRoutes(app, {
+      baseUrl: HOME, authoritativeSource: SOURCE, tenantFor: lensTenant,
+      requireLearner: async () => who,
+      verifyGuest: async () => guest,
+      resolveCourse: async (id) => id === course.id ? course : null,
+      satisfied: (tenant, id) => learnerSatisfiedAus(tenant, id),
+      stageLaunch: async () => undefined,
+      recordLaunched: (tenant, statement) => storeStatementDurably(statement, tenant).then(() => undefined),
+      forgetActor: async () => 0,
+      storeStatement: (statement, tenant) => storeStatementDurably(statement, tenant),
+    });
+    const server = app.listen(0, '127.0.0.1');
+    await once(server, 'listening');
+    const address = server.address();
+    if (!address || typeof address === 'string') throw new Error('no port');
+    const base = `http://127.0.0.1:${address.port}`;
+    const verb = `${HOME}/learn#consented`;
+    const read = async (tenant: typeof DEFAULT_TENANT, did: string) =>
+      (await getStatementStore(tenant).query({ agent: { objectType: 'Agent', account: { homePage: SOURCE, name: did } }, verb })).statements;
+    try {
+      const body = { course_id: course.id, tracking_consent: true };
+      const post = async () => (await fetch(`${base}/learn/launch`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) })).json() as Promise<{ actor: { account: { name: string } } }>;
+      expect((await post()).actor.account.name).toBe(guest.did);
+      expect(await read(guestLens, guest.did)).toHaveLength(1);
+      expect(await read(ownerLens, owner.did)).toEqual([]);
+      who = owner;
+      expect((await fetch(`${base}/learn/link`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' })).status).toBe(200);
+      who = guest;
+      expect((await post()).actor.account.name).toBe(owner.did);
+      expect(await read(guestLens, guest.did)).toHaveLength(1);
+      expect(await read(ownerLens, owner.did)).toHaveLength(1);
+      expect(await read(DEFAULT_TENANT, owner.did)).toEqual([]);
+    } finally {
+      await clearStatementStore(guestLens);
+      await clearStatementStore(ownerLens);
+      await new Promise<void>(resolve => server.close(() => resolve()));
+    }
+  });
+
+  it('says when a pod copy of a void did not land', async () => {
+    const statement = { id: 'void-1', actor: { account: { name: 'did:guest' } } };
+    const seen: unknown[] = [];
+    await expect(persistVoidCopies([statement], async (next) => { seen.push(next); return false; })).rejects.toMatchObject({ status: 503, code: 'player_forget_incomplete' });
+    expect(seen).toEqual([statement]);
+    await expect(persistVoidCopies([], async () => false)).resolves.toBeUndefined();
   });
 
   it('refuses a launch of a course that is not here, and limits how often a launch may be asked', async () => {

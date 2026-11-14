@@ -473,9 +473,9 @@ import {
 } from '../src/policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
-import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, forgetCmi5Learner, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
@@ -509,7 +509,7 @@ import { validateCoverageQueryInput } from '../src/coverage-query-input.js';
 import type { PrivateAuthResult } from '../src/private-performance-auth.js';
 import { attachPerformanceRoutes, offerFromWork, WORK_OFFER_WINDOW, type WorkOffer } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
-import { attachCoursePlayerRoutes, coursePlayerAuth, learnerFromPlayerAuth, PlayerBook, PlayerError, voidActorStatements } from '../src/cmi5-player.js';
+import { attachCoursePlayerRoutes, coursePlayerAuth, learnerFromPlayerAuth, persistVoidCopies, PlayerBook, PlayerError, statementNamesGuest, voidActorStatements } from '../src/cmi5-player.js';
 // Re-integration with the agentic-performance (agp:) layer: Foxxi surfaces the
 // emergent, learnable standards-extension capability the agp layer affords by
 // composing Foxxi's own standards. + the shared in-flow performance-support primitive.
@@ -11347,17 +11347,30 @@ attachCoursePlayerRoutes(app, {
     keepCmi5OnLearnerPod({ ...statement, id }, { did: learner.did, podUrl: learner.podUrl, homePage: String(authoritativeSource) });
   },
   tenantFor: (learner) => lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS)),
-  forgetActor: async (did, tenant) => {
+  dropSatisfaction: (tenant, learnerId, auIds) => { dropLearnerSatisfaction(tenant, learnerId, auIds); },
+  voidClaims: async (ownerDid, tenant, guestDid, where) => {
+    const result = await voidActorStatements({
+      did: ownerDid, homePage: String(authoritativeSource),
+      list: async () => (await getStatementStore(tenant).listAll()).filter(rec => statementNamesGuest(rec.statement, guestDid)),
+      store: (statement) => storeStatementDurably(statement, tenant),
+      mark: (targetId, voidingId) => getStatementStore(tenant).markVoided(targetId, voidingId),
+    });
+    await persistVoidCopies(result.voids, statement => keepCmi5OnLearnerPod(statement, { did: ownerDid, podUrl: where.podUrl, homePage: String(authoritativeSource) }));
+    return result.forgotten;
+  },
+  forgetActor: async (did, tenant, where) => {
     const result = await voidActorStatements({
       did, homePage: String(authoritativeSource),
       list: () => getStatementStore(tenant).listAll(),
       store: (statement) => storeStatementDurably(statement, tenant),
       mark: (targetId, voidingId) => getStatementStore(tenant).markVoided(targetId, voidingId),
     });
-    for (const launch of forgetCmi5Learner(tenant, did)) {
-      if (!launch.podUrl) continue;
-      for (const statement of result.voids) keepCmi5OnLearnerPod(statement, { did, podUrl: launch.podUrl, homePage: launch.homePage });
-    }
+    const launches = forgetCmi5Learner(tenant, did);
+    await clearActorStateDocuments(tenant, { homePage: String(authoritativeSource), name: did });
+    // The caller's pod, not only a launch still held in memory. A restart has no launch record,
+    // and the voids are still this learner's to keep.
+    const podUrl = where?.podUrl ?? launches.find(launch => launch.podUrl)?.podUrl;
+    if (podUrl) await persistVoidCopies(result.voids, statement => keepCmi5OnLearnerPod(statement, { did, podUrl, homePage: String(authoritativeSource) }));
     return result.forgotten;
   },
   statementIds: async (did, tenant) => (await listStoredStatements(tenant))
@@ -11470,20 +11483,26 @@ app.post('/agent/scorm/host', openHostingRateLimit, async (req, res) => {
 // grading tag. A cmi5 AU reports its own result, so it adds experience to the record, not graded
 // evidence for a credential.
 
-/** Keep one of a learner's own cmi5 statements on their pod, where the learner record reads it. */
-function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did: string; podUrl: string; homePage: string }): void {
+/** Keep one of a learner's own cmi5 statements on their pod, where the learner record reads it. False when that copy did not land. */
+async function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did: string; podUrl: string; homePage: string }): Promise<boolean> {
   // Only the launch's own actor, whole: an AU is handed that Agent, and a statement about anyone
   // else (another homePage naming the same DID, or a Group) is not this learner's record to keep.
   const actor = statement.actor as { objectType?: unknown; account?: { homePage?: unknown; name?: unknown } } | undefined;
-  if ((actor?.objectType ?? 'Agent') !== 'Agent' || actor?.account?.name !== learner.did || actor?.account?.homePage !== learner.homePage) return;
+  if ((actor?.objectType ?? 'Agent') !== 'Agent' || actor?.account?.name !== learner.did || actor?.account?.homePage !== learner.homePage) return true;
   const verbId = String((statement.verb as { id?: unknown } | undefined)?.id ?? '');
   const objectId = String((statement.object as { id?: unknown } | undefined)?.id ?? '');
-  void composeIntoSharedLattice({
-    podUrl: learner.podUrl, agentDid: learner.did, label: actorForPod(learner.podUrl, MESH_ACTOR_LABELS),
-    terms: [learner.did, verbId, objectId], content: statement, contentType: 'xapi:Statement',
-    ...(typeof statement.timestamp === 'string' ? { ts: statement.timestamp } : {}),
-    projections: ['rdf', 'vc', 'activity'],
-  }).catch((e) => bridgeWarn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message));
+  try {
+    await composeIntoSharedLattice({
+      podUrl: learner.podUrl, agentDid: learner.did, label: actorForPod(learner.podUrl, MESH_ACTOR_LABELS),
+      terms: [learner.did, verbId, objectId], content: statement, contentType: 'xapi:Statement',
+      ...(typeof statement.timestamp === 'string' ? { ts: statement.timestamp } : {}),
+      projections: ['rdf', 'vc', 'activity'],
+    });
+    return true;
+  } catch (e) {
+    bridgeWarn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message);
+    return false;
+  }
 }
 
 /**
