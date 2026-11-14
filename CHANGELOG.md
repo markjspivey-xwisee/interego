@@ -16,6 +16,12 @@ the claim. The learner's signed route refuses `launched`, `abandoned`, `waived`
 and `satisfied`. A reader that needs the LMS's word can now ask for that
 authority.
 
+Two places in the bridge put a statement record straight into a store, past
+that rule, and both take what a pod holds: the mesh projection's batch landing,
+and the restore of a caller's durable telemetry from the caller's own pod. The
+first now drops a claim to the LMS's authority; the second refuses a record
+that makes one. Found on a reviewer's prompt to check the restore paths.
+
 Not done here: no reader checks the authority yet. Practice Evidence and the
 coached-world gate still read `launched` and `satisfied` by verb, activity and
 actor. Statements the LMS stored before this change carry the old authority.

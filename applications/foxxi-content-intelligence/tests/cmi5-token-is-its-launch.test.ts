@@ -15,7 +15,8 @@ import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { IRI } from '@interego/core';
 import { buildCmi5Launch, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerTenant, redeemFetchToken, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
-import { attachXapiLrsRoutes, getStatementStore, lmsStatementAuthority, LMS_AUTHORITY_NAME, storeStatementDurably } from '../src/xapi-lrs.js';
+import { readFileSync } from 'node:fs';
+import { attachXapiLrsRoutes, claimsLmsAuthority, getStatementStore, lmsStatementAuthority, LMS_AUTHORITY_NAME, storeStatementDurably, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
 import { writeSelfXapi } from '../src/self-xapi.js';
 import type { TenantId } from '../src/tenant-context.js';
 
@@ -273,6 +274,24 @@ describe('a cmi5 auth-token is bound to its launch', () => {
       const r = await writeSelfXapi(learner.id, [{ ...said(verb), timestamp: '2026-11-14T10:00:00.000Z' }], never as never);
       expect([verb, r.status]).toEqual([verb, 403]);
     }
+  });
+
+  it('lets no record put straight into a store keep a claim to the LMS\'s authority', () => {
+    const claim = { id: 'x', authority: lmsStatementAuthority() };
+    const other = { id: 'y', authority: { objectType: 'Agent', account: { homePage: 'https://lrs.example', name: 'foxxi-lrs' } } };
+    expect(claimsLmsAuthority(claim)).toBe(true);
+    expect(withoutLmsAuthorityClaim(claim)).toEqual({ id: 'x' });
+    // Anything else is left exactly as it is, by identity.
+    expect(claimsLmsAuthority(other)).toBe(false);
+    expect(withoutLmsAuthorityClaim(other)).toBe(other);
+    // The bridge has two places that write a store directly, both from what a pod holds: the mesh
+    // projection's batch landing, and the restore of a caller's durable telemetry. Each is held to it.
+    const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
+    expect(server).toContain('statement: { ...withoutLmsAuthorityClaim(ev.statement as Record<string, unknown>), stored: storedAt }');
+    expect(server).toContain("if (claimsLmsAuthority(statement)) throw new Error('durable record names an authority only this LMS assigns');");
+    // And no third: a direct statement put anywhere else in the bridge would be found here.
+    const direct = server.split('\n').filter(l => /getStatementStore\([^)]*\)\.put\(|\bstore\.put\(\{ id,/.test(l));
+    expect(direct).toHaveLength(2);
   });
 
   it('keeps the launch\'s whole actor for the pod: its type and both account fields', () => {

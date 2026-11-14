@@ -157,9 +157,22 @@ export function lmsStatementAuthority(): { objectType: 'Agent'; account: { homeP
 }
 
 /** Whether a statement names the LMS's authority, whatever home page it puts beside the name. */
-function claimsLmsAuthority(stmt: Record<string, unknown>): boolean {
+export function claimsLmsAuthority(stmt: Record<string, unknown>): boolean {
   const account = (stmt['authority'] as { account?: { name?: unknown } } | undefined)?.account;
   return typeof account?.name === 'string' && account.name.trim().toLowerCase() === LMS_AUTHORITY_NAME;
+}
+
+/**
+ * A statement as it may be put straight into a store by code that does not go through
+ * `storeStatementDurably`: the same statement, without a claim to the LMS's authority. Some records
+ * reach a store from outside this process's own emission (a projection of what a pod holds, a
+ * record read back from a pod), and a pod is somebody's to write. The LMS's authority is kept only
+ * where the LMS's own code set it, in this process, on the way in.
+ */
+export function withoutLmsAuthorityClaim<T extends Record<string, unknown>>(stmt: T): T {
+  if (!claimsLmsAuthority(stmt)) return stmt;
+  const { authority: _claimed, ...rest } = stmt;
+  return rest as T;
 }
 
 /** An internally emitted statement authored and checked for storage, or null when it is not conformant. */
