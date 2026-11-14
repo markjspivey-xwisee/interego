@@ -270,4 +270,20 @@ describe('a shared coached world', () => {
     expect(launched['learner']).toBe(consultant.ownerDid);
     expect(launched['launchUrl']).toBe('https://foxxi.example/au?fetch=1');
   });
+
+  it('a challenge that was never issued, or was already used, opens no session', async () => {
+    const running = await start({ bots: false, forceLocal: true });
+    try {
+      const post = (path: string, body: unknown) => fetch(running.url + path, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) });
+      const { challenge } = await (await post('/session/challenge', {})).json() as { challenge: string };
+      expect(challenge).toMatch(/^[A-Za-z0-9_-]{43}$/);
+      expect((await post('/session', { challenge: 'never-issued' })).status).toBe(401);
+      // A real challenge with no proof is refused, and is spent by the attempt.
+      const first = await post('/session', { challenge });
+      expect(first.status).toBeGreaterThanOrEqual(400);
+      expect((await post('/session', { challenge })).status).toBe(401);
+      // Writes need a session.
+      expect((await post('/missions', {})).status).toBe(401);
+    } finally { await running.close(); }
+  });
 });

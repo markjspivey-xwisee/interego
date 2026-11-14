@@ -13,6 +13,7 @@ import { PlayError } from '../../../deploy/identity/provisional-play.js';
 import { PlayGrantError } from '../../foxxi-content-intelligence/src/play-grant.js';
 import { affordancesManifestTurtle } from '../../_shared/affordance-mcp/index.js';
 import { WorldError } from './errors.js';
+import { MAX_CHALLENGES, MAX_SESSIONS, bound } from './bounded.js';
 import { createLocalDoor, createRelayDoor, type GuestDoor } from './guest-play.js';
 import { FoxxiCourseLauncher } from './course-launch.js';
 import { HttpLrs } from './lrs.js';
@@ -220,18 +221,6 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
     return;
   }
   send(res, 404, { error: 'not-found' });
-}
-
-/** The most pending sign-in challenges, and the most sessions, this process keeps. */
-export const MAX_CHALLENGES = 5_000;
-export const MAX_SESSIONS = 5_000;
-
-/** Drop the oldest entries until the map holds at most `max`. A Map keeps insertion order. */
-export function bound<K, V>(map: Map<K, V>, max: number): void {
-  for (const key of map.keys()) {
-    if (map.size <= max) return;
-    map.delete(key);
-  }
 }
 
 function who(req: IncomingMessage, sessions: Map<string, string>): string | undefined {
