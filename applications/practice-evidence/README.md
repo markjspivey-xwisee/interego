@@ -349,6 +349,8 @@ Taken on trust, and recorded as such: the statements are what the LRS returned t
 
 Trust this adds: whoever holds the registered `lms` key can take the reviewed result of any attempt taken from that LMS and fix the session it is sent in. An LRS endpoint can sit in front of several LMSs or tenants, so the role alone names no issuer: the operator also says which LMS each `lms` principal speaks for (`PEV_LAUNCH_LMS_ISSUERS`, the principal to the account homePage that LMS puts on the actors it launches). Such a principal takes statements only for attempts whose launch actor carries that homePage; another issuer's registration is, to it, not there (404), and a principal with the role and no binding speaks for no LMS (403 `lms-issuer-unbound`). The attempt records the issuer the LMS spoke for.
 
+Before turning this on, the operator has to be able to say one thing about the LRS behind `PEV_LAUNCH_LRS_ENDPOINT`: the account homePage on a launch actor names exactly one issuer there, and only that issuer can put it on an actor. The binding is a comparison of two strings, so it is as good as that statement and no better. Two LMSs or tenants that write the same homePage are one issuer to this bridge, and each `lms` principal bound to it takes the other's results. An LRS that lets any client store a launched statement under any homePage lets that client's registrations be taken as the bound LMS's. Where either can happen, leave `PEV_LAUNCH_LMS_ISSUERS` unset: the learner path still works, because it needs no `lms` principal.
+
 Not built here: the LMS's own route that takes the unit's cmi5 credential and makes this request. That belongs to the LMS.
 
 ## What it does not do yet

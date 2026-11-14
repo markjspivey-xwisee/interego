@@ -1,5 +1,14 @@
 # Changelog
 
+## 2026-11-14 — Practice Evidence: what the LMS issuer binding rests on
+
+The README now says what an operator must know before setting
+`PEV_LAUNCH_LMS_ISSUERS`: on that LRS, an actor account homePage names exactly
+one issuer, and only that issuer can write it. The binding compares two
+strings. Where two LMSs share a homePage, or a client can store a launched
+statement under any homePage, the setting should stay unset. Asked for by the
+reviewer of the binding. No code change.
+
 ## 2026-11-14 — Practice Evidence: the LMS that launched an attempt may take its reviewed statements
 
 A unit in a browser holds only its cmi5 credential, which the LMS checks and this
