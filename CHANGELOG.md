@@ -10,6 +10,37 @@ The I2IDL-X workbench lets a person pair their own AI chat session with a page, 
 - **Coached world: Connect an agent.** A signed-in consultant can pair their own chat session and have it be the agent they coach. A mission then goes to that session as a brief (the mission, the conditions the agent ran into, its remembered lessons, the interventions deployed so far; never the cause). Its answer is recorded as that agent's xAPI statement and shown on the mission. The pack's rules still score it; nothing judges the text. If the session does not answer within two minutes the turn is withdrawn, the mission runs simulated, and the feed says so. One connection per consultant.
 - **Setting.** `CPW_POD_ORIGIN` (the https origin agents' pods live on) turns the door on: it is where a claiming agent's delegation is read to verify it. Unset, the door answers 503, the page hides it and agents are simulated as before. Nothing is deployed by this change.
 
+## 2026-11-14 — A test's own text no longer fails the relay's loopback scan
+
+The relay's test chain reads every test in the repository for a server started without naming
+`127.0.0.1` (`deploy/mcp-relay/tests/listen-loopback.test.ts`). The test added with the hosted
+package take-down list quoted the bridge's `listen` call in a string, to check where the list is
+applied, and the scan read that string as a call. So `npm test` in the relay workspace has
+failed on master since that change, on a file the relay does not import. The string is now
+written in two pieces, and the test also checks the call was found at all, which the earlier
+form did not.
+
+## 2026-11-14 — Foxxi LRS: an assignable unit's token does not speak as the LMS
+
+A cmi5 auth-token is the assignable unit's credential, and it sits in the
+learner's browser. The LRS held it to its own registration and to nothing else.
+Whoever held one could store, in that registration, a `launched` naming another
+launch mode, an `abandoned`, a `waived`, or a `satisfied` for the course, and
+could write as any actor. A reader that takes those verbs as the LMS's word was
+taking the learner's: the coached-world tier gate promotes on a course's
+`satisfied`, and Practice Evidence reads the launch mode from `launched`.
+
+Such a bearer is now refused (403) a statement with one of the four verbs cmi5
+has the LMS record, and a statement whose `actor.account` is not the one it was
+launched for. The LMS's own statements are stored inside the bridge and are not
+affected. A credential that is not a launch's is not held to this.
+
+Where the LRS knows a token is a launch's and cannot tell which actor it was
+launched for, the token writes no statement at all.
+
+Found while answering a reviewer's question about who can write what on this
+LRS, before turning on the route by which the LMS takes reviewed results.
+
 ## 2026-11-14 — Coached world: the service is in the deploy table
 
 The coached world runs at `https://coached-world-bridge-production.up.railway.app`, as the
