@@ -14,7 +14,7 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { IRI } from '@interego/core';
-import { buildCmi5Launch, cmi5BearerRegistration, cmi5BearerTenant, redeemFetchToken, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
+import { buildCmi5Launch, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerTenant, redeemFetchToken, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
 import { attachXapiLrsRoutes, getStatementStore } from '../src/xapi-lrs.js';
 import type { TenantId } from '../src/tenant-context.js';
 
@@ -45,7 +45,7 @@ beforeAll(async () => {
   app.use(express.json({ limit: '1mb' }));
   attachXapiLrsRoutes(app, {
     podUrl: '', tenantDid: 'did:web:bridge.example' as IRI, basicAuthPairs: '', forwardingTargets: '', selfBaseUrl: 'http://127.0.0.1',
-    bearerTenantResolver: cmi5BearerTenant, bearerRegistrationResolver: cmi5BearerRegistration,
+    bearerTenantResolver: cmi5BearerTenant, bearerRegistrationResolver: cmi5BearerRegistration, bearerActorResolver: cmi5BearerActor,
   });
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>((r) => server.once('listening', () => r()));
@@ -171,6 +171,39 @@ describe('a cmi5 auth-token is bound to its launch', () => {
     expect((await send(tokenA, statement(B.registration, 'passed'))).status).toBe(403);
     expect((await send('cmi5-0-not-a-launch', statement(A.registration, 'initialized'))).status).toBe(401);
     expect((await send(Buffer.from('user:guess').toString('base64'), statement(A.registration, 'initialized'))).status).toBe(401);
+  });
+
+  it('does not write the LMS\'s own verbs, or as anyone but the actor it was launched for', async () => {
+    expect(cmi5BearerActor(tokenA)).toEqual({ homePage: 'did:web:bridge.example', name: learner.id });
+    expect(cmi5BearerActor('not-a-token')).toBeNull();
+    const store = getStatementStore(tenant);
+    const before = (await store.query({ registration: A.registration })).statements.length;
+    const as = (verb: string, actor: unknown = A.actor) => ({
+      id: randomUUID(), actor, verb: { id: verb }, object: { objectType: 'Activity', id: au(1).id }, context: { registration: A.registration },
+    });
+    // cmi5 has the LMS record these. From the unit's token each would be the learner's browser speaking as the LMS.
+    for (const verb of ['http://adlnet.gov/expapi/verbs/launched', 'https://w3id.org/xapi/adl/verbs/abandoned', 'https://w3id.org/xapi/adl/verbs/waived', 'https://w3id.org/xapi/adl/verbs/satisfied']) {
+      const r = await post(tokenA, as(verb));
+      expect([verb, r.status]).toEqual([verb, 403]);
+      expect(String((await r.json() as { error: string }).error)).toContain('is the LMS\'s to record');
+    }
+    // In a batch, with the scheme an AU uses, and by PUT: the same.
+    expect((await post(tokenA, [as('http://adlnet.gov/expapi/verbs/completed'), as('https://w3id.org/xapi/adl/verbs/satisfied')])).status).toBe(403);
+    const basic = await fetch(`${base}/xapi/statements`, { method: 'POST', headers: { ...headers(tokenA), Authorization: `Basic ${tokenA}` }, body: JSON.stringify(as('https://w3id.org/xapi/adl/verbs/satisfied')) });
+    expect(basic.status).toBe(403);
+    const one = as('http://adlnet.gov/expapi/verbs/launched');
+    expect((await fetch(`${base}/xapi/statements?statementId=${one.id}`, { method: 'PUT', headers: headers(tokenA), body: JSON.stringify(one) })).status).toBe(403);
+    // As another learner, or as the same name under another homePage: refused.
+    const other = { objectType: 'Agent', account: { homePage: 'did:web:bridge.example', name: 'did:ethr:0x9999999999bb00000000000000000000000beef9' } };
+    const elsewhere = { objectType: 'Agent', account: { homePage: 'did:web:another-lms.example', name: learner.id } };
+    for (const actor of [other, elsewhere, { objectType: 'Agent', mbox: 'mailto:someone@example.org' }]) {
+      const r = await post(tokenA, as('http://adlnet.gov/expapi/verbs/completed', actor));
+      expect(r.status).toBe(403);
+      expect(String((await r.json() as { error: string }).error)).toContain('only as the actor it was launched for');
+    }
+    // None of it was stored, and the unit's own statements still are.
+    expect((await store.query({ registration: A.registration })).statements.length).toBe(before);
+    expect((await post(tokenA, as('http://adlnet.gov/expapi/verbs/experienced'))).status).toBe(200);
   });
 
   it('keeps the launch\'s whole actor for the pod: its type and both account fields', () => {

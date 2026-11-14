@@ -102,6 +102,11 @@ export interface XapiLrsConfig {
   bearerTenantResolver?: (token: string) => TenantId | null;
   /** The launch registration a cmi5 auth-token is bound to. Such a bearer reads and writes only that launch's statements and State. */
   bearerRegistrationResolver?: (token: string) => string | null;
+  /**
+   * The actor a cmi5 auth-token was issued for. With it, such a bearer writes statements only as
+   * that actor and never with a verb cmi5 keeps for the LMS.
+   */
+  bearerActorResolver?: (token: string) => { homePage: string; name: string } | null;
   /** Optional: the published tenant directory (user_id + web_id), used to VERIFY
    *  wallet-signed Foxxi session tokens presented as Bearer auth. Directory users get a
    *  deterministic wallet (the same derivation mintSessionToken uses), so a token minted
@@ -403,6 +408,42 @@ function strayFromRegistration(req: Request, batch: readonly Record<string, unkn
 const OUTSIDE_LAUNCH = 'a cmi5 auth-token reads and writes only its own launch: context.registration must be the registration it was minted for';
 
 /**
+ * The verbs cmi5 has the LMS record, never the assignable unit (cmi5 9.3): launched, abandoned,
+ * waived and satisfied. A reader takes one of these as the LMS's word: that a session was opened and
+ * in which mode, that it was abandoned, that a course's moveOn was met.
+ */
+const LMS_ONLY_VERBS: ReadonlySet<string> = new Set([
+  'http://adlnet.gov/expapi/verbs/launched', 'https://w3id.org/xapi/adl/verbs/abandoned',
+  'https://w3id.org/xapi/adl/verbs/waived', 'https://w3id.org/xapi/adl/verbs/satisfied',
+]);
+
+/**
+ * Why a statement is not one the bearer of a cmi5 auth-token may write, with its index, or null.
+ * The token is the assignable unit's, and it is in the learner's browser. It writes as the actor it
+ * was launched for and as nobody else, and it does not write the LMS's own verbs: otherwise whoever
+ * holds it could record that they were launched in another mode, or that the course was satisfied.
+ * A credential that is not a launch's (an operator's, a signed session's) is not held to this.
+ */
+function notTheUnitsToWrite(req: Request, batch: readonly Record<string, unknown>[]): { index: number; why: string } | null {
+  if (boundRegistration(req) === undefined) return null;
+  const launchActor = (req as Request & { xapiLaunchActor?: { homePage: string; name: string } }).xapiLaunchActor;
+  for (let index = 0; index < batch.length; index++) {
+    const s = batch[index]!;
+    const verb = (s['verb'] as { id?: unknown } | undefined)?.id;
+    if (typeof verb === 'string' && LMS_ONLY_VERBS.has(verb)) {
+      return { index, why: `a cmi5 auth-token is an assignable unit's: ${verb} is the LMS's to record (cmi5 9.3)` };
+    }
+    if (launchActor) {
+      const account = (s['actor'] as { account?: { homePage?: unknown; name?: unknown } } | undefined)?.account;
+      if (account?.homePage !== launchActor.homePage || account?.name !== launchActor.name) {
+        return { index, why: 'a cmi5 auth-token writes only as the actor it was launched for: actor.account must be the one in the launch (cmi5 9.2)' };
+      }
+    }
+  }
+  return null;
+}
+
+/**
  * The first statement in a batch that voids another launch's statement, or -1. A voiding statement
  * can carry its own launch's registration and still name a StatementRef from another launch, and
  * voiding marks that target: so a registration-bound bearer may void only its own launch's statements.
@@ -451,7 +492,7 @@ function makeAuthGate(config: XapiLrsConfig) {
     setXapiHeaders(res, version.startsWith('2.') ? version : version);
 
     const authHeader = (req.headers['authorization'] ?? req.headers['Authorization']) as string | undefined;
-    const r = req as Request & { xapiAuth?: unknown; xapiTenant?: TenantId; xapiRegistration?: string };
+    const r = req as Request & { xapiAuth?: unknown; xapiTenant?: TenantId; xapiLaunchActor?: { homePage: string; name: string }; xapiRegistration?: string };
     const basicTenant = basicAuthTenant(authHeader, credTenants);
     if (basicTenant !== null) {
       const decoded = Buffer.from((authHeader ?? '').replace(/^Basic\s+/i, ''), 'base64').toString('utf8');
@@ -474,6 +515,8 @@ function makeAuthGate(config: XapiLrsConfig) {
       r.xapiTenant = cmi5BasicTenant;
       const registration = config.bearerRegistrationResolver?.(basicAsToken);
       if (registration) r.xapiRegistration = registration;
+      const launchActor = config.bearerActorResolver?.(basicAsToken);
+      if (launchActor) r.xapiLaunchActor = launchActor;
       return next();
     }
     const bearer = bearerToken(authHeader);
@@ -490,6 +533,8 @@ function makeAuthGate(config: XapiLrsConfig) {
         r.xapiTenant = cmi5Tenant;
         const registration = config.bearerRegistrationResolver?.(bearer);
         if (registration) r.xapiRegistration = registration;
+        const launchActor = config.bearerActorResolver?.(bearer);
+        if (launchActor) r.xapiLaunchActor = launchActor;
         return next();
       }
 
@@ -782,6 +827,8 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   }
   const stray = strayFromRegistration(req, batch);
   if (stray >= 0) { res.status(403).json({ error: `statement[${stray}]: ${OUTSIDE_LAUNCH}` }); return; }
+  const notUnits = notTheUnitsToWrite(req, batch);
+  if (notUnits) { res.status(403).json({ error: `statement[${notUnits.index}]: ${notUnits.why}` }); return; }
   const voidsAnother = await voidsOutsideRegistration(req, batch);
   if (voidsAnother >= 0) { res.status(403).json({ error: `statement[${voidsAnother}] voids a statement of another launch: ${OUTSIDE_LAUNCH}` }); return; }
 
@@ -1010,6 +1057,8 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   const attachErr = checkStatementAttachments(stmt, multipartParts);
   if (attachErr) { res.status(400).json({ error: attachErr }); return; }
   if (strayFromRegistration(req, [stmt]) >= 0) { res.status(403).json({ error: OUTSIDE_LAUNCH }); return; }
+  const notUnits = notTheUnitsToWrite(req, [stmt]);
+  if (notUnits) { res.status(403).json({ error: notUnits.why }); return; }
   if (await voidsOutsideRegistration(req, [stmt]) >= 0) { res.status(403).json({ error: `it voids a statement of another launch: ${OUTSIDE_LAUNCH}` }); return; }
   if (multipartParts) {
     const referenced = collectAttachmentHashes([stmt]);
