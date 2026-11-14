@@ -928,3 +928,73 @@ export function attachCmi5LmsRoutes(app: Express, config: {
     res.status(200).json(state);
   });
 }
+
+const CMI5_SESSION = 'https://w3id.org/xapi/cmi5/context/extensions/sessionid';
+
+/** The session id a launch put in LMS.LaunchData, when it has one. */
+export function cmi5SessionId(launchData: Record<string, unknown>): string | undefined {
+  const template = launchData.contextTemplate as { extensions?: Record<string, unknown> } | undefined;
+  const id = template?.extensions?.[CMI5_SESSION];
+  return typeof id === 'string' && id.length > 0 ? id : undefined;
+}
+
+export interface ForgottenCmi5Launch {
+  registration: string;
+  podUrl?: string;
+  homePage: string;
+  did: string;
+}
+
+/**
+ * Drop one learner's cmi5 state in this tenant: satisfied activities, launch records, open
+ * sessions, unredeemed fetch tokens, and auth tokens the AU is still holding. Other learners
+ * are left as they are. Pods that held a copy of the launch are returned so the caller can
+ * void those copies; this does not write to a pod.
+ */
+export function forgetCmi5Learner(tenant: TenantId, learnerId: string): ForgottenCmi5Launch[] {
+  const removed: ForgottenCmi5Launch[] = [];
+  const registrations = new Set<string>();
+  for (const [registration, launch] of launches) {
+    if (launch.tenant !== tenant || launch.learner.id !== learnerId) continue;
+    const openKey = openLaunchKey(launch);
+    if (openKey && openByKey.get(openKey) === registration) openByKey.delete(openKey);
+    launches.delete(registration);
+    registrations.add(registration);
+    removed.push({
+      registration,
+      ...(launch.learnerPod ? { podUrl: launch.learnerPod } : {}),
+      homePage: launch.authoritativeSource,
+      did: learnerId,
+    });
+  }
+  for (const [token, rec] of fetchTokens) if (registrations.has(rec.registration) && rec.tenant === tenant) fetchTokens.delete(token);
+  for (const [token, rec] of authTokenLaunch) if (registrations.has(rec.registration) && rec.tenant === tenant) authTokenLaunch.delete(token);
+  // Satisfaction alone (copied in by a link, with no launch of its own) is state too: without marking
+  // the snapshot, a restart would bring it back.
+  const hadSatisfaction = satisfiedAus.get(tenant)?.delete(learnerId) === true;
+  const prefix = `${String(tenant)}|`;
+  const suffix = `|${learnerId}`;
+  for (const key of rollupEmitted.keys()) if (key.startsWith(prefix) && key.endsWith(suffix)) rollupEmitted.delete(key);
+  for (const key of courseEnrollmentReg.keys()) if (key.startsWith(prefix) && key.endsWith(suffix)) courseEnrollmentReg.delete(key);
+  if (removed.length || hadSatisfaction) cmi5PodDirty();
+  return removed;
+}
+
+/** Copy satisfied activities from one learner's lens into another's. The source lens is unchanged. */
+export function copyLearnerSatisfaction(fromTenant: TenantId, fromLearnerId: string, toTenant: TenantId, toLearnerId: string): string[] {
+  const ids = learnerSatisfiedAus(fromTenant, fromLearnerId);
+  for (const id of ids) markAuSatisfied(toTenant, toLearnerId, id);
+  return ids;
+}
+
+/** Remove activities from one learner's satisfied set. The snapshot is marked when any are removed. */
+export function dropLearnerSatisfaction(tenant: TenantId, learnerId: string, auIds: readonly string[]): string[] {
+  const byLearner = satisfiedAus.get(tenant);
+  const set = byLearner?.get(learnerId);
+  if (!set) return [];
+  const removed: string[] = [];
+  for (const id of auIds) if (set.delete(id)) removed.push(id);
+  if (set.size === 0) byLearner!.delete(learnerId);
+  if (removed.length) cmi5PodDirty();
+  return removed;
+}

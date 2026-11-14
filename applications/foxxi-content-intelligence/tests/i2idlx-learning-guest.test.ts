@@ -7,14 +7,18 @@ import { attachLearningRoutes, GUEST_LEARNING_OPERATIONS } from '../src/i2idlx-l
 import { emptyLearningState, type LearningRepository, type LearningSnapshot } from '../src/i2idlx-learning-connections.js';
 import type { GuestGrantRequest, GuestGrantSigner } from '../src/i2idlx-learning-auth.js';
 import { PlayGrantService, learnerGuestGrantConfig, type PlayFetch } from '../src/play-grant.js';
+import { attachCoursePlayerRoutes, learnerFromPlayerAuth } from '../src/cmi5-player.js';
+import { registerCmi5Course } from '../src/cmi5-lms.js';
+import { DEFAULT_TENANT } from '../src/tenant-context.js';
 // The browser module, run here with Node's WebCrypto and an in-memory key store.
 type GuestModule = {
   guestLearningSignIn(config: unknown, options?: Record<string, unknown>): Promise<{ guest: boolean; resumed: boolean }>;
+  guestFreshCredential(config: unknown, options?: Record<string, unknown>): Promise<{ token: string }>;
   guestKeyThumbprint(jwk: { kty: string; crv: string; x: string; y: string }, subtle?: unknown): Promise<string>;
   learningGuestSignIn(value: unknown, origin: string): unknown;
 };
 const guestModuleUrl = new URL('../i2idlx/app/src/learning-guest.js', import.meta.url).href;
-const { guestLearningSignIn, guestKeyThumbprint, learningGuestSignIn } = await import(/* @vite-ignore */ guestModuleUrl) as GuestModule;
+const { guestFreshCredential, guestLearningSignIn, guestKeyThumbprint, learningGuestSignIn } = await import(/* @vite-ignore */ guestModuleUrl) as GuestModule;
 
 type Row = Record<string, unknown>;
 const BASE = 'https://workbench.example', RELAY = 'https://relay.example', IDENTITY = 'https://identity.example', POD = 'https://pods.example';
@@ -77,13 +81,21 @@ async function fixture(options: { guests?: boolean; termsVersion?: string; signe
       (req.body as Row).__client_ip = '203.0.113.7'; if (req.get('Authorization')) (req.body as Row).__caller_token = 'some-agent-bearer'; next(); });
   });
   else app.use(express.json());
-  attachLearningRoutes(app, { baseUrl: BASE, relayOrigin: RELAY, identityOrigin: IDENTITY, podOrigin: POD, repository, fetch: transport, now: () => now,
+  const learning = attachLearningRoutes(app, { baseUrl: BASE, relayOrigin: RELAY, identityOrigin: IDENTITY, podOrigin: POD, repository, fetch: transport, now: () => now,
     sessions: {} as never, taskConfig: { baseUrl: BASE, appDataFile: '', checkOperations: {} } as never,
     ...(options.guests === false ? {} : { guestGrant: options.signer ?? (async (request: GuestGrantRequest) => {
       control.grants.push(request);
       return { _signed_payload: JSON.stringify({ purpose: 'interego-play-provisional-v1', expiresAt: Math.floor(now / 1000) + 90, ...request, ...control.grantPatch, agent_id: 'did:web:identity.example:agents:foxxi-service', subject_pod_url: POD + '/foxxi/', timestamp: new Date(now).toISOString() }),
         _signature: '0x' + 'ab'.repeat(65) };
     }) }) });
+  registerCmi5Course(DEFAULT_TENANT, { id: 'https://workbench.example/course', title: 'Any course', structure: [{ kind: 'au', id: 'https://workbench.example/au', title: 'One', url: 'https://workbench.example/au.html', moveOn: 'Completed' }] });
+  attachCoursePlayerRoutes(app, {
+    baseUrl: BASE, authoritativeSource: 'did:web:workbench.example', book: undefined,
+    requireLearner: (req) => learnerFromPlayerAuth(learning.auth, req),
+    verifyGuest: async () => { throw new Error('unused'); },
+    resolveCourse: async (id) => id === 'https://workbench.example/course' ? { id, title: 'Any course', structure: [{ kind: 'au', id: 'https://workbench.example/au', title: 'One', url: 'https://workbench.example/au.html', moveOn: 'Completed' }] } : null,
+    satisfied: () => [], stageLaunch: async () => undefined, recordLaunched: async () => undefined, forgetActor: async () => 0,
+  });
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); const address = server.address(); assert.ok(address && typeof address !== 'string');
   const local = `http://127.0.0.1:${address.port}`;
   cleanups.push(async () => { server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); });
@@ -124,8 +136,12 @@ describe('provisional guest learner sign-in', () => {
 
   it('creates a guest from a browser-held key, keeps no bearer, and resumes it without a new grant', async () => {
     const f = await fixture(), b = f.browser();
-    const first = await b.signIn(); assert.deepEqual({ guest: first.guest, resumed: first.resumed }, { guest: true, resumed: false });
+    let provision: Row | undefined;
+    const first = await b.signIn({ onProvisioned: (value: Row) => { provision = value; } });
+    assert.deepEqual({ guest: first.guest, resumed: first.resumed }, { guest: true, resumed: false });
+    assert.equal(typeof provision?.token, 'string');
     const stored = b.stored()!; assert.deepEqual(Object.keys(stored).sort(), ['attestation', 'privateKey', 'publicKeyJwk']);
+    assert.ok(!JSON.stringify({ ...stored, privateKey: null }).includes(String(provision?.token)));
     assert.equal((stored.privateKey as CryptoKey).extractable, false);
     assert.ok(!JSON.stringify({ ...stored, privateKey: null }).includes('cg2_'), 'the identity token is never stored');
     assert.equal(f.control.grants.length, 1); assert.equal(f.control.grants[0]!.audience, BASE);
@@ -136,6 +152,12 @@ describe('provisional guest learner sign-in', () => {
     // A reload: same key store, no cookie. The stored attestation and a fresh proof are enough.
     b.forget(); const again = await b.signIn(); assert.equal(again.resumed, true);
     assert.equal(f.control.grants.length, 1); assert.equal(f.control.bootstrapCalls, 1);
+    assert.equal(((await b.status()).account as Row).userId, account.userId);
+    // The page that held the token is gone. Asking again returns one for the same owner and still does not store it.
+    const credential = await guestFreshCredential(learningGuestSignIn((await b.status()).guest_sign_in, BASE), { fetch: b.fetch, subtle: webcrypto.subtle, store: b.store });
+    assert.equal(typeof credential.token, 'string');
+    assert.equal(f.control.grants.length, 2);
+    assert.ok(!JSON.stringify({ ...b.stored()!, privateKey: null }).includes(credential.token));
     assert.equal(((await b.status()).account as Row).userId, account.userId);
   });
 
@@ -287,5 +309,20 @@ describe('provisional guest learner sign-in', () => {
     const b = f.browser(); await b.signIn();
     assert.equal((await b.status()).guest, true);
     assert.equal(signedPayloads.length, 1); assert.equal(signedPayloads[0]!.audience, BASE); assert.equal(signedPayloads[0]!.purpose, 'interego-play-provisional-v1');
+  });
+
+  it('uses the learning session itself for a player launch, and refuses one without its CSRF header', async () => {
+    const f = await fixture(), b = f.browser();
+    await b.signIn();
+    const status = await b.status();
+    const open = { course_id: 'https://workbench.example/course', tracking_consent: true };
+    const without = await b.fetch(BASE + '/learn/launch', { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(open) });
+    assert.equal(without.status, 403);
+    assert.equal(((await without.json()) as Row).error, 'learning_csrf_refused');
+    const withCsrf = await b.fetch(BASE + '/learn/launch', { method: 'POST', headers: { 'Content-Type': 'application/json', 'X-I2IDLX-Learning-CSRF': String(status.csrf) }, body: JSON.stringify(open) });
+    assert.equal(withCsrf.status, 200);
+    const launched = await withCsrf.json() as Row;
+    assert.equal(launched.guest, true);
+    assert.match(String((launched.actor as Row).account && ((launched.actor as Row).account as Row).name), /^did:web:identity.example:users:u-try-play-/);
   });
 });

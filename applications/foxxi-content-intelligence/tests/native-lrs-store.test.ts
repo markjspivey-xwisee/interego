@@ -447,6 +447,26 @@ describe('native Interego xAPI artifact adapter', () => {
     const restarted = database(new TestNativeClient(client.storage)).forTenant('alice');
     expect((await restarted.get(target.id))?.voided).toBe(true);
   });
+  it('returns a linked guest and owner together, including the next page of the same query', async () => {
+    const client = new TestNativeClient(), db = database(client), store = db.forTenant('alias');
+    await db.ready();
+    const guest = record(), owner = record(), other = record();
+    guest.statement.actor = { account: { homePage: 'https://example.test', name: 'guest' } };
+    owner.statement.actor = { account: { homePage: 'https://example.test', name: 'owner' } };
+    other.statement.actor = { account: { homePage: 'https://example.test', name: 'other' } };
+    await store.put(guest); await store.put(owner); await store.put(other);
+    const filter = {
+      agent: { account: { homePage: 'https://example.test', name: 'owner' } },
+      alsoAgents: [{ account: { homePage: 'https://example.test', name: 'guest' } }],
+      limit: 1, ascending: true,
+    };
+    const page = await store.query(filter);
+    expect(page.statements).toHaveLength(1);
+    expect(page.more).toBeTruthy();
+    const rest = await store.query({ ...filter, cursor: page.more! });
+    expect([...page.statements, ...rest.statements].map(row => row.id).sort()).toEqual([guest.id, owner.id].sort());
+    expect([...page.statements, ...rest.statements].some(row => row.id === other.id)).toBe(false);
+  });
   it('retains binary documents, content type and CAS preconditions across independent clients', async () => {
     const storage = primary(), left = database(new TestNativeClient(storage)).forTenant('alice'), right = database(new TestNativeClient(storage)).forTenant('alice');
     const bytes = Buffer.from([0, 255, 128, 1]);

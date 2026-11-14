@@ -97,7 +97,7 @@ function stableJson(value: unknown): string {
 function checkedQuery(value: unknown): CursorQuery {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidLrsQueryError();
   const q = value as Record<string, unknown>;
-  if (Object.keys(q).some(k => !['agent', 'verb', 'activity', 'registration', 'since', 'until', 'ascending', 'limit'].includes(k))) throw new InvalidLrsQueryError();
+  if (Object.keys(q).some(k => !['agent', 'alsoAgents', 'verb', 'activity', 'registration', 'since', 'until', 'ascending', 'limit'].includes(k))) throw new InvalidLrsQueryError();
   if (q.limit !== undefined && (typeof q.limit !== 'number' || !Number.isSafeInteger(q.limit) || q.limit < 0)) throw new InvalidLrsQueryError();
   if (q.ascending !== undefined && typeof q.ascending !== 'boolean') throw new InvalidLrsQueryError();
   for (const key of ['verb', 'activity']) {
@@ -110,6 +110,12 @@ function checkedQuery(value: unknown): CursorQuery {
     if (v !== undefined && (typeof v !== 'string' || v.length > 128 || !UTC_TIMESTAMP.test(utcTimestamp(v)) || !Number.isFinite(Date.parse(utcTimestamp(v))))) throw new InvalidLrsQueryError();
   }
   if (q.agent !== undefined && (typeof q.agent !== 'object' || q.agent === null || Array.isArray(q.agent) || JSON.stringify(q.agent).length > 8192 || validateAgentObject(q.agent).length)) throw new InvalidLrsQueryError();
+  if (q.alsoAgents !== undefined) {
+    if (!Array.isArray(q.alsoAgents) || q.alsoAgents.length > 32) throw new InvalidLrsQueryError();
+    for (const agent of q.alsoAgents) {
+      if (typeof agent !== 'object' || agent === null || Array.isArray(agent) || JSON.stringify(agent).length > 8192 || validateAgentObject(agent).length) throw new InvalidLrsQueryError();
+    }
+  }
   return { ...cursorQueryOf(q as CursorQuery), limit: q.limit === 0 ? 500 : Math.min(q.limit as number | undefined ?? 100, 500), ascending: q.ascending === true };
 }
 /** Tagged tree preserves real binary docs while ordinary JSON Buffer-shaped objects remain JSON. */
