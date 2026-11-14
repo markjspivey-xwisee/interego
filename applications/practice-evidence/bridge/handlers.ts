@@ -2140,6 +2140,28 @@ function lrsReadOf(args: Record<string, unknown>, registration: string): { reado
   return { _signed_payload: sp, _signature: sig };
 }
 
+/**
+ * The text of an answer of at most `max` bytes, or null for a longer one. Bytes are counted as they
+ * arrive, not after the whole answer is a string, and the read stops at the first chunk past the
+ * limit. An answer that declares a longer length is not read.
+ */
+async function textWithin(res: Response, max: number): Promise<string | null> {
+  const declared = Number(res.headers.get('content-length'));
+  if (Number.isFinite(declared) && declared > max) { await res.body?.cancel().catch(() => undefined); return null; }
+  if (!res.body) return '';
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  let seen = 0;
+  let text = '';
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) return text + decoder.decode();
+    seen += value.byteLength;
+    if (seen > max) { await reader.cancel().catch(() => undefined); return null; }
+    text += decoder.decode(value, { stream: true });
+  }
+}
+
 async function statementsOfRegistration(ctx: Ctx, li: LaunchImport, body: { readonly _signed_payload: string; readonly _signature: string }): Promise<unknown[]> {
   let res: Response;
   try {
@@ -2150,11 +2172,12 @@ async function statementsOfRegistration(ctx: Ctx, li: LaunchImport, body: { read
   } catch {
     throw decline(502, 'The LRS did not answer; nothing was recorded.', 'lrs-unreachable');
   }
-  const text = await res.text().catch(() => '');
   if (!res.ok) {
+    await res.body?.cancel().catch(() => undefined);
     throw decline(502, `The LRS refused the read (${res.status}); nothing was recorded. A signed read is fresh for a short time only: sign a new one and try again.`, 'lrs-read-refused', undefined, { lrsStatus: res.status });
   }
-  if (text.length > LRS_READ_MAX_BYTES) throw decline(502, 'The LRS answered with more than this bridge reads for one registration; nothing was recorded.', 'lrs-answer-too-large');
+  const text = await textWithin(res, LRS_READ_MAX_BYTES).catch(() => '');
+  if (text === null) throw decline(502, 'The LRS answered with more than this bridge reads for one registration; nothing was recorded.', 'lrs-answer-too-large');
   let parsed: unknown;
   try { parsed = JSON.parse(text); } catch { parsed = undefined; }
   const statements = isObj(parsed) ? parsed['statements'] : undefined;
