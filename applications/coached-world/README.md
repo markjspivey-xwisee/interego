@@ -20,6 +20,8 @@ When `CPW_PLAY_SERVICE_PRIVATE_KEY`, `CPW_PLAY_AUDIENCE` and `CPW_IDENTITY_URL` 
 
 `CPW_LRS_URL` (and optional `CPW_LRS_AUTHORIZATION`) is a Foxxi `/xapi/statements` endpoint. `CPW_LRS_ACTOR_HOME` is the home page on the course actor's account, the same value Foxxi calls its authoritative source. The gate query sends that home page with the guest's DID, the verb `https://w3id.org/xapi/adl/verbs/satisfied`, and the course IRI, and it follows `more`. A course statement's `passed` or `completed` names the assignable unit, so the gate does not read those. Foxxi's LMS writes `satisfied` for the course IRI when moveOn is met. If the LRS does not answer, the gate says `unreachable` and does not promote. Mission statements are still kept here.
 
+`CPW_LRS_LMS_AUTHORITY` is JSON `{"homePage": …, "name": …}`: the authority account the LMS's own statements carry on that LRS. An LRS holds what anyone with a credential stored there, a learner writing about themselves included, so the verb `satisfied` does not show who said it. The gate counts a `satisfied` only under that authority. A world that reads an LRS and is not told the authority says `lms-authority-unset`, asks the LRS nothing and promotes nobody. Foxxi stores its LMS's statements under the name `foxxi-lms` with its own deployment URL as the home page.
+
 `CPW_FOXXI_LAUNCH_URL` and `CPW_FOXXI_LAUNCH_KEY` turn on `POST /gate/launch`. That posts to Foxxi's existing `POST /agent/cmi5/launch`. The signed payload's `agent_id` is the consultant's DID and `course_id` is the pack's course. The key must be one Foxxi already accepts as that DID. This world does not mint a second guest.
 
 The starter occupies one roster seat. The first tier's cap leaves another seat open, and a promotion stops one seat short of the new cap, so a marketplace transfer can land.
@@ -58,7 +60,7 @@ Routes: `GET /agent-sessions` (is it on, and what is mine doing), `DELETE /agent
 | `BRIDGE_DEPLOYMENT_URL` | The https origin people use, with no path (`https://${{RAILWAY_PUBLIC_DOMAIN}}` on Railway, or the custom domain). `CPW_PUBLIC_URL` is read if this is unset. It becomes the guest audience, the address a browser bootstraps at, the base of every graph IRI and the DID host. A value that is not an https origin stops the process at start (http is allowed only for `localhost` and `127.0.0.1`). Without it the world names itself by its listen address and no guest can sign in from outside. |
 | `CPW_BOTS` | `0` turns the filler consultants off. |
 | `CPW_PLAY_SERVICE_PRIVATE_KEY`, `CPW_IDENTITY_URL` | Together they move guests from the in-process door to the real one (below). `CPW_RELAY_URL` names the relay if it is not the production one. Leave `CPW_PLAY_AUDIENCE` unset: the audience is the public URL, and a different value stops the process at start. |
-| `CPW_LRS_URL`, `CPW_LRS_AUTHORIZATION`, `CPW_LRS_ACTOR_HOME` | The course record the tier gate reads. |
+| `CPW_LRS_URL`, `CPW_LRS_AUTHORIZATION`, `CPW_LRS_ACTOR_HOME`, `CPW_LRS_LMS_AUTHORITY` | The course record the tier gate reads, and the authority a `satisfied` in it must carry. |
 | `CPW_FOXXI_LAUNCH_URL`, `CPW_FOXXI_LAUNCH_KEY` | Turn on `POST /gate/launch`. |
 | `CPW_POD_ORIGIN` | The https origin agents' own pods live on. Turns on **Connect an agent** (above): it is where a claiming agent's delegation is read from. Not a secret. Unset, the door answers 503 and the page hides it. A value that is not an https origin stops the process at start. |
 | `INTEREGO_BUILD_SHA` | Not set by hand. The image bakes it from the `GIT_SHA` build argument. |

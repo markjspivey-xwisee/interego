@@ -12,6 +12,8 @@ import { buildProfile, missionActivityType, symptomActivityType, type ProfileDoc
 import { WorldError } from './errors.js';
 
 export interface XapiStatement {
+  /** Who stored it, as the LRS says. Set by an LRS on what it returns; this world sets none on what it writes. */
+  readonly authority?: { readonly objectType?: string; readonly account?: { readonly homePage?: string; readonly name?: string } };
   readonly id: string;
   readonly version: '2.0.0';
   readonly timestamp: string;
