@@ -22,6 +22,16 @@ actor. Statements the LMS stored before this change carry the old authority.
 Operator credentials can still store any verb; what they store does not carry
 the LMS's authority.
 
+## 2026-11-14 — Connect an agent, shared: any bridge can use a chat session's subscription instead of an API key
+
+The I2IDL-X workbench lets a person pair their own AI chat session with a page, so the page's questions are answered on that session's subscription and no model key is held anywhere. That method lived inside Foxxi. It is now shared code, and the coached world is the second bridge to use it.
+
+- **`applications/_shared/agent-connection/`** holds the protocol: sessions, one-use invitations, the driver capability, the turn queue with leases and revisions, limits and expiry. It has no express dependency and no workbench naming. A bridge supplies a profile (its path, action IRI, field names and wording), how it verifies an Interego-signed caller, and its request limits. Two adapters, for express and for plain `node:http`, wrap one function. A framework-free browser client (an ES module, no build step) opens a session, shows the invitation, follows a turn, cancels and disconnects.
+- **The workbench is unchanged on the wire.** `i2idlx-agent-sessions.ts` is now a thin composition over the shared core: the same routes, wire format, limits and error codes. Its tests were not edited. The provider-specific background Routine stays Foxxi's, passed in as an optional wake plug-in. The workbench page keeps its own bundled client.
+- **`applications/_shared/http-guard/`** holds what the coached world had written for itself and any bridge needs: the per-client request limit (IPv6 by its /56, the last forwarded hop behind a proxy), the ceiling helper for tables callers fill, the check that a public URL is an https origin, and the `/health` body the deploy verifier reads. The coached world imports them from there. Foxxi's express limiters were left as they are.
+- **Coached world: Connect an agent.** A signed-in consultant can pair their own chat session and have it be the agent they coach. A mission then goes to that session as a brief (the mission, the conditions the agent ran into, its remembered lessons, the interventions deployed so far; never the cause). Its answer is recorded as that agent's xAPI statement and shown on the mission. The pack's rules still score it; nothing judges the text. If the session does not answer within two minutes the turn is withdrawn, the mission runs simulated, and the feed says so. One connection per consultant.
+- **Setting.** `CPW_POD_ORIGIN` (the https origin agents' pods live on) turns the door on: it is where a claiming agent's delegation is read to verify it. Unset, the door answers 503, the page hides it and agents are simulated as before. Nothing is deployed by this change.
+
 ## 2026-11-14 — A test's own text no longer fails the relay's loopback scan
 
 The relay's test chain reads every test in the repository for a server started without naming
