@@ -1,0 +1,12 @@
+{
+ "player": "interego-roleplay-player/1",
+ "note": "Used only when the launch names no scenario (cmi5 launchParameters `scenario`, or the launch URL's `scenario`).",
+ "defaultScenario": "scenarios/double-charged-subscription.json",
+ "scenarios": [
+  {
+   "title": "Double-charged subscription refund call",
+   "href": "scenarios/double-charged-subscription.json",
+   "source": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription"
+  }
+ ]
+}

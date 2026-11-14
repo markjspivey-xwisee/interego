@@ -1,0 +1,1694 @@
+{
+ "@context": {
+  "pev": "https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#",
+  "dct": "http://purl.org/dc/terms/",
+  "scenarioKey": "pev:scenarioKey",
+  "title": "dct:title",
+  "learnerGoal": "pev:learnerGoal",
+  "firstLine": "pev:firstLine",
+  "assessmentUse": "pev:assessmentUse",
+  "workRegime": "pev:workRegime",
+  "turnLimit": "pev:turnLimit",
+  "source": {
+   "@id": "dct:source",
+   "@type": "@id"
+  },
+  "conformsTo": {
+   "@id": "dct:conformsTo",
+   "@type": "@id"
+  }
+ },
+ "@type": "pev:Scenario",
+ "player": "interego-roleplay-player/1",
+ "scenarioKey": "double-charged-subscription",
+ "title": "Double-charged subscription refund call",
+ "source": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription",
+ "conformsTo": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi",
+ "learnerGoal": "Resolve a duplicate $19 subscription charge within policy and leave the customer satisfied.",
+ "learnerPart": "Support rep for Brightline Notes Pro",
+ "situation": "A Brightline Notes Pro customer was charged $19 twice on Nov 3 (orders BN-4471 and BN-4472). Policy: refund the duplicate in full, started today, posting in 5 to 7 business days; the rep may offer one free month as goodwill without a manager.",
+ "language": "en-US",
+ "counterpart": {
+  "name": "Customer",
+  "profile": "Choose one of the personas below.",
+  "wants": "The duplicate charge fixed without a runaround.",
+  "knows": "Two charges on Nov 3.",
+  "reactions": "Calms down with specific empathy and clear policy; pushes back when vague."
+ },
+ "firstLine": "Hi. I just checked my card and Brightline charged me twice for Notes Pro. Nineteen dollars, two times, same day. What is going on?",
+ "endsWhen": "All stages of the chosen persona's flow are answered.",
+ "turnLimit": 5,
+ "assessmentUse": "pass-gate",
+ "workRegime": "knowable",
+ "passGateWhy": null,
+ "rubric": {
+  "criteria": [
+   {
+    "id": "empathy",
+    "title": "Empathy",
+    "description": "Acknowledges the specific frustration",
+    "weight": 1,
+    "concepts": [
+     "https://id.i2idl.org/concepts/empathy"
+    ],
+    "activityId": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#rubric-empathy",
+    "levels": [
+     {
+      "id": "0",
+      "label": "Missing",
+      "descriptor": "Missing",
+      "value": 0
+     },
+     {
+      "id": "1",
+      "label": "Partial",
+      "descriptor": "Partial",
+      "value": 1
+     },
+     {
+      "id": "2",
+      "label": "Solid",
+      "descriptor": "Solid",
+      "value": 2
+     },
+     {
+      "id": "3",
+      "label": "Strong",
+      "descriptor": "Strong",
+      "value": 3
+     }
+    ]
+   },
+   {
+    "id": "discovery",
+    "title": "Discovery",
+    "description": "Confirms both orders and the amount",
+    "weight": 1,
+    "concepts": [
+     "https://id.i2idl.org/concepts/task-analysis"
+    ],
+    "activityId": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#rubric-discovery",
+    "levels": [
+     {
+      "id": "0",
+      "label": "Missing",
+      "descriptor": "Missing",
+      "value": 0
+     },
+     {
+      "id": "1",
+      "label": "Partial",
+      "descriptor": "Partial",
+      "value": 1
+     },
+     {
+      "id": "2",
+      "label": "Solid",
+      "descriptor": "Solid",
+      "value": 2
+     },
+     {
+      "id": "3",
+      "label": "Strong",
+      "descriptor": "Strong",
+      "value": 3
+     }
+    ]
+   },
+   {
+    "id": "accuracy",
+    "title": "Accuracy",
+    "description": "States the policy correctly: refund today, 5 to 7 business days, optional free month",
+    "weight": 1,
+    "concepts": [
+     "https://id.i2idl.org/concepts/procedural-knowledge"
+    ],
+    "activityId": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#rubric-accuracy",
+    "levels": [
+     {
+      "id": "0",
+      "label": "Missing",
+      "descriptor": "Missing",
+      "value": 0
+     },
+     {
+      "id": "1",
+      "label": "Partial",
+      "descriptor": "Partial",
+      "value": 1
+     },
+     {
+      "id": "2",
+      "label": "Solid",
+      "descriptor": "Solid",
+      "value": 2
+     },
+     {
+      "id": "3",
+      "label": "Strong",
+      "descriptor": "Strong",
+      "value": 3
+     }
+    ]
+   },
+   {
+    "id": "resolution",
+    "title": "Resolution",
+    "description": "Commits to the refund and goodwill and confirms the customer is satisfied",
+    "weight": 1,
+    "concepts": [
+     "https://id.i2idl.org/concepts/human-support-system"
+    ],
+    "activityId": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#rubric-resolution",
+    "levels": [
+     {
+      "id": "0",
+      "label": "Missing",
+      "descriptor": "Missing",
+      "value": 0
+     },
+     {
+      "id": "1",
+      "label": "Partial",
+      "descriptor": "Partial",
+      "value": 1
+     },
+     {
+      "id": "2",
+      "label": "Solid",
+      "descriptor": "Solid",
+      "value": 2
+     },
+     {
+      "id": "3",
+      "label": "Strong",
+      "descriptor": "Strong",
+      "value": 3
+     }
+    ]
+   },
+   {
+    "id": "professionalism",
+    "title": "Professionalism",
+    "description": "Calm, clear, courteous",
+    "weight": 1,
+    "concepts": [
+     "https://id.i2idl.org/concepts/human-support-system"
+    ],
+    "activityId": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#rubric-professionalism",
+    "levels": [
+     {
+      "id": "0",
+      "label": "Missing",
+      "descriptor": "Missing",
+      "value": 0
+     },
+     {
+      "id": "1",
+      "label": "Partial",
+      "descriptor": "Partial",
+      "value": 1
+     },
+     {
+      "id": "2",
+      "label": "Solid",
+      "descriptor": "Solid",
+      "value": 2
+     },
+     {
+      "id": "3",
+      "label": "Strong",
+      "descriptor": "Strong",
+      "value": 3
+     }
+    ]
+   }
+  ],
+  "passRule": {
+   "minPercent": 66,
+   "requiredLevels": {
+    "empathy": "1",
+    "discovery": "1",
+    "accuracy": "1"
+   }
+  }
+ },
+ "activity": {
+  "name": "Double-charged subscription refund call",
+  "description": "Voice role-play: the trainee plays a support rep resolving a $19 duplicate charge (orders BN-4471 and BN-4472) within policy.",
+  "concepts": [
+   "https://id.i2idl.org/concepts/simulation",
+   "https://id.i2idl.org/concepts/performance-based-assessment",
+   "https://id.i2idl.org/concepts/formative-assessment"
+  ]
+ },
+ "xapi": {
+  "profile": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi",
+  "profileVersion": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3",
+  "verbs": {
+   "initialized": "http://adlnet.gov/expapi/verbs/initialized",
+   "consented": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/consented",
+   "declinedConsent": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/declined-consent",
+   "scored": "http://adlnet.gov/expapi/verbs/scored",
+   "completed": "http://adlnet.gov/expapi/verbs/completed",
+   "terminated": "http://adlnet.gov/expapi/verbs/terminated",
+   "turn": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/took-turn"
+  },
+  "activityTypes": {
+   "scenario": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario",
+   "criterion": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/rubric-criterion",
+   "consent": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/consent-notice",
+   "attempt": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation"
+  },
+  "extensions": {
+   "pseudonym": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym",
+   "scenario": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario",
+   "attemptGraph": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph",
+   "callId": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id",
+   "concepts": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/i2idlx-concepts",
+   "criterionKey": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/criterion-key",
+   "passBar": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/pass-bar",
+   "criterionScores": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/criterion-scores",
+   "counterpartLine": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/customer-line",
+   "rubric": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric"
+  }
+ },
+ "ui": {
+  "brand": "Callcraft",
+  "headline": "Refund call practice",
+  "blurb": "A Brightline Notes Pro customer was charged $19 twice on Nov 3. Talk them through it out loud, and they'll react to what you say.",
+  "counterpartRole": "customer",
+  "moodBands": [
+   40,
+   70
+  ],
+  "upsetHint": "They're upset. Acknowledge how they feel before the facts. ",
+  "missingHints": [
+   {
+    "fromStage": 2,
+    "criterion": "discovery",
+    "text": "You still haven't confirmed the order numbers: BN-4471 and BN-4472."
+   }
+  ],
+  "realPracticeNote": "Ready for the real thing? Ask Grok Bot in chat to call you. It opens with an AI disclosure and asks for your consent, then scores the call against this same rubric.",
+  "freshLinkNote": "Ask Grok Bot in chat for a fresh link.",
+  "reviewNote": "a reviewer reads what you said and signs the result off first. Open this course again afterwards to record it."
+ },
+ "nextSteps": [
+  {
+   "when": {
+    "criterionBelow": {
+     "accuracy": 2
+    }
+   },
+   "text": "Read the four-step job aid. Accuracy is the gap, and the job aid has the exact policy wording.",
+   "link": {
+    "label": "Open the job aid",
+    "href": "https://foxxi-bridge.interego.xwisee.com/content/job-aid/aid-afd35f6c-1a5"
+   }
+  },
+  {
+   "when": {
+    "passed": false
+   },
+   "text": "Run this customer again. You know the policy; focus on the steps flagged above."
+  },
+  {
+   "when": {
+    "passed": true,
+    "variantOf": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#scenario"
+   },
+   "text": "You passed. Try the next customer up, or ask Grok Bot in chat for a real phone call."
+  },
+  {
+   "when": {
+    "passed": true
+   },
+   "text": "You passed the escalation variant. Ask Grok Bot in chat for the real escalation call."
+  }
+ ],
+ "personas": [
+  {
+   "id": "dana",
+   "name": "Dana Reyes",
+   "mood": "Frustrated",
+   "level": 1,
+   "startMood": 55,
+   "variantOf": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#scenario",
+   "backstory": "Pays $19 a month for Brightline Notes Pro. Spotted two charges on Nov 3 while checking her card at lunch. Wants it fixed, not a runaround.",
+   "firstLine": "Hi. I just checked my card and Brightline charged me twice for Notes Pro. Nineteen dollars, two times, same day. What is going on?",
+   "endings": [
+    "Thanks, you've been really helpful. Have a good one.",
+    "Okay. Thanks, I guess.",
+    "I'll believe it when I see it. Bye."
+   ],
+   "stages": [
+    {
+     "goal": "Open with empathy",
+     "hint": "Name the problem and apologize before you ask for anything.",
+     "evidenceFor": [
+      "empathy"
+     ],
+     "choices": [
+      {
+       "text": "Okay. Can you send me some proof of the charges?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 20,
+       "note": "Asking for proof first sounds like doubt. Acknowledge the problem before anything else."
+      },
+      {
+       "text": "Being charged twice is frustrating, and I'm sorry that happened. Let's get it sorted right now.",
+       "effects": {
+        "empathy": 2,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": -20,
+       "best": true
+      },
+      {
+       "text": "Sorry about that. What's the email on the account?",
+       "effects": {
+        "empathy": 1,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": -5,
+       "note": "A quick apology helps, but naming the specific problem lands better."
+      }
+     ]
+    },
+    {
+     "goal": "Confirm both orders",
+     "hint": "You haven't confirmed the order numbers yet: BN-4471 and BN-4472.",
+     "evidenceFor": [
+      "discovery"
+     ],
+     "lines": [
+      "Thank you. Yes, two charges for Notes Pro, both on November 3rd.",
+      "Okay. It's two charges, $19 each, on November 3rd.",
+      "I already told you. Two charges. November 3rd. Can you actually see them or not?"
+     ],
+     "choices": [
+      {
+       "text": "Let me check... yes, I see a $19 charge on Nov 3.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 1,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 10,
+       "note": "Only one charge confirmed. Name both orders and the amount."
+      },
+      {
+       "text": "I can see both: two $19 charges on Nov 3, orders BN-4471 and BN-4472. Is that what you're seeing?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 3,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      },
+      {
+       "text": "Duplicate charges usually drop off on their own. Let's give it a few days.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 25,
+       "note": "This dodges the problem and isn't policy. Look up and confirm the orders."
+      }
+     ]
+    },
+    {
+     "goal": "State the policy",
+     "hint": "Policy: the refund starts today and posts in 5 to 7 business days.",
+     "evidenceFor": [
+      "accuracy"
+     ],
+     "lines": [
+      "Great, that's them. So when do I get my money back?",
+      "Right. So when do I get my money back?",
+      "Fine. When exactly am I getting my $19 back? I want a real answer."
+     ],
+     "choices": [
+      {
+       "text": "It should be back pretty soon. These are usually quick.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 15,
+       "note": "Vague timelines make customers anxious. Give the exact window."
+      },
+      {
+       "text": "Refunds take up to 30 days, and I'll need a manager to approve it.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 25,
+       "note": "Wrong on both counts: it's 5 to 7 business days, and you can do it yourself."
+      },
+      {
+       "text": "I'm refunding the duplicate $19 today. It will post to your card in 5 to 7 business days.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 2,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      }
+     ]
+    },
+    {
+     "goal": "Offer goodwill",
+     "hint": "You can offer one free month yourself. No manager needed.",
+     "evidenceFor": [
+      "resolution"
+     ],
+     "lines": [
+      "Okay, that's fair. It's still annoying, though.",
+      "That's a long wait for money you took by mistake.",
+      "Honestly, this whole thing makes me want to cancel. Can I just talk to a manager?"
+     ],
+     "choices": [
+      {
+       "text": "You shouldn't have had to deal with this. I've added one free month to your account as an apology.",
+       "effects": {
+        "empathy": 1,
+        "discovery": 0,
+        "accuracy": 1,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -20,
+       "best": true
+      },
+      {
+       "text": "Let me transfer you to a manager who can help with that.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 10,
+       "note": "You don't need a manager. The free month is within your own authority."
+      },
+      {
+       "text": "I understand. Unfortunately, there's nothing else I can do.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": 15,
+       "note": "Polite, but it closes the door. Offer the free month."
+      }
+     ]
+    },
+    {
+     "goal": "Recap and close",
+     "hint": "Recap the fix, then check they're satisfied.",
+     "evidenceFor": [
+      "professionalism"
+     ],
+     "lines": [
+      "Alright, I appreciate that. Is that everything?",
+      "Okay. So are we done here?",
+      "Whatever. Are we done?"
+     ],
+     "choices": [
+      {
+       "text": "Yep, that's everything. Bye.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": -1
+       },
+       "mood": 10,
+       "note": "An abrupt ending undoes good work. Recap and check they're satisfied."
+      },
+      {
+       "text": "To recap: the duplicate $19 from order BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Is there anything else I can help with?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 1,
+        "professionalism": 2
+       },
+       "mood": -15,
+       "best": true
+      },
+      {
+       "text": "Yes. Thanks for calling Brightline, have a great day.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": 0,
+       "note": "Courteous, but you didn't recap the fix or check they're satisfied."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "sam",
+   "name": "Sam Okafor",
+   "mood": "Confused",
+   "level": 2,
+   "startMood": 35,
+   "variantOf": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#scenario",
+   "backstory": "Not sure if he was double-charged or accidentally upgraded. Polite, but needs things explained clearly and in order.",
+   "firstLine": "Hey, sorry, I'm a bit lost. I see two Brightline charges on Nov 3. Did I buy something twice, or is this a mistake?",
+   "endings": [
+    "Got it, that makes total sense now. Thanks so much!",
+    "Okay, I think I get it. Thanks.",
+    "I'm still not totally sure what happened, but okay."
+   ],
+   "stages": [
+    {
+     "goal": "Reassure, then own it",
+     "hint": "He's confused, not angry. Reassure him and say it looks like our mistake.",
+     "evidenceFor": [
+      "empathy"
+     ],
+     "choices": [
+      {
+       "text": "No problem, that's what I'm here for. It looks like a mistake on our side, and I'm sorry for the confusion. Let's sort it out together.",
+       "effects": {
+        "empathy": 2,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": -15,
+       "best": true
+      },
+      {
+       "text": "You probably upgraded by accident. Did you click anything?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 20,
+       "note": "Guessing, and hinting it's his fault, adds confusion. Reassure him first."
+      },
+      {
+       "text": "Okay, what's your email?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": 5,
+       "note": "Fine, but cold. Reassure him before asking for details."
+      }
+     ]
+    },
+    {
+     "goal": "Explain both orders clearly",
+     "hint": "Name both orders and say which one is the duplicate.",
+     "evidenceFor": [
+      "discovery"
+     ],
+     "lines": [
+      "Thanks. So what were the two charges?",
+      "Okay... so what are these two charges?",
+      "I'm more confused now. What are these charges?"
+     ],
+     "choices": [
+      {
+       "text": "It's just a billing thing. Nothing to worry about.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 15,
+       "note": "Vague. Name both orders and say which is the duplicate."
+      },
+      {
+       "text": "I see order BN-4471 for $19.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 1,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 5,
+       "note": "Only one order. Confirm both and the amount."
+      },
+      {
+       "text": "You have one plan, Notes Pro at $19 a month. On Nov 3 it was charged twice: orders BN-4471 and BN-4472. The second is a duplicate, not an upgrade.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 3,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      }
+     ]
+    },
+    {
+     "goal": "Explain the refund",
+     "hint": "Refund starts today and takes 5 to 7 business days to show up.",
+     "evidenceFor": [
+      "accuracy"
+     ],
+     "lines": [
+      "Oh, okay. So do I get one of them back?",
+      "So... do I get money back or not?",
+      "I still don't get it. Am I getting money back?"
+     ],
+     "choices": [
+      {
+       "text": "Yes, it'll be refunded within 24 hours.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 10,
+       "note": "Wrong timeline. It's 5 to 7 business days; promising faster sets up another call."
+      },
+      {
+       "text": "Yes. I'm refunding the duplicate $19 today. It takes 5 to 7 business days to show up on your card.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 2,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      },
+      {
+       "text": "You'd need to request that through the website.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 20,
+       "note": "You can refund it yourself, today. Don't send him away."
+      }
+     ]
+    },
+    {
+     "goal": "Prevent the next call",
+     "hint": "Tell him what next month looks like, and offer the free month.",
+     "evidenceFor": [
+      "resolution"
+     ],
+     "lines": [
+      "Great. Will this happen again next month?",
+      "Okay. Will this happen again?",
+      "How do I know this won't happen again?"
+     ],
+     "choices": [
+      {
+       "text": "Can't promise anything, billing glitches happen.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 15,
+       "note": "Honest-sounding but unsettling. Explain what he'll see and offer the free month."
+      },
+      {
+       "text": "I'll escalate it to a manager to investigate.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 5,
+       "note": "No manager needed. The fix and the free month are within your authority."
+      },
+      {
+       "text": "Next month you'll see one normal $19 charge. And for the trouble, I've added a free month to your account.",
+       "effects": {
+        "empathy": 1,
+        "discovery": 0,
+        "accuracy": 1,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      }
+     ]
+    },
+    {
+     "goal": "Recap and close",
+     "hint": "Recap in plain words so he knows exactly what happens.",
+     "evidenceFor": [
+      "professionalism"
+     ],
+     "lines": [
+      "Perfect, thanks. Is there anything I need to do?",
+      "Okay. Do I need to do anything?",
+      "Is there something I have to do now?"
+     ],
+     "choices": [
+      {
+       "text": "Nothing at all. To recap: the duplicate $19 from BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Anything else I can help with?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 1,
+        "professionalism": 2
+       },
+       "mood": -10,
+       "best": true
+      },
+      {
+       "text": "Nope. Bye.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": -1
+       },
+       "mood": 10,
+       "note": "Too abrupt for a confused customer. Recap and check he's satisfied."
+      },
+      {
+       "text": "No, you're all set. Have a good day.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": 0,
+       "note": "Courteous, but recap the fix so he knows exactly what happens."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "jordan",
+   "name": "Jordan Pike",
+   "mood": "Wants to cancel",
+   "level": 3,
+   "startMood": 65,
+   "variantOf": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#scenario",
+   "backstory": "Already annoyed about the price. The double charge was the last straw, and they open by asking to cancel.",
+   "firstLine": "You charged me twice on Nov 3. Honestly, I'm about ready to just cancel the whole thing.",
+   "endings": [
+    "Okay. You actually turned that around. Thanks.",
+    "Fine. I'll give it another month.",
+    "I'm still probably cancelling. Bye."
+   ],
+   "stages": [
+    {
+     "goal": "Fix first, don't rush the cancel",
+     "hint": "Acknowledge the double charge and offer to fix it before talking about cancelling.",
+     "evidenceFor": [
+      "empathy"
+     ],
+     "choices": [
+      {
+       "text": "I can process the cancellation for you right away.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": 10,
+       "note": "You skipped the actual problem. Acknowledge the double charge and fix it first."
+      },
+      {
+       "text": "I'm sorry. Being charged twice is a frustrating way to find out something's wrong. Before you decide anything, let me fix the charge right now.",
+       "effects": {
+        "empathy": 2,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": -20,
+       "best": true
+      },
+      {
+       "text": "If you cancel you'll lose all your notes.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 25,
+       "note": "Sounds like a threat. Lead with empathy and the fix."
+      }
+     ]
+    },
+    {
+     "goal": "Confirm both orders",
+     "hint": "The orders are on screen: BN-4471 and BN-4472.",
+     "evidenceFor": [
+      "discovery"
+     ],
+     "lines": [
+      "Fine. It's the two charges on November 3rd.",
+      "Fine. Two charges, November 3rd.",
+      "Two charges. November 3rd. Look it up."
+     ],
+     "choices": [
+      {
+       "text": "Which card was it on?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 1,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 10,
+       "note": "The orders are in front of you. Confirm them instead of asking."
+      },
+      {
+       "text": "Our system shows you're active, so the charge is valid.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 20,
+       "note": "One charge is valid; the duplicate isn't. Confirm both orders."
+      },
+      {
+       "text": "I see it: two $19 charges on Nov 3, orders BN-4471 and BN-4472. The second is a duplicate.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 3,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      }
+     ]
+    },
+    {
+     "goal": "State the policy",
+     "hint": "Refund the duplicate in full, starting today, 5 to 7 business days.",
+     "evidenceFor": [
+      "accuracy"
+     ],
+     "lines": [
+      "So what happens with the extra $19?",
+      "So what about the extra $19?",
+      "And my money? Or do I have to fight for that too?"
+     ],
+     "choices": [
+      {
+       "text": "I'm refunding the duplicate $19 today. It posts in 5 to 7 business days.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 2,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      },
+      {
+       "text": "If you cancel, I can refund the whole month.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 5,
+       "note": "Not the policy. Refund the duplicate in full, starting today."
+      },
+      {
+       "text": "Refunds are handled by billing. I'll pass it on.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 15,
+       "note": "You own this. Start the refund yourself and give the 5 to 7 day window."
+      }
+     ]
+    },
+    {
+     "goal": "Make a goodwill offer",
+     "hint": "Respect their choice, and offer the free month so they can decide without paying.",
+     "evidenceFor": [
+      "resolution"
+     ],
+     "lines": [
+      "Okay. I'm still thinking about cancelling, though.",
+      "I still kind of want to cancel.",
+      "I'm still cancelling. This was the last straw."
+     ],
+     "choices": [
+      {
+       "text": "Okay, I've cancelled your account.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 5,
+       "note": "Too fast. Offer the free month first and let them decide."
+      },
+      {
+       "text": "That's completely your call. If it helps, I've added a free month as an apology, so you can decide without paying for it.",
+       "effects": {
+        "empathy": 1,
+        "discovery": 0,
+        "accuracy": 1,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -20,
+       "best": true
+      },
+      {
+       "text": "Please don't cancel, we really need customers like you.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 10,
+       "note": "Pleading isn't a resolution. Make a concrete goodwill offer."
+      }
+     ]
+    },
+    {
+     "goal": "Recap and close",
+     "hint": "Recap the refund and the free month, then check they're satisfied.",
+     "evidenceFor": [
+      "professionalism"
+     ],
+     "lines": [
+      "Alright, I'll keep it for now. Is that everything?",
+      "Fine, I'll keep it. Are we done?",
+      "Whatever. Are we done?"
+     ],
+     "choices": [
+      {
+       "text": "Yes. Thanks for staying with Brightline!",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": 0,
+       "note": "Friendly, but recap the refund and free month so they know what to expect."
+      },
+      {
+       "text": "Yep. Bye.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": -1
+       },
+       "mood": 10,
+       "note": "Abrupt. Recap and check they're satisfied."
+      },
+      {
+       "text": "To recap: the duplicate $19 from BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Is there anything else I can help with?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 1,
+        "professionalism": 2
+       },
+       "mood": -10,
+       "best": true
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "riley",
+   "name": "Riley Chen",
+   "mood": "Angry",
+   "level": 4,
+   "startMood": 80,
+   "variantOf": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#scenario",
+   "backstory": "Had a long day and found the double charge right after a bank fee. Short on patience and quick to interrupt.",
+   "firstLine": "This is unbelievable. You took $38 instead of $19 and now my account is overdrawn. Fix it.",
+   "endings": [
+    "Fine. Thanks for actually fixing it.",
+    "Okay. Whatever. Thanks.",
+    "This is the last time I deal with you people."
+   ],
+   "stages": [
+    {
+     "goal": "Absorb the anger",
+     "hint": "Acknowledge the stress of being overdrawn. Never tell them to calm down.",
+     "evidenceFor": [
+      "empathy"
+     ],
+     "choices": [
+      {
+       "text": "Please calm down.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 20,
+       "note": "Telling someone to calm down rarely works. Acknowledge the stress first."
+      },
+      {
+       "text": "Overdraft fees aren't something we cover.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 25,
+       "note": "Leading with a no escalates. Acknowledge, then fix what you can."
+      },
+      {
+       "text": "I'm really sorry. A double charge that leaves you overdrawn is stressful, and it's on us. I'm going to fix it with you right now.",
+       "effects": {
+        "empathy": 2,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": -20,
+       "best": true
+      }
+     ]
+    },
+    {
+     "goal": "Confirm both orders",
+     "hint": "Confirm both orders and say which is the duplicate.",
+     "evidenceFor": [
+      "discovery"
+     ],
+     "lines": [
+      "Okay. Two charges, both on November 3rd.",
+      "Two charges. November 3rd.",
+      "Do I have to spell it out? Two charges. November 3rd."
+     ],
+     "choices": [
+      {
+       "text": "I can see both: two $19 charges on Nov 3, orders BN-4471 and BN-4472. BN-4472 is the duplicate.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 3,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      },
+      {
+       "text": "Can you read me the last four digits of your card?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 1,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 10,
+       "note": "Not needed here. Confirm the orders you can already see."
+      },
+      {
+       "text": "Hmm, I only see one charge.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 25,
+       "note": "There are two. Look carefully and confirm both orders."
+      }
+     ]
+    },
+    {
+     "goal": "State the policy, no overpromising",
+     "hint": "Refund starts today, posts in 5 to 7 business days. Don't promise faster.",
+     "evidenceFor": [
+      "accuracy"
+     ],
+     "lines": [
+      "Okay. So when is the money back?",
+      "When is the money back?",
+      "When. Is. My. Money. Back."
+     ],
+     "choices": [
+      {
+       "text": "Immediately. It'll be back tonight.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 5,
+       "note": "Overpromising backfires. Give the real window: 5 to 7 business days."
+      },
+      {
+       "text": "I'm refunding the duplicate $19 today. It posts in 5 to 7 business days.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 2,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      },
+      {
+       "text": "It depends on your bank.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 15,
+       "note": "Vague. The refund starts today and posts in 5 to 7 business days."
+      }
+     ]
+    },
+    {
+     "goal": "Be honest about limits",
+     "hint": "You can't refund the bank's fee, but you can offer a free month.",
+     "evidenceFor": [
+      "resolution"
+     ],
+     "lines": [
+      "That still leaves me short this week.",
+      "That's a week of being short.",
+      "A week? And what about the overdraft fee?"
+     ],
+     "choices": [
+      {
+       "text": "We'll reimburse your overdraft fee too.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": -5,
+       "note": "Not within policy. Be honest about what you can do, then offer the free month."
+      },
+      {
+       "text": "That's between you and your bank.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 20,
+       "note": "Accurate but cold. Show you care, then offer the free month."
+      },
+      {
+       "text": "I hear you, and I'm sorry for the knock-on hassle. I can't refund the bank's fee, but I've added a free month to your account as an apology.",
+       "effects": {
+        "empathy": 1,
+        "discovery": 0,
+        "accuracy": 1,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      }
+     ]
+    },
+    {
+     "goal": "Recap and close",
+     "hint": "Recap clearly and check they're satisfied.",
+     "evidenceFor": [
+      "professionalism"
+     ],
+     "lines": [
+      "Okay. Thanks for actually fixing it.",
+      "Fine. Are we done?",
+      "Are we done?"
+     ],
+     "choices": [
+      {
+       "text": "Okay, bye.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": -1
+       },
+       "mood": 10,
+       "note": "Abrupt. Recap and check they're satisfied."
+      },
+      {
+       "text": "To recap: the duplicate $19 from BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Is there anything else I can help with?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 1,
+        "professionalism": 2
+       },
+       "mood": -10,
+       "best": true
+      },
+      {
+       "text": "Glad I could help. Take care.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": 0,
+       "note": "Kind, but recap the fix so they know what to expect."
+      }
+     ]
+    }
+   ]
+  },
+  {
+   "id": "dana2",
+   "name": "Dana Reyes, second call",
+   "mood": "Escalation",
+   "level": 5,
+   "startMood": 88,
+   "variantOf": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/roleplay-double-charged-subscription#escalation",
+   "backstory": "The escalation variant. Same double charge, but this is Dana's second call and she opens by demanding a manager. Stay inside your own authority; route to a lead only if she refuses the fix.",
+   "firstLine": "This is the second time I'm calling about being charged twice. I want a manager. Now.",
+   "endings": [
+    "Thank you. That's all I wanted the first time.",
+    "Okay. Let's hope it sticks this time.",
+    "I'll be talking to your manager about this."
+   ],
+   "stages": [
+    {
+     "goal": "De-escalate, offer to fix it yourself",
+     "hint": "Don't transfer yet. Acknowledge the repeat call and offer to fix it yourself, now.",
+     "evidenceFor": [
+      "empathy"
+     ],
+     "choices": [
+      {
+       "text": "Sure, let me transfer you to a manager.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 5,
+       "note": "Not yet. Route to a lead only if she refuses the fix. Offer it first."
+      },
+      {
+       "text": "I'm sorry you've had to call twice. That shouldn't happen. I can fix the double charge myself, right now, on this call. Can I take two minutes to do that?",
+       "effects": {
+        "empathy": 2,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": -25,
+       "best": true
+      },
+      {
+       "text": "Managers are busy. What's the problem?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 20,
+       "note": "Dismissive. Acknowledge the repeat call and offer to fix it yourself."
+      }
+     ]
+    },
+    {
+     "goal": "Confirm both orders",
+     "hint": "Don't make her repeat herself. Confirm the orders you can see.",
+     "evidenceFor": [
+      "discovery"
+     ],
+     "lines": [
+      "Fine. Two minutes. It's the Nov 3 double charge.",
+      "Fine. It's the double charge from November 3rd. Again.",
+      "I explained this last time. Two charges, November 3rd!"
+     ],
+     "choices": [
+      {
+       "text": "Can you explain the issue from the beginning?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 20,
+       "note": "Making her repeat herself on a second call hurts. Confirm the orders you can see."
+      },
+      {
+       "text": "I've got it here: two $19 charges on Nov 3, orders BN-4471 and BN-4472. I'm sorry it wasn't fixed the first time.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 3,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      },
+      {
+       "text": "I see a charge on Nov 3.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 1,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 10,
+       "note": "Name both orders and the amount."
+      }
+     ]
+    },
+    {
+     "goal": "Fix it inside your authority",
+     "hint": "Duplicate refunds and a free month are yours to give. No ticket, no callback.",
+     "evidenceFor": [
+      "accuracy"
+     ],
+     "lines": [
+      "Okay. So what are you actually going to do?",
+      "So what are you going to do this time?",
+      "Last time nobody did anything. What are you going to do?"
+     ],
+     "choices": [
+      {
+       "text": "I'll open a ticket and someone will call you back.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 20,
+       "note": "That's what failed last time. You can refund it yourself today."
+      },
+      {
+       "text": "A manager has to approve refunds.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 15,
+       "note": "Not true. Duplicate refunds and a free month are within your authority."
+      },
+      {
+       "text": "I'm refunding the duplicate $19 right now. It will post in 5 to 7 business days, and I'll stay on the line while it goes through.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 2,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      }
+     ]
+    },
+    {
+     "goal": "Goodwill, and only route if she refuses",
+     "hint": "She's accepted the fix. Offer the free month; no transfer needed.",
+     "evidenceFor": [
+      "resolution"
+     ],
+     "lines": [
+      "Okay. That's better.",
+      "Fine. But I'm still annoyed.",
+      "Fine. But I'm still annoyed."
+     ],
+     "choices": [
+      {
+       "text": "I'll transfer you to a manager anyway, just in case.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": -1,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 10,
+       "note": "She accepted the fix. Routing her now goes against the escalation rule and wastes her time."
+      },
+      {
+       "text": "You have every right to be annoyed. I've also added a free month to your account as an apology for the repeat call.",
+       "effects": {
+        "empathy": 1,
+        "discovery": 0,
+        "accuracy": 1,
+        "resolution": 1,
+        "professionalism": 0
+       },
+       "mood": -15,
+       "best": true
+      },
+      {
+       "text": "Okay, anything else?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 0
+       },
+       "mood": 5,
+       "note": "Rushed. Acknowledge the repeat call and offer the free month."
+      }
+     ],
+     "variant": {
+      "when": {
+       "moodAbove": 70
+      },
+      "goal": "She refused the fix: route to a lead",
+      "hint": "She refused the resolution, so now routing to a lead is right. Confirm what's done and brief them.",
+      "line": "No. I've heard that before. I want a manager.",
+      "choices": [
+       {
+        "text": "There's nothing more anyone can do.",
+        "effects": {
+         "empathy": 0,
+         "discovery": 0,
+         "accuracy": 0,
+         "resolution": 0,
+         "professionalism": 0
+        },
+        "mood": 15,
+        "note": "She refused the fix; now routing to a lead is right. Brief them so she doesn't repeat herself."
+       },
+       {
+        "text": "Transferring you now.",
+        "effects": {
+         "empathy": 0,
+         "discovery": 0,
+         "accuracy": 0,
+         "resolution": 1,
+         "professionalism": 0
+        },
+        "mood": 0,
+        "note": "Routing is right here, but confirm what's done and brief the lead first."
+       },
+       {
+        "text": "I understand. The refund is already started and I've added a free month. I'll bring in my lead now and brief them, so you won't have to repeat anything.",
+        "effects": {
+         "empathy": 1,
+         "discovery": 0,
+         "accuracy": 1,
+         "resolution": 1,
+         "professionalism": 0
+        },
+        "mood": -10,
+        "best": true
+       }
+      ]
+     }
+    },
+    {
+     "goal": "Recap and close",
+     "hint": "Recap everything that's done, and note it so she won't need a third call.",
+     "evidenceFor": [
+      "professionalism"
+     ],
+     "lines": [
+      "Thank you. Is that everything?",
+      "Okay. Are we done?",
+      "Fine. Are we done?"
+     ],
+     "choices": [
+      {
+       "text": "To recap: the duplicate $19 from BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month, and it's noted on your account so you won't need to call again. Anything else?",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 1,
+        "professionalism": 2
+       },
+       "mood": -10,
+       "best": true
+      },
+      {
+       "text": "Yes. Bye.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": -1
+       },
+       "mood": 10,
+       "note": "Abrupt, on a second call. Recap and check she's satisfied."
+      },
+      {
+       "text": "Yes, thanks for your patience.",
+       "effects": {
+        "empathy": 0,
+        "discovery": 0,
+        "accuracy": 0,
+        "resolution": 0,
+        "professionalism": 1
+       },
+       "mood": 0,
+       "note": "Kind, but recap what's done so she trusts it this time."
+      }
+     ]
+    }
+   ]
+  }
+ ],
+ "practiceEvidenceScenario": {
+  "iri": "urn:pev:scenario:2820abbd51e6ac5c",
+  "version": 1
+ },
+ "rubricRef": "urn:pev:scenario:2820abbd51e6ac5c#version-1",
+ "resultAfterReview": true
+}

@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-11-14 — Practice Evidence: a role-play player whose result waits for its review
+
+The voice role-play player existed only as a package hosted on a bridge, with
+no source in this repository. It wrote one `scored` per criterion and its own
+`completed`, and no statement for what was said. So a practice call could not be
+taken as an attempt: there was no conversation for a reviewer to read, and the
+unit had already declared its result.
+
+The player is now in `docs/applications/practice-evidence/roleplay-player/`,
+served with the documentation, and changed:
+
+- it writes one statement per exchange: the other person's line on the
+  activity, the learner's answer in `result.response`;
+- each score is keyed by the rubric criterion's id, and every statement names
+  the scenario version it was scored against;
+- where the scenario sets `resultAfterReview`, it sends no `completed`, labels
+  its own score as unreviewed, and tells the learner the course is not complete;
+- launched again in the same registration, it asks the LMS for the reviewed
+  statements (`GET /cmi5/reviewed`) and sends them.
+
+Checked by hand in a browser against a loopback stand-in for the LMS: a practice
+wrote `initialized`, a consent, 5 exchanges, 5 scores and `terminated`, and this
+application's own reader took those statements as one conversation; a second
+launch sent `passed` and `completed`. Not yet run against a deployed LMS. The
+test added here checks the scenario file and the page's text, not the page
+running.
+
 ## 2026-11-14 — Coached world: an image, a public URL, request limits and a ceiling on what it keeps
 
 The coached world ran only on a developer's machine. It can now be built as an image and put behind a proxy on a public address. Nothing is deployed by this change: there is no Railway service yet, and no service row, so the pipeline has nothing to roll out.
