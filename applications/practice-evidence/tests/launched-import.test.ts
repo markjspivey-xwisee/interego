@@ -468,6 +468,7 @@ describe('pev.import_launched_attempt', () => {
     ok(await act(H, 'pev.override_attempt', W.ben, { attemptIri: taken['attemptIri'], target: seen['currentTarget'], levels, sawJudgeLevelsFirst: true }));
 
     const NEXT = 'a1b2c3d4-0000-4000-8000-00000000abcd';
+    const seenCodes: string[] = [];
     // Asking by registration is the LMS's alone: a learner, a reviewer and a stranger are all refused the same way.
     for (const w of [W.ana, W.ben, W.author]) {
       refused(await act(H, 'pev.launched_statements', w, { registration: REG4, sessionId: NEXT }), 403, 'not-the-lms');
@@ -478,6 +479,13 @@ describe('pev.import_launched_attempt', () => {
     // A bridge that reads no LMS registers none to ask.
     refused(await act(unconfigured, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: NEXT }), 501, 'launch-import-not-configured');
 
+    // A bridge that could not read every attempt does not say the registration was never taken.
+    for (const budget of [20_000, 60_000, 120_000]) {
+      const tight = createPevHandlers({ ...base, actReadBudgetBytes: budget, launchImport: { readUrl: `${LMS}/agent/xapi-statements/read`, endpoint: `${LMS}/xapi`, vocabulary: VOCAB, fetchFn: lrs.fetchFn } }) as Handlers;
+      const r = await act(tight, 'pev.launched_statements', W.lms, { registration: '22222222-2222-4222-8222-222222222222', sessionId: NEXT });
+      seenCodes.push(`${budget}:${String(r['iep:refusalStatus'])}:${String(r['iep:refusalReason'])}`);
+    }
+    expect(seenCodes.some((c) => c.endsWith(':503:registration-search-incomplete')), seenCodes.join(' ')).toBe(true);
     // The LMS opened the session, so no read of the LRS is made: its signed word is recorded as its word.
     const reads = lrs.seen.length;
     const out = ok(await act(H, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: NEXT }));

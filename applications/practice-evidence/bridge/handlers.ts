@@ -3205,7 +3205,11 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
     const registration = String(s.payload['registration']).toLowerCase();
     const every = await attemptBodies(call, s.pod, 'which attempt was taken from this registration');
     const found = every.bodies.find((b) => b.lmsLaunch !== undefined && b.lmsLaunch.registration.toLowerCase() === registration && b.lmsLaunch.endpoint === li.endpoint);
-    if (!found) throw decline(404, 'No attempt was taken from this registration.', 'registration-not-taken', undefined, every.complete ? {} : every.limit);
+    // Not finding it among the attempts that could be read is not finding it only when all of them were read.
+    if (!found && !every.complete) {
+      throw decline(503, 'Not every attempt on this pod could be read, so this bridge cannot tell whether an attempt was taken from this registration.', 'registration-search-incomplete', undefined, every.limit);
+    }
+    if (!found) throw decline(404, 'No attempt was taken from this registration.', 'registration-not-taken');
     iri = found.attemptIri;
   }
   return locked(call, `${s.pod}|${iri}`, async () => {
