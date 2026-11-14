@@ -100,10 +100,13 @@ const HASH_KEYS: ReadonlySet<string> = new Set(['rubricHash', 'scenarioHash']);
 /**
  * Keys whose value is signed or exported bytes, left as they are: a record's descriptor and graph
  * (export_record gives a scored attempt's graphs only to a reader of the stakes) and a statement
- * (project_attempt gives a scored one only to such a reader). A feedback-only rubric's hash in
- * them carries no stake.
+ * (project_attempt gives a scored one only to such a reader), or the statements of a launched
+ * attempt (launched_statements likewise). A feedback-only rubric's hash in them carries no stake.
+ * The statements handed out for a unit are fixed documents the unit compares, byte for byte, with
+ * what its LRS holds: a hash rewritten in them, differently on each ask, would make every copy
+ * differ from the one kept.
  */
-const SIGNED_KEYS: ReadonlySet<string> = new Set(['graphTrig', 'descriptorTurtle', 'statement']);
+const SIGNED_KEYS: ReadonlySet<string> = new Set(['graphTrig', 'descriptorTurtle', 'statement', 'statements']);
 /**
  * A rubric IRI, its hash as `hashIn` reads it: `urn:pev:rubric:`, 63 hex, and the hash's last digit, or the one letter
  * NFC folded that digit and the combining marks after it into (`foldedDigit`).
