@@ -27,6 +27,17 @@ was on. Such an attempt is not revalidated.
 Without the setting nothing changes. Not covered: `terminated`, the exchanges
 and the scores are the unit's own statements and are not the LMS's to mark.
 
+## 2026-11-14 — Voice mode, shared: say it and hear it, in the coached world and in I2IDL-X Ask
+
+A page can now take a spoken question or command and read an answer aloud, using only what the browser has. No model is called for it and no key is involved: where a page has model work, the paired chat session still does it. It is one shared module, so any vertical or bridge can adopt it.
+
+- **`applications/_shared/voice/`** is one dependency-free browser module, `voice.js`, and a README. Speech in uses the browser's `SpeechRecognition`: one utterance at a time, or hands-free (it listens again after each result and ends itself after three silent rounds), with interim words. Speech out uses `speechSynthesis`, a sentence per utterance so a long answer starts and stops promptly; `speakDelta` follows an answer that arrives as cumulative text and speaks each sentence once. Starting to listen stops the reading. `matchSpoken` matches what was heard against labels on screen with fixed rules and returns nothing when two labels fit.
+- **States are what happened**: idle, listening, speaking, denied, unsupported, error. A blocked microphone is told apart from silence and from a missing microphone. The microphone opens only inside a call made from a person's gesture; where the browser reports user activation, a call without one is refused.
+- **The audio.** The module makes no network request. The browser may: Chrome and most Chromium browsers send what you say to the browser vendor's speech service. The module carries that sentence, and both pages show it beside the microphone. Firefox has no recognition, so the microphone control is hidden there; reading aloud still works.
+- **Coached world.** The Coach tab has a voice card. Read aloud speaks the connected agent's work when it arrives and the outcome after an intervention. Say a command presses the matching button: send the agent on a mission, a diagnosis or intervention by its label, deploy. If nothing matches, the page shows what it heard and does nothing. The bridge serves the module at `/voice.js`.
+- **I2IDL-X workbench.** Ask has a microphone button that fills the question box and asks, and Read aloud for the streamed answer with Stop reading. The page bundle imports the shared file directly, so there is no second copy; `app/tools/ask-voice-check.mjs` runs the hook against fake speech objects in the TypeScript workflow and fails if the bundle stops taking the shared file. The four workbench workflows now also start when the shared module changes.
+- **Not tested**: real microphone audio and a real synthesizer. The tests use fake speech objects in node and in headless Chromium. No response header was changed: neither bridge sends a `Permissions-Policy`, so the microphone is allowed for the page's own origin by default. Nothing is deployed by this change.
+
 ## 2026-11-14 — Coached world: the tier gate takes a satisfied only from the LMS
 
 The tier gate promotes a consultant when the LRS holds a cmi5 `satisfied` for
