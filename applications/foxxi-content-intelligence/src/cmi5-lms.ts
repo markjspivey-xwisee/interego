@@ -600,6 +600,18 @@ export function cmi5BearerRegistration(token: string): string | null {
   return authTokenLaunch.get(token)?.registration ?? null;
 }
 
+/**
+ * The session a cmi5-issued auth-token belongs to, as this LMS holds it now: the registration the
+ * token is bound to, that registration's current session, how it was launched and whether it has
+ * ended. Null for a token this LMS did not issue, or a registration with no session kept.
+ */
+export function cmi5BearerSession(token: string): { registration: string; sessionId: string; launchMode: Cmi5LaunchMode; closed: boolean } | null {
+  const bound = authTokenLaunch.get(token);
+  const launch = bound ? launches.get(bound.registration) : undefined;
+  if (!bound || !launch || launch.tenant !== bound.tenant || !launch.sessionId) return null;
+  return { registration: launch.registration, sessionId: launch.sessionId, launchMode: launch.launchMode ?? 'Normal', closed: launch.sessionClosed !== undefined };
+}
+
 // ── moveOn orchestration — closing the cmi5 loop ─────────────────────
 
 /** What the LMS needs to observe a registration and emit `satisfied`. */
