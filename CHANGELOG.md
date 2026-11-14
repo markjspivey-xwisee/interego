@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-14 — Foxxi: TLA-X names the reusable launch link
+
+The TLA-X decoration ties each component of ADL's Total Learning Architecture to
+a control in a Foxxi deployment. Its learning event manager named one way to
+launch: a single-use cmi5 launch. It now also names the reusable personal launch
+link (`POST /agent/cmi5/go`), as a control in the catalog and as a capability in
+the proposals.
+
+The decoration is published, and CI holds this source to the live publication,
+so the two graphs were republished with this change: the catalog (Asserted) and
+the proposals (Hypothetical), each superseding the version before it. The other
+four decorations are unchanged and were not republished.
+
 ## 2026-11-13 — Foxxi: a course player on the existing Interego guest
 
 A browser that opens a hosted package or a published activity, with no cmi5 launch on the URL, gets a player for that course. Start does not mint a Foxxi identity. It uses the provisional Interego guest the learning account already signs in (`u-try-play-`, browser key) or an existing owner, and the xAPI actor is that owner's DID. Agreeing to the recording is required before the launch, and that agreement is kept against the learner and the course. The statements, the satisfied activities and a later deletion are kept in that learner's own lens, the same one a signed read uses. The published course stays in the shared catalogue. The same browser continues the same owner and, while the attempt is open, the same registration. Adding a passkey, wallet or DID keeps that owner (`/connect?claim=`), and the page can ask identity for a fresh token for that key after the activity, because the first one is not kept. Signing in as a different existing owner records a link and leaves the guest's statements as they were. After that link, what the guest does next is recorded as the owner, in the owner's lens; linking again copies satisfaction once more and does not store a second claim. Deleting a guest recording stores a voiding statement and then marks the original with that statement's id, keeps those voids on the learner's pod even when no launch is still in memory, and clears that learner's State documents. A linked guest's own deletion also removes the satisfaction copied onto the owner and the owner's claim that names the guest. Unclaimed guests still expire on identity's own deadline.
