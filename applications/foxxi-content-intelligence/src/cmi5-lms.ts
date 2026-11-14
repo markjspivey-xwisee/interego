@@ -619,6 +619,16 @@ export function cmi5BearerRegistration(token: string): string | null {
 }
 
 /**
+ * The actor a cmi5-issued auth-token was issued for: the account this LMS put on the launch. An
+ * assignable unit writes its statements as that actor (cmi5 9.2) and as nobody else.
+ */
+export function cmi5BearerActor(token: string): { homePage: string; name: string } | null {
+  const bound = authTokenLaunch.get(token);
+  const launch = bound ? launches.get(bound.registration) : undefined;
+  return launch && bound && launch.tenant === bound.tenant ? { homePage: launch.authoritativeSource, name: launch.learner.id } : null;
+}
+
+/**
  * The session a cmi5-issued auth-token was issued for, as this LMS holds it now: the registration
  * and the session the token is bound to, how the registration was launched, and whether that
  * session is still the one to act in. A token is for one session. Once the registration has moved
