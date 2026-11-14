@@ -227,6 +227,8 @@ export interface LmsLaunch {
     readonly at: string; readonly sessionId: string; readonly to: string; readonly statements: readonly Readonly<Record<string, unknown>>[];
     /** What said the session was one to send in: the LRS, read through the learner's signed read, or the LMS that opened it. */
     readonly sessionVouchedBy?: 'lrs-read' | 'lms';
+    /** When the LMS vouched: the account homePage it speaks for, which is the launch actor's. */
+    readonly issuer?: string;
   };
 }
 
@@ -249,7 +251,8 @@ export function lmsLaunchProblems(v: unknown): string[] {
   if (typeof actor !== 'object' || actor === null || Array.isArray(actor)) p.push('actor must be an account: homePage and name');
   else {
     const a = actor as Record<string, unknown>;
-    if (!lmsHttp(a['homePage'])) p.push('actor.homePage must be an absolute http(s) URL');
+    // An LMS may name its accounts under a DID or another IRI, not only a web address.
+    if (typeof a['homePage'] !== 'string' || !LMS_IRI.test(a['homePage'])) p.push('actor.homePage must be an absolute IRI');
     if (typeof a['name'] !== 'string' || a['name'].length === 0) p.push('actor.name must be non-empty');
   }
   if (!lmsHttp(l['endpoint'])) p.push('endpoint must be an absolute http(s) URL');

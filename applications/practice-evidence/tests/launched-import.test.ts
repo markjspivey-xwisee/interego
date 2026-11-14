@@ -224,7 +224,12 @@ const base: PevDeps = {
   fetchFn: operatorPodFetch(POD, SECRET, pod.fetchFn), holderFetchFn: pod.fetchFn, defaultPodUrl: POD,
   deploymentUrl: 'https://bridge.example.test', now: () => clock.now(), nonce,
 };
-const H = createPevHandlers({ ...base, launchImport: { readUrl: `${LMS}/agent/xapi-statements/read`, endpoint: `${LMS}/xapi`, vocabulary: VOCAB, fetchFn: lrs.fetchFn } }) as Handlers;
+const IMPORT = { readUrl: `${LMS}/agent/xapi-statements/read`, endpoint: `${LMS}/xapi`, vocabulary: VOCAB, fetchFn: lrs.fetchFn };
+// The operator says which LMS the lms principal speaks for: the homePage that LMS puts on its actors.
+const H = createPevHandlers({ ...base, launchImport: { ...IMPORT, lmsIssuers: { [W.lms.address]: LMS } } }) as Handlers;
+// The same bridge with no binding, and with the principal bound to another LMS behind the same LRS endpoint.
+const unbound = createPevHandlers({ ...base, launchImport: IMPORT }) as Handlers;
+const otherIssuer = createPevHandlers({ ...base, launchImport: { ...IMPORT, lmsIssuers: { [W.lms.address]: 'https://another-lms.example' } } }) as Handlers;
 const unconfigured = createPevHandlers(base) as Handlers;
 
 const actionOf = (tool: string): string => Object.values(PEV_ACTION).find((x) => toolNameOf(x) === tool)!;
@@ -484,12 +489,18 @@ describe('pev.import_launched_attempt', () => {
     ok(await act(H, 'pev.register_role', W.admin, { address: W.lms.address, role: 'lms', change: 'add' }));
     refused(await act(H, 'pev.launched_statements', W.lms, { registration: 'not-a-registration', sessionId: NEXT }), 400, 'registration-not-a-uuid');
     refused(await act(H, 'pev.launched_statements', W.lms, { registration: '11111111-1111-4111-8111-111111111111', sessionId: NEXT }), 404, 'registration-not-taken');
+    // The role alone names no issuer. A principal the operator bound to no LMS speaks for none; one bound to another
+    // LMS behind the same LRS endpoint finds this registration not there, and cannot take it by its attempt either.
+    refused(await act(unbound, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: NEXT }), 403, 'lms-issuer-unbound');
+    refused(await act(otherIssuer, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: NEXT }), 404, 'registration-not-taken');
+    refused(await act(otherIssuer, 'pev.launched_statements', W.lms, { attemptIri: taken['attemptIri'], sessionId: NEXT }), 403, 'not-the-learner');
+    refused(await act(unbound, 'pev.launched_statements', W.lms, { attemptIri: taken['attemptIri'], sessionId: NEXT }), 403, 'not-the-learner');
     // A bridge that reads no LMS registers none to ask.
     refused(await act(unconfigured, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: NEXT }), 501, 'launch-import-not-configured');
 
     // A bridge that could not read every attempt does not say the registration was never taken.
     for (const budget of [20_000, 60_000, 120_000]) {
-      const tight = createPevHandlers({ ...base, actReadBudgetBytes: budget, launchImport: { readUrl: `${LMS}/agent/xapi-statements/read`, endpoint: `${LMS}/xapi`, vocabulary: VOCAB, fetchFn: lrs.fetchFn } }) as Handlers;
+      const tight = createPevHandlers({ ...base, actReadBudgetBytes: budget, launchImport: { ...IMPORT, lmsIssuers: { [W.lms.address]: LMS } } }) as Handlers;
       const r = await act(tight, 'pev.launched_statements', W.lms, { registration: '22222222-2222-4222-8222-222222222222', sessionId: NEXT });
       seenCodes.push(`${budget}:${String(r['iep:refusalStatus'])}:${String(r['iep:refusalReason'])}`);
     }
@@ -504,7 +515,7 @@ describe('pev.import_launched_attempt', () => {
     expect((statements[0]!['context'] as { registration: string; extensions: Out }).registration).toBe(REG4);
     expect(((statements[0]!['context'] as { extensions: Out }).extensions)[SESSION_EXT]).toBe(NEXT);
     const a = (await readHead(POD, String(taken['attemptIri']), TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
-    expect(a.lmsLaunch!.handedOut).toMatchObject({ sessionId: NEXT, to: didOf(W.lms.address), sessionVouchedBy: 'lms' });
+    expect(a.lmsLaunch!.handedOut).toMatchObject({ sessionId: NEXT, to: didOf(W.lms.address), sessionVouchedBy: 'lms', issuer: LMS });
     expect(validateAgainstShape(recordGraphTurtle(a), readShapesTurtle(), { entailment: 'rdfs' }).conforms).toBe(true);
 
     // The learner asking afterwards gets the same documents; so does the LMS asking again.

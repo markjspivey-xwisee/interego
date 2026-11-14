@@ -1524,7 +1524,9 @@ describe('statements', () => {
     expect(lmsLaunchProblems(null)).toEqual(['the launch is not an object']);
     expect(lmsLaunchProblems({ ...LAUNCH, sessionId: '' })).toEqual(['sessionId must be a non-empty string']);
     expect(lmsLaunchProblems({ ...LAUNCH, activityId: 'relative/path' })).toEqual(['activityId must be an absolute IRI']);
-    expect(lmsLaunchProblems({ ...LAUNCH, actor: { homePage: 'lms.example', name: '' } })).toEqual(['actor.homePage must be an absolute http(s) URL', 'actor.name must be non-empty']);
+    expect(lmsLaunchProblems({ ...LAUNCH, actor: { homePage: 'lms.example', name: '' } })).toEqual(['actor.homePage must be an absolute IRI', 'actor.name must be non-empty']);
+    // An LMS that names its accounts under a DID is as good as one that uses a web address.
+    expect(lmsLaunchProblems({ ...LAUNCH, actor: { homePage: 'did:web:lms.example', name: 'learner-7' } })).toEqual([]);
     expect(lmsLaunchProblems({ ...LAUNCH, endpoint: 'ftp://lms.example/xapi' })).toEqual(['endpoint must be an absolute http(s) URL']);
     expect(lmsLaunchProblems({ ...LAUNCH, launchMode: 'normal' })).toEqual(['launchMode must be Normal, Browse or Review']);
     expect(lmsLaunchProblems({ ...LAUNCH, masteryScore: 80 })).toEqual(['masteryScore must be a number from 0 to 1']);

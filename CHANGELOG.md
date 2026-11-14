@@ -18,6 +18,11 @@ the same eligibility and refusals, fixed once.
 - The role works only for attempts taken from the LRS this bridge reads, never
   together with the role `agent`, and gives no other right: an `lms` principal
   reviews nothing and reads no attempt.
+- The role alone names no issuer. An LRS endpoint can front several LMSs, so the
+  operator binds each `lms` principal to the account homePage its LMS puts on the
+  actors it launches (`PEV_LAUNCH_LMS_ISSUERS`). The principal takes statements
+  only for attempts whose launch actor carries that homePage, and one with no
+  binding speaks for no LMS.
 
 Whoever holds a registered `lms` key can take the reviewed result of any attempt
 taken from that LMS. The LMS's own route that takes the unit's credential and
