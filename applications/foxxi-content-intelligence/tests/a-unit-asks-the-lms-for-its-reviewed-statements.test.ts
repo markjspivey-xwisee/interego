@@ -177,6 +177,52 @@ describe('GET /cmi5/reviewed', () => {
     expect(cmi5BearerSession(second.token)).toMatchObject({ sessionId: session.sessionId, superseded: false, closed: false });
   });
 
+  describe('an answer from the review service that is too long', () => {
+    const q = { registration: 'r', sessionId: 's' };
+    const askWith = (respond: () => Response) => reviewServiceAsk({ ...SERVICE, wallet, fetch: (async () => respond()) as typeof fetch })(q);
+    /** A body sent in `chunks`, counting how many were asked for and whether the reader gave up. */
+    const streamed = (chunks: () => Iterator<Uint8Array>) => {
+      const it = chunks();
+      const seen = { pulled: 0, cancelled: false };
+      const body = new ReadableStream<Uint8Array>({
+        pull(c) { const n = it.next(); if (n.done) c.close(); else { seen.pulled++; c.enqueue(n.value); } },
+        cancel() { seen.cancelled = true; },
+      }, { highWaterMark: 0 });
+      return { seen, response: () => new Response(body, { status: 200 }) };
+    };
+
+    it('stops reading a body with no end soon after the limit, and answers as for an unusable service', async () => {
+      const chunk = new Uint8Array(64 * 1024).fill(0x20);
+      const endless = streamed(function* () { for (;;) yield chunk; });
+      expect(await askWith(endless.response)).toEqual({ status: 502, body: null });
+      expect(endless.seen.cancelled).toBe(true);
+      // 1,000,000 bytes is passed in the 16th chunk of 65,536. Nothing like the whole body was taken.
+      expect(endless.seen.pulled).toBeLessThanOrEqual(18);
+    });
+
+    it('counts bytes, not characters', async () => {
+      // 400,000 euro signs: 400,000 characters, 1,200,000 bytes.
+      const euros = new TextEncoder().encode(JSON.stringify({ kind: 'x', pad: '\u20ac'.repeat(400_000) }));
+      expect(euros.byteLength).toBeGreaterThan(1_000_000);
+      const long = streamed(function* () { for (let i = 0; i < euros.byteLength; i += 50_000) yield euros.subarray(i, i + 50_000); });
+      expect(await askWith(long.response)).toEqual({ status: 502, body: null });
+      expect(long.seen.cancelled).toBe(true);
+    });
+
+    it('does not read an answer that declares more than the limit', async () => {
+      const declared = streamed(function* () { yield new Uint8Array(8); });
+      const r = await askWith(() => new Response(declared.response().body, { status: 200, headers: { 'Content-Length': '1000001' } }));
+      expect(r).toEqual({ status: 502, body: null });
+      expect([declared.seen.pulled, declared.seen.cancelled]).toEqual([0, true]);
+    });
+
+    it('still reads an answer under the limit whose characters are split between chunks', async () => {
+      const bytes = new TextEncoder().encode(JSON.stringify({ kind: 'cmi5-launched-statements', note: 'caf\u00e9 \u20ac \ud83d\ude00' }));
+      const split = streamed(function* () { for (let i = 0; i < bytes.byteLength; i += 1) yield bytes.subarray(i, i + 1); });
+      expect(await askWith(split.response)).toEqual({ status: 200, body: { kind: 'cmi5-launched-statements', note: 'caf\u00e9 \u20ac \ud83d\ude00' } });
+    });
+  });
+
   it('signs what it says it signs', async () => {
     const e = await signedReviewRequest({ ...SERVICE, wallet }, { registration: 'r', sessionId: 's' }, '2026-11-14T10:00:00.000Z', 'n-1');
     expect(JSON.parse(e._signed_payload)).toEqual({

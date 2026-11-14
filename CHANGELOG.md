@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-14 — Foxxi: the review service's answer is limited as it is read
+
+`GET /cmi5/reviewed` asks a review service and limits its answer to 1,000,000
+bytes. The limit was checked after the whole answer had been read into a string,
+and against the string's length. A service that never stopped sending was
+buffered until the 20-second timeout, and an answer of multi-byte text could be
+up to three times the limit.
+
+The answer is now counted in bytes as it arrives. The read stops at the first
+chunk that passes the limit and the rest is cancelled; an answer that declares a
+longer length is not read at all. The unit gets the same `502` as before.
+
+Found by the reviewer after #883 merged.
+
 ## 2026-11-14 — Foxxi: an activity judged after its session asks the LMS for what it may now send
 
 Some activities are judged after the session ends: a practice conversation whose
