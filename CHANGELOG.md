@@ -4,6 +4,31 @@
 
 A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. The `cpw:` vocabulary is published at `docs/applications/coached-world/cpw.ttl`, the same bytes as `applications/coached-world/ontology/cpw.ttl`. Named-graph IRIs go through `turtleIriRef`. The bridge entry installs the shared process safety net, so a rejection nothing awaited is logged and the process keeps serving. See `applications/coached-world/README.md`.
 
+## 2026-11-14 — Practice Evidence: what shows a session over, and a byte limit on the LRS read
+
+Two follow-ups to the change that lets a learner have a reviewed result fixed
+again for a later session. Both came from the reviewer after it merged.
+
+To fix statements again, the ending of the earlier session is evidence. Any
+terminated or abandoned naming that session was accepted. It now has to be a
+cmi5 terminated or abandoned for this unit, by this learner, carrying the cmi5
+category. One about another unit, by another actor or outside cmi5 frees
+nothing. Refusing a session to send in is unchanged: any ending naming it still
+refuses. Not checked: which credential stored the ending. cmi5 has the LMS
+record abandoned, and the read does not say who stored a statement.
+
+After a second read by the reviewer: an abandoned no longer counts as that
+ending at all, only a terminated, until an LRS can show that the LMS stored it.
+And a voiding statement in the read that points at a handed-out id counts as
+that statement having been sent, since an LRS leaves a voided statement out of
+a read. A voiding statement the read does not return cannot be seen; the ids do
+not change, so such a statement still collides when the unit sends.
+
+The LRS's answer to the learner's signed read was limited to 2,000,000 bytes
+after the whole answer had been read into a string, and by the string's length.
+It is now counted in bytes as it arrives and cut off past the limit, as the
+Foxxi side does.
+
 ## 2026-11-14 — Foxxi: the review service's answer is limited as it is read
 
 `GET /cmi5/reviewed` asks a review service and limits its answer to 1,000,000
