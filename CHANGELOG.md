@@ -13,6 +13,21 @@ The coached world ran only on a developer's machine. It can now be built as an i
 
 Still to do by hand, in this order: create the Railway service `coached-world-bridge` as a single replica with no deploy overlap, set `BRIDGE_DEPLOYMENT_URL`, then add its row to `tools/railway-services.mjs`. The steps and every setting are in `applications/coached-world/README.md`.
 
+## 2026-11-14 — Practice Evidence: a launched unit may name the scenario version as its rubric
+
+Taking an attempt from an LMS launch requires every scored statement to name
+the rubric it was scored against, by the rubric's hash or IRI. For a scored
+scenario this bridge withholds those hashes from an assistant, and shows a
+stand-in keyed to the scenario version. So an agent building a unit could not
+write a value the import accepts: the one it was shown is not the rubric's.
+
+A scored statement may now name the scenario version instead: the scenario's
+IRI and `#version-<n>`. A published version has one rubric and does not change,
+so it binds the scores to the same rubric, and it is public. The hash and the
+rubric IRI are still accepted. Nothing about what is withheld changes.
+
+Found while changing the voice role-play player to write what the import reads.
+
 ## 2026-11-14 — Coached world: a shared performance-consulting world on existing primitives
 
 A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. The `cpw:` vocabulary is published at `docs/applications/coached-world/cpw.ttl`, the same bytes as `applications/coached-world/ontology/cpw.ttl`. Named-graph IRIs go through `turtleIriRef`. The bridge entry installs the shared process safety net, so a rejection nothing awaited is logged and the process keeps serving. See `applications/coached-world/README.md`.

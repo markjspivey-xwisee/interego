@@ -15,7 +15,7 @@ import { PEV_ACTION, readShapesTurtle, toolNameOf } from '../src/ontology.js';
 import { coerceScenario, rubricHash, type ScenarioSpec } from '../src/practice.js';
 import { didOf, recordGraphTurtle, signEnvelope, type AttemptBody } from '../src/records.js';
 import {
-  launchVocabularyProblems, readLaunchedCall, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary,
+  launchVocabularyProblems, readLaunchedCall, scenarioVersionRef, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary,
 } from '../src/launched-import.js';
 import { buildLaunchedStatements, launchedRefusals, VERB_COMPLETED, VERB_PASSED } from '../src/projections.js';
 
@@ -183,6 +183,15 @@ describe('a registration read as a conversation', () => {
     expect(problemsOf([...c, scored(33, 'charm', 100)])).toEqual(['criteria scored that the rubric does not have: charm']);
     expect(problemsOf([...c.slice(0, 4), scored(31, 'asks-their-view', 75), ...c.slice(5)])).toEqual(['the score 75 for asks-their-view is not the value of exactly one level']);
     expect(problemsOf([...c.slice(0, 4), scored(31, 'asks-their-view', 50, { rubric: 'f'.repeat(64) }), ...c.slice(5)])[0]).toContain('do not name this scenario version\'s rubric');
+    // The scenario version names the same rubric. A unit built without being shown the rubric's hash names that.
+    const REF = scenarioVersionRef('urn:pev:scenario:0123456789abcdef', 3);
+    expect(REF).toBe('urn:pev:scenario:0123456789abcdef#version-3');
+    const byVersion = call({ rubric: REF });
+    expect(readLaunchedCall(byVersion, { ...INPUT, scenarioVersionRef: REF })).toHaveProperty('call');
+    // Only where the bridge says which version it is, and only that version.
+    expect(problemsOf(byVersion)[0]).toContain('do not name this scenario version\'s rubric');
+    const other = readLaunchedCall(byVersion, { ...INPUT, scenarioVersionRef: scenarioVersionRef('urn:pev:scenario:0123456789abcdef', 4) });
+    expect('problems' in other && other.problems[0]).toContain('#version-4');
     expect(problemsOf([...c, stmt(VERB_INITIALIZED, 50, {}, { registration: '11111111-1111-4111-8111-111111111111' })])[0]).toContain('belongs to another registration');
     expect(problemsOf([...c, turn(25, 'Extra.', 'From someone else.', { actor: didOf(W.ben.address) })])).toContain('the statements name more than one actor');
     const noAnswer = turn(15, 'A line.', 'x'); delete (noAnswer['result'] as Out)['response'];
@@ -627,5 +636,19 @@ describe('pev.import_launched_attempt', () => {
 
     // The role is for this and nothing else: the LMS reviews nothing and reads no attempt.
     refused(await act(H, 'pev.override_attempt', W.lms, { attemptIri: S['attempt'], target: seen['currentTarget'], levels, sawJudgeLevelsFirst: true }), 403, 'not-a-reviewer');
+  }, SLOW);
+
+  it('takes a call whose scores name the scenario version instead of the rubric hash', async () => {
+    const REG9 = '5e11a7c0-0a1b-4c2d-8e3f-9a8b7c6d5e41';
+    const SESSION9 = '5e11a7c0-0a1b-4c2d-8e3f-9a8b7c6d5e4f';
+    const o = { registration: REG9, session: SESSION9, rubric: scenarioVersionRef(S['scenario']!, 1) };
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', o), ...call(o)] } });
+    const r = ok(await act(H, 'pev.import_launched_attempt', W.ana, pay({ registration: REG9 }), readOf(REG9)));
+    expect(r).toMatchObject({ state: 'judged', registration: REG9, turnsRead: 4 });
+    // Another version's name is not this one's.
+    const REG10 = '5e11a7c0-0a1b-4c2d-8e3f-9a8b7c6d5e42';
+    const o2 = { registration: REG10, session: SESSION9, rubric: scenarioVersionRef(S['scenario']!, 2) };
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', o2), ...call(o2)] } });
+    refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ registration: REG10 }), readOf(REG10)), 422, 'registration-not-a-conversation');
   }, SLOW);
 });
