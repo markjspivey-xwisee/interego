@@ -514,6 +514,30 @@ describe('minting, opening and withdrawing a personal launch link', () => {
   });
 });
 
+describe('launchParameters come from the course, unless the link replaces them', () => {
+  const paramsCourse: Cmi5Course = {
+    id: 'urn:foxxi:course:params', title: 'Parameters',
+    structure: [{ kind: 'au', id: 'https://au.example/params', title: 'Params', url: 'https://content.example/params', moveOn: 'Completed', launchParameters: 'from=course' }],
+  };
+  it('stages the course value, the request\'s replacement, or nothing when the request clears it', async () => {
+    const staged: Record<string, unknown>[] = [];
+    const s = await start({
+      courses: [paramsCourse],
+      stageLaunch: async (_tenant, launch) => { staged.push(launch.launchData); },
+    });
+    const kept = await mint(s, { course_id: paramsCourse.id });
+    expect((await open(s, kept.body.token as string)).status).toBe(200);
+    expect(staged.at(-1)).toMatchObject({ launchParameters: 'from=course' });
+    const replaced = await mint(s, { course_id: paramsCourse.id, launch_parameters: 'from=request' });
+    expect((await open(s, replaced.body.token as string)).status).toBe(200);
+    expect(staged.at(-1)).toMatchObject({ launchParameters: 'from=request' });
+    const cleared = await mint(s, { course_id: paramsCourse.id, launch_parameters: null });
+    expect((await open(s, cleared.body.token as string)).status).toBe(200);
+    expect(staged.at(-1)).not.toHaveProperty('launchParameters');
+    expect((await mint(s, { course_id: paramsCourse.id, launch_parameters: 4 })).status).toBe(400);
+  });
+});
+
 describe('the bridge wires the personal link the way it wires a signed launch', () => {
   it('authenticates with the signed-request verifier, derives the learner from it, and keeps links on the tenant pod', () => {
     const src = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');

@@ -499,6 +499,7 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
           id: au.id, url: auUrl, moveOn: au.moveOn, title: au.title,
           ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}),
           ...(au.entitlementKey ? { entitlementKey: au.entitlementKey } : {}),
+          ...(au.launchParameters ? { launchParameters: au.launchParameters } : {}),
         },
         learner: { id: learner.did },
         lrsEndpoint: `${base}/xapi`,

@@ -475,7 +475,7 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
 import { attachXapiLrsRoutes, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
@@ -11530,8 +11530,10 @@ app.post('/agent/cmi5/launch', async (req, res) => {
     if (!choice.ok) { res.status(choice.status).json({ error: choice.error, ...(choice.missingPrerequisites ? { missingPrerequisites: choice.missingPrerequisites } : {}) }); return; }
     const au = choice.au;
     const returnUrl = typeof auth.payload.return_url === 'string' && /^https?:\/\//.test(auth.payload.return_url) ? auth.payload.return_url : undefined;
+    const parameters = launchParametersFrom(au.launchParameters, auth.payload.launch_parameters);
+    if (!parameters.ok) { res.status(400).json({ error: parameters.error }); return; }
     const launch = buildCmi5Launch({
-      au: { id: au.id, url: new URL(au.url, `${bridgeBaseUrl}/`).toString(), moveOn: au.moveOn, title: au.title, ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}) },
+      au: { id: au.id, url: new URL(au.url, `${bridgeBaseUrl}/`).toString(), moveOn: au.moveOn, title: au.title, ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}), ...(parameters.value ? { launchParameters: parameters.value } : {}) },
       learner: { id: learner.did },
       lrsEndpoint: `${bridgeBaseUrl}/xapi`,
       fetchBaseUrl: `${bridgeBaseUrl}/cmi5/fetch`,
