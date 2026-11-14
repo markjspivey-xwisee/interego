@@ -28,7 +28,7 @@ const SECRET = 'operator-pod-write-secret-for-tests';
 const T0 = Date.parse('2026-10-22T09:00:00.000Z');
 const key = (name: string): string => `0x${sha256(`pev-launch-test-key:${name}`)}`;
 const wallet = (name: string): Wallet => importWallet(key(name), 'human', name);
-const W = { platform: importWallet(demoKey('platform'), 'agent', 'pev-platform'), admin: wallet('admin'), author: wallet('author'), ana: wallet('ana'), ben: wallet('ben') };
+const W = { platform: importWallet(demoKey('platform'), 'agent', 'pev-platform'), admin: wallet('admin'), author: wallet('author'), ana: wallet('ana'), ben: wallet('ben'), lms: wallet('lms') };
 
 const clock = { t: T0, now(): Date { this.t += 1000; return new Date(this.t); } };
 let nonceN = 0;
@@ -224,7 +224,12 @@ const base: PevDeps = {
   fetchFn: operatorPodFetch(POD, SECRET, pod.fetchFn), holderFetchFn: pod.fetchFn, defaultPodUrl: POD,
   deploymentUrl: 'https://bridge.example.test', now: () => clock.now(), nonce,
 };
-const H = createPevHandlers({ ...base, launchImport: { readUrl: `${LMS}/agent/xapi-statements/read`, endpoint: `${LMS}/xapi`, vocabulary: VOCAB, fetchFn: lrs.fetchFn } }) as Handlers;
+const IMPORT = { readUrl: `${LMS}/agent/xapi-statements/read`, endpoint: `${LMS}/xapi`, vocabulary: VOCAB, fetchFn: lrs.fetchFn };
+// The operator says which LMS the lms principal speaks for: the homePage that LMS puts on its actors.
+const H = createPevHandlers({ ...base, launchImport: { ...IMPORT, lmsIssuers: { [W.lms.address]: LMS } } }) as Handlers;
+// The same bridge with no binding, and with the principal bound to another LMS behind the same LRS endpoint.
+const unbound = createPevHandlers({ ...base, launchImport: IMPORT }) as Handlers;
+const otherIssuer = createPevHandlers({ ...base, launchImport: { ...IMPORT, lmsIssuers: { [W.lms.address]: 'https://another-lms.example' } } }) as Handlers;
 const unconfigured = createPevHandlers(base) as Handlers;
 
 const actionOf = (tool: string): string => Object.values(PEV_ACTION).find((x) => toolNameOf(x) === tool)!;
@@ -462,5 +467,67 @@ describe('pev.import_launched_attempt', () => {
   it('hands out nothing for an attempt no LMS launched, or one whose launch mode was only assumed', async () => {
     const started = ok(await act(H, 'pev.start_attempt', W.ana, { scenarioIri: S['scenario'], scenarioVersion: 1, coached: false }));
     refused(await act(H, 'pev.launched_statements', W.ana, { attemptIri: started['attemptIri'], sessionId: 'any-session' }), 409, 'no-lms-launch');
+  }, SLOW);
+  it('lets the LMS that launched an attempt take its statements by registration, on its own word for the session', async () => {
+    // Another call of Ana's, taken and reviewed.
+    const REG4 = '9c4f5b91-6e4d-4f86-8a51-3d7e0f2a4b5c';
+    const SESSION4 = 'f0b4d2f7-85a6-4c93-9d4a-6f8a2b3c4d5e';
+    const o = { registration: REG4, session: SESSION4 };
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', o), ...call(o)] } });
+    const taken = ok(await act(H, 'pev.import_launched_attempt', W.ana, { scenarioIri: S['scenario'], scenarioVersion: 1, registration: REG4, coached: false }, readOf(REG4)));
+    const seen = ok(await act(H, 'pev.get_attempt', W.ben, { attemptIri: taken['attemptIri'] }));
+    const levels = [['specific-observation', 'specific'], ['asks-their-view', 'late'], ['agrees-next-step', 'owner-and-date']]
+      .map(([criterionId, levelId]) => ({ criterionId, levelId, why: 'Read against the two exchanges.' }));
+    ok(await act(H, 'pev.override_attempt', W.ben, { attemptIri: taken['attemptIri'], target: seen['currentTarget'], levels, sawJudgeLevelsFirst: true }));
+
+    const NEXT = 'a1b2c3d4-0000-4000-8000-00000000abcd';
+    const seenCodes: string[] = [];
+    // Asking by registration is the LMS's alone: a learner, a reviewer and a stranger are all refused the same way.
+    for (const w of [W.ana, W.ben, W.author]) {
+      refused(await act(H, 'pev.launched_statements', w, { registration: REG4, sessionId: NEXT }), 403, 'not-the-lms');
+    }
+    ok(await act(H, 'pev.register_role', W.admin, { address: W.lms.address, role: 'lms', change: 'add' }));
+    refused(await act(H, 'pev.launched_statements', W.lms, { registration: 'not-a-registration', sessionId: NEXT }), 400, 'registration-not-a-uuid');
+    refused(await act(H, 'pev.launched_statements', W.lms, { registration: '11111111-1111-4111-8111-111111111111', sessionId: NEXT }), 404, 'registration-not-taken');
+    // The role alone names no issuer. A principal the operator bound to no LMS speaks for none; one bound to another
+    // LMS behind the same LRS endpoint finds this registration not there, and cannot take it by its attempt either.
+    refused(await act(unbound, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: NEXT }), 403, 'lms-issuer-unbound');
+    refused(await act(otherIssuer, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: NEXT }), 404, 'registration-not-taken');
+    refused(await act(otherIssuer, 'pev.launched_statements', W.lms, { attemptIri: taken['attemptIri'], sessionId: NEXT }), 403, 'not-the-learner');
+    refused(await act(unbound, 'pev.launched_statements', W.lms, { attemptIri: taken['attemptIri'], sessionId: NEXT }), 403, 'not-the-learner');
+    // A bridge that reads no LMS registers none to ask.
+    refused(await act(unconfigured, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: NEXT }), 501, 'launch-import-not-configured');
+
+    // A bridge that could not read every attempt does not say the registration was never taken.
+    for (const budget of [20_000, 60_000, 120_000]) {
+      const tight = createPevHandlers({ ...base, actReadBudgetBytes: budget, launchImport: { ...IMPORT, lmsIssuers: { [W.lms.address]: LMS } } }) as Handlers;
+      const r = await act(tight, 'pev.launched_statements', W.lms, { registration: '22222222-2222-4222-8222-222222222222', sessionId: NEXT });
+      seenCodes.push(`${budget}:${String(r['iep:refusalStatus'])}:${String(r['iep:refusalReason'])}`);
+    }
+    expect(seenCodes.some((c) => c.endsWith(':503:registration-search-incomplete')), seenCodes.join(' ')).toBe(true);
+    // The LMS opened the session, so no read of the LRS is made: its signed word is recorded as its word.
+    const reads = lrs.seen.length;
+    const out = ok(await act(H, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: NEXT }));
+    expect(lrs.seen.length).toBe(reads);
+    const statements = out['statements'] as Out[];
+    expect(statements.map((x) => (x['verb'] as Out)['id'])).toEqual([VERB_PASSED, VERB_COMPLETED]);
+    expect([out['attemptIri'], out['again'], out['usableInSession']]).toEqual([taken['attemptIri'], false, true]);
+    expect((statements[0]!['context'] as { registration: string; extensions: Out }).registration).toBe(REG4);
+    expect(((statements[0]!['context'] as { extensions: Out }).extensions)[SESSION_EXT]).toBe(NEXT);
+    const a = (await readHead(POD, String(taken['attemptIri']), TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    expect(a.lmsLaunch!.handedOut).toMatchObject({ sessionId: NEXT, to: didOf(W.lms.address), sessionVouchedBy: 'lms', issuer: LMS });
+    expect(validateAgainstShape(recordGraphTurtle(a), readShapesTurtle(), { entailment: 'rdfs' }).conforms).toBe(true);
+
+    // The learner asking afterwards gets the same documents; so does the LMS asking again.
+    const mine = ok(await act(H, 'pev.launched_statements', W.ana, { attemptIri: taken['attemptIri'], sessionId: NEXT }));
+    expect([mine['again'], mine['statements']]).toEqual([true, statements]);
+    const again = ok(await act(H, 'pev.launched_statements', W.lms, { registration: REG4, sessionId: 'another-session' }));
+    expect([again['again'], again['usableInSession'], again['statements']]).toEqual([true, false, statements]);
+    // What the learner's own read vouched for stays recorded as that.
+    const first = (await readHead(POD, S['attempt']!, TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    expect(first.lmsLaunch!.handedOut!.sessionVouchedBy).toBe('lrs-read');
+
+    // The role is for this and nothing else: the LMS reviews nothing and reads no attempt.
+    refused(await act(H, 'pev.override_attempt', W.lms, { attemptIri: S['attempt'], target: seen['currentTarget'], levels, sawJudgeLevelsFirst: true }), 403, 'not-a-reviewer');
   }, SLOW);
 });
