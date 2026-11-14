@@ -1,5 +1,19 @@
 # Changelog
 
+## 2026-11-14 — Coached world: the tier gate takes a satisfied only from the LMS
+
+The tier gate promotes a consultant when the LRS holds a cmi5 `satisfied` for
+the tier's course and that consultant. It matched the verb, the course, the
+actor and the cmi5 category. All four are things a learner writing a statement
+about themselves can supply, on an LRS that lets them.
+
+`CPW_LRS_LMS_AUTHORITY` names the authority account the LMS's own statements
+carry on the LRS. The gate now counts a `satisfied` read from an LRS only under
+that authority. A world that reads an LRS and has not been told the authority
+answers `lms-authority-unset`, asks the LRS nothing and promotes nobody.
+
+A world with no LRS configured is unchanged.
+
 ## 2026-11-14 — Connect an agent, shared: any bridge can use a chat session's subscription instead of an API key
 
 The I2IDL-X workbench lets a person pair their own AI chat session with a page, so the page's questions are answered on that session's subscription and no model key is held anywhere. That method lived inside Foxxi. It is now shared code, and the coached world is the second bridge to use it.
