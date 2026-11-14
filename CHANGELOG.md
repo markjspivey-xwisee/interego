@@ -22,6 +22,36 @@ Which service to ask is a setting (`FOXXI_REVIEW_STATEMENTS_URL`, `_POD` and
 review service, course or profile is named in code. Verified with a fetch double
 for the service; no live service has been asked.
 
+## 2026-11-13 — Practice Evidence: the learner takes the reviewed statements for their assignable unit
+
+A conversation an LMS launched could be taken as an attempt and reviewed, and the
+cmi5 passed, failed and completed for it could be built, but only by code: no act
+handed them to anyone.
+
+`pev.launched_statements` does. The learner signs `{attemptIri, sessionId}`,
+naming the session of the registration their unit will send in, and gets the
+statements, for a reviewed attempt on a ratified rubric whose launch is known to
+be Normal.
+
+- cmi5 allows one passed and one completed per registration, so what is handed
+  out is fixed the first time it is asked for and kept on the attempt
+  (`lmsLaunch.handedOut`). Every later ask returns the same documents, whatever
+  session it names, and writes nothing. A review changed afterwards hands out
+  nothing new.
+- Before they are fixed, the session is checked against the LRS through the
+  learner's own signed read: the LMS's `launched` statement for that unit and
+  session, in Normal mode and for the same actor, with the session not ended and
+  nothing passed, failed or completed in the registration. A session typed wrong
+  or already ended fixes nothing.
+- Only the learner may take them. A scored attempt's statements carry its score,
+  so they are refused to a chat assistant, as a projection is.
+- The bridge still sends nothing to an LRS, and does not learn whether the unit
+  sent them.
+
+Not built: a way for a unit that holds only its cmi5 credential to ask for these
+itself. Verified by the vertical's tests on an in-memory pod; no live LMS, LRS or
+assignable unit has used this.
+
 ## 2026-11-14 — Foxxi: the operator of a bridge can take a hosted package down
 
 Taking a hosted package down (`foxxi.remove_hosted_package`) asks for the

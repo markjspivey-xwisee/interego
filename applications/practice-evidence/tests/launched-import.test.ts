@@ -254,6 +254,7 @@ describe('pev.import_launched_attempt', () => {
     ok(await act(H, 'pev.register_role', W.admin, { address: W.author.address, role: 'author', change: 'add' }));
     const p = ok(await act(H, 'pev.author_scenario', W.author, { scenario: demoScenarioInput('missed-deadline', 1), status: 'published', draftAssistance: { used: false } }));
     S['scenario'] = String(p['scenarioIri']);
+    S['scenarioHash'] = String(p['scenarioHash']);
     expect(p['version']).toBe(1);
   }, SLOW);
 
@@ -382,5 +383,84 @@ describe('pev.import_launched_attempt', () => {
     expect((out[0]!['actor'] as { account: Out }).account).toEqual({ homePage: LMS, name: didOf(W.ana.address) });
     // The activity keeps the definition the unit gave it, so a profile that selects on its type still matches.
     expect(out.map((x) => x['object'])).toEqual([0, 1].map(() => ({ objectType: 'Activity', id: AU, definition: { type: `${P}/activity-types/roleplay-scenario` } })));
+  }, SLOW);
+  it('hands the reviewed statements to the learner, fixed the first time, and to no one else', async () => {
+    const A = 'c0ffee00-1111-4222-8333-444455556666';
+    const B = 'c0ffee00-1111-4222-8333-777788889999';
+    // A key reads a scored session's result only once an admin registered it.
+    ok(await act(H, 'pev.register_role', W.admin, { address: W.ana.address, role: 'learner', change: 'add' }));
+    // Reviewed, but the rubric is not ratified yet: nothing is handed out, and nothing is written.
+    const before = pod.store.size;
+    const early = await act(H, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'], sessionId: A });
+    expect([early['kind'], early['iep:refusalStatus']]).toEqual(['refusal', 409]);
+    expect(pod.store.size).toBe(before);
+    ok(await act(H, 'pev.ratify_scenario', W.ben, { scenarioIri: S['scenario'], version: 1, scenarioHash: S['scenarioHash'] }));
+    // The reviewer is not the learner.
+    refused(await act(H, 'pev.launched_statements', W.ben, { attemptIri: S['attempt'], sessionId: A }), 403, 'not-the-learner');
+    refused(await act(H, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'] }), 400, 'payload-shape');
+
+    // The session has to be one the LMS opened for this unit and this learner, still open, with nothing sent yet.
+    const ask = (sessionId: string, extra: Out = readOf(REG)): Promise<Out> => act(H, 'pev.launched_statements', W.ana, { attemptIri: S['attempt'], sessionId }, extra);
+    const held = [launchedBy('Normal'), ...call()];
+    const notOne = async (statements: Out[], sessionId: string): Promise<unknown> => {
+      lrs.answer = () => ({ status: 200, body: { statements } });
+      return refused(await ask(sessionId), 409, 'not-a-sending-session')['problems'];
+    };
+    const untouched = pod.store.size;
+    refused(await ask(A, {}), 400, 'lrs-read-missing');
+    expect((await notOne(held, A) as string[])[0]).toContain('holds no launched statement from the LMS for this unit and this session');
+    expect(await notOne(held, 'a-session-typed-wrong')).toHaveLength(1);
+    // The session of the conversation itself was launched, and has ended.
+    expect(await notOne(held, SESSION)).toEqual(['the session has already ended: a statement cannot be sent in it']);
+    expect(await notOne([...held, launchedBy('Review', { session: A })], A)).toEqual(['the session was not launched in Normal mode: cmi5 allows passed, failed and completed only in a Normal launch']);
+    expect(await notOne([...held, launchedBy('Normal', { session: A, actor: didOf(W.ben.address) })], A)).toEqual(['the session was launched for another actor']);
+    expect(await notOne([...held, stmt(VERB_LAUNCHED, 50, { contextExt: { [LAUNCH_MODE_EXT]: 'Normal' }, object: { objectType: 'Activity', id: `${LMS}/courses/calls/au/2` } }, { session: A })], A)).toHaveLength(1);
+    expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt(VERB_TERMINATED, 60, {}, { session: A })], A)).toEqual(['the session has already ended: a statement cannot be sent in it']);
+    expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt('https://w3id.org/xapi/adl/verbs/abandoned', 60, {}, { session: A })], A)).toEqual(['the session has already ended: a statement cannot be sent in it']);
+    expect(await notOne([...held, launchedBy('Normal', { session: A }), stmt(VERB_COMPLETED, 60, {}, { session: A })], A)).toEqual(['the registration already holds a passed, failed or completed statement for this unit: cmi5 allows one of each']);
+    expect(pod.store.size).toBe(untouched);
+
+    // Another unit of the same course, completed and passed in this registration, and another session abandoned: neither is this unit's.
+    const elsewhere = { objectType: 'Activity', id: `${LMS}/courses/calls/au/2` };
+    lrs.answer = () => ({ status: 200, body: { statements: [
+      ...held, launchedBy('Normal', { session: A }),
+      stmt(VERB_COMPLETED, 5, { object: elsewhere }, { session: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
+      stmt(VERB_PASSED, 6, { object: elsewhere }, { session: 'aaaaaaaa-0000-4000-8000-00000000000a' }),
+      stmt('https://w3id.org/xapi/adl/verbs/abandoned', 7, { object: elsewhere }, { session: 'aaaaaaaa-0000-4000-8000-00000000000b' }),
+    ] } });
+    const first = ok(await ask(A));
+    const statements = first['statements'] as Out[];
+    expect(statements.map((x) => (x['verb'] as Out)['id'])).toEqual([VERB_PASSED, VERB_COMPLETED]);
+    expect([first['again'], first['recorded'], first['sessionId'], first['usableInSession']]).toEqual([false, true, A, true]);
+    expect((first['forUnit'] as Out)['registration']).toBe(REG);
+    expect(((statements[0]!['context'] as { extensions: Out }).extensions)[SESSION_EXT]).toBe(A);
+
+    // Asked again for another session: the same documents, byte for byte, and nothing new is written.
+    const size = pod.store.size;
+    // No read of the LRS is needed or made for what is already fixed.
+    const reads = lrs.seen.length;
+    const second = ok(await ask(B, {}));
+    expect(second['statements']).toEqual(statements);
+    expect([second['again'], second['recorded'], second['sessionId'], second['handedOutAt']]).toEqual([true, false, A, first['handedOutAt']]);
+    // In another session they are a copy to compare with what the LRS holds, not something to send.
+    expect([second['usableInSession'], second['usableOnlyIn']]).toEqual([false, A]);
+    expect(String(second['sessionNote'])).toContain('not for sending');
+    const third = ok(await ask(A, {}));
+    expect([third['again'], third['usableInSession'], third['sessionNote']]).toEqual([true, true, undefined]);
+    expect(third['statements']).toEqual(statements);
+    expect(pod.store.size).toBe(size);
+    expect(lrs.seen.length).toBe(reads);
+
+    // What was handed out is on the attempt, which still conforms to the published shapes.
+    const a = (await readHead(POD, S['attempt']!, TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    expect(a.lmsLaunch!.handedOut).toMatchObject({ sessionId: A, to: didOf(W.ana.address), at: first['handedOutAt'] });
+    expect(a.lmsLaunch!.handedOut!.statements).toEqual(statements);
+    expect(a.state).toBe('overridden');
+    expect(validateAgainstShape(recordGraphTurtle(a), readShapesTurtle(), { entailment: 'rdfs' }).conforms).toBe(true);
+  }, SLOW);
+
+  it('hands out nothing for an attempt no LMS launched, or one whose launch mode was only assumed', async () => {
+    const started = ok(await act(H, 'pev.start_attempt', W.ana, { scenarioIri: S['scenario'], scenarioVersion: 1, coached: false }));
+    refused(await act(H, 'pev.launched_statements', W.ana, { attemptIri: started['attemptIri'], sessionId: 'any-session' }), 409, 'no-lms-launch');
   }, SLOW);
 });
