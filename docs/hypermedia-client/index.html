@@ -1,0 +1,1197 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Hypermedia Client</title>
+  <style>
+    :root {
+      --ink: #1b1814;
+      --muted: #5c564c;
+      --paper: #f3eee4;
+      --panel: #fffdf8;
+      --rule: #d7cfc0;
+      --safe: #1f5b3b;
+      --safe-bg: #e5f0e8;
+      --unsafe: #8a3510;
+      --unsafe-bg: #f6e6dc;
+      --accent: #243f6b;
+      --accent-2: #c46a1b;
+      --mono: ui-monospace, "SFMono-Regular", "Cascadia Mono", Menlo, Consolas, monospace;
+      --sans: "Avenir Next", "Segoe UI", Helvetica, sans-serif;
+      --serif: Palatino, "Palatino Linotype", "Iowan Old Style", Georgia, serif;
+    }
+    * { box-sizing: border-box; }
+    html, body { margin: 0; height: 100%; background: var(--paper); color: var(--ink); font: 15px/1.45 var(--sans); }
+    body { display: flex; flex-direction: column; }
+    header {
+      padding: 16px 22px 14px;
+      border-bottom: 1px solid var(--rule);
+      background: linear-gradient(#fffaf1, var(--paper));
+    }
+    header h1 { font: 600 22px/1.15 var(--serif); margin: 0 0 4px; letter-spacing: -0.02em; }
+    header p { margin: 0 0 12px; color: var(--muted); max-width: 72em; }
+    .bar { display: flex; gap: 8px; flex-wrap: wrap; align-items: center; }
+    input[type="text"], input[type="search"], input[type="number"], textarea, select {
+      font: 13px var(--mono); border: 1px solid var(--rule); background: var(--panel);
+      color: var(--ink); border-radius: 6px; padding: 8px 10px;
+    }
+    #url { flex: 1 1 420px; }
+    #proxy { flex: 0 1 260px; }
+    button, .btn {
+      font: 600 13px var(--sans); border: 1px solid var(--ink); background: var(--ink);
+      color: #fffaf1; border-radius: 6px; padding: 8px 12px; cursor: pointer;
+    }
+    button.secondary { background: transparent; color: var(--ink); }
+    button.danger { background: var(--unsafe); border-color: var(--unsafe); }
+    button:disabled { opacity: .45; cursor: not-allowed; }
+    main { flex: 1; min-height: 0; display: grid; grid-template-columns: minmax(320px, 38%) 1fr; }
+    aside, section { min-height: 0; overflow: auto; }
+    aside { border-right: 1px solid var(--rule); padding: 12px 14px 28px; }
+    section { padding: 12px 18px 32px; }
+    .meta { font-size: 13px; color: var(--muted); margin-bottom: 12px; }
+    .meta strong { color: var(--ink); font-weight: 650; }
+    .group h2 { font: 650 13px var(--sans); text-transform: uppercase; letter-spacing: .08em; margin: 16px 0 8px; }
+    .card {
+      background: var(--panel); border: 1px solid var(--rule); border-radius: 8px;
+      padding: 9px 10px; margin: 0 0 8px; cursor: pointer;
+    }
+    .card:hover { border-color: #b7ad9c; }
+    .card.active { outline: 2px solid var(--accent); }
+    .card .row { display: flex; gap: 8px; align-items: baseline; }
+    .badge { font: 700 10px var(--mono); padding: 2px 6px; border-radius: 999px; letter-spacing: .04em; }
+    .badge.get { background: var(--safe-bg); color: var(--safe); }
+    .badge.post, .badge.put, .badge.patch, .badge.delete { background: var(--unsafe-bg); color: var(--unsafe); }
+    .badge.http { background: #e7eef8; color: var(--accent); }
+    .badge.mcp { background: #f3e7d4; color: #7a4a10; }
+    .card h3 { margin: 4px 0 2px; font: 650 14px/1.3 var(--serif); }
+    .card code { font: 11px var(--mono); color: var(--muted); word-break: break-all; }
+    .field { margin: 0 0 12px; }
+    .field label { display: block; font-weight: 650; margin-bottom: 4px; }
+    .field .hint { color: var(--muted); font-size: 12px; margin: 4px 0 0; }
+    .field textarea { width: 100%; min-height: 88px; }
+    .field input, .field select { width: 100%; }
+    .req { color: var(--unsafe); }
+    pre, .out { font: 12.5px/1.45 var(--mono); background: #1c1916; color: #f4efe6;
+      padding: 12px; border-radius: 8px; overflow: auto; white-space: pre-wrap; word-break: break-word; }
+    table.sparql { border-collapse: collapse; width: 100%; font-size: 13px; background: var(--panel); }
+    table.sparql th, table.sparql td { border: 1px solid var(--rule); padding: 6px 8px; text-align: left; vertical-align: top; }
+    table.sparql th { background: #efe8db; }
+    a { color: var(--accent); }
+    .iri { color: #9ad0ff; text-decoration: underline; cursor: pointer; }
+    .status { font: 12px var(--mono); color: var(--muted); margin-top: 8px; }
+    .warn { background: var(--unsafe-bg); color: var(--unsafe); padding: 8px 10px; border-radius: 6px; margin: 0 0 12px; }
+    .ok { background: var(--safe-bg); color: var(--safe); padding: 8px 10px; border-radius: 6px; margin: 0 0 12px; }
+    .actions { display: flex; gap: 8px; flex-wrap: wrap; margin: 8px 0 16px; align-items: center; }
+    .see { font-size: 12px; }
+    .see button { font: 12px var(--mono); background: transparent; color: var(--accent);
+      border: 0; padding: 0 6px 0 0; text-decoration: underline; }
+    md-block h1, md-block h2, md-block h3 { font-family: var(--serif); }
+    .crumbs { font: 12px var(--mono); color: var(--muted); margin: 0 0 8px; }
+    .empty { color: var(--muted); font-style: italic; padding: 12px 4px; }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>Hypermedia Client</h1>
+    <p>A generic follower of Interego, HyperMarkdown, and Hydra descriptors. Paste any authority URL — controls, forms, and live <code>hydra:target</code> values come from the document, not from a hard-coded catalog.</p>
+    <div class="bar">
+      <input id="url" type="url" spellcheck="false" placeholder="https://example.org/descriptor">
+      <button id="loadBtn" type="button">Load</button>
+      <button id="backBtn" class="secondary" type="button" disabled>Back</button>
+      <input id="proxy" type="text" spellcheck="false" placeholder="CORS proxy (optional)">
+    </div>
+    <div id="status" class="status">Idle.</div>
+  </header>
+  <main>
+    <aside>
+      <div id="meta" class="meta"></div>
+      <div id="list"><div class="empty">Load a descriptor to see its controls.</div></div>
+    </aside>
+    <section>
+      <div id="detail"><div class="empty">Select a control.</div></div>
+    </section>
+  </main>
+  <script>
+
+const HYDRA = "http://www.w3.org/ns/hydra/core#";
+const SHACL = "http://www.w3.org/ns/shacl#";
+const IEP = "https://markjspivey-xwisee.github.io/interego/ns/iep#";
+const IEH = "https://markjspivey-xwisee.github.io/interego/ns/harness#";
+const HMD = "https://relay.interego.xwisee.com/ns/maintainer/hmd#";
+const DCT = "http://purl.org/dc/terms/";
+const RDFS = "http://www.w3.org/2000/01/rdf-schema#";
+const RDF = "http://www.w3.org/1999/02/22-rdf-syntax-ns#";
+const DCAT = "http://www.w3.org/ns/dcat#";
+const XSD = "http://www.w3.org/2001/XMLSchema#";
+const P = {
+  type: RDF + "type", action: IEP + "action", affordance: IEP + "affordance",
+  readOnly: IEP + "readOnlyHint", idempotent: IEP + "idempotentHint",
+  destructive: IEP + "destructiveHint", method: HYDRA + "method",
+  target: HYDRA + "target", expects: HYDRA + "expects", returns: HYDRA + "returns",
+  returnsCT: HYDRA + "returnsContentType", title: HYDRA + "title",
+  desc: HYDRA + "description", template: HYDRA + "template",
+  mapping: HYDRA + "mapping", variable: HYDRA + "variable",
+  property: HYDRA + "property", required: HYDRA + "required",
+  search: HYDRA + "search", supOp: HYDRA + "supportedOperation",
+  supClass: HYDRA + "supportedClass", media: DCAT + "mediaType",
+  label: RDFS + "label", comment: RDFS + "comment", seeAlso: RDFS + "seeAlso",
+  dcTitle: DCT + "title", dcDesc: DCT + "description", rel: HMD + "rel",
+  control: HMD + "control", hmdTarget: HMD + "target",
+  shProp: SHACL + "property", shPath: SHACL + "path", shName: SHACL + "name",
+  shDt: SHACL + "datatype", shMin: SHACL + "minCount", shMax: SHACL + "maxCount",
+  shPat: SHACL + "pattern", shDef: SHACL + "defaultValue",
+  shMaxLen: SHACL + "maxLength", shMinLen: SHACL + "minLength",
+  shDesc: SHACL + "description", shIn: SHACL + "in",
+  shMinI: SHACL + "minInclusive", shMaxI: SHACL + "maxInclusive",
+  shNode: SHACL + "node", shNodeKind: SHACL + "nodeKind",
+  first: RDF + "first", rest: RDF + "rest", nil: RDF + "nil"
+};
+const PREFIXES0 = { hydra: HYDRA, sh: SHACL, iep: IEP, ieh: IEH, hmd: HMD, dct: DCT, rdfs: RDFS, rdf: RDF, dcat: DCAT, xsd: XSD, schema: "https://schema.org/" };
+const TERMS0 = {
+  action: P.action, affordance: P.affordance, affordances: P.affordance,
+  method: P.method, target: P.target, expects: P.expects, returns: P.returns,
+  mediaType: P.returnsCT, title: P.title, description: P.desc, rel: P.rel,
+  control: P.control, template: P.template, mapping: P.mapping, variable: P.variable,
+  property: P.property, required: P.required, search: P.search,
+  supportedOperation: P.supOp, supportedClass: P.supClass,
+  readOnlyHint: P.readOnly, idempotentHint: P.idempotent,
+  destructiveHint: P.destructive, label: P.label, comment: P.comment, seeAlso: P.seeAlso
+};
+const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
+
+function asList(v) { return v == null ? [] : (Array.isArray(v) ? v : [v]); }
+function rawId(v) {
+  if (v && typeof v === "object") {
+    if (v["@id"] != null) return v["@id"];
+    if (v["@value"] != null) return v["@value"];
+  }
+  return v;
+}
+function literals(v) { return asList(v).map(rawId).filter(x => x != null); }
+function literal(v) { const xs = literals(v); return xs.length ? xs[0] : null; }
+function localName(iri) {
+  if (!iri) return "";
+  const t = String(iri).replace(/\/$/, "");
+  if (t.includes("#")) return t.split("#").pop();
+  if (t.includes(":") && !t.startsWith("http")) return t.split(":").pop();
+  return t.split("/").pop();
+}
+function shortRel(iri) { return localName(iri) || iri || ""; }
+function truthy(v) {
+  if (v == null) return null;
+  if (typeof v === "boolean") return v;
+  const t = String(v).toLowerCase();
+  if (["true", "1", "yes"].includes(t)) return true;
+  if (["false", "0", "no"].includes(t)) return false;
+  return null;
+}
+function inty(v) { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
+
+class Ctx {
+  constructor() { this.prefixes = { ...PREFIXES0 }; this.terms = { ...TERMS0 }; }
+  absorb(ctx) {
+    for (const item of asList(ctx)) {
+      if (!item || typeof item !== "object") continue;
+      for (const [key, val] of Object.entries(item)) {
+        if (key.startsWith("@")) continue;
+        const iri = typeof val === "string" ? val : (val && val["@id"]);
+        if (!iri) continue;
+        const exp = this.expand(iri);
+        this.terms[key] = exp;
+        if (exp.endsWith("#") || exp.endsWith("/")) this.prefixes[key] = exp;
+      }
+    }
+  }
+  expand(value) {
+    if (value == null) return "";
+    const text = String(value);
+    if (/^(_:|http:\/\/|https:\/\/|urn:|@)/.test(text)) return text;
+    if (text.includes(":") && !text.startsWith("{")) {
+      const [prefix, local] = text.split(":", 2);
+      if (this.prefixes[prefix] && !local.startsWith("//")) return this.prefixes[prefix] + local;
+    }
+    return this.terms[text] || this.prefixes[text] || text;
+  }
+  expandKey(key) {
+    if (key.startsWith("@") || key.startsWith("http://") || key.startsWith("https://")) return key;
+    return this.terms[key] || this.expand(key);
+  }
+}
+
+class NodeIndex {
+  constructor(document, base) {
+    this.ctx = new Ctx();
+    this.base = base;
+    this.nodes = new Map();
+    this.order = [];
+    this.root = null;
+    this._ingest(document);
+  }
+  _ingest(document) {
+    if (Array.isArray(document)) {
+      for (const item of document) if (item && typeof item === "object") { this.ctx.absorb(item["@context"]); this._add(item); }
+      return;
+    }
+    if (!document || typeof document !== "object") return;
+    this.ctx.absorb(document["@context"]);
+    const extras = Object.fromEntries(Object.entries(document).filter(([k]) => k !== "@context" && k !== "@graph"));
+    if (Object.keys(extras).length) {
+      const root = { ...extras };
+      if (!root["@id"]) root["@id"] = this.base;
+      this.root = this._add(root);
+    }
+    if (Array.isArray(document["@graph"])) {
+      for (const item of document["@graph"]) {
+        if (item && typeof item === "object") {
+          const node = this._add(item);
+          if (!this.root) this.root = node;
+        }
+      }
+    } else if (!this.root) {
+      this.root = this._add(Object.keys(extras).length ? document : { "@id": this.base });
+    }
+    for (const node of [...this.order]) this._harvest(node);
+  }
+  _add(node) {
+    let id = node["@id"];
+    if (!id) {
+      id = literal(this.get(node, P.action)) || node.action || `_:n${this.order.length}`;
+      node = { ...node, "@id": id };
+    }
+    if (!this.nodes.has(id)) {
+      this.nodes.set(id, node);
+      this.order.push(node);
+      return node;
+    }
+    const existing = this.nodes.get(id);
+    for (const [k, v] of Object.entries(node)) if (!(k in existing)) existing[k] = v;
+    return existing;
+  }
+  _harvest(node) {
+    for (const [key, val] of Object.entries(node)) {
+      const pred = this.ctx.expandKey(key);
+      const lname = localName(pred);
+      if (![P.affordance, P.control, P.supOp, P.supClass].includes(pred) &&
+          !["affordance", "affordances", "control", "supportedOperation", "supportedClass"].includes(lname)) continue;
+      for (const item of asList(val)) {
+        if (item && typeof item === "object" && (item["@id"] || item.action || item.method || item["@type"])) {
+          this._harvest(this._add(item));
+        }
+      }
+    }
+  }
+  get(node, predicate) {
+    if (!node) return null;
+    if (predicate in node) return node[predicate];
+    for (const [key, val] of Object.entries(node)) {
+      if (!key.startsWith("@") && this.ctx.expandKey(key) === predicate) return val;
+    }
+    const want = localName(predicate);
+    for (const [key, val] of Object.entries(node)) {
+      if (key.startsWith("@") || key.startsWith("http://") || key.startsWith("https://") || key.includes(":")) continue;
+      if (key === want) return val;
+    }
+    return null;
+  }
+  node(ident) {
+    const iri = rawId(ident);
+    if (iri == null) return null;
+    if (this.nodes.has(String(iri))) return this.nodes.get(String(iri));
+    if (ident && typeof ident === "object" && Object.keys(ident).some(k => k !== "@id")) return ident;
+    return null;
+  }
+  typesOf(node) { return literals(this.get(node, P.type) || (node && node["@type"])).map(x => this.ctx.expand(x)); }
+  rdfList(head) {
+    const out = []; const seen = new Set();
+    let current = rawId(head);
+    while (current && current !== P.nil && !seen.has(String(current))) {
+      seen.add(String(current));
+      const node = this.node(current);
+      if (!node) { out.push(current); break; }
+      const first = this.get(node, P.first);
+      if (first != null) out.push(...(literals(first).length ? literals(first) : [rawId(first)]));
+      current = literal(this.get(node, P.rest));
+    }
+    return out;
+  }
+}
+
+function fieldName(name, path, variable) {
+  if (variable) return variable;
+  const raw = name || localName(path) || "value";
+  const m = raw.match(/^(?:rest-param-.+-)?(.+)$/);
+  return m ? m[1] : raw;
+}
+
+function schemaTypes(prop) {
+  return asList(prop && prop.type).map(t => String(t)).filter(t => t && t !== "null");
+}
+function schemaJsonKind(types) {
+  const structured = types.filter(t => t === "object" || t === "array");
+  const others = types.filter(t => t !== "object" && t !== "array");
+  if (!structured.length || others.length) return null;
+  if (structured.includes("object") && structured.includes("array")) return "json";
+  return structured[0];
+}
+function schemaDatatype(types) {
+  const typeMap = { string: XSD + "string", integer: XSD + "integer", number: XSD + "decimal", boolean: XSD + "boolean" };
+  return types.length === 1 ? (typeMap[types[0]] || null) : null;
+}
+function shaclJsonKind(index, node, datatype, maxCount) {
+  const dt = datatype || "";
+  if (dt === RDF + "JSON" || dt.endsWith("#JSON")) return "json";
+  if (dt) return null;
+  const nested = index.get(node, P.shNode);
+  const nodeKind = String(literal(index.get(node, P.shNodeKind)) || "");
+  const blank = nodeKind === SHACL + "BlankNode" || nodeKind.endsWith("#BlankNode");
+  if (nested != null || blank) return (maxCount || 0) > 1 ? "array" : "object";
+  return null;
+}
+
+function shapeFields(index, shapeRef) {
+  const fields = [];
+  if (shapeRef && typeof shapeRef === "object" && shapeRef.properties && !(P.shProp in shapeRef)) {
+    const required = new Set(asList(shapeRef.required || []));
+    for (const [name, prop0] of Object.entries(shapeRef.properties || {})) {
+      const prop = (prop0 && typeof prop0 === "object") ? prop0 : {};
+      const types = schemaTypes(prop);
+      const jsonKind = schemaJsonKind(types);
+      fields.push({
+        name, path: name, datatype: jsonKind ? null : (schemaDatatype(types) || XSD + "string"),
+        jsonKind, minCount: required.has(name) ? 1 : 0, maxCount: 1, pattern: prop.pattern || null,
+        defaultValue: prop.default, maxLength: inty(prop.maxLength), minLength: inty(prop.minLength),
+        description: prop.description || "", enum: asList(prop.enum || []),
+        minInclusive: prop.minimum, maxInclusive: prop.maximum, required: required.has(name), rawBody: false
+      });
+    }
+    return fields;
+  }
+  const shape = index.node(shapeRef);
+  if (!shape) return fields;
+  const props = index.get(shape, P.shProp);
+  if (!props) {
+    if (index.get(shape, P.shDt) || index.get(shape, P.shMinLen) || index.get(shape, P.shMaxLen)) {
+      const label = String(literal(index.get(shape, P.label)) || "");
+      const name = /query|sparql/i.test(label) ? "query" : "body";
+      fields.push({
+        name, path: shape["@id"] || null, datatype: String(literal(index.get(shape, P.shDt)) || XSD + "string"),
+        minCount: 1, maxCount: 1, required: true, rawBody: true, pattern: null, defaultValue: null,
+        minLength: inty(literal(index.get(shape, P.shMinLen))), maxLength: inty(literal(index.get(shape, P.shMaxLen))),
+        description: String(literal(index.get(shape, P.comment)) || literal(index.get(shape, P.shDesc)) || ""),
+        enum: []
+      });
+    }
+    return fields;
+  }
+  for (const pref of asList(props)) {
+    const node = index.node(pref) || (pref && typeof pref === "object" ? pref : null);
+    if (!node) continue;
+    const path = String(literal(index.get(node, P.shPath)) || "");
+    const name = literal(index.get(node, P.shName));
+    let enumVals = [];
+    const enumRaw = index.get(node, P.shIn);
+    if (enumRaw != null) {
+      const head = literal(enumRaw);
+      enumVals = (typeof head === "string" && (head.startsWith("_:") || index.node(head))) ? index.rdfList(head) : literals(enumRaw);
+    }
+    const minCount = inty(literal(index.get(node, P.shMin)));
+    const maxCount = inty(literal(index.get(node, P.shMax)));
+    const datatype = String(literal(index.get(node, P.shDt)) || "") || null;
+    fields.push({
+      name: fieldName(name ? String(name) : null, path, null), path: path || null,
+      datatype, jsonKind: shaclJsonKind(index, node, datatype, maxCount),
+      minCount, maxCount,
+      pattern: String(literal(index.get(node, P.shPat)) || "") || null,
+      defaultValue: literal(index.get(node, P.shDef)),
+      maxLength: inty(literal(index.get(node, P.shMaxLen))), minLength: inty(literal(index.get(node, P.shMinLen))),
+      description: String(literal(index.get(node, P.shDesc)) || literal(index.get(node, P.comment)) || literal(index.get(node, P.desc)) || "") || "",
+      enum: enumVals, minInclusive: literal(index.get(node, P.shMinI)), maxInclusive: literal(index.get(node, P.shMaxI)),
+      required: (minCount || 0) >= 1, rawBody: false
+    });
+  }
+  return fields;
+}
+
+function templateOf(index, node) {
+  const readT = (tmpl) => {
+    if (!tmpl) return [null, []];
+    const template = literal(index.get(tmpl, P.template));
+    const mappings = [];
+    for (const item of asList(index.get(tmpl, P.mapping))) {
+      const mn = index.node(item) || (item && typeof item === "object" ? item : null);
+      if (!mn) continue;
+      mappings.push({
+        variable: literal(index.get(mn, P.variable)),
+        property: literal(index.get(mn, P.property)),
+        required: truthy(literal(index.get(mn, P.required)))
+      });
+    }
+    return [template ? String(template) : null, mappings];
+  };
+  const direct = literal(index.get(node, P.template));
+  if (typeof direct === "string" && direct.includes("{")) {
+    const [, mappings] = readT(node);
+    return [direct, mappings];
+  }
+  for (const [key, val] of Object.entries(node)) {
+    if (key.startsWith("@")) continue;
+    const pred = index.ctx.expandKey(key);
+    if (![P.template, P.search].includes(pred) && !localName(pred).toLowerCase().includes("template")) continue;
+    for (const item of asList(val)) {
+      const [template, mappings] = readT(index.node(item) || (item && typeof item === "object" ? item : null));
+      if (template) return [template, mappings];
+    }
+  }
+  return [direct ? String(direct) : null, []];
+}
+
+function mergeMappings(fields, mappings) {
+  for (const mapping of mappings) {
+    const variable = mapping.variable;
+    if (!variable) continue;
+    let match = fields.find(f => f.path === mapping.property) || fields.find(f => f.name === variable) ||
+      fields.find(f => f.path && localName(f.path) === variable);
+    if (match) {
+      match.variable = variable; match.name = variable;
+      if (mapping.required) { match.required = true; if (!match.minCount) match.minCount = 1; }
+    } else {
+      fields.push({ name: variable, path: mapping.property || null, variable, required: !!mapping.required,
+        minCount: mapping.required ? 1 : 0, maxCount: 1, datatype: null, description: "", enum: [], rawBody: false });
+    }
+  }
+  return fields;
+}
+
+function looksLikeOp(index, node) {
+  const types = new Set(index.typesOf(node));
+  if ([HYDRA + "IriTemplate", HYDRA + "IriTemplateMapping", SHACL + "NodeShape", SHACL + "PropertyShape"].some(t => types.has(t))) return false;
+  if ([HYDRA + "Operation", IEP + "Affordance", IEH + "Affordance", HMD + "Control"].some(t => types.has(t))) return true;
+  if (index.get(node, P.method) && (index.get(node, P.action) || index.get(node, P.target) || index.get(node, P.template))) return true;
+  if (index.get(node, P.action) && (index.get(node, P.expects) || index.get(node, P.title) || index.get(node, P.target))) return true;
+  return false;
+}
+
+function isUnsafe(c) {
+  const method = (c.method || "").toUpperCase();
+  return (method && !SAFE.has(method)) || c.destructive === true || c.readOnly === false;
+}
+
+function controlFromNode(index, node, source) {
+  const rel = literal(index.get(node, P.action)) || literal(index.get(node, P.rel)) || node["@id"] || "";
+  const method = String(literal(index.get(node, P.method)) || "GET").toUpperCase();
+  const expectsRaw = index.get(node, P.expects);
+  let expects = null;
+  if (expectsRaw && typeof expectsRaw === "object" && !Array.isArray(expectsRaw) && expectsRaw.properties) expects = null;
+  else if (expectsRaw && typeof expectsRaw === "object" && expectsRaw["@id"]) expects = expectsRaw["@id"];
+  else expects = literal(expectsRaw);
+  const [template, mappings] = templateOf(index, node);
+  let fields = [];
+  const inline = node.fields;
+  if (Array.isArray(inline) && inline[0] && (inline[0].name || inline[0].path || inline[0].datatype)) {
+    fields = inline.map(item => ({
+      name: fieldName(item.name, item.path, null), path: item.path, datatype: item.datatype,
+      minCount: inty(item.minCount), maxCount: inty(item.maxCount), pattern: item.pattern || null,
+      defaultValue: item.defaultValue, maxLength: inty(item.maxLength), minLength: inty(item.minLength),
+      description: item.description || "", required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false
+    }));
+  } else if (expectsRaw != null) {
+    fields = shapeFields(index, Array.isArray(expectsRaw) ? expectsRaw[0] : expectsRaw);
+  }
+  fields = mergeMappings(fields, mappings);
+  const control = {
+    id: String(node["@id"] || rel), rel: String(rel), method,
+    title: String(literal(index.get(node, P.title)) || literal(index.get(node, P.dcTitle)) || literal(index.get(node, P.label)) || shortRel(rel)),
+    description: String(literal(index.get(node, P.desc)) || literal(index.get(node, P.dcDesc)) || literal(index.get(node, P.comment)) || ""),
+    mediaType: literal(index.get(node, P.returnsCT)) || literal(index.get(node, P.media)) || null,
+    expects: expects ? String(expects) : null, returns: literal(index.get(node, P.returns)),
+    target: literal(index.get(node, P.target)) || literal(index.get(node, P.hmdTarget)) || null,
+    template, fields,
+    readOnly: truthy(literal(index.get(node, P.readOnly))),
+    idempotent: truthy(literal(index.get(node, P.idempotent))),
+    destructive: truthy(literal(index.get(node, P.destructive))),
+    types: index.typesOf(node), source
+  };
+  control.unsafe = isUnsafe(control);
+  return control;
+}
+
+function extractControls(index, source) {
+  const found = new Map();
+  const candidates = [];
+  const add = (node) => { if (node && !candidates.includes(node)) candidates.push(node); };
+  for (const node of index.order) {
+    for (const pred of [P.affordance, P.control, P.supOp]) {
+      for (const item of asList(index.get(node, pred))) add(index.node(item) || (item && typeof item === "object" ? item : null));
+    }
+    for (const item of asList(index.get(node, P.supClass))) {
+      const cls = index.node(item);
+      if (cls) for (const op of asList(index.get(cls, P.supOp))) add(index.node(op) || (op && typeof op === "object" ? op : null));
+    }
+    if (looksLikeOp(index, node)) add(node);
+  }
+  for (const node of candidates) {
+    if (!node) continue;
+    const control = controlFromNode(index, node, source);
+    const key = control.rel || control.id;
+    if (key && !found.has(key)) found.set(key, control);
+  }
+  return [...found.values()].sort((a, b) => Number(a.unsafe) - Number(b.unsafe) || a.method.localeCompare(b.method) || a.title.localeCompare(b.title));
+}
+
+function parseMarkdown(text, url, contentType) {
+  const controls = [];
+  const re = /:::control\s+(\S+)\s*\n(.*?)(?:\n:::|$)/gs;
+  let m;
+  while ((m = re.exec(text))) {
+    const ident = m[1].trim();
+    const data = {};
+    for (const line of m[2].split("\n")) {
+      const idx = line.indexOf(":");
+      if (idx < 0) continue;
+      const key = line.slice(0, idx).trim();
+      let val = line.slice(idx + 1).trim();
+      if (!key) continue;
+      if (val.startsWith("{") || val.startsWith("[")) {
+        try { data[key] = JSON.parse(val); continue; } catch {}
+      }
+      data[key] = val.replace(/^"|"$/g, "");
+    }
+    const rel = String(data.rel || ident);
+    const fields = (Array.isArray(data.fields) ? data.fields : []).map(item => ({
+      name: fieldName(item.name, item.path, null), path: item.path, datatype: item.datatype,
+      minCount: inty(item.minCount), maxCount: inty(item.maxCount), pattern: item.pattern || null,
+      defaultValue: item.defaultValue, maxLength: inty(item.maxLength), minLength: inty(item.minLength),
+      description: item.description || "", required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false
+    }));
+    const control = {
+      id: ident.startsWith("http") ? ident : `${url}#${ident}`, rel,
+      method: String(data.method || "GET").toUpperCase(), title: data.title || shortRel(rel),
+      description: data.description || data.whenToUse || "", mediaType: data.mediaType || null,
+      expects: data.expects || null, returns: data.returns || null, target: data.target || null,
+      template: null, fields, types: [], source: url
+    };
+    control.unsafe = isUnsafe(control);
+    controls.push(control);
+  }
+  const title = (text.match(/^#\s+(.+)$/m) || [])[1] || localName(url) || url;
+  return { url, title, types: ["hmd:Document"], description: "Parsed from HyperMarkdown control blocks.", contentType, seeAlso: [], controls };
+}
+
+function classifyPayload(text, contentType) {
+  const ct = (contentType || "").split(";")[0].trim().toLowerCase();
+  const sample = (text || "").trim().slice(0, 240);
+  if (ct.includes("ld+json") || ct === "application/json") return sample.startsWith("{") || sample.startsWith("[") ? "jsonld" : null;
+  if (ct.includes("turtle") || ct === "text/ttl") return "turtle";
+  if ((ct.includes("markdown") || ct === "text/plain") && (text.includes(":::control") || sample.startsWith("---"))) return "markdown";
+  if (sample.startsWith("{") || sample.startsWith("[")) {
+    try { JSON.parse(text); return "jsonld"; } catch {}
+  }
+  if (sample.startsWith("@prefix") || sample.startsWith("PREFIX") || sample.startsWith("<http")) return "turtle";
+  if (text.includes(":::control")) return "markdown";
+  return null;
+}
+function withFormat(url, fmt) {
+  const u = new URL(url);
+  u.searchParams.set("format", fmt);
+  return u.toString();
+}
+function stripFrag(url) { const u = new URL(url); u.hash = ""; return u.toString(); }
+function proxyBase() {
+  const raw = document.getElementById("proxy").value.trim();
+  return raw;
+}
+function viaProxy(url, extra) {
+  const proxy = proxyBase();
+  if (!proxy) return url;
+  const join = proxy.includes("?") ? "&" : "?";
+  let out = proxy + join + "url=" + encodeURIComponent(url);
+  if (extra && extra.as) out += "&as=" + encodeURIComponent(extra.as);
+  return out;
+}
+async function fetchText(url, accept) {
+  // Descriptor loads ask for JSON-LD. When a proxy is in use, also ask it
+  // to convert a Turtle-only response (proxy.py ?as=jsonld, needs rdflib).
+  const extra = (proxyBase() && accept && accept.includes("ld+json")) ? { as: "jsonld" } : null;
+  const res = await fetch(viaProxy(url, extra), { headers: { Accept: accept || "*/*" } });
+  const text = await res.text();
+  const ct = res.headers.get("content-type") || "";
+  return { ok: res.ok, status: res.status, contentType: ct, text, url };
+}
+async function fetchAuthority(url) {
+  url = stripFrag(url);
+  const accept = "application/ld+json, application/json;q=0.9, text/turtle;q=0.8, text/markdown;q=0.4, */*;q=0.1";
+  const hasFmt = new URL(url).searchParams.get("format");
+  const attempt = async (candidate) => {
+    const res = await fetchText(candidate, accept);
+    if (!res.ok) return null;
+    const kind = classifyPayload(res.text, res.contentType);
+    return kind ? { ...res, kind, finalUrl: candidate } : null;
+  };
+  const preferJsonLd = async (candidate, got) => {
+    if (!got || got.kind === "jsonld" || !proxyBase()) return got;
+    if (got.kind !== "turtle") return got;
+    try {
+      const alt = await attempt(withFormat(candidate, "jsonld"));
+      if (alt && alt.kind === "jsonld") return alt;
+    } catch {}
+    return got;
+  };
+  if (hasFmt) {
+    const got = await preferJsonLd(url, await attempt(url));
+    if (got) return got;
+  } else {
+    const got = await preferJsonLd(url, await attempt(url));
+    if (got) {
+      if (got.kind !== "jsonld") {
+        try {
+          const alt = await attempt(withFormat(url, "jsonld"));
+          if (alt && alt.kind === "jsonld") return alt;
+        } catch {}
+      }
+      return got;
+    }
+    for (const fmt of ["jsonld", "turtle", "markdown"]) {
+      const alt = await preferJsonLd(withFormat(url, fmt), await attempt(withFormat(url, fmt)));
+      if (alt) return alt;
+    }
+  }
+  throw new Error("Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from " + url);
+}
+function parseDescriptor(text, contentType, url) {
+  const kind = classifyPayload(text, contentType);
+  if (kind === "jsonld") {
+    const document = JSON.parse(text);
+    const index = new NodeIndex(document, url);
+    const root = index.root || index.nodes.get(url) || index.order[0];
+    const title = String(literal(index.get(root, P.dcTitle)) || literal(index.get(root, P.title)) || literal(index.get(root, P.label)) || localName(url) || url);
+    const types = root ? index.typesOf(root) : [];
+    const description = String(literal(index.get(root, P.dcDesc)) || literal(index.get(root, P.desc)) || literal(index.get(root, P.comment)) || "");
+    const seeAlso = root ? literals(index.get(root, P.seeAlso)).map(String) : [];
+    return { url, title, types, description, contentType, seeAlso, controls: extractControls(index, url) };
+  }
+  if (kind === "markdown") return parseMarkdown(text, url, contentType);
+  if (kind === "turtle") throw new Error("This host served Turtle. Request ?format=jsonld, or set the proxy field to proxy.py — it converts Turtle when the request asks for JSON-LD and rdflib is installed.");
+  throw new Error("Unrecognized descriptor representation (" + contentType + ")");
+}
+function findControl(descriptor, rel) {
+  if (!rel) return null;
+  const exact = descriptor.controls.find(c => c.rel === rel || c.id === rel);
+  if (exact) return exact;
+  const lowered = rel.toLowerCase();
+  return descriptor.controls.find(c => {
+    return [shortRel(c.rel), shortRel(c.id)].map(s => s.toLowerCase()).includes(lowered) ||
+      c.rel.endsWith("#" + rel) || c.rel.endsWith("/" + rel) || c.rel.toLowerCase().endsWith(":" + lowered);
+  }) || null;
+}
+// RFC 6570 percent-encoding. encodeURIComponent is the simple-expansion
+// encoding; bytes at or above 0x80 stay encoded so a character such as
+// "é" (%C3%A9) is not decoded one byte at a time. Reserved expansion (+)
+// additionally leaves ASCII reserved characters unescaped.
+function pctEncode(value, safe) {
+  return encodeURIComponent(String(value)).replace(/%[0-9A-F]{2}/gi, (hex) => {
+    const byte = parseInt(hex.slice(1), 16);
+    if (byte >= 0x80) return hex;
+    const ch = String.fromCharCode(byte);
+    return safe && safe.includes(ch) ? ch : hex;
+  });
+}
+const RESERVED_SAFE = ":/?#[]@!$&'()*+,;=";
+const FRAGMENT_SAFE = ":/?[]@!$&'()*+,;=";
+function templateDefined(value) {
+  if (value == null || value === "") return false;
+  if (Array.isArray(value)) return value.some(templateDefined);
+  if (typeof value === "object") return Object.values(value).some(templateDefined);
+  return true;
+}
+function templateScalar(value) {
+  if (typeof value === "boolean") return value ? "true" : "false";
+  if (value != null && typeof value === "object") return JSON.stringify(value);
+  return String(value);
+}
+function templateEncode(value, op) {
+  const safe = op === "+" ? RESERVED_SAFE : (op === "#" ? FRAGMENT_SAFE : "");
+  return pctEncode(templateScalar(value), safe);
+}
+function expandUriTemplate(template, values) {
+  return template.replace(/\{([^{}]+)\}/g, (_, expr) => expandTemplateExpr(expr, values));
+}
+function expandTemplateExpr(expr, values) {
+  let op = "";
+  if ("+#./;?&".includes(expr[0])) { op = expr[0]; expr = expr.slice(1); }
+  const specs = expr.split(",").map((part) => {
+    const explode = part.includes("*");
+    const name = part.split("*")[0].split(":")[0];
+    return { name, explode };
+  }).filter((spec) => templateDefined(values[spec.name]));
+  if (!specs.length) return "";
+  const encOp = (op === "+" || op === "#") ? op : "";
+  if (op === "?" || op === "&" || op === ";") {
+    const parts = [];
+    for (const spec of specs) parts.push(...templateFormParts(spec, values[spec.name], encOp));
+    if (op === ";") return parts.map((part) => ";" + part).join("");
+    return (op === "&" ? "&" : "?") + parts.join("&");
+  }
+  const rendered = specs.map((spec) => templatePathValue(spec, values[spec.name], op, encOp));
+  if (op === "/") return "/" + rendered.join("/");
+  if (op === ".") return "." + rendered.join(".");
+  if (op === "#") return "#" + rendered.join(",");
+  return rendered.join(",");
+}
+function templateFormParts(spec, value, encOp) {
+  if (value != null && typeof value === "object" && !Array.isArray(value)) {
+    const pairs = Object.entries(value).filter(([, item]) => templateDefined(item));
+    if (spec.explode) return pairs.map(([key, item]) => templateEncode(key, encOp) + "=" + templateEncode(item, encOp));
+    const flat = pairs.flatMap(([key, item]) => [templateEncode(key, encOp), templateEncode(item, encOp)]);
+    return [spec.name + "=" + flat.join(",")];
+  }
+  const items = (Array.isArray(value) ? value : [value]).filter((item) => item != null && item !== "");
+  const encoded = items.map((item) => templateEncode(item, encOp));
+  if (spec.explode) return encoded.map((item) => spec.name + "=" + item);
+  return [spec.name + "=" + encoded.join(",")];
+}
+function templatePathValue(spec, value, op, encOp) {
+  if (value != null && typeof value === "object" && !Array.isArray(value)) {
+    const pairs = Object.entries(value).filter(([, item]) => templateDefined(item));
+    const rendered = pairs.map(([key, item]) => templateEncode(key, encOp) + (spec.explode ? "=" : ",") + templateEncode(item, encOp));
+    if (spec.explode && op === "/") return rendered.join("/");
+    if (spec.explode && op === ".") return rendered.join(".");
+    return rendered.join(",");
+  }
+  const items = (Array.isArray(value) ? value : [value]).filter((item) => item != null && item !== "");
+  const encoded = items.map((item) => templateEncode(item, encOp));
+  if (spec.explode && op === "/") return encoded.join("/");
+  if (spec.explode && op === ".") return encoded.join(".");
+  return encoded.join(",");
+}
+function coerceValue(field, value) {
+  if (value == null || value === "") return null;
+  const kind = field.jsonKind || null;
+  if (kind) {
+    let parsed = value;
+    if (typeof value !== "object") {
+      try { parsed = JSON.parse(String(value)); }
+      catch { throw new Error(field.name + " must be JSON"); }
+    }
+    if (kind === "object" && (parsed == null || typeof parsed !== "object" || Array.isArray(parsed))) {
+      throw new Error(field.name + " must be a JSON object");
+    }
+    if (kind === "array" && !Array.isArray(parsed)) throw new Error(field.name + " must be a JSON array");
+    return parsed;
+  }
+  const dt = field.datatype || "";
+  if (dt.endsWith("#integer") || dt.endsWith("#int")) return parseInt(String(value), 10);
+  if (dt.endsWith("#decimal") || dt.endsWith("#double") || dt.endsWith("#float")) return Number(value);
+  if (dt.endsWith("#boolean")) {
+    const t = String(value).toLowerCase();
+    if (["true", "1", "yes"].includes(t)) return true;
+    if (["false", "0", "no"].includes(t)) return false;
+    throw new Error(field.name + " must be a boolean");
+  }
+  return value;
+}
+function validateFields(control, supplied) {
+  const errors = []; const values = {};
+  for (const field of control.fields) {
+    const aliases = [field.name, field.variable, field.path && localName(field.path)].filter(Boolean);
+    let found = aliases.map(a => supplied[a]).find(v => v != null && v !== "");
+    if ((found == null || found === "") && field.defaultValue != null) found = field.defaultValue;
+    const required = field.required || (field.minCount || 0) >= 1;
+    if (found == null || found === "") { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
+    let typed;
+    try { typed = coerceValue(field, found); } catch (err) { errors.push(String(err.message || err)); continue; }
+    const structured = typed != null && typeof typed === "object";
+    const text = structured ? (typeof found === "string" ? found : JSON.stringify(typed)) : (typed == null ? "" : String(typed));
+    if (!structured && field.minLength != null && text.length < field.minLength) errors.push(field.name + ": shorter than minLength " + field.minLength);
+    if (!structured && field.maxLength != null && text.length > field.maxLength) errors.push(field.name + ": longer than maxLength " + field.maxLength);
+    if (!structured && field.pattern) { try { if (!new RegExp(field.pattern).test(text)) errors.push(field.name + ": does not match pattern " + field.pattern); } catch (err) { errors.push(field.name + ": invalid pattern"); } }
+    if (!structured && field.enum && field.enum.length && !field.enum.map(String).includes(text)) errors.push(field.name + ": must be one of " + field.enum.join(", "));
+    if (!structured && field.minInclusive != null && Number(typed) < Number(field.minInclusive)) errors.push(field.name + ": below minInclusive");
+    if (!structured && field.maxInclusive != null && Number(typed) > Number(field.maxInclusive)) errors.push(field.name + ": above maxInclusive");
+    values[field.name] = typed;
+  }
+  return { values, errors };
+}
+function isMcpTool(target) {
+  if (!target) return false;
+  try {
+    const u = new URL(target);
+    return u.pathname.startsWith("/tool/") && u.hostname.includes("interego");
+  } catch { return false; }
+}
+function isJunction(target, descriptorUrl, controlId) {
+  if (!target) return false;
+  if (target.startsWith("#") || target === controlId) return true;
+  try {
+    const base = stripFrag(descriptorUrl);
+    if (target.startsWith(base + "#")) {
+      const frag = target.slice(base.length + 1);
+      return frag.startsWith("control-") || target === controlId;
+    }
+  } catch {}
+  return false;
+}
+function classifyTransport(control, descriptorUrl) {
+  if (control.template) return "http";
+  if (isMcpTool(control.target)) return "mcp";
+  if (isJunction(control.target, descriptorUrl, control.id)) return "junction";
+  if (control.target && /^https?:\/\//.test(control.target)) return "http";
+  return control.rel ? "mcp" : "unknown";
+}
+function addQuery(url, params) {
+  const u = new URL(url);
+  for (const [k, v] of Object.entries(params)) {
+    if (v == null || v === "") continue;
+    if (Array.isArray(v)) {
+      for (const item of v) if (item != null && item !== "") u.searchParams.append(k, templateScalar(item));
+    } else if (typeof v === "object") {
+      u.searchParams.set(k, JSON.stringify(v));
+    } else {
+      u.searchParams.set(k, templateScalar(v));
+    }
+  }
+  return u.toString();
+}
+function resolvePlan(control, values, descriptorUrl) {
+  const notes = [];
+  let transport = classifyTransport(control, descriptorUrl);
+  const method = control.method || "GET";
+  const headers = { Accept: control.mediaType || "*/*" };
+  let body = null, bodyText = null, url = null;
+  const raw = control.fields.find(f => f.rawBody);
+  if (raw && values[raw.name] != null) { bodyText = String(values[raw.name]); body = bodyText; }
+  if (control.template) {
+    url = expandUriTemplate(control.template, values);
+    transport = "http";
+    notes.push("Expanded hydra:IriTemplate " + control.template);
+    const used = new Set();
+    for (const m of control.template.matchAll(/\{([+#./;?&]?)([^{}]+)\}/g)) {
+      for (const part of m[2].split(",")) used.add(part.split("*")[0].split(":")[0]);
+    }
+    const leftover = Object.fromEntries(Object.entries(values).filter(([k]) => !used.has(k) && !(raw && k === raw.name)));
+    if (Object.keys(leftover).length && SAFE.has(method)) url = addQuery(url, leftover);
+  } else if (transport === "http" && control.target) {
+    url = control.target;
+    if (SAFE.has(method) && Object.keys(values).length && !raw) {
+      url = addQuery(url, values);
+      notes.push("Appended fields as query parameters on hydra:target");
+    } else if (!SAFE.has(method) && raw) {
+      headers["Content-Type"] = control.mediaType || "text/plain";
+    } else if (!SAFE.has(method)) {
+      body = values; bodyText = JSON.stringify(values, null, 2); headers["Content-Type"] = "application/json";
+    }
+  } else if (transport === "mcp") {
+    notes.push("hydra:target is an Interego tool junction (or missing). Plain HTTP will not reach it; use the Interego relay MCP.");
+  } else if (transport === "junction") {
+    notes.push("Target is this document's action junction, not a transport URL. Re-fetch the authority JSON-LD/Turtle, or call invoke_affordance(descriptorUrl, rel).");
+  }
+  let mcp = null;
+  if (transport === "mcp" || transport === "junction" || isMcpTool(control.target)) {
+    mcp = {
+      tool: "invoke_affordance", alternative: "act",
+      arguments: { descriptor_url: descriptorUrl, action_iri: control.rel, payload: values || {} },
+      act_arguments: { descriptor_url: descriptorUrl, action_iri: control.rel, method, payload: values || {} },
+      declared_target: control.target
+    };
+    transport = "mcp";
+  }
+  if (url && !SAFE.has(method) && body == null && !raw && Object.keys(values).length) {
+    body = values; bodyText = JSON.stringify(values, null, 2); headers["Content-Type"] = headers["Content-Type"] || "application/json";
+  }
+  if (raw && bodyText != null && url) headers["Content-Type"] = control.mediaType || "application/sparql-query";
+  return { control, transport, method, url, headers, body, bodyText, fields: values, mcp, notes, unsafe: control.unsafe };
+}
+
+const state = { descriptor: null, selected: null, history: [], lastResponse: null };
+
+function setStatus(msg) { document.getElementById("status").textContent = msg; }
+function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c])); }
+function linkify(text) {
+  const src = String(text);
+  const re = /https?:\/\/[^\s<>"'`)\]},]+/g;
+  let html = "";
+  let last = 0;
+  for (const match of src.matchAll(re)) {
+    const raw = match[0];
+    const clean = raw.replace(/[.,;]+$/, "");
+    html += esc(src.slice(last, match.index));
+    html += `<span class="iri" data-iri="${esc(clean)}">${esc(clean)}</span>`;
+    html += esc(raw.slice(clean.length));
+    last = match.index + raw.length;
+  }
+  return html + esc(src.slice(last));
+}
+function renderMarkdown(src) {
+  const parts = String(src).split(/```/);
+  let html = "";
+  parts.forEach((part, i) => {
+    if (i % 2 === 1) { html += "<pre>" + linkify(part.replace(/^\w+\n/, "")) + "</pre>"; return; }
+    let block = esc(part);
+    block = block.replace(/^### (.+)$/gm, "<h3>$1</h3>").replace(/^## (.+)$/gm, "<h2>$1</h2>").replace(/^# (.+)$/gm, "<h1>$1</h1>");
+    block = block.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<span class="iri" data-iri="$2">$1</span>');
+    block = block.replace(/https?:\/\/[^\s<]+/g, (url) => `<span class="iri" data-iri="${url}">${url}</span>`);
+    block = block.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
+    block = block.replace(/^(?:- |\* )(.+)$/gm, "<li>$1</li>").replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>");
+    block = block.replace(/\n\n+/g, "</p><p>").replace(/\n/g, "<br>");
+    html += "<p>" + block + "</p>";
+  });
+  return html;
+}
+function renderBody(contentType, text, parsed) {
+  const ct = (contentType || "").toLowerCase();
+  if (parsed && parsed.head && parsed.results && Array.isArray(parsed.results.bindings)) {
+    const vars = parsed.head.vars || Object.keys(parsed.results.bindings[0] || {});
+    let html = `<div class="ok">SPARQL result: ${parsed.results.bindings.length} row(s)</div><table class="sparql"><thead><tr>`;
+    html += vars.map(v => "<th>" + esc(v) + "</th>").join("") + "</tr></thead><tbody>";
+    for (const row of parsed.results.bindings) {
+      html += "<tr>" + vars.map(v => {
+        const cell = row[v];
+        const val = cell ? (cell.value || "") : "";
+        return "<td>" + (String(val).startsWith("http") ? `<span class="iri" data-iri="${esc(val)}">${esc(val)}</span>` : esc(val)) + "</td>";
+      }).join("") + "</tr>";
+    }
+    return html + "</tbody></table>";
+  }
+  if (parsed && (ct.includes("json") || typeof parsed === "object")) {
+    return "<pre>" + linkify(JSON.stringify(parsed, null, 2)) + "</pre>";
+  }
+  if (ct.includes("html")) {
+    return `<div class="ok">HTML response. <span class="iri" data-iri="${esc(state.lastResponse && state.lastResponse.url)}">${esc(state.lastResponse && state.lastResponse.url)}</span></div><iframe sandbox srcdoc="${esc(text).slice(0, 20000)}" style="width:100%;min-height:280px;border:1px solid var(--rule);border-radius:8px;background:#fff"></iframe>`;
+  }
+  if (ct.includes("markdown") || /^\s*# /m.test(text || "")) return `<div class="md">${renderMarkdown(text)}</div>`;
+  return "<pre>" + linkify(text || "") + "</pre>";
+}
+function renderList() {
+  const desc = state.descriptor;
+  const meta = document.getElementById("meta");
+  const list = document.getElementById("list");
+  if (!desc) { meta.innerHTML = ""; list.innerHTML = `<div class="empty">Load a descriptor to see its controls.</div>`; return; }
+  meta.innerHTML = `<strong>${esc(desc.title)}</strong><br>${esc(desc.url)}<br>types: ${esc((desc.types || []).map(localName).join(", "))}<br>${esc((desc.controls || []).length)} controls · ${esc((desc.contentType || "").split(";")[0])}` +
+    (desc.seeAlso && desc.seeAlso.length ? `<div class="see">seeAlso: ${desc.seeAlso.map(u => `<button type="button" data-iri="${esc(u)}">${esc(localName(u) || u)}</button>`).join(" ")}</div>` : "") +
+    (desc.description ? `<div style="margin-top:6px">${esc(desc.description)}</div>` : "");
+  const safe = desc.controls.filter(c => !c.unsafe);
+  const unsafe = desc.controls.filter(c => c.unsafe);
+  const card = (c) => {
+    const transport = classifyTransport(c, desc.url);
+    const active = state.selected && state.selected.rel === c.rel ? " active" : "";
+    return `<article class="card${active}" data-rel="${esc(c.rel)}">
+      <div class="row"><span class="badge ${esc(c.method.toLowerCase())}">${esc(c.method)}</span>
+      <span class="badge ${transport}">${transport}</span></div>
+      <h3>${esc(c.title)}</h3>
+      <code>${esc(shortRel(c.rel))}</code>
+    </article>`;
+  };
+  list.innerHTML = `<div class="group"><h2>Safe reads (${safe.length})</h2>${safe.map(card).join("") || '<div class="empty">(none)</div>'}</div>
+    <div class="group"><h2>Unsafe writes (${unsafe.length})</h2>${unsafe.map(card).join("") || '<div class="empty">(none)</div>'}</div>`;
+}
+function fieldDefaultText(field) {
+  if (field.defaultValue == null) return "";
+  return typeof field.defaultValue === "object" ? JSON.stringify(field.defaultValue) : String(field.defaultValue);
+}
+function fieldControl(field) {
+  const req = field.required || (field.minCount || 0) >= 1;
+  const val = esc(fieldDefaultText(field));
+  let input;
+  if (field.enum && field.enum.length && !field.jsonKind) {
+    input = `<select name="${esc(field.name)}"><option value=""></option>${field.enum.map(v => `<option ${String(v) === String(field.defaultValue) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
+  } else if (field.rawBody || field.jsonKind || (field.maxLength && field.maxLength > 200) || /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
+    input = `<textarea name="${esc(field.name)}" ${req ? "required" : ""}>${val}</textarea>`;
+  } else {
+    const type = (field.datatype || "").endsWith("#integer") ? "number" : "text";
+    input = `<input name="${esc(field.name)}" type="${type}" value="${val}" ${req ? "required" : ""} ${field.pattern ? `pattern="${esc(field.pattern)}"` : ""}>`;
+  }
+  return `<div class="field"><label>${esc(field.name)} ${req ? '<span class="req">*</span>' : ""}</label>${input}
+    <div class="hint">${esc([field.jsonKind ? ("JSON " + field.jsonKind) : (field.datatype && localName(field.datatype)), field.pattern, field.description].filter(Boolean).join(" · "))}</div></div>`;
+}
+function renderDetail() {
+  const el = document.getElementById("detail");
+  const desc = state.descriptor;
+  const c = state.selected;
+  if (!c || !desc) { el.innerHTML = `<div class="empty">Select a control.</div>`; return; }
+  const transport = classifyTransport(c, desc.url);
+  const target = c.template || c.target || "(none)";
+  let html = `<div class="crumbs">${esc(shortRel(c.rel))}</div>
+    <h2 style="font-family:var(--serif);margin:0 0 8px">${esc(c.title)}</h2>
+    <div class="meta">${esc(c.description)}</div>
+    <div class="meta"><span class="badge ${esc(c.method.toLowerCase())}">${esc(c.method)}</span>
+      <span class="badge ${transport}">${transport}</span>
+      ${c.mediaType ? " · " + esc(c.mediaType) : ""}<br>
+      <code style="font-size:12px">${esc(c.rel)}</code><br>
+      target: <span class="iri" data-iri="${esc(/^https?:/.test(String(c.target||"")) ? c.target : "")}">${esc(target)}</span>
+    </div>`;
+  if (c.unsafe) html += `<div class="warn">Unsafe operation. The default is a dry run that shows the exact request. Confirm before anything is sent.</div>`;
+  html += `<form id="invokeForm">${c.fields.map(fieldControl).join("") || '<div class="empty">No input fields.</div>'}
+    <div class="actions">
+      ${c.unsafe ? `<button type="submit" class="secondary" data-mode="dry">Dry run</button>
+        <label style="font-size:13px"><input type="checkbox" id="confirmUnsafe"> I confirm this write</label>
+        <button type="submit" class="danger" data-mode="live" disabled id="liveBtn">Invoke</button>`
+        : `<button type="submit" data-mode="live">Invoke</button><button type="submit" class="secondary" data-mode="dry">Dry run</button>`}
+    </div>
+  </form>
+  <div id="result"></div>`;
+  el.innerHTML = html;
+  const form = document.getElementById("invokeForm");
+  const box = document.getElementById("confirmUnsafe");
+  const liveBtn = document.getElementById("liveBtn");
+  if (box && liveBtn) box.addEventListener("change", () => { liveBtn.disabled = !box.checked; });
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const mode = ev.submitter && ev.submitter.dataset.mode ? ev.submitter.dataset.mode : "dry";
+    runInvoke(mode === "dry");
+  });
+}
+function readForm() {
+  const form = document.getElementById("invokeForm");
+  const supplied = {};
+  if (!form) return supplied;
+  for (const el of form.querySelectorAll("input, textarea, select")) {
+    if (!el.name || el.type === "checkbox") continue;
+    supplied[el.name] = el.value;
+  }
+  return supplied;
+}
+function showResult(html) {
+  const box = document.getElementById("result");
+  if (box) box.innerHTML = html;
+}
+async function runInvoke(forceDry) {
+  const desc = state.descriptor;
+  const control = state.selected;
+  if (!desc || !control) return;
+  const { values, errors } = validateFields(control, readForm());
+  if (errors.length) {
+    showResult(`<div class="warn">Validation failed:<ul>${errors.map(e => "<li>" + esc(e) + "</li>").join("")}</ul></div>`);
+    return;
+  }
+  const plan = resolvePlan(control, values, desc.url);
+  const dry = forceDry || (control.unsafe && !(document.getElementById("confirmUnsafe") && document.getElementById("confirmUnsafe").checked));
+  let html = `<details ${dry ? "open" : ""}><summary style="cursor:pointer;font-weight:650;margin:8px 0">Request (${esc(plan.method)} ${esc(plan.transport)})</summary><pre>${linkify(JSON.stringify({
+    method: plan.method, transport: plan.transport, url: plan.url, headers: plan.headers,
+    body: plan.body, notes: plan.notes, mcp: plan.mcp, dryRun: dry
+  }, null, 2))}</pre></details>`;
+  if (dry) {
+    showResult(html + `<div class="warn">Dry run — nothing was sent.</div>`);
+    return;
+  }
+  if (plan.transport !== "http" || !plan.url) {
+    showResult(html + `<div class="warn">No plain-HTTP transport. Use the Interego relay MCP <code>invoke_affordance</code> / <code>act</code> call shown above.</div>`);
+    return;
+  }
+  setStatus("Invoking " + shortRel(control.rel) + " …");
+  try {
+    const init = { method: plan.method, headers: plan.headers };
+    if (!SAFE.has(plan.method) && plan.bodyText != null) init.body = plan.bodyText;
+    const res = await fetch(viaProxy(plan.url), init);
+    const text = await res.text();
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch {}
+    state.lastResponse = { status: res.status, contentType: res.headers.get("content-type") || "", text, parsed, url: plan.url };
+    html += `<h3 style="font-family:var(--serif)">Response HTTP ${res.status} · ${esc(state.lastResponse.contentType)}</h3>` + renderBody(state.lastResponse.contentType, text, parsed);
+    showResult(html);
+    setStatus("HTTP " + res.status + " from " + plan.url);
+    document.title = "Hypermedia Client — " + desc.title;
+    document.documentElement.dataset.ready = "1";
+  } catch (err) {
+    const msg = String(err && err.message || err);
+    const hint = /Failed to fetch|NetworkError|CORS/i.test(msg) ? " Browser CORS blocked this host. Run <code>python3 proxy.py</code> and set the proxy field to <code>/proxy</code>." : "";
+    showResult(html + `<div class="warn">${esc(msg)}${hint}</div>`);
+    setStatus("Invoke failed: " + msg);
+  }
+}
+async function loadDescriptorUrl(url, push = true) {
+  setStatus("Fetching authority document…");
+  document.documentElement.dataset.ready = "0";
+  const fetched = await fetchAuthority(url);
+  if (fetched.kind === "turtle") throw new Error(proxyBase()
+    ? "Descriptor arrived as Turtle. The proxy could not convert it — install rdflib next to proxy.py, or ask the host for ?format=jsonld."
+    : "Descriptor arrived as Turtle. Ask for ?format=jsonld, or set the proxy field so proxy.py can convert it.");
+  const descriptor = parseDescriptor(fetched.text, fetched.contentType, stripFrag(url));
+  if (push && state.descriptor) state.history.push(state.descriptor.url);
+  state.descriptor = descriptor;
+  state.selected = null;
+  state.lastResponse = null;
+  document.getElementById("url").value = descriptor.url;
+  document.getElementById("backBtn").disabled = state.history.length === 0;
+  document.title = "Hypermedia Client — " + descriptor.title;
+  renderList();
+  renderDetail();
+  setStatus(`Loaded ${descriptor.controls.length} controls from ${descriptor.title} (${fetched.kind}).`);
+  document.documentElement.dataset.ready = state.selected ? "0" : "list";
+  return descriptor;
+}
+function selectRel(rel, values) {
+  const control = findControl(state.descriptor, rel);
+  if (!control) return;
+  state.selected = control;
+  renderList();
+  renderDetail();
+  if (values) {
+    const form = document.getElementById("invokeForm");
+    if (form) {
+      for (const [k, v] of Object.entries(values)) {
+        const el = form.querySelector(`[name="${CSS.escape(k)}"]`);
+        if (el) el.value = v;
+      }
+    }
+  }
+}
+document.getElementById("loadBtn").addEventListener("click", async () => {
+  const url = document.getElementById("url").value.trim();
+  if (!url) return;
+  try { await loadDescriptorUrl(url); } catch (err) {
+    setStatus(String(err.message || err));
+    document.getElementById("list").innerHTML = `<div class="warn">${esc(err.message || err)}</div>`;
+  }
+});
+document.getElementById("url").addEventListener("keydown", (ev) => {
+  if (ev.key === "Enter") document.getElementById("loadBtn").click();
+});
+document.getElementById("backBtn").addEventListener("click", async () => {
+  const prev = state.history.pop();
+  document.getElementById("backBtn").disabled = state.history.length === 0;
+  if (prev) {
+    try { await loadDescriptorUrl(prev, false); } catch (err) { setStatus(String(err.message || err)); }
+  }
+});
+document.body.addEventListener("click", async (ev) => {
+  const card = ev.target.closest(".card");
+  if (card && card.dataset.rel) { selectRel(card.dataset.rel); return; }
+  const iriEl = ev.target.closest("[data-iri]");
+  if (iriEl && iriEl.dataset.iri) {
+    const iri = iriEl.dataset.iri;
+    if (!/^https?:\/\//.test(iri)) return;
+    try { await loadDescriptorUrl(iri); } catch (err) { setStatus("Follow failed: " + (err.message || err)); }
+  }
+});
+if (location.origin.startsWith("http") && !document.getElementById("proxy").value) {
+  document.getElementById("proxy").placeholder = "/proxy  (used automatically only if you type it)";
+}
+(async function boot() {
+  const params = new URLSearchParams(location.search);
+  if (!document.getElementById("url").value) {
+    document.getElementById("url").value = params.get("url") || "https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx-catalog";
+  }
+  if (params.get("proxy")) document.getElementById("proxy").value = params.get("proxy");
+  if (params.get("url") || params.get("autoload") === "1") {
+    try {
+      await loadDescriptorUrl(document.getElementById("url").value);
+      if (params.get("invoke")) {
+        const fields = {};
+        if (params.get("query")) fields.query = params.get("query");
+        for (const [k, v] of params.entries()) if (k.startsWith("field.")) fields[k.slice(6)] = v;
+        selectRel(params.get("invoke"), fields);
+        await runInvoke(params.get("dry") === "1");
+        document.documentElement.dataset.ready = "done";
+      } else {
+        document.documentElement.dataset.ready = "list";
+      }
+    } catch (err) {
+      setStatus(String(err.message || err));
+      document.documentElement.dataset.ready = "error";
+    }
+  }
+})();
+
+  </script>
+</body>
+</html>
