@@ -100,9 +100,13 @@ async function startGateOnce(value) {
   let out = '';
   child.stdout.on('data', (d) => { out += String(d); });
   child.stderr.on('data', (d) => { out += String(d); });
+  // 'exit' can come before the last of stderr has been read; 'close' comes after both pipes end.
+  const closed = new Promise((resolve) => child.once('close', resolve));
   const deadline = Date.now() + 30_000;
   while (!/per-user-bearer cache TTL/.test(out)) {
     if (child.exitCode !== null) {
+      // Why it exited is in its last lines, so read them all before deciding.
+      await closed;
       if (/EADDRINUSE/.test(out)) return { out };
       throw new Error(`css-gate exited ${child.exitCode}:\n${out}`);
     }
