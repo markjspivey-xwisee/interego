@@ -9,7 +9,7 @@
  * typed context activity the templates select on (src/xapi-profile.ts).
  */
 import { describe, it, expect } from 'vitest';
-import { buildFoxxiProfileDoc, descriptorProjectionCategory, performanceRecordCategory, FOXXI_NS } from '../src/xapi-profile.js';
+import { buildFoxxiProfileDoc, descriptorProjectionCategory, performanceRecordCategory, performanceCategoriesFor, outcomeResultFor, isLearningActivityType, FOXXI_NS } from '../src/xapi-profile.js';
 import { validates, type Json } from '../src/xapi-profile-server/processor.js';
 import { projectMeshEntry } from '../src/mesh-event-projector.js';
 import { ingestExternalRun } from '../src/agent-run-ingest.js';
@@ -78,6 +78,40 @@ describe('what is not a descriptor projection', () => {
     const bare = check(recorded({}));
     expect(bare.outcome).toBe('invalid');
     expect(bare.templates).toEqual([T('production-performance-completed')]);
+  });
+
+  it('a performance recorded against a course or a lesson is that course\'s or lesson\'s outcome, and matches one template', () => {
+    // As the bridge's record_performance builds it: the object type decides the kind.
+    const recorded = (type: string, success: boolean, quality?: number) => ({ actor: learner, verb: { id: `${ADL}/verbs/${success ? 'completed' : 'failed'}` },
+      object: { id: 'https://example.org/things/made-up', definition: { type } },
+      result: { success, ...outcomeResultFor(type, success), ...(quality !== undefined ? { score: { scaled: quality } } : {}) },
+      context: { contextActivities: { category: [{ id: doc.id, objectType: 'Activity' }, ...performanceCategoriesFor(type)] },
+        extensions: { [`${FOXXI_NS}contextKind`]: 'production', [`${FOXXI_NS}actorKind`]: 'human' } } });
+    const course = `${ADL}/activities/course`, lesson = `${ADL}/activities/lesson`;
+    expect(isLearningActivityType(course)).toBe(true);
+    expect(isLearningActivityType('https://example.org/types/Move')).toBe(false);
+    // It used to match both the course template and the performance template, and fail the first for want of result.completion.
+    expect(check(recorded(course, true))).toMatchObject({ outcome: 'success', templates: [T('completed')] });
+    expect(check(recorded(lesson, true))).toMatchObject({ outcome: 'success', templates: [T('lesson-completed')] });
+    expect(check(recorded(course, false))).toMatchObject({ outcome: 'success', templates: [T('course-failed')] });
+    expect(check(recorded(lesson, false, 0.3))).toMatchObject({ outcome: 'success', templates: [T('lesson-failed')] });
+    // Anything else is a performance record, as before.
+    expect(check(recorded('https://example.org/types/Move', true))).toMatchObject({ outcome: 'success', templates: [T('production-performance-completed')] });
+    expect(check(recorded(`${FOXXI_NS}ProductionTask`, false))).toMatchObject({ outcome: 'success', templates: [T('production-performance-failed')] });
+    // One rule is left to say no: a failed lesson states its score, whoever records it.
+    const scoreless = check(recorded(lesson, false));
+    expect(scoreless.outcome).toBe('invalid');
+    expect(scoreless.templates).toEqual([T('lesson-failed')]);
+  });
+
+  it('no outcome Foxxi records can match a learning template and the performance template together', () => {
+    for (const type of [`${ADL}/activities/course`, `${ADL}/activities/lesson`, 'https://example.org/types/Move', `${FOXXI_NS}ProductionTask`, undefined]) {
+      const marked = performanceCategoriesFor(type).length > 0;
+      expect(marked, String(type)).toBe(!isLearningActivityType(type));
+    }
+    // A descriptor typed as a course and projected as an outcome carries the descriptor marker only.
+    const cats = ((projected({ success: true, conformsTo: [`${ADL}/activities/course`] }).context as { contextActivities: { category: Array<{ definition: { type: string } }> } }).contextActivities.category).map(c => c.definition.type);
+    expect(cats).toEqual([descriptorProjectionCategory().definition.type]);
   });
 
   it('the two categories are distinct typed activities', () => {

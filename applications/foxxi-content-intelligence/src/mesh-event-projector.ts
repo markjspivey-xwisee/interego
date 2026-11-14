@@ -34,7 +34,7 @@
 
 import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
-import { verbRequiresObjectType, verbIsDeclared, descriptorProjectionCategory, performanceRecordCategory, SUPERSEDED_DESCRIPTOR_TYPE } from './xapi-profile.js';
+import { verbRequiresObjectType, verbIsDeclared, descriptorProjectionCategory, performanceCategoriesFor, SUPERSEDED_DESCRIPTOR_TYPE } from './xapi-profile.js';
 import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from '../../agentic-performance-practice/src/agent-trajectory.js';
 
@@ -279,7 +279,7 @@ export function projectMeshEntry(
           // (xapi-profile.ts): a descriptor projection always, and a performance record when
           // the verb is an outcome.
           contextActivities: {
-            category: [descriptorProjectionCategory(), ...(verb.id === ADL_COMPLETED || verb.id === ADL_FAILED ? [performanceRecordCategory()] : [])],
+            category: [descriptorProjectionCategory(), ...(verb.id === ADL_COMPLETED || verb.id === ADL_FAILED ? performanceCategoriesFor(objectType) : [])],
             ...(superseded ? { other: [{ id: superseded, objectType: 'Activity', definition: { type: SUPERSEDED_DESCRIPTOR_TYPE } }] } : {}),
           },
         },

@@ -24,6 +24,29 @@ export const descriptorProjectionCategory = (): ContextActivity =>
 /** The category a statement recording a unit of performance (production, training, performance support) carries. */
 export const performanceRecordCategory = (): ContextActivity =>
   ({ id: `${FOXXI_NS}categories/performance-record`, objectType: 'Activity', definition: { type: PERFORMANCE_RECORD_TYPE } });
+
+/** Object activity types the course and lesson templates select on. */
+const LEARNING_ACTIVITY_TYPES: ReadonlySet<string> = new Set(['http://adlnet.gov/expapi/activities/course', 'http://adlnet.gov/expapi/activities/lesson']);
+/** True when an outcome about this object type is a course or lesson outcome, whoever records it. */
+export const isLearningActivityType = (objectType: unknown): boolean => typeof objectType === 'string' && LEARNING_ACTIVITY_TYPES.has(objectType);
+/**
+ * The categories a recorded performance carries, by what it is about.
+ *
+ * A performance recorded against an activity typed as a course or a lesson used to be both: it
+ * matched the course or lesson template by its object type and the performance template by its
+ * marker, and had to follow the two rule sets at once. The object type decides. About a course or
+ * a lesson it is that course's or lesson's outcome and carries no performance marker; about
+ * anything else it is a performance record.
+ */
+export const performanceCategoriesFor = (objectType: unknown): ContextActivity[] =>
+  isLearningActivityType(objectType) ? [] : [performanceRecordCategory()];
+/**
+ * What a recorded outcome adds to its statement's result, by what it is about. A completion of a
+ * course or a lesson states `completion: true`, which those templates require and the `completed`
+ * verb already says; anything else adds nothing.
+ */
+export const outcomeResultFor = (objectType: unknown, completed: boolean): { completion?: true } =>
+  isLearningActivityType(objectType) && completed ? { completion: true } : {};
 // Re-exported: xapi-instrumentation.ts has always imported FOXXI_NS from here, and
 // that stays true — but the string is DEFINED once, in foxxi-vocab.ts. This module
 // used to declare its own copy of it, which is how the namespace drifted onto a dead

@@ -536,7 +536,7 @@ import { releasedVersion, releasedVersions, versionLinks } from '../src/ns/relea
 import type { PublishedKind } from '../src/ns/published.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
-import { validateAgainstProfileTemplates, performanceRecordCategory } from '../src/xapi-profile.js';
+import { validateAgainstProfileTemplates, performanceCategoriesFor, outcomeResultFor } from '../src/xapi-profile.js';
 import { answerSuppliedProfileRequest } from '../src/xapi-profile-patterns.js';
 import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 /** Credential-format models registered as DATA (not bespoke handlers): the generic
@@ -3668,6 +3668,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // attesting observer (provenance). Any authenticated caller may
     // record a performance event — the observer is on the record.
     const outcomeVerb = momOutcomeVerb(args.success as boolean);
+    const recordedActivityType = (typeof args.activity_type === 'string' && args.activity_type.trim())
+      ? args.activity_type.trim()
+      : `${FOXXI_NS}ProductionTask`;
     const statement: Record<string, unknown> = {
       id: randomUUID(),
       version: '2.0.0',
@@ -3683,13 +3686,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
           // competency by this type across instances. Absent one, it falls back to
           // the generic ProductionTask wrapper (the competency then keys off
           // task_name — the skill the caller explicitly named).
-          type: (typeof args.activity_type === 'string' && args.activity_type.trim())
-            ? args.activity_type.trim()
-            : `${FOXXI_NS}ProductionTask`,
+          type: recordedActivityType,
         },
       },
       result: {
         success: args.success,
+        ...outcomeResultFor(recordedActivityType, args.success === true),
         ...(quality !== undefined ? { score: { scaled: quality } } : {}),
         ...(args.duration_iso ? { duration: args.duration_iso as string } : {}),
       },
@@ -3697,7 +3699,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         // A per-performance registration + the published xAPI Profile as a
         // category, so every statement references the profile it conforms to.
         registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, performanceRecordCategory()] },
+        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, ...performanceCategoriesFor(recordedActivityType)] },
         extensions: {
           [PERF_EXT.observedBy]: ctx.webId,
           [PERF_EXT.contextKind]: 'production',
@@ -6575,12 +6577,22 @@ const app = createVerticalBridge({
       const verdict = !r.verbDeclared ? 'unknown-verb'
         : !r.applicable ? 'no-applicable-template'
           : (r.violations.length === 0 ? 'conformant' : 'non-conformant');
+      // The same statement through the specification's own algorithm, which matches on every
+      // determining property and requires every matched template to be followed; this route's own
+      // verdict accepts any one template selected by verb and object type.
+      let specification: Record<string, unknown>;
+      try {
+        const own = ownXapiProfileDoc({ generatedAt: OWN_XAPI_PROFILE_GENERATED_AT }) as { templates?: unknown[] };
+        const s = profileValidates(readInstance(req) as never, (own.templates ?? []) as never);
+        specification = { outcome: s.outcome, templates: s.templates, findings: s.findings, ...(s.skipped.length ? { notChecked: s.skipped } : {}) };
+      } catch (e) { specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
       res.json({
         ok: true, profile: xapiProfileUrl, verb: r.verb,
         verbDeclared: r.verbDeclared, applicable: r.applicable, verdict,
         matchedTemplates: r.matchedTemplates,
         conforms: r.applicable && r.violations.length === 0,
         violations: r.violations,
+        specification,
       });
     });
 
@@ -9393,12 +9405,13 @@ app.post('/agent/record-performance', async (req, res) => {
       object: { objectType: 'Activity', id: taskId, definition: { name: { en: taskName }, type: activityType } },
       result: {
         success: p.success,
+        ...outcomeResultFor(activityType, p.success === true),
         ...(quality !== undefined ? { score: { scaled: quality } } : {}),
         ...(typeof p.duration_iso === 'string' && p.duration_iso ? { duration: p.duration_iso } : {}),
       },
       context: {
         registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, performanceRecordCategory()] },
+        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }, ...performanceCategoriesFor(activityType)] },
         extensions: {
           [PERF_EXT.observedBy]: callerDid,
           [PERF_EXT.contextKind]: 'production',
@@ -10230,7 +10243,7 @@ async function emitAgentActivity(args: {
       verb: { id: args.verbIri, display: { en: args.verbDisplay } },
       object: { objectType: 'Activity', id: args.objectId, definition: { name: { en: args.objectName }, type: args.objectType } },
       ...(args.result ? { result: args.result } : {}),
-      context: { contextActivities: { category: [performanceRecordCategory()] }, extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
+      context: { contextActivities: { category: performanceCategoriesFor(args.objectType) }, extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
       timestamp: new Date().toISOString(),
     };
     const id = await storeStatementDurably(statement, lens);
