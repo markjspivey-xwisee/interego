@@ -111,6 +111,12 @@ describe('the published role-play player page', () => {
     expect(page).toContain('if (got.state === "unknown") return reviewUnknown(got);');
     // An id the LRS already holds counts only when what it holds says everything the issued statement says.
     expect(page).toContain('return holds(stored, restIssued) && (ti === undefined || sameInstant(ts, ti));');
+    // Nothing reviewed is sent before the LRS has taken this session's initialized.
+    expect(page).toContain('sessionOpened = (await send("initialized", "initialized", scenarioAct(), null, true, false)) !== null;');
+    expect(page.indexOf('if (!sessionOpened) {\n    $("rvtitle")')).toBeLessThan(page.indexOf('o = await postReviewed(st)'));
+    // It does not claim to know what happened in the visit the result was issued for.
+    expect(page).toContain('It may already be in your learning record from that visit.');
+    expect(page).not.toContain('that ended before it was recorded');
     // It never writes a verb cmi5 keeps for the LMS.
     for (const verb of ['verbs/launched', 'verbs/abandoned', 'verbs/waived', 'verbs/satisfied']) expect(page).not.toContain(verb);
   });

@@ -1,5 +1,22 @@
 # Changelog
 
+## 2026-11-14 — Role-play player: a visit's start is confirmed before a reviewed result is sent
+
+Three follow-ups to the role-play player, from a reviewer's read after it merged.
+
+On a visit that records a reviewed result, the player sent `initialized` and
+then the reviewed statements without waiting to learn whether the first was
+taken. It now sends nothing reviewed until the LRS has taken `initialized`, and
+says so and offers to try again where it has not.
+
+The message for a result issued for another visit said that visit "ended before
+it was recorded". The player knows only that the result was issued for a
+different visit, not what was recorded in it. The message now says that.
+
+A statement the LRS refused once and took on a second try left its first error
+behind, and the page then said the visit had not saved. Only the last answer
+for a statement is kept.
+
 ## 2026-11-14 — Coached world: the service is in the deploy table
 
 The coached world runs at `https://coached-world-bridge-production.up.railway.app`, as the
