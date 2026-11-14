@@ -270,6 +270,10 @@ describe('pev.import_launched_attempt', () => {
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay()), 400, 'lrs-read-missing');
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay(), readOf('11111111-1111-4111-8111-111111111111')), 400, 'lrs-read-other-registration');
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay(), readOf(REG, { cursor: 'page-2' })), 400, 'lrs-read-other-registration');
+    // A read that leaves statements out is not a read of the registration: what it lacks proves nothing.
+    for (const filter of [{ since: '2026-10-22T08:30:00.000Z' }, { until: '2026-10-22T08:30:00.000Z' }, { verb: VERB_TERMINATED }, { activity: AU }, { statementId: '00000000-0000-4000-8000-000000000001' }]) {
+      expect(refused(await act(H, 'pev.import_launched_attempt', W.ana, pay(), readOf(REG, filter)), 400, 'lrs-read-narrowed')['narrowing']).toEqual(Object.keys(filter));
+    }
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ scenarioVersion: 2 }), readOf(REG)), 409, 'scenario-revised');
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ scenarioIri: `${S['scenario']}-other` }), readOf(REG)), 404, 'scenario-not-found');
     expect(lrs.seen).toEqual([]);
@@ -493,6 +497,14 @@ describe('pev.import_launched_attempt', () => {
       'a statement that was handed out is already in the LRS: the result was sent',
       'the registration already holds a passed, failed or completed statement for this unit: cmi5 allows one of each',
     ]);
+    // A read with a time window could show the ending and the new launch and leave out what was sent: it is not taken.
+    lrs.answer = () => ({ status: 200, body: { statements: [...held, endedA, openB] } });
+    const looked = lrs.seen.length;
+    refused(await ask(B, readOf(REG, { since: at(55) })), 400, 'lrs-read-narrowed');
+    expect(lrs.seen.length).toBe(looked);
+    // A limit or an order leaves nothing out (a read cut short comes back with `more`, which is refused).
+    lrs.answer = () => ({ status: 200, body: { statements: [...held, openB] } });
+    expect(ok(await ask(B, readOf(REG, { limit: 200, ascending: true })))['notFixedAgain']).toHaveLength(1);
     // It ended with nothing sent, but the new session is not one the LMS opened.
     expect((await stays([...held, endedA]) as string[])[0]).toContain('holds no launched statement from the LMS for this unit and this session');
     expect(pod.store.size).toBe(size);

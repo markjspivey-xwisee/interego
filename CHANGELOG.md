@@ -24,6 +24,14 @@ reach the LRS still collides on its id. The attempt keeps the sessions it was
 fixed for before (`handedOut.fixedBefore`). Otherwise nothing is written and the
 answer gives the reasons (`notFixedAgain`).
 
+**The read must be of the whole registration.** Both checks take what the
+learner's LRS read does not return as not being there. A read with a time
+window, a verb, an activity or a statement id leaves statements out, so it could
+hide a result already sent. `lrs_read` may now carry `registration`, `limit` and
+`ascending` only; anything else is refused before the LRS is asked (400
+`lrs-read-narrowed`), when an attempt is taken as well as here. Found by Codex
+on this change.
+
 Not changed: an `lms` principal asking for another session still gets the copy.
 The LMS route has no LRS read to show that the earlier session ended unsent.
 

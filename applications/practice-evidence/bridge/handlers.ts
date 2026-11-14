@@ -2112,6 +2112,9 @@ const REGISTRATION_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a
 /** Names what stood in for a judge prompt when the scores were the unit's own, read from its statements. */
 export const LAUNCHED_JUDGMENT_TEMPLATE_HASH = sha256('practice-evidence: the scores an assignable unit wrote for its own conversation, read from its statements');
 
+/** The keys a read of a whole registration may carry. Every other xAPI statement filter leaves statements out. */
+const LRS_READ_WHOLE_KEYS: ReadonlySet<string> = new Set(['registration', 'limit', 'ascending']);
+
 /** The learner's own signed read of one registration, as the LRS's signed-read route takes it. */
 function lrsReadOf(args: Record<string, unknown>, registration: string): { readonly _signed_payload: string; readonly _signature: string } {
   const r = args['lrs_read'];
@@ -2124,6 +2127,15 @@ function lrsReadOf(args: Record<string, unknown>, registration: string): { reado
   try { query = (JSON.parse(sp) as Record<string, unknown>)['query']; } catch { query = undefined; }
   if (!isObj(query) || query['registration'] !== registration || query['cursor'] !== undefined) {
     throw decline(400, 'lrs_read must ask for this registration, from its start: its signed payload needs query.registration equal to the registration and no cursor.', 'lrs-read-other-registration');
+  }
+  // What the read does not return is taken as not being there: no result sent yet, no statement of
+  // another session. So the read has to be of the whole registration. A filter (a time window, a
+  // verb, an activity, one statement) would leave statements out and the absence would mean nothing.
+  // `limit` and `ascending` narrow nothing: a read cut short by a limit comes back with `more`, which
+  // is refused where the answer is read.
+  const narrowing = Object.keys(query).filter((k) => !LRS_READ_WHOLE_KEYS.has(k)).sort();
+  if (narrowing.length > 0) {
+    throw decline(400, `lrs_read must ask for the whole registration: its query may carry registration, limit and ascending only, and this one also carries ${narrowing.join(', ')}.`, 'lrs-read-narrowed', undefined, { narrowing });
   }
   return { _signed_payload: sp, _signature: sig };
 }
