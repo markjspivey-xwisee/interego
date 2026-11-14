@@ -17,13 +17,12 @@
  */
 import { readFileSync } from 'node:fs';
 import type { Express, Request, Response } from 'express';
-import { rateLimit, type Options } from 'express-rate-limit';
 import { setActorAliasSource, type ActorLink } from './actor-alias.js';
 import {
   buildCmi5Launch, chooseAu, cmi5SessionId, copyLearnerSatisfaction, findResumableLaunch,
   type Cmi5Launch,
 } from './cmi5-lms.js';
-import { requestAddress } from './revocable-registry.js';
+import { forwardedRateLimit } from './revocable-registry.js';
 import type { Cmi5Course } from './cmi5-course.js';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import type { LearningAccountAuth } from './i2idlx-learning-auth.js';
@@ -349,17 +348,9 @@ function known(error: unknown): { status: number; code: string } | null {
   return typeof status === 'number' && typeof code === 'string' ? { status, code } : null;
 }
 
-function limit(name: string, max: number): ReturnType<typeof rateLimit> {
-  const options: Partial<Options> = {
-    windowMs: 60_000, limit: max, ipv6Subnet: 56, identifier: name,
-    standardHeaders: 'draft-8', legacyHeaders: false,
-    message: { error: 'too_many_requests' },
-    // The socket address is the proxy. The last forwarded hop is the client, the same
-    // address a personal launch link uses.
-    keyGenerator: (req) => requestAddress(req as Request),
-    validate: { keyGeneratorIpFallback: false },
-  };
-  return rateLimit(options);
+/** The shared per-client limit: keyed on the forwarded hop, an IPv6 client folded to its subnet. */
+function limit(name: string, max: number): ReturnType<typeof forwardedRateLimit> {
+  return forwardedRateLimit({ windowMs: 60_000, limit: max, identifier: name });
 }
 
 const GUEST_JS = new URL('../i2idlx/app/src/learning-guest.js', import.meta.url);
