@@ -5,8 +5,8 @@
  * `satisfied` carrying no grading tag, since a cmi5 AU reports its own result.
  */
 import { describe, expect, it } from 'vitest';
-import { buildCmi5Launch, chooseAu, observeCmi5Statement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
-import { readStateDocument } from '../src/xapi-lrs.js';
+import { buildCmi5Launch, chooseAu, findResumableLaunch, observeCmi5Statement, recordLaunchedStatement, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
+import { getStatementStore, readStateDocument } from '../src/xapi-lrs.js';
 import { GRADED_TAG_EXT } from '../src/graded-evidence.js';
 import type { Cmi5Course } from '../src/cmi5-course.js';
 import type { TenantId } from '../src/tenant-context.js';
@@ -75,6 +75,63 @@ describe('a signed learner\'s launch', () => {
   });
 });
 
+const LAUNCHED = 'http://adlnet.gov/expapi/verbs/launched';
+const SESSION_EXT = 'https://w3id.org/xapi/cmi5/context/extensions/sessionid';
+
+describe('the LMS launched statement', () => {
+  const tenant = 'lens:learner-launched' as TenantId;
+  const learner = 'did:ethr:0x1111111111aa00000000000000000000000beef2';
+  const req = {
+    au: { id: second, url: 'https://bridge.example/content/au/p/1?already=1', moveOn: 'Passed' as const, masteryScore: 0.6, title: 'Second' },
+    learner: { id: learner },
+    lrsEndpoint: 'https://bridge.example/xapi', fetchBaseUrl: 'https://bridge.example/cmi5/fetch',
+    authoritativeSource: 'did:web:bridge.example', tenant, courseId: course.id, learnerPod: 'https://pod.example/eth-1111111111aa/',
+  };
+  const scope = { tenant, learnerId: learner, courseId: course.id, auId: second };
+
+  it('is stored once for a session, skipped when that session resumes, and stored again for a new session of the same registration', async () => {
+    const first = buildCmi5Launch(req);
+    const extensions = (first.launched?.context as { extensions: Record<string, unknown> }).extensions;
+    expect(first.launched).toMatchObject({
+      verb: { id: LAUNCHED },
+      actor: first.actor,
+      object: { id: second, objectType: 'Activity' },
+      context: {
+        registration: first.registration,
+        contextActivities: { category: [{ id: 'https://w3id.org/xapi/cmi5/context/categories/cmi5', objectType: 'Activity' }] },
+      },
+    });
+    expect(extensions).toMatchObject({
+      [SESSION_EXT]: expect.any(String),
+      'https://w3id.org/xapi/cmi5/context/extensions/launchmode': 'Normal',
+      'https://w3id.org/xapi/cmi5/context/extensions/launchurl': req.au.url,
+      'https://w3id.org/xapi/cmi5/context/extensions/moveon': 'Passed',
+      'https://w3id.org/xapi/cmi5/context/extensions/masteryscore': 0.6,
+    });
+    expect(String(extensions['https://w3id.org/xapi/cmi5/context/extensions/launchurl'])).not.toContain('endpoint=');
+    expect(first.launchUrl).toContain('endpoint=');
+    await recordLaunchedStatement(tenant, first.launched!);
+
+    const resumed = buildCmi5Launch({ ...req, resume: findResumableLaunch(scope) });
+    expect(resumed.registration).toBe(first.registration);
+    expect(resumed.launched).toBeUndefined();
+
+    await observeCmi5Statement({ verb: { id: 'http://adlnet.gov/expapi/verbs/terminated' }, context: { registration: first.registration } }, tenant, { statementsForRegistration: async () => [], emit: () => undefined });
+    const restarted = buildCmi5Launch({ ...req, resume: findResumableLaunch(scope) });
+    expect(restarted.registration).toBe(first.registration);
+    expect(restarted.launched).toBeDefined();
+    const nextSession = (restarted.launched?.context as { extensions: Record<string, unknown> }).extensions[SESSION_EXT];
+    expect(nextSession).not.toBe(extensions[SESSION_EXT]);
+    await recordLaunchedStatement(tenant, restarted.launched!);
+
+    const held = await getStatementStore(tenant).query({ registration: first.registration, limit: 20 });
+    const launched = held.statements.filter(s => (s.statement.verb as { id?: string }).id === LAUNCHED);
+    expect(launched).toHaveLength(2);
+    expect(launched.map(s => (s.statement.context as { extensions: Record<string, unknown> }).extensions[SESSION_EXT]).sort())
+      .toEqual([extensions[SESSION_EXT], nextSession].sort());
+  });
+});
+
 describe('the bridge wires the learner\'s own launch', () => {
   it('derives the learner from the signature, launches into their lens, stages launch data, and keeps statements only for the launch\'s own actor', async () => {
     const { readFileSync } = await import('node:fs');
@@ -84,6 +141,11 @@ describe('the bridge wires the learner\'s own launch', () => {
     expect(route).toMatch(/const learner = await signedLearner\(auth\)/);
     expect(route).toMatch(/const tenant = lensTenantFor\(actorForPod\(learner\.podUrl, MESH_ACTOR_LABELS\)\)/);
     expect(route).toMatch(/stageLaunchData\(tenant, launch, au\.id\)/);
+    expect(route).toMatch(/recordLaunchedStatement\(tenant, launch\.launched\)/);
+    const lms = readFileSync(new URL('../src/cmi5-lms.ts', import.meta.url), 'utf8');
+    expect(lms).toMatch(/await recordLaunchedStatement\(tenant, launch\.launched\)/);
+    const link = readFileSync(new URL('../src/cmi5-personal-link.ts', import.meta.url), 'utf8');
+    expect(link).toMatch(/if \(launch\.launched\) await recordLaunchedStatement\(tenant, launch\.launched\)/);
     expect(src).toMatch(/\(actor\?\.objectType \?\? 'Agent'\) !== 'Agent' \|\| actor\?\.account\?\.name !== learner\.did \|\| actor\?\.account\?\.homePage !== learner\.homePage/);
     expect(src).toMatch(/bearerRegistrationResolver: cmi5BearerRegistration/);
     expect(src).toMatch(/signedLaunchLearner\(reg, tenant\)/);
