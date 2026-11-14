@@ -88,7 +88,7 @@ import {
   buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, CMI5_SESSION_EXT, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
   type ProjectionFormat,
 } from '../src/projections.js';
-import { readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary } from '../src/launched-import.js';
+import { launchNotVerified, readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary, type LmsAuthority } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
   readCache, readChain, readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship,
@@ -235,6 +235,14 @@ export interface LaunchImport {
    * PEV_LAUNCH_LMS_ISSUERS.
    */
   readonly lmsIssuers?: Readonly<Record<string, string>>;
+  /**
+   * The authority the LMS's own statements carry on this LRS, where the LRS marks them apart from
+   * what anyone else stores. With it, a `launched` is taken as the LMS's word only under that
+   * authority: the launch mode of an attempt, and that a session to send in was opened by the LMS.
+   * Without it a `launched` is taken by its verb, actor, unit and session, which a learner who can
+   * write to their own record can produce.
+   */
+  readonly lmsAuthority?: LmsAuthority;
 }
 
 /** A per-hour limit for one signer and for everyone together. */
@@ -2218,7 +2226,7 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
   const statements = await statementsOfRegistration(ctx, li, lrsRead);
   const readOut = readLaunchedCall(statements, {
     registration: String(s.payload['registration']), spec, rubricHash: sb.rubricHash, rubricIri: sb.rubricIri, scenarioVersionRef: scenarioVersionRef(sIri, sb.version),
-    vocabulary: li.vocabulary, endpoint: li.endpoint,
+    vocabulary: li.vocabulary, endpoint: li.endpoint, ...(li.lmsAuthority ? { lmsAuthority: li.lmsAuthority } : {}),
   });
   if ('problems' in readOut) {
     throw decline(422, 'The registration is not one whole practice conversation against this scenario version; nothing was recorded.', 'registration-not-a-conversation',
@@ -3281,6 +3289,13 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
       throw decline(403, 'Only the learner, or the LMS that launched the attempt, takes its statements.', 'not-the-learner');
     }
     if (!l) throw decline(409, 'No LMS launched this attempt: it satisfies no assignable unit.', 'no-lms-launch');
+    // The launch is not read from the LRS again here: what was decided when the attempt was taken
+    // is what is gone by, for the learner and for the LMS, and for statements already fixed. So an
+    // attempt whose launch was decided without the check this bridge now makes hands out nothing.
+    const unverified = launchNotVerified(l, li?.lmsAuthority);
+    if (unverified !== null) {
+      throw decline(409, 'The launch of this attempt was not checked against the LMS\'s own record; nothing is handed out for it.', 'launch-not-verified', undefined, { problems: [unverified] });
+    }
     // They carry the score and whether it met the pass mark: refused to a caller who does not read the stakes.
     if (scoredUse(h.body.scenarioSpec) && !(await showsStakes(call, s))) {
       throw stakesNotHere(call, 'The statements of a scored session carry its score and whether it met the pass mark.');
@@ -3298,7 +3313,7 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
         if (li.endpoint !== l.endpoint) throw decline(409, 'This attempt was taken from another LRS than the one this bridge reads.', 'another-lrs');
         const held = l.handedOut;
         const now = await statementsOfRegistration(ctx, li, lrsReadOf(args, l.registration));
-        notFixedAgain = refixProblems(now, l, { sessionId: held.sessionId, statementIds: held.statements.map((st) => String(st['id'])) }, sessionId);
+        notFixedAgain = refixProblems(now, l, { sessionId: held.sessionId, statementIds: held.statements.map((st) => String(st['id'])) }, sessionId, li.lmsAuthority);
         if (notFixedAgain.length === 0) {
           notReplayed(h.body, s);
           const statements = held.statements.map((st) => {
@@ -3351,7 +3366,7 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
       if (!li) throw decline(501, 'This bridge is not set up to read an LRS, so it cannot tell whether the session is one to send in.', 'launch-import-not-configured');
       if (li.endpoint !== l.endpoint) throw decline(409, 'This attempt was taken from another LRS than the one this bridge reads.', 'another-lrs');
       const now = await statementsOfRegistration(ctx, li, lrsReadOf(args, l.registration));
-      const sessionProblems = sendingSessionProblems(now, l, sessionId);
+      const sessionProblems = sendingSessionProblems(now, l, sessionId, li.lmsAuthority);
       if (sessionProblems.length > 0) {
         throw decline(409, 'The session named is not one these statements can be sent in; nothing was fixed.', 'not-a-sending-session', undefined, { problems: sessionProblems });
       }

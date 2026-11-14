@@ -106,6 +106,8 @@ export interface ReadLaunchedInput {
    * hash it is something whoever builds the unit can know without being shown the rubric's stakes.
    */
   readonly scenarioVersionRef?: string;
+  /** The authority the LMS's own statements carry on this LRS. With it, a `launched` counts only under that authority. */
+  readonly lmsAuthority?: LmsAuthority;
   readonly vocabulary: LaunchVocabulary;
   /** The LRS endpoint the statements were read from. */
   readonly endpoint: string;
@@ -121,6 +123,46 @@ export interface ReadLaunchedInput {
  */
 export function scenarioVersionRef(scenarioIri: string, version: number): string {
   return `${scenarioIri}#version-${version}`;
+}
+
+/**
+ * The account on the `authority` of a statement the LMS itself recorded, where the LRS marks those
+ * apart. An LRS may let a learner store statements about themselves; one with the verb `launched` is
+ * then the learner's claim, not the LMS's word. An LRS that gives the LMS's own statements an
+ * authority nobody else can write lets a reader tell the two apart, and this names that authority.
+ */
+export interface LmsAuthority { readonly homePage: string; readonly name: string }
+
+/** Why a value is not an LMS authority. Empty when it is one. */
+export function lmsAuthorityProblems(v: unknown): string[] {
+  if (!isObj(v)) return ['must be an object with homePage and name'];
+  const p: string[] = [];
+  if (typeof v['homePage'] !== 'string' || !IRI.test(v['homePage'])) p.push('homePage must be an absolute IRI');
+  if (typeof v['name'] !== 'string' || v['name'].length === 0 || v['name'].length > 200) p.push('name must be a string of 1 to 200 characters');
+  const extra = Object.keys(v).filter((k) => k !== 'homePage' && k !== 'name');
+  if (extra.length > 0) p.push(`unknown keys: ${extra.join(', ')}`);
+  return p;
+}
+
+/**
+ * Why an attempt's recorded launch is not one this bridge has checked, or null. The launch mode is
+ * decided once, when the attempt is taken, and kept. A bridge told the LMS's authority goes by that
+ * decision only where it was made under the same authority: an attempt taken before the check, or
+ * by a bridge told another authority or none, was decided from a `launched` anyone could have stored.
+ */
+export function launchNotVerified(launch: LmsLaunch, lmsAuthority: LmsAuthority | undefined): string | null {
+  if (lmsAuthority === undefined) return null;
+  const u = launch.launchedUnder;
+  if (u === undefined) return 'the launch mode of this attempt was read from a launched statement whose recorder was not checked: it was taken before this bridge checked who records them, or with no launched statement at all';
+  if (u.homePage !== lmsAuthority.homePage || u.name !== lmsAuthority.name) return 'the launch mode of this attempt was read from a launched statement recorded under another authority than the one this bridge is told is the LMS\'s';
+  return null;
+}
+
+/** Whether the LMS recorded this statement, as far as its authority says. Where no authority is known to ask for, every statement passes. */
+function recordedByLms(s: Record<string, unknown>, lms: LmsAuthority | undefined): boolean {
+  if (lms === undefined) return true;
+  const a = objOf(objOf(s['authority'])['account']);
+  return a['homePage'] === lms.homePage && a['name'] === lms.name;
 }
 
 export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunchedInput): { readonly call: ImportedCall } | { readonly problems: readonly string[] } {
@@ -149,7 +191,9 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
   read.sort((a, b) => a.ms - b.ms || a.order - b.order);
 
   // The LMS's own launched statement names the actor too, but is the LMS's, not the unit's.
-  const launches = read.filter((r) => r.verb === VERB_LAUNCHED);
+  // A `launched` is the LMS's to record. Where this LRS marks the LMS's own statements, one without
+  // the mark is somebody's claim to have been launched: it says nothing about how the unit was launched.
+  const launches = read.filter((r) => r.verb === VERB_LAUNCHED && recordedByLms(r.s, i.lmsAuthority));
   const unit = read.filter((r) => r.verb !== VERB_LAUNCHED);
   const accounts = new Set(read.map((r) => {
     const a = objOf(objOf(r.s['actor'])['account']);
@@ -249,6 +293,9 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
   const launch: LmsLaunch = {
     registration: i.registration, sessionId, activityId: first.objectId, actor: { homePage, name }, endpoint: i.endpoint,
     launchMode: launched ? (mode as LmsLaunch['launchMode']) : 'Normal',
+    // Which authority the launched statement carried, where that was checked. It is what a later
+    // hand-out goes by: the launch is not read from the LRS again.
+    ...(launched && i.lmsAuthority ? { launchedUnder: { homePage: i.lmsAuthority.homePage, name: i.lmsAuthority.name } } : {}),
     ...(typeof mastery === 'number' ? { masteryScore: mastery } : {}),
     ...(Object.keys(template).length > 0 ? { contextTemplate: template } : {}),
     ...(isObj(objOf(first.s['object'])['definition']) ? { activityDefinition: objOf(first.s['object'])['definition'] as Record<string, unknown> } : {}),
@@ -269,13 +316,13 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
  * completed for this unit in the registration. A session named by mistake, one already ended, or one of another unit
  * would otherwise fix the statements for good.
  */
-export function sendingSessionProblems(statements: readonly unknown[], launch: LmsLaunch, sessionId: string): string[] {
+export function sendingSessionProblems(statements: readonly unknown[], launch: LmsLaunch, sessionId: string, lmsAuthority?: LmsAuthority): string[] {
   const p: string[] = [];
   const mine = statements.filter(isObj).filter((s) => objOf(s['context'])['registration'] === launch.registration);
   if (mine.length !== statements.length) p.push('the LRS returned statements of another registration');
   const sessionOf = (s: Record<string, unknown>): unknown => objOf(objOf(s['context'])['extensions'])[CMI5_SESSION_EXT];
   const verbOf = (s: Record<string, unknown>): unknown => objOf(s['verb'])['id'];
-  const launches = mine.filter((s) => verbOf(s) === VERB_LAUNCHED && sessionOf(s) === sessionId && objOf(s['object'])['id'] === launch.activityId);
+  const launches = mine.filter((s) => verbOf(s) === VERB_LAUNCHED && sessionOf(s) === sessionId && objOf(s['object'])['id'] === launch.activityId && recordedByLms(s, lmsAuthority));
   if (launches.length === 0) {
     p.push('the LRS holds no launched statement from the LMS for this unit and this session: the session is not one the LMS opened for this attempt');
   } else {
@@ -345,6 +392,7 @@ function cmi5DefinedFor(s: Record<string, unknown>, launch: LmsLaunch): boolean 
  */
 export function refixProblems(
   statements: readonly unknown[], launch: LmsLaunch, fixed: { readonly sessionId: string; readonly statementIds: readonly string[] }, sessionId: string,
+  lmsAuthority?: LmsAuthority,
 ): string[] {
   const p: string[] = [];
   const mine = statements.filter(isObj).filter((s) => objOf(s['context'])['registration'] === launch.registration);
@@ -364,5 +412,5 @@ export function refixProblems(
     return objOf(s['verb'])['id'] === VERB_VOIDED && o['objectType'] === 'StatementRef' && typeof o['id'] === 'string' && ids.has((o['id'] as string).toLowerCase());
   });
   if (voidedOne) p.push('a statement that was handed out was stored in the LRS and then voided: the result was sent');
-  return [...p, ...sendingSessionProblems(statements, launch, sessionId)];
+  return [...p, ...sendingSessionProblems(statements, launch, sessionId, lmsAuthority)];
 }
