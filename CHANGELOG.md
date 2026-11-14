@@ -19,6 +19,34 @@ binding and no authority.
 Without the setting nothing changes. Not covered: `terminated`, the exchanges
 and the scores are the unit's own statements and are not the LMS's to mark.
 
+## 2026-11-14 — Foxxi: the LMS's own statements carry an authority nobody can send
+
+An assignable unit's token was stopped from writing the LMS's verbs earlier
+today. A reviewer asked who else can write to a learner's records. There is one
+more writer: the signed route by which a learner, or an agent acting for them,
+writes statements about themselves. It took any verb. And every statement in
+the LRS, the LMS's own included, carried the same authority, so a reader could
+not tell the LMS's `launched` from one a learner wrote.
+
+The LMS's own `launched` and `satisfied` are now stored under an authority of
+their own, `foxxi-lms`. Only the LMS's code can write it: a statement sent in
+naming it is refused (403), and one handed to any other internal store loses
+the claim. The learner's signed route refuses `launched`, `abandoned`, `waived`
+and `satisfied`. A reader that needs the LMS's word can now ask for that
+authority.
+
+Two places in the bridge put a statement record straight into a store, past
+that rule, and both take what a pod holds: the mesh projection's batch landing,
+and the restore of a caller's durable telemetry from the caller's own pod. The
+first now drops a claim to the LMS's authority; the second refuses a record
+that makes one. Found on a reviewer's prompt to check the restore paths.
+
+Not done here: no reader checks the authority yet. Practice Evidence and the
+coached-world gate still read `launched` and `satisfied` by verb, activity and
+actor. Statements the LMS stored before this change carry the old authority.
+Operator credentials can still store any verb; what they store does not carry
+the LMS's authority.
+
 ## 2026-11-14 — Connect an agent, shared: any bridge can use a chat session's subscription instead of an API key
 
 The I2IDL-X workbench lets a person pair their own AI chat session with a page, so the page's questions are answered on that session's subscription and no model key is held anywhere. That method lived inside Foxxi. It is now shared code, and the coached world is the second bridge to use it.
