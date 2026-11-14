@@ -50,6 +50,8 @@ export interface ShadowDisagreement {
 }
 
 export declare function subjectAttributeGraph(facts: unknown, nowMs?: number): SubjectAttributeGraph;
+/** Whom to attribute a decision or a usage record to: the linked main account where the authority states one. */
+export declare function canonicalSubject(facts: unknown, nowMs?: number): { readonly subject: string; readonly also: readonly string[]; readonly linked: boolean };
 export declare function evaluatePolicies(policies: readonly AccessControlPolicyData[],
   predicates: ReadonlyMap<string, PolicyPredicateShape>, graph: AttributeGraph, action: string)
   : { verdict: AbacVerdict; matchedPolicies: readonly string[] };

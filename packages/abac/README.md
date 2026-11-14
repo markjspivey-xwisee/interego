@@ -25,6 +25,10 @@ subjectAttributeGraph({ subject: guestDid, provisional: true, claimed: false, st
 
 The facts must be an authority's own answer about the subject (identity's introspection, a tenant directory's row), never something the subject sent. The paths are declared in `docs/ns/passport.ttl` (`passport:provisional`, `passport:claimed`, `passport:role`, `passport:linkedTo`, …) and `docs/ns/abac.ttl` (`abac:secondsRemaining`, `abac:ageSeconds`, `abac:useService`). Anything malformed, an unknown member included, throws: a graph is never built from part of an answer.
 
+## Attributing usage to a main account
+
+`canonicalSubject(facts)` answers whom a decision or a usage record belongs to: the main account when the authority states the subject is `linkedTo` one, else the subject itself, with the acting subject in `also`. A vertical keys what it keeps per person (a learner record, a consultant, a quota) on `canonicalSubject(facts).subject` and records `also` beside it, so a guest's usage becomes the main account's the moment the authority states the link, and nothing written before is rewritten. No authority states `linkedTo` yet: identity's link ceremony is not built.
+
 ## Adopting it at a decision point: shadow, then enforce
 
 A service that already decides with a fixed rule keeps that rule deciding and runs the policy beside it. `decideInShadow` returns the existing rule's answer and logs one small record when the policy disagrees (the point, the action, the subject, both answers, the matching policies; no attribute value and nothing of the request). When the log has been quiet for long enough, a setting moves the point to `enforce` and the policy decides, default-deny.

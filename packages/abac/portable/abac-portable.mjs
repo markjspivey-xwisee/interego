@@ -21,6 +21,8 @@
  *   - `decideInShadow(...)`: adopt a policy beside an existing fixed rule. In shadow mode the
  *     existing rule decides and a disagreement is logged; in enforce mode the policy decides.
  *   - `provisionalSubjectPolicies(...)`: a standard policy set for provisional subjects.
+ *   - `canonicalSubject(facts)`: whom to attribute a decision or a usage record to when the
+ *     authority states the subject is linked to a main account.
  *
  * Policies are `iep:AccessControlPolicy` records ({ id, policyPredicateShape, governedAction,
  * deonticMode }); predicates are the mini-SHACL shapes of `abac:` ({ iri, constraints: [{ path,
@@ -113,6 +115,21 @@ export function subjectAttributeGraph(facts, nowMs = Date.now()) {
   state(SUBJECT.proofKeyThumbprint, f.proofKeyThumbprint === undefined ? undefined : [f.proofKeyThumbprint]);
   // The shape of an `@interego/abac` AttributeGraph: no facets, direct statements only.
   return { subject: f.subject, facets: [], sources: new Map(), attributes };
+}
+
+/**
+ * The subject a decision or a usage record should be attributed to: the main account an authority
+ * states the subject is linked to (`linkedTo`), else the subject itself. `also` is the subject
+ * that acted, where that is not the canonical one, so a record can keep both.
+ *
+ * `facts` are validated as `subjectAttributeGraph` validates them (and throw the same way): a link
+ * is believed only as part of a whole, well-formed answer from the authority. A link is followed
+ * once. The authority states the main account, never a chain, and nothing here asks anyone else.
+ */
+export function canonicalSubject(facts, nowMs = Date.now()) {
+  const graph = subjectAttributeGraph(facts, nowMs);
+  const linked = graph.attributes.get(SUBJECT.linkedTo)?.[0];
+  return typeof linked === 'string' ? { subject: linked, also: [graph.subject], linked: true } : { subject: graph.subject, also: [], linked: false };
 }
 
 /** One constraint of a predicate shape against the graph: the package's checkConstraint. */

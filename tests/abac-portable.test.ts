@@ -12,7 +12,7 @@ import { readFileSync } from 'node:fs';
 import { describe, it, expect } from 'vitest';
 import type { AccessControlPolicyData, IRI } from '@interego/core';
 import { evaluate, filterAttributeGraph, type PolicyContext, type PolicyPredicateShape, type PredicateConstraint } from '@interego/abac';
-import { ACTIONS, AbacPortableError, SUBJECT, decide, decideInShadow, evaluatePolicies, provisionalSubjectPolicies, subjectAttributeGraph,
+import { ACTIONS, AbacPortableError, SUBJECT, canonicalSubject, decide, decideInShadow, evaluatePolicies, provisionalSubjectPolicies, subjectAttributeGraph,
   type PolicySet, type ShadowDisagreement, type SubjectFacts } from '@interego/abac/portable';
 
 const PLAY = 'https://play.example';
@@ -76,6 +76,21 @@ describe('one subject model for every principal', () => {
     expect(() => subjectAttributeGraph({ ...facts(), surprise: true }, NOW * 1000)).toThrow(AbacPortableError);
     for (const whole of [null, undefined, 'facts', [], 7]) expect(() => subjectAttributeGraph(whole, NOW * 1000)).toThrow(AbacPortableError);
     expect(() => subjectAttributeGraph(facts(), Number.NaN)).toThrow(AbacPortableError);
+  });
+});
+
+describe('whom usage is attributed to', () => {
+  it('is the linked main account where the authority states one, and the subject itself otherwise', () => {
+    expect(canonicalSubject(facts(), NOW * 1000)).toEqual({ subject: GUEST_DID, also: [], linked: false });
+    expect(canonicalSubject(facts({ linkedTo: OWNER_DID }), NOW * 1000)).toEqual({ subject: OWNER_DID, also: [GUEST_DID], linked: true });
+    expect(canonicalSubject({ subject: OWNER_DID, provisional: false })).toEqual({ subject: OWNER_DID, also: [], linked: false });
+  });
+
+  it('believes a link only inside a whole, well-formed answer', () => {
+    for (const over of [{ linkedTo: GUEST_DID }, { linkedTo: '' }, { linkedTo: ['x'] }, { linkedTo: OWNER_DID, provisional: 'true' }, { linkedTo: OWNER_DID, surprise: 1 } as Over]) {
+      expect(() => canonicalSubject(facts(over), NOW * 1000), JSON.stringify(over)).toThrow(AbacPortableError);
+    }
+    expect(() => canonicalSubject(null)).toThrow(AbacPortableError);
   });
 });
 
