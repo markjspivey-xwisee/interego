@@ -14,6 +14,7 @@ import { FOXXI_NS } from '../src/foxxi-vocab.js';
 import { competencyIri, competencyOfTerm } from '../src/competency-identity.js';
 import { competencyRef } from '../src/content-fragments.js';
 import { projectMeshEntry } from '../src/mesh-event-projector.js';
+import { buildPerformanceStatement } from '../src/performance-statement.js';
 
 const good = { modalStatus: 'Asserted', granularity: 'tool-call', verb: 'ran', objectId: 'urn:x:tests', objectName: ' the tests ', result: { success: false, quality: -0.5, note: 'two failed' }, extra: 'dropped' };
 
@@ -121,7 +122,17 @@ describe('the bridge answers a failed unit with what the work there implies', ()
   it('keeps the trajectory with the work, refusing a malformed one before anything is written', () => {
     expect(route).toMatch(/try \{ workSteps = workStepsFrom\(p\.trajectory\); \}\s+catch \(e\) \{ if \(e instanceof WorkStepError\) \{ res\.status\(400\)\.json\(\{ error: e\.message \}\); return; \} throw e; \}/);
     expect(route.indexOf('workStepsFrom(p.trajectory)')).toBeLessThan(route.indexOf('await storeStatementDurably('));
-    expect(route).toMatch(/\.\.\.\(workSteps \? \{ \[PERF_EXT\.workTrajectory\]: workSteps \} : \{\}\),/);
+    // The route hands the steps to the one function that builds the statement
+    // (src/performance-statement.ts), which is where they go onto it; read there, not in the route.
+    expect(route).toMatch(/\.\.\.\(workSteps \? \{ workTrajectory: workSteps \} : \{\}\),/);
+    const steps = [{ step: 'made-up' }];
+    const built = buildPerformanceStatement({
+      id: '11111111-1111-4111-8111-111111111111', registration: '22222222-2222-4222-8222-222222222222', timestamp: '2026-11-14T00:00:00.000Z',
+      homePage: 'https://bridge.example', performer: 'did:web:example.org:agents:fictional', taskId: 'https://bridge.example/tasks/made-up', taskName: 'A made-up task',
+      success: false, profileUrl: 'https://bridge.example/xapi/profile', observedBy: 'did:web:example.org:agents:fictional', actorKind: 'agent',
+      evidence: { binding: 'self-reported' }, workTrajectory: steps,
+    }) as { context: { extensions: Record<string, unknown> } };
+    expect(built.context.extensions[PERF_EXT.workTrajectory]).toBe(steps);
   });
 
   it('answers only a failure, for the performer themselves, and the record stands whatever it finds', () => {

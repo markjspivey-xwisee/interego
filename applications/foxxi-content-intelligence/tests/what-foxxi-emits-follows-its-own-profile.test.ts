@@ -13,6 +13,7 @@ import { buildFoxxiProfileDoc, descriptorProjectionCategory, performanceRecordCa
 import { validates, type Json } from '../src/xapi-profile-server/processor.js';
 import { projectMeshEntry } from '../src/mesh-event-projector.js';
 import { ingestExternalRun } from '../src/agent-run-ingest.js';
+import { buildPerformanceStatement, momOutcomeVerb, recordedActivityType } from '../src/performance-statement.js';
 
 const doc = buildFoxxiProfileDoc({ generatedAt: '2026-07-22T00:00:00.000Z' }) as { id: string; templates: Json[] };
 const T = (name: string) => `${doc.id}/templates/${name}`;
@@ -112,6 +113,39 @@ describe('what is not a descriptor projection', () => {
     // A descriptor typed as a course and projected as an outcome carries the descriptor marker only.
     const cats = ((projected({ success: true, conformsTo: [`${ADL}/activities/course`] }).context as { contextActivities: { category: Array<{ definition: { type: string } }> } }).contextActivities.category).map(c => c.definition.type);
     expect(cats).toEqual([descriptorProjectionCategory().definition.type]);
+  });
+
+  it('what record_performance builds follows the profile, for every kind of thing a performance is recorded against', () => {
+    // The statement the bridge's record_performance and its signed form now build, by the function they call.
+    const built = (activityType: unknown, success: boolean, more: Partial<Parameters<typeof buildPerformanceStatement>[0]> = {}) => buildPerformanceStatement({
+      id: '11111111-1111-4111-8111-111111111111', registration: '22222222-2222-4222-8222-222222222222', timestamp: '2026-11-14T00:00:00.000Z',
+      homePage: 'https://bridge.example', performer: 'did:web:example.org:agents:fictional',
+      taskId: 'https://bridge.example/tasks/made-up', taskName: 'Sort the made-up invoices', activityType, success,
+      profileUrl: doc.id, observedBy: 'did:web:example.org:observers:fictional', actorKind: 'agent',
+      evidence: { binding: 'self-reported' }, ...more });
+    const course = `${ADL}/activities/course`, lesson = `${ADL}/activities/lesson`;
+    expect(check(built(undefined, true))).toMatchObject({ outcome: 'success', templates: [T('production-performance-completed')] });
+    expect(check(built('  ', false))).toMatchObject({ outcome: 'success', templates: [T('production-performance-failed')] });
+    expect(check(built('urn:made-up:Move', true, { quality: 0.8, durationIso: 'PT5M', costUsd: 0.02 }))).toMatchObject({ outcome: 'success', templates: [T('production-performance-completed')] });
+    expect(check(built(course, true))).toMatchObject({ outcome: 'success', templates: [T('completed')] });
+    expect(check(built(course, false))).toMatchObject({ outcome: 'success', templates: [T('course-failed')] });
+    expect(check(built(lesson, true))).toMatchObject({ outcome: 'success', templates: [T('lesson-completed')] });
+    expect(check(built(lesson, false, { quality: 0.3 }))).toMatchObject({ outcome: 'success', templates: [T('lesson-failed')] });
+
+    // The shape itself, where the two routes used to spell it out separately.
+    const s = built('urn:made-up:Move', true, { quality: 0.8, evidence: { binding: 'shape-validated', shapeIri: 'https://example.org/shapes/made-up' }, workTrajectory: [{ step: 1 }] }) as {
+      verb: { id: string }; object: { definition: { type: string } }; result: Record<string, unknown>;
+      context: { registration: string; contextActivities: { category: Array<{ id: string }> }; extensions: Record<string, unknown> } };
+    expect(s.verb).toEqual(momOutcomeVerb(true));
+    expect(s.object.definition.type).toBe('urn:made-up:Move');
+    expect(s.result).toEqual({ success: true, score: { scaled: 0.8 } });
+    expect(s.context.contextActivities.category[0]!.id).toBe(doc.id);
+    expect(s.context.extensions[`${FOXXI_NS}contextKind`]).toBe('production');
+    expect(s.context.extensions[`${FOXXI_NS}evidenceShape`]).toBe('https://example.org/shapes/made-up');
+    expect(Object.values(s.context.extensions)).toContainEqual([{ step: 1 }]);
+    expect((built(course, true) as { result: unknown }).result).toEqual({ success: true, completion: true });
+    expect(recordedActivityType(undefined)).toBe(`${FOXXI_NS}ProductionTask`);
+    expect(recordedActivityType(' urn:made-up:Move ')).toBe('urn:made-up:Move');
   });
 
   it('the two categories are distinct typed activities', () => {

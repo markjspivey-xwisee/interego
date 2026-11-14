@@ -126,7 +126,10 @@ describe('a duration is taken only as xAPI takes one', () => {
     expect(atRoute).toBeGreaterThan(-1);
     expect(route.slice(atRoute)).toMatch(/^const durationRefused = durationRefusalOf\(p\.duration_iso\);\s+if \(durationRefused\) \{ res\.status\(400\)\.json\(\{ error: durationRefused \}\); return; \}/);
     expect(atRoute).toBeLessThan(route.indexOf('await bindPerformanceToEvidence('));
-    expect(route).toContain("...(typeof p.duration_iso === 'string' && p.duration_iso ? { duration: p.duration_iso } : {}),");
+    // The route hands the checked value to the one builder of this statement, which is where it becomes result.duration.
+    expect(route).toContain("...(typeof p.duration_iso === 'string' && p.duration_iso ? { durationIso: p.duration_iso } : {}),");
+    const builder = readFileSync(new URL('../applications/foxxi-content-intelligence/src/performance-statement.ts', import.meta.url), 'utf8');
+    expect(builder).toContain('...(input.durationIso ? { duration: input.durationIso } : {}),');
     const start = server.indexOf("'foxxi.record_performance': async");
     const mcp = server.slice(start, server.indexOf('await bindPerformanceToEvidence(', start));
     expect(mcp).toMatch(/const durationRefused = durationRefusalOf\(args\.duration_iso\);\s+if \(durationRefused\) return invalidArguments\(durationRefused\);/);
