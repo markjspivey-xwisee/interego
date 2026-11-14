@@ -299,7 +299,7 @@ const UNLINTED_FRONTIER = {
   //    1084 -> 1146: current master plus the enrolled learning review/map/notification
   //    modules cross the measured file-count slack. New modules lint clean; the
   //    error ceiling and all lint targets remain unchanged.
-  applications: { errors: 1452, files: 1146 },
+  applications: { errors: 1452, files: 1205 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
