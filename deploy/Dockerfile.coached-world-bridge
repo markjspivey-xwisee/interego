@@ -82,6 +82,9 @@ RUN npm ci
 # tests/a-bridge-image-carries-what-it-imports.test.ts follows these imports and fails if one is
 # not copied here.
 COPY packages/ ./packages/
+# The retrieval lexicon @interego/pgsl reads at runtime, as published data (see Dockerfile.wsp-bridge).
+# The package walks up from its own dist/ and finds it at /app/docs/ns.
+COPY docs/ns/pgsl-lexicon.ttl ./docs/ns/pgsl-lexicon.ttl
 COPY applications/_shared/ ./applications/_shared/
 COPY applications/coached-world/ ./applications/coached-world/
 COPY applications/foxxi-content-intelligence/src/play-grant.ts ./applications/foxxi-content-intelligence/src/play-grant.ts
