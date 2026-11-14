@@ -2,12 +2,18 @@
  * Two guests, one world. The guest path is identity's ProvisionalPlay.
  * A mismatched intervention does not move the score. Promotion happens only
  * when passed and completed are already in the record from outside.
+ *
+ * Every test that needs the HTTP server is in this file, the deployed surface included:
+ * the public URL, /health, the request limits, and the guest page finding its way back in
+ * after the world was restarted.
  */
 import { webcrypto } from 'node:crypto';
+import { readFileSync } from 'node:fs';
 import { dirname, join } from 'node:path';
-import { fileURLToPath } from 'node:url';
+import { fileURLToPath, pathToFileURL } from 'node:url';
 import { verifyMessage } from 'ethers';
-import { describe, expect, it } from 'vitest';
+import { afterEach, describe, expect, it, vi } from 'vitest';
+import { RATE_RULES } from '../src/rate-limit.js';
 import { start } from '../src/server.js';
 import { CoachedWorld } from '../src/world.js';
 import { FoxxiCourseLauncher } from '../src/course-launch.js';
@@ -20,7 +26,7 @@ const orchardPath = join(here, '../packs/orchard.json');
 const subtle = webcrypto.subtle;
 const b64 = (bytes: ArrayBuffer | Uint8Array) => Buffer.from(bytes instanceof Uint8Array ? bytes : new Uint8Array(bytes)).toString('base64url');
 
-async function guest(base: string): Promise<{ token: string; ownerDid: string }> {
+async function guest(base: string, audience = base): Promise<{ token: string; ownerDid: string }> {
   const pair = await subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, true, ['sign']) as CryptoKeyPair;
   const jwk = await subtle.exportKey('jwk', pair.publicKey) as JsonWebKey;
   const publicKeyJwk = { kty: 'EC' as const, crv: 'P-256' as const, x: jwk.x, y: jwk.y };
@@ -35,7 +41,7 @@ async function guest(base: string): Promise<{ token: string; ownerDid: string }>
   expect(String(admitted['userId'])).toMatch(/^u-try-play-/);
   const challenged = await post(base, '/session/challenge', {});
   const challenge = challenged['challenge'] as string;
-  const proof = await sign(`interego-play-proof-v1\n${attestation}\n${base}\n${challenge}`);
+  const proof = await sign(`interego-play-proof-v1\n${attestation}\n${audience}\n${challenge}`);
   const session = await post(base, '/session', { attestation, challenge, proof });
   return { token: session['token'] as string, ownerDid: session['ownerDid'] as string };
 }
@@ -286,4 +292,198 @@ describe('a shared coached world', () => {
       expect((await post('/missions', {})).status).toBe(401);
     } finally { await running.close(); }
   });
+});
+
+describe('the world behind a proxy, on a public address', () => {
+  const PUBLIC = 'https://world.example';
+  afterEach(() => { vi.unstubAllGlobals(); vi.unstubAllEnvs(); });
+
+  it('names itself by the public URL everywhere, and by the listen address when none is given', async () => {
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true, publicUrl: `${PUBLIC}/` });
+    try {
+      expect(running.origin).toBe(PUBLIC);
+      expect(running.url).toMatch(/^http:\/\/127\.0\.0\.1:\d+$/);
+      expect(await get(running.url, '/play/guest')).toEqual({
+        enabled: true, audience: PUBLIC, identityUrl: PUBLIC, bootstrapUrl: `${PUBLIC}/play/provisional`, local: true,
+      });
+      const page = await fetch(`${running.url}/`);
+      const csp = page.headers.get('content-security-policy') ?? '';
+      expect(csp).toContain("connect-src 'self';");
+      expect(csp).not.toContain('127.0.0.1');
+      const listed = await get(running.url, '/graphs') as { retained: number; dropped: number; graphs: Array<{ id: string; turtle: string; graph: string }> };
+      expect(listed.graphs.length).toBeGreaterThan(0);
+      expect(listed.retained).toBe(listed.graphs.length);
+      expect(listed.dropped).toBe(0);
+      expect(listed.graphs.every(row => row.id.startsWith(`${PUBLIC}/descriptors/`))).toBe(true);
+      expect(JSON.stringify(listed)).not.toContain(running.url);
+      expect(JSON.stringify(listed)).toContain('did:web:world.example:agents:');
+      const turtle = await (await fetch(`${running.url}/affordances`, { headers: { Accept: 'text/turtle' } })).text();
+      expect(turtle).toContain(`${PUBLIC}/`);
+      expect(turtle).not.toContain('127.0.0.1');
+      // A guest's proofs name the public origin, and the owner it yields is on that host.
+      const someone = await guest(running.url, PUBLIC);
+      expect(someone.ownerDid).toMatch(/^did:web:world\.example:users:u-try-play-/);
+    } finally { await running.close(); }
+
+    const plain = await start({ packPath: orchardPath, bots: false, forceLocal: true });
+    try {
+      expect(plain.origin).toBe(plain.url);
+      expect((await get(plain.url, '/play/guest'))['audience']).toBe(plain.url);
+    } finally { await plain.close(); }
+  }, 30_000);
+
+  it('does not start on a public URL that is not an https origin', async () => {
+    await expect(start({ forceLocal: true, publicUrl: 'http://world.example' })).rejects.toThrow(/https/);
+    await expect(start({ forceLocal: true, publicUrl: 'https://world.example/world' })).rejects.toThrow(/origin/);
+    await expect(start({ forceLocal: true, publicUrl: 'not a url' })).rejects.toThrow(/not a URL/);
+  });
+
+  it('answers /health with the build the deploy verifier compares, and facts about the world, to anyone', async () => {
+    const sha = '0123456789abcdef0123456789abcdef01234567';
+    vi.stubEnv('INTEREGO_BUILD_SHA', sha);
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true });
+    try {
+      const first = await get(running.url, '/health');
+      expect(first).toEqual({
+        status: 'ok', build: sha, service: 'coached-world-bridge', startedAt: expect.stringMatching(/^\d{4}-\d\d-\d\dT/) as unknown,
+        pack: { id: loadPackFile(orchardPath).id, title: 'Orchard' }, consultants: 0, door: 'local',
+      });
+      // The verifier reads exactly this field and compares it with the commit it deployed.
+      const verifier = readFileSync(join(here, '../../../tools/railway-redeploy.mjs'), 'utf8');
+      expect(verifier).toContain('seen = j.build ??');
+      expect(verifier).toContain('if (seen === tag)');
+      await guest(running.url);
+      expect((await get(running.url, '/health'))['consultants']).toBe(1);
+      // No session, and no limit: a deploy that polls it, and a platform health check, are never refused.
+      for (let i = 0; i < RATE_RULES.read.limit + 20; i++) {
+        const response = await fetch(`${running.url}/health`);
+        expect(response.status).toBe(200);
+        await response.arrayBuffer();
+      }
+      const answered = await fetch(`${running.url}/health`);
+      expect(answered.headers.get('strict-transport-security')).toBe('max-age=31536000');
+    } finally { await running.close(); }
+    vi.unstubAllEnvs();
+    const unbuilt = await start({ packPath: orchardPath, bots: false, forceLocal: true });
+    try { expect((await get(unbuilt.url, '/health'))['build']).toBe('unset'); } finally { await unbuilt.close(); }
+  }, 30_000);
+
+  it('refuses a client past its limit with 429 and Retry-After, and lets it back when the window ends', async () => {
+    let at = 5_000_000;
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true, publicUrl: PUBLIC, now: () => at });
+    try {
+      const ask = (forwarded: string) => fetch(`${running.url}/session/challenge`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': forwarded }, body: '{}',
+      });
+      for (let i = 0; i < RATE_RULES.door.limit; i++) expect((await ask('198.51.100.9')).status).toBe(200);
+      at += 20_000;
+      const refused = await ask('198.51.100.9');
+      expect(refused.status).toBe(429);
+      expect(refused.headers.get('retry-after')).toBe('40');
+      expect(refused.headers.get('strict-transport-security')).toBe('max-age=31536000');
+      expect(await refused.json()).toEqual({ error: 'rate-limited', retryAfterSeconds: 40 });
+      // The proxy's own entry is the last one. Putting another address in front changes nothing.
+      expect((await ask('192.0.2.50, 198.51.100.9')).status).toBe(429);
+      // Someone else is not refused, and neither is a different kind of request from the same client.
+      expect((await ask('198.51.100.10')).status).toBe(200);
+      expect((await fetch(`${running.url}/world`, { headers: { 'X-Forwarded-For': '198.51.100.9' } })).status).toBe(200);
+      at += 40_000;
+      expect((await ask('198.51.100.9')).status).toBe(200);
+    } finally { await running.close(); }
+  }, 30_000);
+
+  it('with no proxy counts the socket, so a caller cannot dodge the limit with a header', async () => {
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true, now: () => 1 });
+    try {
+      const ask = (i: number) => fetch(`${running.url}/session/challenge`, {
+        method: 'POST', headers: { 'Content-Type': 'application/json', 'X-Forwarded-For': `203.0.113.${i}` }, body: '{}',
+      });
+      for (let i = 0; i < RATE_RULES.door.limit; i++) expect((await ask(i)).status).toBe(200);
+      expect((await ask(200)).status).toBe(429);
+    } finally { await running.close(); }
+  }, 30_000);
+
+  it('the guest page signs in again after the world was restarted and its attestation means nothing', async () => {
+    // The page itself, run here: its key store and its fetch are the only stand-ins. A redeploy
+    // starts a new world on the same public address, with a new door key, so the attestation the
+    // browser kept is refused. The page has to notice and bootstrap again, as the same owner.
+    const kept = new Map<string, unknown>();
+    const idb = {
+      open() {
+        const request: Record<string, unknown> & { result?: unknown } = {};
+        const db = {
+          createObjectStore() { /* one store, made on first open */ },
+          close() { /* nothing held */ },
+          transaction() {
+            const tx: { oncomplete?: () => void; objectStore: () => unknown } = {
+              objectStore: () => ({
+                get(key: string) { queueMicrotask(() => tx.oncomplete?.()); return { result: kept.get(key) }; },
+                put(value: unknown, key: string) { kept.set(key, value); queueMicrotask(() => tx.oncomplete?.()); return { result: key }; },
+              }),
+            };
+            return tx;
+          },
+        };
+        queueMicrotask(() => {
+          request.result = db;
+          (request['onupgradeneeded'] as (() => void) | undefined)?.();
+          (request['onsuccess'] as (() => void) | undefined)?.();
+        });
+        return request;
+      },
+    };
+    vi.stubGlobal('indexedDB', idb);
+    const realFetch = globalThis.fetch;
+    const asked: Array<{ path: string; status: number }> = [];
+    let listening = '';
+    // The page asks its own origin. Here that origin is wherever the current world listens.
+    vi.stubGlobal('fetch', async (input: string | URL | Request, init?: RequestInit) => {
+      const target = new URL(String(input), PUBLIC);
+      expect(target.origin).toBe(PUBLIC);
+      const response = await realFetch(`${listening}${target.pathname}`, init);
+      asked.push({ path: target.pathname, status: response.status });
+      return response;
+    });
+    const page = await import(/* @vite-ignore */ pathToFileURL(join(here, '../public/guest.js')).href) as {
+      signIn(): Promise<{ token: string; ownerDid: string; name: string }>;
+    };
+
+    const before = await start({ packPath: orchardPath, bots: false, forceLocal: true, publicUrl: PUBLIC });
+    listening = before.url;
+    let first: { token: string; ownerDid: string; name: string };
+    try {
+      first = await page.signIn();
+      expect(first.ownerDid).toMatch(/^did:web:world\.example:users:u-try-play-/);
+      expect(asked.filter(a => a.path === '/play/provisional').map(a => a.status)).toEqual([200]);
+      // Coming back to the same world uses the kept attestation: no new grant, no new bootstrap.
+      asked.length = 0;
+      expect((await page.signIn()).ownerDid).toBe(first.ownerDid);
+      expect(asked.map(a => a.path)).toEqual(['/play/guest', '/session/challenge', '/session']);
+    } finally { await before.close(); }
+
+    const after = await start({ packPath: orchardPath, bots: false, forceLocal: true, publicUrl: PUBLIC });
+    listening = after.url;
+    try {
+      asked.length = 0;
+      const again = await page.signIn();
+      // The kept attestation was tried and refused, then the page went through the door again.
+      expect(asked).toEqual([
+        { path: '/play/guest', status: 200 },
+        { path: '/session/challenge', status: 200 },
+        { path: '/session', status: 401 },
+        { path: '/play/grant', status: 200 },
+        { path: '/play/provisional', status: 200 },
+        { path: '/session/challenge', status: 200 },
+        { path: '/session', status: 200 },
+      ]);
+      // Same browser key, same public address: the same owner, in a world that has never seen them.
+      expect(again.ownerDid).toBe(first.ownerDid);
+      expect(again.token).not.toBe(first.token);
+      const view = await (await realFetch(`${after.url}/world`, { headers: { Authorization: `Bearer ${again.token}` } })).json() as { you?: { ownerDid: string; factionId: string | null } };
+      expect(view.you).toMatchObject({ ownerDid: first.ownerDid, factionId: null });
+      // The session the old world gave out is not one here.
+      const stale = await (await realFetch(`${after.url}/world`, { headers: { Authorization: `Bearer ${first.token}` } })).json() as { you?: unknown };
+      expect(stale.you).toBeUndefined();
+    } finally { await after.close(); }
+  }, 30_000);
 });
