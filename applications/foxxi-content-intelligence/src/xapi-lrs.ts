@@ -65,6 +65,7 @@ import type {
   IRI,
 } from '@interego/core';
 import { verifySessionToken, trustedAddressMap } from './auth.js';
+import { actorAliases } from './actor-alias.js';
 import { verifyOauthBearer } from './xapi-oauth.js';
 import type { KeyObject } from 'node:crypto';
 
@@ -1287,7 +1288,10 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
       : (limitRaw !== undefined ? Number(limitRaw) : 100),
     cursor: cursorToken,
   };
-  const result = await store.query(filter);
+  // A linked actor is the same reader. The statement itself is not rewritten; the filter widens.
+  const also = filter.agent ? actorAliases(filter.agent as { account?: { name?: string; homePage?: string } }) : [];
+  const queried = also.length ? { ...filter, alsoAgents: also } : filter;
+  const result = await store.query(queried);
 
   // §2.1.4: a query that would match a voided Statement still surfaces
   // the Voiding Statement that voided it, so the requester sees the void.
@@ -1296,7 +1300,7 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     const includedIds = new Set(recs.map(r => r.id));
     const all = await store.listAll();
     for (const r of all) {
-      if (!r.voided || !r.voidingStatementId || !matchesFilter(r, filter)) continue;
+      if (!r.voided || !r.voidingStatementId || !matchesFilter(r, queried)) continue;
       if (includedIds.has(r.voidingStatementId)) continue;
       const voiding = await store.get(r.voidingStatementId);
       if (voiding && (bound === undefined || registrationOfStatement(voiding.statement) === bound)) {
@@ -1445,6 +1449,27 @@ export async function stageStateDocument(tenant: TenantId, at: StateAddress, con
 /** Read a State document the way the State resource's GET would find it; undefined when absent. */
 export async function readStateDocument(tenant: TenantId, at: StateAddress): Promise<unknown> {
   return (await documentStore(tenant, 'state').get(stateKey(at.activityId, at.agent, at.stateId, at.registration)))?.content;
+}
+
+/**
+ * Delete every State document this actor stored in the tenant: `LMS.LaunchData` and whatever
+ * the activity stored for the attempt, including its suspend data. Another actor's documents stay.
+ */
+export async function clearActorStateDocuments(tenant: TenantId, actor: { homePage: string; name: string }): Promise<number> {
+  const store = documentStore(tenant, 'state');
+  let removed = 0;
+  for (const [key] of await store.list()) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(key); } catch { continue; }
+    if (!Array.isArray(parsed) || parsed[0] !== 'state' || typeof parsed[2] !== 'string') continue;
+    let agent: { account?: { homePage?: unknown; name?: unknown } } | undefined;
+    try { agent = JSON.parse(parsed[2]) as typeof agent; } catch { continue; }
+    if (agent?.account?.name !== actor.name || agent.account.homePage !== actor.homePage) continue;
+    await store.delete(key);
+    removed++;
+  }
+  if (removed) xapiDocsPodDirty();
+  return removed;
 }
 function profileKey(iri: string, profileId: string): string {
   return JSON.stringify(['profile', iri, profileId]);

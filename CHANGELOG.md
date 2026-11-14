@@ -30,6 +30,10 @@ Not built: a way for a unit that holds only its cmi5 credential to ask for these
 itself. Verified by the vertical's tests on an in-memory pod; no live LMS, LRS or
 assignable unit has used this.
 
+## 2026-11-13 — Foxxi: a course player on the existing Interego guest
+
+A browser that opens a hosted package or a published activity, with no cmi5 launch on the URL, gets a player for that course. Start does not mint a Foxxi identity. It uses the provisional Interego guest the learning account already signs in (`u-try-play-`, browser key) or an existing owner, and the xAPI actor is that owner's DID. Agreeing to the recording is required before the launch, and that agreement is kept against the learner and the course. The statements, the satisfied activities and a later deletion are kept in that learner's own lens, the same one a signed read uses. The published course stays in the shared catalogue. The same browser continues the same owner and, while the attempt is open, the same registration. Adding a passkey, wallet or DID keeps that owner (`/connect?claim=`), and the page can ask identity for a fresh token for that key after the activity, because the first one is not kept. Signing in as a different existing owner records a link and leaves the guest's statements as they were. After that link, what the guest does next is recorded as the owner, in the owner's lens; linking again copies satisfaction once more and does not store a second claim. Deleting a guest recording stores a voiding statement and then marks the original with that statement's id, keeps those voids on the learner's pod even when no launch is still in memory, and clears that learner's State documents. A linked guest's own deletion also removes the satisfaction copied onto the owner and the owner's claim that names the guest. Unclaimed guests still expire on identity's own deadline.
+
 ## 2026-11-13 — Foxxi: cmi5 launchParameters
 
 `launchParameters` was described in the cmi5 model and never read or written. A course structure's `<launchParameters>` is now kept on the AU and staged in `LMS.LaunchData` (cmi5 §10.2.3). A signed one-shot launch, a personal launch link, or `GET /cmi5/launch` may replace that string with `launch_parameters`; the value is not interpreted. It is whatever the course, or that request, says.
@@ -383,6 +387,12 @@ live effect is not measured yet; the server now logs it.
 Not addressed: writing and re-reading the head still cost about 200 ms and
 100 ms under the same 2 ms delay. Each is a separate ordinary request to the
 server, several small transactions each.
+
+## 2026-11-13 — Foxxi: a reusable personal cmi5 launch link
+
+`POST /agent/cmi5/launch` returns one launch URL. Its fetch token is single-use and expires after 30 minutes, so a trainee who bookmarks it cannot get back into the activity. A signed caller can now mint `GET /cmi5/go/<token>` (`POST /agent/cmi5/go`) for themselves and one course. The token is 32 random bytes and the URL does not carry the learner. Each open builds a fresh cmi5 launch and redirects to the AU: a new fetch token every time, the same registration and session while that session has not been terminated, abandoned or waived, and a new registration afterwards (Review when the activity is already satisfied). `POST /agent/cmi5/go/revoke` withdraws it. Opens are rate-limited per address and per token. Links expire in 90 days unless `expires_in_days` says otherwise, and they are kept on the tenant pod at `foxxi-lattice/cmi5-personal-links.json`. A read of that file that fails is not followed by a write, so a pod that cannot be read is not replaced by this process's copy. Withdrawn and expired links stay recorded and do not count toward the learner's limit. Mint and revoke are also limited on the route, before the signature is checked. The link is not tied to one course or one person: the course is whichever published course the request names, the actor is whoever signed, and the activity's moveOn and mastery are that course's own structure. Withdrawal, expiry and the per-address limit are the same ones a SCORM dispatch uses, and both registries refuse to overwrite the pod when a read fails.
+
+
 
 ## 2026-11-13 — Foxxi is an xAPI Profile Server
 

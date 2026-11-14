@@ -153,7 +153,9 @@ An incumbent xAPI LRS becomes a *data source under the substrate* — see
   Foxxi — register a cmi5.xml course structure, launch an AU (sequential
   gating derived from the structure), the AU runs and reports, moveOn
   auto-evaluates, `satisfied` is emitted, and satisfaction rolls up
-  blocks → course. It runs SCORM 1.2/2004 content via a conformant RTE
+  blocks → course. A browser can start any published or hosted course from its own page
+  (`COURSE-PLAYER.md`): the learner is an existing Interego guest or owner, and the
+  launch is the same cmi5 launch. It runs SCORM 1.2/2004 content via a conformant RTE
   **and enforces SCORM 2004 Sequencing & Navigation at runtime**. It is
   a full LTI 1.3 Advantage Tool — resource-link launch, Deep Linking 2.0
   content selection, NRPS roster, and AGS line-item management + score

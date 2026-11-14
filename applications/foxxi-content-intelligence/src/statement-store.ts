@@ -52,6 +52,11 @@ export interface QueryFilter {
   statementId?: string;
   voidedStatementId?: string;
   agent?: Record<string, unknown>;
+  /**
+   * Further actors that satisfy `agent`. Set by a reader that knows two actors are one
+   * person. Absent means the agent filter is exact, as the xAPI query defines it.
+   */
+  alsoAgents?: ReadonlyArray<Record<string, unknown>>;
   verb?: string;
   activity?: string;
   registration?: string;
@@ -94,15 +99,22 @@ export interface StatementStore {
 
 // ── Filter / paginate helper ─────────────────────────────────────────
 
+function sameAgent(
+  a: { mbox?: string; openid?: string; account?: { name?: string; homePage?: string } } | undefined,
+  fa: { mbox?: string; openid?: string; account?: { name?: string; homePage?: string } } | undefined,
+): boolean {
+  return JSON.stringify(a) === JSON.stringify(fa)
+    || (!!fa?.mbox && a?.mbox === fa.mbox)
+    || (!!fa?.openid && a?.openid === fa.openid)
+    || (!!fa?.account?.name && a?.account?.name === fa.account.name && a?.account?.homePage === fa.account.homePage);
+}
+
 export function matchesFilter(rec: StoredStatement, f: QueryFilter): boolean {
   const s = rec.statement;
   if (f.agent) {
     const a = s.actor as { mbox?: string; openid?: string; account?: { name?: string; homePage?: string } } | undefined;
     const fa = f.agent as typeof a;
-    const same = JSON.stringify(a) === JSON.stringify(fa)
-      || (fa?.mbox && a?.mbox === fa.mbox)
-      || (fa?.openid && a?.openid === fa.openid)
-      || (fa?.account?.name && a?.account?.name === fa.account.name && a?.account?.homePage === fa.account.homePage);
+    const same = sameAgent(a, fa) || (f.alsoAgents?.some(extra => sameAgent(a, extra as typeof a)) ?? false);
     if (!same) return false;
   }
   if (f.verb && (s.verb as { id?: string } | undefined)?.id !== f.verb) return false;
@@ -117,7 +129,7 @@ export function matchesFilter(rec: StoredStatement, f: QueryFilter): boolean {
  *  same filter as page 1. `statementId`/`voidedStatementId` are excluded: those
  *  return a single statement and never paginate. */
 export type CursorQuery = Pick<QueryFilter,
-  'agent' | 'verb' | 'activity' | 'registration' | 'since' | 'until' | 'ascending' | 'limit'>;
+  'agent' | 'alsoAgents' | 'verb' | 'activity' | 'registration' | 'since' | 'until' | 'ascending' | 'limit'>;
 
 export interface DecodedCursor { offset: number; ts?: number; q?: CursorQuery }
 
@@ -140,6 +152,7 @@ export function encodeCursor(c: DecodedCursor): string {
 export function cursorQueryOf(f: QueryFilter): CursorQuery {
   const q: CursorQuery = {};
   if (f.agent !== undefined) q.agent = f.agent;
+  if (f.alsoAgents !== undefined) q.alsoAgents = f.alsoAgents;
   if (f.verb !== undefined) q.verb = f.verb;
   if (f.activity !== undefined) q.activity = f.activity;
   if (f.registration !== undefined) q.registration = f.registration;
