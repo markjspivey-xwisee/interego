@@ -14,6 +14,18 @@ longer length is not read at all. The unit gets the same `502` as before.
 
 Found by the reviewer after #883 merged.
 
+## 2026-11-14 — Foxxi: a failed lesson nobody scored is recorded without a score
+
+A performance recorded against a lesson, failed, with no quality given, built a
+`failed` statement with no `result.score.scaled`, and Foxxi's own `lesson-failed`
+template required one, so the statement did not follow the profile it names
+(found in review of the statement builder). The template now recommends the
+score and requires `result.success` false instead, so a bare `failed` with no
+result is still refused: cmi5 constrains a score a failed statement
+carries and does not demand one. The statement is unchanged; no score is
+invented. The builder test now runs every kind of activity, each outcome,
+scored and unscored, through the specification's algorithm.
+
 ## 2026-11-14 — Foxxi: a linked guest's browser is not the owner
 
 The course player let an owner link a guest they still held the key for. After
