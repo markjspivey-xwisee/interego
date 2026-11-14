@@ -32,6 +32,13 @@ hide a result already sent. `lrs_read` may now carry `registration`, `limit` and
 `lrs-read-narrowed`), when an attempt is taken as well as here. Found by Codex
 on this change.
 
+**What shows a session over.** To fix statements again, the ending of the
+earlier session is evidence. It now has to be a cmi5 terminated or abandoned for
+this unit, by this learner, carrying the cmi5 category. One about another unit,
+by another actor or outside cmi5 frees nothing. Not checked: which credential
+stored it; the read does not say. The answer from the LRS is also now limited in
+bytes as it is read, as #889 did on the Foxxi side. Both from the reviewer.
+
 Not changed: an `lms` principal asking for another session still gets the copy.
 The LMS route has no LRS read to show that the earlier session ended unsent.
 
