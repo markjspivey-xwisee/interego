@@ -345,7 +345,11 @@ async function route(req: IncomingMessage, res: ServerResponse, ctx: {
     return;
   }
   if (req.method === 'POST' && url.pathname === '/missions/intervene') {
-    send(res, 200, await ctx.world.exclusive(() => ctx.world.intervene(id, text(body, 'diagnosis'), text(body, 'interventionId'))));
+    const settled = await ctx.world.exclusive(() => ctx.world.intervene(id, text(body, 'diagnosis'), text(body, 'interventionId')));
+    // The mission is over: an answer still being written for it is no longer wanted, and the
+    // next mission must find the agent free.
+    ctx.agents?.withdraw(id);
+    send(res, 200, settled);
     return;
   }
   if (req.method === 'POST' && url.pathname === '/market/transfer') {

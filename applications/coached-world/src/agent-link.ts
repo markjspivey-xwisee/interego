@@ -43,6 +43,8 @@ interface Link { readonly sessionId: string; readonly token: string }
 export class AgentLink {
   readonly broker: AgentConnectionBroker;
   private readonly links = new Map<string, Link>();
+  /** The one turn each consultant's agent has been asked and not yet answered. */
+  private readonly asked = new Map<string, string>();
   private readonly answerMs: number;
   private readonly pollMs: number;
   private readonly waits = new Set<ReturnType<typeof setTimeout>>();
@@ -84,6 +86,7 @@ export class AgentLink {
     const link = this.links.get(consultantId);
     if (!link) return false;
     this.links.delete(consultantId);
+    this.asked.delete(consultantId);
     try { this.browser(link, 'disconnect'); } catch { /* Already gone: expired, or closed from the page. */ }
     return true;
   }
@@ -110,10 +113,23 @@ export class AgentLink {
   ask(consultantId: string, brief: MissionBrief): string | null {
     const link = this.links.get(consultantId);
     if (!link || this.state(consultantId).state !== 'connected') return null;
+    // A turn left from a mission that has since ended would make the broker refuse this one.
+    this.withdraw(consultantId);
     try {
       const turn = this.browser(link, 'request', { messages: briefMessages(brief) });
-      return typeof turn['turn_id'] === 'string' ? turn['turn_id'] : null;
+      const turnId = typeof turn['turn_id'] === 'string' ? turn['turn_id'] : null;
+      if (turnId) this.asked.set(consultantId, turnId);
+      return turnId;
     } catch { return null; }
+  }
+
+  /**
+   * Withdraw whatever this consultant's agent is still being asked. Called when the mission it
+   * was asked about ends, so the next mission is not refused while an obsolete answer is awaited.
+   */
+  withdraw(consultantId: string): void {
+    const turnId = this.asked.get(consultantId);
+    if (turnId) this.cancel(consultantId, turnId);
   }
 
   /**
@@ -129,6 +145,7 @@ export class AgentLink {
         let turn: Row;
         try { turn = this.browser(link, 'poll', { turn_id: turnId }); }
         catch { resolve({ ok: false, reason: 'disconnected' }); return; }
+        if (['completed', 'failed', 'cancelled'].includes(String(turn['state'])) && this.asked.get(consultantId) === turnId) this.asked.delete(consultantId);
         if (turn['state'] === 'completed' && typeof turn['text'] === 'string' && turn['text'].trim()) {
           resolve({ ok: true, text: turn['text'], by: this.state(consultantId).actor ?? 'unknown' });
           return;
@@ -150,6 +167,7 @@ export class AgentLink {
 
   /** Withdraw a turn nobody is waiting for any more. */
   cancel(consultantId: string, turnId: string): void {
+    if (this.asked.get(consultantId) === turnId) this.asked.delete(consultantId);
     const link = this.links.get(consultantId);
     if (!link) return;
     try { this.browser(link, 'cancel', { turn_id: turnId }); } catch { /* It ended some other way. */ }
@@ -162,6 +180,7 @@ export class AgentLink {
     for (const timer of this.waits) clearTimeout(timer);
     this.waits.clear();
     this.links.clear();
+    this.asked.clear();
     this.broker.dispose();
   }
 }

@@ -632,6 +632,33 @@ describe('a consultant connects their own agent', () => {
     } finally { await running.close(); }
   }, 60_000);
 
+  it('settling a mission while the agent is still writing frees the agent for the next mission', async () => {
+    // A long answer window: nothing here may be explained by the wait running out.
+    const running = await start({ packPath: orchardPath, bots: false, forceLocal: true, agentVerifier: stub, agentAnswerMs: 60_000, agentPollMs: 10 });
+    try {
+      const me = await guest(running.url);
+      await post(running.url, '/faction', { factionId: 'north' }, me.token);
+      const { drive } = await pair(running.url, me.token);
+      const first = await post(running.url, '/missions', {}, me.token) as unknown as Mission;
+      expect(first.work).toEqual({ state: 'waiting' });
+      const stale = await drive({ operation: 'next' });
+      // The consultant does not wait for the agent: they diagnose and deploy.
+      await post(running.url, '/missions/intervene', { diagnosis: 'timing', interventionId: 'calendar' }, me.token);
+      // The answer to the mission that is over is refused.
+      const late = await drive({ operation: 'finish', turn_id: stale.body['turn_id'], lease_id: stale.body['lease_id'], revision: stale.body['revision'], text: 'an answer to a mission that has ended' });
+      expect(late.status).toBe(409);
+      // The next mission goes to the agent, not to the simulation.
+      const second = await post(running.url, '/missions', {}, me.token) as unknown as Mission;
+      expect(second.work).toEqual({ state: 'waiting' });
+      const fresh = await drive({ operation: 'next' });
+      expect(fresh.body['turn_id']).not.toBe(stale.body['turn_id']);
+      const done = await drive({ operation: 'finish', turn_id: fresh.body['turn_id'], lease_id: fresh.body['lease_id'], revision: fresh.body['revision'], text: 'Counted the made-up crates twice and wrote the tally down.' });
+      expect(done.status).toBe(200);
+      const answered = await until(() => missionOf(running.url, me.token), m => m?.work?.state === 'answered');
+      expect(answered?.work?.text).toBe('Counted the made-up crates twice and wrote the tally down.');
+    } finally { await running.close(); }
+  }, 60_000);
+
   it('with no way to verify an agent the door answers 503, the page is told, and missions are as they were', async () => {
     const running = await start({ packPath: orchardPath, bots: false, forceLocal: true });
     try {
