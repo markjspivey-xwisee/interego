@@ -114,7 +114,7 @@ export function reviewServiceAsk(s: ReviewServiceSettings): NonNullable<Reviewed
 
 const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object' && v !== null && !Array.isArray(v);
 
-/** What the unit is told when the review service has nothing to hand out, without passing its words through whole. */
+/** What the unit is told when the review service has nothing to hand out: its reason code and its `problems` strings, each bounded (20 of them, 400 characters each), and no other field of its answer. */
 function refusalOf(body: unknown): { reason?: string; problems?: string[] } {
   if (!isObj(body)) return {};
   const reason = body['iep:refusalReason'];
