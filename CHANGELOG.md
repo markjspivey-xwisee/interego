@@ -146,6 +146,25 @@ separate entry, left for its own change. The relay's rebuild on merge resolves
 Solid server, eslint, electron-builder and claude-code-acp chains, are
 unchanged.
 
+## 2026-11-15 — Foxxi: a hosted cmi5 package keeps its own moveOn
+
+Found on the first run against the deployed bridge. A package uploaded and
+hosted on Foxxi becomes a cmi5 course, one unit per launchable file. Every such
+unit was given `moveOn="CompletedOrPassed"`, written into the code, whatever the
+package was. That is right for a SCORM package, which has no rule to carry. A
+cmi5 package has one: its course structure says what satisfies each unit. A unit
+declared `CompletedAndPassed` was satisfied on Foxxi by a `completed` alone, so
+a learner who failed and finished had satisfied it. Its mastery score and launch
+parameters were dropped the same way.
+
+`cmi5PackageUnits` reads each unit's moveOn, mastery score and launch parameters
+from the course structure, by the file its `<url>` names. They are kept in the
+package's description and applied when the course is built. A unit that leaves
+moveOn out, and every SCORM package, moves on as before.
+
+A package hosted before this keeps the description it was given, without these.
+It takes them when it is uploaded again.
+
 ## 2026-11-15 — Foxxi: guest-learner docs caught up with the course player
 
 Documentation and comments only; no behaviour changes.
