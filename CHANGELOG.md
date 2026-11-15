@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-15 — jev-harness: a selection whose base yields no changed files is refused
+
+`select-tests` given a `base_ref` that yields no changed files answered
+`mode=full` with "no changed files were given, so nothing narrows the suite".
+That reads as a selection made. On #899, #901 and #905 it hid a range that
+named nothing, and only the gate's 400 showed the fault.
+
+- `src/service.ts`: the selection now answers 400 for that case, as the gate
+  does for an empty diff, and names the commits it compared and their merge
+  base. No judgment is recorded.
+- Unchanged: `changed_files` given by the caller are used as they are, and a
+  call with neither `changed_files` nor `base_ref` still gets the whole suite.
+- In CI the selection step fails, so the merge decision reads the selection as
+  not green. A pull request whose diff really is empty will not merge by
+  itself.
+
 ## 2026-11-15 — Foxxi: guest-learner docs caught up with the course player
 
 Documentation and comments only; no behaviour changes.
