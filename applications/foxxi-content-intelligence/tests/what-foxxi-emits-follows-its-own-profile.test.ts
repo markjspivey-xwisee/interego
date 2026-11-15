@@ -10,14 +10,21 @@
  */
 import { describe, it, expect } from 'vitest';
 import { buildFoxxiProfileDoc, descriptorProjectionCategory, performanceRecordCategory, performanceCategoriesFor, outcomeResultFor, isLearningActivityType, FOXXI_NS } from '../src/xapi-profile.js';
-import { validates, type Json } from '../src/xapi-profile-server/processor.js';
+import { elementsOf, follows, matches, validates, type Json } from '../src/xapi-profile-server/processor.js';
 import { projectMeshEntry } from '../src/mesh-event-projector.js';
 import { ingestExternalRun } from '../src/agent-run-ingest.js';
 import { buildPerformanceStatement, momOutcomeVerb, recordedActivityType } from '../src/performance-statement.js';
 
-const doc = buildFoxxiProfileDoc({ generatedAt: '2026-07-22T00:00:00.000Z' }) as { id: string; templates: Json[] };
+const doc = buildFoxxiProfileDoc({ generatedAt: '2026-07-22T00:00:00.000Z' }) as { id: string; concepts: Json[]; templates: Json[]; patterns: Json[] };
 const T = (name: string) => `${doc.id}/templates/${name}`;
-const check = (statement: unknown) => validates(statement as Json, doc.templates);
+/** Every template some statement in this file followed, and every statement checked: the last tests read them. */
+const followed = new Set<string>(), checked: Json[] = [];
+const check = (statement: unknown) => {
+  const result = validates(statement as Json, doc.templates);
+  checked.push(statement as Json);
+  if (result.outcome === 'success') for (const t of result.templates) followed.add(t);
+  return result;
+};
 const POD = 'https://pod.example/fictional-agent/';
 const projected = (entry: Partial<Parameters<typeof projectMeshEntry>[0]>) => projectMeshEntry({
   descriptorUrl: 'https://pod.example/fictional-agent/context-graphs/1790000000000.ttl', describes: ['urn:graph:made-up-1790000000000'],
@@ -159,5 +166,102 @@ describe('what is not a descriptor projection', () => {
   it('the two categories are distinct typed activities', () => {
     expect(descriptorProjectionCategory().definition.type).not.toBe(performanceRecordCategory().definition.type);
     expect(descriptorProjectionCategory().id).not.toBe(performanceRecordCategory().id);
+  });
+});
+
+// The templates above are reached through the functions that emit. The ones below have no single
+// builder to call from a test, so each is given the smallest statement that should follow it,
+// written by hand: an example of the template, not evidence about an emitter.
+describe('every template has a statement that follows it, and only it', () => {
+  const C = 'https://example.org/courses/made-up';
+  const registration = '33333333-3333-4333-8333-333333333333';
+  const st = (verb: string, type: string | undefined, more: Json = {}): Json => ({ actor: learner, verb: { id: verb },
+    object: { id: `${C}/thing`, ...(type ? { definition: { type } } : {}) }, ...more });
+  const ext = (name: string, value: unknown) => ({ extensions: { [`${FOXXI_NS}${name}`]: value } });
+  const parent = (type: string) => ({ contextActivities: { parent: [{ id: C, definition: { type } }] } });
+  const lesson = `${ADL}/activities/lesson`, course = `${ADL}/activities/course`, W3 = 'https://w3id.org/xapi/adl/verbs';
+  const examples: Record<string, Json> = {
+    launched: st(`${ADL}/verbs/launched`, course, { context: { registration, contextActivities: { category: [{ id: 'https://w3id.org/xapi/cmi5/context/categories/cmi5' }] } } }),
+    initialized: st(`${ADL}/verbs/initialized`, lesson),
+    terminated: st(`${ADL}/verbs/terminated`, lesson),
+    satisfied: st(`${W3}/satisfied`, course),
+    abandoned: st(`${W3}/abandoned`, lesson),
+    waived: st(`${W3}/waived`, lesson),
+    'slide-viewed': st(`${ADL}/verbs/experienced`, lesson, { context: { ...parent(course), ...ext('slideId', 'slide-3') } }),
+    'scene-completed': st(`${FOXXI_NS}verbs/scene-completed`, `${FOXXI_NS}activities/scene`),
+    interacted: st(`${ADL}/verbs/interacted`, `${ADL}/activities/interaction`),
+    passed: st(`${ADL}/verbs/passed`, course, { result: { success: true, score: { scaled: 0.9 } } }),
+    'lesson-passed': st(`${ADL}/verbs/passed`, lesson, { result: { success: true, score: { scaled: 0.9 } } }),
+    asked: st(`${FOXXI_NS}verbs/asked`, `${FOXXI_NS}activities/concept-graph-node`),
+    retrieved: st(`${FOXXI_NS}verbs/retrieved`, `${FOXXI_NS}activities/concept-graph-node`),
+    enrolled: st(`${FOXXI_NS}verbs/enrolled`, course),
+    credentialed: st(`${FOXXI_NS}verbs/credentialed`, `${FOXXI_NS}activities/credential`),
+    'wallet-exported': st(`${FOXXI_NS}verbs/wallet-exported`, `${FOXXI_NS}activities/credential`),
+    'framework-aligned': st(`${FOXXI_NS}verbs/framework-aligned`, `${FOXXI_NS}activities/framework`),
+    'affordance-invoked': st(`${FOXXI_NS}verbs/affordance-invoked`, `${FOXXI_NS}activities/affordance`, { context: ext('affordanceTool', 'foxxi.made_up_tool') }),
+    'policy-decided': st(`${FOXXI_NS}verbs/policy-decided`, undefined, { context: ext('policyId', 'https://pod.example/policies/made-up') }),
+    authored: st(`${FOXXI_NS}verbs/authored`, course),
+    asserted: st(`${FOXXI_NS}verbs/asserted`, undefined, { context: ext('substrateDescriptorIri', 'https://pod.example/fictional-agent/context-graphs/1.ttl') }),
+    'fragment-experienced': st(`${ADL}/verbs/experienced`, `${FOXXI_NS}activities/fragment`, { context: { registration, ...parent(`${FOXXI_NS}activities/composition`),
+      extensions: { [`${FOXXI_NS}competency`]: 'https://example.org/competencies/made-up', [`${FOXXI_NS}compositionPosition`]: 0, [`${FOXXI_NS}alternativesOffered`]: ['urn:made-up:fragment'] } } }),
+    'question-answered': { ...st(`${ADL}/verbs/answered`, undefined, { result: { response: 'true' }, context: { registration, ...parent(`${FOXXI_NS}activities/fragment`) } }),
+      object: { id: `${C}/question`, definition: { type: `${ADL}/activities/cmi.interaction`, interactionType: 'true-false' } } },
+    'composition-completed': st(`${ADL}/verbs/completed`, `${FOXXI_NS}activities/composition`, { result: { completion: true }, context: { registration } }),
+    completed: st(`${ADL}/verbs/completed`, course, { result: { completion: true } }),
+    'course-failed': st(`${ADL}/verbs/failed`, course, { result: { success: false } }),
+    'experienced-activity': st(`${ADL}/verbs/experienced`, course),
+    'experienced-performance': st(`${ADL}/verbs/experienced`, `${ADL}/activities/performance`),
+  };
+
+  it.each(Object.keys(examples))('%s', name => {
+    expect(check(examples[name]), name).toMatchObject({ outcome: 'success', templates: [T(name)], findings: [] });
+  });
+
+  it('leaves no template of the profile without one', () => {
+    // Runs after every other test in the file, so it reads what they all followed.
+    expect(doc.templates.map(t => String(t['id'])).filter(id => !followed.has(id))).toEqual([]);
+  });
+
+  it('follows each primary pattern, and a failed course session is a course session', () => {
+    const P = (name: string) => `${doc.id}/patterns/${name}`;
+    const e = (...names: string[]) => names.map(n => examples[n]!);
+    const session = (outcome: string) => e('launched', 'initialized', 'slide-viewed', 'asked', 'retrieved', 'scene-completed', 'slide-viewed', outcome, 'terminated');
+    for (const outcome of ['completed', 'passed', 'course-failed'])
+      expect(follows(session(outcome), doc.templates, doc.patterns), outcome).toEqual({ follows: true, pattern: P('course-session'), reasons: [] });
+    // A question with no retrieval after it, and a session with no outcome, are not one.
+    expect(follows(e('launched', 'initialized', 'asked', 'completed', 'terminated'), doc.templates, doc.patterns).follows).toBe(false);
+    expect(follows(e('launched', 'initialized', 'slide-viewed', 'terminated'), doc.templates, doc.patterns).follows).toBe(false);
+    expect(follows(e('question-answered', 'fragment-experienced', 'fragment-experienced', 'question-answered', 'question-answered', 'fragment-experienced', 'composition-completed'), doc.templates, doc.patterns))
+      .toEqual({ follows: true, pattern: P('composition-attempt'), reasons: [] });
+    expect(follows(e('passed', 'credentialed'), doc.templates, doc.patterns)).toEqual({ follows: true, pattern: P('credentialing'), reasons: [] });
+    const first = projected({ verb: `${FOXXI_NS}performed` });
+    const acts = [first, projected({ modalStatus: 'Hypothetical' }), projected({ modalStatus: 'Counterfactual' })];
+    expect(follows(acts as Json[], doc.templates, doc.patterns)).toEqual({ follows: true, pattern: P('agent-performance-stream'), reasons: [] });
+    // A revision is also a stream of acts, and `follows` names the first primary pattern that fits,
+    // so the revision arc is matched directly: the first act, then what supersedes it, nothing left over.
+    const revision = [first, projected({ verb: `${FOXXI_NS}performed`, supersedes: ['https://pod.example/fictional-agent/context-graphs/1780000000000.ttl'] })] as Json[];
+    const judged = revision.map(statement => ({ statement, templates: validates(statement, doc.templates).templates }));
+    const [outcome, left] = matches(judged, P('revision-arc'), elementsOf(doc.templates, doc.patterns));
+    expect([outcome, left.length]).toEqual(['success', 0]);
+    expect(matches(judged.slice(0, 1), P('revision-arc'), elementsOf(doc.templates, doc.patterns))[0]).not.toBe('success');
+    expect(doc.patterns.filter(p => p['primary'] === true).map(p => String(p['id'])).sort())
+      .toEqual(['agent-performance-stream', 'composition-attempt', 'course-session', 'credentialing', 'revision-arc'].map(P).sort());
+  });
+
+  it('defines every term a statement carries and every part of the profile', () => {
+    const declared = new Set(doc.concepts.map(c => String(c['id'])));
+    const run = ingestExternalRun({ agentDid: 'did:web:example.org:agents:fictional', task: { name: 'Sort the made-up invoices' }, evaluationId: 'made-up-eval', candidateId: 'made-up-candidate',
+      toolCalls: [{ tool: 'made_up_tool', success: true }], outcome: { success: true, quality: 0.9, costUsd: 0.01 } });
+    const carried = new Set<string>();
+    for (const s of [...checked, ...(run.statements as unknown as Json[])]) {
+      for (const key of Object.keys(((s['context'] as Json | undefined)?.['extensions'] as Json | undefined) ?? {})) if (key.startsWith(FOXXI_NS)) carried.add(key);
+      const verb = (s['verb'] as { id: string }).id; if (verb.startsWith(FOXXI_NS)) carried.add(verb);
+    }
+    expect(carried.size).toBeGreaterThan(20);
+    expect([...carried].filter(id => !declared.has(id))).toEqual([]);
+    for (const part of [...doc.concepts, ...doc.templates, ...doc.patterns]) {
+      expect((part['prefLabel'] as { en?: string } | undefined)?.en, String(part['id'])).toBeTruthy();
+      expect((part['definition'] as { en?: string } | undefined)?.en, String(part['id'])).toBeTruthy();
+    }
   });
 });

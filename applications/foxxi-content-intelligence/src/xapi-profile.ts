@@ -182,6 +182,24 @@ const extensions = [
   { id: `${FOXXI_NS}epistemicConfidence`, prefLabel: { en: 'epistemicConfidence' }, definition: { en: 'Confidence [0.0-1.0] that the DESCRIPTOR itself is accurate (infrastructure-level), NOT a performance score — carried as its own extension, never as result.score.scaled.' } },
   { id: `${FOXXI_NS}groundTruth`, prefLabel: { en: 'groundTruth' }, definition: { en: 'Tri-state groundTruth (true Asserted / false Counterfactual / undefined Hypothetical), passed through verbatim.' } },
   { id: `${FOXXI_NS}endorsed`, prefLabel: { en: 'endorsed' }, definition: { en: 'False when the descriptor is Quoted (recorded with no endorsement).' } },
+  // ── Extensions the emitters wrote that this profile did not declare ──────────────────
+  // A statement carried these under context.extensions and a reader of the profile could not
+  // find out what they meant: the vocabulary a statement used was larger than the vocabulary
+  // the profile defined. Each states its value's type as a JSON Schema, so a consumer can
+  // check the value and not only read about it.
+  // tests/what-foxxi-emits-follows-its-own-profile.test.ts holds the emitters to this list.
+  { id: `${FOXXI_NS}durationMs`, prefLabel: { en: 'durationMs' }, definition: { en: 'How long a bridge affordance call took, in milliseconds, as the bridge measured it.' }, inlineSchema: JSON.stringify({ type: 'number', minimum: 0 }) },
+  { id: `${FOXXI_NS}error`, prefLabel: { en: 'error' }, definition: { en: 'True when a bridge affordance call ended in an error.' }, inlineSchema: JSON.stringify({ type: 'boolean' }) },
+  { id: `${FOXXI_NS}observedBy`, prefLabel: { en: 'observedBy' }, definition: { en: 'DID of the observer or evaluator who attested a performance record. When it is the performer, the record is a self-report.' }, inlineSchema: JSON.stringify({ type: 'string' }) },
+  { id: `${FOXXI_NS}costUsd`, prefLabel: { en: 'costUsd' }, definition: { en: 'Cost of a performance execution in US dollars, when it was reported. Absent means unknown, not zero.' }, inlineSchema: JSON.stringify({ type: 'number', minimum: 0 }) },
+  { id: `${FOXXI_NS}workTrajectory`, prefLabel: { en: 'workTrajectory' }, definition: { en: 'How a unit of recorded production work went, as its performer recorded it with the work: its steps, each with a modal status, a granularity, what it acted on and its result.' } },
+  { id: `${FOXXI_NS}evidenceBinding`, prefLabel: { en: 'evidenceBinding' }, definition: { en: 'How strongly a performance claim is tied to an artifact: unbound (no artifact cited), resolved (the cited artifact dereferences; nobody checked what it says), or shape-validated (it dereferences and validates against the shape the submitter named).' }, inlineSchema: JSON.stringify({ enum: ['unbound', 'resolved', 'shape-validated'] }) },
+  { id: `${FOXXI_NS}evidenceShape`, prefLabel: { en: 'evidenceShape' }, definition: { en: 'IRI of the shape the cited artifact was validated against, when the submitter named one.' }, inlineSchema: JSON.stringify({ type: 'string', format: 'iri' }) },
+  { id: `${FOXXI_NS}evaluationId`, prefLabel: { en: 'evaluationId' }, definition: { en: 'Identifier of the evaluation cohort an ingested agent run belongs to.' }, inlineSchema: JSON.stringify({ type: 'string' }) },
+  { id: `${FOXXI_NS}candidateId`, prefLabel: { en: 'candidateId' }, definition: { en: 'Identifier of the candidate (an agent configuration under evaluation) an ingested run is for.' }, inlineSchema: JSON.stringify({ type: 'string' }) },
+  { id: `${FOXXI_NS}harness`, prefLabel: { en: 'harness' }, definition: { en: 'Label of the harness or runtime the external agent that produced a run is built on.' }, inlineSchema: JSON.stringify({ type: 'string' }) },
+  { id: `${FOXXI_NS}publisherId`, prefLabel: { en: 'publisherId' }, definition: { en: 'The publisher\'s identifier for a cmi5 assignable unit, carried under the Foxxi namespace so the statement claims no cmi5 extension that cmi5 does not define.' }, inlineSchema: JSON.stringify({ type: 'string' }) },
+  { id: `${FOXXI_NS}projectedFromTrajectoryStep`, prefLabel: { en: 'projectedFromTrajectoryStep' }, definition: { en: 'Identifier of the agent trajectory step a performed statement was projected from.' }, inlineSchema: JSON.stringify({ type: 'string' }) },
 ];
 
 // ── Statement templates ─────────────────────────────────────────────
@@ -583,12 +601,14 @@ const patterns = [
   {
     id: `${FOXXI_PROFILE_ID}/patterns/composition-steps`,
     prefLabel: { en: 'composition-steps' },
+    definition: { en: 'The steps of one play, one or more.' },
     primary: false,
     oneOrMore: `${FOXXI_PROFILE_ID}/patterns/composition-step`,
   },
   {
     id: `${FOXXI_PROFILE_ID}/patterns/composition-step`,
     prefLabel: { en: 'composition-step' },
+    definition: { en: 'One step of a play: the answers to its questions, if it has any, then the fragment experienced.' },
     primary: false,
     sequence: [
       `${FOXXI_PROFILE_ID}/patterns/composition-answers`,
@@ -598,13 +618,14 @@ const patterns = [
   {
     id: `${FOXXI_PROFILE_ID}/patterns/composition-answers`,
     prefLabel: { en: 'composition-answers' },
+    definition: { en: 'The questions of one step answered, none or more.' },
     primary: false,
     zeroOrMore: `${FOXXI_PROFILE_ID}/templates/question-answered`,
   },
   {
     id: `${FOXXI_PROFILE_ID}/patterns/course-session`,
     prefLabel: { en: 'course-session' },
-    definition: { en: 'A single learner-launch through a Foxxi course: launch → init → slide-view+ → scene-completed* → (passed | failed) → terminated.' },
+    definition: { en: 'A single learner-launch through a Foxxi course: launch → init → (slide-view | scene-completed | asked, retrieved)+ → (completed | passed | failed) → terminated.' },
     primary: true,
     sequence: [
       `${FOXXI_PROFILE_ID}/templates/launched`,
@@ -624,6 +645,7 @@ const patterns = [
   {
     id: `${FOXXI_PROFILE_ID}/patterns/learn-step`,
     prefLabel: { en: 'learn-step' },
+    definition: { en: 'One thing a learner does in the body of a course: view a slide, complete a scene, or ask a question and get its retrieval.' },
     primary: false,
     alternates: [
       `${FOXXI_PROFILE_ID}/templates/slide-viewed`,
@@ -634,6 +656,7 @@ const patterns = [
   {
     id: `${FOXXI_PROFILE_ID}/patterns/qa-turn`,
     prefLabel: { en: 'qa-turn' },
+    definition: { en: 'A question asked of the concept graph, then the retrieval that answered it.' },
     primary: false,
     sequence: [
       `${FOXXI_PROFILE_ID}/templates/asked`,
@@ -643,10 +666,15 @@ const patterns = [
   {
     id: `${FOXXI_PROFILE_ID}/patterns/completion-outcome`,
     prefLabel: { en: 'completion-outcome' },
+    definition: { en: 'How a course session came out: completed, passed or failed.' },
     primary: false,
     alternates: [
       `${FOXXI_PROFILE_ID}/templates/completed`,
       `${FOXXI_PROFILE_ID}/templates/passed`,
+      // The definition of course-session has always said a session ends passed or failed, and
+      // the SCORM runtime does send a course-typed `failed`. It was not among the alternates, so
+      // a failed session could not follow the pattern written to describe it.
+      `${FOXXI_PROFILE_ID}/templates/course-failed`,
     ],
   },
   {
@@ -673,6 +701,7 @@ const patterns = [
   {
     id: `${FOXXI_PROFILE_ID}/patterns/agent-act`,
     prefLabel: { en: 'agent-act' },
+    definition: { en: 'One context-descriptor act by an agent: performed, intended, considered or voided.' },
     primary: false,
     alternates: [
       `${FOXXI_PROFILE_ID}/templates/performed-descriptor`,
@@ -694,6 +723,7 @@ const patterns = [
   {
     id: `${FOXXI_PROFILE_ID}/patterns/revisions`,
     prefLabel: { en: 'revisions' },
+    definition: { en: 'The descriptors that revise or close the first, one or more.' },
     primary: false,
     oneOrMore: `${FOXXI_PROFILE_ID}/templates/superseding-descriptor`,
   },

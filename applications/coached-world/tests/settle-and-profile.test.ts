@@ -5,7 +5,8 @@ import { describe, expect, it } from 'vitest';
 import { validateAgainstSuppliedProfile } from '../../foxxi-content-intelligence/src/xapi-profile-supplied.js';
 import { PackError } from '../src/errors.js';
 import { loadPack, loadPackFile, publicPack } from '../src/pack.js';
-import { buildProfile } from '../src/profile.js';
+import { follows, validates, type Json } from '../../foxxi-content-intelligence/src/xapi-profile-server/processor.js';
+import { buildProfile, profileVersion } from '../src/profile.js';
 import { baseline, drawCause, openingSymptoms, settle } from '../src/settle.js';
 import { buildMissionStatements, buildWorkStatement } from '../src/statements.js';
 import { MAX_BRIEF_CHARS, MAX_BRIEF_INTERVENTIONS, MAX_BRIEF_LESSONS, MAX_WORK_CHARS, briefMessages, workProduct } from '../src/agent-work.js';
@@ -105,6 +106,84 @@ describe('settlement', () => {
       timestamp: '2026-11-14T00:00:00.000Z',
     });
     expect(mandateBuilt.profile.id).not.toBe(built.profile.id);
+  });
+});
+
+// The profile is a contract only where something holds the world to it. These read the document
+// the world serves with the specification's own two algorithms, over what the builders emit.
+describe.each([['orchard', orchard], ['mandate', mandate]] as const)('the %s profile is a whole document its own statements follow', (_name, pack) => {
+  const profile = buildProfile(pack) as unknown as { [k: string]: unknown; concepts: Json[]; templates: Json[]; patterns: Json[]; versions: Json[] };
+  const mission = pack.missions[0]!;
+  const cause = pack.causes.find(c => c.symptoms.length > 0)!;
+  const build = (more: Partial<Parameters<typeof buildMissionStatements>[0]>) => buildMissionStatements({
+    pack, homePage: 'http://127.0.0.1:9/', actorDid: 'did:web:example:agents:pip', missionId: mission.id, missionTitle: mission.title,
+    missionObject: mission.object, symptoms: cause.symptoms.slice(0, 3), herring: undefined, progressed: 2, measured: undefined,
+    timestamp: '2026-11-14T00:00:00.000Z', ...more,
+  });
+  const json = (s: unknown): Json => JSON.parse(JSON.stringify(s)) as Json;
+
+  it('says what it is, which version it is, and defines every term it names', () => {
+    expect(profile).toMatchObject({ '@context': 'https://w3id.org/xapi/profiles/context', type: 'Profile', conformsTo: 'https://w3id.org/xapi/profiles#1.0', id: pack.profileId });
+    expect(profile.versions).toEqual([{ id: profileVersion(pack), generatedAtTime: expect.stringMatching(/^\d{4}-\d\d-\d\dT[\d:]+Z$/) }]);
+    expect(buildProfile(pack)).toEqual(buildProfile(pack));
+    for (const part of [...profile.concepts, ...profile.templates, ...profile.patterns]) {
+      expect(part['inScheme']).toBe(profileVersion(pack));
+      expect((part['prefLabel'] as { en: string }).en.length).toBeGreaterThan(0);
+      expect((part['definition'] as { en: string }).en.length).toBeGreaterThan(10);
+    }
+    const declared = new Set(profile.concepts.map(c => c['id']));
+    const named = profile.templates.flatMap(t => [t['verb'], t['objectActivityType'], ...((t['contextParentActivityType'] as string[] | undefined) ?? []),
+      ...(t['rules'] as Array<{ location: string }>).map(r => /extensions\['([^']+)'\]/.exec(r.location)?.[1])]).filter(Boolean);
+    expect(named.filter(id => !declared.has(id))).toEqual([]);
+    expect(profile.concepts.filter(c => String(c['type']).endsWith('Extension')).every(c => typeof c['inlineSchema'] === 'string')).toBe(true);
+  });
+
+  it('gives no two templates the same determining properties, so a statement answers to one', () => {
+    const key = (t: Json) => JSON.stringify([t['verb'], t['objectActivityType'], t['contextParentActivityType'] ?? null]);
+    expect(new Set(profile.templates.map(key)).size).toBe(profile.templates.length);
+  });
+
+  it('has every template followed by a statement the world builds, and by that template only', () => {
+    const opened = build({});
+    const settled = build({ symptoms: [], progressed: 0, measured: { raw: 61, success: true }, registration: opened.registration });
+    const seen = new Set<string>();
+    for (const statement of [...opened.statements, ...settled.statements]) {
+      const result = validates(json(statement), profile.templates);
+      expect(result).toMatchObject({ outcome: 'success', findings: [] });
+      expect(result.templates).toHaveLength(1);
+      seen.add(result.templates[0]!);
+    }
+    expect([...seen].sort()).toEqual(profile.templates.map(t => String(t['id'])).sort());
+  });
+
+  it('refuses a statement that names the profile and not the version, or that states the cause', () => {
+    const [first] = build({}).statements;
+    const unversioned = json({ ...first, context: { ...first!.context, contextActivities: { category: [{ id: pack.profileId }] } } });
+    expect(validates(unversioned, profile.templates).outcome).toBe('invalid');
+    const telling = json({ ...first, result: { extensions: { [`${pack.profileId}/ext/cause`]: cause.id } } });
+    expect(validates(telling, profile.templates).outcome).toBe('invalid');
+  });
+
+  it('reads each registration the world writes as one of its primary patterns', () => {
+    const opened = build({});
+    const at = (statements: readonly unknown[], timestamp: string) => statements.map(s => json({ ...(s as object), timestamp }));
+    const work = buildWorkStatement({
+      pack, homePage: 'http://127.0.0.1:9/', actorDid: 'did:web:example:agents:pip', missionId: mission.id, missionTitle: mission.title,
+      response: 'Counted the made-up crates.', timestamp: '2026-11-14T00:01:00.000Z', registration: opened.registration,
+    });
+    const settle = (matched: boolean) => at(build({ symptoms: [], progressed: matched ? 2 : 0, measured: { raw: 61, success: matched }, registration: opened.registration }).statements, '2026-11-14T00:02:00.000Z');
+    const missionPattern = `${pack.profileId}/patterns/mission`;
+    const start = opened.statements.map(json);
+    // Opened and never settled; settled with a match; settled without one; with an agent's work between.
+    for (const stream of [start, [...start, ...settle(true)], [...start, ...settle(false)], [...start, json(work), ...settle(true)]]) {
+      expect(follows(stream, profile.templates, profile.patterns)).toEqual({ follows: true, pattern: missionPattern, reasons: [] });
+    }
+    // What the world's own interventions write: a mission taken up and measured, with nothing observed, under a registration of its own.
+    const standing = build({ symptoms: [], progressed: 0, measured: { raw: 40, success: false } }).statements.map(json);
+    expect(follows(standing, profile.templates, profile.patterns)).toEqual({ follows: true, pattern: `${pack.profileId}/patterns/standing-measure`, reasons: [] });
+    // And what it never writes: a measure before the mission is opened, or two measures.
+    expect(follows([...settle(true), ...at(start, '2026-11-14T00:03:00.000Z')], profile.templates, profile.patterns).follows).toBe(false);
+    expect(follows([...start, ...settle(true), ...at(settle(false), '2026-11-14T00:04:00.000Z')], profile.templates, profile.patterns).follows).toBe(false);
   });
 });
 

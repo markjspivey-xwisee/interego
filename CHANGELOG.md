@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-11-15 — xAPI profiles: every template has a statement that follows it, and the profiles declare what statements carry
+
+Four of this repository's applications publish an xAPI Profile. They were read
+against a published profile used as a yardstick for practice (its vocabulary is
+not used here), and three things were wrong.
+
+**A profile nobody held its own statements to.** `llm-telemetry` checked each of
+its 19 kinds of statement as valid xAPI and never against its own templates.
+Foxxi had a statement following 17 of its 39 templates under the
+specification's algorithm, and none of its patterns was run by any test. Each
+profile's tests now run what its builders emit through the specification's
+validation (`validates`) and pattern matching (`follows`), and fail if a
+template has no statement that follows it. For Foxxi, 22 of those statements are
+written by hand as examples of a template: they show the template can be
+followed, not that every emitter follows it.
+
+**A profile smaller than what statements carry.** Foxxi's emitters wrote twelve
+context extensions the profile did not declare (`durationMs`, `error`,
+`observedBy`, `costUsd`, `workTrajectory`, `evidenceBinding`, `evidenceShape`,
+`evaluationId`, `candidateId`, `harness`, `publisherId`,
+`projectedFromTrajectoryStep`). They are declared, each with a JSON Schema for
+its value where the type is fixed, and a test fails when a statement carries a
+Foxxi term the profile does not define. Eight Foxxi patterns had no definition;
+they have one.
+
+**A document that was not a whole profile.** The coached-world profile had an
+id, four verbs with no label or definition, and four templates. It is now an
+xAPI Profiles 1.0 document: what it conforms to, a version, every verb, activity
+type and extension defined, and patterns for what one registration holds. Its
+statements name the profile version in their category, where they named the
+profile, and each template requires it.
+
+Two things the new tests found:
+
+- Foxxi's `course-session` pattern said a session ends passed or failed and
+  listed only `completed` and `passed`, so a failed session could not follow it.
+  `course-failed` is an alternative now.
+- The coached world writes a second `initialized` when a mission is settled,
+  under the mission's registration. The pattern describes that as it is; whether
+  it should is a separate question.
+
+The agentic-performance-practice bridge stamped its profile's version with the
+time of each request. It is a constant now.
+
+Not changed: no verb or extension IRI is renamed, so no stored statement is
+affected. The agentic-performance-practice profile still describes a statement
+that nothing in the repository emits.
+
 ## 2026-11-15 — Native store: read only what a named writer sealed
 
 The native commit store checked whom a stored artifact was addressed to and not

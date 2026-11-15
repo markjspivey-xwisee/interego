@@ -1,6 +1,7 @@
 import { describe, expect, it } from 'vitest';
 import { normalizeEvent, eventStatement, telemetryMetadata, digest, type TelemetryEvent } from '../applications/llm-telemetry/events.js';
-import { EVENTS, telemetryProfile, META, USAGE } from '../applications/llm-telemetry/profile.js';
+import { EVENTS, telemetryProfile, META, USAGE, INTENT, NS } from '../applications/llm-telemetry/profile.js';
+import { validates, follows } from '../applications/foxxi-content-intelligence/src/xapi-profile-server/processor.js';
 import { ingestTelemetry, mergeTelemetrySnapshot, normalizeQuery, telemetryReport, type TelemetryDependencies } from '../applications/llm-telemetry/service.js';
 import { validateStatement } from '../applications/foxxi-content-intelligence/src/xapi-validate.js';
 import { telemetryView } from '../applications/llm-telemetry/view.js';
@@ -107,6 +108,45 @@ describe('general LLM xAPI observations', () => {
     const p = telemetryProfile(); expect(p.templates).toHaveLength(19); expect(new Set(p.concepts.map(c => c.id)).size).toBe(p.concepts.length);
     expect(p.concepts.filter(c => [META, USAGE].includes(c.id)).every(c => 'inlineSchema' in c && JSON.parse(c.inlineSchema).type === 'object')).toBe(true);
     expect(p.patterns[0]).toMatchObject({ primary: true });
+  });
+  // A statement that is valid xAPI can still break the profile it names. These run what the
+  // builder emits through the specification's own algorithm (Part Three, 2.1 and 2.2), so the
+  // templates are a checked contract and not a description.
+  it.each(Object.keys(EVENTS))('emits a %s statement that follows its own template and no other', kind => {
+    const p = telemetryProfile();
+    const s = eventStatement(actor, event({ kind, turn_id: 'turn-1', tool_use_id: 'tool-1', agent_id: 'agent-1', generation_id: 'generation-1' }), time);
+    expect(validates(s, p.templates)).toMatchObject({ outcome: 'success', templates: [`${NS}templates/${kind}`], findings: [] });
+  });
+  it('refuses a statement that drops the profile version, the registration or the metadata', () => {
+    const p = telemetryProfile();
+    const s = eventStatement(actor, event({ kind: 'tool-started', tool_use_id: 'tool-1' }), time) as { context: { registration?: string; contextActivities: { category: unknown[] }; extensions: Record<string, unknown> } };
+    const broken = [
+      { ...s, context: { ...s.context, contextActivities: { ...s.context.contextActivities, category: [{ id: `${NS}profile/v0` }] } } },
+      { ...s, context: { ...s.context, registration: undefined } },
+      { ...s, context: { ...s.context, extensions: { [INTENT]: s.context.extensions[INTENT] } } },
+    ];
+    for (const b of broken) expect(validates(JSON.parse(JSON.stringify(b)), p.templates).outcome).toBe('invalid');
+  });
+  it('declares every verb, activity type and extension a statement can carry', () => {
+    const p = telemetryProfile(), declared = new Set(p.concepts.map(c => c.id));
+    for (const kind of Object.keys(EVENTS)) {
+      const s = eventStatement(actor, event({ kind, turn_id: 'turn-1', tool_use_id: 'tool-1', agent_id: 'agent-1', parent_agent_id: 'agent-0', target_agent_id: 'agent-2', generation_id: 'generation-1', usage: { input_tokens: 1 } }), time) as {
+        verb: { id: string }; object: { definition: { type: string } }; result?: { extensions?: Record<string, unknown> };
+        context: { extensions: Record<string, unknown>; contextActivities: Record<string, Array<{ id: string; definition?: { type: string } }>> } };
+      const used = [s.verb.id, s.object.definition.type, ...Object.keys(s.context.extensions), ...Object.keys(s.result?.extensions ?? {}),
+        ...Object.values(s.context.contextActivities).flat().map(a => a.definition?.type).filter((t): t is string => !!t)];
+      expect(used.filter(id => !declared.has(id))).toEqual([]);
+    }
+    expect(p.concepts.filter(c => c.type.endsWith('Extension')).every(c => 'inlineSchema' in c)).toBe(true);
+  });
+  it('reads a whole session as the primary pattern, in any order of kinds', () => {
+    const p = telemetryProfile();
+    const kinds = ['session-observed', 'input-received', 'tool-started', 'tool-completed', 'response-completed', 'session-ended'];
+    const session = kinds.map((kind, i) => eventStatement(actor, event({ kind, source_event_id: `event-${i}`, turn_id: 'turn-1', tool_use_id: 'tool-1' }), new Date(Date.parse(time) + i * 1000).toISOString()));
+    expect(follows(session, p.templates, p.patterns)).toEqual({ follows: true, pattern: `${NS}patterns/observation-stream`, reasons: [] });
+    // Partial capture is the stated case: a stream that starts mid-session still follows.
+    expect(follows(session.slice(2, 4), p.templates, p.patterns).follows).toBe(true);
+    expect(follows([], p.templates, p.patterns).follows).toBe(false);
   });
   it('expands the profile with the official ADL context without dropping its vocabulary', async () => {
     // https://github.com/adlnet/xapi-profiles/blob/master/context/profile-context.jsonld

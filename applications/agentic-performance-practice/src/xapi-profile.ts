@@ -17,6 +17,13 @@ import { AGP_NS } from './ontology.js';
 /** The Profile's identity IRI (dereferences to itself when served). */
 export const AGP_PROFILE_ID = 'https://markjspivey-xwisee.github.io/interego/applications/agentic-performance-practice/xapi/profile';
 
+/**
+ * When version 1 of this profile was made. The bridge used to stamp the time of each request,
+ * so the same version claimed a new generation time on every read. A version's time is fixed;
+ * a change to the profile is a new version with its own.
+ */
+export const AGP_PROFILE_GENERATED_AT = '2026-11-15T00:00:00.000Z';
+
 /** The shared, domain-agnostic performance verb, reused verbatim from Foxxi. */
 const PERFORMED = FOXXI_PROFILE_PARTS.verbs.find(v => v.id.endsWith('#performed'));
 if (!PERFORMED) throw new Error('agp xapi-profile: could not locate the shared `performed` verb in FOXXI_PROFILE_PARTS');
