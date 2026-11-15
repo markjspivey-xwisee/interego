@@ -107,7 +107,7 @@ describe('GET /cmi5/reviewed', () => {
     const session = cmi5BearerSession(first.token)!;
     expect(session).toMatchObject({ registration: first.launch.registration, launchMode: 'Normal', closed: false, superseded: false });
 
-    // Not reviewed yet: the unit is told it has nothing to send, with the service's reason and none of its other words.
+    // Not reviewed yet: the unit is told it has nothing to send, with the service's reason and its bounded `problems`, and no other field of its answer.
     const waiting = await get(first.token);
     expect([waiting.status, waiting.body['error'], waiting.body['reason']]).toEqual([409, 'no_reviewed_statements', 'attempt-not-countersigned']);
     service.answer = () => ({ status: 404, body: { kind: 'refusal', 'iep:refusalReason': 'registration-not-taken' } });

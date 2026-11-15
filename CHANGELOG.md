@@ -28,6 +28,23 @@ Callers that read `persisted: false` on a 200 from
 `/agent/xapi-profiles/add` or `/remove` will not see it again: that case is
 now a 503.
 
+## 2026-11-15 — Foxxi: guest-learner docs caught up with the course player
+
+Documentation and comments only; no behaviour changes.
+
+- `i2idlx/LEARNING-CONNECTIONS.md` listed the only routes open to a guest and
+  did not mention the course player, whose `/learn` routes now take the same
+  guest session. It also now says that every guest, from either page, counts
+  against the workbench application's lifetime `maxPods`, which is never
+  refunded.
+- The header of `i2idlx/app/src/learning-guest.js` said the identity token is
+  dropped unread. That is true of the sign-in; `guestFreshCredential`, added
+  with the course player, returns a fresh token to its caller without storing
+  it. The header says so.
+- `src/cmi5-reviewed.ts`: the comment on a refusal said the review service's
+  words are not passed on. Its reason code and up to 20 bounded `problems`
+  strings are. The comment and the test's comment now say that.
+
 ## 2026-11-15 — Foxxi: a cmi5 launch's credential survives a restart
 
 Every deploy of the Foxxi bridge ended every practice in progress. A launch is

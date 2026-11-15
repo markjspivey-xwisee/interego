@@ -1,7 +1,9 @@
 // Guest learning account: a P-256 key this browser generates and cannot export, kept in IndexedDB.
-// The key proves possession only. It does not identify a person. Nothing here is a bearer credential:
-// the identity token the bootstrap returns is dropped unread, and the attestation is public proof
-// material that is useless without a fresh signature from the key.
+// The key proves possession only. It does not identify a person. Nothing kept here is a bearer
+// credential: the attestation is public proof material that is useless without a fresh signature
+// from the key. guestLearningSignIn drops the identity token the bootstrap returns unread.
+// guestFreshCredential is the one exception: it returns a fresh identity token to its caller (the
+// course player's claim step) and still does not store it.
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const fail = (message, code = 'learning_guest_unavailable', extra = {}) => Object.assign(new Error(message), { code }, extra);
 const utf8 = value => new TextEncoder().encode(value);
