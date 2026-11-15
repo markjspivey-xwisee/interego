@@ -22,6 +22,7 @@ export function MapView({ route }) {
   };
   return (
     <div className="mapv">
+      {mode !== "path" ? <h1 className="sr">Map</h1> : null}
       <div className="mapbar">
         <Seg label="Map mode" value={mode} onChange={setMode} options={[
           { v: "whole", l: "Whole glossary", icon: "globe" }, { v: "neighborhood", l: "Neighborhood", icon: "graph" }, { v: "path", l: "Path", icon: "route" },

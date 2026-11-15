@@ -65,6 +65,7 @@ import type {
   IRI,
 } from '@interego/core';
 import { verifySessionToken, trustedAddressMap } from './auth.js';
+import { actorAliases } from './actor-alias.js';
 import { verifyOauthBearer } from './xapi-oauth.js';
 import type { KeyObject } from 'node:crypto';
 
@@ -101,6 +102,12 @@ export interface XapiLrsConfig {
   bearerTenantResolver?: (token: string) => TenantId | null;
   /** The launch registration a cmi5 auth-token is bound to. Such a bearer reads and writes only that launch's statements and State. */
   bearerRegistrationResolver?: (token: string) => string | null;
+  /**
+   * The actor a cmi5 auth-token was issued for. Such a bearer writes statements only as that actor
+   * and never with a verb cmi5 keeps for the LMS. Where this is not given, or gives no actor for a
+   * token bound to a registration, that token writes no statement at all.
+   */
+  bearerActorResolver?: (token: string) => { homePage: string; name: string } | null;
   /** Optional: the published tenant directory (user_id + web_id), used to VERIFY
    *  wallet-signed Foxxi session tokens presented as Bearer auth. Directory users get a
    *  deterministic wallet (the same derivation mintSessionToken uses), so a token minted
@@ -134,13 +141,52 @@ export type XapiStatementRecord = StoredStatement;
  *  internally-emitted statements. homePage is an https IRL in prod. */
 const INTERNAL_LRS_AUTHORITY = { homePage: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080', name: 'foxxi-lrs' };
 
+/**
+ * The account name on the authority of a statement this bridge's own LMS recorded: `launched` when it
+ * launches a unit, `satisfied` when a moveOn is met. It is how a reader tells the LMS's word from a
+ * statement with the same verb that somebody else stored. The LRS assigns it and nobody can send it:
+ * only `storeStatementDurably(…, 'lms')`, called from the LMS's own code, writes it. A statement that
+ * arrives claiming it is refused, and one handed to any other internal store has the claim removed.
+ */
+export const LMS_AUTHORITY_NAME = 'foxxi-lms';
+const INTERNAL_LMS_AUTHORITY = { homePage: INTERNAL_LRS_AUTHORITY.homePage, name: LMS_AUTHORITY_NAME };
+
+/** The authority this bridge's LMS's own statements carry, as a reader compares it. */
+export function lmsStatementAuthority(): { objectType: 'Agent'; account: { homePage: string; name: string } } {
+  return { objectType: 'Agent', account: { ...INTERNAL_LMS_AUTHORITY } };
+}
+
+/** Whether a statement names the LMS's authority, whatever home page it puts beside the name. */
+export function claimsLmsAuthority(stmt: Record<string, unknown>): boolean {
+  const account = (stmt['authority'] as { account?: { name?: unknown } } | undefined)?.account;
+  return typeof account?.name === 'string' && account.name.trim().toLowerCase() === LMS_AUTHORITY_NAME;
+}
+
+/**
+ * A statement as it may be put straight into a store by code that does not go through
+ * `storeStatementDurably`: the same statement, without a claim to the LMS's authority. Some records
+ * reach a store from outside this process's own emission (a projection of what a pod holds, a
+ * record read back from a pod), and a pod is somebody's to write. The LMS's authority is kept only
+ * where the LMS's own code set it, in this process, on the way in.
+ */
+export function withoutLmsAuthorityClaim<T extends Record<string, unknown>>(stmt: T): T {
+  if (!claimsLmsAuthority(stmt)) return stmt;
+  const { authority: _claimed, ...rest } = stmt;
+  return rest as T;
+}
+
 /** An internally emitted statement authored and checked for storage, or null when it is not conformant. */
-function internalRecord(stmt: Record<string, unknown>, emitter: string): StoredStatement | null {
+function internalRecord(stmt: Record<string, unknown>, emitter: string, as: 'lrs' | 'lms' = 'lrs'): StoredStatement | null {
   // Author + structurally validate on the internal emission path too, exactly as
   // the inbound POST /xapi/statements path does — so an internally-stored statement
   // carries an LRS authority (§4.1.9) and is checked against the xAPI shape.
   const timestampAssignedByLrs = typeof stmt.timestamp !== 'string';
-  const enriched = ensureStatementFields(stmt, INTERNAL_LRS_AUTHORITY);
+  // The LMS's authority is given here and only for the LMS's own emission. Several internal stores
+  // keep statements a caller supplied; one of those naming the LMS's authority does not get to keep it.
+  let authored = stmt;
+  if (as === 'lms') authored = { ...stmt, authority: lmsStatementAuthority() };
+  else if (claimsLmsAuthority(stmt)) { const { authority: _claimed, ...rest } = stmt; authored = rest; }
+  const enriched = ensureStatementFields(authored, INTERNAL_LRS_AUTHORITY);
   const id = enriched.id as string;
   const errs = validateStatement(enriched);
   if (errs.length > 0) {
@@ -233,8 +279,8 @@ export function storeStatementInternal(stmt: Record<string, unknown>, tenant: Te
  * null when the statement is not conformant or the write failed. For a caller that must not move
  * on, or report an id, until the record is kept.
  */
-export async function storeStatementDurably(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT): Promise<string | null> {
-  const rec = internalRecord(stmt, 'storeStatementDurably');
+export async function storeStatementDurably(stmt: Record<string, unknown>, tenant: TenantId = DEFAULT_TENANT, as: 'lrs' | 'lms' = 'lrs'): Promise<string | null> {
+  const rec = internalRecord(stmt, 'storeStatementDurably', as);
   if (!rec) return null;
   try {
     await statementStores.for(tenant).put(rec);
@@ -399,7 +445,48 @@ function strayFromRegistration(req: Request, batch: readonly Record<string, unkn
   const reg = boundRegistration(req);
   return reg === undefined ? -1 : batch.findIndex((s) => registrationOfStatement(s) !== reg);
 }
+const LMS_AUTHORITY_NOT_SENT = `the authority ${LMS_AUTHORITY_NAME} is assigned by this LRS to its own LMS's statements and is not accepted on a statement that is sent`;
 const OUTSIDE_LAUNCH = 'a cmi5 auth-token reads and writes only its own launch: context.registration must be the registration it was minted for';
+
+/**
+ * The verbs cmi5 has the LMS record, never the assignable unit (cmi5 9.3): launched, abandoned,
+ * waived and satisfied. A reader takes one of these as the LMS's word: that a session was opened and
+ * in which mode, that it was abandoned, that a course's moveOn was met.
+ */
+const LMS_ONLY_VERBS: ReadonlySet<string> = new Set([
+  'http://adlnet.gov/expapi/verbs/launched', 'https://w3id.org/xapi/adl/verbs/abandoned',
+  'https://w3id.org/xapi/adl/verbs/waived', 'https://w3id.org/xapi/adl/verbs/satisfied',
+]);
+
+/**
+ * Why a statement is not one the bearer of a cmi5 auth-token may write, with its index, or null.
+ * The token is the assignable unit's, and it is in the learner's browser. It writes as the actor it
+ * was launched for and as nobody else, and it does not write the LMS's own verbs: otherwise whoever
+ * holds it could record that they were launched in another mode, or that the course was satisfied.
+ * A credential that is not a launch's (an operator's, a signed session's) is not held to this.
+ */
+function notTheUnitsToWrite(req: Request, batch: readonly Record<string, unknown>[]): { index: number; why: string } | null {
+  if (boundRegistration(req) === undefined) return null;
+  const launchActor = (req as Request & { xapiLaunchActor?: { homePage: string; name: string } }).xapiLaunchActor;
+  // A token known to be a launch's, with no actor known for the launch: nothing says whom it may
+  // write as, so it writes nothing. A missing resolver or a launch no longer held refuses; it does
+  // not fall back to writing as anyone.
+  if (!launchActor && batch.length > 0) {
+    return { index: 0, why: 'a cmi5 auth-token writes only as the actor it was launched for, and this LRS cannot tell which actor that is' };
+  }
+  for (let index = 0; index < batch.length; index++) {
+    const s = batch[index]!;
+    const verb = (s['verb'] as { id?: unknown } | undefined)?.id;
+    if (typeof verb === 'string' && LMS_ONLY_VERBS.has(verb)) {
+      return { index, why: `a cmi5 auth-token is an assignable unit's: ${verb} is the LMS's to record (cmi5 9.3)` };
+    }
+    const account = (s['actor'] as { account?: { homePage?: unknown; name?: unknown } } | undefined)?.account;
+    if (!launchActor || account?.homePage !== launchActor.homePage || account?.name !== launchActor.name) {
+      return { index, why: 'a cmi5 auth-token writes only as the actor it was launched for: actor.account must be the one in the launch (cmi5 9.2)' };
+    }
+  }
+  return null;
+}
 
 /**
  * The first statement in a batch that voids another launch's statement, or -1. A voiding statement
@@ -450,7 +537,7 @@ function makeAuthGate(config: XapiLrsConfig) {
     setXapiHeaders(res, version.startsWith('2.') ? version : version);
 
     const authHeader = (req.headers['authorization'] ?? req.headers['Authorization']) as string | undefined;
-    const r = req as Request & { xapiAuth?: unknown; xapiTenant?: TenantId; xapiRegistration?: string };
+    const r = req as Request & { xapiAuth?: unknown; xapiTenant?: TenantId; xapiLaunchActor?: { homePage: string; name: string }; xapiRegistration?: string };
     const basicTenant = basicAuthTenant(authHeader, credTenants);
     if (basicTenant !== null) {
       const decoded = Buffer.from((authHeader ?? '').replace(/^Basic\s+/i, ''), 'base64').toString('utf8');
@@ -473,6 +560,8 @@ function makeAuthGate(config: XapiLrsConfig) {
       r.xapiTenant = cmi5BasicTenant;
       const registration = config.bearerRegistrationResolver?.(basicAsToken);
       if (registration) r.xapiRegistration = registration;
+      const launchActor = config.bearerActorResolver?.(basicAsToken);
+      if (launchActor) r.xapiLaunchActor = launchActor;
       return next();
     }
     const bearer = bearerToken(authHeader);
@@ -489,6 +578,8 @@ function makeAuthGate(config: XapiLrsConfig) {
         r.xapiTenant = cmi5Tenant;
         const registration = config.bearerRegistrationResolver?.(bearer);
         if (registration) r.xapiRegistration = registration;
+        const launchActor = config.bearerActorResolver?.(bearer);
+        if (launchActor) r.xapiLaunchActor = launchActor;
         return next();
       }
 
@@ -781,6 +872,10 @@ async function handlePostStatements(req: Request, res: Response, config: XapiLrs
   }
   const stray = strayFromRegistration(req, batch);
   if (stray >= 0) { res.status(403).json({ error: `statement[${stray}]: ${OUTSIDE_LAUNCH}` }); return; }
+  const notUnits = notTheUnitsToWrite(req, batch);
+  if (notUnits) { res.status(403).json({ error: `statement[${notUnits.index}]: ${notUnits.why}` }); return; }
+  const claimed = batch.findIndex(claimsLmsAuthority);
+  if (claimed >= 0) { res.status(403).json({ error: `statement[${claimed}]: ${LMS_AUTHORITY_NOT_SENT}` }); return; }
   const voidsAnother = await voidsOutsideRegistration(req, batch);
   if (voidsAnother >= 0) { res.status(403).json({ error: `statement[${voidsAnother}] voids a statement of another launch: ${OUTSIDE_LAUNCH}` }); return; }
 
@@ -1009,6 +1104,9 @@ async function handlePutStatement(req: Request, res: Response, config: XapiLrsCo
   const attachErr = checkStatementAttachments(stmt, multipartParts);
   if (attachErr) { res.status(400).json({ error: attachErr }); return; }
   if (strayFromRegistration(req, [stmt]) >= 0) { res.status(403).json({ error: OUTSIDE_LAUNCH }); return; }
+  const notUnits = notTheUnitsToWrite(req, [stmt]);
+  if (notUnits) { res.status(403).json({ error: notUnits.why }); return; }
+  if (claimsLmsAuthority(stmt)) { res.status(403).json({ error: LMS_AUTHORITY_NOT_SENT }); return; }
   if (await voidsOutsideRegistration(req, [stmt]) >= 0) { res.status(403).json({ error: `it voids a statement of another launch: ${OUTSIDE_LAUNCH}` }); return; }
   if (multipartParts) {
     const referenced = collectAttachmentHashes([stmt]);
@@ -1287,7 +1385,10 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
       : (limitRaw !== undefined ? Number(limitRaw) : 100),
     cursor: cursorToken,
   };
-  const result = await store.query(filter);
+  // A linked actor is the same reader. The statement itself is not rewritten; the filter widens.
+  const also = filter.agent ? actorAliases(filter.agent as { account?: { name?: string; homePage?: string } }) : [];
+  const queried = also.length ? { ...filter, alsoAgents: also } : filter;
+  const result = await store.query(queried);
 
   // §2.1.4: a query that would match a voided Statement still surfaces
   // the Voiding Statement that voided it, so the requester sees the void.
@@ -1296,7 +1397,7 @@ async function handleGetStatements(req: Request, res: Response): Promise<void> {
     const includedIds = new Set(recs.map(r => r.id));
     const all = await store.listAll();
     for (const r of all) {
-      if (!r.voided || !r.voidingStatementId || !matchesFilter(r, filter)) continue;
+      if (!r.voided || !r.voidingStatementId || !matchesFilter(r, queried)) continue;
       if (includedIds.has(r.voidingStatementId)) continue;
       const voiding = await store.get(r.voidingStatementId);
       if (voiding && (bound === undefined || registrationOfStatement(voiding.statement) === bound)) {
@@ -1445,6 +1546,27 @@ export async function stageStateDocument(tenant: TenantId, at: StateAddress, con
 /** Read a State document the way the State resource's GET would find it; undefined when absent. */
 export async function readStateDocument(tenant: TenantId, at: StateAddress): Promise<unknown> {
   return (await documentStore(tenant, 'state').get(stateKey(at.activityId, at.agent, at.stateId, at.registration)))?.content;
+}
+
+/**
+ * Delete every State document this actor stored in the tenant: `LMS.LaunchData` and whatever
+ * the activity stored for the attempt, including its suspend data. Another actor's documents stay.
+ */
+export async function clearActorStateDocuments(tenant: TenantId, actor: { homePage: string; name: string }): Promise<number> {
+  const store = documentStore(tenant, 'state');
+  let removed = 0;
+  for (const [key] of await store.list()) {
+    let parsed: unknown;
+    try { parsed = JSON.parse(key); } catch { continue; }
+    if (!Array.isArray(parsed) || parsed[0] !== 'state' || typeof parsed[2] !== 'string') continue;
+    let agent: { account?: { homePage?: unknown; name?: unknown } } | undefined;
+    try { agent = JSON.parse(parsed[2]) as typeof agent; } catch { continue; }
+    if (agent?.account?.name !== actor.name || agent.account.homePage !== actor.homePage) continue;
+    await store.delete(key);
+    removed++;
+  }
+  if (removed) xapiDocsPodDirty();
+  return removed;
 }
 function profileKey(iri: string, profileId: string): string {
   return JSON.stringify(['profile', iri, profileId]);
@@ -1637,7 +1759,7 @@ import { FOXXI_NS } from './foxxi-vocab.js';
 /** xAPI Profile Version objects MUST be immutable — a fixed authoring timestamp for
  *  /v/1, NOT the live clock (which made generatedAtTime change on every fetch). A real
  *  revision appends /v/2 with wasRevisionOf rather than mutating this. */
-const PROFILE_GENERATED_AT = '2026-07-22T00:00:00.000Z';
+export const PROFILE_GENERATED_AT = '2026-07-22T00:00:00.000Z';
 
 let _profileCache: { url: string; doc: Record<string, unknown>; fetchedAt: number } | null = null;
 async function fetchExternalProfile(url: string): Promise<Record<string, unknown> | null> {
@@ -1688,6 +1810,21 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
   // operators then manage them at runtime through /xapi/admin/forwarding/*.
   seedForwardingTargets(DEFAULT_TENANT, config.forwardingTargets);
   const gate = makeAuthGate(config);
+
+  // How long each xAPI write took end to end, beside the store's own native-write and
+  // native-commit lines: the difference is what this handler spends outside the store.
+  // Method, a resource name from a fixed list, status and milliseconds; nothing from the request.
+  app.use('/xapi', (req: Request, res: Response, next: NextFunction) => {
+    if (req.method !== 'PUT' && req.method !== 'POST' && req.method !== 'DELETE') { next(); return; }
+    // Read here: outside this mounted middleware the path regains its /xapi prefix.
+    const started = performance.now(), path = req.path;
+    res.once('finish', () => {
+      const resource = ['statements', 'activities/state', 'activities/profile', 'agents/profile'].find(name => path === '/' + name) ?? 'other';
+      try { console.warn('[foxxi-lrs] xapi-write ' + JSON.stringify({ method: req.method, resource, status: res.statusCode, elapsedMs: Math.round(performance.now() - started) })); }
+      catch { /* a closed log stream must not fail a response that was already sent */ }
+    });
+    next();
+  });
 
   // Raw-body parser for multipart/mixed Statement requests — the global
   // express.json() middleware skips non-JSON content types, so the

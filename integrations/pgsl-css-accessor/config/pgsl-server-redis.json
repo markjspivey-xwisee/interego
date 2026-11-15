@@ -156,9 +156,15 @@
             }
           },
           {
-            "@type": "PostOperationHandler",
+            "@type": "NativeStageOperationHandler",
             "store": {
               "@id": "urn:solid-server:default:ResourceStore"
+            },
+            "eTagHandler": {
+              "@id": "urn:solid-server:default:ETagHandler"
+            },
+            "accessor": {
+              "@id": "urn:pgsl-css:default:PgslDataAccessor"
             }
           },
           {

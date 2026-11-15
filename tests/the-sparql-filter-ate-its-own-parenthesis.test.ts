@@ -136,3 +136,29 @@ describe('the two exported generators, against data that has answers', () => {
     expect(values(s, queryGraphsByTrustLevel('CryptographicallyVerified'), '?graph')).toEqual(['urn:g2']);
   });
 });
+
+// Three more forms the parser read wrongly and answered without complaint. Each returned zero rows.
+describe('IRIs with a fragment, typed literals and REGEX flags', async () => {
+  const { createTripleStore, addTriples, executeSparqlString: run } = await import('@interego/pgsl');
+  const store = createTripleStore();
+  addTriples(store, [
+    { subject: 'https://example.org/a', predicate: 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type', object: 'https://example.org/ns#Thing' },
+    { subject: 'https://example.org/a', predicate: 'https://example.org/ns#done', object: '"true"^^http://www.w3.org/2001/XMLSchema#boolean' },
+    { subject: 'https://example.org/a', predicate: 'https://example.org/ns#label', object: '"Glazed"' },
+  ]);
+  const rows = (q: string) => run(store, q).bindings.length;
+
+  it('does not read the # of an IRI ref as the start of a comment', () => {
+    expect(rows('SELECT ?s WHERE { ?s a <https://example.org/ns#Thing> }')).toBe(1);
+    expect(rows('SELECT ?s WHERE { ?s a <https://example.org/ns#Thing> . # a real comment\n ?s <https://example.org/ns#label> ?l }')).toBe(1);
+    expect(rows('SELECT ?s WHERE { ?s <https://example.org/ns#label> "Gl#zed" }')).toBe(0);
+  });
+  it('matches a typed literal whose datatype is written as an IRI ref', () => {
+    expect(rows('SELECT ?s WHERE { ?s <https://example.org/ns#done> "true"^^<http://www.w3.org/2001/XMLSchema#boolean> }')).toBe(1);
+    expect(rows('PREFIX xsd: <http://www.w3.org/2001/XMLSchema#> SELECT ?s WHERE { ?s <https://example.org/ns#done> "true"^^xsd:boolean }')).toBe(1);
+  });
+  it('applies the flags given to REGEX', () => {
+    expect(rows('SELECT ?s WHERE { ?s <https://example.org/ns#label> ?l . FILTER(REGEX(?l, "^glaz", "i")) }')).toBe(1);
+    expect(rows('SELECT ?s WHERE { ?s <https://example.org/ns#label> ?l . FILTER(REGEX(?l, "^glaz")) }')).toBe(0);
+  });
+});

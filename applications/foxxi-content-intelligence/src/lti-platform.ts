@@ -28,10 +28,10 @@
  * RFC 7523); OpenID Connect Core 1.0 (form_post response mode); JOSE (RFC 7515/7517/7519).
  */
 
-import express, { type Express, type Request, type Response, type RequestHandler } from 'express';
+import express, { type Router, type Request, type Response, type RequestHandler } from 'express';
 import { rateLimit } from 'express-rate-limit';
-import { createHash, randomBytes } from 'node:crypto';
-import { AGS_SCOPE, LTI_CLAIMS, es256Keys, jwsSignEs256, jwsVerifyRs256OrEs256, type Es256Keys, type PlatformRegistration } from './lti13.js';
+import { createHash, createPrivateKey, createPublicKey, randomBytes, sign } from 'node:crypto';
+import { AGS_SCOPE, LTI_CLAIMS, es256Keys, jwsSignEs256, jwsVerifyRs256OrEs256, type PlatformRegistration } from './lti13.js';
 import { sendServerError } from './http-errors.js';
 
 const LEARNER_ROLE = 'http://purl.imsglobal.org/vocab/lis/v2/membership#Learner';
@@ -84,7 +84,9 @@ export interface LtiPlatformConfig {
   readonly selfBaseUrl: string;
   /** The Tool this Platform launches: the bridge's own when absent. */
   readonly tool?: ToolRegistration;
-  /** The Platform's signing key as PEM. A fresh key per process when absent; the JWKS names it. */
+  /** Offer only the named line item's score service, without local learner metadata. */
+  readonly scoreOnly?: boolean;
+  /** The Platform's P-256 or RSA signing key as PEM. Defaults to a fresh P-256 key. */
   readonly privateKeyPem?: string;
   /** Called after the gradebook changes, so the bridge can keep it. */
   readonly onChange?: () => void;
@@ -126,7 +128,7 @@ interface LineItem {
   readonly tag: string;
 }
 
-interface ResultRow {
+interface PostedScore {
   readonly userId: string;
   readonly scoreGiven?: number;
   readonly scoreMaximum?: number;
@@ -134,6 +136,10 @@ interface ResultRow {
   readonly gradingProgress: string;
   readonly timestamp: string;
   readonly comment?: string;
+}
+
+interface ResultRow extends PostedScore {
+  readonly lastFinalized?: PostedScore;
 }
 
 interface AccessToken { readonly clientId: string; readonly scopes: ReadonlySet<string>; readonly expiresAt: number }
@@ -155,11 +161,28 @@ export interface PlatformSnapshot {
   readonly members: readonly string[];
 }
 
+interface GradebookScore {
+  readonly resultScore?: number;
+  readonly resultMaximum: number;
+  readonly activityProgress: string;
+  readonly gradingProgress: string;
+  readonly timestamp: string;
+  readonly comment?: string;
+}
+
 /** One row of a learner's gradebook: a course's line item and where they stand in it. */
 export interface GradebookRow {
   readonly lineItem: Record<string, unknown>;
   readonly courseId: string;
-  readonly result: { readonly resultScore?: number; readonly resultMaximum: number; readonly activityProgress: string; readonly gradingProgress: string; readonly timestamp: string; readonly comment?: string } | null;
+  readonly result: GradebookScore | null;
+  readonly retake?: GradebookScore;
+}
+
+/** The finalized grade a later scored, not-yet-final post stands beside. acceptScore keeps
+ * lastFinalized only on such a post, whatever its grading progress, so a Pending, PendingManual
+ * or Failed retake leaves the reported grade alone exactly as a NotReady one does. */
+function retainedFinal(row: ResultRow): PostedScore | undefined {
+  return row.lastFinalized;
 }
 
 const trimSlash = (s: string): string => s.replace(/\/+$/, '');
@@ -179,6 +202,27 @@ export function selfTool(selfBaseUrl: string): ToolRegistration {
   };
 }
 
+function launchSigner(issuer: string, pem?: string) {
+  const key = pem ? createPrivateKey(pem) : undefined;
+  if (key?.asymmetricKeyType === 'rsa') {
+    if ((key.asymmetricKeyDetails?.modulusLength ?? 0) < 2048) throw new Error('LTI RSA keys require at least 2048 bits.');
+    const publicKey = createPublicKey(key).export({ format: 'jwk' });
+    const kid = `foxxi-lms-${digest(`${issuer}:${publicKey.n}:${publicKey.e}`).slice(0, 16)}`;
+    const jwk = { ...publicKey, use: 'sig', alg: 'RS256', kid };
+    return { jwk, sign: (claims: Record<string, unknown>) => {
+      const header = Buffer.from(JSON.stringify({ alg: jwk.alg, typ: 'JWT', kid })).toString('base64url');
+      const payload = Buffer.from(JSON.stringify(claims)).toString('base64url');
+      const input = `${header}.${payload}`;
+      return `${input}.${sign('RSA-SHA256', Buffer.from(input), key).toString('base64url')}`;
+    } };
+  }
+  if (key && (key.asymmetricKeyType !== 'ec' || key.asymmetricKeyDetails?.namedCurve !== 'prime256v1')) {
+    throw new Error('LTI launch signing requires a P-256 or RSA private key.');
+  }
+  const keys = es256Keys('foxxi-lms', issuer, pem);
+  return { jwk: keys.jwk, sign: (claims: Record<string, unknown>) => jwsSignEs256({}, claims, keys) };
+}
+
 export class LtiPlatform {
   /** The issuer, and the root every Platform endpoint hangs off. */
   readonly issuer: string;
@@ -189,11 +233,13 @@ export class LtiPlatform {
     title: 'Foxxi open courses',
     type: [COURSE_OFFERING],
   };
-  private readonly keys: Es256Keys;
+  private readonly launchSigning: ReturnType<typeof launchSigner>;
   private readonly onChange: () => void;
   private readonly readiness: () => Promise<boolean>;
   private readonly verifyJwt: NonNullable<LtiPlatformConfig['verifyJwt']>;
   private readonly maxLiveAssertions: number;
+  private readonly scoreOnly: boolean;
+  private readonly grantableScopes: ReadonlySet<string>;
   private readonly grants = new Map<string, Grant>();
   private readonly tokens = new Map<string, AccessToken>();
   private readonly seenJti = new Map<string, number>();
@@ -204,7 +250,9 @@ export class LtiPlatform {
   constructor(config: LtiPlatformConfig) {
     this.issuer = `${trimSlash(config.selfBaseUrl)}/lti/platform`;
     this.tool = config.tool ?? selfTool(config.selfBaseUrl);
-    this.keys = es256Keys('foxxi-lms', this.issuer, config.privateKeyPem);
+    this.scoreOnly = config.scoreOnly ?? false;
+    this.grantableScopes = this.scoreOnly ? new Set([AGS_SCOPE.score]) : GRANTABLE_SCOPES;
+    this.launchSigning = launchSigner(this.issuer, config.privateKeyPem);
     this.onChange = config.onChange ?? (() => undefined);
     this.readiness = config.ensureReady ?? (() => Promise.resolve(true));
     this.verifyJwt = config.verifyJwt ?? jwsVerifyRs256OrEs256;
@@ -233,7 +281,7 @@ export class LtiPlatform {
     };
   }
 
-  jwks(): { keys: Array<Record<string, unknown>> } { return { keys: [{ ...this.keys.jwk }] }; }
+  jwks(): { keys: Array<Record<string, unknown>> } { return { keys: [{ ...this.launchSigning.jwk }] }; }
 
   /** OpenID Provider metadata with the LTI platform configuration, as LTI Dynamic Registration reads it. */
   configuration(): Record<string, unknown> {
@@ -244,11 +292,11 @@ export class LtiPlatform {
       jwks_uri: this.jwksUrl,
       token_endpoint_auth_methods_supported: ['private_key_jwt'],
       token_endpoint_auth_signing_alg_values_supported: ['RS256', 'ES256'],
-      id_token_signing_alg_values_supported: ['ES256'],
+      id_token_signing_alg_values_supported: [this.launchSigning.jwk.alg],
       response_types_supported: ['id_token'],
       response_modes_supported: ['form_post'],
       subject_types_supported: ['public'],
-      scopes_supported: ['openid', ...GRANTABLE_SCOPES],
+      scopes_supported: ['openid', ...this.grantableScopes],
       claims_supported: ['iss', 'aud', 'sub', 'iat', 'exp', 'nonce', 'azp'],
       'https://purl.imsglobal.org/spec/lti-platform-configuration': {
         product_family_code: 'foxxi',
@@ -340,11 +388,13 @@ export class LtiPlatform {
       [LTI_CLAIMS.context]: this.context,
       [LTI_CLAIMS.toolPlatform]: { guid: digest(this.issuer).slice(0, 32), name: 'Foxxi LMS', product_family_code: 'foxxi', version: '1' },
       // Platform-substituted custom parameters: the course, and the pod the learner's record is on.
-      [LTI_CLAIMS.custom]: { foxxi_course_id: grant.courseId, foxxi_learner_pod: grant.podUrl },
-      [LTI_CLAIMS.ags]: { scope: LAUNCH_SCOPES, lineitems: this.lineItemsUrl, lineitem: this.lineItemUrl(item.id) },
+      ...(!this.scoreOnly ? { [LTI_CLAIMS.custom]: { foxxi_course_id: grant.courseId, foxxi_learner_pod: grant.podUrl } } : {}),
+      [LTI_CLAIMS.ags]: this.scoreOnly
+        ? { scope: [AGS_SCOPE.score], lineitem: this.lineItemUrl(item.id) }
+        : { scope: LAUNCH_SCOPES, lineitems: this.lineItemsUrl, lineitem: this.lineItemUrl(item.id) },
       [LAUNCH_PRESENTATION]: { document_target: 'window' },
     };
-    const fields: Record<string, string> = { id_token: jwsSignEs256({}, claims, this.keys) };
+    const fields: Record<string, string> = { id_token: this.launchSigning.sign(claims) };
     if (typeof params.state === 'string' && params.state) fields.state = params.state;
     return { ok: true, action: redirectUri, fields };
   }
@@ -375,8 +425,8 @@ export class LtiPlatform {
     if (this.seenJti.size >= this.maxLiveAssertions) return { ok: false, status: 503, error: 'temporarily_unavailable', description: 'too many client assertions are still live; try again in a few minutes' };
     this.seenJti.set(jti, exp * 1000);
     const asked = str(form.scope).split(/\s+/).filter(Boolean);
-    const granted = asked.filter((s) => GRANTABLE_SCOPES.has(s));
-    if (granted.length === 0) return { ok: false, status: 400, error: 'invalid_scope', description: `none of the requested scopes is one this Platform grants: ${[...GRANTABLE_SCOPES].join(' ')}` };
+    const granted = asked.filter((s) => this.grantableScopes.has(s));
+    if (granted.length === 0) return { ok: false, status: 400, error: 'invalid_scope', description: `none of the requested scopes is one this Platform grants: ${[...this.grantableScopes].join(' ')}` };
     if (this.tokens.size >= MAX_TOKENS) { const oldest = this.tokens.keys().next().value; if (oldest !== undefined) this.tokens.delete(oldest); }
     const accessToken = randomBytes(32).toString('base64url');
     this.tokens.set(accessToken, { clientId: this.tool.clientId, scopes: new Set(granted), expiresAt: now + TOKEN_TTL_S * 1000 });
@@ -412,21 +462,22 @@ export class LtiPlatform {
     if (!li) return null;
     const rows = [...(this.results.get(id)?.values() ?? [])].filter((r) => !userId || r.userId === userId);
     return rows.map((r) => {
-      const scored = this.rescaled(r, li);
+      const grade = retainedFinal(r) ?? r;
+      const scored = this.rescaled(grade, li);
       return {
         id: `${this.lineItemUrl(id)}/results/${digest(r.userId).slice(0, 24)}`,
         scoreOf: this.lineItemUrl(id),
         userId: r.userId,
         ...(scored !== undefined ? { resultScore: scored } : {}),
         resultMaximum: li.scoreMaximum,
-        ...(r.comment ? { comment: r.comment } : {}),
+        ...(grade.comment ? { comment: grade.comment } : {}),
       };
     });
   }
 
   /**
-   * An AGS Score (AGS 2.0 §3.4). Only for a learner this LMS launched, and never older than the
-   * score already on record: a Platform keeps the latest by timestamp, whatever order they arrive in.
+   * An AGS Score (AGS 2.0 §3.4). Only for a learner this LMS launched. Order updates by the
+   * latest post's timestamp, including when an earlier final grade is the reported result.
    */
   acceptScore(contextId: string, id: string, body: unknown, now = Date.now()): { ok: true } | Refused {
     const li = contextId === this.context.id ? this.lineItems.get(id) : undefined;
@@ -445,7 +496,7 @@ export class LtiPlatform {
     if (at > now + 5 * 60_000) return { ok: false, status: 400, error: 'invalid_request', description: 'timestamp is in the future' };
     let scoreGiven: number | undefined;
     let scoreMaximum: number | undefined;
-    if (s.scoreGiven !== undefined) {
+    if (s.scoreGiven !== undefined && s.scoreGiven !== null) {
       scoreGiven = Number(s.scoreGiven);
       scoreMaximum = Number(s.scoreMaximum);
       if (!Number.isFinite(scoreGiven) || scoreGiven < 0) return { ok: false, status: 400, error: 'invalid_request', description: 'scoreGiven must be a number of at least 0' };
@@ -457,10 +508,14 @@ export class LtiPlatform {
     if (!byUser) { byUser = new Map(); this.results.set(id, byUser); }
     if (!prior && byUser.size >= MAX_RESULTS_PER_ITEM) return { ok: false, status: 507, error: 'insufficient_storage', description: 'this line item holds no more results' };
     const comment = str(s.comment).slice(0, 1000);
+    // Keep the final through scored interim updates. An absent score clears it (AGS §3.4.4).
+    const lastFinalized = prior?.gradingProgress === 'FullyGraded' ? prior : prior?.lastFinalized;
+    const retainFinal = scoreGiven !== undefined && gradingProgress !== 'FullyGraded' && lastFinalized?.scoreGiven !== undefined;
     byUser.set(userId, {
       userId, activityProgress, gradingProgress, timestamp,
       ...(scoreGiven !== undefined && scoreMaximum !== undefined ? { scoreGiven, scoreMaximum } : {}),
       ...(comment ? { comment } : {}),
+      ...(retainFinal ? { lastFinalized } : {}),
     });
     this.onChange();
     return { ok: true };
@@ -470,18 +525,12 @@ export class LtiPlatform {
   gradebookFor(sub: string): GradebookRow[] {
     return [...this.lineItems.values()].map((li) => {
       const r = this.results.get(li.id)?.get(sub);
-      const scored = r ? this.rescaled(r, li) : undefined;
+      const final = r && retainedFinal(r);
       return {
         lineItem: this.publicLineItem(li),
         courseId: li.resourceId,
-        result: r ? {
-          ...(scored !== undefined ? { resultScore: scored } : {}),
-          resultMaximum: li.scoreMaximum,
-          activityProgress: r.activityProgress,
-          gradingProgress: r.gradingProgress,
-          timestamp: r.timestamp,
-          ...(r.comment ? { comment: r.comment } : {}),
-        } : null,
+        result: r ? this.gradebookScore(final ?? r, li) : null,
+        ...(r && final ? { retake: this.gradebookScore(r, li) } : {}),
       };
     });
   }
@@ -533,7 +582,19 @@ export class LtiPlatform {
     return { id: this.lineItemUrl(li.id), label: li.label, scoreMaximum: li.scoreMaximum, resourceLinkId: li.resourceLinkId, resourceId: li.resourceId, tag: li.tag };
   }
 
-  private rescaled(r: ResultRow, li: LineItem): number | undefined {
+  private gradebookScore(r: PostedScore, li: LineItem): GradebookScore {
+    const scored = this.rescaled(r, li);
+    return {
+      ...(scored !== undefined ? { resultScore: scored } : {}),
+      resultMaximum: li.scoreMaximum,
+      activityProgress: r.activityProgress,
+      gradingProgress: r.gradingProgress,
+      timestamp: r.timestamp,
+      ...(r.comment ? { comment: r.comment } : {}),
+    };
+  }
+
+  private rescaled(r: PostedScore, li: LineItem): number | undefined {
     if (r.scoreGiven === undefined || r.scoreMaximum === undefined) return undefined;
     return Math.round((r.scoreGiven / r.scoreMaximum) * li.scoreMaximum * 100) / 100;
   }
@@ -565,7 +626,7 @@ function refuse(res: Response, r: Refused): void {
   res.status(r.status).json({ error: r.error, ...(r.description ? { error_description: r.description } : {}) });
 }
 
-export function attachLtiPlatformRoutes(app: Express, platform: LtiPlatform): void {
+export function attachLtiPlatformRoutes(app: Pick<Router, 'get' | 'post' | 'use'>, platform: LtiPlatform): void {
   const formBody = express.urlencoded({ extended: false, limit: '64kb' });
   // This route owns parsing for both media types so its decoded body limit applies to each.
   const scoreBody = express.json({ type: [MEDIA.score, 'application/json'], limit: '64kb' });

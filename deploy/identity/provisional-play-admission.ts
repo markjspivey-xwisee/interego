@@ -22,14 +22,21 @@ export interface PlayAdmissionStore {
   read(): Promise<{ ledger: PlayAdmissionLedger; etag: string } | null>;
   write(ledger: PlayAdmissionLedger, etag: string | null): Promise<boolean>;
   validate(anchor: string): PlayClaims;
+  /** The application audience of a ledger entry, expired or not; null where it does not open. Needed only with an application cap. */
+  audienceOf?(anchor: string): string | null;
 }
 /**
  * Reserve before any pod creation. The lifetime count also bounds active Play
  * pods: failed creation, expiry and deletion never refund an admission. The
  * native conditional write enforces this across writers and process restarts.
+ *
+ * `applicationLimit`: the cap of this owner's application alone (PlayClient.maxPods), counted over
+ * the ledger's entries whose attestation names the same audience. It is checked after the
+ * deployment's `limit`, which still bounds the total, and the ledger's format is unchanged. An entry
+ * that does not open (signed under a key since replaced) counts toward the total only.
  */
 export async function reservePlayAdmission(store: PlayAdmissionStore, claims: PlayClaims,
-  attestation: string, limit: number): Promise<string> {
+  attestation: string, limit: number, applicationLimit?: number): Promise<string> {
   for (let attempt = 0; attempt < 5; attempt++) {
     const current = await store.read();
     const ledger = current?.ledger ?? { version: 1, owners: {} };
@@ -42,6 +49,12 @@ export async function reservePlayAdmission(store: PlayAdmissionStore, claims: Pl
       return existing;
     }
     if (Object.keys(ledger.owners).length >= limit) throw new PlayError(503, 'provisional_play_lifetime_capacity');
+    if (applicationLimit !== undefined) {
+      if (!store.audienceOf) throw new PlayError(503, 'provisional_admission_unavailable');
+      let admitted = 0;
+      for (const anchor of Object.values(ledger.owners)) if (store.audienceOf(anchor) === claims.audience) admitted++;
+      if (admitted >= applicationLimit) throw new PlayError(503, 'provisional_play_application_capacity');
+    }
     const next = { version: 1 as const, owners: { ...ledger.owners, [claims.userId]: attestation } };
     if (await store.write(next, current?.etag ?? null)) return attestation;
   }

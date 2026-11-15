@@ -1,5 +1,4050 @@
 # Changelog
 
+## 2026-11-15 — Foxxi: a cmi5 launch's credential survives a restart
+
+Every deploy of the Foxxi bridge ended every practice in progress. A launch is
+kept on the pod and read back at startup. The auth-token its assignable unit
+writes with was a random string whose meaning was a row in a table in the
+process, and that table was not kept. After a restart the launch was back and
+its credential was not, so the unit's next statement was answered 401. Two
+deploys within five minutes did that twice to one learner on the first run
+against the deployed bridge.
+
+The token now carries what it is for (tenant, registration, session, an expiry
+24 hours on) under an HMAC keyed from `FOXXI_ISSUER_KEY_SEED`
+(`src/cmi5-auth-token.ts`). Nothing is stored for it. The launch it names must
+still be held, in that tenant, every time it is shown, so forgetting a learner
+still ends their tokens.
+
+Not changed: the one-time fetch token is still held in the process, so a launch
+URL made before a restart and opened after it must be made again. A launch
+recorded in the two seconds before a restart may not have reached the pod, and
+its token then names a launch the new process does not hold. With no
+`FOXXI_ISSUER_KEY_SEED` the key is random per process and tokens end with it,
+as before. Changing that secret ends every token minted under the old one.
+
+## 2026-11-15 — Practice Evidence: a launched learner named by WebID is the signer
+
+Found on the first run against the deployed Foxxi LMS. Foxxi launches a learner
+under their WebID, `https://<identity host>/users/<id>/profile#me`. Practice
+Evidence compared the launched actor with the DID the learner signs as,
+`did:web:<identity host>:users:<id>`, as two strings. So every import of a
+registration Foxxi launched for a signed-in person was refused with
+`not-your-registration`, after the registration had read as one whole
+conversation against the scenario.
+
+`launchedActorIsSigner` takes the WebID only when it is exactly the one built
+from the signer's own DID on the identity host the bridge is set up with. The
+host serves both for the one account. Another account, another host, another
+path, a key-held signer and a bridge with no identity host all still match by
+DID only.
+
+## 2026-11-15 — A profile version is published only once its durable write is acknowledged
+
+Two defects in the profile authoring service that merged the same day
+(`applications/foxxi-content-intelligence/src/xapi-profile-server/`), found by a
+reviewer reading the source and confirmed against it before this change.
+
+**What was wrong.** `ProfileServer.publish` put the new version in the in-memory
+index, marked it published, and wrote it to the pod afterwards. A failed write
+was caught and turned into `persisted: false`, and the route answered
+`ok: true, immutable: true` beside it. The version answered at every read route
+until the next restart and then stopped. A retry in the same process was refused
+with 409, because the version was already held. And `ProfileAuthoring.publish`
+deleted the draft from its map and from the draft store whatever `persisted`
+said, so the writer had lost the draft of a version that had not been kept.
+
+**What it does now.** The durable write comes first. `publish` works out what the
+document would be held as without holding it (`ProfileDataset.prepare`, new),
+writes it, and holds it only when `persist` answers `persisted: true`. A write
+that throws, answers `persisted: false`, or does not say, throws
+`PublicationNotKept` (503). The route answers
+`{ ok: false, published: false, persisted: false, draftKept: true, retry }` with
+no `immutable`. The version is in no index, no named graph, and not in the
+examples route; the profile's earlier version stays current; the draft is
+untouched in memory and in the store; and publishing again publishes the same
+version. A server given no `persist`, or a bridge with no profiles pod, publishes
+nothing. While the write is on its way the version is reserved: adding or
+publishing it again is a 409, and so is another agent claiming the profile. The
+same holds across roles: nobody adds a profile named as the version on its way,
+or a version named as the profile. Its bytes count against the server's 12 MB
+from the moment the write starts, and are given back if it is not kept, so two
+publications that do not fit together are not both written.
+
+The draft is closed only after the version is kept. If the store then cannot
+drop the draft, the publication is still reported: it was kept.
+
+**Examples are public, and the writer is now told.** The examples a draft is
+linted with are published with the version and served unsigned at
+`GET /xapi/profiles/examples?iri=`. That was true and unstated at authoring
+time. The draft and publish affordances say it, every draft answer carries
+`examplesWhenPublished`, and a publication answers with the `examples` address.
+No behaviour of that route changed.
+
+**Not done.** `ProfileServer.add` and `remove` (whole documents, not drafts)
+still answer `ok` with `persisted: false` when their write fails; they predate
+the authoring service and their callers read the flag. A write that lands on the
+pod but whose answer is lost is reported as not kept; a retry then writes a
+second record of the same version, and at the next start the earlier one wins.
+A refused publication still counts against the signer's hourly allowance.
+
+Test: `tests/a-profile-version-is-published-only-once-it-is-kept.test.ts`, with a
+made-up pod that throws, declines, or stays silent on command.
+
+## 2026-11-15 — The Foxxi profile server serves the xapi-x profile
+
+The xapi-x profile was on the pod, which serves its triples and judges nothing.
+The Foxxi profile server now holds it too, as one of the deployment's built-in
+profiles beside Foxxi's own (`src/xapi-profile-server/built-in.ts`). So the
+server lists it, answers SPARQL over it, validates a statement against it, and
+resolves the profile, its version, its template and each of the four `iep#` keys
+it declares, with content negotiation.
+
+It is built in, not published through the authoring routes: the server holds
+the document `src/xapix/profile.ts` builds, the same one the pod's graph is made
+from, and no agent, the operator included, can replace it or take it down.
+
+The profile passes the lint a published profile has to pass, with a statement
+the lrs-adapter's own builder makes as its example
+(`tests/the-xapi-x-profile-is-served-by-the-profile-server.test.ts`).
+
+**Not built.** A built-in profile has no stored examples, so
+`/xapi/profiles/examples` answers nothing for it; its example is in the test.
+The profile's IRIs are on the relay's origin and still dereference to the pod,
+not to this server: the server answers for them through its resolver.
+
+## 2026-11-15 — Foxxi's xAPI profile server writes, lints, publishes and hosts profiles
+
+The profile server held documents an agent added whole. Adding a version again
+replaced it, taking one down made its IRIs stop answering, the only read was the
+document by `?iri=`, and the only check on the way in was shape. It is now an
+authoring tool and a host, as four more affordances on the Foxxi vertical
+(`src/xapi-profile-server/affordances.ts`).
+
+**Write** (`foxxi.xapi_profile_draft`). One draft per profile IRI, held under the
+agent that opened it, in xAPI Profiles 1.0 JSON-LD: replace the document, or set
+metadata and put or remove concepts, statement templates, patterns and examples.
+Opening a draft of a profile already held copies its current version into a new
+one. A refused edit leaves the draft as it was.
+
+**Lint** (`foxxi.xapi_profile_lint`). Findings name the term, where in the
+document it is, what is wrong and what to change. They cover labels, definitions
+and `inScheme`; every verb, activity type, attachment usage type and extension a
+template names being declared, held here in another profile, or listed as an
+external term; a schema on every extension; templates with the same determining
+properties; JSONPath the specification allows; pattern shape, references and
+cycles; an example statement for every template; and an example run for every
+primary pattern. Examples are judged by `processor.ts` (`validates`, `follows`,
+`matches`), the same functions a hosted version is validated with. There is no
+second matcher.
+
+**Publish** (`foxxi.xapi_profile_publish`). Refused with the findings unless
+there are none. `generatedAtTime` is set at publication. A later version states
+`wasRevisionOf`. A published version is never replaced, and its author cannot
+take it down. What a version leaves out of the one before is carried in it marked
+`deprecated`, and a deprecated template or pattern judges no statements.
+
+**Host** (`foxxi.xapi_profile_resolve`). A profile, a version, a concept, a
+statement template or a pattern answers by IRI as JSON-LD, or as N-Triples for
+`Accept: text/turtle` or `application/n-triples`. A profile written under
+`/xapi/profiles/p/` answers at its own IRIs, and so do the version, templates and
+patterns of the deployment's own profile under `/xapi/profile/`, which answered
+nothing before.
+
+Foxxi's own profile and both coached-world profiles go through draft, lint,
+publish and host in the tests with no findings. Two things had to be true first.
+Twenty-two Foxxi extensions had no schema; each now has an `inlineSchema`. And
+two Foxxi templates name an activity type another publisher defines that the
+profile does not declare; the test names them as external terms and does not
+copy them into the profile's concepts.
+
+**Not built.** Drafts are held in memory and do not survive a restart; every
+answer carries the whole draft so it can be sent back. An example claims the
+templates it follows, so "follows it and only it" is exact-set equality: a
+template that adds a determining property to another's (Foxxi has two) needs an
+example that claims both. Extension values in examples are not checked against
+the extension's schema. Nothing checks that a revision keeps the meaning of a
+term it keeps. There is no HTML representation and no editor screen. The
+deployment's own profile is still served from code, without examples.
+
+## 2026-11-15 — xapi-x is published, and its eleven open questions are decided
+
+The xapi-x design ended with eleven questions for the owner, who answered:
+publish it, and decide them. Both are done.
+
+**Published.** The `xapix:` ontology and the first xapi-x profile are on the
+owner's pod as public graphs with relay-signed authorship, at
+`https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix` and
+`…/xapix-profile`. Both resolve as Turtle and JSON-LD, the profile's version and
+template IRIs resolve to the profile graph, and each graph was fetched back and
+compared triple for triple with the repository (58 and 51 triples).
+`src/xapix/publication.ts` returns the profile as the triples that were sent,
+using the function the profile server reads a profile with. A public graph cannot
+be unpublished; a change is a new publish that supersedes this one.
+
+**Decided**, with the reason for each, in
+`applications/foxxi-content-intelligence/xapix/README.md`. Three change code:
+
+- The lrs-adapter states `projectionLossy` on every projection, `false`
+  included. It used to write it only alongside several narratives, so a
+  Hypothetical projection that its own audit row called lossy said nothing, and
+  an absent flag could not be read as false. The statement and the audit row now
+  share one test (`projectionIsLossy`). **This changes what the adapter sends**:
+  one more key on every projected statement.
+- A statement may state the modal status `Quoted`. `Retracted` is never a stored
+  status: a retraction is xAPI's own voiding statement.
+- The ontology says what a digest is taken over (RFC 8785 canonical JSON) and
+  that anyone may sign an order attestation, the signer being named with the
+  conclusion.
+
+**Not done.** No emitter writes an `xapix:` term yet. Foxxi's projector does not
+yet write the `iep#` keys, and the profile is not served by the Foxxi profile
+server: both touch files the profile-authoring branch is changing.
+
+## 2026-11-15 — xapi-x: a design for a superset of xAPI made by decoration, and a first profile
+
+The owner asked for "our own xapi-x with our relevant decorations to make it a
+superset", the way i2idl-x is a superset of the I2IDL glossary. The design is in
+`applications/foxxi-content-intelligence/xapix/README.md`, written to be accepted
+or changed before much code exists; eleven questions for the owner are at its end.
+
+**The rule.** Every xapi-x statement is a valid xAPI 2.0 statement and every
+xapi-x profile is a valid xAPI Profiles 1.0 document. A plain LRS and a plain
+profile processor lose only the decorations. Decorations go in three places the
+standards already leave open: a statement's extensions, a category activity, and
+a property on a profile's concept or template whose key is an absolute IRI.
+
+**What the design covers**, each with a worked statement: what signed descriptor
+a statement is a projection of and whether the projection lost anything; modal
+status, and what must not be concluded from a statement that is not asserted;
+how a corrected statement relates to xAPI voiding and to `iep:supersedes`; links
+from a profile's concepts to i2idl-x concepts; how a statement or a template
+offers what can be done next without a consumer building a URL; who may claim a
+statement's place in a sequence; and what a profile gains, with eleven lint rules.
+
+**In code.** The `xapix:` namespace (`src/xapix/namespace.ts`) sits under the same
+relay root as `i2x:`, outside every protocol namespace, with all 15 terms
+declared in `xapix/xapix.ttl`; a test fails when the two lists differ. The first
+xapi-x profile (`src/xapix/profile.ts`) declares the four `iep:` keys the
+lrs-adapter has always written under `result.extensions` (`sourceDescriptor`,
+`modalStatus`, `coherentNarratives`, `projectionLossy`), which no profile
+declared, and one template that requires a source descriptor and a modal status.
+The statement the adapter posts is now built by a function of its own
+(`applications/lrs-adapter/src/projection-statement.ts`, behaviour unchanged), and
+a test runs that function through the specification's `validates` against the
+profile.
+
+**Not done.** Nothing is published: `xapix:` and the profile's IRI do not resolve
+until the graphs are put on the pod, which is the owner's step. No emitter writes
+an `xapix:` term. The profile is not added to the Foxxi profile server.
+
+**Found, not changed.** Only the lrs-adapter writes the four keys;
+learner-performer-companion does not. The adapter leaves `projectionLossy` off a
+Hypothetical projection with one narrative while its audit row calls that
+projection lossy, so an absent flag cannot be read as false. Foxxi's projector
+says the same things under `foxxi:` keys in `context.extensions`.
+
+## 2026-11-15 — xAPI profiles: every template has a statement that follows it, and the profiles declare what statements carry
+
+Four of this repository's applications publish an xAPI Profile. They were read
+against a published profile used as a yardstick for practice (its vocabulary is
+not used here), and three things were wrong.
+
+**A profile nobody held its own statements to.** `llm-telemetry` checked each of
+its 19 kinds of statement as valid xAPI and never against its own templates.
+Foxxi had a statement following 17 of its 39 templates under the
+specification's algorithm, and none of its patterns was run by any test. Each
+profile's tests now run what its builders emit through the specification's
+validation (`validates`) and pattern matching (`follows`), and fail if a
+template has no statement that follows it. For Foxxi, 22 of those statements are
+written by hand as examples of a template: they show the template can be
+followed, not that every emitter follows it.
+
+**A profile smaller than what statements carry.** Foxxi's emitters wrote twelve
+context extensions the profile did not declare (`durationMs`, `error`,
+`observedBy`, `costUsd`, `workTrajectory`, `evidenceBinding`, `evidenceShape`,
+`evaluationId`, `candidateId`, `harness`, `publisherId`,
+`projectedFromTrajectoryStep`). They are declared, each with a JSON Schema for
+its value where the type is fixed, and a test fails when a statement carries a
+Foxxi term the profile does not define. Eight Foxxi patterns had no definition;
+they have one.
+
+**A document that was not a whole profile.** The coached-world profile had an
+id, four verbs with no label or definition, and four templates. It is now an
+xAPI Profiles 1.0 document: what it conforms to, a version, every verb, activity
+type and extension defined, and patterns for what one registration holds. Its
+statements name the profile version in their category, where they named the
+profile, and each template requires it.
+
+Two things the new tests found:
+
+- Foxxi's `course-session` pattern said a session ends passed or failed and
+  listed only `completed` and `passed`, so a failed session could not follow it.
+  `course-failed` is an alternative now.
+- The coached world writes a second `initialized` when a mission is settled,
+  under the mission's registration. The pattern describes that as it is; whether
+  it should is a separate question.
+
+The agentic-performance-practice bridge stamped its profile's version with the
+time of each request. It is a constant now.
+
+Not changed: no verb or extension IRI is renamed, so no stored statement is
+affected. The agentic-performance-practice profile still describes a statement
+that nothing in the repository emits.
+
+## 2026-11-15 — Native store: read only what a named writer sealed
+
+The native commit store checked whom a stored artifact was addressed to and not
+who sealed it. A wrapped key is opened with the sender key the envelope itself
+names, and the store never compared that with a key it trusts. The recipients'
+public keys are in every envelope it writes, and a pod is readable by anyone. So
+whoever could write the pod could seal an artifact of their own to those
+recipients, and the store read it as its own. For Foxxi's LRS that is a
+statement under any authority, the LMS's included.
+
+`NativeCommitStore` takes `trustedSenderPublicKeys`. Given, an artifact is read
+only when every wrapped key names one of those keys as its sender. A wrapped key
+is a NaCl box, so naming a trusted sender cannot be faked without that sender's
+private key. Foxxi's LRS now passes the bridge's key and the store owner's.
+
+Without the option nothing changes. It does not keep out a recipient who turns
+writer: a recipient holds the content key and can reuse a genuine wrapped key.
+It does not stop whoever can write the pod from removing artifacts or putting
+the head back to an earlier one.
+
+## 2026-11-15 — A workflow that provisions the coached world's guest door without a secret reaching a log
+
+Turning on real guests for the coached world, and the general guest beside them, needed an operator to make a key, create an account with it, and hand-edit identity's `PROVISIONAL_PLAY_CLIENTS`, a value that stops identity at start when it is malformed. This adds a dispatch-only workflow that does it inside the runner. Merging it changes nothing: nothing runs until someone dispatches it from master, and unticked `apply` is a dry run.
+
+- **`tools/coached-world-guest-provision.mjs`** (`.github/workflows/coached-world-guest-provision.yml`), after the pattern of `tools/vertical-bridges-provision.mjs`: the token is pinned to the fleet's project and environment, variables are read on the runner and all but the few it needs are dropped, and every write carries `skipDeploys: true`.
+- **Order.** The service key on `coached-world-bridge` (used if set and never overwritten; otherwise generated and written before anything is created with it); the service's identity account and its agent's registration with the relay, through Foxxi's `setup-play-service.mjs`; `CPW_IDENTITY_URL`, `CPW_GENERAL_GUEST`, `CPW_GENERAL_GUEST_DOOR_ORIGIN` on the world; then on identity the merged `PROVISIONAL_PLAY_CLIENTS`, `GENERAL_GUEST_DOOR_ORIGIN`, and `PROVISIONAL_GENERAL_GUEST=1` last. A run that fails is completed by the next one with the same key.
+- **Terms.** The account is created only with `apply`, and where identity states hosted terms only when `accept_terms_version` is the version it states. Otherwise the run names that version and stops before any write.
+- **The client list.** Every other application's entry is carried over as parsed; an entry for this origin is changed only in the fields the tool sets. The existing value and the merged one are checked against identity's rules before any write. The tool mirrors those rules, and `applications/coached-world/tests/the-guest-entry-is-one-identity-accepts.test.ts` holds the mirror to identity's own `parsePlayClients`, `isGuestReturnPath` and `parseDoorOrigin`.
+- **What is printed.** The service wallet's address, the agent DID, the pod, variable names, the origins in the client list, and the services to redeploy. No key, token, or other application's entry (`tests/coached-world-guest-provision.test.mjs`, which also runs on pull requests that touch the tool).
+- **`setup-play-service.mjs`** takes an optional `serviceName` for the account's name and the agent's label, so the coached world's service is not called Foxxi's. The command line and its default are unchanged.
+
+## 2026-11-15 — jev-harness: the gate and the selection diff the event's own SHAs
+
+Three pull requests on 2026-11-14 got no review verdict: #899, #901 and #905.
+Each had merged before its judge job reached its checkout (13 minutes, 60
+seconds and 6 seconds before). The job compared `origin/master...HEAD`, and
+`origin/master` moves. Once master held the pull request, the merge base of the
+two was the pull request's own head, whose tree is the tree of the merge ref
+the job checks out, so the diff was empty. The selection fell back to the whole
+suite with "no changed files were given", and the gate answered 400
+"review-gate needs a diff or a base_ref that yields one". Rebuilding each merge
+ref from the SHAs in the logs gives 0 changed files against the merged master
+and 38, 7 and 51 against the event's base.
+
+The workflow now passes the pull request event's `base.sha` and `head.sha` to
+both steps. They are fixed when the event is made and a later merge does not
+change what they name. A manual run, which has no pull request, compares the
+default branch with the checkout.
+
+`follow` prints the commits a `base_ref` and `head_ref` resolve to, and their
+merge base, before it acts, so the job log says which diff was judged. The
+gate's 400 for an empty range now names the same commits.
+
+Not changed: what the gate checks, the close-time scoring, and the auto-merge
+rules. The three pull requests keep their gap; nothing here judges them again.
+A selection given a base that yields no changed files still answers with the
+whole suite, as before.
+
+## 2026-11-14 — A general guest can be linked to an existing registered account, from any browser or device
+
+A general guest could be kept only by claiming it: giving it a credential of its own, which makes it a new account. This adds the other way, behind the same setting (`PROVISIONAL_GENERAL_GUEST=1`) and inert without it: linking the guest to an account the visitor already has. Nothing is turned on by this change and no setting is changed anywhere.
+
+- **One ceremony.** A signed-in owner asks identity for a link code, from a new section of the dashboard that is served only while the door is on (`POST /guest/link/prepare`, then `POST /guest/link/code`). That needs the bearer and a fresh proof by a passkey or wallet already on the account, verified by the function the local-key link uses; no sign-in path is added and a bearer alone gets nothing. The code (`<account id>:<12 characters>`, 5 minutes) is entered on the door page in the browser that holds the guest (`<door>/guest/door#link`), on the same device or another. The guest's key signs once to be told which account the code names, and the page shows that account before the click that links; the second signature covers the account shown. `POST /guest/door/link` is a door path: the door's host and origin only, rate-limited.
+- **Two conditional writes.** The code's hash, expiry and wrong-attempt count live on the account's record. Identity writes the guest's record first, then the account's, which lists the guest and spends the code in one write, through identity's own record writer. A retry after a failed second write completes the link. Five wrong attempts end a code. A claimed guest, and one linked to another account, are refused. Unlinking is the owner's, with a fresh proof naming the guest, and removes both sides.
+- **When the link is stated.** `subjectAttributes.linkedTo` (the exchange answer and token introspection) carries the account's DID only while the account's own record lists that guest and key, the account still holds a credential, and the guest is unclaimed. One side alone states nothing. `passport:linkedTo` was already declared; no term is added.
+- **The coached world** admits a general guest under `canonicalSubject` of what identity stated, so a linked guest is the same consultant as its account from any browser linked to it.
+- **Accounts that link nothing are unchanged.** The new record members exist only while there is a guest or a live code, and an account whose guest was unlinked is byte-for-byte the record it was.
+
+**After review.** Two gaps a linked guest could have slipped through are closed. A coached-world session made for a linked guest ends after ten minutes (`LINKED_SESSION_MS`), so the browser returns through the door, where the link is read again: an unlink reaches a browser that was already in. And a linked guest gains no credential of its own: the door's token stops being a bearer once the link is confirmed, the record's writer refuses, under the record's lock, a change that would give a credential to a guest that names an account, and a claim clears a guest-side link no account confirms before it opens.
+
+Per-application guests cannot be linked in this version. A passkey registered on another relying party is not offered for the proof, and a guest cannot unlink itself. The ceremony, the reason the code goes from the account to the guest, and the threat notes are in `deploy/identity/PROVISIONAL-PLAY.md`, "Linking a guest to an account".
+## 2026-11-14 — Foxxi's admin gate has the substrate's policy beside it, in shadow
+
+The ABAC decision in `@interego/abac/portable` decided for one kind of principal, a provisional guest. It now runs beside a rule for registered principals: the Foxxi bridge's admin-only gate. Who is allowed does not change. The fixed rule (the caller the tenant directory resolves has the role `admin`) still decides; the policy is evaluated beside it and a disagreement is logged.
+
+- **The point.** The thirteen admin-only gates in `applications/foxxi-content-intelligence/bridge/server.ts` (twelve tools and the tenant owner's write to the configured tenant) were each `ctx.role !== 'admin'`. They now call one function, `mayAdministerTenant` (`src/tenant-admin-policy.ts`), which computes that same answer, returns it, and runs `decideInShadow` beside it. Gates that mix the role with another condition (a learner reading their own record, admin-or-delegated, manager-or-admin) are not touched.
+- **The policy, as data.** One Permit on `urn:foxxi:action:administer-tenant` for a subject whose `passport:role` is `admin`, with `minCount: 1`. The subject's facts are the caller `resolveCaller` built from the tenant directory's row and the operator's configuration (`{ subject: webId, provisional: false, roles: [role] }`); nothing a request sent is read. No vocabulary is added: `passport:role` was already declared, and the action is in Foxxi's own `urn:foxxi:` space.
+- **Shadow.** `FOXXI_ABAC_MODE` is read once in the bridge's entry file. Only the exact value `enforce` lets the policy decide; unset, and anything else, is shadow, and no deployment sets it. A disagreement is one JSON line on stderr: the tool, the action, the subject's IRI, both answers and the matching policy ids. No attribute value, credential or request content. The evaluation is inside a try: it cannot throw into a request, and a logger that throws changes nothing.
+- **Parity.** `tests/the-admin-gate-has-a-policy-beside-it.test.ts` resolves callers the way `resolveCaller` resolves a session token (the real `trustedAddressMap`, `verifySessionToken` and `resolveCallerContext`) and holds the policy to the fixed rule over each role (admin, delegated admin, learning engineer, manager, learner), the administrator's WebID on a tenant that is not the configured one, a row that names no IRI, a signer who is not a member, and a credential that is missing, expired, malformed, cut short or presented under another member's WebID, with nothing logged. A policy that is wrong on purpose shows the record firing and the fixed rule's answer standing.
+- **One disagreement exists today and is left visible.** With `FOXXI_REQUIRE_AUTH=false` and no `FOXXI_ADMIN_WEB_ID` (a development setting), the fixed rule admits an unnamed caller as admin. The policy has no subject to decide about and refuses. Moving this point to `enforce` would end that mode; that is a decision for whoever moves it.
+
+## 2026-11-14 — A general guest: one per browser across applications, constrained by policy over its attributes
+
+A guest ("provisional owner") has been one per application: the key lives in the application's origin and the owner id is derived from that origin. This adds a second kind, off by default, that is one per browser across every application that offers it, and whose write surface is granted by attribute-based policy instead of a fixed rule. Nothing is turned on by this change, and no setting is changed anywhere. With the new setting off, identity's routes, metadata, tokens, ids and paths are what they were, and a per-application guest is untouched either way.
+
+- **The door.** With `PROVISIONAL_GENERAL_GUEST=1`, and for an application whose `PROVISIONAL_PLAY_CLIENTS` entry says `"generalGuest": true` with a `generalGuestReturnPath`, identity serves `GET /guest/door`: a page on its own origin that holds a non-extractable P-256 key and proves possession. An application sends the browser there by a top-level navigation with a grant its service agent signed over a one-time state and a PKCE challenge, and gets it back at its registered return path with a 60-second one-use code that its backend exchanges (`POST /guest/exchange`) for the guest's DID, WebID, pod URL and attributes. The owner id is `u-try-guest-…`, a function of the key alone. Admission, caps, deadline, hosted terms, claim and cleanup are the existing ones; the first application to send a browser pays the admission.
+- **ABAC is the substrate's, used by a deployed service.** The decision lives in `@interego/abac`: its attribute graph can carry direct statements about a subject, and `@interego/abac/portable` (`packages/abac/portable/abac-portable.mjs`, no imports) gives any deployable one subject model for every principal (`subjectAttributeGraph`: a registered owner, a delegated agent, a service account and a provisional guest differ in attribute values, not in mechanism), a default-deny `decide`, and `decideInShadow` for adopting a policy beside a rule a service already has. A parity test holds the portable evaluator to the package's `evaluate`, and the css-gate's vendored copy to the same bytes. The attribute terms are declared in `docs/ns/passport.ttl` and `docs/ns/abac.ttl`; none is added to `iep:`.
+- **One enforcement point.** Identity states a subject's attributes (provisional, claimed, established, standing until, accepted terms version, that the asking application admitted it, key thumbprint) in the exchange answer and in token introspection. The css-gate grants a general guest its application's two checkpoint documents by evaluating policy over them (admitted by this application, standing not ended, provisional), then holds the write to the same shape and bounds as before. A per-application guest's check is unchanged. No fixed rule for registered principals has been put under policy yet.
+- **A dedicated door origin.** `GENERAL_GUEST_DOOR_ORIGIN` serves the door from an origin of its own: that host answers the door's three paths and nothing else, and identity's own origin, whose sign-in pages allow inline script, never holds a guest key. Production should set it.
+- **Tokens.** A general guest's token has no `audience` in its marker, so a css-gate, relay or identity from before this change refuses it. Identity answers an application's token on introspection only: it cannot read `/me`, renew, enrol a credential or delete the account. The relay refuses a general guest's marker.
+- **Applications.** The coached world can offer the door beside its own (`CPW_GENERAL_GUEST=1`). Foxxi's bridge can sign door grants, but its learner workbench does not use the door yet, because it re-checks a guest with identity while the session lives and an application cannot re-check a general guest.
+
+A general guest is linkable across applications by design: each one learns the same DID, pod and key thumbprint (identity does not tell one application which others the guest has used). Linking a guest to a registered account, a cross-device link code and a recovery code are not in this change. The rollout order (gate and relay, then identity, then the setting) and what each older service does with the new token are in `deploy/identity/PROVISIONAL-PLAY.md`, "General guest".
+
+**After review.** The door page now stores a new browser key only if the stored one is still the one that tab saw, in one transaction, so two tabs that start together use one key and a browser never admits a guest whose key it did not keep. `GeneralGuestDoor.start` counts visits whose grant is still being signed toward its ceiling. The page's inline configuration escapes every character that could end the script element or a source line, and the tests read that script by position instead of by a tag pattern.
+
+## 2026-11-14 — Practice Evidence: a launched counts only under the LMS's authority
+
+Practice Evidence reads a `launched` statement in two places: for the launch
+mode of an attempt taken from an LMS launch, and to check that a session a
+reviewed result will be sent in was opened by the LMS. It took one by verb,
+actor, unit and session. On an LRS where a learner can store statements about
+themselves, a learner can produce that.
+
+`PEV_LAUNCH_LMS_AUTHORITY` names the authority account the LMS's own statements
+carry on the LRS. With it set, a `launched` counts only under that authority.
+One without it is nobody's word about the launch: the attempt is still taken,
+with its launch mode not known, and no cmi5 result can be built for it.
+
+`PEV_LAUNCH_LMS_ISSUERS` now needs it. The bridge does not start with the LMS
+binding and no authority.
+
+The launch mode is decided once, when an attempt is taken, and a hand-out goes
+by that without reading the LRS again. So an attempt now records the authority
+its `launched` was read under, and a bridge told the authority hands out
+nothing for an attempt that records none, or another (409
+`launch-not-verified`). That holds for the learner, for the LMS, and for
+statements already fixed, and it covers every attempt taken before the setting
+was on. Such an attempt is not revalidated.
+
+Without the setting nothing changes. Not covered: `terminated`, the exchanges
+and the scores are the unit's own statements and are not the LMS's to mark.
+
+## 2026-11-14 — Role-play player: a visit's start is confirmed before a reviewed result is sent
+
+Three follow-ups to the role-play player, from a reviewer's read after it merged.
+
+On a visit that records a reviewed result, the player sent `initialized` and
+then the reviewed statements without waiting to learn whether the first was
+taken. It now sends nothing reviewed until the LRS has taken `initialized`, and
+says so and offers to try again where it has not.
+
+The message for a result issued for another visit said that visit "ended before
+it was recorded". The player knows only that the result was issued for a
+different visit, not what was recorded in it. The message now says that.
+
+Trying again after a start that could not be confirmed sent a new `initialized`
+with a new id. If the first had been stored and only its answer lost, the visit
+would have had two. The player now keeps the visit's `initialized` and sends
+that same statement again; where the LRS answers that it already holds the id,
+the stored statement is read back and compared, and counts once.
+
+A statement the LRS refused once and took on a second try left its first error
+behind, and the page then said the visit had not saved. Only the last answer
+for a statement is kept.
+
+## 2026-11-14 — Voice mode, shared: say it and hear it, in the coached world and in I2IDL-X Ask
+
+A page can now take a spoken question or command and read an answer aloud, using only what the browser has. No model is called for it and no key is involved: where a page has model work, the paired chat session still does it. It is one shared module, so any vertical or bridge can adopt it.
+
+- **`applications/_shared/voice/`** is one dependency-free browser module, `voice.js`, and a README. Speech in uses the browser's `SpeechRecognition`: one utterance at a time, or hands-free (it listens again after each result and ends itself after three silent rounds), with interim words. Speech out uses `speechSynthesis`, a sentence per utterance so a long answer starts and stops promptly; `speakDelta` follows an answer that arrives as cumulative text and speaks each sentence once. Starting to listen stops the reading. `matchSpoken` matches what was heard against labels on screen with fixed rules and returns nothing when two labels fit.
+- **States are what happened**: idle, listening, speaking, denied, unsupported, error. A blocked microphone is told apart from silence and from a missing microphone. The microphone opens only inside a call made from a person's gesture; where the browser reports user activation, a call without one is refused.
+- **The audio.** The module makes no network request. The browser may: Chrome and most Chromium browsers send what you say to the browser vendor's speech service. The module carries that sentence, and both pages show it beside the microphone. Firefox has no recognition, so the microphone control is hidden there; reading aloud still works.
+- **Coached world.** The Coach tab has a voice card. Read aloud speaks the connected agent's work when it arrives and the outcome after an intervention. Say a command presses the matching button: send the agent on a mission, a diagnosis or intervention by its label, deploy. If nothing matches, the page shows what it heard and does nothing. The bridge serves the module at `/voice.js`.
+- **I2IDL-X workbench.** Ask has a microphone button that fills the question box and asks, and Read aloud for the streamed answer with Stop reading. The page bundle imports the shared file directly, so there is no second copy; `app/tools/ask-voice-check.mjs` runs the hook against fake speech objects in the TypeScript workflow and fails if the bundle stops taking the shared file. The four workbench workflows now also start when the shared module changes.
+- **Not tested**: real microphone audio and a real synthesizer. The tests use fake speech objects in node and in headless Chromium. No response header was changed: neither bridge sends a `Permissions-Policy`, so the microphone is allowed for the page's own origin by default. Nothing is deployed by this change.
+
+## 2026-11-14 — Coached world: the tier gate takes a satisfied only from the LMS
+
+The tier gate promotes a consultant when the LRS holds a cmi5 `satisfied` for
+the tier's course and that consultant. It matched the verb, the course, the
+actor and the cmi5 category. All four are things a learner writing a statement
+about themselves can supply, on an LRS that lets them.
+
+`CPW_LRS_LMS_AUTHORITY` names the authority account the LMS's own statements
+carry on the LRS. The gate now counts a `satisfied` read from an LRS only under
+that authority. A world that reads an LRS and has not been told the authority
+answers `lms-authority-unset`, asks the LRS nothing and promotes nobody.
+
+A world with no LRS configured is unchanged.
+
+## 2026-11-14 — Foxxi: the LMS's own statements carry an authority nobody can send
+
+An assignable unit's token was stopped from writing the LMS's verbs earlier
+today. A reviewer asked who else can write to a learner's records. There is one
+more writer: the signed route by which a learner, or an agent acting for them,
+writes statements about themselves. It took any verb. And every statement in
+the LRS, the LMS's own included, carried the same authority, so a reader could
+not tell the LMS's `launched` from one a learner wrote.
+
+The LMS's own `launched` and `satisfied` are now stored under an authority of
+their own, `foxxi-lms`. Only the LMS's code can write it: a statement sent in
+naming it is refused (403), and one handed to any other internal store loses
+the claim. The learner's signed route refuses `launched`, `abandoned`, `waived`
+and `satisfied`. A reader that needs the LMS's word can now ask for that
+authority.
+
+Two places in the bridge put a statement record straight into a store, past
+that rule, and both take what a pod holds: the mesh projection's batch landing,
+and the restore of a caller's durable telemetry from the caller's own pod. The
+first now drops a claim to the LMS's authority; the second refuses a record
+that makes one. Found on a reviewer's prompt to check the restore paths.
+
+Not done here: no reader checks the authority yet. Practice Evidence and the
+coached-world gate still read `launched` and `satisfied` by verb, activity and
+actor. Statements the LMS stored before this change carry the old authority.
+Operator credentials can still store any verb; what they store does not carry
+the LMS's authority.
+
+## 2026-11-14 — Connect an agent, shared: any bridge can use a chat session's subscription instead of an API key
+
+The I2IDL-X workbench lets a person pair their own AI chat session with a page, so the page's questions are answered on that session's subscription and no model key is held anywhere. That method lived inside Foxxi. It is now shared code, and the coached world is the second bridge to use it.
+
+- **`applications/_shared/agent-connection/`** holds the protocol: sessions, one-use invitations, the driver capability, the turn queue with leases and revisions, limits and expiry. It has no express dependency and no workbench naming. A bridge supplies a profile (its path, action IRI, field names and wording), how it verifies an Interego-signed caller, and its request limits. Two adapters, for express and for plain `node:http`, wrap one function. A framework-free browser client (an ES module, no build step) opens a session, shows the invitation, follows a turn, cancels and disconnects.
+- **The workbench is unchanged on the wire.** `i2idlx-agent-sessions.ts` is now a thin composition over the shared core: the same routes, wire format, limits and error codes. Its tests were not edited. The provider-specific background Routine stays Foxxi's, passed in as an optional wake plug-in. The workbench page keeps its own bundled client.
+- **`applications/_shared/http-guard/`** holds what the coached world had written for itself and any bridge needs: the per-client request limit (IPv6 by its /56, the last forwarded hop behind a proxy), the ceiling helper for tables callers fill, the check that a public URL is an https origin, and the `/health` body the deploy verifier reads. The coached world imports them from there. Foxxi's express limiters were left as they are.
+- **Coached world: Connect an agent.** A signed-in consultant can pair their own chat session and have it be the agent they coach. A mission then goes to that session as a brief (the mission, the conditions the agent ran into, its remembered lessons, the interventions deployed so far; never the cause). Its answer is recorded as that agent's xAPI statement and shown on the mission. The pack's rules still score it; nothing judges the text. If the session does not answer within two minutes the turn is withdrawn, the mission runs simulated, and the feed says so. One connection per consultant.
+- **Setting.** `CPW_POD_ORIGIN` (the https origin agents' pods live on) turns the door on: it is where a claiming agent's delegation is read to verify it. Unset, the door answers 503, the page hides it and agents are simulated as before. Nothing is deployed by this change.
+
+## 2026-11-14 — A test's own text no longer fails the relay's loopback scan
+
+The relay's test chain reads every test in the repository for a server started without naming
+`127.0.0.1` (`deploy/mcp-relay/tests/listen-loopback.test.ts`). The test added with the hosted
+package take-down list quoted the bridge's `listen` call in a string, to check where the list is
+applied, and the scan read that string as a call. So `npm test` in the relay workspace has
+failed on master since that change, on a file the relay does not import. The string is now
+written in two pieces, and the test also checks the call was found at all, which the earlier
+form did not.
+
+## 2026-11-14 — Foxxi LRS: an assignable unit's token does not speak as the LMS
+
+A cmi5 auth-token is the assignable unit's credential, and it sits in the
+learner's browser. The LRS held it to its own registration and to nothing else.
+Whoever held one could store, in that registration, a `launched` naming another
+launch mode, an `abandoned`, a `waived`, or a `satisfied` for the course, and
+could write as any actor. A reader that takes those verbs as the LMS's word was
+taking the learner's: the coached-world tier gate promotes on a course's
+`satisfied`, and Practice Evidence reads the launch mode from `launched`.
+
+Such a bearer is now refused (403) a statement with one of the four verbs cmi5
+has the LMS record, and a statement whose `actor.account` is not the one it was
+launched for. The LMS's own statements are stored inside the bridge and are not
+affected. A credential that is not a launch's is not held to this.
+
+Where the LRS knows a token is a launch's and cannot tell which actor it was
+launched for, the token writes no statement at all.
+
+Found while answering a reviewer's question about who can write what on this
+LRS, before turning on the route by which the LMS takes reviewed results.
+
+## 2026-11-14 — Coached world: the service is in the deploy table
+
+The coached world runs at `https://coached-world-bridge-production.up.railway.app`, as the
+Railway service `coached-world-bridge`, created from the image the last change added. It now has
+its row in `tools/railway-services.mjs`, after the service existed, as the other bridges' rows
+were added: a singleton with no deploy overlap, because the world is held in process and a second
+container would be a second world. With the row, a merge that changes the application is built
+and deployed by the pipeline, and the fleet audit checks the service against what the row
+declares. The service has one setting, its public URL; guests are local to it until identity is
+given an entry for its origin.
+
+## 2026-11-14 — Practice Evidence: a role-play player whose result waits for its review
+
+The voice role-play player existed only as a package hosted on a bridge, with
+no source in this repository. It wrote one `scored` per criterion and its own
+`completed`, and no statement for what was said. So a practice call could not be
+taken as an attempt: there was no conversation for a reviewer to read, and the
+unit had already declared its result.
+
+The player is now in `docs/applications/practice-evidence/roleplay-player/`,
+served with the documentation, and changed:
+
+- it writes one statement per exchange: the other person's line on the
+  activity, the learner's answer in `result.response`;
+- each score is keyed by the rubric criterion's id, and every statement names
+  the scenario version it was scored against;
+- where the scenario sets `resultAfterReview`, it sends no `completed`, labels
+  its own score as unreviewed, and tells the learner the course is not complete;
+- launched again in the same registration, it asks the LMS for the reviewed
+  statements (`GET /cmi5/reviewed`) and sends them.
+
+Three things a review of the page found, fixed before it merged. Sending the
+reviewed statements stops at the first one the LRS does not take, keeps the
+session open and offers to try again, so a `completed` is never stored without
+the `passed` or `failed` before it. An id the LRS already holds counts as this
+result only when the stored statement says everything the issued one says. And
+a practice starts only when the LMS answers that nothing is under review: when
+it cannot be asked, the page says so and starts nothing.
+
+Checked by hand in a browser against a loopback stand-in for the LMS: a practice
+wrote `initialized`, a consent, 5 exchanges, 5 scores and `terminated`, and this
+application's own reader took those statements as one conversation; a second
+launch sent `passed` and `completed`. Not yet run against a deployed LMS. The
+test added here checks the scenario file and the page's text, not the page
+running.
+
+## 2026-11-14 — Coached world: an image, a public URL, request limits and a ceiling on what it keeps
+
+The coached world ran only on a developer's machine. It can now be built as an image and put behind a proxy on a public address. Nothing is deployed by this change: there is no Railway service yet, and no service row, so the pipeline has nothing to roll out.
+
+- **Public URL.** Behind a proxy the process cannot know the address people use, and it had been using its listen address (`http://0.0.0.0:<port>`) as the guest audience, the bootstrap address, the base of every graph IRI and the DID host. `BRIDGE_DEPLOYMENT_URL` (or `CPW_PUBLIC_URL`) now names it. It must be an https origin with no path, or the process does not start. Unset, nothing changes.
+- **`GET /health`** answers `build` (the commit the image was built from, which the deploy verifier compares with the one it shipped), the pack, how many consultants are in the world and which guest door is in use. It needs no session and is never rate limited.
+- **Request limits.** Each client gets 30 requests a minute for coming in, 120 for writes and 240 for reads, and a `429` with `Retry-After` past that. A client is an address (IPv6 by its /56); behind a proxy it is the last `X-Forwarded-For` entry.
+- **A ceiling on history.** A filler consultant publishes a territory graph every four seconds, and the list of published graphs and the statement log grew for as long as the process ran. Both now keep the newest 2,000 and count what they drop; `GET /graphs` says so (`retained`, `dropped`). The current head of each territory, pact and agent is looked up directly instead of by scanning the list, so a descriptor still supersedes the right one after that one has been dropped. An agent's descriptor carries its newest 100 lessons; which causes it has learned is kept apart, so settlement is unchanged. The world admits at most 5,000 consultants, and the in-process guest door forgets guests and spent grants once they have expired.
+- **Restarts.** The world is memory in one process, so a restart or redeploy starts a new one and, with the in-process door, the attestations browsers kept stop working. The guest page already tried a fresh grant when its kept attestation was refused; that is now tested by running the page against a world that was restarted on the same public address.
+- **Image.** `deploy/Dockerfile.coached-world-bridge` and its `deploy/images.json` row. It copies the vertical, `applications/_shared`, `packages/`, and four single files from Foxxi and identity. The test that checks a bridge image carries what its bridge imports now also follows imports that leave `applications/`, accepts a `COPY` of exactly the imported file, and follows what those files import in turn.
+
+Still to do by hand, in this order: create the Railway service `coached-world-bridge` as a single replica with no deploy overlap, set `BRIDGE_DEPLOYMENT_URL`, then add its row to `tools/railway-services.mjs`. The steps and every setting are in `applications/coached-world/README.md`.
+
+## 2026-11-14 — Practice Evidence: a launched unit may name the scenario version as its rubric
+
+Taking an attempt from an LMS launch requires every scored statement to name
+the rubric it was scored against, by the rubric's hash or IRI. For a scored
+scenario this bridge withholds those hashes from an assistant, and shows a
+stand-in keyed to the scenario version. So an agent building a unit could not
+write a value the import accepts: the one it was shown is not the rubric's.
+
+A scored statement may now name the scenario version instead: the scenario's
+IRI and `#version-<n>`. A published version has one rubric and does not change,
+so it binds the scores to the same rubric, and it is public. The hash and the
+rubric IRI are still accepted. Nothing about what is withheld changes.
+
+Found while changing the voice role-play player to write what the import reads.
+
+## 2026-11-14 — Coached world: a shared performance-consulting world on existing primitives
+
+A guest can join one shared world, choose a faction from the pack, and coach an autonomous agent through a mission whose cause, interventions and tiers all come from that pack. Mandate is the sample pack (`applications/coached-world/packs/mandate.json`); Orchard is a second pack that exercises the same engine. Territories, factions, pacts and agent memory are Interego descriptors. Mission statements are xAPI in the pack's profile, checked with Foxxi's supplied-profile reader. The world never emits cmi5 `passed` or `completed`. A tier changes when Foxxi's LMS has written `satisfied` for that course and this consultant's own DID. The world launches that course through Foxxi's existing `POST /agent/cmi5/launch`, naming that DID, so the guest is not admitted a second time. Guests are provisional-play owners (`u-try-play-`). `deploy/identity/provisional-play.ts` is touched only to name the attestation regex groups before use, a strict-null change with the same check. The local admission answer's token field is the short marker `unused`. The leaderboard lists every joined consultant. A promotion leaves a roster seat. A bot settlement publishes the territory graph it changes. The LRS query sends the actor's home page, the verb and the activity, and follows `more`. The `cpw:` vocabulary is published at `docs/applications/coached-world/cpw.ttl`, the same bytes as `applications/coached-world/ontology/cpw.ttl`. Named-graph IRIs go through `turtleIriRef`. The bridge entry installs the shared process safety net, so a rejection nothing awaited is logged and the process keeps serving. See `applications/coached-world/README.md`.
+
+Before it landed, three edges were closed in review: the LRS reader no longer follows a `more` link to another origin (the request carries its credential), outbound calls to the LRS and to Foxxi's launch have a time limit and follow no redirect, and the sign-in challenge and session tables have a ceiling, since callers nobody has verified fill them.
+
+## 2026-11-14 — css-gate: a test no longer fails when another test takes its port
+
+The "Durable LRS" CI job failed twice in two hours, on two pull requests that did
+not touch the gateway, with `listen EADDRINUSE`. The cause is one test,
+`identity-introspection-value-warning.test.mjs`. It starts real gate processes,
+and the gate takes its port from `PORT`, so the test opens a port, reads its
+number, closes it and hands the number to the child. `node --test` runs the
+other test files at the same time, each opening servers on port 0, and one of
+them could be given that port before the child listened.
+
+The test now starts the gate again on another port when the child exits with
+`EADDRINUSE`, up to five times. Any other exit fails as before. The gate itself
+is unchanged.
+
+## 2026-11-14 — Practice Evidence: what shows a session over, and a byte limit on the LRS read
+
+Two follow-ups to the change that lets a learner have a reviewed result fixed
+again for a later session. Both came from the reviewer after it merged.
+
+To fix statements again, the ending of the earlier session is evidence. Any
+terminated or abandoned naming that session was accepted. It now has to be a
+cmi5 terminated or abandoned for this unit, by this learner, carrying the cmi5
+category. One about another unit, by another actor or outside cmi5 frees
+nothing. Refusing a session to send in is unchanged: any ending naming it still
+refuses. Not checked: which credential stored the ending. cmi5 has the LMS
+record abandoned, and the read does not say who stored a statement.
+
+After a second read by the reviewer: an abandoned no longer counts as that
+ending at all, only a terminated, until an LRS can show that the LMS stored it.
+And a voiding statement in the read that points at a handed-out id counts as
+that statement having been sent, since an LRS leaves a voided statement out of
+a read. A voiding statement the read does not return cannot be seen; the ids do
+not change, so such a statement still collides when the unit sends.
+
+The LRS's answer to the learner's signed read was limited to 2,000,000 bytes
+after the whole answer had been read into a string, and by the string's length.
+It is now counted in bytes as it arrives and cut off past the limit, as the
+Foxxi side does.
+
+## 2026-11-14 — Foxxi: the review service's answer is limited as it is read
+
+`GET /cmi5/reviewed` asks a review service and limits its answer to 1,000,000
+bytes. The limit was checked after the whole answer had been read into a string,
+and against the string's length. A service that never stopped sending was
+buffered until the 20-second timeout, and an answer of multi-byte text could be
+up to three times the limit.
+
+The answer is now counted in bytes as it arrives. The read stops at the first
+chunk that passes the limit and the rest is cancelled; an answer that declares a
+longer length is not read at all. The unit gets the same `502` as before.
+
+Found by the reviewer after #883 merged.
+
+## 2026-11-14 — Practice Evidence: which outcomes close a unit, and a result stranded in an ended session
+
+Two things a reviewer left open on `pev.launched_statements`.
+
+**Which statements say a unit already has its result.** The check counted any
+passed, failed or completed whose object was the unit. cmi5's limit of one each
+is on its own defined statements, by the learner the unit was launched for. So
+one now counts only when it also carries the cmi5 category and is by the
+launch's actor. A statement with one of those verbs and no cmi5 category, or
+another actor's, no longer stops a learner's reviewed result from being handed
+out.
+
+**A session that ends before the unit sends.** The statements are fixed for one
+session the first time they are asked for. If that session ended before the unit
+sent them, they could never be sent: every later ask returned a copy marked as
+not for sending. The learner can now ask again for a later session with their
+own signed read of the LRS. The same result is fixed for that session when the
+LRS shows the earlier session ended, none of the statements handed out is in
+the registration, and the new session is one to send in. Only the session
+changes; the ids, verbs, score and timestamp stay, so a statement that did
+reach the LRS still collides on its id. The attempt keeps the sessions it was
+fixed for before (`handedOut.fixedBefore`). Otherwise nothing is written and the
+answer gives the reasons (`notFixedAgain`).
+
+**The read must be of the whole registration.** Both checks take what the
+learner's LRS read does not return as not being there. A read with a time
+window, a verb, an activity or a statement id leaves statements out, so it could
+hide a result already sent. `lrs_read` may now carry `registration`, `limit` and
+`ascending` only; anything else is refused before the LRS is asked (400
+`lrs-read-narrowed`), when an attempt is taken as well as here. Found by Codex
+on this change.
+
+Not changed: an `lms` principal asking for another session still gets the copy.
+The LMS route has no LRS read to show that the earlier session ended unsent.
+
+## 2026-11-14 — Foxxi: TLA-X names the reusable launch link
+
+The TLA-X decoration ties each component of ADL's Total Learning Architecture to
+a control in a Foxxi deployment. Its learning event manager named one way to
+launch: a single-use cmi5 launch. It now also names the reusable personal launch
+link (`POST /agent/cmi5/go`), as a control in the catalog and as a capability in
+the proposals.
+
+The decoration is published, and CI holds this source to the live publication,
+so the two graphs were republished with this change: the catalog (Asserted) and
+the proposals (Hypothetical), each superseding the version before it. The other
+four decorations are unchanged and were not republished.
+
+## 2026-11-14 — Practice Evidence: what the LMS issuer binding rests on
+
+The README now says what an operator must know before setting
+`PEV_LAUNCH_LMS_ISSUERS`: on that LRS, an actor account homePage names exactly
+one issuer, and only that issuer can write it. The binding compares two
+strings. Where two LMSs share a homePage, or a client can store a launched
+statement under any homePage, the setting should stay unset. Asked for by the
+reviewer of the binding. No code change.
+
+## 2026-11-14 — Practice Evidence: the LMS that launched an attempt may take its reviewed statements
+
+A unit in a browser holds only its cmi5 credential, which the LMS checks and this
+bridge cannot. So only the learner could take the reviewed statements for the
+unit, and a player had no way to ask for them itself.
+
+A new role, `lms`, is for the LMS's own signing key. An admin registers it like
+any other role. That principal signs `pev.launched_statements` with
+`{registration, sessionId}` and gets the same documents the learner would, under
+the same eligibility and refusals, fixed once.
+
+- It asks by the registration it issued. No one else may (403), so the answer
+  tells no one whether a registration was taken.
+- It needs no read of the LRS for the session: it opened the session, and its
+  signed word is recorded as the LMS's word (`handedOut.sessionVouchedBy`).
+- The role works only for attempts taken from the LRS this bridge reads, never
+  together with the role `agent`, and gives no other right: an `lms` principal
+  reviews nothing and reads no attempt.
+- The role alone names no issuer. An LRS endpoint can front several LMSs, so the
+  operator binds each `lms` principal to the account homePage its LMS puts on the
+  actors it launches (`PEV_LAUNCH_LMS_ISSUERS`). The principal takes statements
+  only for attempts whose launch actor carries that homePage, and one with no
+  binding speaks for no LMS.
+
+Whoever holds a registered `lms` key can take the reviewed result of any attempt
+taken from that LMS. The LMS's own route that takes the unit's credential and
+makes this request is not part of this change. Verified on an in-memory pod only.
+
+## 2026-11-14 — Foxxi: a failed lesson nobody scored is recorded without a score
+
+A performance recorded against a lesson, failed, with no quality given, built a
+`failed` statement with no `result.score.scaled`, and Foxxi's own `lesson-failed`
+template required one, so the statement did not follow the profile it names
+(found in review of the statement builder). The template now recommends the
+score and requires `result.success` false instead, so a bare `failed` with no
+result is still refused: cmi5 constrains a score a failed statement
+carries and does not demand one. The statement is unchanged; no score is
+invented. The builder test now runs every kind of activity, each outcome,
+scored and unscored, through the specification's algorithm.
+
+## 2026-11-14 — Foxxi: a linked guest's browser is not the owner
+
+The course player let an owner link a guest they still held the key for. After
+that link, every later launch from the guest's browser was recorded as the
+owner: the owner's actor, the owner's lens and pod, the owner's open attempt
+resumed. It checked only that the link existed. No owner session was needed, the
+link did not expire, and nothing but deleting either party's records undid it.
+On a shared computer, someone who signed in, linked the guest that browser kept
+and signed out left the next person who pressed Start recording under their name.
+
+A guest session now launches as the guest, in the guest's lens, linked or not.
+What the guest satisfies after a link still reaches the owner, when the owner
+next launches or links again, both of which take the owner's own session. Making
+a link is unchanged: it needs the owner's session and a fresh proof from the
+guest's key.
+
+Found by a review of the player after it merged. Not fixed here: a guest's
+deletion removes from the owner every activity the guest had satisfied, including
+any the owner satisfied themselves; and a deletion whose pod copy failed reports
+nothing deleted when it is tried again.
+
+## 2026-11-14 — Foxxi: an activity judged after its session asks the LMS for what it may now send
+
+Some activities are judged after the session ends: a practice conversation whose
+result a person reviews. cmi5 gives `passed`, `failed` and `completed` to the
+activity to send, so it sends them in a later session of the same registration,
+once the review stands. The review lives in another service, and an activity in a
+browser holds only its cmi5 credential, which only this LMS can check.
+
+`GET /cmi5/reviewed` takes that credential as a Bearer token. The LMS answers for
+what only it knows (the credential is one it issued; its session is open and was
+launched Normal) and asks a review service for the rest, signing with its own key
+a request that names the registration and the session. It hands back the documents
+the service fixed, or says there is nothing to send yet. The LMS writes none of
+these statements itself. A credential speaks only for the session it was issued
+in: one from an earlier session of the registration is refused, and nobody is
+asked about the current session on its word.
+
+Which service to ask is a setting (`FOXXI_REVIEW_STATEMENTS_URL`, `_POD` and
+`_ACTION`, with `FOXXI_BRIDGE_PRIVATE_KEY`); without it the route answers 501. No
+review service, course or profile is named in code. Verified with a fetch double
+for the service; no live service has been asked.
+
+## 2026-11-13 — Practice Evidence: the learner takes the reviewed statements for their assignable unit
+
+A conversation an LMS launched could be taken as an attempt and reviewed, and the
+cmi5 passed, failed and completed for it could be built, but only by code: no act
+handed them to anyone.
+
+`pev.launched_statements` does. The learner signs `{attemptIri, sessionId}`,
+naming the session of the registration their unit will send in, and gets the
+statements, for a reviewed attempt on a ratified rubric whose launch is known to
+be Normal.
+
+- cmi5 allows one passed and one completed per registration, so what is handed
+  out is fixed the first time it is asked for and kept on the attempt
+  (`lmsLaunch.handedOut`). Every later ask returns the same documents, whatever
+  session it names, and writes nothing. A review changed afterwards hands out
+  nothing new.
+- Before they are fixed, the session is checked against the LRS through the
+  learner's own signed read: the LMS's `launched` statement for that unit and
+  session, in Normal mode and for the same actor, with the session not ended and
+  nothing passed, failed or completed in the registration. A session typed wrong
+  or already ended fixes nothing.
+- Only the learner may take them. A scored attempt's statements carry its score,
+  so they are refused to a chat assistant, as a projection is.
+- The bridge still sends nothing to an LRS, and does not learn whether the unit
+  sent them.
+
+Not built: a way for a unit that holds only its cmi5 credential to ask for these
+itself. Verified by the vertical's tests on an in-memory pod; no live LMS, LRS or
+assignable unit has used this.
+
+## 2026-11-14 — Foxxi: the operator of a bridge can take a hosted package down
+
+Taking a hosted package down (`foxxi.remove_hosted_package`) asks for the
+tenant's admin by signature, and nobody else can do it: an agent working for
+the operator, signing through the relay, is refused, and so two superseded
+packages stayed listed after their owner said to remove them. The operator now
+has a path of their own. `FOXXI_HOSTED_PACKAGES_TAKEN_DOWN` lists packages by
+sha-256, separated by commas or spaces. A listed package is removed from the
+tenant pod when the bridge starts, with what described it, and its course is
+forgotten; while it stays listed it is not listed at `/scorm/packages`, opened,
+or kept again, whether or not the pod has removed it yet. An entry that is no
+sha-256 is named in a warning and takes nothing down. What learners recorded of
+a package stays in their own records, as with the signed removal.
+
+## 2026-11-14 — The UI oracle job waits long enough for the build it reads
+
+"Original client oracles and hosted visitor render" waited eight minutes for a
+completed native or golden build of the pull request's head and then failed. On
+recent pull requests that native build finished 6 to 23 minutes after the push,
+queue included, so the job failed on most of them and passed on a manual re-run
+once the build was done; the gated auto-merge refuses a red check, so each of
+those pull requests waited for a person or a session to press re-run. The wait
+is now thirty minutes and the job's limit fifty. A head whose build never
+finishes fails later than before, with the same message.
+
+## 2026-11-13 — Foxxi: a course player on the existing Interego guest
+
+A browser that opens a hosted package or a published activity, with no cmi5 launch on the URL, gets a player for that course. Start does not mint a Foxxi identity. It uses the provisional Interego guest the learning account already signs in (`u-try-play-`, browser key) or an existing owner, and the xAPI actor is that owner's DID. Agreeing to the recording is required before the launch, and that agreement is kept against the learner and the course. The statements, the satisfied activities and a later deletion are kept in that learner's own lens, the same one a signed read uses. The published course stays in the shared catalogue. The same browser continues the same owner and, while the attempt is open, the same registration. Adding a passkey, wallet or DID keeps that owner (`/connect?claim=`), and the page can ask identity for a fresh token for that key after the activity, because the first one is not kept. Signing in as a different existing owner records a link and leaves the guest's statements as they were. After that link, what the guest does next is recorded as the owner, in the owner's lens; linking again copies satisfaction once more and does not store a second claim. Deleting a guest recording stores a voiding statement and then marks the original with that statement's id, keeps those voids on the learner's pod even when no launch is still in memory, and clears that learner's State documents. A linked guest's own deletion also removes the satisfaction copied onto the owner and the owner's claim that names the guest. Unclaimed guests still expire on identity's own deadline.
+
+## 2026-11-13 — Foxxi: cmi5 launchParameters
+
+`launchParameters` was described in the cmi5 model and never read or written. A course structure's `<launchParameters>` is now kept on the AU and staged in `LMS.LaunchData` (cmi5 §10.2.3). A signed one-shot launch, a personal launch link, or `GET /cmi5/launch` may replace that string with `launch_parameters`; the value is not interpreted. It is whatever the course, or that request, says.
+
+## 2026-11-13 — Foxxi: the LMS records cmi5 launched
+
+A cmi5 launch now stores the LMS `launched` statement before the AU runs. It uses the launch's actor and registration, verb `http://adlnet.gov/expapi/verbs/launched`, the AU as object, and the cmi5 context category. The context extensions are the session id, launch mode, the AU's URL without the cmi5 query, moveOn, and mastery score when the course structure sets one. It is written into the launch's tenant, which for a signed launch and a personal link is the learner's lens, so `foxxi.read_xapi_statements_signed` returns it with the AU's statements. A resumed session does not record another. A new session does, including one that keeps the registration after `terminated` left moveOn unmet.
+
+## 2026-11-13 — Foxxi: a reusable personal cmi5 launch link
+
+`POST /agent/cmi5/launch` returns one launch URL. Its fetch token is single-use and expires after 30 minutes, so a trainee who bookmarks it cannot get back into the activity. A signed caller can now mint `GET /cmi5/go/<token>` (`POST /agent/cmi5/go`) for themselves and one course. The token is 32 random bytes and the URL does not carry the learner. The pod file `foxxi-lattice/cmi5-personal-links.json` stores the sha-256 of that token, keyed by the hash, so a copy of the file cannot open the link. Each open builds a fresh cmi5 launch and redirects to the AU: a new fetch token every time; the same registration and session while that session is open; the same registration and a new session when the earlier one was terminated before moveOn was met; and a new registration after abandoned, waived, or terminated once moveOn was met (Review when the activity is already satisfied). A Review or Browse launch keeps its mode when it is relaunched. `POST /agent/cmi5/go/revoke` withdraws a link. `POST /agent/cmi5/go/list` lists the links minted for the signed person, including ones a delegate minted, without the secret. A link minted by a delegate expires when that delegation does, and a delegation that cannot be read does not bind the link to the agent. Opens are rate-limited per address and per token. Mint, list and revoke are limited on the route before the signature is checked, keyed on the forwarded client rather than the proxy. Links expire in 90 days unless `expires_in_days` says otherwise. Withdrawn and expired records are dropped when another link is minted, so they do not fill the cap, and an open is counted in memory without rewriting the file. A read of the file that fails is not treated as success and is not followed by a write; an open answers 503 until a read has succeeded. The link is not tied to one course or one person: the course is whichever published course the request names, the actor is whoever signed (or the person a delegation names), and the activity's moveOn and mastery are that course's own structure. Withdrawal, expiry, the forwarded-client limit and the read-before-write are the same ones a SCORM dispatch uses.
+
+## 2026-11-14 — Foxxi: the statement a recorded performance becomes is built in one place
+
+`foxxi.record_performance` and its signed form each built their xAPI statement
+inline in the bridge server, the same shape written out twice, where no test
+could call it; the tests checked statements assembled from the same helpers
+instead. The statement is now built by `buildPerformanceStatement`
+(`src/performance-statement.ts`), which both routes call, and the test checks
+what that function returns against the profile under the specification's
+algorithm, for a generic task, a domain type, a course and a lesson, completed
+and failed. The statements the routes produce are unchanged.
+
+## 2026-11-14 — Foxxi: a performance recorded against a course or a lesson is that course's or lesson's outcome
+
+The last pair of Foxxi's statement templates one statement could match
+together. A performance recorded against an activity typed as a course or a
+lesson matched the course or lesson template by its object type and the
+performance template by its marker, and had to follow both; a completion failed
+the first for want of `result.completion`.
+
+The object type now decides (`performanceCategoriesFor`, `outcomeResultFor` in
+`src/xapi-profile.ts`). Recorded against a course or a lesson, the statement
+carries no performance marker and, when it is a completion, states
+`completion: true`; it is held to the course or lesson template alone.
+Recorded against anything else it is a performance record, as before. This
+applies to `record_performance`, its signed form, agent activity and a
+descriptor projected as an outcome. One rule is left to refuse: a failed lesson
+states its score, whoever records it.
+
+`POST /xapi/profile/validate` against Foxxi's own profile now also returns
+`specification`, the outcome of the specification's algorithm for the same
+statement, beside its own verdict, which accepts any one template selected by
+verb and object type.
+
+## 2026-11-13 — Practice Evidence: launch-mode evidence must be for the imported unit and session
+
+Taking a conversation an LMS launched as an attempt read the launch mode from the
+first `launched` statement in the registration, whatever unit or session it was
+for. A registration can cover several of each, so another session's Normal launch
+could stand in for this one's. That fix was pushed to the pull request after it
+had merged, so it is here.
+
+- Only a `launched` statement whose object is the unit of the conversation's
+  `initialized` statement, and whose session id is that session, says how the
+  conversation was launched.
+- Where several match, they have to agree on the mode and on the masteryScore.
+  Which of two records came first no longer decides whether a result may be
+  called passed.
+- With none, with several that disagree, or with one that names no valid mode,
+  the mode stays recorded as assumed. The attempt can still be reviewed, and no
+  cmi5 passed, failed or completed is built for it.
+
+Verified by the vertical's tests against fictional statements only.
+
+## 2026-11-13 — Persisted lattices are written compressed
+
+The writers of persisted lattices now gzip the plaintext before sealing it,
+unless told not to. The reader for that format shipped first, with the writer
+off, because services deploy separately and a reader built before it cannot
+open a compressed body; this turns the writer on now that the reader is live.
+Setting `PGSL_LATTICE_COMPRESSION=none` on a service returns it to plain JSON
+writes without a code change, and a caller can pass `compression: 'none'`.
+Readers accept both forms either way, so resources already stored are read as
+before and are rewritten compressed the next time they are written.
+
+Measured on a made-up artifact with one 120-triple subject: 43.82 MB as plain
+JSON, 1.35 MB compressed. Node identity, holon addresses and the snapshot
+digest do not depend on the stored form.
+## 2026-11-13 — Practice Evidence: an attempt under an LMS launch can count toward its assignable unit
+
+Practice Evidence refused, by design, to put a cmi5 defined category on anything:
+practice could not satisfy an assignable unit, and its registration was derived
+from the attempt. The owner has decided that a practice conversation run under an
+LMS launch does count. This is the first piece of that, as pure functions and the
+record's shape, and the act that takes a launched conversation as an attempt.
+
+- An attempt record may carry the launch it ran under (`lmsLaunch`): the
+  registration, session, actor and activity id the LMS issued, the LRS endpoint,
+  the launch mode, and the masteryScore and contextTemplate when the launch data
+  had them. `lmsLaunchProblems` says what is wrong with one. The record graph
+  writes it as a `pev:LmsLaunch`, declared in `pev.ttl` with a shape in
+  `pev-shapes.ttl`.
+- `buildLaunchedStatements` builds the cmi5 defined statements for a reviewed
+  attempt that has a launch: `passed` or `failed` for a pass gate, then
+  `completed`; `completed` alone for feedback only. They are on the LMS's
+  registration, actor and activity, carry the cmi5 and moveOn categories and the
+  contextTemplate, and name the session they are sent in, which can be a later
+  session of the registration than the conversation's. A statement's id is
+  fixed by the attempt, the registration and the verb, and its timestamp is the
+  time of the review, so a retry is the same document and an LRS refuses a second,
+  different passed or completed for the registration. cmi5 gives these statements
+  to the assignable unit to send, so the bridge still posts nothing, keeps no copy
+  of what was sent and confirms no delivery.
+- `launchedRefusals` gives the reason when none may be built: no launch, a launch
+  that was not Normal, no standing review, or a reviewed result that meets the
+  rubric's pass rule below the launch's masteryScore (or misses it at or above),
+  which cmi5 can call neither passed nor failed. `launchedStatementProblems`
+  checks a statement against its launch.
+
+- `pev.import_launched_attempt` takes a conversation an assignable unit already
+  held under an LMS launch. The learner signs it and passes their own signed read
+  of the registration, which the bridge forwards unchanged to the LRS's signed-read
+  route (`PEV_LAUNCH_READ_URL`); the bridge holds no LRS credential and does not
+  keep the read. The exchanges become turns read from statements, the unit's score
+  per criterion becomes a scripted judgment with nothing verified, and the attempt
+  is written `judged` on the LMS's registration for a reviewer to decide. The
+  profile terms the unit's statements use are a setting (`PEV_LAUNCH_VOCABULARY`);
+  no profile, course or player is named in code. A registration that is not one
+  whole conversation against the scenario version's rubric is refused with every
+  reason, as are another actor's statements and a registration already taken on
+  the pod against any scenario. The cmi5 statements are built only where the LMS's
+  own `launched` statement says the launch was Normal; a mode that was only
+  assumed is refused.
+- A turn may now be an `lrs-statement`, and the other person's lines may be
+  controlled by an `assignable-unit`; both are in `pev.ttl` and its shapes.
+
+An attempt started in Practice Evidence itself has no launch, projects exactly as
+before and satisfies nothing. Verified by the vertical's tests against fictional
+fixtures only, with a fetch double for the LRS: no live LMS, LRS or assignable
+unit has used this. Not built: the act that serves the reviewed statements to the
+unit and keeps what it handed out.
+
+## 2026-11-13 — A persisted lattice can be read compressed; writing it that way is off for now
+
+A PGSL lattice is kept as one sealed pod resource whose plaintext is
+`JSON.stringify({ topUri, nodes })`. That text is highly redundant: every
+fragment repeats its full list of item URIs, about 91 characters each, and the
+same provenance object sits on every node. For a made-up artifact of 485
+triples the plaintext was 13.9 MB and the pod PUT 18.5 MB, while gzip of the
+same plaintext is about 0.57 MB. Sealing the compressed bytes directly takes
+that PUT to roughly 0.77 MB; carrying them as base64 inside a string plaintext
+would have been about 1.02 MB.
+
+Every reader of these resources (`resolveLatticeFromPodDetailed`,
+`resolveLatticeFromPod`, `resolveHolonFromPod`, and through them Foxxi's shared
+lattice and the private performance store) now opens both forms. The two are
+told apart by the first byte of the authenticated plaintext: a plain one is
+JSON text and begins with `{`; a compressed one begins with a NUL byte, which
+no JSON text can, followed by a marker, a version, a codec, the exact inflated
+length and one gzip stream. Once the first byte says compressed, everything
+after it has to check out or the read is refused as unreadable, with the
+reason. It is never retried as JSON, so a writer will not take a damaged body
+for an empty lattice and write over it. Inflation is capped at 256 MiB
+(`MAX_LATTICE_INFLATED_BYTES`), enforced inside zlib, so a small body cannot
+make a reader allocate without limit.
+
+The writers can compress, and do not unless asked: pass
+`{ compression: 'gzip' }` to a `promote*Encrypted*` writer (or
+`latticeCompression: 'gzip'` to `composeIntoSharedLattice`), or set
+`PGSL_LATTICE_COMPRESSION=gzip`. Unset, a writer seals the same plain JSON it
+always has. That is deliberate. The services that read these resources deploy
+separately, and a reader built before this change cannot open a compressed
+body, so every reader has to be live before any writer emits one. The default
+flips in a later change.
+
+To seal bytes without base64-ing them first, `@interego/core` gains
+`createEncryptedEnvelopeFromBytes` and `openEncryptedEnvelopeBytes` (with
+`encryptContentBytes` and `decryptContentBytes` beneath them). The string
+functions are now thin wrappers over these; an envelope made from a string has
+the same shape and seals the same bytes as before. The zlib use is in a
+Node-only module of `@interego/pgsl`; core stays free of it.
+
+Node URIs are content-addressed and do not depend on how the body is stored:
+the nodes read back from a compressed body are deep-equal to those from a
+plain one, and the snapshot digest that lets a duplicate compose skip its
+write is computed over the nodes, so it is unchanged.
+
+Separately, `composeIntoSharedLattice` takes an opt-in `maxGroupWidth`. An
+ingest over a group of width W builds W(W+1)/2 fragments, so one wide subject
+dominates an artifact, and the existing fold at eight applies only to the top
+level list of groups. With `maxGroupWidth` set, a group with more children
+than that folds into sub-holons of at most that width, recursively. No caller
+sets it: folding is part of the composition, so it changes the holon URI of
+any artifact with a group that wide, and existing memories, courses and
+ontologies keep their URIs only because it is unset.
+
+Measured on one made-up artifact with a 120-triple subject and thirty
+4-triple subjects: 9,227 nodes, 32.9 MB plaintext and a 43.8 MB PUT as
+written today; a 1.35 MB PUT with compression; 2,574 nodes and a 2.2 MB PUT
+with groups folded at eight; 0.15 MB with both.
+
+## 2026-11-13 — Foxxi statements say which kind they are, and its profile selects on that
+
+Under the xAPI Profiles specification a statement must follow every template it
+matches, and it matches on determining properties only. Three families of
+Foxxi's templates shared a verb and took any object type, so a statement of one
+kind matched the templates written for another and failed them: a course
+completion against the performance template, an ingested production run against
+the descriptor templates, a plain voiding against the descriptor voiding.
+
+Statements Foxxi emits now carry a typed context activity saying which kind
+they are, and the templates select on its type:
+
+- a category of type `foxxi:activities/descriptor-projection` on every statement
+  projected from a context descriptor (`performed-descriptor`,
+  `superseding-descriptor`, `voided-descriptor`);
+- a category of type `foxxi:activities/performance-record` on every recorded
+  unit of performance: `record_performance`, its signed form, agent activity,
+  and a descriptor projected as an outcome (`production-performance-completed`,
+  `production-performance-failed`);
+- type `foxxi:activities/superseded-descriptor` on the `other` activity naming
+  the descriptor a statement revises (`superseding-descriptor`).
+
+`performed-production` now names its object type, `foxxi:ProductionTask`, which
+its two emitters already used. The three activity types are declared in the
+profile and in the Foxxi vocabulary.
+
+The Foxxi vocabulary takes a new version for them, 2026.11.0, released and
+archived on its own (backward compatible with 2026.10.1). The archive test
+counted imports per release as if every release carried every document; it now
+counts the releases that archived a shapes graph.
+
+A new test runs what the descriptor projector and the run ingest really emit
+through the specification's validation: each validates, against the template
+for its own kind. Statements stored before this carry no marker: a stored
+production completion or descriptor projection matches no template under the
+specification's reading, and is not rewritten. Foxxi's own validator, which
+selects by verb and object type and accepts any one template, is unchanged. One
+case left: a performance recorded against an activity typed as a course or a
+lesson matches both the course template and the performance template, and has
+to follow both.
+
+## 2026-11-13 — Foxxi's xAPI Profile: two templates the specification's matching could not use
+
+The specification matches a statement to a template on its determining
+properties, and a statement that matches several templates has to follow every
+one. Two of Foxxi's templates were written for a looser reading and went wrong
+under it:
+
+- `launched` named the cmi5 category in `contextCategoryActivityType`. That
+  property is the type of a category activity; the cmi5 category is an
+  activity id and carries no type, so the template matched no statement. The
+  property is gone; the rule on the category id is what requires it.
+- `experienced-activity` had no `objectActivityType` and a rule that the object
+  be a course or a performance. It therefore matched every `experienced`
+  statement, and made each fragment and slide statement invalid. It is now the
+  course template, with a new `experienced-performance` beside it.
+
+Of 26 statements this application's own tests treat as conformant, 21 now
+validate under the specification's algorithm (16 before). The other five need a
+decision about what Foxxi emits, and are unchanged: `completed` and `failed`
+for a course or lesson against the production-performance templates,
+`performed` for an ingested production run against the descriptor templates,
+and a plain `voided` against `voided-descriptor`. Each pair shares a verb with
+nothing in the statement to tell them apart.
+## 2026-11-13 — A guest test stopped passing when the clock reached the guest's expiry
+
+`a-guest-is-kept-by-their-browser.test.ts` runs a deployment at a fixed instant
+(2026-11-12T10:00Z) with a guest that expires a day later. The storage gate's
+`checkProvisionalTarget` compared that expiry with the machine's clock, so the
+test passed until 2026-11-13T10:00Z and has answered 401 on every run since,
+on every pull request. `checkProvisionalTarget` now takes `now` as a parameter,
+defaulting to the machine's clock as before, the way `verifiedProvisional`
+already does; the test passes the deployment's clock. The gate's behaviour in
+service is unchanged.
+
+## 2026-11-13 — Foxxi's own xAPI Profile states its rule locations as JSONPath
+
+Found on the live Profile Server the day it shipped: `/validate_templates`
+against Foxxi's own profile answered "a JSONPath starts at $". The profile
+published every rule location without the `$` (`context.registration`), which
+the specification's algorithm rightly refuses. The published document now
+states `$.context.registration` and `$.context.extensions['…']`; Foxxi's own
+validator reads both forms, so nothing it accepted before is refused.
+
+Not fixed here: under the specification's matching, a statement can match two
+of this profile's templates at once (for example `fragment-experienced` and
+`experienced-activity`, which share a verb and differ only in a rule), and
+then has to follow both.
+## 2026-11-13 — Foxxi LRS: a registration is checked against a brought profile's patterns
+
+Checking a statement against a brought xAPI Profile reported the profile's
+patterns as not checked, because one statement cannot show an order. The same
+endpoint, `POST /xapi/profile/validate`, now takes `statements` (the statements
+of one registration) beside `profile` and reads them against the profile's
+primary patterns: `sequence`, `alternates`, `optional`, `oneOrMore` and
+`zeroOrMore`, over patterns and statement templates of that profile.
+
+This is beside the Profile Server's `/xapi/profiles/validate_patterns`, which
+runs the specification's algorithm against a profile the server holds, by id.
+This route takes the profile in the request, holds nothing, and says what it
+did not evaluate.
+
+- The check is on demand. Nothing is stored or fetched, and nothing is refused
+  on ingest: the LRS keeps a statement whether or not it fits a pattern.
+- Each primary pattern is `followed`, `not-fully-checked` or `not-followed`.
+  `not-fully-checked` means the run fits only if a template checked in part, or
+  one the profile does not define, is taken as followed; `conforms` is then
+  false. `not-followed` says how many statements were read and where it stopped.
+- Statements are read in `timestamp` order when every one has a timestamp, and
+  in the order sent otherwise; the answer says which (`orderedBy`), and names
+  equal timestamps. Statements of more than one registration are refused.
+- Subregistrations are not read, and are named in `notChecked` when present.
+- The answer for a request carrying a `profile` is now built in
+  `src/xapi-profile-patterns.ts` (`answerSuppliedProfileRequest`), so a test
+  pins the response of both the one-statement and the registration check.
+
+## 2026-11-13 — Pod server: a staged batch is one storage transaction
+
+The timing added on 2026-11-12 showed where a live single-statement write
+goes: about 1.6 s of a 2.0 s write was the one request that stages its
+artifacts (10 items, 305 KB), about 160 ms an item against 7 ms on one machine.
+The server ran the whole per-document write path for each item, and the
+Postgres adapter sent every buffered write as two statements, one at a time:
+about fifteen database round trips an item. With the database 2 ms away in each
+direction (a delaying proxy in front of a local Postgres) the same build
+measures 1.29 s for a 7-item staging request, which is the live figure. With
+this change it measures 93 ms, and a `PUT /xapi/statements` goes from a median
+of 1,708 ms to 515 ms (12 writes each; 145 ms to 102 ms with no delay). The
+live effect is not measured yet; the server now logs it.
+
+- `packages/pgsl-store`: `LdpStore.stageResources` creates or confirms a batch
+  of immutable resources in one transaction. An absent name is created by a
+  statement that restates its absence; a present one is confirmed only by the
+  identical stored bytes, size and media type; anything else refuses the whole
+  batch, and a refused batch stages nothing. A name taken by a concurrent
+  writer sends the transaction round again, where it is confirmed. The
+  container's marker moves forward in the same transaction.
+- `packages/pgsl-store`: the Postgres adapter writes a run of buffered sets as
+  two statements over arrays (lock and size the rows being replaced, then one
+  upsert) instead of two per key, in key order, at most 4 MiB or 1,024 keys a
+  statement. The transaction interface gains two optional operations with
+  fallbacks, `getMany` and `createAbsent`, each one round trip on Postgres.
+  Write admission, the per-transaction byte bound and the retired-bytes charge
+  are unchanged. This applies to every write through the adapter.
+- `integrations/pgsl-css-accessor`: the `application/vnd.interego.native-stage+json`
+  operation uses that transaction instead of one document write per item. The
+  request, its limits and its receipts are unchanged, except that a request is
+  now atomic: one that is refused leaves none of its items behind (it used to
+  keep the items before the one refused). Staged names take no per-document
+  lock and emit no per-document change notification; they are immutable and
+  content-named, and are created by compare-and-set. A container that does not
+  exist yet is created by staging its first item the ordinary way.
+  A name that is already a container (a marker at `name/`, or anything beneath
+  it) is refused, as the ordinary write path refuses it, and so is a name that
+  is an auxiliary resource (`.meta`, `.acl`, `.acr`).
+- The handler logs one line of numbers per staging request to stderr,
+  `[pgsl-css] native-stage {items, bytes, created, ordinary, prepareMs, engineMs, containerMs, totalMs}`.
+
+Not addressed: writing and re-reading the head still cost about 200 ms and
+100 ms under the same 2 ms delay. Each is a separate ordinary request to the
+server, several small transactions each.
+
+## 2026-11-13 — Foxxi: a reusable personal cmi5 launch link
+
+`POST /agent/cmi5/launch` returns one launch URL. Its fetch token is single-use and expires after 30 minutes, so a trainee who bookmarks it cannot get back into the activity. A signed caller can now mint `GET /cmi5/go/<token>` (`POST /agent/cmi5/go`) for themselves and one course. The token is 32 random bytes and the URL does not carry the learner. Each open builds a fresh cmi5 launch and redirects to the AU: a new fetch token every time, the same registration and session while that session has not been terminated, abandoned or waived, and a new registration afterwards (Review when the activity is already satisfied). `POST /agent/cmi5/go/revoke` withdraws it. Opens are rate-limited per address and per token. Links expire in 90 days unless `expires_in_days` says otherwise, and they are kept on the tenant pod at `foxxi-lattice/cmi5-personal-links.json`. A read of that file that fails is not followed by a write, so a pod that cannot be read is not replaced by this process's copy. Withdrawn and expired links stay recorded and do not count toward the learner's limit. Mint and revoke are also limited on the route, before the signature is checked. The link is not tied to one course or one person: the course is whichever published course the request names, the actor is whoever signed, and the activity's moveOn and mastery are that course's own structure. Withdrawal, expiry and the per-address limit are the same ones a SCORM dispatch uses, and both registries refuse to overwrite the pod when a read fails.
+
+
+
+## 2026-11-13 — Foxxi is an xAPI Profile Server
+
+The bridge served one profile, its own, and checked a statement against a
+profile sent with the request. It is now the Profile Server of the xAPI
+Profiles specification, Part Three, at `/xapi/profiles`:
+
+- **Profiles in an RDF store.** A profile version added to the server is a
+  holon in a public PGSL lattice on the commons pod, the exact document its
+  content, and is read back from there when the bridge starts. Its RDF is a
+  projection of that holon. Foxxi's own profile is always held. (Composing
+  every triple into the lattice was measured and dropped: a 19 KB profile
+  became an 18.9 MB pod write, against 36 KB.)
+- **`/sparql`.** `@interego/pgsl`'s SPARQL engine over a named graph per
+  profile version (the graph IRI is the version IRI) and a default graph of
+  current versions, with the inference the specification asks for: every SKOS
+  relationship, and `profile:concepts`, `profile:templates` and
+  `profile:patterns` as subproperties of the inverse of `skos:inScheme`. GET,
+  form POST, `application/sparql-query` and JSON; results in the SPARQL 1.1
+  JSON format. The specification's own example queries run as it writes them.
+- **`/validate_templates` and `/validate_patterns`.** The specification's two
+  algorithms, written from its pseudocode
+  (`src/xapi-profile-server/processor.ts`). POST variables `statement` or
+  `statements`, and `profile` by id; 204 on success, 400 with comments naming
+  the template and rule, or the part of the pattern.
+- **Adding a profile is a signed affordance**, by contents, or by https URI on
+  a host the deployment lists (`FOXXI_XAPI_PROFILE_URI_HOSTS`; by default
+  profiles.adlnet.gov, raw.githubusercontent.com and w3id.org)
+  (`foxxi.xapi_profile_add`). The agent that first adds a profile IRI adds its
+  later versions and may take it down (`foxxi.xapi_profile_remove`); the
+  operator may take down any. Query and both validations are affordances too.
+
+What it does not do: the SPARQL engine evaluates SELECT and ASK with OPTIONAL,
+UNION, FILTER, VALUES, grouping, ordering, LIMIT and OFFSET. Property paths,
+subqueries, MINUS, EXISTS, HAVING, CONSTRUCT, DESCRIBE, SERVICE and a GRAPH
+pattern beside other patterns are refused with a 400 that names the form. An
+Activity definition inside a concept is kept as one JSON literal, not expanded.
+
+`POST /xapi/profile/validate` with a brought profile is unchanged, and now also
+returns `specification`: the outcome of the specification's algorithm for the
+same statement and templates. The two differ where this route picks templates
+by verb and the algorithm matches on every determining property.
+
+Fixed in `packages/pgsl`'s SPARQL engine on the way, each of which returned no
+rows without an error: an IRI ref with a fragment was cut at its `#` as if a
+comment began there; a typed literal whose datatype was written `^^<iri>`
+never matched; and REGEX ignored its flags argument.
+
+## 2026-11-13 — Foxxi: two more routes parsed an already parsed body
+
+The guest learner routes failed on the live bridge because their own
+`express.json` (Express 4) re-read a request the bridge's global parser
+(Express 5) had already consumed. Two other JSON routes in this application had
+the same shape and were found by reading, not by a report:
+
+- the LRS admin writes (`POST`/`PUT /xapi/admin/forwarding/targets`,
+  `POST /xapi/admin/forwarding/retry`, `POST /xapi/admin/credentials`);
+- the course-source service's endpoint.
+
+All three now use one helper, `routeJson` (`src/route-json.ts`), which leaves a
+parsed body alone and parses only an unparsed request. The progress-notification
+callback already guarded against this itself and is unchanged. Routes that parse
+forms, XML or raw bodies are unaffected: the bridge's parser reads JSON only.
+
+A new test reproduces the failure with plain `express.json` behind a parser that
+leaves no mark (`500`, `stream.not.readable`) and shows the helper passing. The
+LRS admin routes sit behind an admin gate and were not probed live.
+
+## 2026-11-12 — Foxxi LRS: a template checked in part is not a match
+
+Checking a statement against a brought xAPI Profile reported a template as
+followed when no violation was found, even when part of that template had not
+been evaluated: a template whose only rule has a `selector` was skipped whole
+and still made the statement `conformant`. A template with no violation found
+and a part not evaluated is now listed apart, in `partiallyCheckedTemplates`.
+Only a template evaluated whole counts as a match. When the only clean
+templates are partial ones the verdict is `not-fully-checked` and `conforms` is
+false. A fully checked match is kept when another template, or the profile's
+patterns, could not be evaluated.
+
+## 2026-11-12 — Native commits and the Foxxi LRS: numeric timing of every write
+
+Two changes that were faster locally (fewer round trips, compact index nodes)
+did not move the live bridge: a single-statement write still takes about
+0.76 s at the edge (median of 24, 2026-11-12), against 139 ms for the same
+write on one machine. A third of live writes take 1.1 to 1.5 s. Where that time
+goes is not known, and a local profile has now mispredicted production twice.
+This adds the measurement, and changes no behaviour.
+
+- `packages/pgsl`: `NativeCommitStore` option `onCommit` receives one
+  `NativeCommitDiagnostic` per commit: outcome (committed, replayed, conflict,
+  error), whether staging was batched and whether the commit started from the
+  caller's snapshot, and the milliseconds spent reading the head, probing,
+  building (serializing, encrypting, index work), staging, writing the head,
+  reading it back and assembling the result, with the staging request count,
+  item count and bytes. Numbers only. An observer that throws or rejects does
+  not affect the commit, and a client without an observer makes exactly the
+  requests it made before.
+- `applications/foxxi-content-intelligence`: the native LRS store reports each
+  write transaction (`onWrite`: attempts, so a retried head conflict is
+  visible, and the time reading the head, preparing and committing), and the
+  xAPI routes report each write request's method, a resource name from a fixed
+  list, status and total milliseconds. The bridge logs all three as
+  `[foxxi-lrs] native-commit`, `native-write` and `xapi-write`. The difference
+  between `xapi-write` and `native-write` is what the handler spends outside
+  the store. No tenant, key, statement, URL or error text is logged.
+## 2026-11-12 — Foxxi LRS: check a statement against an xAPI Profile you bring
+
+`POST /xapi/profile/validate` checked a statement against Foxxi's own profile
+and no other, so the author of a profile for another domain could have its
+statements kept here but not checked here. Send the profile document as
+`profile` beside the statement (`instance` or `statement`) and the check is
+against that profile's statement templates: each template's determining
+properties (verb, object and context activity types, attachment usage type) and
+its rules (location, presence, any, all, none). The answer names the templates
+followed, or why the closest one is not, and lists what it did not evaluate
+(a rule's `selector`, statement-reference templates, patterns) instead of
+passing it. Nothing is stored and nothing is fetched: the profile is whatever
+the request carries.
+
+Tried against the twelve templates of a published phone role-play profile,
+recovered from its RDF reading: usable, and a statement missing required
+locations is reported with each one.
+
+Not covered: the LRS does not refuse a statement on ingest for breaking a
+brought profile, a profile cannot be registered or kept, and patterns (the
+order of statements) are not checked.
+
+## 2026-11-12 — Foxxi: guest learner routes refused the bridge's own body decorations
+
+With the body-parser fix deployed, the live guest routes answered
+`400 learning_sign_in_input_invalid` to a well-formed request. The bridge adds
+`__client_ip` (and, given a bearer, `__caller_token`) to every JSON body, and
+the guest routes accept a body only with exactly the fields they expect. The
+other learner routes already drop those two; the guest routes now do too, and
+still refuse any other extra field.
+
+The guest routes' per-address rate limits now use the bridge's `__client_ip`
+where it supplies one. Behind the bridge's proxy the socket address is the same
+for everyone, so the per-address limit had been one limit for all callers.
+
+The regression fixture now puts both of the bridge's behaviours in front of the
+routes: the foreign parser and the decorations.
+
+## 2026-11-12 — Native commits: index nodes as compact byte holons (opt-in), and a cheaper base64 check
+
+Halving a write's round trips (the entry of the same date below) did not make the
+live bridge faster: 0.94 s median before, 1.09 to 1.26 s after, on 12 writes
+each. Pod requests there cost about 40 ms, not the 100 ms the estimate assumed.
+Profiling the write found the cost: **a single-statement write uploaded about
+1.3 MB**, nearly all of it index.
+
+An index node holds up to sixteen references. Stored as one wide PGSL tuple,
+each reference and every contiguous run of them is a node of its own: sixteen
+references (about 5 KB) became 554 PGSL nodes and 443 KB of plaintext, about
+790 KB once encrypted and base64 encoded, and the root node is rewritten by
+every commit. The bridge built, validated and encrypted that megabyte and the
+pod server validated and stored it, per write.
+
+- `packages/pgsl`: new `NativeCommitStore` option `compactIndexNodes`. When
+  set, an index node is written as a byte holon (the five-field tuple
+  `createNativeByteArtifact` makes) whose payload is the canonical JSON of the
+  same references. It is still a content-addressed, validated PGSL holon,
+  encrypted and staged like any artifact. A reader accepts a compact node only
+  as the exact canonical encoding of well-formed, content-bound references
+  under this store's owner, with the same key, prefix, fanout and duplicate
+  checks as the wide form.
+- **Every client from this version reads both forms, whatever the option
+  says**, so a store converts as its paths are rewritten and both kinds of
+  writer can extend one head. **A client older than this change cannot read a
+  compact node**: turn the option on only when every reader of the store has
+  been upgraded. The Foxxi LRS store, whose bridge is its only reader, turns
+  it on. The head, commit object and record formats are unchanged.
+- `integrations/pgsl-css-accessor`: the native commit and staging commands
+  validated `bodyBase64` with a pattern match over the whole body and then
+  again by exact re-encoding. The re-encoding alone proves the alphabet and
+  padding, so the pattern is replaced by a length check; on megabyte bodies it
+  was the pod server's largest single CPU cost. What is accepted is unchanged.
+
+**Measured** (single-statement `PUT /xapi/statements`, the LRS over the actual
+pod server, gate and Postgres 16 on one machine, 20 writes after 3 warm-ups):
+
+| | staged bytes per write | staging request | whole write | +100 ms per pod request |
+|---|---|---|---|---|
+| before | 1 344 558 | 187 ms median | 326 ms median | 720 ms median |
+| after | 304 090 | 68 ms median | 139 ms median | 549 ms median |
+
+Of what is still staged, the commit object (about 122 KB, a nine-field tuple) is
+now the largest item; it is not changed here.
+## 2026-11-12 — Foxxi: guest learner routes answered 500 behind the bridge's body parser
+
+Found on the live bridge minutes after guest learners were switched on: every
+`POST /i2idlx/learning/guest/*` answered `500 internal error` before reaching
+its handler. The bridge's global JSON parser comes from the shared bridge
+package's Express 5; this module's own `express.json` is Express 4's, which
+skips an already parsed request only by a mark the newer parser does not
+leave. It read the consumed stream again and failed. The guest routes now
+parse a body only when none is parsed yet.
+
+The tests missed it because their fixture took both parsers from the same
+Express. A new case runs the whole guest sign-in behind a parser that leaves
+no mark; it fails without the fix.
+
+## 2026-11-12 — Foxxi: the grant route answered every browser 400
+
+The first run of kept guests against the live services found that
+`POST /play/grant` refused every request with `invalid_play_grant_request`, so
+each guest was silently the tab-only guest. The bridge's request middleware
+writes `__client_ip` (and `__caller_token` where a bearer was sent) into every
+JSON body before a route sees it, and the grant service refuses a body with any
+key but its two. The tests called the grant service directly and never carried
+what the route receives.
+
+The route now takes those two names off first (`playGrantRequestBody`); any
+other key a caller adds is still refused, and neither value reaches what the
+relay signs. A test reproduces the refusal with the body as routed, and another
+fails if the middleware starts adding a name the helper does not know.
+
+
+## 2026-11-12 — Native commits: a write reads the head once and skips three repeat requests (opt-in)
+
+After batched staging, a single-statement LRS write still made eight sequential
+requests to the pod server: two head reads and two reads of the commit object
+behind the head (one pair by the caller, one pair again inside `commit`), the
+`OPTIONS` capability probe, the staging request, the head compare-and-set and
+its read-back. Three options on `NativeCommitStore` (`packages/pgsl`), all off
+by default, remove four of them:
+
+- `commitFromExpectedSnapshot`: a commit whose `expected` is a snapshot object
+  this client itself returned starts from that verified head instead of reading
+  the head again. A head that moved since is caught by the head compare-and-set,
+  after staging, with the same conflict or replay outcome as before; a copy of
+  a snapshot, or one from another client, still reads the head first.
+- `reuseBackingCommits`: the immutable, content-addressed commit object behind a
+  head is fetched once. A client keeps the few it has fetched or staged with a
+  confirmation; a kept copy has its digest checked, is decrypted and is compared
+  with the head on every use. The head itself is fetched and verified on every
+  read.
+- `capabilityProbeTtlMs`: a commit may rely on the client's last successful
+  `OPTIONS` probe for this long. The probe only decides which requests a commit
+  sends; every write is still confirmed by its receipt or read-back. `ready()`
+  always probes.
+
+The head compare-and-set, its read-back and the staging confirmations are
+unchanged. The Foxxi LRS store turns all three on (probe period five minutes).
+
+**Measured** (single-statement `PUT /xapi/statements`, the LRS over the actual
+pod server, gate and Postgres 16 on one machine, 20 writes after 3 warm-ups):
+
+| | pod requests per write | loopback | +100 ms per pod request |
+|---|---|---|---|
+| before | 8 | 242 ms median | 1081 ms median (1022 to 1174) |
+| after | 4 | 267 ms median | 720 ms median (624 to 784) |
+
+Loopback time does not move because it is encryption and validation, not
+requests. On the live bridge the previous change measured 0.94 s median per
+write (12 writes, 2026-11-12) against about 2.7 s before it.
+## 2026-11-12 — Foxxi: the learner workbench signs guest grants as its own application
+
+Guest learners were built but had no grant signer. The decision was that the
+I2IDL-X workbench and the dashboard are two applications to identity, not one.
+
+- `learnerGuestGrantConfig` (`src/play-grant.ts`) turns the workbench's signer
+  on only when `FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY` is set. The audience is
+  the bridge's own origin. The bridge stops at start if the key is the
+  dashboard's `FOXXI_PLAY_SERVICE_PRIVATE_KEY`, if the origin is not public
+  HTTPS, or if it is also `FOXXI_PLAY_AUDIENCE`: either would make the two
+  applications one.
+- The bridge hands the workbench a signer backed by the existing
+  `PlayGrantService` (sign in `existingOnly`, relay `sign_request`, echo
+  checked). `GET /play/status` adds `learnerWorkbench` when it is configured.
+- The workbench now lets its signer set the grant's purpose and expiry and
+  checks both on what comes back (the purpose exactly; an expiry in the future
+  and no more than 120 seconds away).
+
+Still off in production: no variable was set, no service account was created,
+and identity's `PROVISIONAL_PLAY_CLIENTS` is unchanged. The steps are in
+`i2idlx/LEARNING-CONNECTIONS.md`, "Guest learners".
+
+## 2026-11-12 — Foxxi: a provisional guest can be a learner, and only a learner
+
+Follow-up to the per-application Provisional Play change. Foxxi's learner
+sign-in refused every provisional account, so a `foxxi` application in
+`PROVISIONAL_PLAY_CLIENTS` would have admitted guests with nowhere to go.
+
+- Three routes under `/i2idlx/learning/guest/` (`grant`, `challenge`,
+  `session`) admit a guest by browser-key proof: the workbench issues a
+  single-use challenge, the browser's P-256 key signs it with its attestation,
+  and the workbench asks identity's `/play/provisional/verify`, then checks
+  issuer, audience, owner, DID, WebID and pod again itself. It holds no relay or
+  identity credential for a guest, repeats the identity check at most every 30
+  seconds, and ends the session at the guest's deadline or after an hour.
+- `LearningAccountAuth.resolve()` refuses a guest session unless the route opts
+  in. Opted in: joining a connection as a learner, a guest's own links, its
+  courses, progress, readiness and released review, and course launch. Refused
+  with `403 learning_guest_refused`: everything a connection's owner does,
+  LTI setup, progress notifications and the AI learning context.
+- Browser module `i2idlx/app/src/learning-guest.js` keeps a non-extractable
+  P-256 key and the attestation in IndexedDB, and never stores the identity
+  token. The learning panel shows "Start as a guest learner" only when the
+  workbench offers it.
+- Off in production: guest sign-in exists only where the workbench is given a
+  `guestGrant` signer for Foxxi's service agent, and the bridge wires none. The
+  bridge's grant service for dashboard guests (`src/play-grant.ts`) signs for
+  the dashboard's origin and is not connected to it. No environment variable is
+  read and none is set. The relay sign-in path is
+  unchanged and still refuses provisional accounts.
+
+Application code only (`applications/foxxi-content-intelligence`); no change to
+identity, the relay, the css-gate, or any ontology.
+## 2026-11-12 — Foxxi: an operator's script for the play service's account and agent
+
+Turning on kept guests (`DURABLE-GUEST.md`) needs two things done once on the
+live services: the service wallet's identity account, and its agent's
+registration with the relay. `tools/setup-play-service.mjs` does both, for an
+operator to run.
+
+Run with no flag it changes nothing: it signs in only if the account exists,
+asks the relay whether it signs for the agent, and reports. `--create-account`
+creates the account; `--register-agent` registers the agent; where identity has
+hosted terms it prints the version and links and creates nothing until
+`--accept-terms=<version>` is given. The key comes from the environment only,
+and neither it nor a token is printed. It ends by printing the
+`PROVISIONAL_PLAY_CLIENTS` entry for a person to set; it sets nothing itself.
+
+It has run only against stand-ins for identity's accounts and the relay's
+registry. Whether the relay registers an agent over REST on a pod nothing has
+bootstrapped is unconfirmed; the script prints the relay's own refusal if not.
+
+## 2026-11-12 — Foxxi: a guest can be kept by their browser, in a provisional pod
+
+The dashboard's guest is a wallet the tab makes, and a reload lost it unless the
+guest had written down its recovery phrase. Foxxi can now use the deployment's
+provisional owners (`deploy/identity/PROVISIONAL-PLAY.md`) to keep it, when an
+operator turns that on. It is off by default and nothing live changes with this
+merge.
+
+- **Bridge** (`src/play-grant.ts`): three routes. `GET /play/guest` says whether
+  guests are kept; `POST /play/grant` asks the relay to sign the grant identity
+  requires, for the one browser key the request names; `GET /play/status` shows
+  an operator the agent DID and pod the relay signs the service as, and whether
+  it is ready. On only when `FOXXI_PLAY_SERVICE_PRIVATE_KEY` and
+  `FOXXI_PLAY_AUDIENCE` are both set. The service signs in to identity with its
+  own wallet, `existingOnly`, so the bridge never creates an account.
+- **Dashboard** (`dashboard-app/src/auth/durable-guest.ts`): a "Keep this guest
+  in this browser" box on the sign-in page. The browser gets a provisional owner
+  on a non-extractable P-256 key, seals the recovery phrase to an X25519 key
+  whose secret is wrapped by a non-extractable AES key, and writes the sealed
+  document to the one path its token allows. The sign-in page then offers
+  "Continue as that guest" until the guest deadline, with no sign-in repeated.
+  New dependency: `tweetnacl`, in the dashboard only.
+
+The bridge's authentication is unchanged, and a guest that could not be kept is
+the tab-only guest it always was. Foxxi's I2IDL-X learner sign-in still refuses
+provisional accounts.
+
+The test runs the browser client and the grant service against identity's own
+admission code and the storage gate's own guest policy, not a stand-in for them.
+Not exercised: anything that needs the live services (the service account, its
+registration with the relay, the relay's signature, CORS, IndexedDB in a real
+browser). `applications/foxxi-content-intelligence/DURABLE-GUEST.md` lists the
+operator steps and exactly what has and has not been run.
+
+## 2026-11-11 — CI: the Chromium install decides on whether the browser launches
+
+On 2026-11-11 the "Passkey login and single-prompt receipt signing (Chromium)"
+job failed for about two hours on `master` and on every pull request. The
+runners could not resolve the Ubuntu package mirror, so
+`npx playwright install --with-deps chromium` failed on nine optional font
+packages after ten minutes of apt's own retries. Every library Chromium needs
+was already on the runner image, the browser was never downloaded, and no test
+ran.
+
+`tools/ci-install-chromium.mjs` replaces that command in the three workflows
+that used it through npx (`identity-tests.yml`, `e2e-passkey.yml`,
+`client-signature-live.yml`). It installs the system packages within three
+minutes and treats a failure there as a warning, downloads the browser with up
+to three attempts, then launches Chromium headless and renders a page. The
+launch decides the step: a runner that really lacks a library fails there, with
+the launcher's message. No test is skipped or changed.
+
+The two workflows that install Chromium through Python's Playwright
+(`i2idlx-ui-oracle.yml`, `i2idlx-v93-release.yml`) are unchanged.
+
+Also corrected: `deploy/identity/PROVISIONAL-PLAY.md` said Foxxi's dashboard
+guest signs in through SIWE and gets a `u-eth-` account. It does not: the
+tab-made wallet signs requests to the Foxxi bridge as `did:ethr:<address>` and
+calls neither identity nor the relay.
+
+`MIN_FILES` in `tools/lint-gate.mjs` goes from 670 to 673, the number the gate
+named when the new files took the linted count past its slack.
+
+
+## 2026-11-11 — Native commits: a commit's immutable representations are staged in one receipted request
+
+A native commit stages each changed record, the previous operation's record,
+every index node on the changed paths and the commit object before the one head
+compare-and-set. Each was a conditional PUT and a GET read-back, one after
+another, so a single small write cost 15 to 39 requests to the pod server.
+
+**Why staging them concurrently failed (the closed attempt).** The pod server
+answered some of the concurrent PUTs `500 native resource changed repeatedly
+during replacement`, the client then read back a 404 and reported `Native
+immutable artifact could not be read back unchanged`. CSS locks only the
+document a PUT targets. For every document created in a container it also
+writes the missing ancestor containers and rewrites the container's modified
+date, with no lock on the container, and `LdpStore` did each of those as an
+optimistic replacement that gave up after eight attempts. A loss means another
+writer's replacement committed, so one of N writers can lose N - 1 times in a
+row: eight documents created together in a new container reproduce it every
+time against Postgres. The document itself never conflicted with anything.
+
+**What changed.**
+
+- `packages/pgsl-store`: `LdpStore`'s unconditional replacements (container
+  markers, metadata) now retry up to 64 times with a short random pause instead
+  of 8 times in lock-step. Concurrent native PUTs into one container are all
+  confirmed (16 at once, across two server processes, in the contract test).
+- `integrations/pgsl-css-accessor`: a new operation,
+  `POST <container>/` with `Content-Type:
+  application/vnd.interego.native-stage+json` and
+  `{version: 1, items: [{name, contentType, bodyBase64}]}` (at most 64 items and
+  8 MiB of representations). Each item is the same create-if-absent native
+  commit a conditional PUT would be, through the same authorized ResourceStore
+  path, one after another. The answer is `{version: 1, receipts: [...]}`, one
+  per item in order: `{name, status: "staged", created, revision, bodyDigest,
+  contentType, size}`. A name must be `<label>-<sha256 of its bytes>` with an
+  optional extension, so the operation cannot name an auxiliary resource, a
+  nested path or any document not derived from the bytes given. A name that
+  already holds the identical representation is read back and confirmed
+  (`created: false`); one that holds anything else answers 409. Identical
+  means the bytes and the whole media type, parameters included: the same
+  bytes under another charset are another representation. The items are
+  independent commits, not a transaction. Advertised on `OPTIONS` as
+  `Interego-Native-Stage: 1`. Both server configurations use it; ordinary POST
+  is unchanged. The css-gate needs no change to carry it (it is an authorized
+  write to the container) and now lists the header for cross-origin clients.
+- `packages/pgsl`: `NativeCommitStore.commit` reads that header from the
+  `OPTIONS` probe it already makes and, when present, sends everything the
+  commit stages in one request (several for a large commit: 64 items or 4 MiB
+  each) before the head compare-and-set. Every receipt must name its item and
+  state the digest, size and type of the submitted bytes; a missing, extra,
+  reordered or mismatched receipt refuses the commit with the head untouched.
+  A batch that is not answered (transport failure, any non-2xx) falls back to
+  the per-representation PUT and read-back. The head compare-and-set, its
+  read-back and its conflict and lost-acknowledgement handling are the same
+  requests as before. New option `stageIndividually: true` keeps the old
+  staging against a server that offers the batch. Index nodes a commit built
+  are remembered as verified only after their receipt.
+
+**Measured** (single-statement `PUT /xapi/statements`, the LRS over the actual
+pod server, gate and Postgres 16 on one machine, 20 writes after 3 warm-ups):
+
+| | pod requests per write | loopback | +100 ms per pod request |
+|---|---|---|---|
+| before | 21 median (15 to 39) | 305 ms median (211 to 539) | 2471 ms median (1759 to 4065) |
+| after | 8 (always) | 242 ms median (185 to 322) | 1081 ms median (1022 to 1174) |
+
+The 100 ms column delays each request the LRS makes to the pod, as a stand-in
+for the bridge → gate → pod distance in production, where a read takes 0.1 to
+0.3 s; it is not a production measurement. The eight that remain are three
+head reads, two commit-object reads, the `OPTIONS` probe, the staging request
+and the head write.
+
+**Deploy order.** The pod server first, then clients; either order is safe. An
+old client never sends the new request, and a new client against an old server
+sees no header and stages as before.
+## 2026-11-11 — CLAUDE.md: an agent's own pull requests are opened ready and merged when green
+
+Sessions kept stopping to ask the owner to merge: they opened pull requests as
+drafts, which disarms the repository's auto-merge, and treated the review
+gate's `needs-human-review` as a stop although it has been advisory since
+2026-09-21. `CLAUDE.md` now says what to do: open ready, merge when the checks
+are green, read the gate as advice, and still ask before anything that cannot
+be undone outside the repository.
+
+## 2026-11-11 — Provisional Play: a guest's write surface is per application, not Hallowmarch's
+
+Provisional Play was already keyed by application origin
+(`PROVISIONAL_PLAY_CLIENTS`), but what a guest could write was the literal
+`hallowmarch` in three services: the css-gate's two checkpoint paths, the
+relay's two graphs, and the identity janitor's game-data patterns. A second
+application could be admitted and then had nowhere of its own to save.
+
+Each client entry now takes two optional fields (deployment composition only;
+no protocol or ontology change):
+
+- `namespace`, a slug matching `^[a-z][a-z0-9-]{1,31}$`. It replaces the
+  literal in the gate's `<namespace>/checkpoints/<sha256>.json` paths and the
+  relay's `urn:graph:<namespace>:<kind>:<owner>` graphs. The two document kinds
+  are unchanged. Identity reads it from its own configuration, never from a
+  request, and puts it in the signed guest token marker
+  (`provisionalPlay.namespace`) only when it is not `hallowmarch`; a token whose
+  namespace is not the one configured now for its application does not verify.
+  The gate and the relay read it only from that marker, check its shape again,
+  and refuse a credential whose namespace is present and malformed. The relay's
+  persisted OAuth record keeps the field, which its strict parser would
+  otherwise have dropped, turning the guest into a Hallowmarch one after a
+  restart.
+- `maxPods`, that application's own lifetime admission cap, counted from the
+  origins inside the admission ledger's existing attestations.
+  `PROVISIONAL_PLAY_MAX_PODS` still bounds the total and is checked first. The
+  ledger's format is unchanged. New refusal:
+  `503 provisional_play_application_capacity`.
+
+An entry with neither field behaves byte-identically: same marker, same paths,
+same graphs. The janitor now treats `<namespace>/checkpoints/<64 hex>.json`
+under any well-formed namespace as game data (names a guest pod uses for
+something else, such as `context-graphs`, are excluded), so an application
+taken out of configuration does not strand its guests' saves.
+
+Do not change the namespace of an application that has live guests: a guest
+that already bound its graphs under the old one has spent its two bindings, and
+the relay refuses any under the new one (`409 provisional_namespace_changed`).
+
+Rollout: deploy the relay and gate, then identity, and only then configure a
+namespace. A gate from before this change ignores the field and would let a
+second application's guest write the two `hallowmarch/` documents of its own
+pod. See `deploy/identity/PROVISIONAL-PLAY.md`, "More than one application".
+
+Not in this change: Foxxi is not configured as an application, no production
+variable is set, and Foxxi's learner sign-in still refuses provisional
+accounts. Its dashboard guest remains the tab-made wallet account.
+
+## 2026-11-11 — Foxxi test: the compression test's server binds loopback
+
+`linked-data-answers-are-compressed.test.ts` started its Express app with
+`.listen(0)`, which binds every interface. The relay-invariants check requires
+every test server to name `127.0.0.1`, and has failed on master since that test
+merged. It now does.
+## 2026-11-11 — Railway: health-bridge is a tracked service
+
+The fleet audit reported `health-bridge` as a service nobody knows about, and its
+resource cap as one with no recorded minimum. It is meant to be there. It is now
+a row in `tools/railway-services.mjs`, marked as built by Railway from source
+rather than as an image this repository publishes, so the image tools refuse to
+repoint it, and its cap as set on the live service (0.25 CPU, 500000000 bytes)
+is recorded as its floor.
+
+Not covered: the audit compares image pins to master, and this service has
+neither; its running commit is not checked by anything here.
+
+## 2026-11-11 — Deploy gate: a fleet audit run no longer counts as a check on the commit it lands on
+
+The auto-deploy gate (`tools/ci-green-for-sha.mjs`) reads every workflow run
+GitHub files under the commit being deployed. It leaves out only its own run,
+the post-deploy live signature check and Dependabot's updater. The Railway fleet
+audit (`railway-fleet-audit.yml`) says in its own header that nothing in it gates
+a deploy. It runs on a daily schedule or when dispatched by hand, and GitHub
+files either run under whatever master's head is at that moment. So the gate
+counted it anyway.
+
+On 2026-11-11 a scheduled audit run, filed under 3d974242 at 14:53, failed
+because the services were five commits behind master (and one Railway service is
+not in the repository's service table). The gate then refused that commit's
+deploy, which was the rollout that would have brought the services up to master:
+the drift the audit reported blocked its own fix. That deploy was already late:
+on 86eb7389, the identity tests' Chromium job had failed three times installing
+system packages, because the runner could not resolve Ubuntu's package mirror.
+That failure is outside this repository and is still counted, as it should be.
+
+`FLEET_AUDIT_WORKFLOWS` (`Railway fleet audit`) now joins the post-deploy check
+in `NON_GATING_WORKFLOWS`, the gate's default ignore list. A test checks that
+the name matches the workflow's own `name:`, and that the workflow still runs
+only on its schedule or by hand. A push or pull_request trigger there would make
+it a check on that commit, which must gate it. Another test checks that a failed
+test workflow on the same commit still refuses the deploy. The three new tests
+fail on the old gate.
+
+Not covered: the audit's own findings are unchanged and still need acting on,
+in the Actions tab. They are services behind master until the next deploy, and
+a Railway service missing from `tools/railway-services.mjs`, which is the
+owner's to add or remove.
+
+## 2026-11-11 — Foxxi bridge: linked-data answers are compressed, and its memory floor follows its heap
+
+The edge in front of the bridge compresses JSON and HTML but not JSON-LD or
+Turtle, which are the bridge's largest answers. The bridge now compresses those
+itself, with brotli or gzip as the client accepts: the entry point goes from
+269 KB to 60 KB, the Turtle affordance manifest from 652 KB to 80 KB and an
+ontology from 122 KB to 14 KB (measured on a local run). Each encoding has its
+own ETag and the answer varies on `Accept-Encoding`. Streams, files, small
+answers, plain JSON and `no-transform` answers are left as they are.
+
+The bridge's heap setting on the live service was lowered from 3072 MiB to
+1536 MiB on 2026-11-11, after the process settled at about 350 MiB. The
+recorded memory floor for `foxxi-bridge` in `tools/railway-services.mjs`
+follows it: 2 GiB, from 4 GiB. No limit override is set on the service, so this
+changes what the guard would flag, not what the service is given.
+
+The dashboard's sign-in card links to the bridge's `/start` page.
+
+Not covered: the workbench page at `/i2idlx/` (2.1 MB, 514 KB as the edge
+gzips it) is served as a file and is not touched by this.
+## 2026-11-11 — Dependencies: fixed releases of the MCP SDK and minimatch under claude-code-acp, by an npm override
+
+`@zed-industries/claude-code-acp` 0.16.2, a root dev dependency and its newest
+release, pins `@modelcontextprotocol/sdk` 1.26.0 and minimatch 10.2.1 exactly.
+Both versions carry high-severity advisories, and the only fix `npm audit`
+offered was going back to 0.12.6. The root `package.json` now has an
+`overrides` block, scoped to that one package, that sets
+`@modelcontextprotocol/sdk` to 1.32.2 and minimatch to 10.2.6, the newest
+releases in the majors it pins. The package itself stays at 0.16.2.
+
+The root lockfile changes in exactly two entries: `@modelcontextprotocol/sdk`
+moves from 1.26.0 to 1.32.2, and the minimatch nested under claude-code-acp
+from 10.2.1 to 10.2.6. No package is added or removed, and no other version
+moves. claude-code-acp is the only package in the tree that depends on the v1
+SDK, so the hoisted copy belongs to it alone. 1.32.2 also accepts
+`@hono/node-server` 2.x, and the locked 1.19.17 still satisfies it; 10.2.6 asks
+for brace-expansion 5.0.8 or later, and the locked 5.0.12 satisfies that. npm
+10.9.4, which regenerated the lockfile here, also dropped the `libc` fields on
+the four Linux packages of the Claude Code CLI and rewrote the flags on the
+`applications/foxxi-content-intelligence` entry. Those lines are kept as they
+are on master, because a newer npm wrote them and they have nothing to do with
+this change.
+
+No service imports either package, so nothing changes at run time. The
+packages are not only on developer machines, though. The images built from
+`deploy/Dockerfile.{foxxi,pev,wrd,agp,wsp,jev-harness}-bridge`,
+`deploy/Dockerfile.discord` and `deploy/Dockerfile.interego-bridge` run a plain
+`npm ci` against the root lockfile and keep its dev dependencies, so they carry
+claude-code-acp, the v1 SDK and its minimatch, unused. Auto-deploy counts the
+root manifests as an input to every image that installs from them
+(`tools/deploy-bundle-scope.ts`), so the deployed ones are rebuilt from the new
+lockfile once this lands, and the high-severity SDK leaves them with it. The
+relay's runtime image does not carry them: its build stage installs the root
+tree, but the image ships only the `node_modules` installed from the relay's
+own manifest. The dashboard and PGSL browser images are built the same way,
+and identity and the validator install from their own lockfiles.
+
+The agent-development-practice reject-always-probe adapter launches
+claude-code-acp by hand against a live agent, and
+`tools/probe-sse-mcp-handshake-live.ts`, a live probe also run by hand, imports
+the hoisted v1 SDK. The relay uses SDK v2 and still imports nothing from v1
+(`deploy/mcp-relay/tests/no-frozen-dependency.test.ts`). The holodeck shim's
+comment (`examples/holodeck/lib/mcp-shim.mjs`) that the v1 SDK "is no longer
+installed anywhere in this repo" is out of date. No workspace declares v1, but
+it is installed, hoisted to the root `node_modules` as claude-code-acp's
+dependency, so a v1 import anywhere in the repo still resolves. The shim itself
+uses v2.
+
+Compatibility was read from the published packages. claude-code-acp's code
+imports only `McpServer` from `@modelcontextprotocol/sdk/server/mcp.js` and
+`minimatch` from `minimatch`. In 1.32.2 the same subpath exports exist, and the
+file is still there. The bodies of `registerTool` and `connect` are unchanged,
+and so are the members of the transport interface, but `McpServer` behaves
+differently in four ways that claude-code-acp's own use reaches, and none of
+them breaks it. It installs its tool handlers at construction when the options
+declare tools, which claude-code-acp's call does
+(`{ capabilities: { tools: {} } }`), so `tools/list` answers with an empty list
+instead of "method not found" when no tool gets registered. It throws at registration on
+an `inputSchema` it does not recognise; claude-code-acp passes objects of zod
+fields, which it does. It parses missing tool arguments as an empty object. And
+a failed validation reports every issue with its path, not only the first
+message. It also gains an optional limit on tool-input size, off unless set.
+The agent SDK claude-code-acp hands that server to only calls `connect()` with
+its own in-process transport. The probe's `Client`, `SSEClientTransport` and
+`StreamableHTTPClientTransport` keep their exports and the options it passes.
+The transports gain a `redirectPolicy` option whose default no longer follows a
+redirect to another origin, while the probe's raw leg uses plain `fetch`, which
+does. The probe connects straight to the relay, so its legs still agree; its
+header now says what a relay address that redirects to another origin would do
+to them. minimatch 10.2.6 has the same exports and still takes the three options
+claude-code-acp passes (`dot`, `matchBase`, `nocase`). It adds two optional
+recursion limits. `@anthropic-ai/claude-agent-sdk` 0.2.44, another of its
+dependencies, depends on neither package (its only npm dependencies are
+optional image libraries), so the lockfile holds no copy of either under it.
+Its bundled code carries compiled-in MCP SDK code of its own, and no sign of
+minimatch.
+
+`npm audit` on the root lockfile, before: 24 vulnerable packages, 3 high and 21
+moderate. After: 23, none high and 23 moderate. `@modelcontextprotocol/sdk`,
+rated high for six advisories (four high, two moderate) in OAuth handling,
+request and body size limits, task ownership, token audience checks and
+redirects, is no longer listed. minimatch drops from high to moderate: its two
+high advisories, slow matching on some crafted patterns, are fixed in 10.2.3.
+claude-code-acp, flagged through both, drops from high to moderate.
+
+Checks: the `tsconfig.check.json` typecheck, the lint gate,
+`no-frozen-dependency.test.ts`, the editor-witness tests and the holodeck shim
+boot test pass. The local `node_modules` still holds 1.26.0 and 10.2.1, so these
+ran against the old versions, with one exception: the typecheck was run again
+with the probe's SDK imports pointed at the 1.32.2 declarations. All three
+imports resolved to them, and it reported no errors, as it does against 1.26.0.
+Neither claude-code-acp nor the probe was run. CI installs from the lockfile
+and runs the rest on the new versions.
+
+Not covered: `@zed-industries/claude-code-acp` is deprecated, renamed
+`@agentclientprotocol/claude-agent-acp`. Moving to it waits because the
+successor renames the permission-menu option ids, and the
+agent-development-practice editor witness
+(`adapters/editor-witness/src/measure.ts`) tells a mode switch from a grant by
+matching the chosen option id against the new mode id. With other ids it would
+miscount without saying so. minimatch keeps one moderate advisory, fixed only
+in 11.0.1, a major release that the override does not reach. The agent SDK's
+compiled-in MCP code is not a lockfile entry, so `npm audit` does not see it
+and an override cannot change it. The other moderate advisories are unchanged:
+the eslint, electron-builder and Solid server chains, and `@hono/node-server`,
+which the relay's v2 MCP transport also uses. The overrides pin exact
+versions, so a later fixed 1.x or 10.x release reaches this copy only when
+someone edits the block; `npm update` and `npm audit fix` leave an exact
+override where it is. The block goes in the same change that replaces
+claude-code-acp, because npm says nothing about an override whose package has
+left the tree. The holodeck shim's out-of-date comment, and its README's line
+listing `@modelcontextprotocol/sdk` as a prerequisite where the shim needs the
+v2 packages, are not corrected here.
+
+## 2026-11-11 — Native LRS: a head is materialized once, and re-read only where it changed
+
+On 2026-11-11 the Foxxi bridge's native xAPI LRS stopped answering. Its head
+then indexed about 4,300 nodes, a complete read of it took about 560 s, and
+every query, count and listing started its own. Nothing was shared between
+requests in flight and nothing was kept between requests. Point writes already
+read selected index paths only, and still do; they queued behind those reads.
+
+Three changes, one per layer.
+
+**Foxxi adapter** (`native-lrs-store.ts`). A complete read now first reads and
+verifies the pod's current head without its index. If that is the head this
+process last materialized, the verified snapshot is returned. Otherwise the
+callers that found the same head await one materialization. A caller never
+joins a read begun for a different head, so a request that has just written is
+not answered from before its own write. The snapshot is not a source of truth:
+it is used only while the pod still names the same commit, and a head that has
+changed is verified again. `getAttachment` reads its one index path where it
+used to read the whole index.
+
+**`@interego/pgsl` `NativeCommitStore`**. New opt-in `indexNodeCacheEntries`
+keeps decoded index nodes, each only after it was fetched, digest-checked,
+decrypted and validated under the exact reference it is later asked for. The
+head is still fetched and verified on every read. Because index nodes are
+immutable and content addressed, a head changed by one commit shares almost all
+of its nodes with the one before, so reading it fetches the changed paths only.
+Concurrent reads of one node share one fetch, the nodes a commit writes are
+kept as it writes them, and selected paths are looked up in parallel within the
+client's existing read limit. Off by default: a hit does not show that the pod
+still serves that artifact, which an integrity audit wants to see. The Foxxi
+bridge turns it on.
+
+**`@interego/core` envelope encryption**. Profiling a cold read with no network
+showed most of the time was not the index walk or the cipher. `tweetnacl-util`
+picks its implementation by whether `atob` exists, Node has one, and so base64
+and UTF-8 went through a per-byte path written for old browsers on every
+envelope sealed or opened. `encryption.ts` now converts with `Buffer` and
+`TextEncoder`/`TextDecoder` and hands anything they do not plainly accept to
+`tweetnacl-util`, so the same inputs are accepted and refused with the same
+errors. The native artifact validator also compared fragment constituents by
+serializing them; it now compares the items.
+
+Measured in process, with no network, on 3,000 records in 481 index nodes:
+
+| | before | after |
+| --- | --- | --- |
+| complete read, nothing cached | 8.3 s | 3.8 s |
+| complete read of an unchanged head | 8.3 s, 483 fetches | about 10 ms, 2 fetches |
+| complete read after this client's own write | 8.3 s, 483 fetches | about 12 ms, 2 fetches |
+| complete read after another client's write | 483 fetches | at most 12 index fetches |
+| one-statement write, counting the read-back of what it stages | 24 reads | 13 reads |
+
+Not covered: nothing here was run against the production pod, so the 560 s
+figure is not re-measured. A first complete read after a restart is still one
+read per index node; at the production head that was about 4,300 nodes. Staging
+a commit's new artifacts is still serial. The 81,165 test artifacts under the
+old location are untouched, and the bridge still points at the fresh location
+set on 2026-11-11.
+
+## 2026-11-11 — I2IDL-X UI oracle: a pull request merged during its build keeps its build runs
+
+The UI oracle tied each build run to its pull request through the run's
+`pull_requests` list. GitHub fills that list only with open pull requests whose
+head matches the run, so once a pull request is merged or closed, every build
+run of its head lists none. That is what failed Actions run 42951589971: PR #827
+was merged at 03:16:04 UTC, two seconds after the selection step started, and
+when the native run finished at 03:22:16 it named no pull request, so the step
+failed at its next check. The entry below corrects its own account of that run.
+
+In a pull request, a build run now belongs to it when its event is
+`pull_request`, its head branch is the pull request's head branch, and its head
+commit and head repository match, as before. None of these change when the pull
+request closes. The `pull_requests` list still counts when it is not empty: a
+run that names only other pull requests is still excluded. This loosens one
+thing on purpose: an empty or missing list no longer excludes a run by itself.
+It tightens another: a run of the same commit on another branch, which GitHub
+can list with this pull request because their head commits match, is now
+excluded by `head_branch`. Replayed with the times and fields GitHub reports,
+run 42951589971 would have chosen native run 42951590127 at the first check
+after it finished, where master's script failed; the change in the entry below
+would have failed at the end of the wait. The checks now run in the order
+`name`, `path`, `repository`, `head_repository`, `head_sha`, `event`,
+`head_branch`, `pull_requests`, `status`, `conclusion`, then `artifact`. A run
+named by hand has no pull request, so `event`, `head_branch` and
+`pull_requests` are not checked for it, as before.
+
+Two failures now say so sooner or more plainly. A pull request whose head is in
+another repository, a fork, fails at once with "This pull request's head
+repository is <repository>, not <this repository>. The UI oracle uses build
+outputs only from heads in <this repository>, so a retry will not help.", or
+"missing" when the fork was deleted, because every build run of such a head
+fails `head_repository`. When the eight-minute wait ends and every run found
+failed an identity check (`name`, `path`, `repository`, `head_repository`,
+`head_sha`, `event`, `head_branch` or `pull_requests`), the error says
+"Retrying only this UI job will not help: every run found fails an identity
+check." in place of "Retry only this UI job after native outputs are
+uploaded.", which it keeps when any run was passed over for `status`,
+`conclusion` or `artifact`. Such heads, for example ones whose only runs are on
+another branch, still wait the full eight minutes (17 checks) before failing.
+
+CI: `i2idlx-typescript.yml`, whose units job runs `ui-oracle-selection.test.ts`,
+now also starts when `.github/workflows/i2idlx-ui-oracle.yml` changes, so a pull
+request that edits only the selector script runs the test that executes it.
+
+Tests: `ui-oracle-selection.test.ts` still runs the workflow's own script
+against a stand-in GitHub API, whose runs and pull request payload now carry
+the event, head branch and head repository. Added: run 42951589971's timeline
+replayed; a merged pull request's runs with an empty list and with none; runs on
+another branch at the same commit and runs of another event, never chosen,
+during the wait and in the final validation; a payload with no head branch,
+which binds no run; a fork's head, also a deleted one, failing before any call
+to GitHub; the identity-only wording, and the mixed cases that keep the retry
+advice; the capped error with 11-digit run ids, the longest check name and the
+longer advice (570 characters, held under 600); the `Selected run 101 excluded
+by conclusion: failure, expected success.` line; and that
+`i2idlx-typescript.yml` starts on a change to the UI workflow. Two earlier tests
+that treated an empty list as excluding a run now use a list naming another
+pull request, or another branch. Ten of the eighteen tests fail on the script
+before this change; all pass on it.
+
+Not covered: not exercised against GitHub itself; the replay uses the times and
+fields GitHub reports for runs 42951589971, 42951590127 and 42951589975. The
+branch binding relies on GitHub reporting a pull request run's head branch as
+the pull request's head branch, as it does for those runs. Only the first
+failing check of a run is reported.
+
+## 2026-11-11 — I2IDL-X UI oracle: each build run is checked in full before it is chosen
+
+The UI oracle's first step picks a completed native or golden build of the pull
+request's exact head and its retained artifact. It took the first completed run
+of the exact head (native runs: successful) that had a matching unexpired
+artifact, and only then checked the run's path, repository, head repository and
+association with the pull request. A peer review run through Interego, on the
+final head of #827, found the case this breaks: when that first run fails one
+of those later checks, the step fails with "Selected build run does not belong
+to the expected repository, workflow and source head" and never tries a later
+run that meets every check.
+
+Actions run 42951589971, the run that review read, failed that way, but this
+change alone would not have passed it. PR #827 was merged two seconds after the
+step started, and GitHub lists only open pull requests on a run, so from then
+on neither build run of that head named the pull request. The native run
+finished six minutes later with no association; the golden run had not
+finished, and had none either. Replayed with the times GitHub reports, this
+change fails that run at the end of the eight-minute wait, excluding both runs
+by `pull_requests`. What it does is make a later eligible run reachable and say
+why each run was passed over. The entry above changes the association check,
+and with it that run would have passed.
+
+Each run is now checked in full while the candidates are read, native runs
+first and golden runs after them, as before. A run excluded by its own fields
+has no artifact listing read. The final validation of the chosen run, or of a
+run named by hand, still runs after the choice with the same checks, through
+the same function, so the two cannot drift apart, and the artifact receipt is
+still checked. No check was loosened, and the error messages for a named run
+are unchanged.
+
+Reading the new log lines: each poll writes one line per native or golden run
+on that head that was passed over, as `Candidate run <id> (<workflow name>)
+excluded by <check>: <detail>.` The check is the first that failed, in the
+order `name`, `path`, `repository`, `head_repository`, `head_sha`,
+`pull_requests`, `status`, `conclusion`, `artifact`. The detail is usually
+`<found>, expected <wanted>`; for `artifact` it reads `no unexpired <artifact
+name>`, and for `name` `<name> is neither build workflow`. A run that fails one
+of these checks, other than `artifact`, in the final validation is logged the
+same way as `Selected run <id> excluded by …` before its error; the "names a
+different build workflow" error and the missing-artifact error write no such
+line. When the eight-minute wait ends with nothing chosen, the error keeps its
+first two sentences and adds `Last check excluded run <id> by <check>, …` for
+up to ten runs, then how many more, or says that no native or golden build run
+was found for the head.
+
+Tests: `ui-oracle-selection.test.ts` still runs the workflow's own script
+against a stand-in GitHub API. It now covers the peer review's case, with no
+association and with one for another pull request; a run excluded by each
+check, never chosen, with its log line; the error after the wait, its cap and
+the empty case; and the strict checks and unchanged messages for a run named
+by hand. The first three fail on the old script and pass on the new one. The
+fourth passes on both. The earlier tests pass unchanged, waiting included.
+
+Not covered: only the first failing check of a run is reported. A head whose
+build runs all fail an identity check, such as a fork's head or a pull request
+merged before the choice, used to fail as soon as a native run finished, with
+"does not belong". It now fails only at the end of the eight-minute wait (17
+checks), with the no-outputs error and its `Last check excluded run <id> by
+<check>` reason, and the retry advice in that error does not help when the
+reason is an identity check. The entry above keeps a merged pull request's
+runs eligible, fails a fork's head at once again, and words that error for the
+cases left. Not exercised against GitHub itself. The workflow that runs this
+test, `i2idlx-typescript.yml`, was not started by a change to
+`i2idlx-ui-oracle.yml` alone; the entry above adds it.
+
+## 2026-11-11 — Foxxi bridge: a front door at /start
+
+Everything on the bridge can be done with no account, by a person or by an
+agent, but nothing said so where a newcomer lands: the root answers with every
+affordance at once. `GET /start` is one description of what can be done here,
+in the order a newcomer would do it: start as a guest, play a hosted package,
+read your own record, bring a package. A browser gets a page; anything else
+gets the same steps as JSON, each with the affordance to call, where its
+request goes and where its input contract is. It also says how a request is
+signed by an agent holding only a key.
+
+The page names only what the deployment offers: bringing a package is left out
+when that route is closed, and so is any step whose affordance is not active.
+It loads no script and no outside resource.
+
+Not covered: nothing links to `/start` yet, from the dashboard or the root.
+## 2026-11-11 — Foxxi bridge: the ontologies it loads at start no longer hold 2.5 GB
+
+The bridge composes eighteen ontologies into its in-memory lattice when it
+starts. Each has one sub-holon per subject, and all of them went into one final
+sequence, hundreds of items wide; the lattice builds about n²/2 fragments over a
+sequence of n. Measured with the memory figures the bridge now reports: 100 MB
+before that step, 2,557 MB after it, in production and in a local run alike.
+
+Past eight sub-holons, a holon is now composed of holons of holons until few
+enough remain. The same local run settles at about 300 MB, and `/ns/<module>`
+serves the same ontologies. A holon of eight or fewer sub-holons is composed as
+before, so a published memory keeps its address.
+
+Not changed: the bridge's heap limit and its Railway memory floor, which were
+sized for the old figure and can come down once this is seen in production.
+
+## 2026-11-11 — Dependencies: the Claude Code CLI 2.1.251 as a dev dependency, in place of Dependabot's #817
+
+This lands Dependabot's #817 with the changelog entry its checks needed.
+
+- **Root lockfile:** the dev dependency `@anthropic-ai/claude-code` moves from
+  `^2.1.179` to `^2.1.251`, with its eight platform packages. 2.1.251 fixes a
+  high-severity advisory in the CLI's file-edit tool, the only high one
+  `npm audit` reported for this package. No other entry in the lockfile changes.
+- **Nothing in this repository runs it.** No workflow calls the CLI. The shared
+  workspace's desktop shell looks for a CLI the user installed globally, and the
+  agent-development-practice probe drives `@zed-industries/claude-code-acp`, not
+  this package. So no one runs it except a developer who runs the CLI from
+  this checkout. Correction, from the entry on the claude-code-acp override
+  above: the bridge images that run `npm ci` on the root lockfile keep its dev
+  dependencies, so they carry the CLI too, unused.
+- **Node:** 2.1.251 declares Node 22 or later. The repository asks for Node 20
+  or later and some CI jobs run Node 20. npm only warns about an engine it does
+  not match here (no `engine-strict`), and since nothing runs the CLI, those jobs
+  are unaffected. A developer running it from this checkout needs Node 22.
+- **#817's own checks:** its test-selection job failed because its bridge could
+  not start without the repository's secrets, which a Dependabot run does not
+  get. The I2IDL-X oracle job failed waiting for build outputs. Neither touches
+  this change; this branch runs both with the usual secrets.
+
+Not covered: the other high advisories `npm audit` reports are in
+`@zed-industries/claude-code-acp`'s own copies of `@modelcontextprotocol/sdk`
+and `minimatch`, also dev-only. They need a newer release of that package:
+the only fix `npm audit` offers is going back to 0.12.6. The moderate ones are in the
+eslint, electron-builder and Solid server chains, and in `@hono/node-server`
+under the relay's MCP transport. The relay never calls that module's static
+file server, which is where the advisory lies.
+
+## 2026-11-11 — Practice Evidence: a repeated quote's note calls nothing highlighted once the text is deleted
+
+A review of the previous entry found its note on a quote found more than once
+still untrue in one case. Once the learner deletes the conversation text, the
+session page draws no highlight: each line reads "(text deleted)" and each quote
+"(deleted with the conversation text)", because a line's highlights are drawn
+only over its tidied text, which a deleted conversation no longer has. A quote's
+place and count are kept, so the note went on saying "Found N times; the one
+highlighted is in line T." Now the note says which line is highlighted only when
+the page draws that line's highlights, the same test the conversation panel
+uses; otherwise it says "Found N times; it was saved from line T." The note on
+the line the AI named is unchanged, as it never spoke of a highlight. The
+README's sentence on the note says the same.
+
+The same review found the count can name a place this page shows otherwise. The
+count is of the lines as a chat's views show them, a fingerprint as its
+stand-in. The web app shows a fingerprint bare and a stand-in the learner wrote
+out as written, so where a learner wrote out a stand-in the page could say
+"Found 2 times" with the quoted words in one line only. The note now says
+"Found N times in the lines as the AI was shown them", and the README says why
+one of the places can show other characters on the page.
+
+Tests: in the web app, driven in a DOM, the session of the previous entry's test
+is deleted by the learner and opened again. It draws no highlight; the quote
+found in lines 1 and 3 and saved in line 3 says "Found 2 times; it was saved
+from line 3.", the one saved in line 1 says so beside the note on the line the
+AI named, the quote found once has no note, and nothing in the feedback is
+called highlighted. The two notes fail without the change. Every note checked
+by the tests now reads "Found 2 times in the lines as the AI was shown them;".
+
+Not covered: the session page still shows no number beside a line, so once the
+text is deleted the line a note names is found only by counting the
+conversation's lines from 0, the other person's opening line first, as the
+judge packet numbers them. A check of a quote as sent is made against the stored
+lines, as before, so a line holding the copied words where its views show them
+otherwise (a stand-in written into a rubric IRI, which the views mask again) is
+counted, and with no line named the quote is saved there as sent, as before.
+
+## 2026-11-11 — Practice Evidence: a repeated quote says which place is highlighted, and counts every place it shows
+
+The previous entry left two gaps in how a quote found more than once is shown.
+The web app's note on such a quote said "Found N times; the first is
+highlighted." The highlight is at the place the quote was saved, which, since a
+quote is checked in the turn the judge named first, need not be the first place
+it was found. The note now names that line: "Found N times; the one highlighted
+is in line T." A line is numbered by its turn, as the note beside it numbers the
+line the AI named and as the judge packet numbers it. The README, the guide, the
+landing page and the action descriptions never said which place is highlighted,
+so nothing there was wrong.
+
+A quote's count (`occurrences`) counted only the places of the check it was
+saved by. Where one learner line held a rubric fingerprint, which every view
+shows as its stand-in, and another held that stand-in written out, a quote read
+back and saved in the fingerprint's line counted 1, leaving out the line that
+showed it written out; and a quote saved as sent in the written-out line counted
+1, leaving out the fingerprint's line. Now a quote that checks out counts each
+place any check of it checks out at, once: the quote as sent, each stretch read
+back, and the quote with every stand-in read back. A place is a turn and where
+the stretch starts in that turn normalised; every reading of one stretch starts
+there, as a view keeps the stored line's offsets, so two readings that check out
+at one place count once. Only the count changes: the saved text, place,
+fingerprint, why, `readBack`, the turn the judge named and the highlight are
+those of the check that was kept, a quote that does not check out has no count,
+and with no stand-in to read back the count is the same as before.
+
+The count is stored in a judgment's body, under the body's sha256 and the
+record's signature, and nothing counts it again or compares it: a judgment saved
+before keeps the count it was saved with, and still verifies. It is not one of
+the record's typed triples. A chat reads the count as before; each place counted
+is in a line the quote would have been saved in had the judge named that line,
+so it tells a chat nothing that naming each line in turn would not.
+
+Tests: a quote that shows in two learner lines, the stand-in written out in one
+and a fingerprint shown as it in the other, is saved where it was before with
+the judge naming either line, no line or a line that does not hold it, and
+counted 2 each time; a quote in one place counts 1, read back or as sent; words
+with no stand-in count as before; a quote that does not check out has no count;
+with no reader the check is exactly the one before; and where a doubled space
+and a curly apostrophe make two readings check out at one place, that place
+counts once. Through the bridge, the judge's chat of the previous entry has its
+quote counted 2 in the web app's answer. In the web app, driven in a DOM, a quote
+found in two lines and saved in the second says the highlight is in line 3; one
+saved in the first, because the AI named a line that does not hold it, says
+line 1 beside the note on the line it named; and each highlight is in the line
+its note names. The two named-line counts, the bridge's count and the web app's
+note fail without the change.
+
+Not covered: judgments saved before this change keep the counts they were saved
+with, which can be lower; nothing counts them again. The session page shows no
+number beside a line, so the line the note names is found by its highlight, as
+with the note on the line the AI named.
+
+## 2026-11-11 — Foxxi dashboard: bring a package from the Learn page
+
+Anyone who signs may bring a SCORM or cmi5 package to the bridge, but only by
+composing the signed request themselves. The Learn page now has a "Bring a
+package" card: choose a file, and it is read in the browser, signed as whoever
+is signed in, a guest included, and sent with `foxxi.host_package_signed`. The
+page says what the bridge answered, and the list of hosted packages is read
+again so the new one can be launched. The card says that what is brought is
+public. It is not shown on a bridge that does not offer the affordance.
+
+Not covered: the card checks the file against the bridge's default size only;
+a bridge set to take less refuses in its own words, which the page shows. Not
+exercised against the live bridge from a browser.
+
+## 2026-11-11 — Foxxi dashboard: start as a guest, on a key the tab makes
+
+The dashboard's sign-in page offered a demo roster, a wallet extension or a
+pasted key, so someone arriving with none of those had no way in, although the
+bridge already takes any key's signature for that key's own identity. The page
+now leads with "Start as a guest": the tab makes a key, signs in as it, and
+lands on Learn, where the guest can play what is hosted and read their own
+record.
+
+The key is kept in the tab's memory only. The Learn page says so, and shows
+the key's recovery phrase when asked, to be written down: pasted into "connect
+a self-sovereign identity", it signs the guest back in as the same identity.
+Neither the key nor the phrase is written to browser storage.
+
+Not covered: a guest who closes the tab without the phrase cannot come back as
+that identity. The pages that read with a tenant-directory session (the
+profile, my activity) answer a guest as they do any wallet outside the
+directory.
+## 2026-11-11 — Foxxi: the bridge reports what memory it holds
+
+The deployed bridge sits near 3 GB of memory from the moment it starts, on a
+host that bills for memory held. Started with no pod behind it, the same code
+needs about 210 MB. Nothing the bridge reported could say what the rest is.
+`GET /metrics` and `/metrics.json` now carry the process's resident memory,
+its JavaScript heap in use and reserved, and memory held outside the heap, and,
+where the process runs in a container, what the container is charged for and
+how much of that is the processes' own memory, file cache or shared memory.
+Those tell live data from a heap left grown and from memory that is not the
+process's.
+
+They also carry how many xAPI statements the bridge holds in memory and the
+budget it may hold before evicting, at about 1 KiB a statement.
+
+Not covered: this measures and changes nothing else. The figures are read when
+asked for; no history is kept. Read against the deployed bridge only after it
+is deployed.
+## 2026-11-11 — Foxxi: anyone who signs may bring a package to be hosted
+
+Only an admin could host a SCORM or cmi5 package on the bridge. A person or an
+agent with no account could play what was hosted, as a wallet their browser
+made, but could bring nothing. `POST /agent/scorm/host` (affordance
+`foxxi.host_package_signed`) now takes the same upload from any wallet, or any
+agent holding a delegation. The package is parsed and kept as an operator's
+is, its receipt names the signer as the uploader, and it is listed and played
+the same way.
+
+The route is bounded where the operator's upload is not: a 25 MB package, five
+packages per signer per hour and twenty per address, each changeable in the
+environment, and `FOXXI_OPEN_HOSTING=off` closes it. A value the bridge cannot
+honor stops it at startup.
+
+Since strangers' content is then served from the bridge's own host, an admin
+can take a hosted package down by its sha-256 with
+`foxxi.remove_hosted_package`: the package and what describes it leave the
+tenant pod and the bridge, and its course is forgotten, so it is no longer
+listed, launched or served. What learners already recorded of it stays in
+their own records.
+
+Not covered: the per-signer count is kept in the running process, so a restart
+clears it, and no cumulative storage budget is kept. Only an admin can take a
+package down; whoever brought it cannot. A hosted package still earns no
+credential, since it grades itself. Neither route was exercised against the
+live bridge.
+
+## 2026-11-10 — I2IDL-X workbench: the stale-directory check opens a row before counting its controls
+
+Since a capability's details are built when its row opens, the check that a
+directory shown from its build snapshot cannot run requests counted enabled
+Validate buttons while every row was closed, so it found none whatever the
+rows would have held. It now opens one row first and requires that row's
+Validate button to be there and disabled, then counts as before. Found in peer
+review of the change that defers the details.
+
+Not covered: only the first row is opened, so a snapshot row further down that
+enabled its button would not be seen.
+## 2026-11-10 — Practice Evidence: a quote is checked in the turn the judge named before a match elsewhere
+
+A peer review, run on fictional data, found that the turn a judge names for a
+quote was not always where the quote was saved. One of the learner's lines held
+a rubric fingerprint, which every view shows as its stand-in; an earlier line
+held that stand-in written out, copied from an earlier view of the same
+scenario version, so both lines showed the same stretch. A judge who copied the
+stretch from the later line and named its turn had the quote saved, and
+highlighted, in the earlier line, as sent, with a note of the turn it had
+named. The quote as sent was checked first, and a match in any turn ended the
+check before the stretch in the named turn was read back. Without the earlier
+line, the same quote was read back and saved in the named turn. The README and
+the docstrings already said the named turn comes first. The as-sent check has
+come first since quotes were first read back, so this is not new.
+
+Now a check that checks out in the named turn, as sent or read back, is kept
+ahead of one that checks out only in another turn. Among checks that check out
+only elsewhere the order is as before: the quote as sent, then each stretch
+read back by its place, then the quote with every stand-in read back. With no
+turn named, or no answer that shows a line otherwise than stored, nothing
+changed. A quote is still never saved as a stretch that did not check out. The
+README and the docstrings now state the order.
+
+Tests: the peer review's case as a unit test, with the judge naming the line
+that holds the fingerprint (read back and saved there), the line with the
+stand-in written out (saved there as sent), no line (as before), and a turn
+where it checks out in no view (saved as sent where it does, as before).
+Through the bridge, a judge's chat quotes the fingerprint's line from the
+packet and names it: the judge's saved answer, the web app's quote and every
+highlight are on that line. Both fail without the change; the other cases pass
+with and without it.
+
+Not covered: the web app's note on a quote found more than once still says the
+first place is highlighted, which has not been so since the named turn was
+preferred; it is unchanged. A quote read back in the named turn counts how
+often the stored words occur, so a copy written out in another line, which
+reads differently as stored, is not counted. Both are covered by the 2026-11-11
+entry on a repeated quote.
+
+## 2026-11-10 — I2IDL-X workbench: a capability's details are built when its row is opened
+
+The Agents view's capability directory built every operation's inputs, buttons
+and details up front, inside rows that start closed: about ninety elements for
+each of some two hundred operations, on the Agents view and again in the
+workbench pane beside an Orchestrate run. A row's body is now built the first
+time the row opens and is kept after that, so edits in an opened row stay.
+
+Map, Insights and the Ask view before an agent is connected each gain a
+heading that screen readers announce. Nothing visible changes on them.
+
+Not covered: a closed row's details no longer match the browser's find-in-page.
+The directory's own filter still searches every operation's title, name,
+description and IRI. Small touch targets on Semantics and Review, and field
+labels overlapping nodes on the map, are unchanged.
+## 2026-11-10 — Practice Evidence: a quote reads back whichever of a fingerprint's last digit and its stand-in's takes a mark
+
+The same peer review found a case that reading a quote back by its place
+missed. Sometimes a combining mark follows a rubric fingerprint's last hex
+digit that the digit does not take, but the stand-in's last digit does: a
+fingerprint ending in a decimal digit, a stand-in ending in a letter, and a dot
+above, say. The judge packet and `normalisedText` then show the stand-in's
+letter and the mark as two characters, which NFC would fold into one. The quote
+rule normalises a quote with NFC, so an exact copy from the packet was not
+found as the packet shows it, and the line's text, normalised, was lined up
+with the normalised line only in the other direction. Where the stretch also
+held a curly apostrophe or a doubled space, the quote was found nowhere and was
+read back with every stand-in put back, the one the learner wrote out
+included, so it was "not found verbatim in any learner turn". The readings
+tried before had kept some runs as written and found it. A copy from the text
+or the packet that a chat app normalised on the way failed the same way, both
+before that change and after it, even with a single fingerprint and nothing
+written out.
+
+Now the line's text and its normalised form, each as shown, are normalised as
+a quote is and lined up with the normalised line in whichever direction NFC
+folds at a fingerprint's last digit: the letter or digit and the marks after it
+in one are taken as one place against the same in the other, when both start
+with a hex digit and hold the same marks. The quote is looked for in both. So
+a quote copied exactly from the packet or the text, normalised on the way, or
+copied again from how an answer shows a read-back quote, is found at its place
+and read back as the stored words there. More marks after the letter than NFC
+folds into it line up the same way. Nothing else changed: a place that starts
+or ends inside a word is still skipped, and a quote is never read back by
+offsets that do not line up.
+
+Tests: over fictional fingerprints ending in decimal digits and in hex
+letters, with one mark, another, and two marks that NFC puts in order and folds
+in part, meeting all four ways the two last digits take them; with and without
+the stand-in written out, with a doubled space and a curly apostrophe; each
+copy from the packet and from the text, as shown, straightened and normalised,
+and each way an answer shows the read-back quote, copied again as it is and
+normalised. The earlier fold test now uses fingerprints ending in decimal
+digits too. Through the bridge: a fingerprint ending in a decimal digit, a
+stand-in ending in a letter, the stand-in written out and a curly apostrophe;
+a judge quotes the packet as shown, a second judge copies the first's quote as
+shown, and the packet's stretch and the session's text are quoted normalised on
+the way. Each is credited, and the web app keeps the learner's words. All
+three tests fail without the change. The earlier entry's "Not covered" now
+says what it missed.
+
+Not covered: a quote a chat app changed in a way the quote rule's normalising
+does not undo (an apostrophe it does not straighten, say) is not found, as
+before. Where the two views differ anywhere but at a fingerprint's last digit
+and the marks after it, which the tests did not meet, that view normalised is
+not looked in.
+
+## 2026-11-10 — Practice Evidence: contesting a review hands the learner's chat on in its own answer
+
+A peer review, run on fictional data, found that contesting a review, the act
+that reopens judging, answered the learner's own chat with no hand-off note.
+The session could be judged again, and the chat was rightly not offered the
+judge packet, but nothing in that answer said what to do instead: the note came
+only with a later read of the session. Ending the conversation, the act that
+first opens judging, already carried it.
+
+The contest's answer now carries the same `handOff` a read of the session
+carries: to the learner's own chat, while there is room for another judgment.
+The README's list of answers that carry it, and the contest action's
+description, now name it.
+
+Tests: the live-run test checks the contest's answer from the learner's chat:
+contested, handed on to an appointed judge with the session page, no judge
+packet offered, and the same hand-off a read of the session then carries.
+Without the change, that answer has no hand-off and the test fails.
+
+Not covered: withdrawing a review is an admin's act, so its answer goes to the
+admin, never to the learner's chat, and carries no hand-off; the learner's chat
+gets it on its next read of the session, as before. A contest sent from the web
+app gets none, as before, since the page shows Send to your judge itself.
+
+## 2026-11-10 — Practice Evidence: a quote is read back by where it sits in the line as shown
+
+The same peer review found a limit in how a judge's quote is read back. A
+learner's line held one rubric fingerprint, written as `urn:pev:rubric:` and
+its hex, then four copies of the stand-in every view shows for it, which the
+learner had copied from an earlier view and written out, with ordinary words
+between. A judge copied the stretch the judge packet shows, starting after
+`urn:pev:rubric:`, so the quote held five runs of hex that read the same. The
+first had to be read back as the fingerprint and the other four kept as
+written. With up to four such runs every mix was tried, but with five or more
+only two were: every run read back, or every run kept. So the quote, copied
+exactly, was "not found verbatim in any learner turn", and the criterion was
+counted at its lowest level.
+
+Now nothing is tried in turn. The quote is looked for in each of the learner's
+lines as the views show it: the line as an attempt's text shows it, and its
+normalised form as the judge packet and normalisedText show it, the quote
+normalised as the quote rule normalises it. Where it is found, the stored
+line's words at the same place are what it is read back as. A stand-in is as
+long as what it replaces, so the places line up. Where a mark after a
+fingerprint's last hex digit makes NFC fold the two into one letter that the
+stand-in's digit does not take, the line's text, normalised, shows the digit
+and the mark, and it is lined up with the normalised line letter by letter.
+So which runs stand for a fingerprint and which the learner wrote out is read
+from the line, however many there are. The quote rule still holds: the turn
+the judge named is kept where the words sit there, and a place where the quote
+starts or ends inside a word of the stored line is not read back, so no part
+of a fingerprint is. A quote found nowhere is saved as before, with every
+stand-in read back, and says why. The saved quote, its fingerprint, the
+highlights and the transcript's fingerprint are still the stored words', a
+quote shown from its line and copied again reads back again, and no stand-in
+equals a fingerprint Practice Evidence keys in a field, or the start of one.
+A fingerprint followed by more hex in a line is shown as a stand-in with that
+hex after it; a read-back quote of it shown without its line now masks the
+first 64 hex of such a run too.
+
+Tests: the peer review's case with five runs, and with four and ten; a
+fingerprint and a calibration kind mixed with written-out stand-ins of both;
+quotes starting inside `urn:pev:rubric:` and at the kind's hex; the turn the
+judge named; quotes that cut a word, and the other person's lines; the folded
+letter copied from the text and changed on the way; and the same through the
+bridge, from the packet, with a second judge copying the first's quote.
+
+Not covered: the line's text, normalised, was lined up with the normalised
+line only where NFC folds the fingerprint's last digit and a mark into a letter
+the stand-in's digit does not take. The other way round, where the stand-in's
+digit takes the mark and the fingerprint's does not, the normalised form as
+shown is not in NFC, and a quote copied exactly from the judge packet, of a
+stretch the text shows otherwise (with a curly apostrophe or a doubled space),
+was not found, nor was one normalised on the way by a chat app; the readings
+tried before had found the first. The entry "a quote reads back whichever of a fingerprint's last digit
+and its stand-in's takes a mark" covers both. A quote a chat app changed in a
+way normalising does not undo is not found, as before.
+
+## 2026-11-10 — Practice Evidence: a reopened session is handed to a judge as a finished one is
+
+A peer review, run on fictional data, found that a session reopened by a
+contest or a withdrawn review could still be judged, but the learner was not
+shown how to send it to a judge. An appointed judge could fetch its judge
+packet while it had room for another judgment. The learner's own chat
+assistant got no hand-off note for it, though, and the web app did not show
+Send to your judge. When that assistant asked for the judge packet, the
+refusal told the learner to use Send to your judge, which the session page did
+not show in those states.
+
+Now every state a judge can assess a session in is treated alike: finished,
+judged, contested and review withdrawn, each while the session has fewer than
+five judgments. In each, the learner's chat gets the hand-off note, the web
+app shows Send to your judge (the judge packet is offered to the web app's own
+agent and to a key the learner holds, as for a finished or judged session),
+and the refusal to the learner's chat points to it. Once a reviewer has signed
+off, or the session has five judgments, none of them is offered, and the
+refusal says why. Tests check each of those states: what a read tells the
+learner's chat and the web app, the refusal's words and where they point, and
+whether the session page shows Send to your judge.
+
+Not covered: in a contested or withdrawn-review session the learner is still
+not offered Get a second opinion (a bridge's own model), though they may ask
+for it there; that was so before. On a workspace whose web app has no
+Interego sign-in, the hand-off still names Send to your judge, where that page
+says Get the hand-off; such a page cannot sign in as the Interego account a
+chat's session belongs to.
+
+## 2026-11-10 — Foxxi keeps a finalized LTI grade beside any scored retake that is not final
+
+A scored LTI retake marked Pending, PendingManual or Failed now appears
+separately in the learner's gradebook while the last finalized grade stays in
+place, as a NotReady retake already did. Before, such a post replaced the
+reported grade, and a later NotReady post brought the finalized grade back. A
+newer finalized grade still replaces it, and a post with no score still clears
+the grade.
+
+Not covered: stored gradebooks need no migration, since the finalized grade
+was already kept with these posts. No live tool was observed sending these
+three statuses; the change is tested locally only.
+
+## 2026-11-10 — Practice Evidence: the old wording of the demo rubric's top level is gone from the tests
+
+The same peer review found one test that still repeated the demo rubric's old
+top level for asking their view: a reviewer's reason for overriding a level
+read "before saying anything else about it". It was free text, not a copy of
+the rubric, so nothing broke, but the demo rubric and the scripted judge now
+say "before deciding anything", and the reason now does too. A test now checks
+that the old words appear in no file of Practice Evidence: its code, its
+README, its pages, or its tests.
+
+Not covered: the check looks only inside Practice Evidence. The changelog
+still quotes the old wording, as it should, to say what changed.
+
+## 2026-11-10 — Practice Evidence: a quote of a stand-in the learner wrote out reads back
+
+A peer review, run on fictional data, found one kind of quote that still failed
+to read back. A learner can copy a stand-in from an earlier view of the same
+scenario version and write it out in a later line, beside the fingerprint it
+stands for. Every view then shows the two the same way. A judge who quoted both
+had every run of hex digits that stands for a fingerprint read back as that
+fingerprint, the one the learner wrote out included, so the quote was "not
+found verbatim in any learner turn" and the criterion was counted at its
+lowest level.
+
+Now, when the quote with every stand-in read back is not found, it is also
+read with some of the runs of hex digits that have nothing around them kept as
+written, fewest first. A stand-in with `urn:pev:rubric:` or `pev/` around it is
+always read back, since no view shows such a run as written. Only readings
+that some stored line holds are checked. The first that checks out in the turn
+the judge named is kept, otherwise the first that checks out anywhere. A quote
+no reading finds is saved as before, with every stand-in read back, and says
+why.
+
+## 2026-11-10 — Practice Evidence: a fingerprint an accent follows is masked in the normalised form too
+
+A peer review, run on fictional data, found that a rubric fingerprint written
+into a learner's line as `urn:pev:rubric:` and its 64 hex digits, with a
+combining mark (an accent) right after the last digit, was masked in the line
+as stored but not in its normalised form. Normalising puts a hex letter and an
+accent after it together into one letter (`e` and an acute accent become `é`),
+so the normalised form held 63 hex digits and that letter, which was not taken
+for a fingerprint. The judge packet, an attempt's normalisedText and a quote's
+normalised form then showed the first 63 hex digits of the fingerprint as
+written. This needs someone who reads the stakes to have written a real
+fingerprint into a line, which the design already accepts, but a line and its
+normalised form are meant to be masked the same way.
+
+Now both forms are read alike: 63 hex digits and a letter made from a hex
+digit and the marks after it count as a fingerprint too. The 63 digits are
+replaced with the stand-in's, and the letter with the stand-in's last digit
+and the same marks where those make one letter, or otherwise with another hex
+letter that takes those marks, picked by the stand-in. Every view keeps its
+length, so a quote's place in a line still holds. A judge's quote copied from
+either form is read back and checks out. A read-back quote shown with no line
+to show it from masks such a run as well, of 64 hex digits or of 16.
+
+Not covered: the letter shown tells that the fingerprint's last digit takes
+those marks, which the line and its normalised form shown side by side already
+tell. A mark inside the run of hex digits, rather than after it, splits the
+run in both forms, so neither form takes it for a fingerprint, as before.
+
+## 2026-11-10 — Practice Evidence: a judge's saved answer shows a quote from the turn it was found in
+
+A peer review, run on fictional data, found that a judge's own answer after
+saving and the session could show one saved quote two ways. A learner's first
+line held 16 hex digits written out on their own, and a later line held the
+same digits as part of a calibration kind, which every view shows as a
+stand-in. A judge copied a quote from the later line, stand-in included, and
+said it came from that turn. It was read back and checked out there, and the
+session showed it as that line shows it. But the judge's answer after saving
+gave the quote without its place, so it was looked for again, found first in
+the earlier line, and shown as that line shows it: with the hex digits the
+stand-in stands for. Nothing was shown that the earlier line does not show
+anyway, but the two answers disagreed, and the saved answer showed which
+digits that stand-in stands for.
+
+Now the judge's answer after saving gives each quote's place: the turn it was
+found in and where it starts and ends there. These carry none of the stakes,
+and the judge chose the turn. A quote that was read back is shown from that
+place, as the session and the review queue show it. An answer that gives a
+quote's turn but not where in it is shown from the first place in that turn.
+
+Not covered: an answer that gives a read-back quote with no place at all is
+still shown from the first turn that holds those words. No answer does that
+today.
+
+## 2026-11-10 — Practice Evidence: the demo rubric's top level for asking their view
+
+The same peer review found a gap in the demo scenario's rubric. The criterion
+"Asks for their view" reads "Invites the colleague's account before deciding
+anything", and its middle level reads "Asks only after deciding what happens
+next". But its top level read "Asks for their side before saying anything
+else about it". So a learner who states the facts, then asks, then decides fit
+no level above the lowest. The top level now reads "Asks for their side before
+deciding anything", the same moment the criterion names. Ids, level values,
+weights and the pass rule are unchanged, so the demo's levels, and the tests
+that check them, still hold. The test copy of the demo scenario changes the
+same way, and a new test checks that it stays the same rubric as the demo's.
+The scripted demo judge's second, lower rationale, which repeated the old
+wording, now uses the new one.
+
+Not covered: a rubric's words are part of its fingerprint, so the demo
+scenario as this code writes it has a new rubric fingerprint. The live
+workspace's published copy of the demo scenario is a separate published
+record and is not changed by this; its author would publish it again to pick
+up the new wording. Sessions and judgments already recorded keep the rubric
+they were made against.
+
+## 2026-11-10 — Practice Evidence: a quote that was read back is shown as the line shows it
+
+A peer review, run on fictional data, found the quote fix below still broke in
+one case. A learner's line held a rubric fingerprint in its usual form and,
+apart from it, a run of 64 hex digits that was no rubric's (a build reference,
+say). The session shows such a run as written. A judge's quote copied from the
+line was read back and checked out. But answers to a chat showed the saved
+quote with every run of 16 or 64 hex digits as a stand-in, the unrelated one
+included, so it no longer matched the line. A second judge who copied the quote
+from that answer had it fail as "not found verbatim in any learner turn", and
+the criterion was counted at its lowest level.
+
+Now an answer to someone who reads no stakes shows a read-back quote that
+checked out as the stretch of the learner's line it was matched against,
+exactly as the line's own views show it: its normalised form as the judge
+packet shows that stretch, and its words as the session shows the line when
+they were copied from there. A stand-in there stays a stand-in, and a run of
+digits the line shows as written stays as written. Copied into another
+judgment, the shown quote is read back and checks out again, as often as it is
+copied. The session, the review queue and a judge's own answer after saving
+all show it this way. Nothing stored changes: the saved quote, its
+fingerprint, the highlights and the transcript's fingerprint are still worked
+out from the learner's words as stored, and no stand-in equals a fingerprint
+Practice Evidence keys in a field, or the start of one.
+
+Not covered: a read-back quote that did not check out has no stretch of a line
+to be shown from, so it is shown as before, with every run of 16 or 64 hex
+digits in it as a stand-in. So is a quote an answer shows without its
+session's lines, which no answer does today.
+
+## 2026-11-10 — Work Redesign: a copied message is the one for the form as it is
+
+A reviewer found that Map a process could copy a message for a process name
+the person had already changed. Copy and paste's button asks the bridge for
+the drafting instructions for the document, and while that answer was on its
+way the person could rename the process, or edit the document or its title.
+When the answer came, the page copied the message made for the form as it had
+been, showed it under "Show the message", and kept it for the next press,
+while the form said something else.
+
+The page now reads the document's title, its text and the process name
+together when it asks, and reads them again when the answer comes. If any of
+them changed, it asks again for what is there now and copies that, so one
+press copies what the person sees. An answer is kept under the title, text and
+name it was asked for (one that comes after the form changed is not kept), and
+the preview and the next press use it only while the form says those, so they
+never use an answer made for another form; a name changed and changed back
+uses it again. The same holds while the browser puts the message on the
+clipboard: if the form changes then, the message for the form as it is is
+copied after it, and "Copied" is said once. If the browser refuses the
+clipboard, "Copy this" offers the message for the form as it is once the
+browser has answered. If the form is still changing after three tries, or has
+changed into one that cannot be copied (the title cleared, or the document
+grown past what a chat can record), the page says the form changed and asks
+the person to copy again. A message an earlier try put on the clipboard for
+the form as it was is then taken off again, and so it is when the answer for
+the changed form is refused or "Copy this" opens; a message copied since, by a
+later press or another copy button, is left alone. Only a write the browser took
+counts as this copy's, so a later try the browser refused never takes off text
+another copy put there in between (found by an automated review). Taking a
+message off is a wait too: a form changed while it happens is copied again, so
+"Copy this" and a failed packet's message never speak for a form no longer shown. Where the browser will not empty the clipboard,
+the page says it still holds the message for the form as it was before the
+last change. The chat route's button ("Copy the message for my assistant")
+makes its message on the spot and asks the bridge for nothing, so only the
+clipboard step could go wrong there; it follows the same rule now. A draft
+pasted in step 3 can rename the process too: "Show the message" now goes when
+it does, where it used to stay, naming the old process. Reuse is as before:
+the same title, text and process name copy again without a new request. The
+page now compares the title, text and name themselves to decide that, instead
+of a hash of the text, so reuse also works on a page that cannot compute one.
+
+New tests hold an answer back and, while it waits, rename the process, edit
+the document, edit its title, or rename after the view was drawn again; they
+also rename while the clipboard is taking the message (on both buttons), keep
+the form changing past three answers, and rename from a pasted draft. Each
+checks the clipboard, the preview and the next press against the form as it
+is, and each fails with the fix taken out.
+
+A review of the first version found three gaps, closed as described above.
+When the form changed while the clipboard was taking the message, rather than
+while the answer was on its way, the page said nothing was copied while a
+paste still gave the message for the form before the last change. A browser
+that refused the clipboard after a rename got "Copy this" with the message for
+the old name. And renaming the process and renaming it back while the
+clipboard took the message dropped the answer kept for it: "Show the message"
+went missing, and the next press asked the bridge for the same answer again. A
+change to the form now only takes "Show the message" away. Further tests hold
+the clipboard through three renames (with the browser emptying the clipboard
+afterwards, and refusing to), clear the title or grow the document past a
+chat's limit while the clipboard takes the message, have the answer for a
+renamed process refused, have the browser refuse the clipboard after a rename,
+rename and rename back, and press again while an earlier press is still
+copying; each fails with its fix taken out.
+
+Not covered: these were checked in a test browser (jsdom), not a real one.
+Signing a map hashes the document first; an edit made in that moment is still
+sent with the hash of the text before it, and the bridge refuses the pair (the
+hash does not match) rather than record it, as before.
+
+## 2026-11-10 — Work Redesign: what a live run through a chat assistant found
+
+A live run through Claude, with the Interego connector, recorded a fictional
+process map on the live Work Redesign site from a chat. It passed, and showed
+five things to fix on the chat route.
+
+A new workspace has no types of task, and every task needs one, so a chat
+drafting a map had nothing to choose from and no word on what to do. The
+message the app copies for the assistant, and the drafting instructions the
+bridge hands back, now say: if the workspace lists no type of task, or none
+fits, tell the person and ask them to add the types in Work Redesign (People &
+roles, Types of task, where an admin adds them), then read again, and never
+make one up. Where the
+operator lets chat assistants take every action and the person is an admin,
+the message adds a step, and the instructions a ready payload, for the
+assistant to add the types the person names: types of task only, never people,
+roles or rules, each one shown to the person and added once they confirm.
+Elsewhere the bridge refuses that change from a chat, as before.
+
+A template a chat asked for still listed `issuedAt` as required and filled in
+a time and a nonce made by the bridge, while the copied message says a chat's
+payload has no `issuedAt` and teaches its own way of making a nonce. For a
+chat, every template now leaves `issuedAt` out of the template and the schema
+(the relay adds its own time), and shows the nonce as the copied message
+writes it, for example `record-task-map-<turn number, or 0>-<16 new random
+letters or digits>`. Templates for a key-held signature, and the web app's,
+are unchanged.
+
+The template for a registry change filled in one person's entry, so an
+assistant filling it in as told sent a change to people and roles when it only
+meant to add types of task. It now fills no part until one is named (`subject`
+entries, taskKinds or podPolicy), with a note to send only the part being
+changed; named, it is that part alone. A part that is not one is refused. The
+People & roles page builds its own changes and works as before.
+
+A chat's reads were large: each repeated about 8,500 characters of text that
+is the same in every read. A chat's read now leaves that text out unless it
+asks for it (`fixedText: true` in the payload the relay signs), names each
+field it left out, and can ask for the registry alone (`kind: "registry"`, in
+the same payload, since the relay sends nothing beside it). It keeps the
+workspace's own rules for AI permissions, which differ from one workspace to
+the next: the workspace's pod policy, and the grant policy with it applied.
+The copied message and the drafting instructions read the registry alone.
+Measured on a test bridge without a record key: a read of one five-task map
+went from 20,033 characters to 14,405, and the registry read from 8,322 to
+2,694. The web app's reads keep all of it.
+
+Smaller fixes: tasks come back in their process's order rather than the order
+of their identifiers; a recorded map's answer says which document text the
+record keeps, its length and whether the text is stored; the capture table's
+own fields in the drafting instructions are grouped under its route, apart
+from the chat's; and the instructions, the templates and the copied messages
+use one wording for making a nonce, the shared chat helper's, which a test
+holds equal. The drafting instructions grew by about 1,300 characters with the
+nonce rule and the step that adds types of task, and the size check on them
+was raised to match.
+
+A review of this work found more, now fixed. A chat's read had left out the
+workspace's own AI permission rules with the rest of the fixed text, so a chat
+never saw a workspace's stricter rules and nothing said they were in the part
+left out; it now keeps them, as above. The template a chat gets now lists its
+nonce first among the paths to fill, since the chat makes that nonce itself: a
+chat's payload filled exactly as the list said kept the placeholder nonce and
+was refused. A chat's malformed change, answered with the chat's schema, now
+points at the signed template read with the change's intent under `template`,
+which answers the chat's shape; it pointed at the unsigned template, which
+answers the shape of a change signed with the signer's own key. And a test now
+holds that the
+pod policy template carries every rule the pod holds, for a key holder and for
+a chat, so a change sent from it with one rule raised keeps the others; no test
+covered that before. The template's `subject` names the part of a registry
+change and also what a ratification is about, and a ratification's template
+copied any value it was given, a registry part among them, into a payload the
+bridge then refused; it now refuses (400) any value but description,
+classification or assignment, as a registry change's template refuses any but
+its parts. Last, the copied message's rule for asking for a template wrote its
+own copy of the placeholder nonce, which would have gone stale without notice
+if the shared chat helper changed its placeholder. The helper now publishes
+the placeholder it writes into each signed step (`noncePlaceholder`, beside
+`actPrompt`), the rule takes it from there, and a test holds that the web app
+writes no placeholder of its own.
+
+New tests check each of these, and each fails with its fix taken out.
+
+Not covered: no second live run has been made with these changes. The chat
+route's 20,000-character limit is still unmeasured: the live run's document was
+734 characters. Read sizes were measured on a test bridge, not the live one. A
+chat's read names one section (`kind`) or takes them all; it cannot pick
+several. The bridge does not check that a type of task a
+chat adds was confirmed by the person; the message and the instructions ask
+the assistant to, and the bridge checks only who may make the change. A pod
+policy change replaces the whole policy, so one built without the template
+still returns each field it leaves out to the published value; the template
+and its note guard against that, the bridge does not.
+
+## 2026-11-10 — Work Redesign: the registry schema says what a registry change needs
+
+The published schema for a Work Redesign registry change (`wrd:update-registry`:
+served by the envelope template, summarised in the action's description, and
+attached to a refused change as `expectedPayload`) marked each entry's label,
+softwareAgent and personRef as optional, while the bridge refused an entry
+without them, one field per signed attempt. An assistant that built its change
+from the schema failed two or three times before it got through. The schema now
+publishes the three shapes the bridge takes, each with what it needs: a person
+(address, roles from approver, operator and worker, label, softwareAgent false,
+personRef), an agent (its key's address, the agent role alone, label,
+softwareAgent true, principal, model) and a removal (address and an empty roles
+list). It also says a change carries at least one of entries, taskKinds and
+podPolicy, that a label, a model and a task kind's definition cannot be blank,
+and that a definition is one line. A pod policy used to be published as any
+object, so a policy-only change built from the schema could be refused as
+malformed, with the same loose schema attached. Its schema now lists its fields
+and their limits as the bridge checks them: `null`, or an object holding any of
+a highest allowed level (one of the allocation levels), a floor above 0 and at
+most 1, and three whole-number counts from 1 to 100,000, and nothing else. The
+bridge's own checks did not change; the person reference's pattern, the pod
+policy's fields and its largest count now each come from one shared constant.
+The envelope template's entry is a person's, so its softwareAgent is filled as
+false and the fields left to fill are the address, a role, the label and the
+person reference. The action's one-line summary names the three shapes and the
+pod policy's fields. A validator in strict mode (Ajv's `strict` option, for
+example) can now compile the schema: it refused the "at least one of" rule,
+whose branches each required a field they did not declare.
+
+The schema is stricter than the bridge in a few places, on purpose, so that a
+change built from it holds exactly the fields that count: it refuses a role
+listed twice (the bridge drops the repeat), a field the bridge does not read on
+a person's or an agent's entry (the bridge ignores it), and a null label or
+definition for a kind of task already registered (the bridge keeps the kind's
+own). A removal is the one open shape, because the bridge reads any entry whose
+roles are empty as a removal, whatever else it carries.
+
+New tests build an entry from each shape's required fields alone (a person by
+Interego ID, a person by wallet address, an agent, a removal), check it against
+the schema and send it to the bridge, which takes it; fill the template the same
+way; check that each entry and pod policy the bridge refuses for its own sake is
+refused by the schema too; send a change holding only a pod policy, with every
+field the schema names, which both take; check that each place the schema is
+stricter than the bridge is one the bridge takes and reads as the stricter form
+would say; check that every part of every payload's schema declares each field
+it requires; and drive the web app's People & roles page to add a person and an
+AI agent and remove someone, each change in one of the schema's shapes and
+taken. The page already built those shapes and is unchanged. The tests' own
+schema check now reads a field named like a built-in object member (`toString`,
+`constructor`) as the payload's own; it used to fail on such a payload instead
+of reporting it.
+
+Not covered: what depends on the pod or the bridge's settings stays the
+bridge's to check, so a payload can match the schema and still be refused when
+an agent's principal is not a registered person, when a person who is an
+agent's principal is removed, when an address appears twice in one change, when
+a new task kind has no label or definition, or when a user DID is not on the
+bridge's identity host. The schema counts a length in characters, as JSON
+Schema does, and the bridge counts a character outside the basic range (an
+emoji, for example) twice, so a label, model or definition near its limit that
+holds such characters can match the schema and still be refused. A pod policy
+value that would loosen the published policy (a floor or a count below the
+published one) matches the schema and is still refused, with a refusal of its
+own that does not call the change malformed: the published values are the
+bridge's to read, not the schema's to state. On the People & roles page, saving
+a person with no role ticked still sends what the bridge reads as a removal
+(for someone not yet added, a change that changes nothing), as before.
+
+## 2026-11-10 — Practice Evidence and Work Redesign: fixes from a live run through a chat assistant
+
+A run of a whole practice session through a real chat assistant, with the
+Interego connector, on the live Practice Evidence site found that the
+messages people copy into their assistant called the workspace's storage
+"My storage address". That storage belongs to the workspace, and everyone in
+it acts on it, so an assistant could offer it to the person as their own. The
+shared helper that writes these messages can now say "This workspace's
+storage address", the same for everyone in it and not the person's own, and
+every Practice Evidence message (workspace details, the start-up message, the
+message for a judge, the drafting message) and both Work Redesign messages
+(workspace details and the map message) now say that. A message that names a
+person's own storage still says "My storage address".
+
+Not covered: nothing checks which storage a message names; each site says
+which it is when it builds the message.
+
+Two smaller mismatches from the same run. The learner's start-up message tells
+the assistant to stop when an answer says "ended": true, but ending the
+conversation answered with its state alone. Ending it now says "ended": true
+too, as a save that ends the conversation already did. And the practice and
+judging instructions an assistant fetches showed a save in a different form
+from the one its copied message showed (podUrl, issuedAt and any nonce, where
+the message says pod_url, no issuedAt and a nonce made of the step, the turn
+and 16 random characters). For a request the Interego relay signs, they now
+show the message's form; for someone who signs with their own key they show
+the form they need, as before. Practice Evidence takes both forms through the
+relay, as it did.
+
+Not covered: someone who signs with their own key still sends podUrl and
+issuedAt; the message's form is taken only through the relay.
+
+The same run showed a learner's own assistant being pointed at assessing the
+learner's own practice. Once the conversation was over, Practice Evidence
+offered that assistant the judging instructions ("an independent judge agent
+can judge this attempt") and answered it with them in full, although saving an
+assessment of one's own session is refused. Now the learner's next step is a
+hand-off: the assistant is told that an appointed judge assesses the session
+with their own assistant, and that the learner sends it to them with Send to
+your judge in the web app. The judging instructions are refused to the
+learner's own assistant, with the same words. The web app's own Send to your
+judge, and its hand-off on a workspace without Interego sign-in, work as
+before.
+
+The run also found that a learner could not tell whether their workspace had
+a judge at all, and that only an admin could see who holds which role. Reading
+a session (or the list of one's sessions) now says the reader's own roles,
+whether they are an admin, and whether anyone else in the workspace is a judge
+or a reviewer. It says yes or no, never who or how many, and it carries none
+of the weights or the pass mark. The session page warns beside Send to your
+judge when the workspace has no judge yet, and asks the learner to have their
+admin add one. The message for a judge, the guide and a refused judge now say
+that a judge's own Interego account must be registered, by its Member ID (the
+ID with :users: in it), not by the ID of the assistant that acts for them.
+
+Not covered: whether anyone else is a judge is read from the role list as it
+is now, so it does not say whether that judge is willing or able to assess
+this session. A learner who signs with their own key, or uses the web app,
+still fetches the judging instructions, to hand to their judge; only their
+chat assistant is refused them.
+
+On a workspace whose bridge has a model of its own (the live one has none), a
+learner's assistant can have the session judged by that model. Its answer
+offered no judging instructions, as it should not, but did not say the
+hand-off either, so the assistant was told neither step. That answer now
+carries the same hand-off as reading the session does, while there is room
+for another judgment.
+
+## 2026-11-10 — Practice Evidence: where a stand-in is the same, said exactly
+
+The scenario list's description said a fingerprint's stand-in in text is the
+same wherever that text is shown. It is the same only within one scenario
+version. A scenario's results and the calibration table show stand-ins of
+their own, so one criterion title can show three. The description now says
+"for the same scenario version" and names the two that differ. The README and
+an entry below listed the review queue among the views of a session's lines;
+it shows the judges' quotes, not the lines, and they now say so.
+
+## 2026-11-10 — Practice Evidence: a judge's quote that leaves out part of a stand-in checks out
+
+The same review found the quote fix below incomplete. Practice Evidence put a
+fingerprint back into a judge's quote only when the quote held the whole
+stand-in, from `urn:pev:rubric:` or `pev/` to the end. But a quote may start or
+end at a colon or a slash, so a judge could quote just the stand-in's digits,
+or start at `rubric:`, or stop before the closing slash. Such a quote did not
+check out, and the criteria it supported were counted at their lowest level.
+
+Now a run of 64 or 16 hex digits in a quote that is a stand-in for a
+fingerprint in the session's lines is read back too. The saved quote is
+marked `readBack`, because the judge's signed request held the stand-in and
+not the learner's words. Answers to a chat show such a quote as the judge
+copied it, so the fingerprint stays hidden there too.
+
+Two smaller fixes. A line starting with a character that normalising turns
+into a letter (the Kelvin sign becomes a K) showed a calibration kind as a
+stand-in in the session's text but bare in its normalised form and in the
+judge packet. Both now show the stand-in. And `record_judgment`'s answer says
+which quotes were read back.
+
+Not covered: in a quote that was read back, a run of 16 or 64 hex digits the
+learner wrote with nothing around it is shown to a chat as a stand-in, while
+the line shows it as written. A quote that cuts into a run of digits is not
+read back; it cuts a word, which the quote rule refuses anyway.
+
+## 2026-11-10 — Practice Evidence: a signed request's payload no longer checks a guess
+
+A fourth review found another way to check a guess at a scored scenario's
+weights and pass mark, older than the changes below. A record keeps each signed
+request as it was sent: a turn, a review, a contest, a transcript removal. A
+request signed with a key can carry fields of the signer's choosing beside the
+act's own. Answers to someone who reads no stakes showed those payloads, and
+keyed a field there named like Practice Evidence's own rubric fingerprint the
+same way as the real one. So a key nobody registered could write guesses into
+one contest or removal, then read the session back and see which guess matched.
+An object in the payload could even name another scenario to compare against.
+
+Now an answer to someone who reads no stakes shows a signed request without
+what it signed, and says so (`payloadLeftOut`). The signature, the fingerprint
+of what was signed, and who signed it stay. The web app, and keys an admin
+registered for a role other than agent, still see the whole request. The note every such answer carries,
+and the README, say so.
+
+Not covered: a request may still carry fields the act does not use. They are
+kept in the record, shown only to readers of the stakes, and never acted on.
+
+## 2026-11-10 — Practice Evidence: a judge's quote of a line holding a fingerprint checks out
+
+A review found that the change below broke judging in one case. When a
+learner's line held a rubric fingerprint (a rubric's address, or a calibration
+row's kind), every answer to a chat assistant showed it as a random value made
+for that one answer. A judge's assistant that copied a quote from the judge
+packet character for character, as the packet asks, sent words the stored line
+did not hold, so the quote did not check out and that criterion was counted at
+its lowest level.
+
+Now a fingerprint inside text is replaced with a stand-in keyed with Practice
+Evidence's own key under a label of its own. It never equals a fingerprint
+Practice Evidence writes in a field, or the start of one, so it still checks
+no guess. The same fingerprint shows the same stand-in in every answer about
+the same scenario version: the judge packet, the session and the
+conversation's own answers all show a line the same way, and the review queue
+shows the judges' quotes from it the same way. A quote copied
+from any of them is read back as the learner's words as stored, checked
+against them, and kept as them. The transcript's fingerprint is unchanged.
+
+The same review found one more thing to close. A calibration row's standing
+reason named the row's kind, which holds the start of the rubric's
+fingerprint. With stand-ins that repeat, a chat could have written a guess into
+a criterion title and compared the two in the calibration table. The reason
+now says "this criterion" instead, so nothing Practice Evidence writes into
+text holds a fingerprint.
+
+A quote that copied only part of a stand-in (leaving out the
+`urn:pev:rubric:` before it, say) was not read back at first; the entry two
+above fixes that. Not covered: two equal stand-ins show that two texts hold the same fingerprint. That tells a
+chat something only when a real fingerprint is already in some text, which
+only someone who reads the stakes can have put there.
+
+## 2026-11-10 — Practice Evidence: a fingerprint written into text no longer checks a guess
+
+A third review found one more way to check a guess at a scored scenario's
+weights and pass mark. Practice Evidence keyed every rubric fingerprint it
+found in an answer, those inside text included, and keyed them all the same
+way within one scenario version. So someone who reads no stakes could write
+the plain fingerprint of each guess into something the workspace keeps (a line
+of their practice session, a reason for contesting a review or for removing a
+transcript, a judge's quotes and reasons, or the words of a scored scenario,
+which an author's chat may edit while keeping its stakes), read it back keyed,
+and see which guess matched the scenario's own keyed fingerprint. Now only the
+fingerprints Practice Evidence writes itself are keyed: a scenario's and a
+rubric's fingerprint, a rubric's address and a calibration row's kind. A
+fingerprint anywhere else, inside any text, comes back as a random value made
+for that one place, which matches nothing else in the answer, the same
+fingerprint written twice included. The note every such answer carries, the
+scenario list's description and the README say so.
+
+A judge whose assistant quoted such a line, copying the random value, had the
+quote fail; the entry above fixes that. People in the web app, and keys an
+admin registered, read the text as it was written.
+
+A smaller fix from the same review: a scenario's results page showed, under
+the table of people who assessed sessions, the note that the table's rubric
+fingerprints are calibration's own and match none shown with a scenario. For
+reviewers and admins in the web app that was not true: they read the plain
+fingerprint there, the same one the scenario shows. The note now appears there
+only when the results left the stakes out, and on the calibration page, as
+before.
+
+## 2026-11-09 — Practice Evidence: second review of keeping the stakes out of a chat
+
+A second review found that the keyed fingerprints could still check a guess at
+a scored scenario's weights and pass mark. Two rubrics with the same content
+had the same keyed fingerprint everywhere, so an author's chat could save a
+scratch scenario holding a copy of the rubric with stakes it guessed, and
+compare the fingerprint the save answered with to the one the scenario list
+showed it. Each fingerprint is now keyed to its own scenario and version as
+well as to the rubric, so a scenario a chat saves, or a new version of the same
+scenario, never shows a fingerprint that matches another scenario's or
+version's, a right guess included. The judge's hand-off and the approval of a
+rubric take the fingerprint shown for that scenario version, and the review
+queue now names each entry's scenario version. Calibration's table keys its
+fingerprints its own way, so they match none shown elsewhere.
+
+Not covered: calibration still counts judgments of the same rubric together
+across scenarios, so once enough sessions on two scenarios have been judged,
+its table can show that their rubrics, stakes included, are the same.
+
+A wallet nobody registered, which is what open enrolment gives every learner
+who does not sign in with Interego, cannot download the content of a scored
+session of their own, copy it to their own storage, or build a learning record
+from it: those hold the score and the pass mark, which go only to an address
+an admin registered. The web app hid this. Now the learning-record panel says
+why its buttons are off and asks the person to have their admin register the
+address, and a download says it holds each version's signatures without the
+session's content, and why. A refusal tells a wallet to ask an admin to
+register its address, a chat to use the web app signed in with Interego, and
+an agent's key that it is not a person's, instead of sending someone already
+in the web app to the web app. The note where the weights would be offers
+Interego sign-in only where the workspace offers it, and never on the person's
+own session, where signing in with Interego would make them another person;
+there it asks for the address to be registered. The guide and the Connect
+dialog say the same.
+
+Not covered: such a learner cannot keep a whole copy of a scored session of
+their own until an admin registers their address.
+
+Smaller fixes from the same review. Every tool description that says the
+stakes are left out now names everyone they are left out for: a chat
+assistant the Interego relay signs for, a key no admin registered or one
+registered as an agent, or a request nobody signed. The guide says an
+assistant may edit the words of a scored scenario and of its criteria and
+levels, not which criteria and levels there are or their order. The
+calibration tables say their fingerprints are calibration's own and match
+none shown with a scenario or a session. The README says that changing the
+platform key, or setting or changing the record key, changes every keyed
+fingerprint, so a judge's hand-off copied before has to be fetched again, and
+that the fingerprint in a judge's signed request can be checked only by this
+bridge, not by someone reading the record on their own. The README and the
+tests now speak of a person as they.
+
+The web app is now known by its OAuth client, where the relay says which
+client asked. The relay can sign the id of the OAuth client whose access
+token made a request, and Practice Evidence now reads a request as its own
+web app's only when that client is the web app's own: the address of its
+client metadata document, or, on a deployment that registers dynamically,
+the id the relay gave it. Any other client is a chat, whatever it calls
+itself, so an app that registers under the name "Practice Evidence" no
+longer reads the weights and the pass mark or takes the decisive acts. Where
+the relay does not say which client asked, the agent's name decides, as
+before.
+
+Not covered: the client id shows whose sign-in token was presented, not that
+the web page or a person made the request, so whatever holds the web app's
+token is read as the web app. A deployment that registers dynamically knows
+only the id it registered since it started, so after a restart, or on another
+copy of the bridge, a person signed in before is read as a chat until they
+sign in again. With a relay that does not sign the client id, an app named
+"Practice Evidence" is still read as the web app.
+
+## 2026-11-09 — Practice Evidence: closing the other ways the stakes reached a chat
+
+A review of the change below found that the weights and the pass mark still
+reached a chat assistant in four ways, and this closes them. A key anyone can
+make, a coding assistant's own included, read them: now a key reads them only
+once an admin has registered it, and not if it is registered as an agent. A
+wallet that holds no role sees the levels and is told how to see the rest.
+Every answer that leaves them out also hid the rubric's fingerprint in plain
+sha256, and with the rubric's words beside it a guess at the weights could be
+checked in under a minute: those fingerprints are now keyed, so they cannot
+be checked against a guess, and the judge's binding, the approval of a rubric
+and the calibration filter take them in that form. A chat could copy a
+scored record, unencrypted, to a pod it named and read it back, and could
+build its learning record: both are now refused to a chat and done in the
+web app. An author's chat that fixed one line of a scored scenario had to
+send weights it could not read, and a guess replaced the author's: now it
+sends the scenario without them and the new version keeps the old ones. The
+web app's own sign-in must also be exactly its own agent, so an app that
+names itself "Practice Evidence Helper" is a chat. An answer about
+feedback-only scenarios alone no longer says it left something out, and an
+author's wallet is asked to sign only to edit a scored scenario. The landing
+page, the guide and the Connect dialog now say what is enforced: what
+Practice Evidence sends a chat through the connector leaves the stakes out,
+and an AI tool given a person's own registered key reads what that person
+reads.
+
+## 2026-11-09 — Practice Evidence: no chat assistant receives the weights or the pass mark
+
+Before, listing scenarios, reading a session and the review queue gave any
+signed-in person's chat assistant a scored scenario's weights, the points for
+each level and the pass mark, and the judge message could only ask for a new
+chat. Now no answer Practice Evidence gives a chat assistant carries them,
+whatever roles the person holds: not the weights, level points, pass rule or
+the author's reason for it, nor any points, percent, pass result, unmet
+requirement or closeness to the pass mark worked out from them. A chat still
+gets the criteria and levels in words, every level chosen, the quotes, the
+reasons, the states and the counts. A judge who reuses a chat has not read
+the stakes through the connector.
+
+The workspace tells a chat from its own web app by the agent the Interego
+relay signed for. The relay takes that agent from the signed-in session and
+drops any agent a caller names, so nothing a chat adds to a request changes
+it. The web app's own agent, and a key an admin registered, still read the
+stakes; a request nobody signed does not. The scenario list is now a POST
+that may be signed: the web app signs one list read when Interego sign-in
+signs it without asking, and otherwise shows "Show the weights and pass mark",
+which a wallet or manual signing confirms once. Editing a scored scenario
+needs that signed read, or a sign-in. The queue a chat reads is ranked without
+closeness to the pass mark. A chat gets a scored record's descriptors but
+not its graphs.
+
+The landing page, the guide, the Connect dialog, the judge message and the
+README now say this, and what it does not cover: a record a person downloads
+or copies to their own storage from the web app holds everything, and a
+workspace without a record key keeps its records in plain text. The judge message still asks
+for a new chat, because one used for reviewing has seen other assessments'
+levels. A new test asks every read from each role's chat assistants and web
+app agent, and tries claims that a request is the web app's.
+
+## 2026-11-09 — Relay: a signed request can say which OAuth client asked
+
+When the relay signs a request for someone (`sign_request`, or `act` with
+`sign_payload: true`), it can now put `client_id` in the signed payload: the id
+of the OAuth client whose access token made the call. For a web app that signs
+in with a Client ID Metadata Document that is the URL of its `client.json`; for
+a dynamically registered client it is the id the relay gave it. Until now a
+site could only read the agent's name, which comes from the name a client chose
+for itself, so any app could register under a site's own name and look like
+it. The id cannot be chosen that way. A caller cannot set `client_id` either:
+one it sends, at the top level or inside `payload`, is dropped, and the session
+field it comes from is stripped on every transport.
+
+**It is off until the relay's operator turns it on** with
+`RELAY_SIGN_CLIENT_ID=1` (the relay's `/health` reports it as
+`signsClientId`). Several sites refuse a signed payload holding a field they do
+not list. The ones in this repository accept `client_id` from this release, but
+Foxxi (which also serves the Agentic Performance Practice routes) ships in its
+own image and rolls out separately from the relay. Had the relay signed the
+field as soon as its image went live, every chat agent's request to Foxxi's
+directory actions, workbench agent sessions, own-LTI reconciliation, telemetry
+settings and queries, and private performance routes would have been refused
+until the new Foxxi image was serving, and for as long as a failed Foxxi rollout
+kept the old one. Turn it on only after the Foxxi bridge runs this release.
+**If you verify relay-signed requests outside this repository and refuse fields
+you do not list, accept `client_id` before the relay enables it.**
+
+The field is left out when no OAuth client is known: the REST `/tool` and
+`/messages` routes (an identity-server bearer or a wallet signature), the
+legacy API key, and a follow-up act a deployment-installed observer makes. Left
+out means the relay does not say which client asked; it never means "the web
+UI". It names the client whose token was used; it does not prove that a person,
+or the site's own page, made the request. No site reads it yet; the Practice
+Evidence bridge is the first that will. A site that compares it with its own
+client id should accept every id it has used within a token's lifetime (an
+hour), not only its current one: an id from dynamic registration changes when
+the site registers again, after a restart for example, while tokens issued to
+the earlier id are still live. A Client ID Metadata Document id does not
+change, so prefer that, or keep the registration. The Practice Evidence page
+registers once per process today and keeps the id only in memory, so it must
+keep its ids or its registration before it starts checking the field.
+
+A caller's own `client_id` is still dropped, but no longer silently:
+`sign_request`'s result says it was not signed (`notSigned`), so a site whose
+own input happens to be called `client_id` finds out on its first try instead
+of quietly receiving the relay's value or none. Through `act` with
+`sign_payload: true` the drop is still silent, because `act` passes on only the
+signed pair.
+
+Sites that refused any field they did not list now accept `client_id` as the
+relay's, like `subject_pod_url`: Foxxi's directory actions, workbench agent
+sessions, own-LTI reconciliation and telemetry settings and queries, and the
+private performance routes, which also keep it out of a plan's retry identity.
+Foxxi's telemetry settings and query routes now set the relay's fields aside
+through one shared list, with a test that sends them a relay-signed payload
+holding `client_id`. Work Redesign's web page refuses a payload holding
+`client_id`, as it does the relay's other fields. The descriptions of what the
+relay adds (Provisional Play, Foxxi's own-subject activity actions and README,
+and the payload shapes the private performance routes serve) now mention
+`client_id`.
+
+A repository-wide test (`integrations/tests/relay-signed-client-id-is-transport.test.ts`,
+with the cross-vertical tests, since it reads the verticals' sources) reads every
+tracked JavaScript and TypeScript source file outside tests and build output that names `subject_pod_url`. It fails when
+an array or argument list naming `agent_id`, `timestamp` and `subject_pod_url`
+leaves `client_id` out (in any quote style, on one line or across several), when
+a destructuring sets `subject_pod_url` aside before a rest element without
+`client_id`, and when a sentence saying what the relay adds names the pod stamp
+without `client_id`. It does not see a list built from pieces, a chain of
+comparisons, source in other languages, or prose worded another way.
+
+The `sign_request` result's hint no longer tells an assistant to prefer the
+URL form of an action over the one a site gave it: `act` takes the
+`urn:iep:action:…` form and the URL form alike, and the hint now says to use
+the action as the site or the descriptor gives it.
+
+Not covered: `act` still fetches a target's whole affordance manifest on every
+call; caching it is left for later. Nothing turns `RELAY_SIGN_CLIENT_ID` on for
+the hosted deployment; that is an operator step once the Foxxi bridge is live.
+
+## 2026-11-09 — Smaller action answers from the vertical bridges; the task-map packet names the chat route
+
+An action answer from a vertical bridge carried a Markdown copy of itself
+under schema:encoding, so that an MCP client that cannot ask for Markdown
+still got the typed next-step controls. That copy also held the whole answer
+twice more, escaped in its front matter and again in a json block, so answers
+came to about four times their content: a Work Redesign task-map packet, a
+Practice Evidence judge packet sent through the relay's act (past a chat
+client's tool-result limit), and even a one-sentence refusal, about 14 KB.
+A JSON answer now carries that Markdown only when it has a next-step control
+to offer, and then only the controls and their links, never the answer again.
+An answer with no next step is the JSON alone: every Work Redesign and
+Practice Evidence answer today, and every refusal. Measured on local bridges:
+the task-map packet for a 1,358-character document went from 25,479 to 6,221
+bytes (9,064 with the chat-route step below), a judge packet for three
+exchanges from 38,907 to 9,539 bytes, and a refusal from about 14,000 to about
+2,700. Asked for as Markdown (Accept: text/markdown or ?format=markdown), an
+answer is still one document holding all of it, as before. An answer that names
+no next step of its own (Foxxi's answers when a composition has nothing to play
+or has just finished) keeps a Markdown copy of about 4 KB holding only its
+links, the list of actions among them, so it still points somewhere; it is the
+same size whatever the answer holds.
+
+Work Redesign's task-map packet said only how the web app records a reviewed
+draft. It now also says how a chat does it (next.relaySigned), as the app's
+copied message already told assistants: read who is registered first, show the
+person the draft and ask who does each task, then fill in the payload template
+and have the relay sign it, with the document's text inside the signed payload
+and document.storeText true. The packet's first instruction points to both
+routes, and the action's description of what it returns says so too. The
+action manifest's comment now names the pod a bridge is configured to write to.
+
+That chat route carries the document's text inside the payload the relay
+signs, and the bridge takes that payload only up to 64 KiB, so it keeps to the
+limit the web app already keeps: documents of up to 20,000 characters. For a
+longer document the packet now offers no payload to fill: it says the document
+is too long to record from a chat, and that the person records the draft in
+the web app instead, where it works at any length. Before, an assistant with
+only the packet could draft a long document's map, ask who does each task, and
+then be refused at the last step.
+
+Asking for the task map's payload template from a chat now gives the chat's
+version: the document's text among the payload's fields, and storeText true.
+It used to give the web app's version, whose storeText false is refused from
+a chat, so an assistant that followed the template exactly was turned away.
+A malformed map sent from a chat is answered with the chat's version too. The
+web app, signed in with Interego or with a wallet, still gets its own version.
+
+Not covered: the relay's act still escapes an answer once more inside its own
+result; the 20,000-character limit is a cautious figure, not a measured one
+(a document full of line breaks or quote marks takes more room once escaped,
+and so do many long quotes), and no round trip through a real chat assistant
+has measured it; a revision's template from a chat still does not list the
+document's text, which a chat sends inside the payload with new quotes; a
+JSON answer from a vertical bridge that offers no next step names the list of
+actions but not the bridge's own pages (its web app, its ontology), which only
+the Markdown forms list; and the manifest names only a bridge's default pod,
+not every pod it serves.
+
+## 2026-11-09 — Work Redesign and Practice Evidence: the narrow-phone fix, corrected
+
+A second look at the change below found that it moved things on wide screens that it
+said it left alone, and that a few places still ran past a narrow phone's screen.
+
+- Practice Evidence's status pills could wrap at every width, so in My practice
+  "Confirmed by a reviewer" and "Conversation text deleted" took two lines at 1280 px,
+  and from 768 px up the table's columns moved. A status now wraps only below 768 px,
+  where it is needed. From 768 px up, My practice and the session page are again
+  exactly as they were before either change.
+- Practice Evidence's sign-in page, and the sign-in card on a view that needs you to
+  sign in (My practice, for one), still ran 18 px past a 300 px screen: "Sign in with
+  Interego" needs 236 px and the card had 220. A button in that card now wraps its
+  label onto a second line when the line is too short for it.
+- In Work Redesign, on a workspace open to read (WRD_PUBLIC_READS=1) with a wallet in
+  the browser and Interego sign-in off, the round Refresh button was squeezed to 32 px
+  wide at 300 px and 38 px at 320 px. It keeps its 44 px now, and "Connect wallet"
+  wraps instead.
+- The offline demo's "Demo time ... weeks Skip ahead" ran 16 px past a 300 px screen,
+  and its weeks box was too narrow to show its number. That line now wraps between its
+  parts; the persona picker beside it is unchanged.
+- Signing manually in Practice Evidence with a wallet and no Interego sign-in: below
+  360 px "Use a wallet" took two lines, the header grew to 118 px, and the side
+  navigation slid 6 px under it when the page scrolled. Below 360 px the header now
+  always leaves room for that second line, and the navigation sits below it.
+- On a touch screen, Practice Evidence's "Connect your AI" button is at least 44 px
+  wide where it shows only its icon (it was 42 px).
+
+The header breakpoints stay at fixed widths, as designed. Between them, a header can
+take a second line, or use its shorter labels, where one line would just fit (for
+example from 480 to 767 px). Both sites use each device's own fonts, so how much room a
+header needs changes from one phone to the next, and the fixed widths leave room for
+that.
+
+New tests check that a status in a table cell stays on one line from 768 px, that the
+sign-in card's buttons wrap, that Refresh keeps its size, that the demo clock wraps,
+the header height below 360 px, the touch-screen width of "Connect your AI", and the
+left-aligned label of "Copy the start-up message". Each one fails when its rule is
+taken out, except one: jsdom does not rank selectors with :has() the way a browser
+does, so the second selector on the narrow header-height rule is checked in Chromium
+only.
+
+Measured again in Chromium against the master branch: 97 page states of both sites, at
+nine widths from 300 to 1280 px, in light and dark, with a mouse and with a touch
+screen. None of them scrolls sideways.
+
+## 2026-11-09 — Work Redesign and Practice Evidence: nothing runs past a narrow phone's screen
+
+On phones from 300 to 414 px wide, parts of both sites were wider than the
+screen, so the whole page could be dragged sideways. Measured in Chromium,
+signed in and out, with Interego sign-in on and off, in light and dark:
+
+- Work Redesign's app header was 28 px too wide at 320 px and 48 px at 300 px.
+  At 300 px the squeezed Refresh button covered the account button, so a tap
+  on it pressed Refresh. The landing page's header was 16 px too wide
+  at 300 px. After a process map was signed, each task's "Copy link for the
+  people named" ran up to 145 px past the screen (32 px at 414 px).
+- On a workspace open to read (WRD_PUBLIC_READS=1), "Sign in with your
+  Interego account" in the header ran 215 px past a 320 px screen and 38 px
+  past a 768 px one. With a wallet in the browser, Connect wallet beside it,
+  351 and 173 px.
+- Practice Evidence's header was 15 px too wide signed in at 320 px and 47 to
+  67 px signed out; the guide's "Open the app" 12 px. Signing manually where
+  another way to sign in is offered put four things in the header: up to
+  203 px too wide at 300 px and 88 px at 768 px. On the session page,
+  "Signature verified: unchanged since it was signed" ran 37 px past a 320 px
+  screen. At 300 px "Copy the start-up message", "Copy the message for my AI"
+  in Write a scenario and Work Redesign's "Draft a map with copy and paste"
+  did too.
+
+Now, in every header, the product name breaks onto two lines when the buttons
+need the room, and only then. A badge gives way next, then a button's label,
+and round buttons keep their full size (44 px on a touch screen). Work
+Redesign's Refresh shows an icon below 480 px, and "Refresh" is still its name
+for a screen reader. The small Sign in button says "Sign in" alone where its
+whole label does not fit. Two ways to sign in, or signing manually beside
+another way, put the header's buttons on a line of their own under the brand
+below 768 px, and the navigation below moves down to match; signing manually
+as the only way does so below 360 px. Beside another way, signing manually
+also shortens the header's button labels below 1024 px, as on a phone. The
+other long buttons and statuses wrap inside their space. At 768 and 1280 px
+nothing moves except what was too wide there: the headers above, and at 768 px
+a recorded task's link, which ran into its row's edge and now sits under its
+badge. New tests check each rule as the stylesheet applies it at a phone's
+width, and each fails with its rule taken out.
+
+## 2026-11-09 — Foxxi keeps finalized LTI grades during retakes
+
+A scored LTI retake marked NotReady appears separately in the learner's
+gradebook while the last finalized grade stays in place. A newer finalized
+grade replaces it. Score-clearing updates still clear the grade.
+
+## 2026-11-09 — Foxxi scoped LTI grade passback
+
+Foxxi can launch an external LTI tool under an expiring connection for one
+signed learner and one course. The tool sees a generated subject and can
+post scores to that connection's line item. The learner can read the
+temporary grade in their Foxxi gradebook and revoke the connection.
+Revocation removes the temporary grade and closes its protocol endpoints.
+The open Foxxi gradebook retains its own credentials and storage.
+Scoped OIDC redirects keep their query parameters through the bridge's router.
+
+The gradebook accepts standard LTI score media and plain JSON. It keeps the
+tool's activity and grading statuses as submitted. The open gradebook's
+snapshot is encrypted, and the platform can sign a launch with RSA for a
+tool that requires RS256.
+
+## 2026-11-09 — Work Redesign: a new process name makes the copied AI message again
+
+Copy the message for my AI keeps the packet it fetched and reuses it while
+the document's title and text are unchanged. The packet's draft template also
+names the process, so after a person copied the message, changed the Process
+name and copied again, the message still carried the old name, and an answer
+that followed it wrote the old name back over the new one when it was filled
+in. The held packet is now keyed on the process name as well, and editing the
+Process name drops it and its "Show the message" preview, as editing the
+document does. The demo test names the process, renames it and copies the
+message each time: each new name asks for a new packet and the message carries
+it, and the same name again reuses the packet. Found by the Codex review of
+the pull request.
+
+## 2026-11-09 — Work Redesign: the workspace details say once what to do without sign_payload
+
+The shared chat helper's prompts now end "How to do each step" with one
+sentence for an assistant whose act tool has no sign_payload option: leave
+sign_payload out of a plain step, and do a signed step in two calls, the
+connector's sign_request tool with the step's payload as its only argument,
+then act with what it returned. Work Redesign's workspace details already said
+the second part in their own rule about which actions are signed, in other
+words, so an assistant was told it twice. That rule now says only which
+actions are signed (sign_payload true) and which one takes plain arguments
+(sign_payload false), and the shared sentence says the rest, once. The message
+for mapping a process from a document already said it once and is unchanged.
+The texts an assistant reads straight from the workspace (the envelope
+template's signing rule, and each affordance's relay-signed inputs and
+descriptions) keep their own wording of the two calls, since neither copied
+message repeats them.
+
+## 2026-11-08 — Work Redesign: ChatGPT labels in bold, sign_request text in whole sentences
+
+On the landing page and in the guide, the second set-up step now shows
+ChatGPT's Server URL and OAuth labels in bold, as the steps already showed
+ChatGPT's other labels (Plugins, +, Add custom MCP server, Create as a plugin)
+and Claude's. "Accept the warning" stays plain words.
+
+The relay-signed input of each signed Work Redesign action described how to have a
+payload signed, then left "the same fields as the envelope payload, podUrl and
+a nonce included" after a semicolon with no verb. It now says it in whole
+sentences: call act with sign_payload: true or, where act has no sign_payload
+option, call the connector's sign_request tool with payload as its only
+argument; that payload has the same fields as the envelope payload, podUrl and
+a nonce included, and needs no issuedAt. Nothing else about signing changed.
+
+## 2026-11-08 — Work Redesign: Tab after a click, ChatGPT steps in order, sign_request on its own
+
+After "Skip to content" in the Work Redesign app, a click or tap on plain text
+in the main area now sets where the next Tab starts. Before, the main area kept
+focus through the click, so the next Tab jumped back to the first control at
+the top of the view. Now the main area gives up focus as soon as the person
+presses, and the browser starts Tab from where they pressed.
+
+The landing page and the guide now give ChatGPT's set-up in the order OpenAI's
+guide does: the first step only opens Plugins, then +, then Add custom MCP
+server; the second names it Interego and pastes the connector address as its
+Server URL with OAuth, and only then accepts the warning, selects Create as a
+plugin and installs it. Before, the first step said to create and install the
+plugin before the address it needs had been given. Claude's steps are
+unchanged.
+
+Where Work Redesign's own words tell an assistant without a sign_payload
+option to sign in two calls (the workspace details, the envelope template's
+signing rule, the relay-signed inputs and descriptions of each affordance, and
+the README), they now say to call sign_request with the payload as its only
+argument, then call act with the same descriptor_url and action_iri and with
+the returned signature and signed payload as its payload, unchanged. Anything
+passed to sign_request beside the payload is signed along with it, so the
+payload must be its only argument.
+
+## 2026-11-08 — Work Redesign: copied messages carry the shared helpers' newer nonce example
+
+The Work Redesign branch now carries master's shared chat helpers unchanged.
+The workspace details and the process-map message that Work Redesign copies
+for a person's assistant therefore show the nonce example the helpers now make
+from the message's own first signed step, read-records at turn 0, rather than a
+step name the site does not have. Nothing in Work Redesign itself had to change
+for it, and its tests pass against the shared helpers as master has them.
+
+## 2026-11-08 — Work Redesign: ChatGPT set-up as OpenAI's guide gives it, and no plan named
+
+Work Redesign's ChatGPT set-up now follows OpenAI's guide to custom MCP
+servers, checked on 2026-11-08: in ChatGPT on the web, open Plugins, select +,
+then Add custom MCP server; name it Interego, paste the connector address as
+its Server URL and choose OAuth; accept the warning, select Create as a plugin
+and install it; sign in with the same Interego account; then type @ in a chat
+and choose Interego. The app's "Use your AI assistant" panel shows the
+connector address first and these five steps after it, then says that a
+workspace's settings decide whether a person can add one, that ChatGPT asks
+before each write unless told to remember the choice for that chat, and how to
+pick up new tools, with a link to OpenAI's guide. The landing page and the
+guide give the same first step in one sentence, and the guide links OpenAI's
+guide too. Claude's steps are unchanged.
+
+No page claims any longer that a ChatGPT or Claude plan must allow custom
+connectors: whether a person can add one depends on their plan or workspace
+settings, and without one they can still draft a process map with copy and
+paste. Where Work Redesign's own words tell an assistant to sign (the workspace
+details, the map message, the envelope template's signing rule and the
+relay-signed inputs of each affordance), they now also say what to do when
+the assistant's act tool has no sign_payload option: sign the payload with the
+connector's sign_request tool, then pass act exactly the signature and signed
+payload it returned.
+
+## 2026-11-08 — Work Redesign: a click, quick presses and Dismiss keep the person's place
+
+In the Work Redesign app, the main area now takes focus only from "Skip to
+content", and only until focus leaves it. Before, it could take focus at any
+time, so a click on plain text focused it and the next Tab went back to its
+first control, taking the page to the top of the view. Now the next Tab goes on
+from where the person clicked. A redraw straight after the skip link still
+leaves focus in the main area.
+
+Pressing "Add a task" several times in quick succession now keeps the button
+where it is on the screen. The app's own scroll, which holds a pressed button
+in place through a redraw, was taken for the person scrolling, so a second
+redraw within a fifth of a second let the new task push the button off the
+screen. A button clicked straight after turning the mouse wheel now also stays
+under the pointer, while a page the person is still scrolling by other means is
+left to scroll.
+
+Dismissing an answer from the keyboard on the welcome screen or on "One more
+step" now moves focus to that screen's title, as it already did to a view's
+heading, instead of to the top of the page. While a new type of task is being
+signed, its "Add type of task" button only looks unavailable: it keeps focus,
+so the next Tab goes on from it, and a press is still ignored until the answer
+comes.
+
+## 2026-11-08 — Work Redesign: use your own Claude or ChatGPT, or copy and paste
+
+Work Redesign still runs no model and asks for no key; the web app now lets
+people bring their own assistant. The account menu has "Use your AI
+assistant": how to add the Interego connector in Claude or in ChatGPT (the
+address in a read-only box that wraps and grows to its lines, so a phone shows
+all of it, with Copy), this workspace's details to copy into
+a chat once, and copy-only starters for the seven questions and for plans,
+which tell the assistant never to answer for the person and to use only the
+person's own numbers. The workspace details name the actions the connector
+cannot pass arguments to and the signed read to use for each, one per line, and
+no copied text puts a comma, colon or full stop straight after an action, where
+it would read as part of its name; they name the intents
+that differ from an action's own name, and, where the operator lets chat
+agents decide, ask the assistant to check with the person before a decisive
+act instead of sending them to the app. It is offered only to someone signed in with their
+Interego account on a bridge that trusts a relay; the shell names the
+connector only then. A wallet signer, the read-only page, a bridge with
+sign-in off and the demo are told why and offered copy and paste.
+
+Mapping a process from a document now has two routes. In Claude or ChatGPT,
+one copied message carries the document and the exact steps: get the
+drafting instructions (plain), read who is registered (signed), confirm the
+draft with the person, then record the map (signed, storing the document's
+text). The app offers it only to process leads and only for documents up to
+20,000 characters, since the signed payload has a size cap; the button and
+its note follow the text as it is typed, so shortening a document turns the
+route back on. Copy and paste now
+copies plain text with a one-object reply rule instead of the packet's JSON,
+reads the pasted answer through code fences and surrounding words, and lets
+the person say who drafted the map, which is signed as chosen. `/ui/app.js` is
+served as the shared chat-agent helpers followed by the app, as one module.
+The landing page, guide and README say what the assistant's provider and the
+connector see, add the "Teams without an AI assistant" limit, and mark the
+bridge's own `/mcp` as a developer endpoint, not the connector.
+
+The pages' connector set-up follows the same rule as the app: it is shown only
+where the shell names a connector (`connectorUrlOf`, now in
+`bridge/landing.ts`, through `{{#chat_ready}}` sections the page renderer
+fills). Elsewhere the landing page and the guide drop everything that assumes
+the connector (adding it, the things to ask it, what stays in the app, the
+guide's optional step and the chat route under Map a process), open with the
+panel's own words (Work Redesign runs no AI; your own assistant drafts), say
+once that the workspace isn't set up for it, point to copy and paste, and say
+what pasting a document shares; the navigation names the section "Your own AI
+assistant" rather than the apps, and the FAQ, the guide's data section and
+limits, and the footers keep their connector sentences, recording a map from a
+chat and its length limit among them, to where one is named. Below 64em the
+site pages' section links move from the header into its menu, which holds every
+one of them, so the header no longer runs past the screen's edge at 768 to
+930 px. Choosing a link in that menu, by mouse, tap or key, now closes it, so
+it no longer covers the section it went to (the pages' one script,
+`/ui/site.js`, served by the bridge under the same policy as the app's). With the
+deployed bridge's 44-character address the set-up no longer widens either page on a phone: each step may
+shrink, and each address sits on a line of its own, filling it before going
+on, with no full stop hanging off it. The panel is titled "Use your AI
+assistant", like every way into it; its two set-ups are tabs the arrow keys,
+Home and End move between. Escape closes a panel with nothing to type in (the
+set-up, "Copy this", "Exactly what you're signing"), and does nothing in a
+form, so nothing typed is lost. Closing a panel puts focus back on the button
+that opened it, not just one with the same label: a row's "Edit" or "Remove"
+is that row's, a button in a disclosure opens it again, and where the button
+is gone, the view's heading; the panel's own way to Map a process gives focus
+to that view's heading. Where the browser refuses the clipboard, the
+text to copy opens over the panel, says to select and copy it, and closes
+back to it and to the Copy button pressed; "Exactly what you're signing",
+opened from a form, closes back to the form as it was, and a redraw while a
+panel is open keeps focus where it was. Where the chat route is not offered,
+the panel no longer asks to connect once or blames a plan. The pages and the panel say the
+connector's sign-in in one sentence, and the first thing to ask an assistant
+starts from the Map a process message. In Map a process, step 1 counts the
+text as it is typed (against a chat's 20,000 characters where that route is
+offered, "Loaded from" and the file's name only while the text is the
+file's, the name breaking inside itself on a phone rather than widening the
+steps), the copy-and-paste
+preview goes as soon as the title or text changes, the copied message leaves
+out the packet's note to programs, "not-declared" from an assistant is taken
+as no model, switching who drafted the map keeps what was typed, and the
+route cards are spaced by their own gap. Their buttons' labels wrap inside the
+card, so none runs past it or off a 320 to 375 px screen, and "Copy the
+message for my AI" keeps keyboard focus through the redraw copying makes,
+where focus is still on it when the copy lands. A person who went on while its
+message was being fetched keeps their place: focus stays in a panel they
+opened, and a page they scrolled on is not pulled back to the button.
+
+Any redraw of the same view now gives focus back to what had it, built again:
+the same button, or the same field with what was typed in it and the caret
+and selection where they were, and it stays where it was on the screen
+(another view, a task or signing in still starts afresh). So pressing "Copy
+the message for my AI" twice, with a double click, Enter twice or Enter held
+down, no longer leaves focus on nothing; a person who went into "Your AI's
+answer" and typed while the message was on its way stays there, and their next
+keys go in; and a menu or field that redraws when changed keeps focus too.
+A press while a copy is on its way, the second click of a double click and
+Enter's repeats add no copy and no toast; a later press copies again, as does
+a press once a copy has waited 10 seconds for its message. The
+copy no longer moves the button 90 to 115 px down the screen: the browser's
+scroll anchoring, which had nothing to hold on to once the view was rebuilt and
+moved the page anyway, is off in the app, and a redraw keeps what has focus,
+or else what is on the screen, in its place, except while the page is still
+scrolling.
+
+A redraw while the browser is still scrolling to a button that Tab just reached
+(Tab, then Enter at once on "Add a task" below the screen) now brings the
+rebuilt button to the middle of the screen, instead of leaving focus on a
+button the new task pushed off it. Someone who has scrolled, clicked or used
+another key since is left where they are. "Skip to content" now works in the
+app: focus moves to the screen's main area, so the next Tab starts there, and
+the address is left as it is, so a task page stays on its task. Only opening or
+leaving a task link draws the page again and goes to its top; `#main` typed
+into the address does neither. The main area takes focus by script only and
+shows no outline, and below 768 px it no longer stops with its first line under
+the navigation strip. Dismissing an answer from the keyboard now moves focus to
+the view's heading (or to an open panel's title) instead of the top of the
+page. In People & roles, "Add a type of task" keeps what was typed, and stays
+open, through redraws and through a refusal, so a refused ID can be corrected.
+It empties and closes only once the type is added, and its button is off while
+the change is being signed.
+
+## 2026-11-09 — Foxxi encrypts stored LTI gradebooks
+
+Foxxi seals gradebook snapshots before serving or saving grades. Recovery of a
+mismatched legacy pointer requires an approved fingerprint of the signed copy
+and preserves the original pointer and payload. A configured RSA key lets the
+platform sign launches with RS256 for tools that require it.
+
+## 2026-11-09 — Practice Evidence: the pages say when an assistant sees the weights and the pass mark
+
+The landing page said AI "never sees the weights or the pass mark". That is
+true of the three things an assistant does in Practice Evidence: drafting a
+scenario, playing the other person and proposing levels. It was not true of
+everything else a connected assistant can do. Asked to list the practice
+scenarios or show results, as the landing page and the guide suggest, an
+assistant reads each scored scenario's whole rubric: how much each criterion
+counts, the points for each level and the pass mark, as a person sees them in
+the web app. What's waiting for review also shows every assessment's levels
+side by side. The landing page, the guide and the README now say which steps
+leave the weights and the pass mark out, and that those reads do not.
+
+So the message a learner sends their judge now asks the judge to paste it into
+a new chat, not one where they reviewed sessions or listed scenarios, which
+has already seen the scoring. The guide, Getting started and the Connect
+dialog say the same.
+
+Three smaller fixes. The judge message says an assessment may already be
+saved only when that chat sent a save of this session, or can't tell whether
+it did: a save of another learner's session in the same chat no longer
+counts. The workspace details no longer say twice what to do when the act
+tool has no sign_payload option; their signing rule points to the last line
+of "How to do each step", which says it. And the README now says that a
+judge's save answers with the session's state and how many assessments it
+has, as well as how the judge's own levels and quotes were checked.
+
+## 2026-11-09 — Practice Evidence: a prompt with plain steps says what to do without sign_payload
+
+The shared helpers that write the prompts people copy into Claude or ChatGPT
+said what to do when a chat app's act tool has no sign_payload option only in
+a prompt that could lead to a signed step. A prompt whose steps were all plain
+still listed "sign_payload: false" for each step and never said to leave that
+argument out, which is what an assistant has to do in a chat app without the
+option, as in ChatGPT's current connection. No prompt Practice Evidence copies
+today has only plain steps, so none went out that way. Now every prompt with a
+plain step says to leave sign_payload out of it, without signing it or
+wrapping it. The sign_request way is given only in a prompt with a signed step.
+A prompt with both, such as drafting a scenario, says each once, in one
+sentence.
+
+The workspace details now say that sign_payload true or false, there and in
+any example, says whether a step is signed or plain, and that in a chat app
+without the option their rule for that case covers every step of either kind:
+sign_request first for a signed step, no sign_payload for a plain one.
+
+A new test runs two chats of the same judge that overlap. One fetches the
+judge packet; the other fetches it, assesses and saves; the first then saves
+what it assessed from its own packet. That save is refused because the
+session changed, the first chat fetches the packet again, finds the
+assessment saved and stops, and the session holds one assessment by that
+judge. The test also checks that one packet carries both what a save is tied
+to and whether the judge's assessment is saved, read from the same version of
+the session. The README now describes the signing rule as above and the two
+overlapping chats.
+
+A note on the relay change that sends ChatGPT each tool result once (#807):
+that layout, a one-line summary as the text and the result in structured
+form, is used on the /mcp endpoint only, where Claude and ChatGPT connect. The
+older /messages endpoint keeps the default layout for every client, the
+result's JSON text first and the summary after it.
+
+## 2026-11-09 — Practice Evidence: saving an assessment no longer shows the judge's assistant the scoring
+
+The entry below said the judge's assistant no longer reads the scoring. It
+still did, one step later. When it saved an assessment, the answer included
+the full provisional result for a scored scenario (how much each criterion
+counts, the points for each level, the percent, the pass mark and the levels
+a pass needs), the first assessment's result, which is often another
+judge's, and every judge's levels side by side. If the same chat then
+assessed again, the session once it was reopened or another learner's
+session of the same scenario, the assistant had already read all of it.
+
+Now a judge's save answers with only what the judge needs: that it was
+saved, where, how many assessments the session has, and for each criterion
+the level given and whether each quote checked out. The result, the other
+judgments and the advice for the next level stay in the record, and the
+learner and the reviewers still see them in the web app. When the web app
+asks for an assessment, the answer is unchanged.
+
+Three smaller fixes. A judge's assistant whose first step is refused before
+anything was saved (the judge is not registered yet, or the session has not
+ended) no longer tells the judge their assessment may already be saved; it
+says so only when it sent a save in that chat or can't tell whether it did.
+Whether a judge's assessment came after the session was last reopened is now
+decided by the order things were written in, not by comparing clock times,
+so one written in the same instant as the reopening still counts. And the
+guide now says that after a contest or a withdrawn review, the same message
+pasted again does ask for a new assessment.
+
+The README now lists the packet's yourAssessment field among the additions
+to the interface, and says what the save answer leaves out. Tests check the
+save answer for a first judge, a second judge and a judge assessing again
+after a contest, with no scoring in any of them.
+
+## 2026-11-09 — Practice Evidence: a judge's assistant checks for a saved assessment without reading the scoring
+
+The judge's message checked whether the judge's assessment was saved by
+reading the whole session. That answer includes the full rubric: how much
+each criterion counts, the points for each level and what it takes to pass.
+The judge packet leaves those out on purpose, so the assistant proposing
+levels cannot aim for a pass. When a session the judge had assessed was
+reopened for a new assessment, or when the judge is also a reviewer or an
+admin, the assistant read all of that before it assessed. Telling it to set
+the answer aside did not take it out of what it had read.
+
+Now the judge packet itself says whether the judge already has a saved
+assessment of the session that still counts: its last field,
+`yourAssessment`, is empty, or says it is saved and when. It says nothing
+else, not a level, a quote, another judge's assessment, a review or anything
+about scoring. An assessment made before the session was last reopened (the
+learner contested the review, or an admin withdrew it) does not count. The
+judge's message no longer asks for the full session record. Its first step, fetching
+the packet, is also the check: if an assessment is saved, the assistant says
+so and stops. After a save that may have gone through (an error, no answer, a
+one-time code refused as already used, or the assistant losing track), it
+fetches the packet again, which is only a read, and if nothing is saved it
+sends the same assessment once more, tied to the same version of the session,
+so a first save that did go through makes the resend fail instead of saving
+twice. If the session changed, it fetches the packet again and assesses only
+if nothing of the judge's is saved. The message is about a fifth shorter. The
+guide, the README and the action's description say the same, and tests check
+the packet's new field for a judge, a judge who is also a reviewer or an
+admin, and the learner, before and after a judgment and a contest.
+
+## 2026-11-08 — Practice Evidence: a judge's assistant checks for a saved assessment before it starts
+
+A judge could still save two assessments of the same session by pasting the
+judge's message into a new chat. The check for a saved assessment ran only
+after a save went wrong in the same chat. When the chat app failed and the
+judge started a new chat, or when the learner sent the message again (the
+Send to your judge button stays after a session is assessed), the new chat
+fetched the session, which shows no earlier assessment, and the save went
+through. The second assessment was marked as a repeat, but it still counted in
+the agreement figures.
+
+Now the assistant reads the session first, before it fetches anything to
+assess. If an assessment by the judge is saved there, it says so and stops. An
+assessment made before the session was last reopened (a learner contested the
+review, or an admin withdrew it) does not count, so the judge can still assess
+a reopened session once. Before, a judge whose new assessment of a contested
+session failed to save could be told it was saved, because their earlier
+assessment was found. The assistant uses what it reads only to look for the
+judge's own assessment, and sets aside the conversation, other judges'
+assessments and reviews. An answer missing the fields it checks, as a long
+answer cut short by a chat app would be, counts as no answer. A wrong field in
+the check is fixed once, as for any other step, rather than ending the chat. The
+guide and the README say the same, and a test runs the check as the message
+describes it against the workspace, through a contest and a second assessment.
+
+In the guide's and the landing page's setup steps, the step that starts with
+ChatGPT's warning now says that signing in is a step in either app.
+
+The relay test showing that sign_request called alone signs what act signs now
+also catches a change to the tool arguments written as a cast, an alias,
+Reflect.set, a nested property, `++` or `--`: every use of the arguments in that
+part of the relay must be a known kind of read.
+
+## 2026-11-08 — Practice Evidence: a judge's assistant asks the workspace whether a save went through
+
+The judge's message still let one assessment be saved twice. If a save was
+kept but the chat app showed an error, the assistant stopped; if the judge then
+asked it to try again, the new save was refused because the session had
+changed (the first save changed it), and the message sent the assistant back to
+fetch the session, which shows no earlier assessment, so it saved a second one.
+The message decided this from what the assistant had seen accepted in that
+chat, and an error is not an acceptance. It also told the judge only that an
+assessment "may already be saved", with no way to find out, including when the
+workspace had refused a one-time code the assistant reused, when nothing was
+saved.
+
+Now the message has a third step that reads the session, which a judge may do
+once an assessment of theirs is saved on it. Before the assistant fetches the
+session again after a save refused because the session changed, and whenever a
+save is refused as already used, comes back with an error that names no reason
+code, gets no answer, or the assistant loses track, it reads the session. If an
+assessment signed as the judge is there, it says so and stops. If the read is
+refused as not allowed, nothing of the judge's was saved: it sends the same
+assessment once more (which the workspace refuses, as the session having
+changed, if the first one had been kept after all), or fetches the session
+again and assesses that if the session changed. Only when it cannot read the
+session does it say the assessment may already be saved, and the guide tells
+the judge to ask the learner whether the session page shows it before pasting
+the message into a new chat. The README says the same.
+
+The guide's and the landing page's ChatGPT steps are now in ChatGPT's own
+order, as in the Connect dialog: add the custom MCP server, give its Server URL
+and OAuth, then accept the warning, create it as a plugin and install it. The
+guide and the landing page no longer say outright that a person cannot assess
+their own session: the workspace refuses an assessment from the account or
+wallet that started the session, and the pages now say that.
+
+The relay test showing that sign_request called alone signs what act signs now
+also fails if the relay's tool call handling changes the arguments after the
+part the test runs and before the tool itself is called.
+
+## 2026-11-08 — Practice Evidence: a judge's assistant never saves the same assessment twice
+
+The judge's message sent the assistant back to fetch the session and assess it
+again when a save was refused as already used, or when it lost track. In both
+cases the first save may already have been kept, and fetching the session shows
+no earlier assessment, so following the message could record a second judgment
+of the same session by the same judge. Now a save refused as already used, or
+one the assistant lost track of after sending it, ends with the assistant
+telling the judge the assessment may already be saved, and stopping. Only a
+save refused because the session changed sends it back to fetch the session,
+and only while no save of that session has been accepted in that chat. The
+guide and the README say the same.
+
+The copied prompts now tell an assistant to call sign_request with the step's
+payload as its only argument, since it also signs any other argument it is
+given. A new relay test runs the relay's own code for both ways, through the
+argument handling a chat app's tool call reaches, and shows that sign_request
+called that way signs the same fields as act with sign_payload. The shared test
+could not show this, since it gave both ways one stand-in signer. While the
+identity service cannot be reached, the two can differ in the subject pod field
+alone, which no bridge reads as the pod an act targets.
+
+The ChatGPT tab of the Connect dialog now says what the Claude tab says about
+whether a connector can be added (it depends on plan or workspace settings),
+the guide and the landing page include accepting ChatGPT's warning, and a
+remembered approval is described as covering one tool in one chat. The Connect
+dialog, the guide and the landing page say a learner's own assistant cannot
+assess a session the learner started with their Interego account, which is
+what the bridge checks: a session started with a wallet belongs to the wallet.
+
+## 2026-11-08 — Practice Evidence: signing without sign_payload, ChatGPT's own setup steps, and who may judge
+
+A chat app can show the connector's act tool without its sign_payload option
+(an app can keep an old copy of the tool list), so a person's assistant had no
+way to do a signed step from the text Practice Evidence gave it. Every copied
+prompt that can lead to a signed step (the start-up message, the judge's
+message, drafting a scenario and the workspace details) now says how to do one
+in two calls: the connector's sign_request tool with the step's payload, then
+act with the two fields it returned, unchanged, which is what sign_payload does
+inside the connector. A prompt whose every step is plain leaves that out. The
+shared chat-agent helpers add it, so it reads the same wherever they are used.
+
+The ChatGPT setup steps follow OpenAI's own guide to custom MCP servers,
+checked today, and link to it: Plugins, then Add custom MCP server, its Server
+URL and OAuth, create it as a plugin and install it, then choose it with @ in a
+chat. The Connect dialog adds that ChatGPT asks before each write unless told
+to remember the choice for that tool in that chat, and that refreshing the app from its
+settings page fetches new tools. No page claims which plans allow custom
+connectors any more: whether a person can add one depends on their plan or
+workspace settings.
+
+The guide and the Connect dialog now say plainly that a judge is a different
+person, with their own Interego account, appointed by Member ID, and that a
+learner's own assistant cannot assess a session the learner started with their
+Interego account, in a new chat or told to act as a judge, since it still acts
+as that account. The guide also says that an
+assessment is tied to the exact session, conversation and rubric the judge's
+assistant fetched. The start-up message no longer retries a refused save at the
+next turn number, which could save the same reply twice: after a refusal for a
+turn out of order, a step already used, a stale step or a session that moved
+on, or after losing track, the assistant reads the conversation again and
+reconciles before it writes or saves another reply. The judge's message has it
+judge a new copy of the session when a save is refused because the session
+changed, unless a save of that session already went through in that chat.
+
 ## 2026-11-08 — Foxxi accepts plain JSON LTI scores
 
 The LTI gradebook parses plain JSON and standard LTI score submissions on the

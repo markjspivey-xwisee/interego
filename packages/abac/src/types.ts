@@ -33,6 +33,18 @@ export interface AttributeGraph {
   readonly facets: readonly ContextFacetData[];
   /** Provenance of each facet: where (which pod / descriptor) it came from. */
   readonly sources: ReadonlyMap<ContextFacetData, IRI>;
+  /**
+   * Statements made directly about the subject, by compact IRI, each many-valued: attributes
+   * that are no facet of any descriptor (what an identity provider holds about an account, say).
+   * `extractAttribute` returns them after the facets' values for the same path. Optional, and a
+   * graph without it evaluates exactly as before.
+   *
+   * They carry no source descriptor, so `filterAttributeGraph` (which keeps facets by their
+   * source) never carries them over: a graph filtered for sybil resistance holds none. Whoever
+   * builds a graph with them vouches for every one, so build it only from an authority's own
+   * answer, never from the subject's request.
+   */
+  readonly attributes?: ReadonlyMap<string, readonly (string | number | boolean)[]>;
 }
 
 /**

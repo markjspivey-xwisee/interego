@@ -59,8 +59,13 @@ export const LIFECYCLE_STATES: readonly LifecycleState[] = [
   'in-conversation', 'ended', 'judged', 'countersigned', 'overridden', 'contested', 'review-retracted', 'redacted',
 ];
 export type EnvelopeForm = 'pev-canonical' | 'signed-request';
-export type Role = 'reviewer' | 'author' | 'judge' | 'agent' | 'learner';
-export const ROLES: readonly Role[] = ['reviewer', 'author', 'judge', 'agent', 'learner'];
+/**
+ * `lms`: the LMS whose LRS launched attempts are taken from, as a signing principal (its bridge's
+ * own key). It may take a launched attempt's reviewed statements for the unit it launched, and
+ * vouch for the session it opened. It holds no other right here.
+ */
+export type Role = 'reviewer' | 'author' | 'judge' | 'agent' | 'learner' | 'lms';
+export const ROLES: readonly Role[] = ['reviewer', 'author', 'judge', 'agent', 'learner', 'lms'];
 
 /** Who stands behind a signature: a key the person holds, or the Interego relay signing for their session. */
 export type Authority = 'key-held' | 'relay-delegated';
@@ -188,6 +193,103 @@ export interface AttemptAct {
   readonly authority?: 'relay-delegated'; readonly agentId?: string; readonly relaySigner?: string;
 }
 
+/**
+ * The cmi5 launch an attempt ran under, as the LMS issued it. Present only on an attempt taken from
+ * an LMS launch; an attempt started here carries none, and satisfies no assignable unit.
+ */
+export interface LmsLaunch {
+  /** The registration and the session of the conversation, both issued by the LMS. */
+  readonly registration: string; readonly sessionId: string;
+  /** The assignable unit's activity id, as the launch gave it: the object of every cmi5 defined statement. */
+  readonly activityId: string;
+  /** The actor the LMS launched, as it named them. */
+  readonly actor: { readonly homePage: string; readonly name: string };
+  /** The LRS endpoint the launch named, where the session's statements are. */
+  readonly endpoint: string;
+  readonly launchMode: 'Normal' | 'Browse' | 'Review';
+  /** Present when the launch data carried one (a scaled score, 0 to 1). */
+  readonly masteryScore?: number;
+  /** The launch data's contextTemplate, carried into every statement of the registration. */
+  readonly contextTemplate?: Readonly<Record<string, unknown>>;
+  /** The cmi5 defined verbs the unit had already sent in this registration when the attempt was taken from it. */
+  readonly unitSent?: readonly ('passed' | 'failed' | 'completed')[];
+  /** How the launch mode is known: from the LMS's launched statement, or not at all (Normal is then assumed). */
+  readonly launchModeFrom?: 'launched-statement' | 'assumed';
+  /**
+   * The authority the `launched` statement was recorded under, when the launch mode was read from
+   * one that carried the authority this bridge was told is the LMS's. Absent where the mode was
+   * taken from a `launched` whose recorder was not checked: every attempt taken before the check
+   * existed, and every one taken by a bridge not told the authority.
+   */
+  readonly launchedUnder?: { readonly homePage: string; readonly name: string };
+  /** Every statement the attempt was read from, in time order. */
+  readonly statementIds?: readonly string[];
+  /** The activity's definition as the unit's own first statement gave it, carried onto the statements built for the unit. */
+  readonly activityDefinition?: Readonly<Record<string, unknown>>;
+  /**
+   * The cmi5 defined statements handed out for the unit to send, fixed the first time they were
+   * asked for: when, for which session, to whom, and the documents themselves.
+   */
+  readonly handedOut?: {
+    readonly at: string; readonly sessionId: string; readonly to: string; readonly statements: readonly Readonly<Record<string, unknown>>[];
+    /** What said the session was one to send in: the LRS, read through the learner's signed read, or the LMS that opened it. */
+    readonly sessionVouchedBy?: 'lrs-read' | 'lms';
+    /** When the LMS vouched: the account homePage it speaks for, which is the launch actor's. */
+    readonly issuer?: string;
+    /**
+     * The sessions these statements were fixed for before this one, oldest first. Each ended with
+     * none of them in the LRS, which is why they were fixed again. The result they carry never changed.
+     */
+    readonly fixedBefore?: readonly { readonly at: string; readonly sessionId: string }[];
+  };
+}
+
+const LMS_UUID = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i;
+const LMS_IRI = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"{}|\\^`]+$/;
+const lmsHttp = (v: unknown): boolean => {
+  if (typeof v !== 'string') return false;
+  try { const u = new URL(v); return u.protocol === 'http:' || u.protocol === 'https:'; } catch { return false; }
+};
+
+/** Each failure as one sentence; [] means the value is a launch an attempt may carry. */
+export function lmsLaunchProblems(v: unknown): string[] {
+  if (typeof v !== 'object' || v === null || Array.isArray(v)) return ['the launch is not an object'];
+  const l = v as Record<string, unknown>;
+  const p: string[] = [];
+  if (typeof l['registration'] !== 'string' || !LMS_UUID.test(l['registration'])) p.push('registration must be a UUID');
+  if (typeof l['sessionId'] !== 'string' || l['sessionId'].length === 0 || l['sessionId'].length > 200) p.push('sessionId must be a non-empty string');
+  if (typeof l['activityId'] !== 'string' || !LMS_IRI.test(l['activityId'])) p.push('activityId must be an absolute IRI');
+  const actor = l['actor'];
+  if (typeof actor !== 'object' || actor === null || Array.isArray(actor)) p.push('actor must be an account: homePage and name');
+  else {
+    const a = actor as Record<string, unknown>;
+    // An LMS may name its accounts under a DID or another IRI, not only a web address.
+    if (typeof a['homePage'] !== 'string' || !LMS_IRI.test(a['homePage'])) p.push('actor.homePage must be an absolute IRI');
+    if (typeof a['name'] !== 'string' || a['name'].length === 0) p.push('actor.name must be non-empty');
+  }
+  if (!lmsHttp(l['endpoint'])) p.push('endpoint must be an absolute http(s) URL');
+  if (l['launchMode'] !== 'Normal' && l['launchMode'] !== 'Browse' && l['launchMode'] !== 'Review') p.push('launchMode must be Normal, Browse or Review');
+  const m = l['masteryScore'];
+  if (m !== undefined && (typeof m !== 'number' || !Number.isFinite(m) || m < 0 || m > 1)) p.push('masteryScore must be a number from 0 to 1');
+  const t = l['contextTemplate'];
+  if (t !== undefined && (typeof t !== 'object' || t === null || Array.isArray(t))) p.push('contextTemplate must be an object');
+  const u = l['unitSent'];
+  if (u !== undefined && !(Array.isArray(u) && u.every((x) => x === 'passed' || x === 'failed' || x === 'completed'))) p.push('unitSent must list passed, failed or completed');
+  const f = l['launchModeFrom'];
+  if (f !== undefined && f !== 'launched-statement' && f !== 'assumed') p.push('launchModeFrom must be launched-statement or assumed');
+  const lu = l['launchedUnder'];
+  if (lu !== undefined && (typeof lu !== 'object' || lu === null || typeof (lu as Record<string, unknown>)['homePage'] !== 'string' || typeof (lu as Record<string, unknown>)['name'] !== 'string')) {
+    p.push('launchedUnder must name an authority account: homePage and name');
+  }
+  const ho = l['handedOut'];
+  if (ho !== undefined && (typeof ho !== 'object' || ho === null || !Array.isArray((ho as Record<string, unknown>)['statements']))) p.push('handedOut must carry the statements handed out');
+  const d = l['activityDefinition'];
+  if (d !== undefined && (typeof d !== 'object' || d === null || Array.isArray(d))) p.push('activityDefinition must be an object');
+  const ids = l['statementIds'];
+  if (ids !== undefined && !(Array.isArray(ids) && ids.every((x) => typeof x === 'string' && LMS_UUID.test(x)))) p.push('statementIds must be UUIDs');
+  return p;
+}
+
 export interface AttemptBody extends RecordCommon {
   readonly kind: 'attempt'; readonly attemptIri: string; readonly state: LifecycleState; readonly evidenceKind: 'practice';
   readonly scenario: {
@@ -203,13 +305,15 @@ export interface AttemptBody extends RecordCommon {
   readonly endedBy?: 'learner' | 'learner-confirmed-counterpart-end' | 'turn-limit';
   readonly endProposedAtTurn?: number;
   readonly turns: readonly Turn[];
-  readonly counterpartControlledBy: 'platform' | 'learner-model' | 'learner';
+  readonly counterpartControlledBy: 'platform' | 'learner-model' | 'learner' | 'assignable-unit';
   readonly transcriptHash?: string;
   /** judgments[0] is the PRIMARY judgment. */
   readonly judgments: readonly JudgmentResult[];
   readonly reviews: readonly ReviewResult[];
   readonly reopenings: readonly Reopening[];
   readonly redaction?: Redaction;
+  /** Set only on an attempt taken from an LMS launch. */
+  readonly lmsLaunch?: LmsLaunch;
   readonly startEnvelope: StoredEnvelope;
   readonly acts: readonly AttemptAct[];
 }
@@ -783,11 +887,39 @@ export const EXPORT_VERIFY_STEPS: readonly string[] = [
   'An envelope kept in a record with authority relay-delegated was signed by the Interego relay for agentId, not by the person: recoverMessageSigner(\'sha256:\' + sha256Hex(signedPayload), signature), from @interego/core, must be its relaySigner and one of relayAddresses, and the signed payload\'s agent_id must be agentId (did:web:<identityHost>:agents:…). principal (did:web:<identityHost>:users:…) is who the identity host said controlled that agent when the act was taken, as this platform signed it into the record; a reader who wants it asked again fetches https://<identityHost>/agents/<slug>/did.json, whose controller may have changed since.',
 ];
 
+/**
+ * What an export without graphs can be checked for: a scored session's export to a caller who does
+ * not read its stakes (export_record `graphsLeftOut`). It shows which versions there are and that
+ * this platform signed each descriptor, not what the record holds.
+ */
+export const EXPORT_VERIFY_STEPS_WITHOUT_GRAPHS: readonly string[] = [
+  'This export holds no graph (graphTrig is null in every version), so it shows which versions there are and what each descriptor says, not what the record holds, and the platform proof cannot be checked against the content it signed.',
+  'parseAuthorshipProofFromDescriptorTurtle(descriptorTurtle), from @interego/solid, gives the platform proof; proof.signerAddress must be one of platformAddresses.',
+];
+
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 //  Next actions (§12.26, A4): what this caller can do next, from the record's own state
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 export interface NextAction { readonly action: string; readonly toolName: string; readonly label: string; readonly why: string }
+
+/**
+ * The states a judge can assess an attempt in: the conversation is over and no review stands, so it
+ * was never reviewed, or a contest or a withdrawn review reopened it. The handlers' `judgeable`
+ * refuses every other state.
+ */
+const JUDGING_STATES: ReadonlySet<LifecycleState> = new Set(['ended', 'judged', 'contested', 'review-retracted']);
+
+/**
+ * Whether a judge can assess an attempt now: one of the states judging is open in, with room for
+ * another judgment (`MAX_JUDGMENTS`). What the handlers' `judgeable` lets through, so every place
+ * that offers the learner a way to hand the session to a judge (the judge packet among their next
+ * actions, the `handOff` a learner's own chat assistant is given) offers it exactly then.
+ */
+export function judgingOpen(state: LifecycleState, judgmentCount: number): boolean {
+  return JUDGING_STATES.has(state) && judgmentCount < MAX_JUDGMENTS;
+}
+
 export interface NextActionView {
   readonly state: LifecycleState; readonly authorTest: boolean; readonly judgmentCount: number; readonly contestCount: number;
   readonly learnerTurns: number; readonly mayCountersignAsIs: boolean;
@@ -801,7 +933,9 @@ const NEXT: Readonly<Partial<Record<PevActionKey, { label: string; why: string }
   recordTurns: { label: 'Record a line from your agent', why: 'Record your line together with the line your own agent wrote for the other person.' },
   endConversation: { label: 'End the conversation', why: 'Stop here; the transcript is then fixed and can be judged.' },
   judgeAttempt: { label: 'Ask this bridge to judge', why: 'A model chooses levels and quotes; the platform checks every quote and computes the result.' },
-  judgePacket: { label: 'Get a judge packet', why: 'An independent judge agent can judge this attempt from the packet.' },
+  // Offered only to the learner (nextActionsFor), whose next step is a hand-off: their appointed judge assesses from the
+  // packet, never the learner or their own assistant (record_judgment: judge-is-the-learner).
+  judgePacket: { label: 'Hand off to your appointed judge', why: 'Your appointed judge assesses this session from the judge packet, with their own assistant or tool; you cannot assess your own session.' },
   exportRecord: { label: 'Download my record', why: 'Every version of this record with its platform signature, checkable offline.' },
   holderCopy: { label: 'Copy to my pod', why: 'Writes a copy of every version to a pod you name.' },
   redactAttempt: { label: 'Remove the transcript from this pod', why: 'Deletes the text from the operator pod; hashes stay, so copies you hold can still be checked.' },
@@ -846,6 +980,8 @@ export function nextActionsFor(
       if (view.contestCount < MAX_CONTESTS) add('contestReview');
       add('exportRecord'); add('holderCopy'); add('redactAttempt');
     } else if (s === 'contested' || s === 'review-retracted') {
+      // Reopened: judging starts again, so the learner hands it to a judge as after a judgment (`judgingOpen`).
+      if (judgingOpen(s, view.judgmentCount)) add('judgePacket');
       add('exportRecord'); add('holderCopy'); add('redactAttempt');
     } else if (s === 'redacted') {
       add('exportRecord');
@@ -1223,11 +1359,23 @@ function attemptGraph(a: AttemptBody, json: string): string[] {
     ['pev:hasReview', a.reviews.map((r) => ref(`${A}#review-${r.index}`))],
     ['pev:hasReopening', a.reopenings.map((o) => ref(`${A}#reopening-${o.index}`))],
     ['pev:hasRedaction', a.redaction ? ref(`${A}#redaction`) : undefined],
+    ['pev:lmsLaunch', a.lmsLaunch ? ref(`${A}#lms-launch`) : undefined],
     ...assessmentPairs(standing?.assessment ?? a.judgments[0]?.provisional),
     ['pev:serverHeldDemoKey', anyDemoSigner(a) ? bool(true) : undefined],
     ...envelopePairs(a.startEnvelope),
     ...commonPairs(a, json),
   ]));
+  if (a.lmsLaunch) {
+    const l = a.lmsLaunch;
+    blocks.push(block(`${A}#lms-launch`, 'pev:LmsLaunch', [
+      ['pev:lmsRegistration', lit(l.registration)],
+      ['pev:lmsSessionId', lit(l.sessionId)],
+      ['pev:lmsActivity', ref(l.activityId)],
+      ['pev:lmsEndpoint', ref(l.endpoint)],
+      ['pev:lmsLaunchMode', lit(l.launchMode)],
+      ['pev:lmsMasteryScore', l.masteryScore !== undefined ? `"${l.masteryScore}"^^xsd:decimal` : undefined],
+    ]));
+  }
   for (const t of a.turns) {
     const T = `${A}#turn-${t.index}`;
     blocks.push(block(T, 'pev:Turn', [

@@ -79,6 +79,72 @@ revokes future access; it cannot erase an already delivered client transcript.
 Connector removal first confirms cleanup of its generated LTI resources. Failed
 remote cleanup keeps the credential for an explicit retry.
 
+## Guest learners (off unless the workbench's service key is set)
+
+A learner can also arrive as a provisional guest (`deploy/identity/PROVISIONAL-PLAY.md`): an owner
+the identity service creates for a P-256 key this browser generates, cannot export, and keeps in
+IndexedDB. Possession of that key is all a guest proves. It does not identify a person.
+
+The workbench is its own application to identity, separate from the Foxxi dashboard
+(`DURABLE-GUEST.md`): its own origin, its own service account, its own entry in identity's
+`PROVISIONAL_PLAY_CLIENTS`, and so its own guests and its own admission cap. A dashboard guest and a
+guest learner are never the same account.
+
+Guest sign-in is off unless `FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY` is set on the bridge. Unset,
+`/i2idlx/learning/session` offers no `guest_sign_in` and the three guest routes answer
+`503 learning_guest_unavailable`. Turning it on, in order (each step changes a live service):
+
+1. Make a secp256k1 key for this purpose only. The bridge stops at start if it is the dashboard's
+   `FOXXI_PLAY_SERVICE_PRIVATE_KEY`, if it is malformed, if `BRIDGE_DEPLOYMENT_URL` is not a public
+   HTTPS origin, or if that origin is also `FOXXI_PLAY_AUDIENCE`.
+2. Create the service's identity account and register its agent with the relay.
+   `tools/setup-play-service.mjs` does both; it reads its key from `FOXXI_PLAY_SERVICE_PRIVATE_KEY`,
+   so run it with the workbench's key in that variable and `--audience=<the bridge's origin>`
+   (`DURABLE-GUEST.md` has the flags).
+3. Set `FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY` on the bridge and restart it. `GET /play/status`
+   then carries `learnerWorkbench`, with the `agentDid` and `podUrl` the relay signs this service
+   as and whether it is `ready`.
+4. Add the workbench's origin to identity's `PROVISIONAL_PLAY_CLIENTS` with those two values, a
+   `namespace` and a `maxPods`. Merge it in; do not replace the other entries.
+
+The audience of every grant is the bridge's own configured origin, never a request's.
+
+The flow, all under `/i2idlx/learning/guest/`, each requiring the workbench's own `Origin`:
+
+1. `POST grant` with `{publicKeyThumbprint}` returns a grant for that key, which the browser signs
+   and posts to identity's `/play/provisional` itself. The identity token in that answer is never
+   read or stored; only the attestation (public proof material) is kept beside the key.
+2. `POST challenge` returns a single-use challenge, valid two minutes.
+3. `POST session` with `{attestation, challenge, proof}`: the workbench consumes the challenge, asks
+   identity's `/play/provisional/verify` whether this is a live guest of this application, checks
+   every canonical field of the answer again (issuer, audience, `u-try-play-` owner, DID, WebID, pod),
+   and sets the same HttpOnly session cookie as a normal sign-in.
+
+The workbench holds no relay or identity credential for a guest. It keeps the proof it was shown and
+repeats the identity check when a request arrives more than 30 seconds after the last one, so a
+guest that was deleted, expired or claimed away stops within that window; the session also ends at
+the guest's fixed deadline and never lasts more than an hour. A returning guest signs in again with
+its stored attestation and a fresh proof, without spending a new grant.
+
+A guest is a learner and nothing else. `auth.resolve()` refuses a guest session unless the route
+opts in, so a route nobody decided about is closed to guests. What is open:
+
+| Open to a guest | Closed to a guest (`403 learning_guest_refused`) |
+|---|---|
+| `request-link`, `discover`, `my-links`, `confirm-link`, `revoke-link` (its own) | creating or revoking a connector, policies, course maps, `pending-links`, `approve-link`, LTI setup |
+| `courses`, `progress`, `course-readiness`, `quiz-review` | progress notifications (a subscription would outlive the guest) |
+| `/i2idlx/api/learning/launch` | `/i2idlx/api/learning/context` (needs a paired agent, which a guest cannot register) |
+
+An administrator still decides whether a guest is a learner at all: a link is `pending-admin` until
+the connection's owner matches it to an actual registration, and the owner sees the requesting
+account's `u-try-play-` WebID when doing so. A link belongs to the guest's owner DID, so a guest
+that later adds a passkey or wallet to the same owner keeps its links and signs in the normal way.
+
+This is separate from the dashboard's "Start as a guest", which makes a secp256k1 wallet in the tab
+and signs requests to the Foxxi bridge as `did:ethr:`. That guest has no learning account and cannot
+use these routes, including when its browser keeps it in a provisional pod (`DURABLE-GUEST.md`): the
+pod is the dashboard application's, and the guest still signs as its wallet.
+
 ## Course readiness and released quiz review
 
 Select a course and explicitly check its readiness. This verifies current

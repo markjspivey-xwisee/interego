@@ -407,6 +407,42 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
       "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
     ]
   },
+  "foxxi.cmi5_personal_launch": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "An authenticated own-account signed request or supported Foxxi bearer session"
+    ],
+    "notes": [
+      "Mints a durable per-learner per-course URL. Opening it is unauthenticated and rate-limited; the token is the capability.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.cmi5_personal_launch_list": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "signed",
+    "requires": [
+      "An authenticated own-account signed request or supported Foxxi bearer session"
+    ],
+    "notes": [
+      "Lists personal launch links minted for the signed learner. The URL secret is not stored and is not returned.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.cmi5_personal_launch_revoke": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "An authenticated own-account signed request or supported Foxxi bearer session"
+    ],
+    "notes": [
+      "Withdraws a personal launch link minted for the same learner.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
   "foxxi.lti_launch_signed": {
     "implementation": "implemented",
     "mode": "write",
@@ -853,6 +889,108 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
       "An authenticated own-account signed request or supported Foxxi bearer session"
     ],
     "notes": [
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_add": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by any wallet, or by an agent holding a delegation"
+    ],
+    "notes": [
+      "Bounded by document size, triple count and a count per signer each hour; the first agent to add a profile IRI adds its later versions.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_remove": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by the agent that added the profile, or by the operator"
+    ],
+    "notes": [
+      "Records the removal; the lattice is append-only, so the earlier holon stays addressable.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_draft": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by any wallet, or by an agent holding a delegation"
+    ],
+    "notes": [
+      "A draft is its writer's and is held in memory: it does not survive a restart, and every answer carries the whole draft so it can be sent back.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_lint": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by any wallet, or by an agent holding a delegation"
+    ],
+    "notes": [
+      "Judges examples with the specification's own validation and pattern matching; stores nothing.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_publish": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by the agent that wrote the draft"
+    ],
+    "notes": [
+      "Refused unless the lint has no findings. A published version is immutable, and what it leaves out of the version before stays resolvable as deprecated.",
+      "A version is published only once its durable write is acknowledged. Otherwise the answer is 503 with ok: false and published: false, the version answers nowhere, the draft is kept, and the same version can be published again.",
+      "The examples of a draft are published with the version and are then public, served unsigned at /xapi/profiles/examples.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_resolve": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "public",
+    "requires": [],
+    "notes": [
+      "Serves a profile, a version, a concept, a statement template or a pattern by IRI as JSON-LD or N-Triples, by the Accept header.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_sparql": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "public",
+    "requires": [],
+    "notes": [
+      "SELECT and ASK over the profiles held; forms the engine does not evaluate are refused by name.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_validate_templates": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "public",
+    "requires": [],
+    "notes": [
+      "Runs the specification's statement template algorithm; stores nothing.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_validate_patterns": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "public",
+    "requires": [],
+    "notes": [
+      "Runs the specification's pattern algorithm; stores nothing.",
       "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
     ]
   },
@@ -1850,6 +1988,32 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
       "Operator-configured SCORM Cloud application credentials"
     ],
     "notes": [
+      "Generic handler instrumentation may record an operation observation separately from the requested result."
+    ]
+  },
+  "foxxi.host_package_signed": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by any wallet, or by an agent holding a delegation",
+      "Open hosting left on for this deployment (FOXXI_OPEN_HOSTING)"
+    ],
+    "notes": [
+      "Bounded by package size and by a count per signer and per address each hour.",
+      "Generic handler instrumentation may record an operation observation separately from the requested result."
+    ]
+  },
+  "foxxi.remove_hosted_package": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "role-gated",
+    "requires": [
+      "An authenticated own-account signed request or supported Foxxi bearer session",
+      "An admin or delegated-admin role"
+    ],
+    "notes": [
+      "Removes the package and what describes it from the tenant pod; learners' own records of it stay.",
       "Generic handler instrumentation may record an operation observation separately from the requested result."
     ]
   },

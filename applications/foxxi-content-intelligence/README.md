@@ -13,7 +13,9 @@ artifacts that compose cleanly with the rest of the Interego substrate.
 actions for the person who controls a native session agent. A write signs
 `{subject_did, purpose: "personal-performance", statements: [...]}`; a read signs
 the same subject/purpose with `query: {statementId}` or supported filters. The
-relay supplies the session agent, own-pod stamp and fresh signature timestamp.
+relay supplies the session agent, own-pod stamp and fresh signature timestamp,
+and may add `client_id` (the OAuth client its session token was issued to),
+which is accepted and not read.
 Foxxi independently verifies the configured native identity controller, storage,
 owner registry, signed delegation, current relay anchor and owner encryption key.
 The existing own-agent xAPI actions keep their separate actor semantics.
@@ -212,11 +214,17 @@ glue references them but does NOT re-implement them.
 
 ## Hosted SCORM packages
 
-An uploaded SCORM package (`foxxi.upload_scorm_package`) is played from the bridge itself, with no second origin ([`src/scorm-hosting.ts`](src/scorm-hosting.ts)):
+An uploaded SCORM package (an operator's with `foxxi.upload_scorm_package`, or anyone's who signs with `foxxi.host_package_signed`) is played from the bridge itself, with no second origin ([`src/scorm-hosting.ts`](src/scorm-hosting.ts)):
 - it is kept on the tenant pod under its sha-256, and read back only while its bytes still hash to it;
 - each of its files is served from `/scorm/packages/<sha-256>/files/<path>` with `Content-Security-Policy: sandbox` and no `allow-same-origin`, so every document runs in an opaque origin of its own and cannot reach anything of the bridge's;
 - each HTML document gets the SCORM runtime put into it (the player's own `scorm-rte.js`), after a bootstrap that stands in for web storage and takes the cmi5 launch's auth-token. The content's commits become that AU's cmi5 statements, sent with a credential bound to one registration;
 - the package is a cmi5 course of its SCOs, launched with the signed `POST /agent/cmi5/launch` (`course_id` is `<bridge>/scorm/packages/<sha-256>`), and its statements land in the learner's record as experience.
+
+The operator of a bridge takes a hosted package down without a signature by listing its sha-256 in `FOXXI_HOSTED_PACKAGES_TAKEN_DOWN` (comma or space separated). A listed package is removed from the tenant pod when the bridge starts, its course is forgotten, and while it stays listed it is not listed, opened or kept again. Remove it from the list to let it be hosted again. `foxxi.remove_hosted_package` remains the signed way, for the tenant's admin.
+
+That one-shot launch URL is spent on first use and expires after 30 minutes, because its cmi5 fetch token is single-use. A learner who should be able to come back gets a personal link instead: `foxxi.cmi5_personal_launch` (`POST /agent/cmi5/go`), signed the same way, for the signer and one course. The response's `url` is `GET /cmi5/go/<token>`, and that token is shown only then. The token is 32 random bytes; the URL does not carry the learner's identifier. The pod stores the sha-256 of the token. It lasts 90 days unless `expires_in_days` says otherwise (`null` does not expire on its own). A link minted by a delegate ends when that delegation does. Each open builds a new fetch token and redirects to the activity with `endpoint`, `fetch`, `actor`, `activityId` and `registration`, so xAPI tracking keeps working. An open session continues the same registration and session. A session terminated before moveOn was met keeps the registration and starts a new session. Abandoned, waived, or terminated after moveOn starts a new registration, in Review mode when the activity is already satisfied. A stored Review launch stays Review when it is relaunched. `foxxi.cmi5_personal_launch_list` (`POST /agent/cmi5/go/list`) lists the links minted for the signed person. `foxxi.cmi5_personal_launch_revoke` (`POST /agent/cmi5/go/revoke`) withdraws one. Opens are limited per address and per token (`FOXXI_CMI5_GO_PER_IP`, default 60 a minute; `FOXXI_CMI5_GO_PER_TOKEN`, default 12). Mint, list and revoke are limited on the forwarded client. The links are kept on the tenant pod at `foxxi-lattice/cmi5-personal-links.json`, the same way dispatches are kept. Nothing new has to be set for a deploy that already has a tenant pod; the file is written on the first mint. `launchParameters` on an activity in the course structure is staged in `LMS.LaunchData`; `launch_parameters` on the signed launch, or on the link, replaces that string.
+
+**An activity judged after its session** (a practice conversation a person reviews, say) ends its first session without `passed` or `completed`, and sends them in a later session of the same registration once the review stands. It asks for them at `GET /cmi5/reviewed`, with the cmi5 auth-token of its current session as a Bearer credential. The LMS answers for what only it knows: an unknown credential is `401`, a credential from an earlier session of the registration `409 credential_of_an_earlier_session` (a credential speaks only for the session it was issued in), an ended session `409 session_ended`, a Browse or Review launch `409 not_a_normal_launch`. For the rest it asks a review service, signing a request with its own key (`FOXXI_BRIDGE_PRIVATE_KEY`) that names the registration and the session: `200` carries the documents the review service fixed, in order, and whether they are for this session (`usableInSession`); `409 no_reviewed_statements` or `registration_not_under_review` means there is nothing to send yet. The LMS writes none of these statements itself: the activity sends them, with its own credential. Which service to ask is a setting, all three or none: `FOXXI_REVIEW_STATEMENTS_URL` (the service's act), `FOXXI_REVIEW_STATEMENTS_POD` (the pod it keeps its records on) and `FOXXI_REVIEW_STATEMENTS_ACTION` (the action IRI the act is signed for). Without them the route answers `501`. The review service has to have registered the LMS's signing address; the bridge logs that address at startup when the route is set up.
 
 Single-document SCOs, which current authoring tools export, run. Content whose frames script each other does not, because each document is its own origin.
 
@@ -230,6 +238,8 @@ An authoring tool's own export that is no SCORM package (an `.h5p` file, an Adap
 - its files are served in the same sandbox, for the pages folded from it.
 
 In the dashboard, "Host a package" takes an `.h5p` file too, and the Author page folds an export as it folds a package.
+
+A browser that opens a hosted package, or a published activity with no cmi5 launch parameters, gets a player for that course (`GET /learn?course_id=…`, [`COURSE-PLAYER.md`](COURSE-PLAYER.md)). Start uses the Interego guest or an existing owner already signed in on the bridge. The activity is then a normal cmi5 launch for that owner.
 
 ## Folding a SCORM package into composable content
 
@@ -320,6 +330,9 @@ PORT=6080 \
 | `FOXXI_DASHBOARD_ORIGIN` | Origins (comma-separated) the bridge allows through CORS for the dashboard's `fetch` calls. Their hosts are also the pages a session-key grant may be asked from. |
 | `FOXXI_SESSION_KEYS` | Optional. `off` takes no session keys. Otherwise a wallet may grant a key a tab makes the right to sign this bridge's requests as it (`src/session-key.ts`): the grant is an EIP-4361 message naming a dashboard host, this bridge, the key and an expiry; it travels with each request as `_session`, and is checked in full each time. The policy is published at `GET /.well-known/foxxi-session-key`. |
 | `FOXXI_SESSION_KEY_MAX_TTL_S` | Optional. The longest a session-key grant may run, in seconds: twelve hours unless set, a week at most. |
+| `FOXXI_OPEN_HOSTING` | Optional. `off` closes `POST /agent/scorm/host`, the signed route by which any wallet or delegated agent brings a package to be hosted (`src/open-hosting.ts`); it then answers 404 and only an operator hosts, with `foxxi.upload_scorm_package`. Open unless set. Anything but `on` or `off` stops the bridge at startup. |
+| `FOXXI_OPEN_HOSTING_MAX_ZIP_MB` | Optional. The largest package a signer may bring, in MB: 25 unless set, a whole number from 1 to 37 (what the 50 MB request body carries once base64-encoded). |
+| `FOXXI_OPEN_HOSTING_PER_SIGNER_HOURLY` | Optional. How many packages one signer may bring in an hour, counted in this process: 5 unless set, from 1 to 1000. The route also allows 20 an hour per address. |
 | `FOXXI_POD_WRITE_SECRET` | Bearer token the bridge sends on every pod write. The css-gate ([`deploy/css-gate/`](../../deploy/css-gate/)) gates all `POST`/`PUT`/`PATCH`/`DELETE` behind `Authorization: Bearer <WRITE_SECRET>` — without this the bridge can read but every write 401s. Reads stay anonymous. Must match the gate's `WRITE_SECRET`. Omit when pointing at a local CSS that accepts anonymous writes. |
 | `FOXXI_BRIDGE_PRIVATE_KEY` | 0x-prefixed 32-byte hex. The bridge derives a stable `did:key:0x<addr>#bridge` from it and signs bridge-originated descriptors (snapshots, calibration-flip records) so federated readers admit them as `CryptographicallyVerified`. If unset, the bridge generates an ephemeral key at startup — the signing identity rotates on every restart and older descriptors fail signature recovery. Generate one with `node -e "const{Wallet}=require('ethers');console.log(Wallet.createRandom().privateKey)"`. |
 | `FOXXI_LLM_API_KEY` | Optional. Lets the bridge call an LLM for `foxxi.ask_course_question_agentic`. Retrieval works without it. |

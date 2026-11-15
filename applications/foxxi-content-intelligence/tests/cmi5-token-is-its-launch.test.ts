@@ -14,8 +14,10 @@ import { randomUUID } from 'node:crypto';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import type { IRI } from '@interego/core';
-import { buildCmi5Launch, cmi5BearerRegistration, cmi5BearerTenant, redeemFetchToken, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
-import { attachXapiLrsRoutes, getStatementStore } from '../src/xapi-lrs.js';
+import { buildCmi5Launch, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerTenant, redeemFetchToken, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
+import { readFileSync } from 'node:fs';
+import { attachXapiLrsRoutes, claimsLmsAuthority, getStatementStore, lmsStatementAuthority, LMS_AUTHORITY_NAME, storeStatementDurably, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
+import { writeSelfXapi } from '../src/self-xapi.js';
 import type { TenantId } from '../src/tenant-context.js';
 
 const tenant = 'lens:token-is-its-launch' as TenantId;
@@ -45,7 +47,7 @@ beforeAll(async () => {
   app.use(express.json({ limit: '1mb' }));
   attachXapiLrsRoutes(app, {
     podUrl: '', tenantDid: 'did:web:bridge.example' as IRI, basicAuthPairs: '', forwardingTargets: '', selfBaseUrl: 'http://127.0.0.1',
-    bearerTenantResolver: cmi5BearerTenant, bearerRegistrationResolver: cmi5BearerRegistration,
+    bearerTenantResolver: cmi5BearerTenant, bearerRegistrationResolver: cmi5BearerRegistration, bearerActorResolver: cmi5BearerActor,
   });
   server = app.listen(0, '127.0.0.1');
   await new Promise<void>((r) => server.once('listening', () => r()));
@@ -171,6 +173,125 @@ describe('a cmi5 auth-token is bound to its launch', () => {
     expect((await send(tokenA, statement(B.registration, 'passed'))).status).toBe(403);
     expect((await send('cmi5-0-not-a-launch', statement(A.registration, 'initialized'))).status).toBe(401);
     expect((await send(Buffer.from('user:guess').toString('base64'), statement(A.registration, 'initialized'))).status).toBe(401);
+  });
+
+  it('does not write the LMS\'s own verbs, or as anyone but the actor it was launched for', async () => {
+    expect(cmi5BearerActor(tokenA)).toEqual({ homePage: 'did:web:bridge.example', name: learner.id });
+    expect(cmi5BearerActor('not-a-token')).toBeNull();
+    const store = getStatementStore(tenant);
+    const before = (await store.query({ registration: A.registration })).statements.length;
+    const as = (verb: string, actor: unknown = A.actor) => ({
+      id: randomUUID(), actor, verb: { id: verb }, object: { objectType: 'Activity', id: au(1).id }, context: { registration: A.registration },
+    });
+    // cmi5 has the LMS record these. From the unit's token each would be the learner's browser speaking as the LMS.
+    // Verb ids, not addresses anything here dials: every request below goes to the loopback LRS.
+    const LAUNCHED = 'http://adlnet.gov/expapi/verbs/launched';
+    const SATISFIED = 'https://w3id.org/xapi/adl/verbs/satisfied';
+    const COMPLETED = 'http://adlnet.gov/expapi/verbs/completed';
+    for (const verb of [LAUNCHED, 'https://w3id.org/xapi/adl/verbs/abandoned', 'https://w3id.org/xapi/adl/verbs/waived', SATISFIED]) {
+      const r = await post(tokenA, as(verb));
+      expect([verb, r.status]).toEqual([verb, 403]);
+      expect(String((await r.json() as { error: string }).error)).toContain('is the LMS\'s to record');
+    }
+    // In a batch, with the scheme an AU uses, and by PUT: the same.
+    const batch = [as(COMPLETED), as(SATISFIED)];
+    expect((await post(tokenA, batch)).status).toBe(403);
+    const asLms = JSON.stringify(as(SATISFIED));
+    const basic = await fetch(`${base}/xapi/statements`, { method: 'POST', headers: { ...headers(tokenA), Authorization: `Basic ${tokenA}` }, body: asLms });
+    expect(basic.status).toBe(403);
+    const one = as(LAUNCHED);
+    expect((await fetch(`${base}/xapi/statements?statementId=${one.id}`, { method: 'PUT', headers: headers(tokenA), body: JSON.stringify(one) })).status).toBe(403);
+    // As another learner, or as the same name under another homePage: refused.
+    const other = { objectType: 'Agent', account: { homePage: 'did:web:bridge.example', name: 'did:ethr:0x9999999999bb00000000000000000000000beef9' } };
+    const elsewhere = { objectType: 'Agent', account: { homePage: 'did:web:another-lms.example', name: learner.id } };
+    for (const actor of [other, elsewhere, { objectType: 'Agent', mbox: 'mailto:someone@example.org' }]) {
+      const wrong = as(COMPLETED, actor);
+      const r = await post(tokenA, wrong);
+      expect(r.status).toBe(403);
+      expect(String((await r.json() as { error: string }).error)).toContain('only as the actor it was launched for');
+    }
+    // None of it was stored, and the unit's own statements still are.
+    expect((await store.query({ registration: A.registration })).statements.length).toBe(before);
+    const own = as('http://adlnet.gov/expapi/verbs/experienced');
+    expect((await post(tokenA, own)).status).toBe(200);
+  });
+
+  it('writes nothing where the LRS is not told which actor a launch token is for', async () => {
+    // The same LRS routes, wired as before this rule existed: the registration is known, the actor is not.
+    const bare = express();
+    bare.use(express.json({ limit: '1mb' }));
+    attachXapiLrsRoutes(bare, {
+      podUrl: '', tenantDid: 'did:web:bridge.example' as IRI, basicAuthPairs: '', forwardingTargets: '', selfBaseUrl: 'http://127.0.0.1',
+      bearerTenantResolver: cmi5BearerTenant, bearerRegistrationResolver: cmi5BearerRegistration,
+    });
+    const s2 = bare.listen(0, '127.0.0.1');
+    await new Promise<void>((r) => s2.once('listening', () => r()));
+    try {
+      const url = `http://127.0.0.1:${(s2.address() as AddressInfo).port}/xapi/statements`;
+      const own = JSON.stringify(statement(A.registration, 'experienced'));
+      const r = await fetch(url, { method: 'POST', headers: headers(tokenA), body: own });
+      expect(r.status).toBe(403);
+      expect(String((await r.json() as { error: string }).error)).toContain('cannot tell which actor');
+      // Reading its own launch is not a write and is unaffected.
+      expect((await fetch(`${url}?registration=${A.registration}`, { headers: headers(tokenA) })).status).toBe(200);
+    } finally { await new Promise<void>((r) => { s2.close(() => r()); }); }
+  });
+
+  it('marks the LMS\'s own statements with an authority nobody can send', async () => {
+    const SATISFIED = 'https://w3id.org/xapi/adl/verbs/satisfied';
+    const LAUNCHED = 'http://adlnet.gov/expapi/verbs/launched';
+    const store = getStatementStore(tenant);
+    const said = (verb: string, more: Record<string, unknown> = {}) => ({
+      id: randomUUID(), actor: A.actor, verb: { id: verb }, object: { objectType: 'Activity', id: au(1).id }, context: { registration: A.registration }, ...more,
+    });
+    const authorityOf = async (id: string) => ((await store.get(id))!.statement['authority'] as { account: { homePage: string; name: string } }).account;
+
+    // The LMS's own code stores under the LMS's authority, whatever the statement carried in.
+    const mine = await storeStatementDurably(said(SATISFIED, { authority: { objectType: 'Agent', account: { homePage: 'https://elsewhere.example', name: 'someone' } } }), tenant, 'lms');
+    expect(await authorityOf(mine!)).toEqual(lmsStatementAuthority().account);
+    expect(lmsStatementAuthority().account.name).toBe(LMS_AUTHORITY_NAME);
+
+    // Any other internal store does not, and a statement handed to it claiming the authority loses the claim.
+    const plain = await storeStatementDurably(said(SATISFIED), tenant);
+    const claiming = await storeStatementDurably(said(SATISFIED, { authority: lmsStatementAuthority() }), tenant);
+    const shouting = await storeStatementDurably(said(SATISFIED, { authority: { objectType: 'Agent', account: { homePage: 'https://elsewhere.example', name: ' FOXXI-LMS ' } } }), tenant);
+    for (const id of [plain, claiming, shouting]) expect((await authorityOf(id!)).name).toBe('foxxi-lrs');
+
+    // Sent in, the claim is refused: by POST, in a batch, and by PUT.
+    const claim = said('http://adlnet.gov/expapi/verbs/experienced', { authority: lmsStatementAuthority() });
+    const posted = await post(tokenA, claim);
+    expect(posted.status).toBe(403);
+    expect(String((await posted.json() as { error: string }).error)).toContain('is assigned by this LRS');
+    const mixed = [said('http://adlnet.gov/expapi/verbs/experienced'), claim];
+    expect((await post(tokenA, mixed)).status).toBe(403);
+    const body = JSON.stringify(claim);
+    expect((await fetch(`${base}/xapi/statements?statementId=${claim.id}`, { method: 'PUT', headers: headers(tokenA), body })).status).toBe(403);
+    expect(await store.get(claim.id)).toBeFalsy();
+
+    // The signed route by which a learner writes about themselves takes none of the LMS's verbs.
+    const never = { request: async () => { throw new Error('the LRS must not be asked'); }, persist: async () => null };
+    for (const verb of [LAUNCHED, SATISFIED, 'https://w3id.org/xapi/adl/verbs/abandoned', 'https://w3id.org/xapi/adl/verbs/waived']) {
+      const r = await writeSelfXapi(learner.id, [{ ...said(verb), timestamp: '2026-11-14T10:00:00.000Z' }], never as never);
+      expect([verb, r.status]).toEqual([verb, 403]);
+    }
+  });
+
+  it('lets no record put straight into a store keep a claim to the LMS\'s authority', () => {
+    const claim = { id: 'x', authority: lmsStatementAuthority() };
+    const other = { id: 'y', authority: { objectType: 'Agent', account: { homePage: 'https://lrs.example', name: 'foxxi-lrs' } } };
+    expect(claimsLmsAuthority(claim)).toBe(true);
+    expect(withoutLmsAuthorityClaim(claim)).toEqual({ id: 'x' });
+    // Anything else is left exactly as it is, by identity.
+    expect(claimsLmsAuthority(other)).toBe(false);
+    expect(withoutLmsAuthorityClaim(other)).toBe(other);
+    // The bridge has two places that write a store directly, both from what a pod holds: the mesh
+    // projection's batch landing, and the restore of a caller's durable telemetry. Each is held to it.
+    const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
+    expect(server).toContain('statement: { ...withoutLmsAuthorityClaim(ev.statement as Record<string, unknown>), stored: storedAt }');
+    expect(server).toContain("if (claimsLmsAuthority(statement)) throw new Error('durable record names an authority only this LMS assigns');");
+    // And no third: a direct statement put anywhere else in the bridge would be found here.
+    const direct = server.split('\n').filter(l => /getStatementStore\([^)]*\)\.put\(|\bstore\.put\(\{ id,/.test(l));
+    expect(direct).toHaveLength(2);
   });
 
   it('keeps the launch\'s whole actor for the pod: its type and both account fields', () => {

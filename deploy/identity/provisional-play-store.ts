@@ -22,14 +22,16 @@ export interface PlayAnchorStorage {
 
 const listed = (value: unknown) => Array.isArray(value) && value.length > 0;
 /** Whether an owner's document lists a passkey, wallet or DID (a claimed owner). */
-function holdsCredential(document: PlayAnchorDocument): boolean {
+export function holdsCredential(document: PlayAnchorDocument): boolean {
   return listed(document['webAuthnCredentials']) || listed(document['walletAddresses']) || listed(document['didKeys']);
 }
 
 /** Bounded receipts live beside the immutable signed anchor in the owner's pod. */
 export async function provisionPlayAnchor(storage: PlayAnchorStorage, claims: PlayClaims,
   attestation: string, maxPods: number, receipt: PlayReceipt,
-  terms?: { requiredVersion: string; acceptance?: TermsAcceptance }): Promise<string> {
+  terms?: { requiredVersion: string; acceptance?: TermsAcceptance },
+  /** A general guest's door code (provisional-general-guest.ts), recorded with the application in the same write. */
+  doorCode?: PlayReceipt): Promise<string> {
   const now = storage.now ?? (() => Math.floor(Date.now() / 1000));
   // Conditional writes protect the same owner even if a process restarts or two
   // requests race. New owners reserve the durable lifetime budget before writing.
@@ -48,7 +50,10 @@ export async function provisionPlayAnchor(storage: PlayAnchorStorage, claims: Pl
     if (existing && !vacant) {
       if (!document.provisionalPlayAnchor) throw new PlayError(409, 'provisional_owner_conflict');
       const live = storage.validate(document.provisionalPlayAnchor);
-      if (live.userId !== claims.userId || live.audience !== claims.audience || live.proofKeyThumbprint !== claims.proofKeyThumbprint)
+      // A general guest's anchor names the application that admitted it; another application's door
+      // finds the same owner. A per-application guest's is compared as it always was.
+      if (live.userId !== claims.userId || live.proofKeyThumbprint !== claims.proofKeyThumbprint || live.general !== claims.general
+        || (!claims.general && live.audience !== claims.audience))
         throw new PlayError(409, 'provisional_owner_conflict');
     } else {
       if (terms) {
@@ -57,16 +62,49 @@ export async function provisionPlayAnchor(storage: PlayAnchorStorage, claims: Pl
       }
       document.provisionalPlayAnchor = await storage.reserveAdmission(claims, attestation, maxPods);
       const reserved = storage.validate(document.provisionalPlayAnchor);
-      if (reserved.userId !== claims.userId || reserved.proofKeyThumbprint !== claims.proofKeyThumbprint)
+      if (reserved.userId !== claims.userId || reserved.proofKeyThumbprint !== claims.proofKeyThumbprint || reserved.general !== claims.general)
         throw new PlayError(409, 'provisional_owner_conflict');
     }
     const receipts = (document.provisionalPlayReceipts ?? []).filter(row => Number.isInteger(row.expiresAt) && row.expiresAt > now());
     if (receipts.some(row => row.hash === receipt.hash)) throw new PlayError(409, 'play_grant_already_used');
     if (receipts.length >= 16) throw new PlayError(429, 'play_grant_receipt_capacity');
     document.provisionalPlayReceipts = [...receipts, receipt];
+    if (claims.general) {
+      // The applications that admitted or have used this guest, oldest first: one of its attributes.
+      const applications = (Array.isArray(document['provisionalGuestApplications']) ? document['provisionalGuestApplications'] : []) as Array<{ audience: string; admittedAt: number }>;
+      if (!applications.some(row => row?.audience === claims.audience)) {
+        if (applications.length >= 64) throw new PlayError(429, 'guest_application_capacity');
+        document['provisionalGuestApplications'] = [...applications, { audience: claims.audience, admittedAt: now() }];
+      }
+      if (doorCode) {
+        const codes = (Array.isArray(document['provisionalGuestCodes']) ? document['provisionalGuestCodes'] as PlayReceipt[] : [])
+          .filter(row => Number.isInteger(row.expiresAt) && row.expiresAt > now());
+        if (codes.length >= 16) throw new PlayError(429, 'guest_code_capacity');
+        document['provisionalGuestCodes'] = [...codes, doorCode];
+      }
+    }
     if (!await storage.write(claims.userId, document, existing?.etag ?? null)) continue;
     storage.committed(document);
     return document.provisionalPlayAnchor!;
+  }
+  throw new PlayError(409, 'provisional_owner_busy');
+}
+
+/**
+ * Change an existing owner's record, conditionally on the revision read (a general guest's door
+ * code being spent, its claim proof being recorded). `change` throws a PlayError to refuse, and
+ * nothing is written then. There must be a record: none is created here. A `change` that returns
+ * `false` found nothing to change: the record is answered as read, and nothing is written.
+ */
+export async function updatePlayAnchorDocument(storage: Pick<PlayAnchorStorage, 'read' | 'write' | 'committed'>, userId: string,
+  change: (document: PlayAnchorDocument) => void | false): Promise<PlayAnchorDocument> {
+  for (let attempt = 0; attempt < 3; attempt++) {
+    const existing = await storage.read(userId);
+    if (!existing || existing.document.userId !== userId) throw new PlayError(401, 'provisional_owner_unavailable');
+    if (change(existing.document) === false) return existing.document;
+    if (!await storage.write(userId, existing.document, existing.etag)) continue;
+    storage.committed(existing.document);
+    return existing.document;
   }
   throw new PlayError(409, 'provisional_owner_busy');
 }

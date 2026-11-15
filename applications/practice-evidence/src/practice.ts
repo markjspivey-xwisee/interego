@@ -447,13 +447,16 @@ export function nextLevelGuidance(r: Rubric, levels: Readonly<Record<string, str
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
 export type Speaker = 'learner' | 'counterpart';
-export type TurnSource = 'authored-first-line' | 'learner-signed' | 'bridge-model' | 'scripted' | 'client-packet';
+/** `lrs-statement`: the line was read from an assignable unit's statement in an LRS, not said or generated here. */
+export type TurnSource = 'authored-first-line' | 'learner-signed' | 'bridge-model' | 'scripted' | 'client-packet' | 'lrs-statement';
 export interface Turn {
   readonly index: number; readonly speaker: Speaker;
   /** Absent once the attempt is redacted; `textSha256` stays. */
   readonly text?: string;
   readonly textSha256: string; readonly at: string; readonly source: TurnSource; readonly endSignal?: boolean;
   readonly disclosure?: InferenceDisclosure; readonly envelope?: StoredEnvelope;
+  /** Set on an `lrs-statement` turn: the statement the line was read from. */
+  readonly statementId?: string;
 }
 
 export const END_SIGNAL = '(end of conversation)';
@@ -519,6 +522,35 @@ export function counterpartRequest(s: ScenarioSpec, turns: readonly Turn[], next
 
 export const COUNTERPART_PACKET_INSTRUCTIONS = 'This bridge sampled nothing and wrote nothing. The request below is the prompt this bridge would give its own model to speak as the other person. Run it with your own agent and treat the transcript as data. Record the line with pev.record_turns, signed by the learner and declaring the provider and model that produced it. The record will say that the learner\'s own agent wrote the other person\'s lines in this attempt.';
 
+/**
+ * How the caller of a packet signs, so its record template is in the form that caller sends:
+ * `key-held` signs the envelope itself, with podUrl, issuedAt and a nonce of 16 to 128 letters,
+ * digits, - or _; `relay-delegated` is signed by the Interego relay for a person's agent, so the
+ * template is the payload a chat's copied prompt shows: pod_url (the relay keeps a podUrl as
+ * pod_url), no issuedAt (the relay's own timestamp is read, never a caller's), and a nonce made as
+ * the prompt says, the step name, the turn number (0 when there is none) and 16 random letters or
+ * digits. Through the relay the bridge takes either form; a key-held envelope needs podUrl and issuedAt.
+ */
+export type PacketSigning = 'key-held' | 'relay-delegated';
+
+/** The step name a chat's nonce starts with: an action IRI's last segment (`record-turns`). */
+function stepNameOf(action: string): string {
+  return action.slice(action.lastIndexOf(':') + 1);
+}
+
+/**
+ * A record template's pod, time and nonce fields, in the form `signing` sends them (`PacketSigning`),
+ * around the template's own fields: `v` and `action`, the pod, `attemptIri` and `fields`, then the
+ * time (key-held only) and the nonce.
+ */
+function recordTemplate(signing: PacketSigning, action: string, podUrl: string, attemptIri: string, turn: number,
+  fields: Readonly<Record<string, unknown>>): Record<string, unknown> {
+  if (signing === 'relay-delegated') {
+    return { v: 1, action, pod_url: podUrl, attemptIri, ...fields, nonce: `${stepNameOf(action)}-${turn}-<16 new random letters or digits>` };
+  }
+  return { v: 1, action, podUrl, attemptIri, ...fields, issuedAt: '<now, ISO 8601>', nonce: '<16 to 128 letters, digits, - or _>' };
+}
+
 export interface CounterpartPacket {
   readonly execution: 'client-required'; readonly sampling_performed: false; readonly writes_performed: false;
   readonly request: TextModelRequest; readonly promptTemplateHash: string; readonly instructions: string;
@@ -526,10 +558,13 @@ export interface CounterpartPacket {
   readonly recordWith: { readonly tool: 'pev.record_turns'; readonly action: string; readonly payloadTemplate: Readonly<Record<string, unknown>> };
 }
 
-/** The client-required packet that lets the learner's own agent play the other person. */
+/**
+ * The client-required packet that lets the learner's own agent play the other person. Its record
+ * template is in the form the caller signs in (`signing`, key-held unless said).
+ */
 export function counterpartPacket(
   s: ScenarioSpec, turns: readonly Turn[], nextLearnerText: string,
-  binding: { podUrl: string; attemptIri: string; turnIndex: number },
+  binding: { podUrl: string; attemptIri: string; turnIndex: number; signing?: PacketSigning },
 ): CounterpartPacket {
   return {
     execution: 'client-required', sampling_performed: false, writes_performed: false,
@@ -539,12 +574,10 @@ export function counterpartPacket(
     expected: { turnIndex: binding.turnIndex, endSignal: END_SIGNAL },
     recordWith: {
       tool: 'pev.record_turns', action: PEV_ACTION.recordTurns,
-      payloadTemplate: {
-        v: 1, action: PEV_ACTION.recordTurns, podUrl: binding.podUrl, attemptIri: binding.attemptIri,
+      payloadTemplate: recordTemplate(binding.signing ?? 'key-held', PEV_ACTION.recordTurns, binding.podUrl, binding.attemptIri, binding.turnIndex, {
         turnIndex: binding.turnIndex, learnerText: nextLearnerText, counterpartText: '<the other person\'s line>',
         counterpartDisclosure: { provider: '<provider>', model: '<model as your provider returned it>' },
-        issuedAt: '<now, ISO 8601>', nonce: '<16 to 128 letters, digits, - or _>',
-      },
+      }),
     },
   };
 }
@@ -559,8 +592,10 @@ export function learnerTurnCount(turns: readonly Pick<Turn, 'speaker'>[]): numbe
 }
 
 /** Who controlled the other person's lines: the most learner-controlled route used wins. */
-export function counterpartControl(turns: readonly Turn[]): 'platform' | 'learner-model' | 'learner' {
+export function counterpartControl(turns: readonly Turn[]): 'platform' | 'learner-model' | 'learner' | 'assignable-unit' {
   const theirs = turns.filter((t) => t.speaker === 'counterpart');
+  // A conversation read from an LRS was scripted by the unit an LMS launched: neither this bridge nor the learner wrote those lines.
+  if (theirs.some((t) => t.source === 'lrs-statement')) return 'assignable-unit';
   if (theirs.some((t) => t.source === 'client-packet')) return 'learner';
   if (theirs.some((t) => t.source === 'bridge-model' && t.disclosure?.keySource === 'per-request-byok')) return 'learner-model';
   return 'platform';
@@ -591,9 +626,24 @@ export interface QuoteCheck {
   /** Offsets (UTF-16 code units) into the NORMALISED learner turn. */
   readonly start?: number;
   readonly end?: number;
+  /**
+   * On a quote that checked out, how many places in the learner's lines it checks out at, each counted once: a place is a
+   * turn and the offset its stretch starts at in that turn normalised (`placesOf`). `verifyQuote` counts each place the
+   * quote's normalised text sits at without cutting a word; `verifyQuoteAsShown` counts each place any of its checks
+   * checks out at, as sent or read back, so a line that shows the same stretch stored otherwise is counted too. The place
+   * it was saved at (`turnIndex`, `start`, `end`) is one of them, and need not be the first. Kept as counted when the
+   * judgment was saved: nothing counts again.
+   */
   readonly occurrences?: number;
   readonly declaredTurnIndex?: number;
   readonly why?: string;
+  /**
+   * Set when the quote as sent was not found in the turn the judge named (anywhere, when none was
+   * named) and was checked as read back (`verifyQuoteAsShown`): `text` is then the stored words it was
+   * copied from, not the words the judge's signed request held, which showed a stand-in where the
+   * stored line holds a fingerprint.
+   */
+  readonly readBack?: true;
 }
 
 export interface JudgeQuoteInput { readonly text: string; readonly turnIndex?: number }
@@ -608,6 +658,9 @@ const WHY_NEEDS_QUOTE = 'a level above the lowest needs at least one learner quo
 /** A letter, digit or combining mark: the characters a quote may not cut between. */
 const WORD_CHAR = /[\p{L}\p{N}\p{M}]/u;
 const WORD_RUN = /[\p{L}\p{N}\p{M}]+/gu;
+
+/** A place a quote sits in the learner's lines: its turn, and where it starts in that turn normalised. */
+interface QuotePlace { readonly turnIndex: number; readonly start: number }
 
 function hitsIn(haystack: string, needle: string): number[] {
   const out: number[] = [];
@@ -627,8 +680,11 @@ function charFrom(s: string, i: number): string {
   return cp === undefined ? '' : String.fromCodePoint(cp);
 }
 
-/** True when a match at [start, end) of `turn` cuts a word at either end. */
-function cutsAWord(turn: string, start: number, end: number): boolean {
+/**
+ * True when a match at [start, end) of `turn` cuts a word at either end. Exported for reading a quote
+ * back from where it sits in a line as shown (stakes.ts `quoteReadingsAsStored`), by the same rule.
+ */
+export function cutsAWord(turn: string, start: number, end: number): boolean {
   const cut = (outside: string, inside: string): boolean => WORD_CHAR.test(outside) && WORD_CHAR.test(inside);
   return cut(charBefore(turn, start), charFrom(turn, start)) || cut(charFrom(turn, end), charBefore(turn, end));
 }
@@ -640,20 +696,13 @@ function enoughWords(s: string): boolean {
 }
 
 /**
- * Check one quote against the learner's own turns. The quote text is never altered; the offsets
- * point into the normalised turn so a reader can highlight exactly what matched. A match that
- * starts or ends inside a word does not count: "acceptable" inside "unacceptable" is not
- * something the learner said.
+ * Each place `normalised` (a quote normalised) sits in the learner's lines, in the order of `turns`, and whether a place
+ * was passed over because the match there starts or ends inside a word.
  */
-export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[]): QuoteCheck {
-  const normalised = normaliseForQuote(q.text);
-  const base = { text: q.text, normalised, quoteSha256: sha256(normalised) };
-  if (Array.from(normalised).length < QUOTE_MIN_CHARS) return { ...base, verified: false, why: WHY_SHORT };
-  if (!enoughWords(normalised)) return { ...base, verified: false, why: WHY_FEW_WORDS };
-  const ordered = [...turns].sort((a, b) => a.index - b.index);
-  const located: { turnIndex: number; start: number }[] = [];
+function placesOf(normalised: string, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[]): { readonly located: readonly QuotePlace[]; readonly cutOnly: boolean } {
+  const located: QuotePlace[] = [];
   let cutOnly = false;
-  for (const t of ordered) {
+  for (const t of turns) {
     if (t.speaker !== 'learner' || t.text === undefined) continue;
     const turn = normaliseForQuote(t.text);
     for (const start of hitsIn(turn, normalised)) {
@@ -661,6 +710,23 @@ export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'inde
       else located.push({ turnIndex: t.index, start });
     }
   }
+  return { located, cutOnly };
+}
+
+/**
+ * Check one quote against the learner's own turns. The quote text is never altered; the offsets
+ * point into the normalised turn so a reader can highlight exactly what matched. A match that
+ * starts or ends inside a word does not count: "acceptable" inside "unacceptable" is not
+ * something the learner said. The place kept is the first in the turn the judge named, else the
+ * first; `occurrences` counts them all.
+ */
+export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[]): QuoteCheck {
+  const normalised = normaliseForQuote(q.text);
+  const base = { text: q.text, normalised, quoteSha256: sha256(normalised) };
+  if (Array.from(normalised).length < QUOTE_MIN_CHARS) return { ...base, verified: false, why: WHY_SHORT };
+  if (!enoughWords(normalised)) return { ...base, verified: false, why: WHY_FEW_WORDS };
+  const ordered = [...turns].sort((a, b) => a.index - b.index);
+  const { located, cutOnly } = placesOf(normalised, ordered);
   if (located.length > 0) {
     const inDeclared = q.turnIndex === undefined ? undefined : located.find((l) => l.turnIndex === q.turnIndex);
     const pick = inDeclared ?? located[0]!;
@@ -675,6 +741,60 @@ export function verifyQuote(q: JudgeQuoteInput, turns: readonly Pick<Turn, 'inde
     ...base, verified: false, why: cutOnly ? WHY_CUTS_WORD : theirs ? WHY_THEIRS : WHY_ABSENT,
     ...(q.turnIndex !== undefined ? { declaredTurnIndex: q.turnIndex } : {}),
   };
+}
+
+/**
+ * How a quote copied from a view of the transcript is read back as the stored text (stakes.ts
+ * `quoteReadingsAsStored`): the stretches of the learner's stored lines it was found at, as a view
+ * shows them (`matched`, in order), and the quote with every stand-in in it read back (`otherwise`).
+ */
+export interface QuoteReadings {
+  readonly matched: readonly string[];
+  readonly otherwise: string;
+}
+
+/**
+ * How a quote copied from a view of the transcript is read back as the stored text it stands for: one
+ * reading, or `QuoteReadings`. `turnIndex` is the turn the judge named, if any, to look in first.
+ */
+export type QuoteReader = (quote: string, turnIndex?: number) => string | QuoteReadings;
+
+/**
+ * Check a quote a judge may have copied from a view of the transcript that shows some of its text
+ * otherwise than stored (an answer that replaced a fingerprint in a line with a stand-in, say):
+ * `asStored` reads such a quote back as the stored text it stands for. A check of it as read back
+ * keeps the stored text, marked `readBack`, so a recorded quote is always one of the stored lines' own
+ * and says when it is not the text the judge sent. The checks, in order: the quote as sent, each
+ * stretch `asStored` matched (`QuoteReadings.matched`), then the quote with every stand-in read back
+ * (`otherwise`, or the one reading). The first that checks out in the turn the judge named is kept,
+ * whether as sent or read back, so the same words written out in another turn do not take the place
+ * of the stretch the judge named; else the first that checks out in another turn; else the check of
+ * `otherwise`. With no turn named, the first that checks out anywhere, so a quote found as sent is
+ * kept as sent. A quote no check finds is saved with every stand-in read back and says why, never as
+ * a stretch that did not check out. A quote that checks out counts every place any check checks out
+ * at, each once (`QuoteCheck.occurrences`): where it shows as sent, and where it is read back, in the
+ * turn it is saved in and in any other. Nothing else differs from the check that was kept. Without
+ * `asStored`, exactly `verifyQuote`.
+ */
+export function verifyQuoteAsShown(
+  q: JudgeQuoteInput, turns: readonly Pick<Turn, 'index' | 'speaker' | 'text'>[], asStored?: QuoteReader,
+): QuoteCheck {
+  const sent = verifyQuote(q, turns);
+  if (asStored === undefined) return sent;
+  const read = asStored(q.text, q.turnIndex);
+  const { matched, otherwise } = typeof read === 'string' ? { matched: [] as readonly string[], otherwise: read } : read;
+  const readBack = (text: string): QuoteCheck => ({ ...verifyQuote({ ...q, text }, turns), readBack: true });
+  // Every check, in order: the quote as sent, each stretch matched, then the quote with every stand-in read back.
+  const checks = [sent, ...matched.filter((text) => text !== q.text).map(readBack), otherwise === q.text ? sent : readBack(otherwise)];
+  // The first that checked out in the turn the judge named, or anywhere when none was named (`verifyQuote` then sets no
+  // `declaredTurnIndex`); else the first that checked out in another turn; else the last.
+  const kept = checks.find((c) => c.verified && c.declaredTurnIndex === undefined) ?? checks.find((c) => c.verified) ?? checks[checks.length - 1]!;
+  if (!kept.verified) return kept;
+  // A place is a turn and where its stretch starts in that turn normalised. Every check that checks out at the same stretch
+  // starts there, whichever view it was read from (a view keeps the stored line's offsets), so it is counted once.
+  const places = new Set(checks.flatMap((c) => (c.verified && c.normalised !== undefined
+    ? placesOf(c.normalised, turns).located.map((p) => `${p.turnIndex}:${p.start}`) : [])));
+  return { ...kept, occurrences: places.size };
 }
 
 export type CriterionStatus = 'verified' | 'unverified' | 'no-quote-needed';
@@ -794,10 +914,14 @@ export interface JudgePacket {
   readonly recordWith: { readonly tool: 'pev.record_judgment'; readonly action: string; readonly payloadTemplate: Readonly<Record<string, unknown>> };
 }
 
-/** The client-required packet that lets an independent judge agent judge the attempt. */
+/**
+ * The client-required packet that lets an independent judge agent judge the attempt. Its record
+ * template is in the form the caller signs in (`signing`, key-held unless said); judging has no turn,
+ * so a chat's nonce has turn 0.
+ */
 export function judgePacket(
   s: ScenarioSpec, turns: readonly Turn[],
-  binding: { podUrl: string; attemptIri: string; attemptHeadUrl: string; transcriptHash: string; rubricHash: string },
+  binding: { podUrl: string; attemptIri: string; attemptHeadUrl: string; transcriptHash: string; rubricHash: string; signing?: PacketSigning },
 ): JudgePacket {
   return {
     execution: 'client-required', sampling_performed: false, writes_performed: false,
@@ -808,13 +932,11 @@ export function judgePacket(
     instructions: JUDGE_PACKET_INSTRUCTIONS,
     recordWith: {
       tool: 'pev.record_judgment', action: PEV_ACTION.recordJudgment,
-      payloadTemplate: {
-        v: 1, action: PEV_ACTION.recordJudgment, podUrl: binding.podUrl, attemptIri: binding.attemptIri,
+      payloadTemplate: recordTemplate(binding.signing ?? 'key-held', PEV_ACTION.recordJudgment, binding.podUrl, binding.attemptIri, 0, {
         attemptHeadUrl: binding.attemptHeadUrl, transcriptHash: binding.transcriptHash, rubricHash: binding.rubricHash,
         judgment: { criteria: '<as the output schema describes>' },
         judgeDisclosure: { provider: '<provider>', model: '<model as your provider returned it>', usedPacketPrompt: true },
-        issuedAt: '<now, ISO 8601>', nonce: '<16 to 128 letters, digits, - or _>',
-      },
+      }),
     },
   };
 }
@@ -943,18 +1065,20 @@ const round4 = (n: number): number => Math.round(n * 1e4) / 1e4;
 /**
  * Turn a parsed judgment into the recorded one: every quote verified by the platform, each
  * criterion's status, and the provisional result with unverified criteria at their lowest level
- * ("credit only where the quote checked out"). The judge's own level stays visible.
+ * ("credit only where the quote checked out"). The judge's own level stays visible. `asStored`
+ * reads a quote copied from a view that showed the transcript otherwise than stored back as the
+ * stored text (`verifyQuoteAsShown`).
  */
 export function assembleJudgment(
   s: ScenarioSpec, turns: readonly Turn[], parsed: { readonly criteria: readonly JudgeCriterionInput[] },
-  meta: Omit<JudgmentResult, 'criteria' | 'unverifiedCriteria' | 'provisional'>,
+  meta: Omit<JudgmentResult, 'criteria' | 'unverifiedCriteria' | 'provisional'>, asStored?: QuoteReader,
 ): JudgmentResult {
   const criteria: CriterionJudgment[] = s.rubric.criteria.map((c) => {
     const input = parsed.criteria.find((x) => x.criterionId === c.id);
     if (!input) throw new Error(`assembleJudgment: no judgment for criterion ${c.id}`);
     const idx = levelIndex(c, input.level);
     if (idx < 0) throw new Error(`assembleJudgment: unknown level ${input.level} for ${c.id}`);
-    const quotes = input.quotes.map((q) => verifyQuote(q, turns));
+    const quotes = input.quotes.map((q) => verifyQuoteAsShown(q, turns, asStored));
     const st = criterionStatus(idx, quotes);
     let probabilities: Record<string, number> | null = null;
     if (input.probabilities) {

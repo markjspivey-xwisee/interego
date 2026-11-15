@@ -49,24 +49,49 @@ export function renderAffordanceManifestHmd(id: string, title: string,
   });
 }
 
-/** An immutable response snapshot, not a public URL to a learner's private state.
- * Keep the native payload lossless as JSON text; controls remain typed HMD.
- * Inline encoding also reaches MCP clients that cannot set an Accept header. */
+/**
+ * An immutable response snapshot, not a public URL to a learner's private state.
+ *
+ * Asked for as Markdown (Accept: text/markdown, or ?format=markdown), the answer is one HMD
+ * document: the payload kept lossless as JSON text (front matter schema:text, and a json block a
+ * person can read) followed by its typed next-step controls.
+ *
+ * Asked for as JSON, the payload IS the answer, so the Markdown riding along under
+ * schema:encoding repeats none of it. It carries only what the JSON lacks: the typed next-step
+ * controls, for an MCP client that cannot send an Accept header, and the links (the action
+ * manifest, and the caller's own, such as a web app or an ontology). Copying the payload into it
+ * twice (escaped in the front matter, again in a json block) made every answer about four times
+ * its content, past a chat client's tool-result limit once the relay's act escaped it again.
+ *
+ * With no control to carry, it is left out only where the JSON already names a way on: a payload
+ * decorated by decorateShim (every answer createVerticalBridge sends, refusals included) has
+ * `affordances`, whose first is the discover-affordances step to the action manifest. That
+ * answer then names none of the caller's own links; the Markdown forms (Accept: text/markdown,
+ * and the Markdown entry point) still carry them, the JSON entry point does not. A direct caller
+ * whose payload has no `affordances` (Foxxi's routes, which call this directly: a composition with
+ * nothing to play, or one just finished) keeps a twin with the links alone, a bounded size
+ * whatever the payload.
+ */
 export function sendActionResult(req: Request, res: Response, payload: Record<string, unknown>,
   base: string, title: string, next: readonly Affordance[], links: readonly HypermediaLink[] = []): void {
-  const md = renderHypermediaMarkdown({ id: `urn:uuid:${randomUUID()}`, type: 'schema:DigitalDocument',
-    descriptorUrl: `${base}/affordances`, title,
-    fields: { 'schema:encodingFormat': 'application/json', 'schema:text': JSON.stringify(payload) },
-    body: hmdProse(`# ${title}\n\nResponse snapshot. Follow the controls through the declared authority.\n\n`
-      + '```json\n' + JSON.stringify(payload, null, 2) + '\n```'),
+  const doc = { id: `urn:uuid:${randomUUID()}`, type: 'schema:DigitalDocument', descriptorUrl: `${base}/affordances`, title,
     links: [{ label: 'Available actions', href: `${base}/affordances?format=markdown`, rel: 'related', type: 'text/markdown' }, ...links],
-    controls: next.map(a => affordanceControl(a, base)),
-  });
+    controls: next.map(a => affordanceControl(a, base)) };
   res.vary('Accept');
   res.setHeader('Cache-Control', 'no-store');
-  if (wantsHmd(req)) { sendHmd(res, md); return; }
+  if (wantsHmd(req)) {
+    sendHmd(res, renderHypermediaMarkdown({ ...doc,
+      fields: { 'schema:encodingFormat': 'application/json', 'schema:text': JSON.stringify(payload) },
+      body: hmdProse(`# ${title}\n\nResponse snapshot. Follow the controls through the declared authority.\n\n`
+        + '```json\n' + JSON.stringify(payload, null, 2) + '\n```') }));
+    return;
+  }
+  if (doc.controls.length === 0 && Array.isArray(payload['affordances'])) { res.json(payload); return; }
   res.json({ ...payload, 'https://schema.org/encoding': {
     '@type': 'https://schema.org/MediaObject', 'https://schema.org/encodingFormat': 'text/markdown',
-    'https://schema.org/text': md,
+    'https://schema.org/text': renderHypermediaMarkdown({ ...doc,
+      body: hmdProse(doc.controls.length > 0
+        ? `# ${title}\n\nNext steps for the JSON answer that carries this document. Follow the controls through the declared authority.`
+        : `# ${title}\n\nWhere to go from the JSON answer that carries this document: its links, the actions this service offers among them.`) }),
   } });
 }

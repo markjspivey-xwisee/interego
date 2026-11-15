@@ -141,7 +141,9 @@ describe('every advertised affordance can actually be invoked', () => {
       .toMatch(/credential/i);
 
     // …and the manifest must NOT have grown a copy of the spec's own routes.
-    const rawLrsRoutes = ALL.filter(a => /\{base\}\/xapi\/(statements|activities|agents|state|profile)/.test(a.targetTemplate));
+    // Whole path segments: `/xapi/profiles/…` is the xAPI Profile Server (the Profiles specification,
+    // Part Three), a different surface that the LRS's about document does not describe.
+    const rawLrsRoutes = ALL.filter(a => /\{base\}\/xapi\/(statements|activities|agents|state|profile)(?![a-z_-])/.test(a.targetTemplate));
     expect(rawLrsRoutes.map(a => a.toolName),
       'spec-defined LRS routes should be reached via the about document, not re-declared').toEqual([]);
   });

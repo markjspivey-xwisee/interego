@@ -179,6 +179,30 @@ export class PgslDataAccessor implements DataAccessor {
     }
   }
 
+  /**
+   * Stage a batch of immutable documents into an existing container: one native transaction for
+   * every document and for the container's modified time, which moves when anything was created.
+   * Returns undefined when a name already holds a different representation (nothing is staged).
+   */
+  async stageDocuments(
+    container: ResourceIdentifier, items: readonly { name: string; bytes: Uint8Array; contentType: string }[],
+  ): Promise<{ receipts: { created: boolean; revision: string; bodyDigest: string; contentType: string; size: number }[];
+    engineMs: number; containerMs: number; } | undefined> {
+    const started = performance.now();
+    const outcome = await this.ldp.stageResources(this.pod, items.map(item => ({
+      path: container.path + item.name, bytes: item.bytes, contentType: item.contentType,
+    })), { touch: container.path });
+    if (outcome.status === 'conflict') return undefined;
+    const staged = performance.now();
+    if (!outcome.touched && outcome.receipts.some(receipt => receipt.created)) {
+      // A container with no marker of its own yet (it exists through its children): give it one,
+      // the way CSS does after a created child, keeping whatever metadata it has.
+      const st = await this.ldp.stat(this.pod, container.path);
+      await guardNativeHead(() => this.ldp.setMeta(this.pod, container.path, st?.meta, CONTAINER_MARKER_CT));
+    }
+    return { receipts: outcome.receipts, engineMs: staged - started, containerMs: performance.now() - staged };
+  }
+
   async writeContainer(identifier: ResourceIdentifier, metadata: RepresentationMetadata): Promise<void> {
     // Marker for existence + persist any non-derived container metadata (pim:Storage on the root).
     const meta = await this.extractMeta(metadata);

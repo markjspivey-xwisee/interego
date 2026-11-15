@@ -35,6 +35,14 @@
  *      they are indistinguishable from leg 2 alone. A probe that cannot tell them apart would
  *      report "SSE is not MCP" about an expired token.
  *
+ * ★ REDIRECTS. Legs 2 and 3 go through the SDK's transports, which in the locked SDK (1.32.2;
+ * 1.26.0 had no such option) do not follow a redirect to another origin: `redirectPolicy`
+ * defaults to 'same-origin'. Leg 1 uses plain `fetch`, which does. The default relay URL
+ * answers directly, so the legs agree. Pointed at an INTEREGO_RELAY that redirects to another
+ * origin, they would not: a refused redirect on `/mcp` ends the run inconclusive (2), and one
+ * on `/sse` counts as a failed handshake toward 0, with a rejection that names
+ * `redirectPolicy: 'same-origin'`.
+ *
  * ── EXIT CODE ───────────────────────────────────────────────────────────────
  *
  *   0 — the control connected AND `/sse` sent no `endpoint` frame AND the SDK client failed.

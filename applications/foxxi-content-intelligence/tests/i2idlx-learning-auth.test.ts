@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import { once } from 'node:events';
 import { createHash } from 'node:crypto';
 import express from 'express';
-import { LearningAccountAuth, LearningAuthError, attachLearningAccountRoutes, type LearningPrincipal } from '../src/i2idlx-learning-auth.js';
+import { LearningAccountAuth, LearningAuthError, attachLearningAccountRoutes, learnerReturnPath, type LearningPrincipal } from '../src/i2idlx-learning-auth.js';
 
 const BASE = 'https://workbench.example', RELAY = 'https://relay.example', IDENTITY = 'https://identity.example', POD = 'https://pods.example';
 const PATH = '/i2idlx/learning', ALICE = 'u-pk-aaaaaaaaaaaa', BOB = 'u-pk-bbbbbbbbbbbb';
@@ -75,8 +75,8 @@ async function fixture(options: { local?: boolean; maxSessions?: number; maxPend
   cleanups.push(async () => { control.release.resolve(); auth.dispose(); server.closeAllConnections(); providerServer.closeAllConnections();
     await Promise.all([new Promise<void>(resolve => server.close(() => resolve())), new Promise<void>(resolve => providerServer.close(() => resolve()))]); });
   const request = (path: string, cookies = '', init: RequestInit = {}) => fetch(local + path, { ...init, redirect: 'manual', headers: { ...(cookies ? { Cookie: cookies } : {}), ...init.headers } }) as Promise<ProbeResponse>;
-  async function begin(cookies = '') {
-    const start = await request(PATH + '/oauth/start', cookies); assert.equal(start.status, 302); const location = start.headers.get('location')!;
+  async function begin(cookies = '', query = '') {
+    const start = await request(PATH + '/oauth/start' + query, cookies); assert.equal(start.status, 302); const location = start.headers.get('location')!;
     const pending = cookiePair(start, '__Host-i2idlx-learning-pending');
     const authorized = await transport(location, { redirect: 'manual' }); assert.equal(authorized.status, 302);
     return { callback: new URL(authorized.headers.get('location')!), pending, location, start };
@@ -188,6 +188,22 @@ describe('independent human learning-account sign-in', () => {
     f.control.blockOnce = true; const pending = f.finish(p, a.cookie); await f.control.blocked.promise;
     const out = await f.request(PATH + '/sign-out', a.cookie + '; ' + p.pending, { method: 'POST', headers: { Origin: BASE, 'X-I2IDLX-Learning-CSRF': s.csrf } }); assert.equal(out.status, 200); await out.text();
     f.control.release.resolve(); const result = await pending; assert.ok([401, 503].includes(result.response.status)); assert.equal(result.cookie, ''); await result.response.text();
+  });
+  it('returns a finished sign-in to the course player, and refuses any other next path', async () => {
+    assert.equal(learnerReturnPath('/learn?course_id=abc'), '/learn?course_id=abc');
+    assert.equal(learnerReturnPath('/learn'), '/learn');
+    assert.equal(learnerReturnPath('https://evil.example/learn'), null);
+    assert.equal(learnerReturnPath('/i2idlx/'), null);
+    assert.equal(learnerReturnPath('//learn'), null);
+    assert.equal(learnerReturnPath('/learn/../admin'), null);
+    assert.equal(learnerReturnPath(''), null);
+    assert.equal(learnerReturnPath(['/learn']), null);
+    const f = await fixture();
+    const refused = await f.request(PATH + '/oauth/start?next=' + encodeURIComponent('https://evil.example'));
+    assert.equal(refused.status, 400); await refused.text();
+    const logged = await f.finish(await f.begin('', '?next=' + encodeURIComponent('/learn?course_id=abc')));
+    assert.equal(logged.response.status, 303);
+    assert.equal(logged.response.headers.get('location'), BASE + '/learn?course_id=abc');
   });
   it('bounds pending records and live sessions', async () => {
     const f = await fixture({ maxPending: 1 }); const first = await f.begin(); const full = await f.request(PATH + '/oauth/start'); assert.equal(full.status, 429); await full.text();

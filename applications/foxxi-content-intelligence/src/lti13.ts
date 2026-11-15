@@ -218,7 +218,7 @@ interface VerifyResult {
   error?: string;
 }
 
-export async function jwsVerifyRs256OrEs256(jwt: string, jwksUrl: string): Promise<VerifyResult> {
+export async function jwsVerifyRs256OrEs256(jwt: string, jwks: string | readonly Record<string, unknown>[]): Promise<VerifyResult> {
   const parts = jwt.split('.');
   if (parts.length !== 3) return { ok: false, error: 'malformed JWT' };
   const headerRaw = base64urlDecode(parts[0]!).toString('utf8');
@@ -229,27 +229,33 @@ export async function jwsVerifyRs256OrEs256(jwt: string, jwksUrl: string): Promi
     header = JSON.parse(headerRaw);
     payload = JSON.parse(payloadRaw);
   } catch { return { ok: false, error: 'invalid JSON in header/payload' }; }
+  if (!header || typeof header !== 'object' || Array.isArray(header)
+      || !payload || typeof payload !== 'object' || Array.isArray(payload)) {
+    return { ok: false, error: 'JWT header and payload must be objects' };
+  }
   if (header.alg !== 'RS256' && header.alg !== 'ES256') {
     return { ok: false, error: `unsupported alg ${header.alg as string}` };
   }
-  // Fetch JWKS and find key by kid
-  let jwks: { keys?: Array<Record<string, unknown>> };
-  try {
-    // Transient-network retry: platform JWKS endpoints are hosted by the
-    // LMS and may be momentarily unreachable. withTransientRetry handles
-    // 5xx / connect blips; 4xx falls through to the caller as "bad URL".
-    const r = await withTransientRetry(async () => {
-      const resp = await fetch(jwksUrl, { headers: { Accept: 'application/json' } });
-      if (resp.status >= 500) {
-        throw new Error(`JWKS fetch failed: ${resp.status} ${resp.statusText}`);
-      }
-      return resp;
-    });
-    if (!r.ok) return { ok: false, error: `JWKS fetch ${r.status}` };
-    jwks = await r.json() as typeof jwks;
-  } catch (err) { return { ok: false, error: `JWKS fetch threw: ${(err as Error).message}` }; }
+  // Temporary tool connections can pin the provider's public keys at provisioning.
+  let keys: readonly Record<string, unknown>[];
+  if (typeof jwks === 'string') {
+    try {
+      const r = await withTransientRetry(async () => {
+        const resp = await fetch(jwks, { headers: { Accept: 'application/json' } });
+        if (resp.status >= 500) {
+          throw new Error(`JWKS fetch failed: ${resp.status} ${resp.statusText}`);
+        }
+        return resp;
+      });
+      if (!r.ok) return { ok: false, error: `JWKS fetch ${r.status}` };
+      const body = await r.json() as { keys?: Array<Record<string, unknown>> };
+      keys = body.keys ?? [];
+    } catch (err) { return { ok: false, error: `JWKS fetch threw: ${(err as Error).message}` }; }
+  } else {
+    keys = jwks;
+  }
   const kid = header.kid as string | undefined;
-  const candidates = (jwks.keys ?? []).filter(k => !kid || k.kid === kid);
+  const candidates = keys.filter(k => !kid || k.kid === kid);
   if (candidates.length === 0) return { ok: false, error: `no JWK matching kid=${kid as string}` };
   for (const k of candidates) {
     try {

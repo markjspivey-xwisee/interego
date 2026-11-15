@@ -106,6 +106,28 @@
  *                                   Anything else is ignored with a warning that does not print
  *                                   an address. Unset or ignored, they go to the guide's contact
  *                                   section. Set it on the service; never bake it into an image
+ *   PEV_LAUNCH_READ_URL, PEV_LAUNCH_LRS_ENDPOINT, PEV_LAUNCH_VOCABULARY
+ *                                   taking an attempt from an LMS launch
+ *                                   (pev.import_launched_attempt): the LRS's signed-read route a
+ *                                   learner's own signed read is forwarded to, the LRS endpoint
+ *                                   recorded on the attempt, and the profile terms the unit's
+ *                                   statements use, as JSON {turnVerb, counterpartLineExt,
+ *                                   criterionKeyExt, rubricExt}, each an absolute IRI. All three or
+ *                                   none: with none the act answers 501; with some, or a value that
+ *                                   is not an https URL (http on loopback) or not that JSON, the
+ *                                   bridge does not start. This bridge holds no LRS credential
+ *   PEV_LAUNCH_LMS_AUTHORITY        optional, with the three above, and required with
+ *                                   PEV_LAUNCH_LMS_ISSUERS: JSON {homePage, name}, the authority
+ *                                   account the LMS's own statements carry on that LRS. With it a
+ *                                   launched statement counts only under that authority; without
+ *                                   it one is taken by verb, actor, unit and session. A value that
+ *                                   is not that JSON, or issuers without it: the bridge does not start
+ *   PEV_LAUNCH_LMS_ISSUERS          optional, with the three above: JSON mapping each principal
+ *                                   that holds the role lms (a 0x address or a DID) to the account
+ *                                   homePage its LMS puts on the actors it launches. Such a
+ *                                   principal takes reviewed statements only for attempts whose
+ *                                   launch actor carries that homePage; one not listed speaks for
+ *                                   no LMS, whatever its role. Malformed: the bridge does not start
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
  *                                   route (this bridge never picks a model)
@@ -124,14 +146,15 @@ import { contactForLog } from '../../_shared/contact-link/index.js';
 import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
+import { launchVocabularyProblems, lmsAuthorityProblems, type LaunchVocabulary, type LmsAuthority } from '../src/launched-import.js';
 import { attemptIriSecret, freshNonce, iriKeyFingerprint, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
 import { cachedDidDocuments, isUserDid, type RelayDelegationPolicy } from '../src/relay-delegated.js';
 import {
-  createPevHandlers, describeStartup, DECISIVE_ACTS, DECISIVE_ON_ANOTHERS_ATTEMPT, DEFAULT_BUDGETS, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX,
+  createPevHandlers, describeStartup, type LaunchImport, DECISIVE_ACTS, DECISIVE_ON_ANOTHERS_ATTEMPT, DEFAULT_BUDGETS, DEMO_ROLE_NAMES, WEB_UI_AGENT_PREFIX,
   type DemoRoleName, type DemoSigner, type HourlyLimit, type PevDeps,
 } from './handlers.js';
 import { didDocumentFetch, operatorPodFetch } from './pod-helpers.js';
-import { attachUi, contactUrlOf, hostAllowlistGuard, relayCallFetch } from './ui.js';
+import { attachUi, contactUrlOf, hostAllowlistGuard, relayCallFetch, webAppClients } from './ui.js';
 
 const say = (line: string): void => { process.stdout.write(`${line}\n`); };
 const warn = (line: string): void => { process.stderr.write(`${line}\n`); };
@@ -314,6 +337,65 @@ async function main(): Promise<void> {
   const uiSignIn = relayUrl !== undefined && relayAddresses.length > 0 && identityHost !== undefined;
   const relayIsLoopback = relayUrl !== undefined && ((): boolean => { try { return LOOPBACK.has(new URL(relayUrl).hostname); } catch { return false; } })();
 
+  const launchReadUrl = env('PEV_LAUNCH_READ_URL');
+  const launchEndpoint = env('PEV_LAUNCH_LRS_ENDPOINT');
+  const launchVocabularyRaw = env('PEV_LAUNCH_VOCABULARY');
+  let launchImport: LaunchImport | undefined;
+  if (launchReadUrl !== undefined || launchEndpoint !== undefined || launchVocabularyRaw !== undefined) {
+    const httpsOrLoopback = (v: string | undefined): boolean => {
+      if (v === undefined) return false;
+      try { const u = new URL(v); return u.protocol === 'https:' || (u.protocol === 'http:' && ['127.0.0.1', 'localhost', '[::1]'].includes(u.hostname)); } catch { return false; }
+    };
+    let vocabulary: unknown;
+    try { vocabulary = launchVocabularyRaw !== undefined ? JSON.parse(launchVocabularyRaw) : undefined; } catch { vocabulary = undefined; }
+    const bad = [
+      ...(httpsOrLoopback(launchReadUrl) ? [] : ['PEV_LAUNCH_READ_URL takes the https URL of the LRS\'s signed-read route']),
+      ...(httpsOrLoopback(launchEndpoint) ? [] : ['PEV_LAUNCH_LRS_ENDPOINT takes the https URL of the LRS endpoint']),
+      ...launchVocabularyProblems(vocabulary).map((x) => `PEV_LAUNCH_VOCABULARY: ${x}`),
+    ];
+    if (bad.length > 0) {
+      warn(`Taking an attempt from an LMS launch needs PEV_LAUNCH_READ_URL, PEV_LAUNCH_LRS_ENDPOINT and PEV_LAUNCH_VOCABULARY together, or none of them. ${bad.join('; ')}. Not listening.`);
+      process.exitCode = 1;
+      return;
+    }
+    // Which LMS each lms principal speaks for. Optional: without it no principal takes statements as an LMS.
+    const issuersRaw = env('PEV_LAUNCH_LMS_ISSUERS');
+    let lmsIssuers: Record<string, string> | undefined;
+    if (issuersRaw !== undefined) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(issuersRaw); } catch { parsed = undefined; }
+      const entries = typeof parsed === 'object' && parsed !== null && !Array.isArray(parsed) ? Object.entries(parsed as Record<string, unknown>) : null;
+      if (!entries || entries.length === 0 || entries.some(([k, v]) => !(/^0x[0-9a-fA-F]{40}$/.test(k) || /^did:/.test(k)) || typeof v !== 'string' || !/^[A-Za-z][A-Za-z0-9+.-]*:\S+$/.test(v))) {
+        warn('PEV_LAUNCH_LMS_ISSUERS takes JSON mapping each lms principal (a 0x address or a DID) to the account homePage its LMS puts on the actors it launches, such as {"0x…":"did:web:lms.example"}. A wrong binding would let one LMS take another\'s attempts. Not listening.');
+        process.exitCode = 1;
+        return;
+      }
+      lmsIssuers = Object.fromEntries(entries as [string, string][]);
+    }
+    // The authority the LMS's own statements carry on that LRS. Optional by itself; required with the binding above.
+    const authorityRaw = env('PEV_LAUNCH_LMS_AUTHORITY');
+    let lmsAuthority: LmsAuthority | undefined;
+    if (authorityRaw !== undefined) {
+      let parsed: unknown;
+      try { parsed = JSON.parse(authorityRaw); } catch { parsed = undefined; }
+      const wrong = lmsAuthorityProblems(parsed);
+      if (wrong.length > 0) {
+        warn(`PEV_LAUNCH_LMS_AUTHORITY takes JSON naming the authority account the LMS's own statements carry on the LRS, such as {"homePage":"https://lms.example","name":"lms"}: ${wrong.join('; ')}. Not listening.`);
+        process.exitCode = 1;
+        return;
+      }
+      lmsAuthority = parsed as LmsAuthority;
+    }
+    if (lmsIssuers && !lmsAuthority) {
+      warn('PEV_LAUNCH_LMS_ISSUERS needs PEV_LAUNCH_LMS_AUTHORITY: an LMS takes reviewed results for the sessions its own launched statements name, and without the authority the LMS records them under, a launched statement anyone stored would be taken for the LMS\'s. Not listening.');
+      process.exitCode = 1;
+      return;
+    }
+    launchImport = {
+      readUrl: launchReadUrl as string, endpoint: launchEndpoint as string, vocabulary: vocabulary as LaunchVocabulary,
+      ...(lmsIssuers ? { lmsIssuers } : {}), ...(lmsAuthority ? { lmsAuthority } : {}),
+    };
+  }
   const llmKey = env('PEV_LLM_API_KEY') ?? env('ANTHROPIC_API_KEY');
   const llmModel = env('PEV_LLM_MODEL');
   const model: TextModel | undefined = llmKey && llmModel
@@ -353,13 +435,17 @@ async function main(): Promise<void> {
     relayAddresses: relayAddresses.map((x) => x.toLowerCase()), identityHost,
     fetchDidDocument: cachedDidDocuments(didDocumentFetch(globalThis.fetch.bind(globalThis))),
   } : undefined;
+  // This web app's own OAuth client ids at the relay: its metadata document URL, and an id a dynamic
+  // registration gives it here. The handlers read a relay-signed `client_id` against them; the web
+  // UI's sign-in adds a registered id.
+  const webApp = webAppClients(base);
   const deps: PevDeps = {
     platformWallet, platformKeyKind,
     trustedPlatformAddresses: trusted.filter((x) => isAddress(x)),
     ...(recordKey ? { recordKey } : {}),
     adminAddresses: [...admins.filter((x) => isAddress(x)), ...(demoAdmin ? [demoAdmin.address] : [])],
     ...(relayDelegation !== undefined ? { relayDelegation, adminDids } : {}),
-    chatAgentsDecide,
+    chatAgentsDecide, isWebAppClient: webApp.has,
     ...(relayUrl !== undefined ? { relayUrl } : {}),
     fetchFn: operatorPodFetch(defaultPodUrl, writeSecret, baseFetch),
     holderFetchFn: baseFetch,
@@ -370,6 +456,7 @@ async function main(): Promise<void> {
     bridgeModelFor: modelFor, budgets,
     ...(model ? { model } : {}),
     ...(demoSigner ? { demoSigner } : {}),
+    ...(launchImport ? { launchImport: { ...launchImport, fetchFn: baseFetch } } : {}),
   };
   const handlers = createPevHandlers(deps);
 
@@ -402,7 +489,7 @@ async function main(): Promise<void> {
         ontologyTurtle: readOntologyTurtle, shapesTurtle: readShapesTurtle,
       });
       attachUi(a, uiSignIn && relayUrl !== undefined
-        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}) }, ...contact }
+        ? { interego: { relayUrl, deploymentUrl: base, relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback }), ...(relayDelegation !== undefined ? { relayDelegation } : {}), webAppClients: webApp }, ...contact }
         : contact);
     },
   });
@@ -428,7 +515,7 @@ async function main(): Promise<void> {
   say(`  admins: ${deps.adminAddresses?.length ?? 0} address(es), ${relayAddresses.length > 0 ? adminDids.length : 0} Interego DID(s)`);
   const decisive = `${[...DECISIVE_ACTS].join(', ')}, and ${[...DECISIVE_ON_ANOTHERS_ATTEMPT].join(', ')} on another learner's attempt`;
   say(relayAddresses.length > 0 && identityHost !== undefined
-    ? `  Interego sign-in: ON, relay-attested, not user-held. A request the relay (${relayAddresses.join(', ')}) signs for an agent on ${identityHost} acts as that agent's controller there, a did:web:${identityHost}:users:… person; whoever holds that relay delegation key, or controls ${identityHost}, can act as any person on this bridge. Records made this way carry authority relay-delegated. ${chatAgentsDecide ? `Chat agents may take ${decisive} (PEV_CHAT_AGENTS_DECIDE=1).` : `Only this bridge's web UI (${WEB_UI_AGENT_PREFIX}… agents) may take ${decisive}; PEV_CHAT_AGENTS_DECIDE=1 lets chat agents.`} Relay: ${relayUrl ?? 'PEV_RELAY_URL not set'}`
+    ? `  Interego sign-in: ON, relay-attested, not user-held. A request the relay (${relayAddresses.join(', ')}) signs for an agent on ${identityHost} acts as that agent's controller there, a did:web:${identityHost}:users:… person; whoever holds that relay delegation key, or controls ${identityHost}, can act as any person on this bridge. Records made this way carry authority relay-delegated. ${chatAgentsDecide ? `Chat agents may take ${decisive} (PEV_CHAT_AGENTS_DECIDE=1).` : `Only this bridge's web UI (its own OAuth client, ${base}/ui/oauth/client.json or the id it registered, where the relay signs which client asked, and a ${WEB_UI_AGENT_PREFIX}… agent) may take ${decisive}; PEV_CHAT_AGENTS_DECIDE=1 lets chat agents.`} Relay: ${relayUrl ?? 'PEV_RELAY_URL not set'}`
     : `  Interego sign-in: off (PEV_TRUSTED_RELAY_ADDRESSES is empty): only keys a person holds sign acts${adminDids.length > 0 ? `; the ${adminDids.length} admin DID(s) in PEV_ADMIN_DIDS cannot act until it is on` : ''}`);
   if (relayAddresses.length > 0) {
     say(uiSignIn

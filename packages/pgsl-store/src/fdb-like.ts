@@ -91,6 +91,50 @@ export interface FdbTxn {
    * deliberately no default, so a new backend cannot silently inherit last-writer-wins.
    */
   compareAndSet(key: Key, expected: Value | null, value: Value): Promise<boolean>;
+  /**
+   * OPTIONAL: read several keys at once, answered in the order asked. Exactly `get` per key; a
+   * backend one network hop from its data answers in one round trip instead of one per key.
+   * Use `getMany()` below, which falls back to `get`.
+   */
+  getMany?(keys: readonly Key[]): Promise<(Value | undefined)[]>;
+  /**
+   * OPTIONAL: create several ABSENT keys at once, answered in the order asked with whether each
+   * was created. Exactly `compareAndSet(key, null, value)` per entry (the absence is in the
+   * statement, never in an earlier read), in one round trip. Keys must be distinct.
+   * Use `createAbsent()` below, which falls back to `compareAndSet`.
+   */
+  createAbsent?(entries: readonly { readonly key: Key; readonly value: Value }[]): Promise<boolean[]>;
+  /**
+   * OPTIONAL: for each half-open range [begin, end), whether any key lies in it, in the order
+   * asked. Exactly `getRange(begin, end, { limit: 1 })` per range, in one round trip.
+   * Use `anyInRanges()` below, which falls back to `getRange`.
+   */
+  anyInRanges?(ranges: readonly { readonly begin: Key; readonly end: Key }[]): Promise<boolean[]>;
+}
+
+export async function anyInRanges(
+  txn: FdbTxn, ranges: readonly { readonly begin: Key; readonly end: Key }[],
+): Promise<boolean[]> {
+  if (txn.anyInRanges) return txn.anyInRanges(ranges);
+  const out: boolean[] = [];
+  for (const range of ranges) out.push((await txn.getRange(range.begin, range.end, { limit: 1 })).length > 0);
+  return out;
+}
+
+export async function getMany(txn: FdbTxn, keys: readonly Key[]): Promise<(Value | undefined)[]> {
+  if (txn.getMany) return txn.getMany(keys);
+  const out: (Value | undefined)[] = [];
+  for (const key of keys) out.push(await txn.get(key));
+  return out;
+}
+
+export async function createAbsent(
+  txn: FdbTxn, entries: readonly { readonly key: Key; readonly value: Value }[],
+): Promise<boolean[]> {
+  if (txn.createAbsent) return txn.createAbsent(entries);
+  const out: boolean[] = [];
+  for (const entry of entries) out.push(await txn.compareAndSet(entry.key, null, entry.value));
+  return out;
 }
 
 /**

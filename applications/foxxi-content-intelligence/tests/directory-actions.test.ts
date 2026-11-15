@@ -167,6 +167,15 @@ describe('implemented directory actions have authenticated real effects', () => 
     expect(await f.actions.run(action, { ...envelope, _signed_payload: envelope._signed_payload + ' ' })).toMatchObject({ kind: 'refusal', 'iep:refusalStatus': 401 });
     expect(f.requests).toEqual([]);
   });
+  it('accepts the client_id the relay signs beside its other transport fields, and still refuses other undeclared fields', async () => {
+    const f = fixture();
+    // The relay signs the OAuth client its session's token was issued to; it is transport, like subject_pod_url.
+    expect(await f.call('consume_lesson', { course_iri: courseIri, client_id: 'https://bridge.example/ui/oauth/client.json' }))
+      .toMatchObject({ loaded: true, writesPerformed: false });
+    expect(await f.call('consume_lesson', { course_iri: courseIri, pod_name: 'another-fictional-pod' }))
+      .toMatchObject({ kind: 'refusal', 'iep:refusalStatus': 400, error: expect.stringContaining('undeclared fields') });
+    expect(f.requests).toEqual([]);
+  });
   it('loads the real published lesson without manufacturing consumption, progress, completion or xAPI', async () => {
     const f = fixture(), result = await f.call('consume_lesson', { course_iri: courseIri });
     expect(result).toMatchObject({ loaded: true, consumed: false, completed: false, writesPerformed: false, lesson: { title: course.packageMeta.title, slides: course.slides } });

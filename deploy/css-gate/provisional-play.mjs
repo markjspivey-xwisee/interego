@@ -1,4 +1,5 @@
 import { createHash } from 'node:crypto';
+import { ACTIONS, decide, provisionalSubjectPolicies, subjectAttributeGraph } from './abac-portable.mjs';
 
 const sha256 = value => createHash('sha256').update(value).digest('hex');
 const REVISION = /^sha256:[a-f0-9]{64}$/;
@@ -36,10 +37,24 @@ export function createProvisionalWriteLimiter() {
   };
 }
 
-/** Only a trusted verifier can supply this marker. A malformed marker never becomes ordinary ownership. */
+/** The application namespace of a marker that names none: the first application's, unchanged. */
+export const DEFAULT_PLAY_NAMESPACE = 'hallowmarch';
+const NAMESPACE = /^[a-z][a-z0-9-]{1,31}$/;
+
+/**
+ * Only a trusted verifier can supply this marker. A malformed marker never becomes ordinary ownership.
+ *
+ * `marker.namespace` is the application's slug, set by identity from its own configuration
+ * (PROVISIONAL_PLAY_CLIENTS) inside the signed token: it selects the one directory and graph family
+ * the guest may write. Absent means DEFAULT_PLAY_NAMESPACE. One that is present and malformed
+ * refuses the credential; it never falls back to the default application's paths.
+ */
 export function verifiedProvisional(data, now = Date.now()) {
   if (data.provisionalPlay === undefined) return undefined;
   const marker = data.provisionalPlay;
+  // A general guest's marker (`general`, and never an `audience`) is checked on its own, below.
+  // Everything after this line is the per-application guest's check, unchanged.
+  if (marker && typeof marker === 'object' && !Array.isArray(marker) && marker.general !== undefined) return verifiedGeneralGuest(data, marker, now);
   let audience;
   try { audience = new URL(marker?.audience); } catch { /* refused below */ }
   const expectedSuffix = `:users:${data.userId}`;
@@ -49,22 +64,88 @@ export function verifiedProvisional(data, now = Date.now()) {
     || !/^did:web:[a-zA-Z0-9.:%-]+:users:u-try-play-[a-f0-9]{32}$/.test(data.ownerDid)
     || !audience || audience.protocol !== 'https:' || audience.origin !== marker.audience
     || !/^[A-Za-z0-9_-]{43}$/.test(marker.proofKeyThumbprint)
+    || (marker.namespace !== undefined && (typeof marker.namespace !== 'string' || !NAMESPACE.test(marker.namespace)))
     || !Number.isSafeInteger(marker.expiresAt) || marker.expiresAt * 1000 <= now
     || marker.expiresAt * 1000 > now + 7 * 24 * 60 * 60 * 1000 + 60_000) {
     throw refusal(401, 'provisional_play_invalid', 'provisional play credential is invalid or expired');
   }
   return Object.freeze({ audience: marker.audience, proofKeyThumbprint: marker.proofKeyThumbprint,
-    expiresAt: marker.expiresAt, userId: data.userId, ownerDid: data.ownerDid });
+    expiresAt: marker.expiresAt, userId: data.userId, ownerDid: data.ownerDid,
+    namespace: marker.namespace ?? DEFAULT_PLAY_NAMESPACE });
+}
+
+/** What a general guest's write budget is bound to in place of an application: one budget for the pod, whichever application writes. */
+export const GENERAL_GUEST_BUDGET_AUDIENCE = 'urn:interego:general-guest';
+const ORIGIN = /^https:\/\/[A-Za-z0-9.-]+(?::[0-9]{1,5})?$/;
+
+/**
+ * A general guest's credential: one provisional owner per browser key across applications (identity's
+ * provisional-general-guest.ts). Its id has its own prefix and its marker names the application the
+ * token is for (`application`), or is the door's own (`door`, which may write nothing here). The
+ * subject's attributes are identity's answer beside the marker (`data.subjectAttributes`), kept as they
+ * came: what the guest may write is decided from them by policy (generalGuestMayWrite), not here.
+ * Anything malformed refuses the credential; it never becomes ordinary ownership or a
+ * per-application guest.
+ */
+function verifiedGeneralGuest(data, marker, now) {
+  const door = marker.door === true;
+  if (marker.general !== true || marker.audience !== undefined
+    || !/^u-try-guest-[a-f0-9]{32}$/.test(data.userId)
+    || typeof data.ownerDid !== 'string' || !data.ownerDid.endsWith(`:users:${data.userId}`)
+    || !/^did:web:[a-zA-Z0-9.:%-]+:users:u-try-guest-[a-f0-9]{32}$/.test(data.ownerDid)
+    || (marker.door !== undefined && marker.door !== true)
+    || (door ? marker.application !== undefined || marker.namespace !== undefined
+      : typeof marker.application !== 'string' || marker.application.length > 256 || !ORIGIN.test(marker.application))
+    || !/^[A-Za-z0-9_-]{43}$/.test(marker.proofKeyThumbprint)
+    || (marker.namespace !== undefined && (typeof marker.namespace !== 'string' || !NAMESPACE.test(marker.namespace)))
+    || !Number.isSafeInteger(marker.expiresAt) || marker.expiresAt * 1000 <= now
+    || marker.expiresAt * 1000 > now + 7 * 24 * 60 * 60 * 1000 + 60_000) {
+    throw refusal(401, 'provisional_play_invalid', 'provisional play credential is invalid or expired');
+  }
+  return Object.freeze({ general: true, ...(door ? { door: true } : { application: marker.application }),
+    audience: GENERAL_GUEST_BUDGET_AUDIENCE, proofKeyThumbprint: marker.proofKeyThumbprint,
+    expiresAt: marker.expiresAt, userId: data.userId, ownerDid: data.ownerDid,
+    namespace: marker.namespace ?? DEFAULT_PLAY_NAMESPACE, subjectAttributes: data.subjectAttributes });
+}
+
+/**
+ * Whether a general guest may write its application's checkpoints, decided by policy from the
+ * attributes identity stated about the subject, with the substrate's own evaluator
+ * (abac-portable.mjs, a byte-identical copy of packages/abac/portable/abac-portable.mjs): the
+ * standard policy set for provisional subjects at the token's application (a provisional subject
+ * that application admitted, whose standing has not ended, may publish), default deny. The attributes must be this guest's and this token's (same owner, key and deadline), or
+ * nothing is decided from them. Returns the decision; `allowed` is false for anything else.
+ */
+export function generalGuestMayWrite(claims, now = Date.now()) {
+  const refused = reason => ({ allowed: false, verdict: 'Indeterminate', reason, matchedPolicies: [] });
+  if (!claims || claims.general !== true || claims.door === true || typeof claims.application !== 'string') return refused('default-deny: not an application\'s guest credential');
+  const facts = claims.subjectAttributes;
+  if (!facts || facts.subject !== claims.ownerDid || facts.proofKeyThumbprint !== claims.proofKeyThumbprint
+    || facts.standingUntil !== claims.expiresAt) return refused('default-deny: the attributes are not this credential\'s');
+  try {
+    return decide(ACTIONS.publish,
+      provisionalSubjectPolicies({ service: claims.application, provisionalMay: [ACTIONS.publish] }),
+      subjectAttributeGraph(facts, now));
+  } catch { return refused('default-deny: the attributes are malformed'); }
 }
 
 export function provisionalCheckpointPaths(claims) {
   const owner = sha256(claims.ownerDid);
+  const namespace = claims.namespace ?? DEFAULT_PLAY_NAMESPACE;
+  if (typeof namespace !== 'string' || !NAMESPACE.test(namespace)) throw refusal(401, 'provisional_play_invalid', 'provisional play credential is invalid or expired');
   return ['player-profile', 'player-profile-index'].map(kind =>
-    `/${claims.userId}/hallowmarch/checkpoints/${sha256(`urn:graph:hallowmarch:${kind}:${owner}`)}.json`);
+    `/${claims.userId}/${namespace}/checkpoints/${sha256(`urn:graph:${namespace}:${kind}:${owner}`)}.json`);
 }
 
-export function checkProvisionalTarget(claims, method, target, headers) {
-  if (claims.expiresAt * 1000 <= Date.now()) throw refusal(401, 'provisional_play_expired', 'Keep your character to continue saving after the temporary session expires');
+// `now` is a parameter, as it is for verifiedProvisional, so a caller that verified the credential
+// at one instant checks its expiry against that same instant.
+export function checkProvisionalTarget(claims, method, target, headers, now = Date.now()) {
+  if (claims.expiresAt * 1000 <= now) throw refusal(401, 'provisional_play_expired', 'Keep your character to continue saving after the temporary session expires');
+  // A general guest has no write surface of its own: the policy grants it its application's, and the
+  // checks below then hold it to that surface's shape (the same two documents, the same bounds).
+  if (claims.general !== undefined && !generalGuestMayWrite(claims, now).allowed) {
+    throw refusal(403, 'provisional_play_scope', 'temporary play permits only its own bounded native character checkpoints');
+  }
   if (method !== 'PUT' || target.search || !provisionalCheckpointPaths(claims).includes(target.pathname)) {
     throw refusal(403, 'provisional_play_scope', 'temporary play permits only its own bounded native character checkpoints');
   }

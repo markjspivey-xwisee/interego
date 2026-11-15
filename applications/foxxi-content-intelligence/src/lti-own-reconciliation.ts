@@ -82,7 +82,7 @@ const ADL = 'http://adlnet.gov/expapi/verbs/';
 const PLAN_TTL_MS = 10 * 60_000;
 const MAX_JSON_BYTES = 256 * 1024;
 const MAX_ENTRIES = 64;
-const TRANSPORT_FIELDS = ['subject_did', 'purpose', 'subject_pod_url', 'timestamp', 'agent_id'];
+const TRANSPORT_FIELDS = ['subject_did', 'purpose', 'subject_pod_url', 'client_id', 'timestamp', 'agent_id'];
 function fail(code: RecoveryErrorCode, status = 400): never { throw new OwnLtiReconciliationError(code, status); }
 const object = (v: unknown): v is Record<string, unknown> => v !== null && typeof v === 'object' && !Array.isArray(v)
   && (Object.getPrototypeOf(v) === Object.prototype || Object.getPrototypeOf(v) === null);

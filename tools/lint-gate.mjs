@@ -209,7 +209,7 @@ const UNLINTED_FRONTIER = {
   // Master reached 276 inside the slack (local identity links, returning passkeys, the dashboard
   // inbox). identity's key-encoding.ts and its suite take the committed census to 278. Both lint
   // clean; the error pin stays.
-  deploy: { errors: 356, files: 278 },
+  deploy: { errors: 356, files: 296 },
   // The bulk of these are `no-console` in vertical bridges and CLI entry points — one config
   // decision, not a thousand defects. See the note above.
   // ★ 320 -> 337, and the ratchet caught it in CI rather than locally, which is the interesting
@@ -299,7 +299,17 @@ const UNLINTED_FRONTIER = {
   //    1084 -> 1146: current master plus the enrolled learning review/map/notification
   //    modules cross the measured file-count slack. New modules lint clean; the
   //    error ceiling and all lint targets remain unchanged.
-  applications: { errors: 1452, files: 1146 },
+  //    1146 -> 1206 files (2026-11-14), errors not raised: master had grown to 1204, the top of
+  //    the slack, with the cmi5 course player, personal launch links and the practice-evidence
+  //    launch import. The route by which an activity asks for its reviewed statements
+  //    (src/cmi5-reviewed.ts and its test) adds 2 more. Both lint clean
+  //    (`npx eslint applications/foxxi-content-intelligence/src/cmi5-reviewed.ts
+  //    applications/foxxi-content-intelligence/tests/a-unit-asks-the-lms-for-its-reviewed-statements.test.ts`:
+  //    0 problems).
+  //    Master then re-pinned to 1205 on its own; with these 2 the measured count is 1207.
+  //    1207 -> 1270, errors unchanged: the root grew past its slack as the xAPI profile and xapi-x
+  //    work landed; the last 2 are src/xapi-profile-server/built-in.ts and its test, both lint-clean.
+  applications: { errors: 1452, files: 1270 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
@@ -717,7 +727,11 @@ const BASELINE = {};
 // 2026-10-27: both, merged, bring the linted scope to 686; the gate named 653.
 // 2026-11-08: tests/relay-tool-result-shape.test.ts brings the linted scope to 702; the gate named 668.
 // 2026-11-08: tests/relay-image-strips-test-only-deps.test.ts brings it to 703; the gate named 669.
-export const MIN_FILES = 669;
+// 2026-11-13: packages/pgsl/src/lattice-codec.ts and its test bring it to 709; the gate named 675.
+// 2026-11-14: packages/abac/portable/ (the dependency-free decision and its types) and
+// tests/abac-portable.test.ts bring it to 712; the gate named 678.
+// 2026-11-15: tools/coached-world-guest-provision.mjs, its declarations and its test bring it to 715; the gate named 681.
+export const MIN_FILES = 681;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

@@ -72,6 +72,20 @@ const bareCt = (ct: string): string => ct.split(';')[0]!.trim();
 const containerPrefix = (containerPath: string): string =>
   containerPath === '' || containerPath.endsWith('/') ? containerPath : `${containerPath}/`;
 
+/**
+ * How often an unconditional replacement re-reads the head and tries again after losing its
+ * compare-and-set. A loss means another writer's replacement of the same resource committed, so
+ * the writers together always progress, but one of N writers can lose N - 1 times in a row. An
+ * LDP server rewrites a container's marker and its modified date for every document created in
+ * it, without a lock on the container, so documents written into one container together all
+ * replace that one resource: eight were enough to exhaust the eight attempts this used to have,
+ * and each failure refused a document write that never conflicted with anything.
+ */
+const REPLACEMENT_ATTEMPTS = 64;
+/** A short random wait before a retry, so writers that lost together do not all retry together. */
+const contentionPause = (attempt: number): Promise<void> =>
+  new Promise((resolve) => { setTimeout(resolve, Math.random() * Math.min(attempt, 8) * 2); });
+
 export class LdpStore {
   constructor(
     private readonly store: PgslStore,
@@ -110,6 +124,29 @@ export class LdpStore {
     });
   }
 
+  /**
+   * Create-or-confirm several immutable resources in one native transaction. Each result carries
+   * the digest, size and revision of what is now stored at that path; a path holding a different
+   * representation refuses the whole request and stages nothing.
+   */
+  async stageResources(
+    pod: string, items: readonly { path: string; bytes: Uint8Array; contentType: string }[],
+    options: { touch?: string } = {},
+  ): Promise<
+    | { status: 'staged'; touched: boolean; receipts: { path: string; created: boolean; revision: string; bodyDigest: string; contentType: string; size: number }[] }
+    | { status: 'conflict'; path: string }
+  > {
+    const prepared = items.map((item) => ({ item, ...this.prepareResource(item.bytes, item.contentType, {}) }));
+    const outcome = await this.store.stageResources(pod, prepared.map(({ item, nodes, record }) => ({
+      resource: item.path, slice: nodes, record, bytes: item.bytes,
+    })), options);
+    if (outcome.status === 'conflict') return { status: 'conflict', path: outcome.resource };
+    return { status: 'staged', touched: outcome.touched, receipts: prepared.map(({ item, record }, index) => ({
+      path: item.path, created: outcome.results[index]!.created, revision: outcome.results[index]!.revision,
+      bodyDigest: record.bodyDigest!, contentType: item.contentType, size: item.bytes.length,
+    })) };
+  }
+
   private prepareResource(bytes: Uint8Array, contentType: string, opts: IngestOptions, meta?: string): {
     nodes: StoredNode[]; record: ResourceRecord;
   } {
@@ -127,7 +164,8 @@ export class LdpStore {
 
   /** Legacy unconditional LDP writes retain replacement semantics, atomically. */
   private async replacePrepared(pod: string, path: string, nodes: StoredNode[], record: ResourceRecord): Promise<void> {
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < REPLACEMENT_ATTEMPTS; attempt++) {
+      if (attempt) await contentionPause(attempt);
       const head = await this.store.resourceHead(pod, path);
       const result = await this.store.commitResource(nodes, {
         pod, resource: path, record, expectedRevision: head?.revision ?? null, legacy: true,
@@ -243,7 +281,8 @@ export class LdpStore {
 
   /** Update only the metadata quads of an existing (or newly minimal) resource. */
   async setMeta(pod: string, path: string, meta: string | undefined, contentType?: string): Promise<void> {
-    for (let attempt = 0; attempt < 8; attempt++) {
+    for (let attempt = 0; attempt < REPLACEMENT_ATTEMPTS; attempt++) {
+      if (attempt) await contentionPause(attempt);
       const head = await this.store.resourceHead(pod, path);
       if (head?.record.nativeManaged) throw new NativeResourceManagedError();
       let bodyDigest = head?.record.bodyDigest;

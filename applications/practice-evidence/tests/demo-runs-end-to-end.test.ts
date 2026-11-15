@@ -24,7 +24,7 @@ const arr = (v: unknown): unknown[] => (Array.isArray(v) ? v as unknown[] : []);
 
 /** The spec's step table (§16.3), by step id: the status and, for a refusal, the code. */
 const EXPECTED: readonly (readonly [string, number, string?])[] = [
-  ['1a', 200], ['1b', 200], ['1c', 200], ['1d', 200], ['1e', 200],
+  ['1a', 200], ['1b', 200], ['1c', 200], ['1d', 200], ['1e', 200], ['1f', 200], ['1g', 200],
   ['2', 403, 'not-an-admin'], ['3', 403, 'not-an-author'], ['4', 400, 'assessment-use-undeclared'],
   ['5', 200], ['6', 409, 'scenario-not-published'], ['7', 200], ['8', 200], ['9', 200],
   ['10', 403, 'ratifier-is-the-author'], ['11', 200], ['12', 200], ['13', 400, 'pass-gate-needs-knowable-work'], ['14', 200], ['15', 200],
@@ -95,7 +95,8 @@ describe('the offline demo runs end to end', () => {
     expect(cells.length).toBe(5);
     expect(cells.every((c) => c['status'] === 'Hypothetical')).toBe(true);
     const agent = cells.filter((c) => String(c['judgeId']).startsWith('did:ethr:'));
-    expect(agent.map((c) => obj(c['standing'])['why'])).toEqual(agent.map(() => expect.stringMatching(/^1 outcome\(s\) of pev\/[0-9a-f]{16}\/[a-z0-9-]+, below 20$/)));
+    // The reason names the kind in words: a kind holds the start of the rubric's fingerprint, which no text carries.
+    expect(agent.map((c) => obj(c['standing'])['why'])).toEqual(agent.map(() => '1 outcome(s) of this criterion, below 20'));
     const results = obj(report.results);
     expect(obj(results['counts'])['authorTestExcluded']).toBe(1);
     const levels = arr(obj(results['final'])['perCriterion']).flatMap((c) => arr(obj(c)['levels']).map(obj));

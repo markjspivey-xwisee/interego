@@ -4,7 +4,14 @@ import { Wallet } from 'ethers';
 import { createHash } from 'node:crypto';
 import { recoverSignedRequest } from '../src/auth.js';
 import type { AddressInfo } from 'node:net';
-import { generateKeyPair, openEncryptedEnvelope, createEncryptedEnvelope } from '@interego/core';
+import { generateKeyPair, openEncryptedEnvelopeBytes, createEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
+import { decodeLatticePlaintext } from '@interego/pgsl';
+
+/** A stored lattice's JSON text, whether it was sealed plain or compressed; null when the key does not open it. */
+const opened = (envelope: EncryptedEnvelope, key: EncryptionKeyPair): string | null => {
+  const bytes = openEncryptedEnvelopeBytes(envelope, key);
+  return bytes ? decodeLatticePlaintext(bytes) : null;
+};
 import { PrivatePerformanceStore } from '../../agentic-performance-practice/src/private-performance-store.js';
 import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
 import { publicSpellingOf } from '../src/store-origins.js';
@@ -176,14 +183,15 @@ describe('private encrypted CAS persistence', () => {
     const raw = [...pod.files.values()][0]!.body;
     expect(raw).not.toContain('Rule application'); expect(raw).not.toContain('learner-A');
     const envelope = JSON.parse(raw);
-    expect(openEncryptedEnvelope(envelope, pod.owner)).toContain('learner-A');
-    expect(openEncryptedEnvelope(envelope, pod.bridge)).toContain('learner-A');
-    expect(openEncryptedEnvelope(envelope, generateKeyPair())).toBeNull();
+    // The stored lattice is compressed before it is sealed; `opened` reads either form.
+    expect(opened(envelope, pod.owner)).toContain('learner-A');
+    expect(opened(envelope, pod.bridge)).toContain('learner-A');
+    expect(opened(envelope, generateKeyPair())).toBeNull();
   });
   it('refuses owner-reencrypted forged server plan even after content hashes are recomputed', async () => {
     const { pod, store } = await seed();
     const [url, record] = [...pod.files.entries()][0]!;
-    const payload = JSON.parse(openEncryptedEnvelope(JSON.parse(record.body), pod.owner)!);
+    const payload = JSON.parse(opened(JSON.parse(record.body), pod.owner)!);
     for (const node of Object.values(payload.nodes) as Array<{ kind: string; value?: string }>) {
       if (!node.value?.startsWith('__foxxi_private_performance_v1__:')) continue;
       const state = JSON.parse(node.value.slice('__foxxi_private_performance_v1__:'.length));
@@ -293,6 +301,22 @@ describe('private transport and scope binding', () => {
       expect((await post('/agent/performance/outcomes', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD })).body.outcomes).toHaveLength(1);
       expect((await post('/agent/performance/calibration', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD })).body.seed_samples).toBe(0);
       expect((await post('/agent/performance/outcomes', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: 'https://victim.example/' })).status).toBe(403);
+      // The relay also signs client_id (the OAuth client its session's token was issued to): accepted as transport, like subject_pod_url.
+      const relayClient = 'https://bridge.example/ui/oauth/client.json';
+      expect((await post('/agent/performance/outcomes', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD, client_id: relayClient })).body.outcomes).toHaveLength(1);
+      expect((await post('/agent/performance/calibration', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD, client_id: relayClient })).status).toBe(200);
+      // Any other unlisted field is still refused.
+      expect((await post('/agent/performance/calibration', { agent_id: ACTOR, timestamp: time(2), subject_pod_url: POD, pod_name: 'u-pk-123456789abc' })).status).toBe(400);
+      // A plan retried through another client is the same plan: client_id is not part of its logical input.
+      const viaOtherClient = await post('/agent/contextualize-and-plan', { ...payload, timestamp: time(3), client_id: relayClient });
+      expect(viaOtherClient.status).toBe(200); expect(viaOtherClient.body.privatePlan).toEqual(first.body.privatePlan);
+      // The schema these routes serve as the payload shape names what they accept: client_id beside the relay's other fields.
+      const served = await (await fetch(base + '/agent/performance/schema')).json() as { transport: string; actionPayloads: Record<'record' | 'read' | 'calibration', string> };
+      const declared = (shape: string): string[] => shape.replace(/^\{|\}$/g, '').split(',').map(k => k.replace(/\?$/, ''));
+      expect(declared(served.actionPayloads.record)).toEqual(['agent_id', 'timestamp', 'subject_pod_url', 'client_id', 'outcome']);
+      expect(declared(served.actionPayloads.read)).toEqual(['agent_id', 'timestamp', 'subject_pod_url', 'client_id', 'episode_id']);
+      expect(declared(served.actionPayloads.calibration)).toEqual(['agent_id', 'timestamp', 'subject_pod_url', 'client_id']);
+      expect(served.transport).toMatch(/client_id[^.]*accepted/);
       for (const a of privatePerformanceAffordances) { expect(a.externallyRouted).toBe(true); expect((await fetch(base + a.targetTemplate.replace('{base}', '') + '/affordance')).status).toBe(200); }
     } finally { await new Promise<void>((resolve, reject) => server.close(e => e ? reject(e) : resolve())); }
   });

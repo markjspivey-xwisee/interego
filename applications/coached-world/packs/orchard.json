@@ -1,0 +1,69 @@
+{
+  "id": "https://example.org/worlds/orchard",
+  "title": "Orchard",
+  "tagline": "Two crews, one grove.",
+  "profileId": "https://example.org/profiles/orchard-work",
+  "verbs": { "initialized": "initialized", "observed": "observed", "progressed": "progressed", "measured": "measured" },
+  "season": { "name": "Harvest", "startDay": 1, "lengthDays": 30, "startMinutes": 480, "tickMinutes": 15 },
+  "factions": [
+    { "id": "north", "name": "North Crew", "motto": "Read the row", "doctrine": "Information first" },
+    { "id": "south", "name": "South Crew", "motto": "Fix the press", "doctrine": "Tools first" }
+  ],
+  "territories": [
+    { "id": "row-a", "name": "Row A", "q": 0, "r": 0, "control": { "north": 50, "south": 50 } },
+    { "id": "row-b", "name": "Row B", "q": 1, "r": 0, "control": { "north": 30, "south": 70 } },
+    { "id": "press", "name": "The Press", "q": 0, "r": 1, "control": { "north": 60, "south": 40 } }
+  ],
+  "causes": [
+    { "id": "timing", "label": "Information / feedback", "bem": "Gilbert: data and feedback", "minTier": 0, "allyLift": 1.5,
+      "symptoms": [
+        { "verb": "waited", "result": "idle · no ripeness reading", "tone": "meh" },
+        { "verb": "picked", "result": "picked on yesterday's note", "tone": "bad" }
+      ] },
+    { "id": "press", "label": "Tools / environment", "bem": "Gilbert: instruments and resources", "minTier": 0, "allyLift": 1.5,
+      "symptoms": [
+        { "verb": "jammed", "result": "press timeout", "tone": "bad" },
+        { "verb": "worked", "result": "manual workaround, triple time", "tone": "meh" }
+      ] }
+  ],
+  "interventions": [
+    { "id": "calendar", "label": "Ripeness card", "addresses": "timing", "cost": 10, "minTier": 0, "composes": "Job aid descriptor on the agent's pod" },
+    { "id": "repair", "label": "Press repair", "addresses": "press", "cost": 15, "minTier": 0, "composes": "Tool manifest update on the agent's pod" }
+  ],
+  "missions": [
+    { "id": "pick", "type": "Harvest", "title": "Clear row before dusk", "object": "apple row", "kpi": "Bins filled", "base": 50, "minTier": 0, "weights": { "timing": 2, "press": 2 } }
+  ],
+  "tiers": [
+    { "id": "hand", "label": "Hand", "rosterCap": 2, "gateAfterSuccesses": 1, "courseIri": "https://example.org/courses/orchard-crew" },
+    { "id": "crew", "label": "Crew", "rosterCap": 2 }
+  ],
+  "roles": ["Picker", "Press hand"],
+  "agentNames": ["Pip", "Quince"],
+  "givenNames": ["Ada", "Bram"],
+  "familyNames": ["Holt", "Voss"],
+  "starter": { "name": "Pip-1", "role": "Picker", "baseline": 48 },
+  "influence": 80,
+  "botCount": 4,
+  "marketCount": 2,
+  "pactProposalCost": 5,
+  "initialPacts": [],
+  "scoring": {
+    "matchLiftBase": 10, "matchLiftSpan": 4, "memoryBaselineLift": 6, "tierBaseline": 2,
+    "baselineJitter": 0, "scoreFloor": 5, "scoreCeil": 99, "roiScale": 3, "gainScale": 2,
+    "matchGainBonus": 4, "rivalBlunt": 0.1, "territoryScale": 0.9, "rankRoiWeight": 40,
+    "poachPriceMultiplier": 1.4, "promoteInfluence": 10, "botAccuracy": 1,
+    "marketPriceBase": 8, "marketPricePerPoint": 0.2, "pactAccept": 1
+  },
+  "templates": {
+    "lessonMatched": "{type}: {cause} fixed with {intervention} · {delta} {kpi}",
+    "lessonMissed": "{type}: tried {intervention} but the cause was {cause} · no lift",
+    "feedIntervene": "{who} deployed {intervention} on {agent} at {territory} · {delta} {kpi}",
+    "feedJoin": "{who} joined {faction}",
+    "feedFlip": "{faction} took {territory}",
+    "feedPact": "{a} and {b} signed a federation pact",
+    "feedDissolve": "{a} dissolved its pact with {b}",
+    "feedTransfer": "{who} took on {agent}",
+    "feedPoach": "{who} poached {agent} from {faction}",
+    "feedPromote": "{who} reached {tier} after a reviewed course"
+  }
+}

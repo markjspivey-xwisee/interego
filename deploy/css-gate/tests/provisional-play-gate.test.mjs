@@ -8,6 +8,9 @@ import { provisionalCheckpointPaths } from '../provisional-play.mjs';
 
 const userId = 'u-try-play-' + 'a'.repeat(32);
 const ownerDid = `did:web:identity.example:users:${userId}`;
+// A guest of a second application (identity's PROVISIONAL_PLAY_CLIENTS `namespace`), in its own pod.
+const otherUserId = 'u-try-play-' + 'b'.repeat(32);
+const otherOwnerDid = `did:web:identity.example:users:${otherUserId}`;
 const deadline = Math.floor(Date.now() / 1000) + 3600;
 const marker = { audience: 'https://game.example', proofKeyThumbprint: 'a'.repeat(43), expiresAt: deadline };
 process.env.WRITE_SECRET = 'operator-fixture';
@@ -23,6 +26,8 @@ const identity = await listenLoopback(createServer(async (req, res) => {
   const token = JSON.parse(body).token;
   res.writeHead(200, { 'content-type': 'application/json' });
   res.end(JSON.stringify(token === 'guest-token' ? { valid: true, userId, ownerDid, provisionalPlay: marker }
+    : token === 'foxxi-token' ? { valid: true, userId: otherUserId, ownerDid: otherOwnerDid, provisionalPlay: { ...marker, audience: 'https://learn.example', namespace: 'foxxi' } }
+    : token === 'bad-namespace' ? { valid: true, userId: otherUserId, ownerDid: otherOwnerDid, provisionalPlay: { ...marker, namespace: '../hallowmarch' } }
     : token === 'canonical-token' ? { valid: true, userId: 'canonical' }
       : token === 'bad-marker' ? { valid: true, userId, ownerDid, provisionalPlay: null } : { valid: false }));
 }));
@@ -81,6 +86,27 @@ test('guest arbitrary/metadata writes, bad markers and nonconditional saves neve
   assert.equal(forwarded.length, 0);
   assert.equal(stored.size, 0);
   assert.equal((await fetch(gate.base + `/${userId}/play-budget.json`)).status, 401);
+});
+
+test('a second application\'s guest writes only its own two checkpoints: not the first application\'s paths in its pod, nor another guest\'s pod', async () => {
+  forwarded.length = 0;
+  const foxxi = { Authorization: 'Bearer foxxi-token' };
+  const own = provisionalCheckpointPaths({ userId: otherUserId, ownerDid: otherOwnerDid, namespace: 'foxxi' });
+  const asDefault = provisionalCheckpointPaths({ userId: otherUserId, ownerDid: otherOwnerDid });
+  assert.ok(own.every(target => target.startsWith(`/${otherUserId}/foxxi/checkpoints/`)));
+  assert.ok(asDefault.every(target => target.startsWith(`/${otherUserId}/hallowmarch/checkpoints/`)));
+  for (const target of [...asDefault, path, `/${otherUserId}/foxxi/checkpoints/${'0'.repeat(64)}.json`, `/${otherUserId}/foxxi/notes.json`]) {
+    assert.equal((await send(target, foxxi)).status, 403, target);
+  }
+  // The first application's guest cannot write the second's paths either, in either pod.
+  for (const target of [...own, ...provisionalCheckpointPaths({ userId, ownerDid, namespace: 'foxxi' })]) assert.equal((await send(target)).status, 403, target);
+  // A namespace that is present and malformed refuses the credential; it is never taken for the default.
+  for (const target of [...own, ...asDefault]) assert.equal((await send(target, { Authorization: 'Bearer bad-namespace' })).status, 401, target);
+  assert.equal(forwarded.length, 0);
+  for (const target of own) assert.equal((await send(target, foxxi)).status, 201, target);
+  assert.deepEqual(forwarded.map(row => row.path), own);
+  for (const target of own) { stored.delete(target); }
+  stored.delete(`/${otherUserId}/play-budget.json`);
 });
 
 test('budget outage preserves prior checkpoint and canonical ownership remains ordinary', async () => {

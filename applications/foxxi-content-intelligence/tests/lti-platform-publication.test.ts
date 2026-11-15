@@ -1,8 +1,9 @@
 import { afterEach, describe, expect, it, vi } from 'vitest';
-import type { IRI } from '@interego/core';
+import { deriveEncryptionKeyPair, type IRI } from '@interego/core';
 import { LtiPlatform } from '../src/lti-platform.js';
 import { isPlatformSnapshot } from '../src/lti-platform-readiness.js';
-import { FOXXI_SNAPSHOT_TYPES, flushSnapshot, loadLatestSnapshotStrict, registerSnapshot, seedLatestSnapshotHead } from '../src/pod-snapshot-publisher.js';
+import { FOXXI_SNAPSHOT_TYPES, flushSnapshot, loadLatestSnapshotStrict, loadPrivateLtiGradebook, readLegacySnapshotFailureWitness,
+  registerSnapshot, seedLatestSnapshotHead } from '../src/pod-snapshot-publisher.js';
 import { withPublishLock } from '../src/bridge-signer.js';
 
 const pod = 'https://pod.example/lms/';
@@ -41,10 +42,9 @@ class SolidFixture {
   };
 }
 
-function fixture(timeoutMs?: number) {
+function fixture(timeoutMs?: number, surface = `lti-platform-test-${++sequence}`) {
   const solid = new SolidFixture();
   const config = { podUrl: pod, authoritativeSource: source, fetch: solid.fetch };
-  const surface = `lti-platform-test-${++sequence}`;
   const latest = `${pod}foxxi/snapshots/${surface}-snapshot.ttl`;
   const legacyGraph = `${pod}foxxi/snapshots/${surface}-snapshot-graph.trig`;
   const platform = new LtiPlatform({ selfBaseUrl: 'https://bridge.example' });
@@ -154,6 +154,71 @@ describe('LTI-only immutable versions and a CAS latest head', () => {
     expect(await f.read()).toMatchObject({ state: 'loaded' });
     f.solid.files.delete(f.latest);
     expect(await f.read()).toEqual({ state: 'unavailable', reason: 'legacy-head-missing' });
+  });
+
+  it('recovers only the approved signed legacy copy, archives the displaced head and stores future grades as ciphertext', async () => {
+    const f = fixture(undefined, 'lti-platform');
+    await f.prime(); await flushSnapshot(f.surface);
+    const head = f.solid.files.get(f.latest)!.body;
+    const graphUrl = [...f.solid.files.keys()].find(url => url.endsWith('-graph.trig'))!;
+    const graph = f.solid.files.get(graphUrl)!.body;
+    const iri = /urn:foxxi:[^<>\s]+:sha256:[a-f0-9]{64}/.exec(graph)![0];
+    const retained = graph.replaceAll(iri, 'urn:foxxi:lti-platform-snapshot:v1');
+    const displaced = head.replaceAll(graphUrl, f.legacyGraph).replaceAll(iri, 'urn:foxxi:lti-platform-snapshot:v2');
+    f.solid.set(f.legacyGraph, retained);
+    f.solid.set(f.latest, displaced);
+    const encryptionKey = deriveEncryptionKeyPair('12'.repeat(32), 'gradebook-test');
+    registerSnapshot({ surface: f.surface, typeIri, config: f.config, collect: () => f.platform.snapshot(), immutableLatest: true, encryptionKey });
+    const witness = () => readLegacySnapshotFailureWitness(f.surface, { config: f.config, typeIri, validate: isPlatformSnapshot });
+    const recover = (approvedLegacyWitness?: string) => loadPrivateLtiGradebook({ validate: isPlatformSnapshot, approvedLegacyWitness });
+    const writes = () => f.solid.requests.filter(r => r.method === 'PUT').length;
+    const before = writes();
+    expect(await recover()).toEqual({ state: 'unavailable', reason: 'legacy-head-mismatch' });
+    expect(await recover('ff'.repeat(32))).toEqual({ state: 'unavailable', reason: 'legacy-head-mismatch' });
+    f.solid.set(f.legacyGraph, retained.replace(/(agentSignature ")[^"]+(")/, '$1invalid$2'));
+    expect(await recover((await witness()).witnessDigest)).toEqual({ state: 'unavailable', reason: 'legacy-head-mismatch' });
+    expect(writes()).toBe(before);
+    f.solid.set(f.legacyGraph, retained);
+    const staleApproval = (await witness()).witnessDigest;
+    f.solid.beforeGet = async url => {
+      if (url.endsWith('.envelope.jose.json')) {
+        f.solid.beforeGet = undefined;
+        f.solid.set(f.legacyGraph, retained + '\n# an operator changed the stored source');
+      }
+      return undefined;
+    };
+    expect(await recover(staleApproval)).toEqual({ state: 'unavailable', reason: 'migration-unconfirmed' });
+    expect(f.solid.files.get(f.latest)!.body).toBe(displaced);
+    f.solid.set(f.legacyGraph, retained);
+    const recovered = await recover((await witness()).witnessDigest);
+    expect(recovered).toMatchObject({ state: 'loaded', revision: { version: 3 }, head: { encrypted: true } });
+    if (recovered.state !== 'loaded') throw new Error('The encrypted gradebook did not restore.');
+    expect(recovered.snapshot.results).toEqual([]);
+    const archive = [...f.solid.files.entries()].find(([url]) => url.includes('lti-platform-legacy-head-'));
+    expect(archive?.[1].body).toBe(displaced);
+    expect(f.solid.files.get(f.legacyGraph)!.body).toBe(retained);
+    expect(f.solid.files.get(f.latest)!.body).toContain(`<${archive?.[0]}>`);
+    const writesAfter = writes();
+    expect(await recover()).toEqual(recovered);
+    expect(writes()).toBe(writesAfter);
+
+    seedLatestSnapshotHead(f.surface, recovered);
+    f.platform.restore(recovered.snapshot);
+    f.score(); await flushSnapshot(f.surface);
+    const latest = await recover();
+    expect(latest).toMatchObject({ state: 'loaded', revision: { version: 4 }, head: { encrypted: true } });
+    if (latest.state !== 'loaded') throw new Error('The encrypted grade could not be read.');
+    const restarted = new LtiPlatform({ selfBaseUrl: 'https://bridge.example' });
+    restarted.restore(latest.snapshot);
+    expect(restarted.gradebookFor(person)[0]?.result).toMatchObject({ resultScore: 100, resultMaximum: 100 });
+    expect(restarted.gradebookFor('another-learner')[0]?.result).toBeNull();
+    const encryptedGraphs = [...f.solid.files.entries()].filter(([url]) => url.endsWith('.envelope.jose.json'));
+    expect(encryptedGraphs.length).toBeGreaterThanOrEqual(2);
+    expect(encryptedGraphs.every(([, value]) => !value.body.includes(person) && !value.body.includes('bundleJson'))).toBe(true);
+    expect(f.solid.files.get(f.latest)!.body).not.toContain(latest.revision.sha256);
+    expect(await f.read()).toEqual({ state: 'unavailable', reason: 'invalid-head' });
+    expect(await loadLatestSnapshotStrict(f.surface, { config: f.config, typeIri, validate: isPlatformSnapshot, followLatestDescriptor: true,
+      encryptionKey: deriveEncryptionKeyPair('34'.repeat(32), 'gradebook-test') })).toEqual({ state: 'unavailable', reason: 'invalid-snapshot' });
   });
 
   it('rejects a self-consistent payload and dct hash carried under a DIFFERENT payload-hash graph IRI', async () => {

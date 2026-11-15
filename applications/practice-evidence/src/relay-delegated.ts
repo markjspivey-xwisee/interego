@@ -73,6 +73,12 @@ export function isUserDid(did: string, identityHost: string): boolean {
   return m !== null && SLUG.test(m[1] ?? '');
 }
 
+/** The user id of `did:web:<host>:users:<id>` on the identity host, or null. */
+export function userIdOfUserDid(did: string, identityHost: string): string | null {
+  const m = new RegExp(`^did:web:${escapeHost(identityHost)}:users:(.+)$`).exec(did);
+  return m && SLUG.test(m[1] ?? '') ? m[1]! : null;
+}
+
 /** The canonical user id a relay agent's slug ends with (`<surface>-<userId>`), or null. */
 export function userIdOfAgentSlug(slug: string): string | null {
   return /-(u-(?:pk|eth|did)-[0-9a-f]{12})$/.exec(slug)?.[1] ?? null;

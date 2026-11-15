@@ -2,6 +2,11 @@
  * Native Interego primary for xAPI. Complete encrypted canonical PGSL artifacts
  * are authoritative; the paired statement query entries are rebuildable views.
  * No process cache, SQL database or public pod snapshot is a source of truth.
+ *
+ * The complete head this process last materialized is kept, but it is not a
+ * source of truth either: it is served only after the pod's current head has
+ * been read and verified in that same call and names the same commit. A head
+ * that has changed in any way is read and verified again from the pod.
  */
 import { createHash, createHmac, randomUUID, timingSafeEqual } from 'node:crypto';
 import {
@@ -44,6 +49,23 @@ export interface NativeInteregoLrsOptions {
   /** Optional, value-free diagnostics for range queries taking at least five seconds.
    * Observer failures (including asynchronous rejection) never affect the query. */
   onSlowQuery?: (event: NativeLrsQueryDiagnostic) => void;
+  /** Optional, value-free timing of every write transaction. Observer failures never affect it. */
+  onWrite?: (event: NativeLrsWriteDiagnostic) => void;
+}
+/** Durations and counts only: no tenant, key, record or error text. */
+export interface NativeLrsWriteDiagnostic {
+  /** 0=committed, 1=nothing to write, 2=contention limit, 3=other error. */
+  readonly outcome: 0 | 1 | 2 | 3;
+  /** Head read, prepare and commit rounds; more than 1 means a head conflict was retried. */
+  readonly attempts: number;
+  readonly changes: number;
+  readonly elapsedMs: number;
+  readonly readyMs: number;
+  /** Reading the head for each attempt, summed. */
+  readonly readMs: number;
+  /** The caller's own work between the read and the commit, summed. */
+  readonly prepareMs: number;
+  readonly commitMs: number;
 }
 type NativeChange = Parameters<NativeCommitClient['commit']>[0]['changes'][number];
 type ByteArtifact = ReturnType<typeof createNativeByteArtifact>;
@@ -75,7 +97,7 @@ function stableJson(value: unknown): string {
 function checkedQuery(value: unknown): CursorQuery {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new InvalidLrsQueryError();
   const q = value as Record<string, unknown>;
-  if (Object.keys(q).some(k => !['agent', 'verb', 'activity', 'registration', 'since', 'until', 'ascending', 'limit'].includes(k))) throw new InvalidLrsQueryError();
+  if (Object.keys(q).some(k => !['agent', 'alsoAgents', 'verb', 'activity', 'registration', 'since', 'until', 'ascending', 'limit'].includes(k))) throw new InvalidLrsQueryError();
   if (q.limit !== undefined && (typeof q.limit !== 'number' || !Number.isSafeInteger(q.limit) || q.limit < 0)) throw new InvalidLrsQueryError();
   if (q.ascending !== undefined && typeof q.ascending !== 'boolean') throw new InvalidLrsQueryError();
   for (const key of ['verb', 'activity']) {
@@ -88,6 +110,12 @@ function checkedQuery(value: unknown): CursorQuery {
     if (v !== undefined && (typeof v !== 'string' || v.length > 128 || !UTC_TIMESTAMP.test(utcTimestamp(v)) || !Number.isFinite(Date.parse(utcTimestamp(v))))) throw new InvalidLrsQueryError();
   }
   if (q.agent !== undefined && (typeof q.agent !== 'object' || q.agent === null || Array.isArray(q.agent) || JSON.stringify(q.agent).length > 8192 || validateAgentObject(q.agent).length)) throw new InvalidLrsQueryError();
+  if (q.alsoAgents !== undefined) {
+    if (!Array.isArray(q.alsoAgents) || q.alsoAgents.length > 32) throw new InvalidLrsQueryError();
+    for (const agent of q.alsoAgents) {
+      if (typeof agent !== 'object' || agent === null || Array.isArray(agent) || JSON.stringify(agent).length > 8192 || validateAgentObject(agent).length) throw new InvalidLrsQueryError();
+    }
+  }
   return { ...cursorQueryOf(q as CursorQuery), limit: q.limit === 0 ? 500 : Math.min(q.limit as number | undefined ?? 100, 500), ascending: q.ascending === true };
 }
 /** Tagged tree preserves real binary docs while ordinary JSON Buffer-shaped objects remain JSON. */
@@ -220,10 +248,15 @@ class NativeMutation {
   }
 }
 
-/** Shares only transport and stable keys. Every operation starts from a verified durable native head. */
+const headIdentity = (head: NativeSnapshot): string =>
+  JSON.stringify([head.revision, head.reference?.revision ?? null, head.reference?.commitUrl ?? null, head.reference?.topUri ?? null]);
+
+/** Shares transport, stable keys and one validated complete head. Every operation starts from a verified durable native head. */
 export class NativeInteregoLrsDatabase {
   private closed = false;
   private readiness?: Promise<void>;
+  private completeHead?: { identity: string; snapshot: NativeSnapshot };
+  private readonly completeHeadReads = new Map<string, Promise<NativeSnapshot>>();
   private readonly secret: Buffer;
   constructor(private readonly options: NativeInteregoLrsOptions) {
     this.secret = Buffer.from(options.cursorSecret);
@@ -275,12 +308,42 @@ export class NativeInteregoLrsDatabase {
   async read<T>(snapshot: NativeSnapshot, tenant: string, kind: string, id: string, cache?: NativeQueryArtifactCache): Promise<T | null> {
     return this.readReference<T>(snapshot, this.key(tenant, kind, id), tenant, kind, id, cache);
   }
+  /** The complete index at the pod's current head. Materializing it costs one
+   * read per index node, so callers that find the same head share the work:
+   *  - each call first reads and verifies the current head with no record paths
+   *    (the head resource and its backing commit, not the index);
+   *  - if that is the head this process last materialized, the verified
+   *    snapshot is returned;
+   *  - otherwise callers that saw the same head await one materialization.
+   * A caller never joins a read begun for a different head, so a request that
+   * has just committed cannot be answered from before its own write. Nothing
+   * here is a source of truth: the cached snapshot is used only while the pod
+   * still names the same commit, and any change is verified again in full.
+   * A client that cannot read a head without its index gets no sharing. */
+  async readCompleteHead(): Promise<NativeSnapshot> {
+    if (!this.client.readHeadRecords) return this.client.readHead();
+    const identity = headIdentity(await this.client.readHeadRecords([]));
+    if (this.completeHead?.identity === identity) return this.completeHead.snapshot;
+    const shared = this.completeHeadReads.get(identity);
+    if (shared) return shared;
+    const read = (async () => {
+      try {
+        const snapshot = await this.client.readHead();
+        if (snapshot.selectedRecordKeys) throw new Error('native LRS complete head is a selection');
+        // Keyed by what was actually read, which may be newer than the probe.
+        if (!this.closed) this.completeHead = { identity: headIdentity(snapshot), snapshot };
+        return snapshot;
+      } finally { this.completeHeadReads.delete(identity); }
+    })();
+    this.completeHeadReads.set(identity, read);
+    return read;
+  }
   async readHead(keys?: readonly string[]): Promise<NativeSnapshot> {
-    if (keys === undefined || !this.client.readHeadRecords) return this.client.readHead();
+    if (keys === undefined || !this.client.readHeadRecords) return this.readCompleteHead();
     const selected = [...new Set(keys)].sort();
     // Preserve complete-index behavior for batches beyond the optional SDK
     // selection capacity. Ordinary signed batches contain at most 20 records.
-    if (selected.length > 1000) return this.client.readHead();
+    if (selected.length > 1000) return this.readCompleteHead();
     const snapshot = await this.client.readHeadRecords(selected);
     const checked = snapshot.selectedRecordKeys;
     if (!checked || selected.some(key => !checked.includes(key))) throw new Error('native LRS selected head omitted a required path');
@@ -302,28 +365,47 @@ export class NativeInteregoLrsDatabase {
     try { await pending; } catch (error) { if (pending === this.readiness) this.readiness = undefined; throw error; }
   }
   async transaction<R>(prepare: (mutation: NativeMutation) => Promise<R>, readKeys?: readonly string[]): Promise<R> {
-    await this.ready();
-    for (let attempt = 0; attempt < 8; attempt++) {
-      const mutation = new NativeMutation(this, await this.readHead(readKeys));
-      const result = await prepare(mutation);
-      if (!mutation.changes.size) return result;
-      try {
-        // The verified native receipt is still awaited. No caller here uses its
-        // returned record map, so reconstructing the entire global index would
-        // add unrelated network reads after an already committed point write.
-        await this.client.commit({ operationId: randomUUID(), expected: mutation.snapshot, changes: [...mutation.changes.values()], resultRecordKeys: [] });
-        return result;
-      } catch (error) {
-        if (!(error instanceof NativeCommitConflictError)) throw error;
-        if (attempt === 7) throw new Error('native LRS commit contention limit reached');
+    const observe = this.options.onWrite, started = performance.now();
+    let outcome: NativeLrsWriteDiagnostic['outcome'] = 3, attempts = 0, changes = 0, readyMs = 0, readMs = 0, prepareMs = 0, commitMs = 0;
+    try {
+      await this.ready();
+      readyMs = performance.now() - started;
+      for (let attempt = 0; attempt < 8; attempt++) {
+        attempts = attempt + 1;
+        const reading = performance.now();
+        const mutation = new NativeMutation(this, await this.readHead(readKeys));
+        const preparing = performance.now(); readMs += preparing - reading;
+        const result = await prepare(mutation);
+        const committing = performance.now(); prepareMs += committing - preparing;
+        changes = mutation.changes.size;
+        if (!mutation.changes.size) { outcome = 1; return result; }
+        try {
+          // The verified native receipt is still awaited. No caller here uses its
+          // returned record map, so reconstructing the entire global index would
+          // add unrelated network reads after an already committed point write.
+          await this.client.commit({ operationId: randomUUID(), expected: mutation.snapshot, changes: [...mutation.changes.values()], resultRecordKeys: [] });
+          commitMs += performance.now() - committing; outcome = 0;
+          return result;
+        } catch (error) {
+          commitMs += performance.now() - committing;
+          if (!(error instanceof NativeCommitConflictError)) throw error;
+          if (attempt === 7) { outcome = 2; throw new Error('native LRS commit contention limit reached'); }
+        }
+      }
+      outcome = 2;
+      throw new Error('native LRS commit contention limit reached');
+    } finally {
+      if (observe) {
+        const round = Math.round, event: NativeLrsWriteDiagnostic = Object.freeze({ outcome, attempts, changes, elapsedMs: round(performance.now() - started),
+          readyMs: round(readyMs), readMs: round(readMs), prepareMs: round(prepareMs), commitMs: round(commitMs) });
+        try { void Promise.resolve(observe(event)).catch(() => {}); } catch { /* Observation is never write authority. */ }
       }
     }
-    throw new Error('native LRS commit contention limit reached');
   }
   forTenant(tenant: string): NativeInteregoLrsStore { bounded(tenant, 'tenant', 8192); return new NativeInteregoLrsStore(this, tenant); }
   async listTenants(): Promise<string[]> {
     await this.ready();
-    const head = await this.client.readHead(), names: string[] = [];
+    const head = await this.readCompleteHead(), names: string[] = [];
     for (const [key, ref] of head.records) {
       if (!key.startsWith(PREFIX) || !key.includes('/registry/')) continue;
       const value = readNativeByteArtifact(await this.client.readArtifact(ref));
@@ -337,7 +419,7 @@ export class NativeInteregoLrsDatabase {
     return names.sort();
   }
   clearAllowed(): boolean { return this.options.allowClear === true; }
-  async close(): Promise<void> { this.closed = true; this.secret.fill(0); }
+  async close(): Promise<void> { this.closed = true; this.completeHead = undefined; this.secret.fill(0); }
 }
 
 export interface AppliedNativeVoid { target: StoredStatement; voidingStatementId: string; }
@@ -487,7 +569,7 @@ export class NativeInteregoLrsStore implements StatementStore {
     }
     const cursor = filter.cursor === undefined ? null : this.cursor(filter.cursor, q, authorizationRegistration);
     diagnostics?.enter('head');
-    const head = cursor ? await this.database.client.readSnapshotAt(cursor.head) : await this.database.client.readHead();
+    const head = cursor ? await this.database.client.readSnapshotAt(cursor.head) : await this.database.readCompleteHead();
     diagnostics?.enter('index');
     const index = this.queryEntries(head).sort((a, b) => (q.ascending ? a.stored.localeCompare(b.stored) : b.stored.localeCompare(a.stored)) || a.opaque.localeCompare(b.opaque));
     let start = 0;
@@ -549,7 +631,7 @@ export class NativeInteregoLrsStore implements StatementStore {
   }
   async listAll(): Promise<StoredStatement[]> {
     await this.database.ready();
-    const head = await this.database.client.readHead(), prefix = this.database.prefix(this.tenant) + 'statement/', records: StoredStatement[] = [];
+    const head = await this.database.readCompleteHead(), prefix = this.database.prefix(this.tenant) + 'statement/', records: StoredStatement[] = [];
     for (const key of head.records.keys()) {
       if (!key.startsWith(prefix)) continue;
       const base = await this.database.readReference<StoredStatement>(head, key, this.tenant, 'statement');
@@ -559,7 +641,7 @@ export class NativeInteregoLrsStore implements StatementStore {
   }
   async count(): Promise<number> {
     await this.database.ready(); const prefix = this.database.prefix(this.tenant) + 'statement/';
-    return [...(await this.database.client.readHead()).records.keys()].filter(key => key.startsWith(prefix)).length;
+    return [...(await this.database.readCompleteHead()).records.keys()].filter(key => key.startsWith(prefix)).length;
   }
   async clear(): Promise<void> {
     if (!this.database.clearAllowed()) throw new Error('native LRS clear is disabled');
@@ -572,7 +654,7 @@ export class NativeInteregoLrsStore implements StatementStore {
   }
   async listResources<T>(kind: string): Promise<Array<[string, T]>> {
     await this.database.ready(); bounded(kind, 'record kind', 64);
-    const head = await this.database.client.readHead(), prefix = this.database.prefix(this.tenant) + kind + '/', result: Array<[string, T]> = [];
+    const head = await this.database.readCompleteHead(), prefix = this.database.prefix(this.tenant) + kind + '/', result: Array<[string, T]> = [];
     for (const [key, ref] of head.records) {
       if (!key.startsWith(prefix)) continue;
       const payload = readNativeByteArtifact(await this.database.client.readArtifact(ref));
@@ -597,7 +679,9 @@ export class NativeInteregoLrsStore implements StatementStore {
   async getAttachment(sha: string): Promise<LrsAttachment | null> {
     if (!/^[a-f0-9]{64}$/i.test(sha)) throw new Error('invalid LRS attachment hash');
     await this.database.ready();
-    const ref = (await this.database.client.readHead()).records.get(this.database.key(this.tenant, 'attachment', sha.toLowerCase()));
+    // One attachment is one index path, not the whole index.
+    const key = this.database.key(this.tenant, 'attachment', sha.toLowerCase());
+    const ref = (await this.database.readHead([key])).records.get(key);
     if (!ref) return null;
     const value = readNativeByteArtifact(await this.database.client.readArtifact(ref));
     if (value.owner !== this.database.owner || value.sha256 !== 'sha256:' + sha.toLowerCase()) throw new Error('native LRS attachment binding failed');

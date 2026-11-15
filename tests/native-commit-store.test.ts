@@ -1,11 +1,11 @@
 import { createHash } from 'node:crypto';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { deriveEncryptionKeyPair, mintNodeId, type IRI } from '@interego/core';
+import { createEncryptedEnvelope, deriveEncryptionKeyPair, mintNodeId, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair, type IRI } from '@interego/core';
 import {
-  NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE,
+  NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, NATIVE_STAGE_MEDIA_TYPE,
   createNativeByteArtifact, readNativeByteArtifact, validateNativeArtifact,
   type NativeArtifactInput, type NativeArtifactReference, type NativeCommitScope, type NativeSnapshotReference,
-  type NativeHeadReadDiagnostic,
+  type NativeHeadReadDiagnostic, type NativeCommitDiagnostic,
 } from '@interego/pgsl';
 
 const owner = deriveEncryptionKeyPair('a'.repeat(64));
@@ -27,6 +27,11 @@ class NativeTransport {
   readonly methods: string[] = [];
   readonly writes: Array<{ url: string; body: string }> = [];
   optionsAvailable = true;
+  /** Batched staging is modelled only when a test turns it on; every other test sees a server without it. */
+  stageAvailable = false;
+  failBatch = false;
+  batchTransform: ((receipts: Record<string, unknown>[]) => unknown) | undefined;
+  readonly batches: string[][] = [];
   failStage = false;
   loseStageAck = false;
   failHead = false;
@@ -42,7 +47,8 @@ class NativeTransport {
     const method = init?.method ?? 'GET';
     this.methods.push(method + ' ' + url);
     if (method === 'OPTIONS') return new Response(null, { status: 204, headers: this.optionsAvailable
-      ? { 'Accept-Put': NATIVE_COMMIT_MEDIA_TYPE, 'Interego-Native-Commit': '1' } : {} });
+      ? { 'Accept-Put': NATIVE_COMMIT_MEDIA_TYPE, 'Interego-Native-Commit': '1', ...(this.stageAvailable ? { 'Interego-Native-Stage': '1' } : {}) } : {} });
+    if (method === 'POST') return this.stageBatch(url, init);
     if (method === 'GET') {
       const row = this.rows.get(url); if (!row) return new Response(null, { status: 404 });
       const headers: Record<string, string> = { 'Content-Type': 'application/json',
@@ -90,6 +96,25 @@ class NativeTransport {
     }
     return new Response(JSON.stringify(receipt), { headers: { 'Content-Type': 'application/json', ETag: '"' + revision + '-json"' } });
   };
+  /** Create-if-absent per item, named by the digest of its bytes; identical bytes are confirmed, not rewritten. */
+  private stageBatch(url: string, init: RequestInit | undefined): Response {
+    expect(this.stageAvailable).toBe(true); // never sent to a server that did not advertise it
+    expect(url).toBe(scope.artifactContainer); expect(init?.redirect).toBe('manual');
+    expect(new Headers(init?.headers).get('Content-Type')).toBe(NATIVE_STAGE_MEDIA_TYPE);
+    const command = JSON.parse(String(init?.body)) as { version: number; items: Array<{ name: string; contentType: string; bodyBase64: string }> };
+    expect(command.version).toBe(1); expect(command.items.length).toBeGreaterThan(0); expect(command.items.length).toBeLessThanOrEqual(64);
+    this.batches.push(command.items.map(item => item.name));
+    if (this.failBatch) return new Response(null, { status: 503 });
+    const receipts = command.items.map(item => {
+      const bytes = Buffer.from(item.bodyBase64, 'base64'), target = url + item.name, old = this.rows.get(target);
+      expect(item.name).toMatch(new RegExp('^(artifact|commit)-' + sha(bytes).slice(7) + '\\.json$')); expect(item.contentType).toBe('application/json');
+      if (old && !Buffer.from(old.bytes).equals(bytes)) throw new Error('model: a content-named resource changed');
+      const revision = old?.revision ?? sha(target + ':' + (++this.sequence) + ':' + sha(bytes));
+      if (!old) { this.rows.set(target, { bytes, revision }); this.writes.push({ url: target, body: bytes.toString('utf8') }); }
+      return { name: item.name, status: 'staged', created: !old, revision, bodyDigest: sha(bytes), contentType: 'application/json', size: bytes.length } as Record<string, unknown>;
+    });
+    return new Response(JSON.stringify(this.batchTransform ? this.batchTransform(receipts) : { version: 1, receipts }), { headers: { 'Content-Type': 'application/json' } });
+  }
   client(overrides: Partial<ConstructorParameters<typeof NativeCommitStore>[0]> = {}): NativeCommitStore {
     return new NativeCommitStore({ scope, fetch: this.fetch, senderKeyPair: bridge,
       ownerPublicKey: owner.publicKey, recipientPublicKeys: [owner.publicKey, bridge.publicKey], ...overrides });
@@ -935,5 +960,564 @@ describe('explicit bounded native rolling checkpoints', () => {
     const changed = transport.client({ atomicCheckpoint: true, scope: { ...scope, artifactContainer: scope.pod + 'other/' } });
     await expect(changed.readAtomicCheckpoint()).rejects.toThrow('scope changed');
     expect(transport.headWrites()).toBe(1);
+  });
+});
+
+describe('native index reads at scale', () => {
+  const RECORDS = 3000;
+  let seeded: NativeTransport, total: number, complete: Awaited<ReturnType<NativeCommitStore['readHead']>>;
+  const artifactGets = (transport: NativeTransport, from = 0): string[] => transport.methods.slice(from)
+    .filter(method => /^GET .*\/artifact-[a-f0-9]{64}\.json$/.test(method)).map(method => method.slice(4));
+  const copy = (): NativeTransport => {
+    const transport = new NativeTransport();
+    for (const [url, row] of seeded.rows) transport.rows.set(url, { bytes: Uint8Array.from(row.bytes), revision: row.revision });
+    return transport;
+  };
+  beforeAll(async () => {
+    seeded = new NativeTransport();
+    const client = seeded.client({ indexNodeCacheEntries: 100_000 }), shared = artifact('same payload');
+    for (let batch = 0; batch < RECORDS / 1000; batch++) {
+      await client.commit({ operationId: 'seed-' + batch, expected: await client.readHeadRecords([]), resultRecordKeys: [],
+        changes: Array.from({ length: 1000 }, (_, i) => ({ key: 'row:' + (batch * 1000 + i), artifact: shared })) });
+    }
+    const events: NativeHeadReadDiagnostic[] = [];
+    complete = await copy().client({ onHeadRead: event => events.push(event) }).readHead();
+    total = events.at(-1)!.indexNodes;
+    expect(complete.records.size).toBe(RECORDS);
+    expect(total).toBeGreaterThan(200);
+  }, 120_000);
+
+  it.each([0, 100_000])('writes one record without reading the whole index (node cache entries: %i)', async indexNodeCacheEntries => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries, indexReadConcurrency: 8 });
+    const before = new Set(transport.rows.keys());
+    const expected = await client.readHeadRecords(['row:new']);
+    expect(expected.records.size).toBe(0);
+    await client.commit({ operationId: 'one-write', expected, changes: [{ key: 'row:new', artifact: artifact('new') }], resultRecordKeys: ['row:new'] });
+    // Index nodes that existed before this write and were fetched during it.
+    const existingReads = artifactGets(transport).filter(url => before.has(url));
+    expect(existingReads.length).toBeGreaterThan(0);
+    expect(existingReads.length).toBeLessThanOrEqual(16);
+    expect(existingReads.length).toBeLessThan(total / 10);
+    if (indexNodeCacheEntries) expect(new Set(existingReads).size).toBe(existingReads.length);
+    const after = await transport.client().readHead();
+    expect(after.records.size).toBe(RECORDS + 1);
+    expect(after.records.has('row:new')).toBe(true);
+  }, 60_000);
+
+  it('reuses verified index nodes for an unchanged head and still verifies that head on every read', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 100_000, indexReadConcurrency: 8 });
+    expect(await client.readHead()).toEqual(complete);
+    expect(artifactGets(transport)).toHaveLength(total);
+    const warm = transport.methods.length;
+    const again = await client.readHead();
+    expect(again).toEqual(complete);
+    expect([...again.records]).toEqual([...complete.records]);
+    // Callers get their own map: one caller cannot change what another reads.
+    (again.records as Map<string, NativeArtifactReference>).clear();
+    expect((await client.readHead()).records.size).toBe(RECORDS);
+    expect(artifactGets(transport, warm)).toEqual([]);
+    expect(transport.methods.slice(warm).filter(method => method === 'GET ' + scope.headUrl)).toHaveLength(2);
+    expect(transport.methods.slice(warm).filter(method => method === 'GET ' + complete.reference!.commitUrl)).toHaveLength(2);
+  }, 60_000);
+
+  it('re-reads only the changed paths when another client moves the head', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 100_000, indexReadConcurrency: 8 });
+    await client.readHead();
+    const writer = transport.client();
+    await writer.commit({ operationId: 'elsewhere', expected: await writer.readHeadRecords([]), resultRecordKeys: [],
+      changes: [{ key: 'row:elsewhere', artifact: artifact('elsewhere') }, { key: 'row:7', artifact: null }] });
+    const moved = transport.methods.length;
+    const changed = await client.readHead();
+    const fetched = artifactGets(transport, moved);
+    expect(fetched.length).toBeGreaterThan(0);
+    expect(fetched.length).toBeLessThanOrEqual(12);
+    expect(changed.revision).not.toBe(complete.revision);
+    expect(changed).toEqual(await transport.client().readHead());
+    expect(changed.records.has('row:elsewhere')).toBe(true);
+    expect(changed.records.has('row:7')).toBe(false);
+    expect(changed.records.size).toBe(RECORDS);
+  }, 60_000);
+
+  it('does not fetch the index again after its own commit', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 100_000 });
+    await client.readHead();
+    await client.commit({ operationId: 'own', expected: await client.readHeadRecords([]), resultRecordKeys: [],
+      changes: [{ key: 'row:own', artifact: artifact('own') }] });
+    const committed = transport.methods.length;
+    const own = await client.readHead();
+    expect(artifactGets(transport, committed)).toEqual([]);
+    expect(own).toEqual(await transport.client().readHead());
+    expect(own.records.size).toBe(RECORDS + 1);
+  }, 60_000);
+
+  it('shares one fetch per index node between concurrent complete reads', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 100_000, indexReadConcurrency: 8 });
+    const snapshots = await Promise.all(Array.from({ length: 6 }, () => client.readHead()));
+    for (const snapshot of snapshots) expect(snapshot).toEqual(complete);
+    expect(artifactGets(transport)).toHaveLength(total);
+    expect(new Set(artifactGets(transport)).size).toBe(total);
+    expect(transport.methods.filter(method => method === 'GET ' + scope.headUrl)).toHaveLength(6);
+  }, 60_000);
+
+  it('keeps no failed or unverified node and verifies a node it has not seen', async () => {
+    const transport = copy();
+    let failures = 1, corrupt = false;
+    const client = transport.client({ indexNodeCacheEntries: 100_000, fetch: async (input, init) => {
+      const url = String(input);
+      if ((init?.method ?? 'GET') === 'GET' && /\/artifact-/.test(url)) {
+        if (failures-- > 0) return new Response(null, { status: 503 });
+        if (corrupt) { corrupt = false; const response = await transport.fetch(input, init); return new Response('{}', { headers: response.headers }); }
+      }
+      return transport.fetch(input, init);
+    } });
+    await expect(client.readHead()).rejects.toThrow('Native resource is unreadable');
+    expect(await client.readHead()).toEqual(complete);
+    const writer = transport.client();
+    await writer.commit({ operationId: 'unseen', expected: await writer.readHeadRecords([]), resultRecordKeys: [],
+      changes: [{ key: 'row:unseen', artifact: artifact('unseen') }] });
+    corrupt = true;
+    await expect(client.readHead()).rejects.toThrow('Native read metadata is not bound to its representation.');
+    expect((await client.readHead()).records.has('row:unseen')).toBe(true);
+  }, 60_000);
+
+  it('evicts least recently used nodes at its entry bound and rejects an invalid bound', async () => {
+    const transport = copy(), client = transport.client({ indexNodeCacheEntries: 64 });
+    expect(await client.readHead()).toEqual(complete);
+    const warm = transport.methods.length;
+    expect(await client.readHead()).toEqual(complete);
+    // Too small to hold the index: correct, with most nodes fetched again.
+    expect(artifactGets(transport, warm).length).toBeGreaterThan(total / 2);
+    for (const indexNodeCacheEntries of [-1, 1.5, 4_000_001]) expect(() => transport.client({ indexNodeCacheEntries })).toThrow('Invalid native index node cache capacity.');
+  }, 60_000);
+});
+
+describe('batched staging of a commit\'s immutable representations', () => {
+  const stagingRequests = (transport: NativeTransport, from = 0): string[] => transport.methods.slice(from)
+    .filter(m => !m.endsWith(' ' + scope.headUrl) && !m.startsWith('OPTIONS ') && !m.startsWith('GET '));
+  const commitTwo = (client: NativeCommitStore, id: string) => client.readHead().then(expected => client.commit({ operationId: id, expected, changes: [
+    { key: 'statement:' + id, artifact: artifact('statement ' + id) }, { key: 'state:' + id, artifact: artifact('state ' + id) },
+  ] }));
+
+  it('stages everything a commit refers to in one request, before the head, and reads none of it back', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client();
+    await commitTwo(client, 'first');
+    const from = transport.methods.length, result = await commitTwo(client, 'second');
+    const during = transport.methods.slice(from), post = during.indexOf('POST ' + scope.artifactContainer);
+    // Two records, the previous operation's record, the index leaf and the commit object: one request.
+    expect(stagingRequests(transport, from)).toEqual(['POST ' + scope.artifactContainer]);
+    expect(transport.batches.at(-1)).toHaveLength(5);
+    expect(transport.batches.at(-1)!.filter(name => name.startsWith('commit-'))).toHaveLength(1);
+    expect(post).toBeGreaterThan(-1); expect(post).toBeLessThan(during.indexOf('PUT ' + scope.headUrl));
+    const staged = new Set(transport.batches.at(-1)!.map(name => scope.artifactContainer + name));
+    expect(during.slice(0, during.indexOf('PUT ' + scope.headUrl)).filter(m => m.startsWith('GET ') && staged.has(m.slice(4)))).toEqual([]);
+    // The head compare-and-set and its read-back are the same requests as without batching.
+    expect(during.filter(m => m === 'PUT ' + scope.headUrl)).toHaveLength(1);
+    expect(result.resourceReceipt?.resource).toBe(scope.headUrl);
+    // A client that never batches reads exactly what was published.
+    const reader = await transport.client({ stageIndividually: true }).readHead();
+    expect(await textAt(transport, reader, 'statement:second')).toBe('statement second');
+    expect(await textAt(transport, reader, 'state:first')).toBe('state first');
+  });
+
+  it('writes the same resources as individual staging, with far fewer requests', async () => {
+    const batched = new NativeTransport(), individual = new NativeTransport(); batched.stageAvailable = true;
+    for (const transport of [batched, individual]) { const client = transport.client(); await commitTwo(client, 'a'); await commitTwo(client, 'b'); }
+    const kinds = (transport: NativeTransport): string[] => transport.writes.map(w => w.url === scope.headUrl ? 'head' : w.url.includes('/commit-') ? 'commit' : 'artifact').sort();
+    expect(kinds(batched)).toEqual(kinds(individual));
+    expect(stagingRequests(batched)).toHaveLength(2);
+    expect(stagingRequests(individual).length).toBe(individual.writes.length - 2);
+    expect(individual.methods.filter(m => m.startsWith('POST '))).toEqual([]);
+  });
+
+  it('stages individually when the server does not advertise it or the client opts out', async () => {
+    const silent = new NativeTransport(); await commitTwo(silent.client(), 'silent');
+    expect(silent.batches).toEqual([]);
+    const declined = new NativeTransport(); declined.stageAvailable = true;
+    await commitTwo(declined.client({ stageIndividually: true }), 'declined');
+    expect(declined.batches).toEqual([]);
+    expect(declined.methods.filter(m => m.startsWith('PUT ') && m.includes('/artifact-')).length).toBeGreaterThan(0);
+  });
+
+  it('falls back to a confirmed write and read-back of each representation when the batch is not answered', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true; transport.failBatch = true;
+    const from = transport.methods.length, result = await commitTwo(transport.client(), 'fallback');
+    expect(transport.batches).toHaveLength(1);
+    const during = transport.methods.slice(from), head = during.indexOf('PUT ' + scope.headUrl);
+    for (const name of transport.batches[0]!) {
+      const put = during.indexOf('PUT ' + scope.artifactContainer + name), get = during.indexOf('GET ' + scope.artifactContainer + name, put);
+      expect(put).toBeGreaterThan(-1); expect(get).toBeGreaterThan(put); expect(get).toBeLessThan(head);
+    }
+    expect(await textAt(transport, result.snapshot, 'statement:fallback')).toBe('statement fallback');
+    // Nothing is staged and nothing confirms it: the head is not published.
+    const dead = new NativeTransport(); dead.stageAvailable = true; dead.failBatch = true; dead.failStage = true;
+    await expect(commitTwo(dead.client(), 'dead')).rejects.toThrow(); expect(dead.headWrites()).toBe(0);
+  });
+
+  it.each<[string, (receipts: Record<string, unknown>[]) => unknown]>([
+    ['a receipt for different bytes', receipts => { receipts[1]!.bodyDigest = sha('other'); return { version: 1, receipts }; }],
+    ['a receipt for another name', receipts => { receipts[0]!.name = receipts[1]!.name; return { version: 1, receipts }; }],
+    ['a receipt with another size', receipts => { receipts[2]!.size = Number(receipts[2]!.size) + 1; return { version: 1, receipts }; }],
+    ['a receipt that is not a confirmation', receipts => { receipts[0]!.status = 'pending'; return { version: 1, receipts }; }],
+    ['a receipt without a native revision', receipts => { delete receipts[0]!.revision; return { version: 1, receipts }; }],
+    ['a missing receipt', receipts => ({ version: 1, receipts: receipts.slice(1) })],
+    ['an extra receipt', receipts => ({ version: 1, receipts: [...receipts, receipts[0]] })],
+    ['reordered receipts', receipts => ({ version: 1, receipts: [...receipts].reverse() })],
+    ['an unknown answer version', receipts => ({ version: 2, receipts })],
+    ['an answer that is not receipts', () => ({ ok: true })],
+  ])('does not publish a head after %s', async (_name, batchTransform) => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client({ indexNodeCacheEntries: 1000 });
+    await commitTwo(client, 'good');
+    const head = transport.rows.get(scope.headUrl)!.revision;
+    transport.batchTransform = batchTransform;
+    await expect(commitTwo(client, 'refused')).rejects.toThrow(/staging/i);
+    expect(transport.rows.get(scope.headUrl)!.revision).toBe(head); expect(transport.headWrites()).toBe(1);
+    // Nothing from the refused commit was kept as verified: the same client still reads the published state.
+    transport.batchTransform = undefined;
+    const after = await client.readHead();
+    expect([...after.records.keys()].sort()).toEqual(['state:good', 'statement:good']);
+    expect(after).toEqual(await transport.client().readHead());
+  });
+
+  it('splits a large commit into bounded requests and confirms every one before the head', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client(), changes = Array.from({ length: 150 }, (_, i) => ({ key: 'row:' + i, artifact: artifact('row ' + i) }));
+    const result = await client.commit({ operationId: 'large', expected: await client.readHead(), changes });
+    expect(transport.batches.length).toBeGreaterThan(2);
+    for (const batch of transport.batches) expect(batch.length).toBeLessThanOrEqual(64);
+    const names = transport.batches.flat();
+    expect(new Set(names).size).toBe(names.length);
+    expect(transport.methods.lastIndexOf('POST ' + scope.artifactContainer)).toBeLessThan(transport.methods.indexOf('PUT ' + scope.headUrl));
+    expect(result.snapshot.records.size).toBe(150);
+    expect((await transport.client().readHead()).records.size).toBe(150);
+    expect(transport.methods.filter(m => m.startsWith('PUT ') && !m.endsWith(scope.headUrl))).toEqual([]);
+  }, 60_000);
+
+  it('confirms identical representations that are already there and keeps replay and conflict handling', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const left = transport.client(), right = transport.client(), expected = await left.readHead();
+    const won = await left.commit({ operationId: 'left', expected, changes: [{ key: 'k', artifact: artifact('left') }] });
+    await expect(right.commit({ operationId: 'right', expected, changes: [{ key: 'k', artifact: artifact('right') }] })).rejects.toBeInstanceOf(NativeCommitConflictError);
+    const writes = transport.writes.length;
+    const replay = await right.commit({ operationId: 'left', expected, changes: [{ key: 'k', artifact: artifact('left') }] });
+    expect(replay.replayed).toBe(true); expect(replay.head).toEqual(won.head); expect(transport.writes.length).toBe(writes);
+    // A rival wins the head after this commit has staged: the staged batch is abandoned, the conflict surfaces.
+    const stale = await left.readHead();
+    transport.beforeHead = async () => { await right.commit({ operationId: 'rival', expected: await right.readHead(), changes: [{ key: 'r', artifact: artifact('rival') }] }); };
+    await expect(left.commit({ operationId: 'loser', expected: stale, changes: [{ key: 'l', artifact: artifact('loser') }] })).rejects.toBeInstanceOf(NativeCommitConflictError);
+    expect([...(await transport.client().readHead()).records.keys()].sort()).toEqual(['k', 'r']);
+  });
+});
+
+describe('opt-in fewer round trips per commit', () => {
+  // Index nodes are kept in both configurations, so the requests that differ are the ones these options remove.
+  const indexed = { indexNodeCacheEntries: 10_000 } as const;
+  const fast = { ...indexed, reuseBackingCommits: true, commitFromExpectedSnapshot: true, capabilityProbeTtlMs: 60_000 } as const;
+  const write = async (client: NativeCommitStore, id: string) => client.commit({ operationId: id, expected: await client.readHeadRecords([]),
+    resultRecordKeys: [], changes: [{ key: 'row:' + id, artifact: artifact(id) }] });
+  const requests = (transport: NativeTransport, from: number): string[] => transport.methods.slice(from)
+    .map(m => m.replace(/(artifact|commit)-[a-f0-9]{64}\.json$/, '$1')).map(m => m.replace(scope.headUrl, 'head').replace(scope.artifactContainer, ''));
+
+  it('a steady write is one head read, one staging request, the head compare-and-set and its read-back', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client(fast);
+    await write(client, 'one'); await write(client, 'two');
+    const from = transport.methods.length; await write(client, 'three');
+    expect(requests(transport, from)).toEqual(['GET head', 'POST ', 'PUT head', 'GET head']);
+    // The same writes without the options: the probe, the second head read and both commit reads are there.
+    const plain = new NativeTransport(); plain.stageAvailable = true;
+    const slow = plain.client(indexed); await write(slow, 'one'); await write(slow, 'two');
+    const before = plain.methods.length; await write(slow, 'three');
+    expect(requests(plain, before)).toEqual(['GET head', 'GET commit', 'GET head', 'GET commit', 'OPTIONS head', 'POST ', 'PUT head', 'GET head']);
+    expect([...(await plain.client().readHead()).records.keys()].sort()).toEqual([...(await transport.client().readHead()).records.keys()].sort());
+  });
+
+  it('still fetches and verifies the head on every read, and a commit object it has not seen', async () => {
+    const transport = new NativeTransport(), client = transport.client(fast), other = transport.client();
+    await write(client, 'mine');
+    let from = transport.methods.length; await client.readHeadRecords([]);
+    expect(requests(transport, from)).toEqual(['GET head']);
+    await write(other, 'theirs');
+    from = transport.methods.length; const seen = await client.readHead();
+    expect(requests(transport, from).slice(0, 2)).toEqual(['GET head', 'GET commit']);
+    expect([...seen.records.keys()].sort()).toEqual(['row:mine', 'row:theirs']);
+    transport.corruptHeadRead = true;
+    await expect(client.readHeadRecords([])).rejects.toThrow(); transport.corruptHeadRead = false;
+  });
+
+  it('refuses a kept commit object that does not match the head it is asked to back', async () => {
+    const transport = new NativeTransport(), client = transport.client(fast);
+    await write(client, 'first');
+    const first = transport.rows.get(scope.headUrl)!;
+    await write(client, 'second');
+    // The pod now serves the earlier head's bytes under the head URL, with a new revision.
+    transport.rows.set(scope.headUrl, { bytes: first.bytes, revision: sha('rolled-back') });
+    const rolled = await client.readHeadRecords(['row:first', 'row:second']);
+    // That earlier head is still backed by its own (kept) commit object, and is read as what it is.
+    expect([...rolled.records.keys()]).toEqual(['row:first']);
+    const forged = transport.rows.get(scope.headUrl)!.bytes.slice(); forged[forged.length - 20] = forged[forged.length - 20]! ^ 1;
+    transport.rows.set(scope.headUrl, { bytes: forged, revision: sha('forged') });
+    await expect(client.readHeadRecords([])).rejects.toThrow();
+  });
+
+  it('a head that moved since the expected snapshot is a conflict at the compare-and-set, and nothing is published', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client(fast), rival = transport.client();
+    await write(client, 'base');
+    const stale = await client.readHeadRecords([]);
+    await write(rival, 'rival');
+    const heads = transport.headWrites();
+    await expect(client.commit({ operationId: 'late', expected: stale, changes: [{ key: 'row:late', artifact: artifact('late') }] }))
+      .rejects.toBeInstanceOf(NativeCommitConflictError);
+    expect(transport.headWrites()).toBe(heads);
+    expect([...(await transport.client().readHead()).records.keys()].sort()).toEqual(['row:base', 'row:rival']);
+    // Retrying from a fresh head commits, as a caller's conflict loop does.
+    await client.commit({ operationId: 'late', expected: await client.readHeadRecords([]), changes: [{ key: 'row:late', artifact: artifact('late') }] });
+    expect((await transport.client().readHead()).records.size).toBe(3);
+  });
+
+  it('replays an operation that committed after the expected snapshot, and keeps the content check', async () => {
+    const transport = new NativeTransport(), client = transport.client(fast), rival = transport.client(fast);
+    await write(client, 'base');
+    const stale = await client.readHeadRecords([]), change = [{ key: 'row:once', artifact: artifact('once') }];
+    const won = await rival.commit({ operationId: 'once', expected: await rival.readHeadRecords([]), changes: change });
+    const heads = transport.headWrites();
+    const replay = await client.commit({ operationId: 'once', expected: stale, changes: change });
+    expect(replay.replayed).toBe(true); expect(replay.head).toEqual(won.head); expect(transport.headWrites()).toBe(heads);
+    await expect(client.commit({ operationId: 'once', expected: await client.readHeadRecords([]), changes: [{ key: 'row:once', artifact: artifact('other') }] }))
+      .rejects.toThrow('different content');
+  });
+
+  it('reads the head first for an expected snapshot it did not hand out, and by default', async () => {
+    const transport = new NativeTransport(), client = transport.client(fast);
+    await write(client, 'base');
+    const copy = { ...(await client.readHeadRecords([])) };
+    let from = transport.methods.length;
+    await client.commit({ operationId: 'copy', expected: copy, changes: [] });
+    expect(requests(transport, from)[0]).toBe('GET head');
+    const stale = await client.readHeadRecords([]);
+    await write(transport.client(), 'rival');
+    from = transport.writes.length;
+    await expect(transport.client().commit({ operationId: 'default', expected: stale, changes: [{ key: 'k', artifact: artifact('v') }] }))
+      .rejects.toBeInstanceOf(NativeCommitConflictError);
+    expect(transport.writes.length).toBe(from); // refused before staging, as before
+  });
+
+  it('probes again after the period, on ready(), and when the last probe failed; a vanished capability refuses the commit', async () => {
+    vi.useFakeTimers({ toFake: ['Date'] });
+    try {
+      const transport = new NativeTransport(), client = transport.client(fast);
+      const probes = (): number => transport.methods.filter(m => m.startsWith('OPTIONS ')).length;
+      await write(client, 'a'); await write(client, 'b'); expect(probes()).toBe(1);
+      await client.ready(); expect(probes()).toBe(2);
+      vi.setSystemTime(Date.now() + 60_001);
+      await write(client, 'c'); expect(probes()).toBe(3);
+      vi.setSystemTime(Date.now() + 60_001); transport.optionsAvailable = false;
+      await expect(write(client, 'd')).rejects.toThrow('unavailable'); expect(probes()).toBe(4);
+      transport.optionsAvailable = true;
+      await write(client, 'd'); expect(probes()).toBe(5);
+      expect(() => transport.client({ capabilityProbeTtlMs: -1 })).toThrow('probe period');
+      expect(() => transport.client({ capabilityProbeTtlMs: 3_600_001 })).toThrow('probe period');
+    } finally { vi.useRealTimers(); }
+  });
+});
+
+describe('opt-in compact index nodes', () => {
+  const compact = { compactIndexNodes: true } as const;
+  const fill = async (client: NativeCommitStore, prefix: string, count: number) => client.commit({ operationId: prefix, expected: await client.readHead(),
+    changes: Array.from({ length: count }, (_, i) => ({ key: prefix + ':' + i, artifact: artifact(prefix + ' ' + i) })) });
+  /** Decrypted artifacts under the current head that are index nodes, with the tag of their top tuple. */
+  const indexBytes = (transport: NativeTransport, from: number): number => transport.writes.slice(from)
+    .filter(w => w.url.includes('/artifact-')).reduce((sum, w) => sum + w.body.length, 0);
+
+  it('holds the same index in a small fraction of the bytes, and reads back identically', async () => {
+    const wide = new NativeTransport(), small = new NativeTransport();
+    await fill(wide.client(), 'row', 60); await fill(small.client(compact), 'row', 60);
+    const wideOne = wide.writes.length, smallOne = small.writes.length;
+    await wide.client().commit({ operationId: 'one', expected: await wide.client().readHead(), changes: [{ key: 'one', artifact: artifact('one') }] });
+    await small.client(compact).commit({ operationId: 'one', expected: await small.client(compact).readHead(), changes: [{ key: 'one', artifact: artifact('one') }] });
+    // One more record: the same number of resources either way, a fraction of the bytes.
+    expect(small.writes.length - smallOne).toBe(wide.writes.length - wideOne);
+    expect(indexBytes(small, smallOne) * 5).toBeLessThan(indexBytes(wide, wideOne));
+    const a = await wide.client().readHead(), b = await small.client(compact).readHead();
+    expect([...b.records.keys()].sort()).toEqual([...a.records.keys()].sort());
+    for (const key of ['row:0', 'row:59', 'one']) expect(await textAt(small, b, key)).toBe(await textAt(wide, a, key));
+  }, 60_000);
+
+  it('is read by a client without the option, and both kinds of writer extend one head', async () => {
+    const transport = new NativeTransport(), plain = transport.client(), small = transport.client(compact);
+    await fill(plain, 'wide', 40);
+    await fill(small, 'compact', 40);
+    await fill(plain, 'again', 40);
+    await small.commit({ operationId: 'del', expected: await small.readHead(), changes: [{ key: 'wide:3', artifact: null }] });
+    for (const reader of [transport.client(), transport.client(compact), transport.client({ ...compact, indexNodeCacheEntries: 10_000, indexReadConcurrency: 8 })]) {
+      const head = await reader.readHead();
+      expect(head.records.size).toBe(119);
+      expect(await textAt(transport, head, 'compact:17')).toBe('compact 17');
+      expect(await textAt(transport, head, 'again:39')).toBe('again 39');
+      expect(head.records.has('wide:3')).toBe(false);
+      const selected = await reader.readHeadRecords(['wide:0', 'compact:1', 'missing']);
+      expect([...selected.records.keys()].sort()).toEqual(['compact:1', 'wide:0']);
+    }
+    // History written by either kind stays reachable.
+    const first = await transport.client(compact).commit({ operationId: 'wide', expected: await small.readHead(), changes: Array.from({ length: 40 }, (_, i) => ({ key: 'wide:' + i, artifact: artifact('wide ' + i) })) });
+    expect(first.replayed).toBe(true);
+  }, 60_000);
+
+  it('refuses a compact node that is not the canonical encoding of well-formed references', async () => {
+    const transport = new NativeTransport(), small = transport.client(compact);
+    await fill(small, 'row', 3);
+    const head = await small.readHead(), sample = head.records.get('row:0')!;
+    const entry = (key: string, over: Partial<NativeArtifactReference> = {}) => { const r = { ...sample, ...over }; return [key, r.resourceUrl, r.bodyDigest, r.plaintextDigest, r.topUri]; };
+    const forged = async (payload: string, owner = scope.owner, contentType = 'application/vnd.interego.native-index-node+json'): Promise<unknown> => {
+      const node = createNativeByteArtifact({ owner, contentType, bytes: Buffer.from(payload), provenance });
+      const staged = await small.commit({ operationId: 'forge-' + sha(payload + owner + contentType).slice(7, 20), expected: await small.readHead(), changes: [{ key: 'forged', artifact: node }] });
+      const reference = staged.snapshot.records.get('forged')!;
+      // The staged artifact stands in for an index node a hostile pod serves under a head.
+      return (small as unknown as { readIndexNode(r: NativeArtifactReference, prefix: string): Promise<unknown> }).readIndexNode(reference, '');
+    };
+    const good = JSON.stringify({ entries: [entry('record:row:0')], kind: 'leaf' });
+    await expect(forged(good)).resolves.toMatchObject({ kind: 'leaf' });
+    await expect(forged(JSON.stringify({ kind: 'leaf', entries: [entry('record:row:0')] }))).rejects.toThrow('canonical');
+    await expect(forged(good + ' ')).rejects.toThrow('canonical');
+    await expect(forged(JSON.stringify({ entries: [entry('b'), entry('a')], kind: 'leaf' }))).rejects.toThrow('canonical');
+    await expect(forged(JSON.stringify({ entries: [entry('a'), entry('a')], kind: 'leaf' }))).rejects.toThrow();
+    await expect(forged(JSON.stringify({ entries: [], kind: 'leaf' }))).rejects.toThrow('fanout');
+    await expect(forged(JSON.stringify({ entries: Array.from({ length: 17 }, (_, i) => entry('k' + String(i).padStart(2, '0'))), kind: 'leaf' }))).rejects.toThrow('fanout');
+    await expect(forged(JSON.stringify({ entries: [entry('a')], kind: 'root' }))).rejects.toThrow();
+    await expect(forged(JSON.stringify({ entries: [entry('a')], extra: 1, kind: 'leaf' }))).rejects.toThrow();
+    await expect(forged(JSON.stringify({ entries: [['a', sample.resourceUrl]], kind: 'leaf' }))).rejects.toThrow('malformed');
+    await expect(forged(JSON.stringify({ entries: [entry('a', { resourceUrl: 'https://evil.example/artifact-' + 'a'.repeat(64) + '.json' })], kind: 'leaf' }))).rejects.toThrow();
+    await expect(forged(JSON.stringify({ entries: [entry('a', { bodyDigest: 'sha256:' + '0'.repeat(64) })], kind: 'leaf' }))).rejects.toThrow('content bound');
+    await expect(forged(JSON.stringify({ entries: [entry('zz')], kind: 'branch' }))).rejects.toThrow('branch binding');
+    await expect(forged(good, 'did:web:someone-else.example' as IRI)).rejects.toThrow('owner or type');
+    await expect(forged(good, scope.owner, 'application/json')).rejects.toThrow('owner or type');
+    await expect(forged('not json')).rejects.toThrow('malformed');
+    // A leaf entry outside the hash prefix it is read under is refused, as in the wide form.
+    const reference = (await small.commit({ operationId: 'prefix', expected: await small.readHead(), changes: [{ key: 'p', artifact: createNativeByteArtifact({ owner: scope.owner,
+      contentType: 'application/vnd.interego.native-index-node+json', bytes: Buffer.from(good), provenance }) }] })).snapshot.records.get('p')!;
+    const wrongPrefix = createHash('sha256').update('record:row:0').digest('hex')[0] === '0' ? '1' : '0';
+    await expect((small as unknown as { readIndexNode(r: NativeArtifactReference, prefix: string): Promise<unknown> }).readIndexNode(reference, wrongPrefix)).rejects.toThrow('leaf binding');
+  }, 60_000);
+
+  it('works with batched staging, the node cache and the fewer-round-trip options together', async () => {
+    const transport = new NativeTransport(); transport.stageAvailable = true;
+    const client = transport.client({ ...compact, indexNodeCacheEntries: 10_000, reuseBackingCommits: true, commitFromExpectedSnapshot: true, capabilityProbeTtlMs: 60_000 });
+    await fill(client, 'row', 150);
+    for (const id of ['a', 'b', 'c']) await client.commit({ operationId: id, expected: await client.readHeadRecords([]), resultRecordKeys: [], changes: [{ key: id, artifact: artifact(id) }] });
+    const head = await transport.client().readHead();
+    expect(head.records.size).toBe(153);
+    expect(await textAt(transport, head, 'row:149')).toBe('row 149');
+    expect(transport.methods.filter(m => m.startsWith('PUT ') && !m.endsWith(scope.headUrl))).toEqual([]);
+  }, 60_000);
+});
+
+describe('numeric commit diagnostics', () => {
+  const numeric = (event: NativeCommitDiagnostic): void => { for (const value of Object.values(event)) expect(typeof value).toBe('number'); };
+
+  it('reports phases, requests and bytes for batched and individual staging, and never values', async () => {
+    for (const batched of [true, false]) {
+      const transport = new NativeTransport(), events: NativeCommitDiagnostic[] = []; transport.stageAvailable = batched;
+      const client = transport.client({ onCommit: event => { events.push(event); }, commitFromExpectedSnapshot: true });
+      await client.commit({ operationId: 'first', expected: await client.readHead(), changes: [{ key: 'a', artifact: artifact('a') }] });
+      const from = transport.writes.length;
+      await client.commit({ operationId: 'second', expected: await client.readHead(), changes: [{ key: 'b', artifact: artifact('b') }, { key: 'c', artifact: artifact('c') }] });
+      const second = events[1]!, staged = transport.writes.slice(from).filter(w => w.url !== scope.headUrl);
+      numeric(second);
+      expect(second).toMatchObject({ commitNumber: 2, outcome: 0, batched: batched ? 1 : 0, fromExpected: 1, changes: 2, stagedItems: staged.length,
+        stageRequests: batched ? 1 : staged.length * 2, stagedBytes: staged.reduce((sum, w) => sum + Buffer.byteLength(w.body), 0) });
+      expect(second.elapsedMs).toBeGreaterThanOrEqual(second.stageMs);
+      expect(Object.isFrozen(second)).toBe(true);
+      // The same resources as a client that is not observed.
+      const plain = new NativeTransport(); plain.stageAvailable = batched;
+      const unobserved = plain.client({ commitFromExpectedSnapshot: true });
+      await unobserved.commit({ operationId: 'first', expected: await unobserved.readHead(), changes: [{ key: 'a', artifact: artifact('a') }] });
+      await unobserved.commit({ operationId: 'second', expected: await unobserved.readHead(), changes: [{ key: 'b', artifact: artifact('b') }, { key: 'c', artifact: artifact('c') }] });
+      expect(plain.methods.map(m => m.replace(/-[a-f0-9]{64}/, ''))).toEqual(transport.methods.map(m => m.replace(/-[a-f0-9]{64}/, '')));
+    }
+  });
+
+  it('reports replays, conflicts and errors, and an observer that throws or rejects changes nothing', async () => {
+    const transport = new NativeTransport(), events: NativeCommitDiagnostic[] = [];
+    let mode: 'record' | 'throw' | 'reject' = 'record';
+    const client = transport.client({ onCommit: event => { events.push(event); if (mode === 'throw') throw new Error('observer'); if (mode === 'reject') return Promise.reject(new Error('observer')) as never; } });
+    const expected = await client.readHead(), change = [{ key: 'k', artifact: artifact('v') }];
+    await client.commit({ operationId: 'one', expected, changes: change });
+    await client.commit({ operationId: 'one', expected, changes: change });
+    await expect(client.commit({ operationId: 'stale', expected, changes: [{ key: 'k', artifact: artifact('other') }] })).rejects.toBeInstanceOf(NativeCommitConflictError);
+    transport.failStage = true;
+    await expect(client.commit({ operationId: 'broken', expected: await client.readHead(), changes: [{ key: 'x', artifact: artifact('x') }] })).rejects.toThrow();
+    transport.failStage = false;
+    expect(events.map(event => event.outcome)).toEqual([0, 1, 2, 3]);
+    events.forEach(numeric);
+    for (mode of ['throw', 'reject'] as const) {
+      const receipt = await client.commit({ operationId: 'observed-' + mode, expected: await client.readHead(), changes: [{ key: mode, artifact: artifact(mode) }] });
+      expect(receipt.replayed).toBe(false);
+    }
+    expect((await transport.client().readHead()).records.size).toBe(3);
+  });
+
+  describe('who sealed what it reads', () => {
+    const readers = [owner.publicKey, bridge.publicKey];
+    /** The head as the store holds it, sealed again by `sealer` to the same two readers: same content, another writer. */
+    const resealHead = (transport: NativeTransport, sealer: EncryptionKeyPair): void => {
+      const row = transport.rows.get(scope.headUrl)!;
+      const plaintext = openEncryptedEnvelope(JSON.parse(Buffer.from(row.bytes).toString('utf8')) as EncryptedEnvelope, owner);
+      expect(typeof plaintext).toBe('string');
+      const bytes = Buffer.from(JSON.stringify(createEncryptedEnvelope(plaintext as string, readers, sealer)));
+      plant(transport, bytes);
+    };
+    /** Puts `bytes` where a writer of the pod would: the head, and the commit object the head stands for, named by its digest. */
+    const plant = (transport: NativeTransport, bytes: Buffer): void => {
+      transport.rows.set(scope.headUrl, { bytes, revision: sha('planted-head:' + sha(bytes)) });
+      transport.rows.set(scope.artifactContainer + 'commit-' + sha(bytes).slice(7) + '.json', { bytes, revision: sha('planted-commit:' + sha(bytes)) });
+    };
+    const trusting = (transport: NativeTransport, keys: readonly string[]) => transport.client({ trustedSenderPublicKeys: keys });
+
+    it('reads a record anyone sealed to its readers, unless it is told whose sealing to accept', async () => {
+      const transport = new NativeTransport(); await put(transport, 'kept');
+      // Somebody who can write the pod puts a head of their own there, addressed to the store's two
+      // readers. Their public keys are in every envelope the store has written.
+      resealHead(transport, other);
+      // Addressed correctly, it decrypts: a store that checks only whom a record is for takes it as its own.
+      expect((await transport.client().readHead()).records.size).toBe(1);
+      // Told to accept only what this client sealed, it does not.
+      await expect(trusting(transport, [bridge.publicKey]).readHead()).rejects.toThrow('not sealed by a trusted writer');
+      await expect(trusting(transport, readers).readHead()).rejects.toThrow('not sealed by a trusted writer');
+    });
+
+    it('still reads what it sealed itself, and what a writer it names sealed', async () => {
+      const transport = new NativeTransport(); await put(transport, 'kept');
+      const strict = trusting(transport, [bridge.publicKey]);
+      const head = await strict.readHead();
+      expect(head.records.size).toBe(1);
+      expect(await textAt(transport, head, 'statement:kept')).toBe('kept');
+      // It goes on writing and reading under the same rule.
+      await strict.commit({ operationId: 'second', expected: head, changes: [{ key: 'statement:second', artifact: artifact('second') }] });
+      expect((await trusting(transport, [bridge.publicKey]).readHead()).records.size).toBe(2);
+      // The owner sealed the head: read where the owner is named, refused where only this client is.
+      resealHead(transport, owner);
+      expect((await trusting(transport, readers).readHead()).records.size).toBe(2);
+      await expect(trusting(transport, [bridge.publicKey]).readHead()).rejects.toThrow('not sealed by a trusted writer');
+    });
+
+    it('holds every wrapped key to it, not only the one it opens', async () => {
+      const transport = new NativeTransport(); await put(transport, 'kept');
+      // The key this client opens keeps its own sender; the owner's copy names a stranger.
+      const row = transport.rows.get(scope.headUrl)!;
+      const envelope = JSON.parse(Buffer.from(row.bytes).toString('utf8')) as EncryptedEnvelope;
+      const mixed = { ...envelope, wrappedKeys: envelope.wrappedKeys.map(k => k.recipientPublicKey === owner.publicKey ? { ...k, senderPublicKey: other.publicKey } : k) };
+      plant(transport, Buffer.from(JSON.stringify(mixed)));
+      expect((await transport.client().readHead()).records.size).toBe(1);
+      await expect(trusting(transport, [bridge.publicKey]).readHead()).rejects.toThrow('not sealed by a trusted writer');
+    });
+
+    it('is not built with a trusted set that leaves out its own key, is empty, or holds something that is no key', () => {
+      const transport = new NativeTransport();
+      for (const keys of [[], [owner.publicKey], [bridge.publicKey, 'not-a-key']]) {
+        expect(() => trusting(transport, keys)).toThrow('Trusted native writers');
+      }
+    });
   });
 });

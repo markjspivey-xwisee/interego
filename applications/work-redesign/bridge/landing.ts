@@ -1,8 +1,9 @@
 /**
  * The customer-facing pages the bridge serves to browsers: the landing page at / (content-negotiated;
  * agents keep the factory's JSON-LD / HMD) and the guide at /ui/help. Both are static HTML files filled
- * once at attach time: no script, no style element or attribute, same-origin assets only, so they render
- * without JavaScript under UI_CSP. No environment reads: bridge/server.ts passes everything through attachUi.
+ * once at attach time: no inline script, no style element or attribute, same-origin assets only, so they
+ * render without JavaScript under UI_CSP. Their one script, /ui/site.js, only closes the header's menu once
+ * a link in it is chosen. No environment reads: bridge/server.ts passes everything through attachUi.
  */
 import type { Request } from 'express';
 import type { UiSignIn } from './ui.js';   // type-only import: no runtime cycle
@@ -105,9 +106,27 @@ function iconSvg(name: string, size: string | undefined): string {
   return `<svg class="icon${size ? ` icon--${size}` : ''}" viewBox="0 0 24 24" aria-hidden="true" focusable="false">${paths.map((d) => `<path d="${d}"/>`).join('')}</svg>`;
 }
 
-/** The values the site pages' {{tokens}} take, from what attachUi was given (never the environment). */
+/**
+ * The address a person adds to Claude or ChatGPT as the Interego connector (the relay's MCP endpoint),
+ * which the app's "Use your AI assistant" panel and the site pages' set-up show: only when this bridge
+ * takes the acts that relay signs (a relay URL, and a relay trusted). Otherwise undefined: the shell
+ * names no connector, the panel offers copy and paste only, and the pages say the workspace is not
+ * set up for it, since a connector set up then could never act here.
+ */
+export function connectorUrlOf(signIn?: UiSignIn): string | undefined {
+  if (!signIn || signIn.policy === null) return undefined;
+  const relay = signIn.relayUrl.replace(/\/$/, '');
+  return relay === '' ? undefined : `${relay}/mcp`;
+}
+
+/**
+ * The values the site pages' {{tokens}} take, from what attachUi was given (never the environment).
+ * `chat_ready` is a flag for the pages' sections ('yes' or ''): set exactly when connectorUrlOf names a
+ * connector, and `connector_url` is that address ('' otherwise, and shown only inside {{#chat_ready}}).
+ */
 export function siteValues(o: { readonly base: string; readonly signIn?: UiSignIn; readonly landing?: LandingOptions }): Record<string, string> {
   const relayUrl = (o.signIn?.relayUrl ?? INTEREGO_DEFAULTS.relayUrl).replace(/\/$/, '');
+  const connector = connectorUrlOf(o.signIn) ?? '';
   let relayOrigin: string = INTEREGO_DEFAULTS.relayUrl;
   try { relayOrigin = new URL(relayUrl).origin; } catch { relayOrigin = INTEREGO_DEFAULTS.relayUrl; }
   const identityHost = o.signIn?.policy?.identityHost;
@@ -122,7 +141,8 @@ export function siteValues(o: { readonly base: string; readonly signIn?: UiSignI
     sibling_name: SIBLING.name,
     sibling_url: o.landing?.siblingUrl ?? SIBLING.url,
     identity_url: identityUrl,
-    connector_url: `${relayUrl}/mcp`,
+    connector_url: connector,
+    chat_ready: connector === '' ? '' : 'yes',
     security_txt: securityTxt,
     contact_href: contactHref,
     // With no contact named, nothing promises a walkthrough: the guide is what a visitor can open now.
@@ -150,13 +170,24 @@ export function siteValues(o: { readonly base: string; readonly signIn?: UiSignI
   };
 }
 
+/** A section of a site page: {{#name}}…{{/name}} kept when the value is not '', {{^name}}…{{/name}} kept when it is. */
+const SECTION = /\{\{([#^])([a-z_]+)\}\}([\s\S]*?)\{\{\/\2\}\}/g;
+
 /**
- * Fill a site page: {{brand}} becomes the brand link, {{icon:x}} / {{icon:x:sm}} inline SVG, and
- * {{name}} the HTML-escaped value. An unknown token or icon throws, so a typo fails the boot and
- * the tests and never ships a "{{".
+ * Fill a site page: first its sections ({{#name}}…{{/name}} kept only when the value is not '', and
+ * {{^name}}…{{/name}} only when it is; sections do not nest), then {{brand}} becomes the brand link,
+ * {{icon:x}} / {{icon:x:sm}} inline SVG, and {{name}} the HTML-escaped value. An unknown token, section
+ * or icon throws, as does a nested or unclosed section, so a typo fails the boot and the tests and
+ * never ships a "{{".
  */
 export function renderSitePage(template: string, values: Readonly<Record<string, string>>): string {
-  const out = template.replace(/\{\{([a-z_]+)(?::([a-z-]+))?(?::([a-z]+))?\}\}/g, (_m, name: string, arg: string | undefined, size: string | undefined) => {
+  const shown = template.replace(SECTION, (_m, kind: string, name: string, body: string) => {
+    const v = values[name];
+    if (v === undefined) throw new Error(`unknown section in a site page: {{${kind}${name}}}`);
+    if (/\{\{[#^/]/.test(body)) throw new Error(`a section nests another in a site page: {{${kind}${name}}}`);
+    return (kind === '#') === (v !== '') ? body : '';
+  });
+  const out = shown.replace(/\{\{([a-z_]+)(?::([a-z-]+))?(?::([a-z]+))?\}\}/g, (_m, name: string, arg: string | undefined, size: string | undefined) => {
     if (name === 'brand' && arg === undefined) return BRAND;
     if (name === 'icon' && arg !== undefined) return iconSvg(arg, size);
     const v = values[name];

@@ -37,7 +37,8 @@ export function ownLtiReconciliationRateLimitOptions(): { total: Partial<Options
       identifier: 'own-lti-reconciliation-client', standardHeaders: 'draft-8', legacyHeaders: false, handler: exceeded },
   };
 }
-const TRANSPORT = new Set(['subject_did', 'purpose', 'subject_pod_url', 'timestamp', 'agent_id']);
+// client_id: the OAuth client the relay signed for (it sets it, like subject_pod_url); never an input.
+const TRANSPORT = new Set(['subject_did', 'purpose', 'subject_pod_url', 'client_id', 'timestamp', 'agent_id']);
 const unavailable = () => new OwnLtiReconciliationError('attestation-unavailable', 503);
 
 /** Domain-separated integrity under the existing stable service key; not a public signature. */

@@ -629,7 +629,13 @@ const BODIES = {
       for (const who of ['you', 'agent']) for (const row of gb[who]?.rows ?? []) columns.set(row.lineItem?.id, row.lineItem?.label ?? row.courseId);
       const cell = (who, id) => {
         const row = (gb[who]?.rows ?? []).find((r) => r.lineItem?.id === id);
-        return row?.result ? `${row.result.resultScore ?? '—'} / ${row.result.resultMaximum}` : '—';
+        if (!row?.result) return '—';
+        const score = `${row.result.resultScore ?? '—'} / ${row.result.resultMaximum}`;
+        if (!row.retake) return score;
+        return [
+          h('div', {}, `Final grade · ${score}`),
+          h('div', { class: 'muted' }, `Provisional retake · ${row.retake.resultScore} / ${row.retake.resultMaximum}`),
+        ];
       };
       out.push(h('table', { class: 'gradebook' },
         h('thead', {}, h('tr', {}, h('th', {}, 'The LMS gradebook'), [...columns.values()].map((label) => h('th', {}, label)))),

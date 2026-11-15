@@ -347,7 +347,7 @@ export function corsHeadersFor(originHeader) {
     'Access-Control-Expose-Headers':
       'Link, ETag, Accept-Post, Accept-Patch, Accept-Put, Location, WAC-Allow, '
       + 'Last-Modified, Content-Type, Allow, Updates-Via, '
-      + 'Interego-Native-Commit, Interego-Revision, Interego-Body-Digest, '
+      + 'Interego-Native-Commit, Interego-Native-Stage, Interego-Revision, Interego-Body-Digest, '
       + 'Interego-Provisional-Bytes-Remaining, Interego-Provisional-Writes-Remaining, Interego-Provisional-Expires-At, '
       + 'Interego-Play-Budget-Exhausted',
     'Vary': 'Origin',
@@ -1147,6 +1147,19 @@ const server = createServer(async (req, res) => {
           detail: isWrite
             ? `bearer is scoped to userId="${userId}" but the request is forwarded to pod "${pod ?? '(root)'}"; user bearers can only write to /<userId>/...`
             : `bearer is scoped to userId="${userId}" but ${upstreamUrl.pathname} is pod "${pod}"'s sign-in record; only its owner reads it`,
+        }));
+        return;
+      }
+      if (!isWrite && verified.provisionalPlay?.general) {
+        // The only reads that need a bearer are a pod's private documents (its sign-in record and its
+        // write budget). A general guest's token is held by an application's backend, or is the
+        // door's: neither is the owner reading its own record, which lists the owner's credentials
+        // and the other applications it has used. Identity states what an application may know
+        // (subjectAttributes); the record itself is not read with this token.
+        res.writeHead(403, { 'Content-Type': 'application/json', ...corsHeaders });
+        res.end(JSON.stringify({
+          error: 'sign-in record is not readable with a general guest credential',
+          detail: `${upstreamUrl.pathname} is private to pod "${pod}"; a general guest's application credential reads none of it`,
         }));
         return;
       }

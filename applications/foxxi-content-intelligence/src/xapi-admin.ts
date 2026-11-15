@@ -17,11 +17,13 @@
  * role so a regular learner can't read other learners' statements.
  */
 
-import express, { type Express, type Request, type Response, type NextFunction } from 'express';
+import type { Express, Request, Response, NextFunction } from 'express';
+import { routeJson } from './route-json.js';
 import { getStatementStore, listStoredStatements, statementStoreTenants } from './xapi-lrs.js';
 import { DEFAULT_TENANT, type TenantId } from './tenant-context.js';
 import { FOXXI_PROFILE_ID } from './xapi-profile.js';
 import { verifySessionToken, trustedAddressMap } from './auth.js';
+import { actorNameLinked, canonicalActorName } from './actor-alias.js';
 import { PERF_EXT } from './learner-record.js';
 import { parseTrig, readStringValue, type IRI, type ParsedDocument } from '@interego/core';
 import { FOXXI_CONSTRUCTION } from './foxxi-vocab.js';
@@ -107,7 +109,7 @@ async function handleStatementsAdmin(req: Request, res: Response): Promise<void>
   if (actorFilter) {
     filtered = filtered.filter(r => {
       const a = r.statement.actor as { account?: { name?: string }; mbox?: string } | undefined;
-      return a?.account?.name === actorFilter || a?.mbox === actorFilter || a?.account?.name?.includes(actorFilter);
+      return actorNameLinked(a?.account?.name, actorFilter) || a?.mbox === actorFilter || a?.account?.name?.includes(actorFilter);
     });
   }
   if (sinceParam) {
@@ -167,7 +169,7 @@ async function handleAggregates(req: Request, res: Response): Promise<void> {
       activityCounts.set(obj.id, cur);
     }
     const actor = r.statement.actor as { name?: string; account?: { name?: string } } | undefined;
-    const actorKey = actor?.account?.name ?? actor?.name ?? 'unknown';
+    const actorKey = canonicalActorName(actor?.account?.name ?? actor?.name ?? 'unknown');
     const cur = actorCounts.get(actorKey) ?? { name: actor?.name, count: 0 };
     cur.count++;
     actorCounts.set(actorKey, cur);
@@ -493,7 +495,7 @@ function handleDeleteCredential(req: Request, res: Response): void {
 
 export function attachXapiAdminRoutes(app: Express, config: AdminConfig): void {
   const gate = makeAdminGate(config);
-  const json = express.json({ limit: '256kb' });
+  const json = routeJson({ limit: '256kb' });
   const storageRead = (read: (req: Request, res: Response) => Promise<void>) => async (req: Request, res: Response): Promise<void> => {
     try { await read(req, res); }
     catch {

@@ -31,6 +31,48 @@ import util from 'tweetnacl-util';
 import { sha256 } from '@noble/hashes/sha2.js';
 import { utf8ToBytes } from '@noble/hashes/utils.js';
 
+// ── Byte/text conversions ────────────────────────────────────
+//
+// tweetnacl-util chooses its implementation by whether `atob` exists, and
+// Node has had a global `atob` since v16. So on Node it takes the path written
+// for old browsers: one String.fromCharCode and one array push per byte, for
+// base64 and UTF-8 alike. For a payload of tens of kilobytes that costs more
+// than the cipher does, on every envelope sealed or opened.
+//
+// These produce exactly what tweetnacl-util produces and refuse exactly what
+// it refuses: any input the fast path does not plainly accept is handed to
+// tweetnacl-util, which then returns or throws as it always has.
+const NodeBuffer: typeof Buffer | undefined = (globalThis as { Buffer?: typeof Buffer }).Buffer;
+const strictUtf8 = typeof TextDecoder === 'function' ? new TextDecoder('utf-8', { fatal: true, ignoreBOM: true }) : undefined;
+const utf8Encoder = typeof TextEncoder === 'function' ? new TextEncoder() : undefined;
+const isWellFormed = (String.prototype as { isWellFormed?: (this: string) => boolean }).isWellFormed;
+
+function toBase64(bytes: Uint8Array): string {
+  if (!NodeBuffer || !(bytes instanceof Uint8Array)) return util.encodeBase64(bytes);
+  return NodeBuffer.from(bytes.buffer, bytes.byteOffset, bytes.byteLength).toString('base64');
+}
+function fromBase64(text: string): Uint8Array {
+  if (!NodeBuffer || typeof text !== 'string') return util.decodeBase64(text);
+  // Buffer skips what it does not recognise, so accept its answer only when
+  // encoding it gives the input back: that holds exactly for canonical
+  // standard base64, which tweetnacl-util decodes to these same bytes.
+  const bytes = NodeBuffer.from(text, 'base64');
+  if (bytes.toString('base64') !== text) return util.decodeBase64(text);
+  return Uint8Array.from(bytes);
+}
+function utf8ToText(bytes: Uint8Array): string {
+  if (strictUtf8 && bytes instanceof Uint8Array) {
+    try { return strictUtf8.decode(bytes); } catch { /* malformed: let tweetnacl-util decide and report */ }
+  }
+  return util.encodeUTF8(bytes);
+}
+function textToUtf8(text: string): Uint8Array {
+  // A lone surrogate has no UTF-8 form. TextEncoder would replace it silently;
+  // tweetnacl-util refuses it, so it still does.
+  if (!utf8Encoder || !isWellFormed || typeof text !== 'string' || !isWellFormed.call(text)) return util.decodeUTF8(text);
+  return utf8Encoder.encode(text);
+}
+
 // ═════════════════════════════════════════════════════════════
 //  Types
 // ═════════════════════════════════════════════════════════════
@@ -83,8 +125,8 @@ export interface EncryptedEnvelope {
 export function generateKeyPair(): EncryptionKeyPair {
   const kp = nacl.box.keyPair();
   return {
-    publicKey: util.encodeBase64(kp.publicKey),
-    secretKey: util.encodeBase64(kp.secretKey),
+    publicKey: toBase64(kp.publicKey),
+    secretKey: toBase64(kp.secretKey),
     algorithm: 'X25519-XSalsa20-Poly1305',
   };
 }
@@ -137,8 +179,8 @@ export function deriveEncryptionKeyPair(privateKeyHex: string, principal?: strin
   // tweetnacl reduces this to a valid Curve25519 scalar internally.
   const kp = nacl.box.keyPair.fromSecretKey(secretBytes);
   return {
-    publicKey: util.encodeBase64(kp.publicKey),
-    secretKey: util.encodeBase64(kp.secretKey),
+    publicKey: toBase64(kp.publicKey),
+    secretKey: toBase64(kp.secretKey),
     algorithm: 'X25519-XSalsa20-Poly1305',
   };
 }
@@ -150,7 +192,7 @@ export function deriveEncryptionKeyPair(privateKeyHex: string, principal?: strin
 export function generateContentKey(): ContentKey {
   const key = nacl.randomBytes(32);
   return {
-    key: util.encodeBase64(key),
+    key: toBase64(key),
     algorithm: 'XSalsa20-Poly1305',
   };
 }
@@ -164,16 +206,33 @@ export function generateContentKey(): ContentKey {
  * Uses nacl.secretbox (XSalsa20-Poly1305) — authenticated encryption.
  */
 export function encryptContent(plaintext: string, contentKey: ContentKey): EncryptedContent {
-  const message = util.decodeUTF8(plaintext);
-  const key = util.decodeBase64(contentKey.key);
+  return encryptContentBytes(textToUtf8(plaintext), contentKey);
+}
+
+/**
+ * Encrypt RAW BYTES with a symmetric key — the bytes-capable twin of
+ * {@link encryptContent}, which is now a thin wrapper over this (text is
+ * UTF-8 encoded exactly as before, so a string caller's output is unchanged
+ * in shape and construction).
+ *
+ * Exists so a caller can seal a binary plaintext (e.g. a compressed body)
+ * without first base64-ing it into a string, which would cost a third again
+ * before the envelope's own base64 of the ciphertext.
+ *
+ * A reader that expects text MUST NOT open a bytes envelope with
+ * {@link decryptContent}: use {@link decryptContentBytes} and decide from the
+ * bytes what they are.
+ */
+export function encryptContentBytes(message: Uint8Array, contentKey: ContentKey): EncryptedContent {
+  const key = fromBase64(contentKey.key);
   const nonce = nacl.randomBytes(24);
 
   const ciphertext = nacl.secretbox(message, nonce, key);
   if (!ciphertext) throw new Error('Encryption failed');
 
   return {
-    ciphertext: util.encodeBase64(ciphertext),
-    nonce: util.encodeBase64(nonce),
+    ciphertext: toBase64(ciphertext),
+    nonce: toBase64(nonce),
     algorithm: 'XSalsa20-Poly1305',
     encryptedAt: new Date().toISOString(),
   };
@@ -184,14 +243,23 @@ export function encryptContent(plaintext: string, contentKey: ContentKey): Encry
  * Returns null if decryption fails (wrong key, tampered ciphertext).
  */
 export function decryptContent(encrypted: EncryptedContent, contentKey: ContentKey): string | null {
-  const ciphertext = util.decodeBase64(encrypted.ciphertext);
-  const nonce = util.decodeBase64(encrypted.nonce);
-  const key = util.decodeBase64(contentKey.key);
-
-  const plaintext = nacl.secretbox.open(ciphertext, nonce, key);
+  const plaintext = decryptContentBytes(encrypted, contentKey);
   if (!plaintext) return null;
 
-  return util.encodeUTF8(plaintext);
+  return utf8ToText(plaintext);
+}
+
+/**
+ * Decrypt content to RAW BYTES, with no text decoding. Returns null if
+ * decryption fails (wrong key, tampered ciphertext). The authenticated bytes
+ * are returned exactly as sealed, whether the writer sealed text or binary.
+ */
+export function decryptContentBytes(encrypted: EncryptedContent, contentKey: ContentKey): Uint8Array | null {
+  const ciphertext = fromBase64(encrypted.ciphertext);
+  const nonce = fromBase64(encrypted.nonce);
+  const key = fromBase64(contentKey.key);
+
+  return nacl.secretbox.open(ciphertext, nonce, key);
 }
 
 // ═════════════════════════════════════════════════════════════
@@ -208,9 +276,9 @@ export function wrapKeyForRecipient(
   recipientPublicKey: string,
   senderKeyPair: EncryptionKeyPair,
 ): WrappedKey {
-  const message = util.decodeBase64(contentKey.key);
-  const recipientPub = util.decodeBase64(recipientPublicKey);
-  const senderSecret = util.decodeBase64(senderKeyPair.secretKey);
+  const message = fromBase64(contentKey.key);
+  const recipientPub = fromBase64(recipientPublicKey);
+  const senderSecret = fromBase64(senderKeyPair.secretKey);
   const nonce = nacl.randomBytes(24);
 
   const wrapped = nacl.box(message, nonce, recipientPub, senderSecret);
@@ -218,8 +286,8 @@ export function wrapKeyForRecipient(
 
   return {
     recipientPublicKey,
-    wrappedKey: util.encodeBase64(wrapped),
-    nonce: util.encodeBase64(nonce),
+    wrappedKey: toBase64(wrapped),
+    nonce: toBase64(nonce),
     senderPublicKey: senderKeyPair.publicKey,
   };
 }
@@ -232,16 +300,16 @@ export function unwrapKey(
   wrapped: WrappedKey,
   recipientSecretKey: string,
 ): ContentKey | null {
-  const ciphertext = util.decodeBase64(wrapped.wrappedKey);
-  const nonce = util.decodeBase64(wrapped.nonce);
-  const senderPub = util.decodeBase64(wrapped.senderPublicKey);
-  const recipientSecret = util.decodeBase64(recipientSecretKey);
+  const ciphertext = fromBase64(wrapped.wrappedKey);
+  const nonce = fromBase64(wrapped.nonce);
+  const senderPub = fromBase64(wrapped.senderPublicKey);
+  const recipientSecret = fromBase64(recipientSecretKey);
 
   const keyBytes = nacl.box.open(ciphertext, nonce, senderPub, recipientSecret);
   if (!keyBytes) return null;
 
   return {
-    key: util.encodeBase64(keyBytes),
+    key: toBase64(keyBytes),
     algorithm: 'XSalsa20-Poly1305',
   };
 }
@@ -264,11 +332,25 @@ export function createEncryptedEnvelope(
   recipientPublicKeys: readonly string[],
   senderKeyPair: EncryptionKeyPair,
 ): EncryptedEnvelope {
+  return createEncryptedEnvelopeFromBytes(textToUtf8(plaintext), recipientPublicKeys, senderKeyPair);
+}
+
+/**
+ * Bytes-capable twin of {@link createEncryptedEnvelope}: seal RAW BYTES and
+ * wrap the key for each recipient. The envelope has the same shape, version
+ * and algorithms — only the sealed plaintext is binary instead of UTF-8 text.
+ * Open with {@link openEncryptedEnvelopeBytes}.
+ */
+export function createEncryptedEnvelopeFromBytes(
+  plaintext: Uint8Array,
+  recipientPublicKeys: readonly string[],
+  senderKeyPair: EncryptionKeyPair,
+): EncryptedEnvelope {
   // Generate a random content key
   const contentKey = generateContentKey();
 
   // Encrypt the content with the symmetric key
-  const content = encryptContent(plaintext, contentKey);
+  const content = encryptContentBytes(plaintext, contentKey);
 
   // Wrap the content key for each recipient
   const wrappedKeys = recipientPublicKeys.map(pubKey =>
@@ -293,6 +375,21 @@ export function openEncryptedEnvelope(
   envelope: EncryptedEnvelope,
   recipientKeyPair: EncryptionKeyPair,
 ): string | null {
+  const bytes = openEncryptedEnvelopeBytes(envelope, recipientKeyPair);
+  return bytes ? utf8ToText(bytes) : null;
+}
+
+/**
+ * Open an encrypted envelope to RAW BYTES (no text decoding). Works on any
+ * envelope, whether sealed from text or from bytes.
+ *
+ * @returns The authenticated plaintext bytes, or null if not authorized /
+ *   decryption fails
+ */
+export function openEncryptedEnvelopeBytes(
+  envelope: EncryptedEnvelope,
+  recipientKeyPair: EncryptionKeyPair,
+): Uint8Array | null {
   // Find the wrapped key for this recipient
   const myWrappedKey = envelope.wrappedKeys.find(
     wk => wk.recipientPublicKey === recipientKeyPair.publicKey
@@ -305,7 +402,7 @@ export function openEncryptedEnvelope(
   if (!contentKey) return null; // Unwrapping failed
 
   // Decrypt the content
-  return decryptContent(envelope.content, contentKey);
+  return decryptContentBytes(envelope.content, contentKey);
 }
 
 /**
@@ -365,12 +462,14 @@ export function reEncryptForRecipients(
   ownerKeyPair: EncryptionKeyPair,
   newRecipientPublicKeys: readonly string[],
 ): EncryptedEnvelope | null {
-  // Decrypt with owner's key
-  const plaintext = openEncryptedEnvelope(envelope, ownerKeyPair);
+  // Decrypt with owner's key. As BYTES: the plaintext is not always text (a compressed lattice is
+  // a binary container), and decoding it as UTF-8 threw, so such an envelope could not have a
+  // recipient revoked. Bytes in, the same bytes out, whatever they are.
+  const plaintext = openEncryptedEnvelopeBytes(envelope, ownerKeyPair);
   if (!plaintext) return null;
 
   // Re-encrypt for new recipient set (with a new random content key)
-  return createEncryptedEnvelope(plaintext, newRecipientPublicKeys, ownerKeyPair);
+  return createEncryptedEnvelopeFromBytes(plaintext, newRecipientPublicKeys, ownerKeyPair);
 }
 
 // ═════════════════════════════════════════════════════════════

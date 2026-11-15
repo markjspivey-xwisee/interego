@@ -385,7 +385,19 @@ export type {
   PersistenceRegistry,
   LatticeReadResult,
   CasWriteResult,
+  EncryptedWriteOptions,
 } from './persistence.js';
+// Compress-then-encrypt codec for a persisted lattice plaintext (Node-only).
+export {
+  compressLatticePlaintext,
+  decodeLatticePlaintext,
+  isCompressedLatticePlaintext,
+  resolveLatticeCompression,
+  LatticeCodecError,
+  LATTICE_COMPRESSION_ENV,
+  MAX_LATTICE_INFLATED_BYTES,
+} from './lattice-codec.js';
+export type { LatticeCompression } from './lattice-codec.js';
 // Projection engine (Stage 3) — holon → cg-RDF descriptor + manifest entry.
 // The manifest is a deterministic render of a lattice slice (not a pod scan).
 export {

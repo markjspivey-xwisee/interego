@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 84 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 97 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -83,6 +83,140 @@ Read the deployment-owned Hypothetical authored layer with origin and source bin
 - HTTP: `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/authored-shapes.ttl` (served by a bespoke route; not through the bridge's MCP endpoint)
 - Media type: `text/turtle`
 - Inputs: none
+
+## `foxxi.xapi_profile_add`
+
+**Add an xAPI Profile to the profile server**
+
+Add a version of an xAPI Profile as yourself, by its contents (profile) or by the https address it is published at (uri), when that address is on a host this deployment fetches from (profiles.adlnet.gov, raw.githubusercontent.com and w3id.org unless the operator set others); a profile published anywhere else is sent by its contents. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The version becomes a holon in a public PGSL lattice with its exact document as content, and its RDF is projected from that; it is then queryable at /sparql in a named graph whose IRI is the version's IRI, in the default graph if it is the profile's current version, and usable by id at /validate_templates and /validate_patterns. The first agent to add a profile IRI is the one who adds later versions of it. Up to 256 KB and 6,000 triples per version.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-add-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/add` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, profile?: <the profile document>, uri?: "https://…" — exactly one of the two }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_remove`
+
+**Take an xAPI Profile down from the profile server**
+
+Take down a profile you added (every version) or one version of it, named by iri. The operator may take down any. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The lattice is append-only: the removal is what is recorded, the server stops answering from the profile, and the earlier holon stays addressable. This deployment's own profile cannot be taken down.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-remove-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/remove` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, iri: <profile or version IRI> }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_draft`
+
+**Write or edit a draft of an xAPI Profile**
+
+Open, read, edit or discard your draft of an xAPI Profile, in xAPI Profiles 1.0 JSON-LD. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. Name the profile by its IRI. With nothing else, the draft is opened (or read): empty for a new profile, or the current version copied into a new version for one already held, which is how a published profile is revised. An IRI on this deployment is under {base}/xapi/profiles/p/ (for example {base}/xapi/profiles/p/my-profile), and then the profile, its versions and every term you give an IRI beneath it are served at their own addresses; an IRI on your own domain is accepted too and is read through the resolve affordance. Edit with any of: document (replace the whole profile document), set (prefLabel, definition, seeAlso, author, conformsTo), put ({ concepts, templates, patterns }: each entry is added, or replaces the one with its id; inScheme is set to the draft's version for you), remove (ids of concepts, templates, patterns or examples), version (the IRI of the version being written), examples ({ statements: [{ id?, follows: [template IRIs], statement }], sequences: [{ id?, pattern, statements: [statements or example-statement ids] }], replace? }) and external (terms another publisher defines that your templates name: [{ id, type }]). Examples are not part of the profile document; they are kept beside it, and the lint needs them. Examples are yours while the draft is open and become public when you publish: they are kept in the public lattice with the version and served to anyone, unsigned, at {base}/xapi/profiles/examples?iri=<version IRI>. Write them with made-up actors; do not paste a real person's statement (name, mbox, account) into one. Every answer carries the whole draft and the lint's findings. Drafts are working state held in memory: one that matters should be kept from the answer, and can be sent back whole as document and examples. Without profile, the answer lists the drafts you have open. Up to 256 KB of document and 512 KB of examples; 10 drafts per agent, 100 on the server.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-draft-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/draft` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, profile?: <profile IRI>, version?, document?, set?, put?, remove?, examples?, external?, discard?: true }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_lint`
+
+**Lint an xAPI Profile draft**
+
+Check a profile before it is published and get findings a writer can act on: each names the term, where in the document it is, what is wrong and what to change. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. Name your draft by profile, or send any document with its examples to lint without keeping it. No findings means: the profile and every concept, statement template and pattern has a label and a definition and an inScheme equal to the version being written; every verb, activity type, attachment usage type and extension a template names is declared in the profile, declared by another profile held on this server, or listed as an external term; every extension has an inlineSchema or a schema, and not both; no two templates have the same determining properties; every rule's location and selector is JSONPath the specification allows; every pattern states exactly one of sequence, alternates, optional, oneOrMore and zeroOrMore, names only templates and patterns of the profile and does not contain itself; every statement template has an example statement that the specification's validation says follows exactly the templates the example claims; and every primary pattern has an example run that the specification's pattern matching accepts as one complete pass. The examples are judged by the same processor a published version is validated with. A draft is linted as the version it would be published as: parts an earlier version had that the draft leaves out appear in it as deprecated.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-lint-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/lint` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, profile?: <profile IRI of your draft> — or document: <a profile document>, examples?: { statements, sequences }, external?: [{ id, type }] }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_publish`
+
+**Publish a draft as a version of an xAPI Profile**
+
+Publish your draft of a profile as a version. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. Refused with the findings (422) unless the lint has none. On publication the version's generatedAtTime is set to that moment, and when the profile already has a version here the new one states wasRevisionOf it. A published version is immutable: it is never replaced, adding the same version again is refused, and its author cannot take it down. What an earlier version had that this one leaves out (a concept, a statement template, a pattern) is carried into the new version marked deprecated, so its IRI still resolves and says so; a deprecated template or pattern judges no statements. The version becomes a holon in the public lattice with its document and examples, is queryable at /sparql, usable by its IRI at /validate_templates and /validate_patterns, and served by the resolve affordance. The draft's examples are published with it and from then on are public: anyone can read them, unsigned, at {base}/xapi/profiles/examples?iri=<version IRI>, so publish no example that carries a real person's name, mbox or account. A version is published only once its durable write to the pod is acknowledged. When that write does not land the answer is 503 with ok: false, published: false and persisted: false: nothing was published, the version answers nowhere, your draft is exactly as it was, and publishing again retries the same version. The draft is closed only on a publication that was kept.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-publish-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/publish` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, profile: <profile IRI of your draft> }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_resolve`
+
+**Read a hosted xAPI Profile, version, concept, statement template or pattern by its IRI**
+
+Dereference any IRI held on the profile server: a profile (its current version), one version, or a concept, statement template or pattern. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The answer is JSON-LD in the xAPI Profiles context by default; send Accept: text/turtle or application/n-triples for its triples (N-Triples, which is also Turtle), and anything else is a 406. A term is read from the current version of its profile; one that the current version no longer has is read from the latest version that had it and carries deprecated: true, so an IRI that was once published keeps answering. Link headers name the version the answer came from, the profile, and the version it revises. A profile written here under {base}/xapi/profiles/p/ is also served at its own IRI and so is each of its terms, with the same content negotiation. GET {base}/xapi/profiles/examples?iri=<version> returns the example statements and sequences a version was published with. No signature is needed.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-resolve`
+- HTTP: `GET https://foxxi-bridge.interego.xwisee.com/xapi/profiles/resource` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/ld+json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `iri` | string | yes | The IRI of a profile, a version, a concept, a statement template or a pattern. |
+
+## `foxxi.xapi_profile_sparql`
+
+**Query the xAPI Profiles on the profile server with SPARQL**
+
+Ask a SPARQL SELECT or ASK query of the profiles held. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The default graph holds the current version of every profile; each version is also a named graph whose IRI is the version IRI (FROM <version>, or WHERE { GRAPH <version> { … } }, or GRAPH ?g to ask every version). Inferred and queryable: every SKOS relationship in both directions and transitively (skos:broaderTransitive, skos:narrowerTransitive), and skos:inScheme from a concept, statement template or pattern to its profile. Evaluated: basic graph patterns, OPTIONAL, UNION, FILTER (comparison, REGEX, STRSTARTS, BOUND), VALUES, GROUP BY with COUNT/SUM/AVG/MIN/MAX, ORDER BY, LIMIT, OFFSET. Not evaluated, and refused with a 400 that says so rather than answered wrongly: property paths, subqueries, MINUS, EXISTS, HAVING, CONSTRUCT, DESCRIBE, SERVICE, and GRAPH beside other patterns. Also at GET {base}/xapi/profiles/sparql?query=….
+
+- Action: `urn:iep:action:foxxi:xapi-profile-sparql`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/sparql` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `query` | string | yes | The SPARQL query. The specification's own example queries are accepted as it writes them. |
+| `default-graph-uri` | string | no | A version IRI to query in place of the default graph. |
+
+## `foxxi.xapi_profile_validate_templates`
+
+**Validate a statement against a profile's statement templates**
+
+Run the specification's statement template validation (Part Three, 2.1) for one xAPI Statement against a profile on the server, named by its id. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. A statement validates when it matches at least one template on every determining property (verb, object activity type, context activity types, attachment usage types) and follows every rule of each template it matches. 204 with no body when it validates. 400 with comments naming the template, the rule's location and what was found when it does not, or when it matches no template. Nothing is stored. As the specification says of this API, it is for experiment and demonstration, not for a critical path.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-validate-templates`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_templates` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `statement` | object | yes | One xAPI Statement. |
+| `profile` | string | yes | The id of a profile, or of a version, held on the server. |
+
+## `foxxi.xapi_profile_validate_patterns`
+
+**Validate a run of statements against a profile's patterns**
+
+Run the specification's pattern validation (Part Three, 2.2) for an array of xAPI Statements against a profile on the server, named by its id. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The statements are taken in timestamp order, then array order. They follow the profile when each validates against its statement templates and one primary pattern matches all of them from first to last. 204 with no body when they do. 400 with comments saying which statement or which part of the pattern did not. Up to 500 statements. Nothing is stored.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-validate-patterns`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_patterns` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `statements` | array | yes | The xAPI Statements of one registration or sub-registration. |
+| `profile` | string | yes | The id of a profile, or of a version, held on the server. |
 
 ## `foxxi.i2idlx_capabilities`
 
@@ -225,7 +359,7 @@ Signed payload {agent_id,timestamp,outcome:{episode_id,plan_id,plan_sha256,inter
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | Signed payload {agent_id,timestamp,outcome:{episode_id,plan_id,plan_sha256,intervention:{type,delivered,artifact:{uri,version,sha256},delivered_at},post,fresh?,assistance,observed_at}}. The server plan is created using private_evidence on contextualize-and-plan. Measurements include exact canonical report content and evidence references. No caller success labels; no causal attribution. Full schema: {"version":"1","planner":{"path":"/agent/contextualize-and-plan","optIn":"private_evidence","reviewOnly":"private_review: true reads own empirical profile without a new plan or counted episode"},"transport":"Use existing sign_request then act. agent_id/timestamp are required by signed transport. Automatically stamped subject_pod_url is accepted only when equivalent to the authenticated own pod, then excluded from logical plan identity.","ref":{"uri":"HTTP(S) or URN immutable evidence identifier","version":"nonempty version string","sha256":"lowercase SHA-256 hex of evidence bytes; report uses canonical JSON below"},"private_evidence":{"episode_id":"stable id for one learner/intervention episode","study_id":"study id","learner_id":"learner label (not an independently verified identity)","policy":"ref","baseline":"measurement with phase=baseline","assistance":"baseline assistance description","independence":"same-account-procedural \| self-assessed","target":{"minimum_score":"number >0 and <=1","maximum_unsafe":"nonnegative integer"}},"measurement":{"phase":"baseline \| post \| fresh","correct":"integer >=0","total":"integer >0, >=correct","unsafe":"integer >=0, <=total","assessed_at":"observed ISO UTC timestamp","assessment":"ref","responses":"ref","scorer":"ref, same hash/version in every phase","report":"ref whose sha256 hashes report_content","report_content":{"phase":"exact matching phase","correct":"exact matching correct","total":"exact matching total","unsafe":"exact matching unsafe","assessed_at":"exact matching timestamp","policy_sha256":"policy.sha256","assessment_sha256":"assessment.sha256","responses_sha256":"responses.sha256","scorer_sha256":"scorer.sha256"}},"canonicalHash":"SHA-256 UTF-8 JSON with object keys recursively lexicographically sorted, compact separators, array order retained, finite JSON values only. report_content accepts exactly the nine declared fields.","outcome":{"episode_id":"same as private_evidence.episode_id","plan_id":"returned privatePlan.plan_id","plan_sha256":"returned privatePlan.sha256","intervention":{"type":"a selected intervention in the bound server plan","delivered":"boolean","artifact":"ref","delivered_at":"UTC time >= baseline and server plan creation, <= post"},"post":"measurement phase=post","fresh":"optional additional measurement phase=fresh; omit if no additional follow-up occurred","assistance":"post/fresh assistance description","observed_at":"UTC time >= last assessment"},"actionPayloads":{"record":"{agent_id,timestamp,subject_pod_url?,outcome}","read":"{agent_id,timestamp,subject_pod_url?,episode_id?}","calibration":"{agent_id,timestamp,subject_pod_url?}"},"limits":"1000 plans and 1000 episodes, 4 MB encrypted snapshot per account. Private content is encrypted to owner+bridge; trusted bridge can decrypt. No public projection or shared-seed update.","verification":"Arithmetic, submitted report content hashes and fixed evidence bindings are checked. Evidence URIs are not fetched. Server plans/outcomes carry a bridge-secret authentication tag. Assessor truth, independent sampling and causal learning are not verified.","calibration":"Only derived Knowable gap-analysis with named cause, baseline gap, newly delivered selected intervention and non-self-assessed reports is eligible. Eligible rates are tentative: this caller-supplied evidence trust class always remains Hypothetical and cannot trigger automatic rate-driven intervention swapping. Manager may use observations for review/stop. Seeds excluded."} |
+| `_signed_payload` | string | yes | Signed payload {agent_id,timestamp,outcome:{episode_id,plan_id,plan_sha256,intervention:{type,delivered,artifact:{uri,version,sha256},delivered_at},post,fresh?,assistance,observed_at}}. The server plan is created using private_evidence on contextualize-and-plan. Measurements include exact canonical report content and evidence references. No caller success labels; no causal attribution. Full schema: {"version":"1","planner":{"path":"/agent/contextualize-and-plan","optIn":"private_evidence","reviewOnly":"private_review: true reads own empirical profile without a new plan or counted episode"},"transport":"Use existing sign_request then act. agent_id/timestamp are required by signed transport. Automatically stamped subject_pod_url is accepted only when equivalent to the authenticated own pod, then excluded from logical plan identity. client_id, which the relay may add (the OAuth client its session token was issued to), is accepted, not checked, and also excluded.","ref":{"uri":"HTTP(S) or URN immutable evidence identifier","version":"nonempty version string","sha256":"lowercase SHA-256 hex of evidence bytes; report uses canonical JSON below"},"private_evidence":{"episode_id":"stable id for one learner/intervention episode","study_id":"study id","learner_id":"learner label (not an independently verified identity)","policy":"ref","baseline":"measurement with phase=baseline","assistance":"baseline assistance description","independence":"same-account-procedural \| self-assessed","target":{"minimum_score":"number >0 and <=1","maximum_unsafe":"nonnegative integer"}},"measurement":{"phase":"baseline \| post \| fresh","correct":"integer >=0","total":"integer >0, >=correct","unsafe":"integer >=0, <=total","assessed_at":"observed ISO UTC timestamp","assessment":"ref","responses":"ref","scorer":"ref, same hash/version in every phase","report":"ref whose sha256 hashes report_content","report_content":{"phase":"exact matching phase","correct":"exact matching correct","total":"exact matching total","unsafe":"exact matching unsafe","assessed_at":"exact matching timestamp","policy_sha256":"policy.sha256","assessment_sha256":"assessment.sha256","responses_sha256":"responses.sha256","scorer_sha256":"scorer.sha256"}},"canonicalHash":"SHA-256 UTF-8 JSON with object keys recursively lexicographically sorted, compact separators, array order retained, finite JSON values only. report_content accepts exactly the nine declared fields.","outcome":{"episode_id":"same as private_evidence.episode_id","plan_id":"returned privatePlan.plan_id","plan_sha256":"returned privatePlan.sha256","intervention":{"type":"a selected intervention in the bound server plan","delivered":"boolean","artifact":"ref","delivered_at":"UTC time >= baseline and server plan creation, <= post"},"post":"measurement phase=post","fresh":"optional additional measurement phase=fresh; omit if no additional follow-up occurred","assistance":"post/fresh assistance description","observed_at":"UTC time >= last assessment"},"actionPayloads":{"record":"{agent_id,timestamp,subject_pod_url?,client_id?,outcome}","read":"{agent_id,timestamp,subject_pod_url?,client_id?,episode_id?}","calibration":"{agent_id,timestamp,subject_pod_url?,client_id?}"},"limits":"1000 plans and 1000 episodes, 4 MB encrypted snapshot per account. Private content is encrypted to owner+bridge; trusted bridge can decrypt. No public projection or shared-seed update.","verification":"Arithmetic, submitted report content hashes and fixed evidence bindings are checked. Evidence URIs are not fetched. Server plans/outcomes carry a bridge-secret authentication tag. Assessor truth, independent sampling and causal learning are not verified.","calibration":"Only derived Knowable gap-analysis with named cause, baseline gap, newly delivered selected intervention and non-self-assessed reports is eligible. Eligible rates are tentative: this caller-supplied evidence trust class always remains Hypothetical and cannot trigger automatic rate-driven intervention swapping. Manager may use observations for review/stop. Seeds excluded."} |
 | `_signature` | string | yes | Use sign_request; signature binds agent_id and complete payload. |
 
 ## `foxxi.read_private_performance_outcomes`
@@ -240,7 +374,7 @@ Signed payload {agent_id,timestamp,episode_id?}. Reads only the verified caller 
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | Signed payload {agent_id,timestamp,episode_id?}. Reads only the verified caller own encrypted pod. Full schema: {"version":"1","planner":{"path":"/agent/contextualize-and-plan","optIn":"private_evidence","reviewOnly":"private_review: true reads own empirical profile without a new plan or counted episode"},"transport":"Use existing sign_request then act. agent_id/timestamp are required by signed transport. Automatically stamped subject_pod_url is accepted only when equivalent to the authenticated own pod, then excluded from logical plan identity.","ref":{"uri":"HTTP(S) or URN immutable evidence identifier","version":"nonempty version string","sha256":"lowercase SHA-256 hex of evidence bytes; report uses canonical JSON below"},"private_evidence":{"episode_id":"stable id for one learner/intervention episode","study_id":"study id","learner_id":"learner label (not an independently verified identity)","policy":"ref","baseline":"measurement with phase=baseline","assistance":"baseline assistance description","independence":"same-account-procedural \| self-assessed","target":{"minimum_score":"number >0 and <=1","maximum_unsafe":"nonnegative integer"}},"measurement":{"phase":"baseline \| post \| fresh","correct":"integer >=0","total":"integer >0, >=correct","unsafe":"integer >=0, <=total","assessed_at":"observed ISO UTC timestamp","assessment":"ref","responses":"ref","scorer":"ref, same hash/version in every phase","report":"ref whose sha256 hashes report_content","report_content":{"phase":"exact matching phase","correct":"exact matching correct","total":"exact matching total","unsafe":"exact matching unsafe","assessed_at":"exact matching timestamp","policy_sha256":"policy.sha256","assessment_sha256":"assessment.sha256","responses_sha256":"responses.sha256","scorer_sha256":"scorer.sha256"}},"canonicalHash":"SHA-256 UTF-8 JSON with object keys recursively lexicographically sorted, compact separators, array order retained, finite JSON values only. report_content accepts exactly the nine declared fields.","outcome":{"episode_id":"same as private_evidence.episode_id","plan_id":"returned privatePlan.plan_id","plan_sha256":"returned privatePlan.sha256","intervention":{"type":"a selected intervention in the bound server plan","delivered":"boolean","artifact":"ref","delivered_at":"UTC time >= baseline and server plan creation, <= post"},"post":"measurement phase=post","fresh":"optional additional measurement phase=fresh; omit if no additional follow-up occurred","assistance":"post/fresh assistance description","observed_at":"UTC time >= last assessment"},"actionPayloads":{"record":"{agent_id,timestamp,subject_pod_url?,outcome}","read":"{agent_id,timestamp,subject_pod_url?,episode_id?}","calibration":"{agent_id,timestamp,subject_pod_url?}"},"limits":"1000 plans and 1000 episodes, 4 MB encrypted snapshot per account. Private content is encrypted to owner+bridge; trusted bridge can decrypt. No public projection or shared-seed update.","verification":"Arithmetic, submitted report content hashes and fixed evidence bindings are checked. Evidence URIs are not fetched. Server plans/outcomes carry a bridge-secret authentication tag. Assessor truth, independent sampling and causal learning are not verified.","calibration":"Only derived Knowable gap-analysis with named cause, baseline gap, newly delivered selected intervention and non-self-assessed reports is eligible. Eligible rates are tentative: this caller-supplied evidence trust class always remains Hypothetical and cannot trigger automatic rate-driven intervention swapping. Manager may use observations for review/stop. Seeds excluded."} |
+| `_signed_payload` | string | yes | Signed payload {agent_id,timestamp,episode_id?}. Reads only the verified caller own encrypted pod. Full schema: {"version":"1","planner":{"path":"/agent/contextualize-and-plan","optIn":"private_evidence","reviewOnly":"private_review: true reads own empirical profile without a new plan or counted episode"},"transport":"Use existing sign_request then act. agent_id/timestamp are required by signed transport. Automatically stamped subject_pod_url is accepted only when equivalent to the authenticated own pod, then excluded from logical plan identity. client_id, which the relay may add (the OAuth client its session token was issued to), is accepted, not checked, and also excluded.","ref":{"uri":"HTTP(S) or URN immutable evidence identifier","version":"nonempty version string","sha256":"lowercase SHA-256 hex of evidence bytes; report uses canonical JSON below"},"private_evidence":{"episode_id":"stable id for one learner/intervention episode","study_id":"study id","learner_id":"learner label (not an independently verified identity)","policy":"ref","baseline":"measurement with phase=baseline","assistance":"baseline assistance description","independence":"same-account-procedural \| self-assessed","target":{"minimum_score":"number >0 and <=1","maximum_unsafe":"nonnegative integer"}},"measurement":{"phase":"baseline \| post \| fresh","correct":"integer >=0","total":"integer >0, >=correct","unsafe":"integer >=0, <=total","assessed_at":"observed ISO UTC timestamp","assessment":"ref","responses":"ref","scorer":"ref, same hash/version in every phase","report":"ref whose sha256 hashes report_content","report_content":{"phase":"exact matching phase","correct":"exact matching correct","total":"exact matching total","unsafe":"exact matching unsafe","assessed_at":"exact matching timestamp","policy_sha256":"policy.sha256","assessment_sha256":"assessment.sha256","responses_sha256":"responses.sha256","scorer_sha256":"scorer.sha256"}},"canonicalHash":"SHA-256 UTF-8 JSON with object keys recursively lexicographically sorted, compact separators, array order retained, finite JSON values only. report_content accepts exactly the nine declared fields.","outcome":{"episode_id":"same as private_evidence.episode_id","plan_id":"returned privatePlan.plan_id","plan_sha256":"returned privatePlan.sha256","intervention":{"type":"a selected intervention in the bound server plan","delivered":"boolean","artifact":"ref","delivered_at":"UTC time >= baseline and server plan creation, <= post"},"post":"measurement phase=post","fresh":"optional additional measurement phase=fresh; omit if no additional follow-up occurred","assistance":"post/fresh assistance description","observed_at":"UTC time >= last assessment"},"actionPayloads":{"record":"{agent_id,timestamp,subject_pod_url?,client_id?,outcome}","read":"{agent_id,timestamp,subject_pod_url?,client_id?,episode_id?}","calibration":"{agent_id,timestamp,subject_pod_url?,client_id?}"},"limits":"1000 plans and 1000 episodes, 4 MB encrypted snapshot per account. Private content is encrypted to owner+bridge; trusted bridge can decrypt. No public projection or shared-seed update.","verification":"Arithmetic, submitted report content hashes and fixed evidence bindings are checked. Evidence URIs are not fetched. Server plans/outcomes carry a bridge-secret authentication tag. Assessor truth, independent sampling and causal learning are not verified.","calibration":"Only derived Knowable gap-analysis with named cause, baseline gap, newly delivered selected intervention and non-self-assessed reports is eligible. Eligible rates are tentative: this caller-supplied evidence trust class always remains Hypothetical and cannot trigger automatic rate-driven intervention swapping. Manager may use observations for review/stop. Seeds excluded."} |
 | `_signature` | string | yes | Use sign_request; signature binds agent_id and complete payload. |
 
 ## `foxxi.read_private_performance_calibration`
@@ -255,7 +389,7 @@ Signed payload {agent_id,timestamp}. Counts one learner/intervention episode, wi
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | Signed payload {agent_id,timestamp}. Counts one learner/intervention episode, with eligibility, source and sample counts. No public aggregate publication. Full schema: {"version":"1","planner":{"path":"/agent/contextualize-and-plan","optIn":"private_evidence","reviewOnly":"private_review: true reads own empirical profile without a new plan or counted episode"},"transport":"Use existing sign_request then act. agent_id/timestamp are required by signed transport. Automatically stamped subject_pod_url is accepted only when equivalent to the authenticated own pod, then excluded from logical plan identity.","ref":{"uri":"HTTP(S) or URN immutable evidence identifier","version":"nonempty version string","sha256":"lowercase SHA-256 hex of evidence bytes; report uses canonical JSON below"},"private_evidence":{"episode_id":"stable id for one learner/intervention episode","study_id":"study id","learner_id":"learner label (not an independently verified identity)","policy":"ref","baseline":"measurement with phase=baseline","assistance":"baseline assistance description","independence":"same-account-procedural \| self-assessed","target":{"minimum_score":"number >0 and <=1","maximum_unsafe":"nonnegative integer"}},"measurement":{"phase":"baseline \| post \| fresh","correct":"integer >=0","total":"integer >0, >=correct","unsafe":"integer >=0, <=total","assessed_at":"observed ISO UTC timestamp","assessment":"ref","responses":"ref","scorer":"ref, same hash/version in every phase","report":"ref whose sha256 hashes report_content","report_content":{"phase":"exact matching phase","correct":"exact matching correct","total":"exact matching total","unsafe":"exact matching unsafe","assessed_at":"exact matching timestamp","policy_sha256":"policy.sha256","assessment_sha256":"assessment.sha256","responses_sha256":"responses.sha256","scorer_sha256":"scorer.sha256"}},"canonicalHash":"SHA-256 UTF-8 JSON with object keys recursively lexicographically sorted, compact separators, array order retained, finite JSON values only. report_content accepts exactly the nine declared fields.","outcome":{"episode_id":"same as private_evidence.episode_id","plan_id":"returned privatePlan.plan_id","plan_sha256":"returned privatePlan.sha256","intervention":{"type":"a selected intervention in the bound server plan","delivered":"boolean","artifact":"ref","delivered_at":"UTC time >= baseline and server plan creation, <= post"},"post":"measurement phase=post","fresh":"optional additional measurement phase=fresh; omit if no additional follow-up occurred","assistance":"post/fresh assistance description","observed_at":"UTC time >= last assessment"},"actionPayloads":{"record":"{agent_id,timestamp,subject_pod_url?,outcome}","read":"{agent_id,timestamp,subject_pod_url?,episode_id?}","calibration":"{agent_id,timestamp,subject_pod_url?}"},"limits":"1000 plans and 1000 episodes, 4 MB encrypted snapshot per account. Private content is encrypted to owner+bridge; trusted bridge can decrypt. No public projection or shared-seed update.","verification":"Arithmetic, submitted report content hashes and fixed evidence bindings are checked. Evidence URIs are not fetched. Server plans/outcomes carry a bridge-secret authentication tag. Assessor truth, independent sampling and causal learning are not verified.","calibration":"Only derived Knowable gap-analysis with named cause, baseline gap, newly delivered selected intervention and non-self-assessed reports is eligible. Eligible rates are tentative: this caller-supplied evidence trust class always remains Hypothetical and cannot trigger automatic rate-driven intervention swapping. Manager may use observations for review/stop. Seeds excluded."} |
+| `_signed_payload` | string | yes | Signed payload {agent_id,timestamp}. Counts one learner/intervention episode, with eligibility, source and sample counts. No public aggregate publication. Full schema: {"version":"1","planner":{"path":"/agent/contextualize-and-plan","optIn":"private_evidence","reviewOnly":"private_review: true reads own empirical profile without a new plan or counted episode"},"transport":"Use existing sign_request then act. agent_id/timestamp are required by signed transport. Automatically stamped subject_pod_url is accepted only when equivalent to the authenticated own pod, then excluded from logical plan identity. client_id, which the relay may add (the OAuth client its session token was issued to), is accepted, not checked, and also excluded.","ref":{"uri":"HTTP(S) or URN immutable evidence identifier","version":"nonempty version string","sha256":"lowercase SHA-256 hex of evidence bytes; report uses canonical JSON below"},"private_evidence":{"episode_id":"stable id for one learner/intervention episode","study_id":"study id","learner_id":"learner label (not an independently verified identity)","policy":"ref","baseline":"measurement with phase=baseline","assistance":"baseline assistance description","independence":"same-account-procedural \| self-assessed","target":{"minimum_score":"number >0 and <=1","maximum_unsafe":"nonnegative integer"}},"measurement":{"phase":"baseline \| post \| fresh","correct":"integer >=0","total":"integer >0, >=correct","unsafe":"integer >=0, <=total","assessed_at":"observed ISO UTC timestamp","assessment":"ref","responses":"ref","scorer":"ref, same hash/version in every phase","report":"ref whose sha256 hashes report_content","report_content":{"phase":"exact matching phase","correct":"exact matching correct","total":"exact matching total","unsafe":"exact matching unsafe","assessed_at":"exact matching timestamp","policy_sha256":"policy.sha256","assessment_sha256":"assessment.sha256","responses_sha256":"responses.sha256","scorer_sha256":"scorer.sha256"}},"canonicalHash":"SHA-256 UTF-8 JSON with object keys recursively lexicographically sorted, compact separators, array order retained, finite JSON values only. report_content accepts exactly the nine declared fields.","outcome":{"episode_id":"same as private_evidence.episode_id","plan_id":"returned privatePlan.plan_id","plan_sha256":"returned privatePlan.sha256","intervention":{"type":"a selected intervention in the bound server plan","delivered":"boolean","artifact":"ref","delivered_at":"UTC time >= baseline and server plan creation, <= post"},"post":"measurement phase=post","fresh":"optional additional measurement phase=fresh; omit if no additional follow-up occurred","assistance":"post/fresh assistance description","observed_at":"UTC time >= last assessment"},"actionPayloads":{"record":"{agent_id,timestamp,subject_pod_url?,client_id?,outcome}","read":"{agent_id,timestamp,subject_pod_url?,client_id?,episode_id?}","calibration":"{agent_id,timestamp,subject_pod_url?,client_id?}"},"limits":"1000 plans and 1000 episodes, 4 MB encrypted snapshot per account. Private content is encrypted to owner+bridge; trusted bridge can decrypt. No public projection or shared-seed update.","verification":"Arithmetic, submitted report content hashes and fixed evidence bindings are checked. Evidence URIs are not fetched. Server plans/outcomes carry a bridge-secret authentication tag. Assessor truth, independent sampling and causal learning are not verified.","calibration":"Only derived Knowable gap-analysis with named cause, baseline gap, newly delivered selected intervention and non-self-assessed reports is eligible. Eligible rates are tentative: this caller-supplied evidence trust class always remains Hypothetical and cannot trigger automatic rate-driven intervention swapping. Manager may use observations for review/stop. Seeds excluded."} |
 | `_signature` | string | yes | Use sign_request; signature binds agent_id and complete payload. |
 
 ## `foxxi.discover_lrs`
@@ -378,7 +512,7 @@ foxxi.claim_credential for a course this bridge's SCORM engine grades, signed by
 
 **Launch a cmi5 activity for myself**
 
-Launch an Assignable Unit of a cmi5 course published on this bridge, for yourself, signed by your wallet or by an agent holding your delegation (a relay connection, such as a Claude connector). The launch is for the signer and nobody else. The LMS stages LMS.LaunchData in the State resource and returns the conformant launch URL; the AU fetches its auth-token once. Its statements, and the `satisfied` the LMS records when they meet moveOn, land in your own record and are kept on your pod, where your IEEE P2997 learner record reads them. They count as experience, not as graded evidence for a credential: a cmi5 AU reports its own result. Without au_id, the first AU you have not satisfied; sequential progression is enforced (409 names the AU that comes first). Externally routed: sign_request the args, then POST the envelope.
+Launch an Assignable Unit of a cmi5 course published on this bridge, for yourself, signed by your wallet or by an agent holding your delegation (a relay connection, such as a Claude connector). The launch is for the signer and nobody else. The LMS stages LMS.LaunchData in the State resource and returns the conformant launch URL; the AU fetches its auth-token once, and that URL expires after 30 minutes. Its statements, and the `satisfied` the LMS records when they meet moveOn, land in your own record and are kept on your pod, where your IEEE P2997 learner record reads them. They count as experience, not as graded evidence for a credential: a cmi5 AU reports its own result. Without au_id, the first AU you have not satisfied; sequential progression is enforced (409 names the AU that comes first). For a link the learner can open again, use foxxi.cmi5_personal_launch. Externally routed: sign_request the args, then POST the envelope.
 
 - Action: `urn:iep:action:foxxi:cmi5-launch-signed`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/cmi5/launch` (served by a bespoke route; not through the bridge's MCP endpoint)
@@ -386,7 +520,67 @@ Launch an Assignable Unit of a cmi5 course published on this bridge, for yoursel
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url? }): the published course, optionally the AU, optionally where the AU returns you. |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, launch_parameters? }): the published course, optionally the AU, optionally where the AU returns you, optionally the launchParameters string that replaces the one in the course structure (cmi5 §10.2.3). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.cmi5_personal_launch`
+
+**Mint a reusable cmi5 launch link**
+
+Mint a durable link for yourself, for one cmi5 course published on this bridge, signed by your wallet or by an agent holding your delegation. The link is GET /cmi5/go/<token>: the token is unguessable, shown only in this response, and the URL carries nothing that identifies the learner. The bridge stores a hash of the token. Each open starts a fresh fetch token and redirects to the activity. An open session continues; a session terminated before moveOn was met keeps the registration and starts a new session; a session that met moveOn, or was abandoned or waived, starts a new registration (Review when the activity is already satisfied). A link minted by a delegate ends when that delegation does. expires_in_days defaults to 90; null means the link does not expire on its own, except that it still cannot outlive the delegation. Without au_id the link follows the course. foxxi.cmi5_personal_launch_list lists the links minted for you. foxxi.cmi5_personal_launch_revoke withdraws one. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:cmi5-personal-launch-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/cmi5/go` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, expires_in_days?, launch_parameters? }). expires_in_days is a whole number of days (1 to 3650) or null for no expiry; omitted means 90 days. launch_parameters, when present, replaces the course structure's launchParameters on every open (cmi5 §10.2.3); null clears it. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.cmi5_personal_launch_revoke`
+
+**Withdraw a reusable cmi5 launch link**
+
+Withdraw one of your personal cmi5 launch links. The URL then stops launching. A session already open may finish. Pass the token, the link URL, or the id from foxxi.cmi5_personal_launch_list. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:cmi5-personal-launch-revoke-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/cmi5/go/revoke` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, token }). token is the link's token or its full URL. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.cmi5_personal_launch_list`
+
+**List your reusable cmi5 launch links**
+
+List the personal cmi5 launch links minted for you, including ones an agent minted in your name. Each row is the stored record: the hash id, the course, when it expires, and whether it is live. The URL itself is not stored and is not returned. Externally routed: sign_request the args, then POST the envelope.
+
+- Action: `urn:iep:action:foxxi:cmi5-personal-launch-list-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/cmi5/go/list` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.host_package_signed`
+
+**Bring a package to be hosted here**
+
+Bring a SCORM or cmi5 .zip, or an authoring tool's own export, to be hosted on this bridge, signed by your wallet or by an agent holding your delegation. No account or directory role is needed: any key may sign. It is parsed on arrival and kept by its sha-256 exactly as foxxi.upload_scorm_package keeps an operator's, with you named as the uploader on its receipt. A package with something to launch is listed at /scorm/packages and anyone may play it with foxxi.cmi5_launch_signed, each of its documents in a sandbox of its own. What a package reports is experience, not graded evidence. The deployment bounds this route: a largest package, a number per signer per hour, and it may be closed, in which case it answers 404.
+
+- Action: `urn:iep:action:foxxi:host-package-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/host` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, zip_base64, hinted_title? }): the package, base64-encoded, and optionally a display name. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.lti_launch_signed`
@@ -929,7 +1123,7 @@ Record observed activity for the human who controls your native session agent. T
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",statements:[{id,actor,verb,object,timestamp,result?,context?}]}). The relay supplies agent_id, subject_pod_url and fresh signature timestamp. Statement timestamps describe observed events. |
+| `_signed_payload` | string | yes | sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",statements:[{id,actor,verb,object,timestamp,result?,context?}]}). The relay supplies agent_id, subject_pod_url and fresh signature timestamp, and may add client_id (the OAuth client its session token was issued to), which is accepted and not read. Statement timestamps describe observed events. |
 | `_signature` | string | yes | The complete fresh signature returned by sign_request. |
 
 ## `foxxi.read_own_subject_xapi_statements_signed`
@@ -944,7 +1138,7 @@ Read the authoritative bounded encrypted own-pod xAPI activity window for the hu
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",query:{statementId}}), or query filters verb/activity/registration/since/until/ascending/limit/cursor. The relay supplies agent_id, own pod stamp and fresh timestamp. |
+| `_signed_payload` | string | yes | sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",query:{statementId}}), or query filters verb/activity/registration/since/until/ascending/limit/cursor. The relay supplies agent_id, own pod stamp and fresh timestamp, and may add client_id (the OAuth client its session token was issued to), which is accepted and not read. |
 | `_signature` | string | yes | The complete fresh signature returned by sign_request. |
 
 ## `foxxi.credentials`

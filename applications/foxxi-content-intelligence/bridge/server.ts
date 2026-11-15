@@ -39,6 +39,14 @@ import { composeOwnSubjectXapiVerifier } from '../src/own-subject-xapi-auth.js';
 import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
 import { createOwnSubjectActivityStore } from '../src/own-subject-activity-store.js';
 import { rateLimit } from 'express-rate-limit';
+import { SignerHourlyLimit, openHostingRequest, openHostingSettings } from '../src/open-hosting.js';
+import { ProfileServer, ProfileServerError, mountProfileServerReads, MAX_PROFILE_BYTES, type ProfileRecord } from '../src/xapi-profile-server/service.js';
+import { validates as profileValidates } from '../src/xapi-profile-server/processor.js';
+import { buildFoxxiProfileDoc as ownXapiProfileDoc, FOXXI_PROFILE_ID as OWN_XAPI_PROFILE_ID } from '../src/xapi-profile.js';
+import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
+import { builtInProfiles } from '../src/xapi-profile-server/built-in.js';
+import { mountProfileAuthoring, mountProfileHosting } from '../src/xapi-profile-server/authoring-http.js';
+import { PROFILE_GENERATED_AT as OWN_XAPI_PROFILE_GENERATED_AT } from '../src/xapi-lrs.js';
 import { createOwnLtiReconciliation, validateRecoveryEntry, type RecoveryEntry } from '../src/lti-own-reconciliation.js';
 import { createOwnLtiReconciliationStore } from '../src/lti-own-reconciliation-store.js';
 import { createRecoveryAttestation, ownLtiReconciliationHandler, ownLtiReconciliationRateLimitOptions } from '../src/lti-own-reconciliation-http.js';
@@ -120,6 +128,9 @@ import { courseHmd, memoryHmd, collectionHmd, xapiCourseHmd } from '../src/hyper
 import { authorXapiCourse, xapiCourseArtifact, xapiCourseLinks } from '../src/xapi-course.js';
 import { affordancesManifestTurtle, type Affordance } from '../../_shared/affordance-mcp/index.js';
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
+import { frontDoor, frontDoorHtml } from '../src/front-door.js';
+import { PlayGrantError, PlayGrantService, learnerGuestGrantConfig, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
+import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
  * THE ONE DECLARATION of an affordance, looked up by its action IRI.
@@ -219,7 +230,7 @@ import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
 import { acceptSessionKeys, sessionKeyPolicy, sessionKeyPolicyFor, SESSION_KEY_CHAIN_ID } from '../src/session-key.js';
-import { makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
+import { deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
 import { courseIri, courseIdOf } from '../src/course-identity.js';
 import { attachAgentScormArtifacts, scormArtifactLinks, scormArtifactManifest } from '../src/scorm-artifacts.js';
@@ -314,7 +325,7 @@ import {
   registerSnapshot as registerBridgeSnap,
   dirty as markBridgeDirty,
   loadLatestSnapshot as loadBridgeSnap,
-  loadLatestSnapshotStrict as loadBridgeSnapStrict,
+  loadPrivateLtiGradebook,
   readLegacySnapshotFailureWitness,
   seedLatestSnapshotHead,
   FOXXI_SNAPSHOT_TYPES as BRIDGE_SNAP_TYPES,
@@ -463,16 +474,21 @@ import {
   type CallerContext,
   type AccessDecisionTrace,
 } from '../src/policy.js';
+import { abacMode, mayAdministerTenant } from '../src/tenant-admin-policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
-import { readyStatementStore } from '../src/statement-store.js';
-import { attachXapiLrsRoutes, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore } from '../src/xapi-lrs.js';
+import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
+import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerRegistration, cmi5BearerTenant, getCmi5Course, learnerSatisfiedAus, observeCmi5Statement, registerCmi5Course, signedLaunchLearner, stageLaunchData } from '../src/cmi5-lms.js';
-import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, type PackageAbout } from '../src/scorm-hosting.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
+import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
+import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
+import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, takenDownPackages, type PackageAbout } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes } from '../src/lti-platform.js';
 import { LtiPlatformReadiness, isPlatformSnapshot } from '../src/lti-platform-readiness.js';
+import { ScopedLtiConnection } from '../src/lti-scoped-connection.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
 import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, registryWriter, type DispatchEngine } from '../src/scorm-dispatch.js';
 import { glossaryLoader } from '../src/i2idl-glossary.js';
@@ -491,12 +507,14 @@ import {
 import { resolveAgentEncryptionKey } from '@interego/solid';
 import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
 import { DirectoryActions, DirectoryActionError, makeDirectoryActionAuthorizer, configuredLmsFromEnv } from '../src/directory-actions.js';
+import { withoutRelaySignedFields } from '../src/relay-signed-fields.js';
 import { attachCapabilityDirectoryRoutes } from '../src/i2idlx-capability-runner.js';
 import { FOXXI_CAPABILITY_ANNOTATIONS } from '../src/capability-annotations.js';
 import { validateCoverageQueryInput } from '../src/coverage-query-input.js';
 import type { PrivateAuthResult } from '../src/private-performance-auth.js';
 import { attachPerformanceRoutes, offerFromWork, WORK_OFFER_WINDOW, type WorkOffer } from '../src/performance-routes.js';
 import { attachContentDeliveryRoutes, restorePublishedCourse } from '../src/content-delivery.js';
+import { attachCoursePlayerRoutes, coursePlayerAuth, learnerFromPlayerAuth, persistVoidCopies, PlayerBook, PlayerError, statementNamesGuest, voidActorStatements } from '../src/cmi5-player.js';
 // Re-integration with the agentic-performance (agp:) layer: Foxxi surfaces the
 // emergent, learnable standards-extension capability the agp layer affords by
 // composing Foxxi's own standards. + the shared in-flow performance-support primitive.
@@ -526,7 +544,8 @@ import { releasedVersion, releasedVersions, versionLinks } from '../src/ns/relea
 import type { PublishedKind } from '../src/ns/published.js';
 import { SPEC_MODELS, validateInstance, validateInstanceWith, composeAllSpecOntologies } from '../src/spec/index.js';
 import { LER_MODEL, OB3_MODEL, CLR_MODEL, validateLerInstance } from '../src/spec/ler.model.js';
-import { validateAgainstProfileTemplates } from '../src/xapi-profile.js';
+import { validateAgainstProfileTemplates, performanceCategoriesFor } from '../src/xapi-profile.js';
+import { answerSuppliedProfileRequest } from '../src/xapi-profile-patterns.js';
 import { verifyDataIntegrityProof, type VerifiableCredentialJson } from '../../_shared/vc-jwt/data-integrity-jcs.js';
 /** Credential-format models registered as DATA (not bespoke handlers): the generic
  *  /ns/<module> loop mounts GET/shapes/validate/term + composes them into the lattice,
@@ -547,7 +566,8 @@ import { resolveSubjectPodUrlPure, explicitPodRoot, hasControlChars } from '../s
 import { configureStoreSpelling } from '../src/store-origins.js';
 import { resolveReadTarget, type ReadTargetDecision } from '../src/read-target.js';
 import { retireRow, activeRows, isRetired } from '../src/enrolment-register.js';
-import { bindPerformanceToEvidence, EVIDENCE_BINDING_EXT, EVIDENCE_SHAPE_EXT } from '../src/performance-evidence.js';
+import { bindPerformanceToEvidence } from '../src/performance-evidence.js';
+import { buildPerformanceStatement, momOutcomeVerb } from '../src/performance-statement.js';
 // The one Turtle-literal escaper. See packages/core/src/rdf/escape.ts.
 import { escapeTurtleLiteral } from '@interego/core';
 import type {
@@ -647,16 +667,6 @@ if (!process.env.FOXXI_AUTHORITATIVE_SOURCE) {
  *  published xAPI Profile as a contextActivities.category. */
 const bridgeBaseUrl = process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080';
 const xapiProfileUrl = `${bridgeBaseUrl}/xapi/profile`;
-/** MOM-conformant outcome verb for a production performance (ADL / MOM Level 1
- *  Completion & Certification): a successful unit of work is `completed`, an
- *  unsuccessful one `failed`. The verb is a canonical, dereferenceable ADL/MOM
- *  verb; the DOMAIN of the work stays in object.definition.type (the transplant
- *  test), never coined into the verb. */
-function momOutcomeVerb(success: boolean): { id: string; display: { en: string } } {
-  return success
-    ? { id: 'http://adlnet.gov/expapi/verbs/completed', display: { en: 'completed' } }
-    : { id: 'http://adlnet.gov/expapi/verbs/failed', display: { en: 'failed' } };
-}
 /** Resolve a performance task to a valid xAPI Activity id that is ALSO a
  *  dereferenceable URL: a caller-supplied http(s) id is used as-is; anything else
  *  (a bare label, or a urn) is minted into a bridge activity URL. Guarantees
@@ -669,10 +679,25 @@ function productionTaskIri(rawTaskId: unknown, taskName: string): string {
 const adminWebId = process.env.FOXXI_ADMIN_WEB_ID ?? '';
 const adminKeySeed = process.env.FOXXI_ADMIN_KEY_SEED ?? '';
 const issuerKeySeed = process.env.FOXXI_ISSUER_KEY_SEED ?? '';
+// A cmi5 launch's auth-token is signed under a key from this secret, so it is still good after a restart.
+configureCmi5AuthTokenSecret(issuerKeySeed);
 const tenantProfileDid = process.env.FOXXI_TENANT_PROFILE_DID ?? authoritativeSource;
 const tenantProfileName = process.env.FOXXI_TENANT_PROFILE_NAME ?? 'Acme Training Co L&D';
 const walletSeed = process.env.FOXXI_WALLET_SEED;
 const requireAuth = (process.env.FOXXI_REQUIRE_AUTH ?? 'true').toLowerCase() !== 'false';
+
+// The admin-only gates decide by the fixed rule (role admin) with the substrate's ABAC policy
+// evaluated beside it (src/tenant-admin-policy.ts). SHADOW unless this is exactly `enforce`: the
+// fixed rule's answer is what is returned, and a disagreement is one line on stderr. No
+// deployment sets it.
+const tenantAdminAbacMode = abacMode(process.env.FOXXI_ABAC_MODE);
+/** The admin-only gate. `point` is the tool it stands in. Never throws, never changes a shadow answer. */
+function mayAdminister(ctx: CallerContext, point: string): boolean {
+  return mayAdministerTenant(ctx, {
+    point, mode: tenantAdminAbacMode,
+    log: record => bridgeWarn(`[foxxi-bridge] ${JSON.stringify(record)}`),
+  });
+}
 
 // Learning Engineer role — comma-separated list of WebIDs that get the
 // learning-engineer role. LE = cohort + content analytics read-only.
@@ -1108,7 +1133,7 @@ async function assertTenantOwnerWrite(args: Record<string, unknown>, targetPod: 
     // `sign_request` exit; flattening it to prose put the 401 back at HTTP 200 for every
     // affordance gated here, and dropped the one field an agent can act on. Propagate it.
     if ('error' in resolved) return resolved;
-    if (resolved.ctx.role !== 'admin') {
+    if (!mayAdminister(resolved.ctx, 'foxxi.tenant_owner_write')) {
       return {
         kind: 'refusal' as const,
         'iep:refusalStatus': 403,
@@ -2047,7 +2072,8 @@ async function landMeshBatch(events: ProjectedMeshEvent[]): Promise<number> {
        */
       if (await store.get(id)) continue;
       const storedAt = new Date().toISOString();
-      await store.put({ id, statement: { ...ev.statement, stored: storedAt }, stored: storedAt, voided: false } as StoredStatement);
+      // Projected from what a pod holds, and put straight into the store: it does not keep a claim to the LMS's authority.
+      await store.put({ id, statement: { ...withoutLmsAuthorityClaim(ev.statement as Record<string, unknown>), stored: storedAt }, stored: storedAt, voided: false } as StoredStatement);
       landed++;
     } catch (err) {
       bridgeWarn(`[foxxi-bridge][mesh] put failed for ${id} (${ev.mode}):`, (err as Error).message);
@@ -3220,7 +3246,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') {
+    if (!mayAdminister(ctx, 'foxxi.issue_completion_credential')) {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.issue_completion_credential', decision: 'deny', appliedPolicies: ['admin-full-access'] });
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue completion credentials (caller role: ${ctx.role})`, accessDecision: trace };
     }
@@ -3656,51 +3682,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     // The performer is the xAPI actor; the authenticated caller is the
     // attesting observer (provenance). Any authenticated caller may
     // record a performance event — the observer is on the record.
-    const outcomeVerb = momOutcomeVerb(args.success as boolean);
-    const statement: Record<string, unknown> = {
-      id: randomUUID(),
-      version: '2.0.0',
-      actor: { objectType: 'Agent', account: { homePage: bridgeBaseUrl, name: performerDid } },
-      verb: outcomeVerb,
-      object: {
-        objectType: 'Activity',
-        id: taskId,
-        definition: {
-          name: { en: taskName },
-          // A creator-declared DOMAIN activity type (e.g. urn:ttt:Move) makes this
-          // a publishing-layer vocabulary act: the ELR projector aggregates a
-          // competency by this type across instances. Absent one, it falls back to
-          // the generic ProductionTask wrapper (the competency then keys off
-          // task_name — the skill the caller explicitly named).
-          type: (typeof args.activity_type === 'string' && args.activity_type.trim())
-            ? args.activity_type.trim()
-            : `${FOXXI_NS}ProductionTask`,
-        },
-      },
-      result: {
-        success: args.success,
-        ...(quality !== undefined ? { score: { scaled: quality } } : {}),
-        ...(args.duration_iso ? { duration: args.duration_iso as string } : {}),
-      },
-      context: {
-        // A per-performance registration + the published xAPI Profile as a
-        // category, so every statement references the profile it conforms to.
-        registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }] },
-        extensions: {
-          [PERF_EXT.observedBy]: ctx.webId,
-          [PERF_EXT.contextKind]: 'production',
-          [PERF_EXT.actorKind]: actorKind,
-          // How strongly this claim is tied to an artifact anybody can check. On the
-          // statement rather than in a README, so a reader who pulls the record can tell a
-          // shape-validated performance from a bare self-report without asking anyone.
-          [EVIDENCE_BINDING_EXT]: evidence.binding,
-          ...(evidence.shapeIri ? { [EVIDENCE_SHAPE_EXT]: evidence.shapeIri } : {}),
-          ...(typeof args.cost_usd === 'number' ? { [PERF_EXT.costUsd]: args.cost_usd } : {}),
-        },
-      },
-      timestamp: new Date().toISOString(),
-    };
+    const statement = buildPerformanceStatement({
+      id: randomUUID(), registration: randomUUID(), timestamp: new Date().toISOString(),
+      homePage: bridgeBaseUrl, performer: performerDid,
+      taskId, taskName, activityType: args.activity_type,
+      success: args.success as boolean,
+      ...(quality !== undefined ? { quality } : {}),
+      ...(args.duration_iso ? { durationIso: args.duration_iso as string } : {}),
+      profileUrl: xapiProfileUrl, observedBy: ctx.webId, actorKind,
+      evidence: { binding: evidence.binding, ...(evidence.shapeIri ? { shapeIri: evidence.shapeIri } : {}) },
+      ...(typeof args.cost_usd === 'number' ? { costUsd: args.cost_usd } : {}),
+    });
     // Land the performance in the PERFORMER's OWN lens + shared lattice — the
     // self-sovereign system of record that assemble_learner_record reads — NOT the
     // flat env-tenant partition (the legacy outlier; the delegated /agent/record-
@@ -3778,7 +3770,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     }
     void composeIntoSharedLattice({
       podUrl: perfPod, agentDid: performerDid, label: perfLabel,
-      terms: [performerDid, outcomeVerb.id, perfActivityType, taskId],
+      terms: [performerDid, momOutcomeVerb(args.success as boolean).id, perfActivityType, taskId],
       content: withId, contentType: 'xapi:Statement',
       ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
       projections: ['rdf', 'vc', 'activity'],
@@ -4411,7 +4403,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') {
+    if (!mayAdminister(ctx, 'foxxi.query_experience_index')) {
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — federated xAPI queries are admin-only (per learner privacy policy)' };
     }
     const endpoints = (args.endpoints as Array<{ label: string; endpoint: string; username: string; password: string }>).map<FederatedLrsEndpoint>(e => ({
@@ -4426,7 +4418,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx, admin } = resolved;
-    if (ctx.role !== 'admin') {
+    if (!mayAdminister(ctx, 'foxxi.push_to_cass')) {
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can push frameworks to CaSS' };
     }
     // Synthesize a framework from the tenant catalog (same as export_case_framework).
@@ -4474,7 +4466,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx, admin } = resolved;
-    if (ctx.role !== 'admin') {
+    if (!mayAdminister(ctx, 'foxxi.export_case_framework')) {
       const trace = emitAccessDecision({ ctx, tool: 'foxxi.export_case_framework', decision: 'deny', appliedPolicies: ['admin-full-access'] });
       return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can export the competency framework`, accessDecision: trace };
     }
@@ -4509,7 +4501,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue BBS+ credentials` };
+    if (!mayAdminister(ctx, 'foxxi.issue_bbs_credential')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — only admins can issue BBS+ credentials` };
     if (!issuerKeySeed) return notConfigured('FOXXI_ISSUER_KEY_SEED unset');
     const issued = await issueBbsCompletionCredential({
       subject: {
@@ -4710,7 +4702,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can countersign assessments' };
+    if (!mayAdminister(ctx, 'foxxi.countersign_assessment')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can countersign assessments' };
     return countersignAssessment({ // was: return { error: 'forbidden — admin only' }
       assessment: args.assessment as CompetencyAssessment,
       humanIssuerSeed: args.human_seed as string,
@@ -4721,7 +4713,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — audit trails are admin-only' };
+    if (!mayAdminister(ctx, 'foxxi.audit_compliance_trail')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — audit trails are admin-only' };
     return composeAuditTrail({
       learnerDid: args.learner_did as string,
       learnerPodUrl: (args.learner_pod_url as string) || tenantPodUrl,
@@ -4734,7 +4726,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can declare framework alignments' };
+    if (!mayAdminister(ctx, 'foxxi.declare_framework_alignment')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — only admins can declare framework alignments' };
     const alignment: FrameworkAlignment = {
       ownItemIri: args.own_item_iri as string,
       ownItemLabel: args.own_item_label as string,
@@ -5078,7 +5070,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
+    if (!mayAdminister(ctx, 'foxxi.scorm_cloud_pull')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
     const secretKey = process.env.FOXXI_SCORM_CLOUD_SECRET_KEY;
     if (!appId || !secretKey) {
@@ -5103,7 +5095,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
+    if (!mayAdminister(ctx, 'foxxi.scorm_cloud_register')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — admin only' };
     const appId = process.env.FOXXI_SCORM_CLOUD_APP_ID;
     const secretKey = process.env.FOXXI_SCORM_CLOUD_SECRET_KEY;
     if (!appId || !secretKey) return notConfigured('SCORM Cloud credentials not configured.');
@@ -5117,6 +5109,22 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         email: args.learner_email as string | undefined,
       },
     }, { appId, secretKey });
+  },
+
+  'foxxi.remove_hosted_package': async (args) => {
+    const resolved = await resolveCaller(args);
+    if ('error' in resolved) return resolved;
+    const { ctx } = resolved;
+    // Anyone who signs may bring a package (POST /agent/scorm/host), so an operator must be able
+    // to take one down: it is served from this host to anyone.
+    if (!isAdminEquivalent(ctx.role)) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: `forbidden — taking a hosted package down requires an admin or delegated admin (caller role: ${ctx.role})` };
+    const sha = typeof args.package_sha256 === 'string' ? args.package_sha256.trim().toLowerCase() : '';
+    if (!PACKAGE_SHA.test(sha)) return { kind: 'refusal' as const, 'iep:refusalStatus': 400, 'iep:refusalReason': 'the request names no package', error: 'package_sha256 is required: the sha-256 a hosted package is listed under at /scorm/packages' };
+    const taken = await hostedPackages.remove(sha);
+    // Its course goes whether or not the pod took the delete: nothing should launch a package being taken down.
+    const courseForgotten = unregisterCmi5Course(DEFAULT_TENANT, `${bridgeBaseUrl}/scorm/packages/${sha}`);
+    if (!taken.removed) return { kind: 'refusal' as const, 'iep:refusalStatus': 502, 'iep:refusalReason': 'the pod did not remove the package', error: taken.why ?? 'the pod did not remove the package', packageSha256: sha, courseForgotten };
+    return { removed: true, packageSha256: sha, courseForgotten, removedBy: ctx.webId, note: 'The package and what described it are gone from the pod and from this bridge: it is no longer listed, launched or served. What learners already recorded of it stays in their own records.' };
   },
 
   'foxxi.upload_scorm_package': async (args) => {
@@ -5209,7 +5217,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — DPIA generation is admin-only' };
+    if (!mayAdminister(ctx, 'foxxi.generate_dpia')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — DPIA generation is admin-only' };
     const chain = await composeAuditTrail({
       learnerDid: args.learner_did as string,
       learnerPodUrl: (args.learner_pod_url as string) || tenantPodUrl,
@@ -5242,7 +5250,7 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const resolved = await resolveCaller(args);
     if ('error' in resolved) return resolved;
     const { ctx } = resolved;
-    if (ctx.role !== 'admin') return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — backup is admin-only' };
+    if (!mayAdminister(ctx, 'foxxi.backup_tenant_pod')) return { kind: 'refusal' as const, 'iep:refusalStatus': 403, 'iep:refusalReason': 'the caller is authenticated but not permitted this operation', error: 'forbidden — backup is admin-only' };
     return backupTenantPod({ podUrl: tenantPodUrl });
   },
 
@@ -5888,16 +5896,21 @@ const instrumentedHandlers = Object.fromEntries(
 
 // Foxxi as its own LMS: the LTI 1.3 Platform that launches this bridge's own Tool over HTTP, the
 // way any LMS would, and keeps the gradebook the Tool posts grades to. The gradebook is kept on
-// the tenant pod like the Tool's line items. Its key is fresh per process unless one is set.
+// the tenant pod as ciphertext. Its separate OIDC signing key can be fresh per process.
+const gradebookSecret = process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '';
+const gradebookKey = /^(?:0x)?[a-f0-9]{64}$/i.test(gradebookSecret)
+  ? deriveEncryptionKeyPair(gradebookSecret, `urn:foxxi:lti-platform-gradebook:v1:${tenantPodUrl.replace(/\/?$/, '/')}`)
+  : undefined;
 const ltiPlatform: LtiPlatform = new LtiPlatform({
   selfBaseUrl: bridgeBaseUrl,
   ...(process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM ? { privateKeyPem: process.env.FOXXI_LTI_PLATFORM_PRIVATE_KEY_PEM.replace(/\\n/g, '\n') } : {}),
   onChange: () => markBridgeDirty('lti-platform'),
   ensureReady: () => ltiPlatformReadiness.ensureReady(),
 });
+const scopedLti = ScopedLtiConnection.fromSetting(process.env.FOXXI_LTI_SCOPED_TOOL, bridgeBaseUrl);
 const ltiPlatformReadiness: LtiPlatformReadiness = new LtiPlatformReadiness({
   load: async () => {
-    const result = await loadBridgeSnapStrict('lti-platform', { typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, validate: isPlatformSnapshot, followLatestDescriptor: true });
+    const result = await loadPrivateLtiGradebook({ validate: isPlatformSnapshot, approvedLegacyWitness: process.env.FOXXI_LTI_LEGACY_RECOVERY_WITNESS });
     seedLatestSnapshotHead('lti-platform', result);
     return result;
   },
@@ -5905,7 +5918,8 @@ const ltiPlatformReadiness: LtiPlatformReadiness = new LtiPlatformReadiness({
   collect: () => ltiPlatform.snapshot(),
   onState: (state) => console.info('[lti-platform/readiness]', JSON.stringify(state)),
 });
-registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook, collect: () => ltiPlatformReadiness.snapshotForPublish(), immutableLatest: true });
+registerBridgeSnap({ surface: 'lti-platform', typeIri: BRIDGE_SNAP_TYPES.LtiPlatformGradebook,
+  collect: () => ltiPlatformReadiness.snapshotForPublish(), immutableLatest: true, encryptionKey: gradebookKey });
 void ltiPlatformReadiness.ensureReady();
 /** The Tool's side, once mounted: how a grade gets back to the platform that launched the course. */
 let ltiTool: Lti13Tool | undefined;
@@ -5915,13 +5929,15 @@ const app = createVerticalBridge({
   affordances: activeAffordances,
   handlers: instrumentedHandlers,
   defaultPodUrl: tenantPodUrl,
-  routeOwnedJsonPostPaths: [ltiPlatform.scoreRoutePath],
+  routeOwnedJsonPostPaths: [ltiPlatform.scoreRoutePath, ...(scopedLti ? [scopedLti.scoreRoutePath] : [])],
   hypermediaLinks: [
     { label: 'Courses', href: `${bridgeBaseUrl}/agent/scorm/courses?format=markdown`, rel: 'collection', type: 'text/markdown' },
     { label: 'Job aids', href: `${bridgeBaseUrl}/agent/memories?format=markdown`, rel: 'collection', type: 'text/markdown' },
     { label: 'Guidance', href: `${bridgeBaseUrl}/guidance?format=markdown`, rel: 'help', type: 'text/markdown' },
   ],
   middleware: (a) => {
+    // First, so every route's answer passes through it (src/compress-linked-data.ts).
+    a.use(compressLinkedData());
     // CORS for the browser dashboard. The vertical owns its CORS
     // policy; the substrate-side vertical-bridge factory stays
     // CORS-agnostic so other deployments (server-to-server, MCP
@@ -5963,10 +5979,10 @@ const app = createVerticalBridge({
     // ingress's allowed-IP-ranges in production.
     a.get('/metrics', (_req, res) => {
       res.type('text/plain; version=0.0.4');
-      res.send(renderMetrics());
+      res.send(renderMetrics() + '\n' + residentStatementMetricLines().join('\n') + '\n');
     });
     a.get('/metrics.json', (_req, res) => {
-      res.json(metricsJson());
+      res.json({ ...metricsJson(), lrsResidentStatements: residentStatementCount(), lrsResidentStatementsBudget: residentStatementBudget() });
     });
 
     // Prepare only a requested wallet-authenticated surface's directory, before its
@@ -5993,6 +6009,7 @@ const app = createVerticalBridge({
       bearerTenantResolver: cmi5BearerTenant,
       // ...and to the launch's registration: one launch's token cannot read or write another's.
       bearerRegistrationResolver: cmi5BearerRegistration,
+      bearerActorResolver: cmi5BearerActor,
       // Verify wallet-signed Foxxi session-token Bearers against the published directory
       // (round-47: the gate previously accepted ANY Bearer as DEFAULT_TENANT). Directory
       // users get a deterministic wallet so a token minted for a known user_id verifies.
@@ -6025,7 +6042,8 @@ const app = createVerticalBridge({
             (await getStatementStore(tenant).query({ registration: reg, limit: 500 }))
               .statements.map(r => r.statement),
           emit: async (s) => {
-            const id = await storeStatementDurably(s, tenant);
+            // `satisfied` is the LMS's to say, and is stored under the LMS's authority.
+            const id = await storeStatementDurably(s, tenant, 'lms');
             if (!id) throw new Error('cmi5 satisfaction statement was not committed');
             if (own) keepCmi5OnLearnerPod({ ...s, id }, own);
           },
@@ -6069,6 +6087,7 @@ const app = createVerticalBridge({
     });
     // Foxxi as its own LMS: the Platform that launches the Tool above.
     attachLtiPlatformRoutes(a, ltiPlatform);
+    scopedLti?.attach(a);
 
     // OneRoster 1.2 — SIS / HR roster sync. Both a producer (Foxxi
     // exposes its roster) and a consumer (`POST /oneroster/v1p2/import`
@@ -6509,18 +6528,52 @@ const app = createVerticalBridge({
     // "profile-conformant" verifiable, not just declared.
     a.post('/xapi/profile/validate', (req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
+      // With a `profile` beside the statement, the check is against that profile's templates
+      // (src/xapi-profile-supplied.ts): the caller's own xAPI Profile, read from the request and
+      // neither stored nor fetched. Without one it is Foxxi's own profile, as before.
+      // With `statements` (the ordered statements of one registration) in place of one statement,
+      // the check is against that profile's patterns (src/xapi-profile-patterns.ts). Both are on
+      // demand: nothing here refuses or alters what the LRS keeps.
+      const sent = (req.body && typeof req.body === 'object' && !Array.isArray(req.body)) ? req.body as Record<string, unknown> : undefined;
+      if (sent && (sent.profile !== undefined || sent.statements !== undefined)) {
+        const answer = answerSuppliedProfileRequest(sent);
+        if (answer.status === 200 && answer.body.checked === undefined) {
+          // One statement: the same statement and templates through the specification's own
+          // algorithm (src/xapi-profile-server/processor.ts), which the Profile Server's
+          // /validate_templates answers with. The two differ by design in one place: this route
+          // picks templates by verb and reports each rule; the algorithm matches on every
+          // determining property.
+          try {
+            const templates = Array.isArray((sent.profile as Record<string, unknown>).templates) ? (sent.profile as { templates: unknown[] }).templates : [];
+            const r = profileValidates((sent.instance ?? sent.statement) as never, templates as never);
+            answer.body.specification = { outcome: r.outcome, templates: r.templates, findings: r.findings, ...(r.skipped.length ? { notChecked: r.skipped } : {}) };
+          } catch (e) { answer.body.specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
+        }
+        res.status(answer.status).json(answer.body);
+        return;
+      }
       const r = validateAgainstProfileTemplates(readInstance(req));
       // conforms is only meaningful when a template applied. An unknown or
       // template-less verb is reported honestly, never as a bare conforms:true.
       const verdict = !r.verbDeclared ? 'unknown-verb'
         : !r.applicable ? 'no-applicable-template'
           : (r.violations.length === 0 ? 'conformant' : 'non-conformant');
+      // The same statement through the specification's own algorithm, which matches on every
+      // determining property and requires every matched template to be followed; this route's own
+      // verdict accepts any one template selected by verb and object type.
+      let specification: Record<string, unknown>;
+      try {
+        const own = ownXapiProfileDoc({ generatedAt: OWN_XAPI_PROFILE_GENERATED_AT }) as { templates?: unknown[] };
+        const s = profileValidates(readInstance(req) as never, (own.templates ?? []) as never);
+        specification = { outcome: s.outcome, templates: s.templates, findings: s.findings, ...(s.skipped.length ? { notChecked: s.skipped } : {}) };
+      } catch (e) { specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
       res.json({
         ok: true, profile: xapiProfileUrl, verb: r.verb,
         verbDeclared: r.verbDeclared, applicable: r.applicable, verdict,
         matchedTemplates: r.matchedTemplates,
         conforms: r.applicable && r.violations.length === 0,
         violations: r.violations,
+        specification,
       });
     });
 
@@ -9324,33 +9377,18 @@ app.post('/agent/record-performance', async (req, res) => {
       });
       return;
     }
-    const outcomeVerb = momOutcomeVerb(p.success as boolean);
-    const statement: Record<string, unknown> = {
-      id: randomUUID(),
-      version: '2.0.0',
-      actor: { objectType: 'Agent', account: { homePage: bridgeBaseUrl, name: callerDid } },
-      verb: outcomeVerb,
-      object: { objectType: 'Activity', id: taskId, definition: { name: { en: taskName }, type: activityType } },
-      result: {
-        success: p.success,
-        ...(quality !== undefined ? { score: { scaled: quality } } : {}),
-        ...(typeof p.duration_iso === 'string' && p.duration_iso ? { duration: p.duration_iso } : {}),
-      },
-      context: {
-        registration: randomUUID(),
-        contextActivities: { category: [{ id: xapiProfileUrl, objectType: 'Activity' }] },
-        extensions: {
-          [PERF_EXT.observedBy]: callerDid,
-          [PERF_EXT.contextKind]: 'production',
-          [PERF_EXT.actorKind]: (p.actor_kind === 'human' ? 'human' : 'agent'),
-          [EVIDENCE_BINDING_EXT]: evidence.binding,
-          ...(evidence.shapeIri ? { [EVIDENCE_SHAPE_EXT]: evidence.shapeIri } : {}),
-          ...(typeof p.cost_usd === 'number' ? { [PERF_EXT.costUsd]: p.cost_usd } : {}),
-          ...(workSteps ? { [PERF_EXT.workTrajectory]: workSteps } : {}),
-        },
-      },
-      timestamp: new Date().toISOString(),
-    };
+    const statement = buildPerformanceStatement({
+      id: randomUUID(), registration: randomUUID(), timestamp: new Date().toISOString(),
+      homePage: bridgeBaseUrl, performer: callerDid,
+      taskId, taskName, activityType,
+      success: p.success as boolean,
+      ...(quality !== undefined ? { quality } : {}),
+      ...(typeof p.duration_iso === 'string' && p.duration_iso ? { durationIso: p.duration_iso } : {}),
+      profileUrl: xapiProfileUrl, observedBy: callerDid, actorKind: p.actor_kind === 'human' ? 'human' : 'agent',
+      evidence: { binding: evidence.binding, ...(evidence.shapeIri ? { shapeIri: evidence.shapeIri } : {}) },
+      ...(typeof p.cost_usd === 'number' ? { costUsd: p.cost_usd } : {}),
+      ...(workSteps ? { workTrajectory: workSteps } : {}),
+    });
     // Awaited (storeStatementDurably): the store's write can fail after it has taken the statement,
     // and storeStatementInternal answered with the id regardless.
     const statementId = await storeStatementDurably(statement, lensTenantFor(label));
@@ -9396,7 +9434,7 @@ app.post('/agent/record-performance', async (req, res) => {
     // record); cross-seat recipients are wrapped into the encrypted lattice.
     const sharedLattice = await composeIntoSharedLattice({
       podUrl: subjectPod, agentDid: callerDid, label,
-      terms: [callerDid, outcomeVerb.id, activityType, taskId],
+      terms: [callerDid, momOutcomeVerb(p.success as boolean).id, activityType, taskId],
       content: { ...statement, id: statementId }, contentType: 'xapi:Statement',
       ts: typeof statement.timestamp === 'string' ? statement.timestamp : undefined,
       projections: ['rdf', 'vc', 'activity'],
@@ -9861,7 +9899,8 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
         return;
       }
       if (operation === 'telemetry-capture-read' || operation === 'telemetry-capture-update') {
-        const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...settings } = bound.payload;
+        // The signer's own fields are not settings; the settings validator refuses any key it does not know.
+        const settings = withoutRelaySignedFields(bound.payload);
         const preferences = operation === 'telemetry-capture-read'
           ? await readCapturePreferences(bound.callerDid, captureStore)
           : await updateCapturePreferences(bound.callerDid, settings, captureStore);
@@ -9889,6 +9928,9 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
           },
           restore: async statement => {
             if (!statement.stored || !statement.authority) throw new Error('durable record is missing its LRS-assigned envelope');
+            // Read back from the caller's own pod, which the caller can write. A record there naming the
+            // LMS's authority was not put there by the LMS, and is not restored as if it had been.
+            if (claimsLmsAuthority(statement)) throw new Error('durable record names an authority only this LMS assigns');
             await getStatementStore(tenant).put({ id: String(statement.id), statement, stored: String(statement.stored), voided: false });
           },
           request: createSelfXapiRequest({ port: PORT, principal, secret, timeoutMs: signedXapiTimeoutMs }),
@@ -9933,9 +9975,9 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
         } else if (operation === 'telemetry-query') {
           let query;
           try {
-            // The signature binder adds identity/time fields; only the query options
-            // supplied by the caller are passed to its closed schema.
-            const { agent_id: _agent, subject_pod_url: _pod, timestamp: _time, ...options } = bound.payload;
+            // The signature binder adds identity/time fields (and the relay its pod stamp and client_id);
+            // only the query options supplied by the caller are passed to its closed schema.
+            const options = withoutRelaySignedFields(bound.payload);
             query = normalizeQuery(options.query ?? options);
           } catch (error) { res.status(400).json({ error: (error as Error).message }); return; }
           const report = telemetryReport(bound.callerDid, await deps.snapshot(), query, deps.now());
@@ -10169,7 +10211,7 @@ async function emitAgentActivity(args: {
       verb: { id: args.verbIri, display: { en: args.verbDisplay } },
       object: { objectType: 'Activity', id: args.objectId, definition: { name: { en: args.objectName }, type: args.objectType } },
       ...(args.result ? { result: args.result } : {}),
-      context: { extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
+      context: { contextActivities: { category: performanceCategoriesFor(args.objectType) }, extensions: { [PERF_EXT.observedBy]: args.actorDid, [PERF_EXT.contextKind]: args.contextKind ?? 'production', [PERF_EXT.actorKind]: 'agent' } },
       timestamp: new Date().toISOString(),
     };
     const id = await storeStatementDurably(statement, lens);
@@ -10919,6 +10961,174 @@ app.get('/agent/memories', async (req, res) => {
   res.json({ ok: true, count: memories.length, commons: `${base}/agent/memories`, inbox, memories });
 });
 
+// ── The xAPI Profile Server ──────────────────────────────────────────────────────
+//
+// xAPI Profiles, Part Three, section 1, made of what is already here (src/xapi-profile-server/):
+// each profile version is a holon in a PUBLIC lattice on the commons pod, with the exact document
+// as its content, and its RDF is a projection of that holon; the SPARQL endpoint is @interego/pgsl's
+// engine over a named graph per version; the two validation APIs are the specification's algorithms; and
+// adding a profile is a signed affordance, so "administrator" means the agent that signed.
+//
+// A dedicated pod resource, like the memory commons and for the same two reasons: it holds only
+// what was published to be public, so node-addressing it leaks nothing, and it sits at a fixed
+// address a cold replica can read back.
+const XAPI_PROFILES_POD = (process.env.FOXXI_XAPI_PROFILES_POD ?? MEMORY_COMMONS_POD);
+const XAPI_PROFILES_LABEL = 'xapi-profiles';
+const XAPI_PROFILES_RESOURCE = 'xapi-profiles';
+const XAPI_PROFILE_RECORD = 'xapi:ProfileRecord';
+const xapiProfileServerBase = `${bridgeBaseUrl}/xapi/profiles`;
+
+const xapiProfileServer = new ProfileServer({
+  // Foxxi's own profile and the xapi-x profile: both are this deployment's, served from its code.
+  builtIn: () => builtInProfiles() as never,
+  isOperator: did => adminWebId !== '' && did === adminWebId,
+  hydrate: async () => {
+    if (!XAPI_PROFILES_POD) return [];
+    await ensureResident(XAPI_PROFILES_POD, XAPI_PROFILES_POD, XAPI_PROFILES_LABEL, undefined, XAPI_PROFILES_RESOURCE);
+    markLatticePublic(XAPI_PROFILES_LABEL);
+    const records = latticeArtifacts(XAPI_PROFILES_LABEL, XAPI_PROFILE_RECORD).map(a => a.content as ProfileRecord).filter(r => r && typeof r.at === 'string');
+    bridgeLog(`[foxxi-bridge][xapi-profiles] ${records.length} profile record(s) read back from the lattice`);
+    return records;
+  },
+  persist: async (record, held) => {
+    if (!XAPI_PROFILES_POD) return { persisted: false };
+    // The spine is the profile and its version; the document is the holon's content, and its
+    // triples are projected from that when the bridge starts. Composing every triple into the
+    // lattice was measured first: a 19 KB profile of 545 triples became 7,398 nodes and an
+    // 18.9 MB pod write, against 36 KB this way, and the pod refuses a resource a few times that.
+    const sl = await composeIntoSharedLattice({
+      podUrl: XAPI_PROFILES_POD, agentDid: record.by, label: XAPI_PROFILES_LABEL,
+      resourceName: XAPI_PROFILES_RESOURCE,
+      terms: record.kind === 'removed' ? [record.iri] : held ? [held.id, held.version] : [],
+      content: record as unknown as Record<string, unknown>,
+      contentType: XAPI_PROFILE_RECORD, projections: ['rdf'],
+      publicLattice: true,
+    });
+    return { ...(sl?.holonUri ? { holonUri: sl.holonUri } : {}), persisted: sl?.persisted === true };
+  },
+});
+
+mountProfileServerReads(app, xapiProfileServer, {
+  base: xapiProfileServerBase,
+  urlencoded: express.urlencoded({ extended: false, limit: '2mb' }),
+  text: express.text({ type: ['application/sparql-query', 'text/plain'], limit: '64kb' }),
+  addTarget: `${bridgeBaseUrl}/agent/xapi-profiles/add`,
+  removeTarget: `${bridgeBaseUrl}/agent/xapi-profiles/remove`,
+});
+
+/** Hosts a profile may be fetched from by URI. Anything else is added by its contents. */
+const XAPI_PROFILE_URI_HOSTS: readonly string[] = (process.env.FOXXI_XAPI_PROFILE_URI_HOSTS ?? 'profiles.adlnet.gov,raw.githubusercontent.com,w3id.org')
+  .split(',').map(h => h.trim().toLowerCase()).filter(h => /^[a-z0-9.-]+$/.test(h));
+const xapiProfileWriteRateLimit = rateLimit({
+  windowMs: 3_600_000, limit: 60, ipv6Subnet: 56, identifier: 'xapi-profiles',
+  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+});
+const xapiProfileAddsBySigner = new SignerHourlyLimit(Number(process.env.FOXXI_XAPI_PROFILE_ADDS_PER_HOUR ?? 12));
+
+/** Read a profile from where it is published. Public targets only, bounded, never followed inward. */
+async function fetchProfileByUri(uri: string): Promise<unknown> {
+  let url: URL;
+  try { url = new URL(uri); } catch { throw new ProfileServerError(400, '`uri` is not a URL.'); }
+  if (url.protocol !== 'https:' || url.port !== '' || url.username !== '' || url.password !== '') throw new ProfileServerError(400, 'A profile is fetched over https, on the default port, with no credentials in the address.');
+  // The host is one this deployment names, and the address fetched is built from that name, not
+  // from the caller's text: a signed caller chooses a path on a listed host and nothing else.
+  const host = XAPI_PROFILE_URI_HOSTS.find(h => h === url.hostname.toLowerCase());
+  if (!host) throw new ProfileServerError(400, `Profiles are fetched from ${XAPI_PROFILE_URI_HOSTS.join(', ') || 'no host'} here. Send a profile published elsewhere by its contents, as \`profile\`.`);
+  const target = `https://${host}${url.pathname}${url.search}`;
+  try { await assertSafeFetchTarget(target); } catch { throw new ProfileServerError(400, 'That host is not a public target.'); }
+  let resp: Response;
+  try {
+    resp = await (guardedFetchFn(globalThis.fetch) as typeof fetch)(target, {
+      headers: { Accept: 'application/ld+json, application/json' }, signal: AbortSignal.timeout(10_000),
+    });
+  } catch (e) { throw new ProfileServerError(502, `The profile could not be fetched: ${(e as Error).message}`); }
+  if (!resp.ok) throw new ProfileServerError(502, `The profile could not be fetched: its host answered ${resp.status}.`);
+  const declared = Number(resp.headers.get('content-length') ?? 0);
+  if (declared > MAX_PROFILE_BYTES) throw new ProfileServerError(413, `The document there is ${declared} bytes; profiles of up to ${MAX_PROFILE_BYTES} are held.`);
+  const text = await resp.text();
+  if (Buffer.byteLength(text) > MAX_PROFILE_BYTES) throw new ProfileServerError(413, `The document there is larger than ${MAX_PROFILE_BYTES} bytes.`);
+  try { return JSON.parse(text); } catch { throw new ProfileServerError(400, 'What is published there is not JSON.'); }
+}
+
+// POST /agent/xapi-profiles/add — add a profile version, by its contents (`profile`) or by where
+// it is published (`uri`). Signed: the profile is held under the agent that added it.
+app.post('/agent/xapi-profiles/add', xapiProfileWriteRateLimit, async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const admitted = xapiProfileAddsBySigner.admit(auth.callerDid);
+    if (!admitted.ok) {
+      res.setHeader('Retry-After', String(admitted.retryAfterSeconds));
+      res.status(429).json({ error: 'this signer has added as many profiles as one signer may in an hour; try again later', retryAfterSeconds: admitted.retryAfterSeconds });
+      return;
+    }
+    const p = auth.payload;
+    if ((p.profile === undefined) === (p.uri === undefined)) { res.status(400).json({ error: 'send the profile itself as `profile`, or where it is published as `uri` — one of the two' }); return; }
+    const uri = typeof p.uri === 'string' ? p.uri : undefined;
+    const doc = uri !== undefined ? await fetchProfileByUri(uri) : p.profile;
+    const r = await xapiProfileServer.add(doc as never, auth.callerDid, uri);
+    const document = `${xapiProfileServerBase}/profile?iri=${encodeURIComponent(r.held.version)}`;
+    sendActionResult(req, res, {
+      ok: true, profile: r.held.id, version: r.held.version, replaced: r.replaced,
+      current: xapiProfileServer.dataset.get(r.held.id)?.version === r.held.version,
+      triples: r.held.stated.length, addedBy: auth.callerDid,
+      graph: r.held.version, document,
+      sparql: `${xapiProfileServerBase}/sparql`,
+      validateTemplates: `${xapiProfileServerBase}/validate_templates`,
+      validatePatterns: `${xapiProfileServerBase}/validate_patterns`,
+      server: xapiProfileServerBase,
+      holonUri: r.holonUri ?? null, persisted: r.persisted,
+    }, bridgeBaseUrl, 'Profile added', []);
+  } catch (err) {
+    if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
+    sendServerError(res, err, 'route-handler');
+  }
+});
+
+// POST /agent/xapi-profiles/remove — take down a profile (every version) or one version. The
+// agent that added it, or the operator. The lattice is append-only, so what is recorded is the
+// removal; the earlier holon stays addressable and the server stops answering from it.
+app.post('/agent/xapi-profiles/remove', xapiProfileWriteRateLimit, async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const iri = typeof auth.payload.iri === 'string' ? auth.payload.iri : '';
+    if (!iri) { res.status(400).json({ error: 'name the profile or the version to take down as `iri`' }); return; }
+    const r = await xapiProfileServer.remove(iri, auth.callerDid);
+    sendActionResult(req, res, { ok: true, removed: r.removed, persisted: r.persisted, server: xapiProfileServerBase }, bridgeBaseUrl, 'Profile taken down', []);
+  } catch (err) {
+    if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
+    sendServerError(res, err, 'route-handler');
+  }
+});
+
+// Writing a profile here and hosting it: a draft, a lint, a publication, and every IRI of a held
+// profile answering with content negotiation (src/xapi-profile-server/authoring.ts). Drafts are
+// held in memory; a published version goes to the lattice with the versions that were added, and
+// is published only once that write is acknowledged (with no pod configured, nothing is published).
+const xapiProfileAuthoring = new ProfileAuthoring(xapiProfileServer, { hostedUnder: `${xapiProfileServerBase}/p/` });
+mountProfileAuthoring(app, xapiProfileAuthoring, {
+  base: xapiProfileServerBase,
+  verify: async body => {
+    const auth = await verifyDelegatedCaller(body as never);
+    return auth.ok ? { ok: true, callerDid: auth.callerDid, payload: auth.payload as Record<string, unknown> } : { ok: false, status: auth.status, error: auth.error };
+  },
+  // Writing a profile is many small edits, so it has its own allowance, apart from adding whole profiles.
+  limit: { windowMs: 3_600_000, limit: 600, ipv6Subnet: 56, identifier: 'xapi-profile-authoring' },
+  // A published version goes to the same public lattice an added one does, under the same count per signer.
+  beforePublish: did => {
+    const admitted = xapiProfileAddsBySigner.admit(did);
+    if (!admitted.ok) throw new ProfileServerError(429, `This signer has added or published as many profile versions as one signer may in an hour; try again in ${admitted.retryAfterSeconds} seconds.`);
+  },
+  send: (req, res, payload, title) => { sendActionResult(req, res, payload, bridgeBaseUrl, title, []); },
+});
+mountProfileHosting(app, xapiProfileServer, {
+  base: xapiProfileServerBase,
+  // The deployment's own profile is served at /xapi/profile; its version, templates and patterns
+  // have IRIs beneath that, which answered nothing.
+  own: OWN_XAPI_PROFILE_ID.startsWith(`${bridgeBaseUrl}/`) ? [{ path: new URL(OWN_XAPI_PROFILE_ID).pathname, iri: OWN_XAPI_PROFILE_ID }] : [],
+});
+
 // ── Credentials through any signed connection ─────────────────────────────────────────────────
 //
 // The same claim as foxxi.claim_credential, for the courses this bridge's SCORM engine grades,
@@ -10927,6 +11137,27 @@ app.get('/agent/memories', async (req, res) => {
 // connector, or anyone signed in to the relay) reaches Foxxi. The record read is the signer's
 // own pod, derived from the signature and never named by the caller; a delegated claim is
 // issued to the person the delegation names, not to the agent carrying it.
+
+/**
+ * Who a personal launch link is for. A wallet is itself. A delegate is the person the delegation
+ * names, and the link ends when that delegation does. A read that fails does not bind the link to
+ * the agent: the caller is told to try again.
+ */
+async function signedLearnerForLink(auth: { callerDid: string }): Promise<{ did: string; podUrl: string; via?: string; delegationExpiresAt?: string }> {
+  const podUrl = selfBoundPod(auth.callerDid);
+  if (auth.callerDid.startsWith('did:ethr:')) return { did: auth.callerDid, podUrl };
+  let vc;
+  try {
+    vc = await readDelegationCredential(resolveSubjectPodUrl(auth.callerDid), auth.callerDid as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never });
+  } catch {
+    throw new PersonalLinkAuthError(503, 'the delegation could not be read just now; the link was not bound to the agent');
+  }
+  if (!vc) throw new PersonalLinkAuthError(401, 'this agent has no delegation to act as a person');
+  const person = vc.credentialSubject?.delegatedBy ?? vc.issuer;
+  if (!person || person === auth.callerDid) throw new PersonalLinkAuthError(503, 'the delegation could not be read just now; the link was not bound to the agent');
+  if (vc.expirationDate && Date.parse(vc.expirationDate) <= Date.now()) throw new PersonalLinkAuthError(401, 'this delegation has expired');
+  return { did: String(person), podUrl, via: auth.callerDid, ...(vc.expirationDate ? { delegationExpiresAt: vc.expirationDate } : {}) };
+}
 
 /** Who a signed caller is learning as, and whose record and wallet that means. */
 async function signedLearner(auth: { callerDid: string }): Promise<{ did: string; podUrl: string; via?: string }> {
@@ -11018,7 +11249,20 @@ app.post('/agent/credentials/claim', async (req, res) => {
 // with foxxi.upload_scorm_package; kept on the tenant pod by sha-256; played as a cmi5 course
 // through the signed launch below, the SCOs' statements sent with that launch's auth-token.
 
-const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage });
+// The operator's take-down list (FOXXI_HOSTED_PACKAGES_TAKEN_DOWN: sha-256s, comma or space
+// separated). Whoever sets this service's variables is its operator, so this needs no signer: a
+// listed package is removed at start, its course forgotten, and it is not kept again while listed.
+const hostedPackagesTakenDown = takenDownPackages(process.env.FOXXI_HOSTED_PACKAGES_TAKEN_DOWN);
+for (const entry of hostedPackagesTakenDown.ignored) bridgeWarn(`[foxxi-bridge] FOXXI_HOSTED_PACKAGES_TAKEN_DOWN: "${entry}" is not a sha-256 (64 hex characters); it takes nothing down`);
+const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage, takenDown: hostedPackagesTakenDown.shas });
+/** Remove what the operator listed, and forget each one's course. Run once the bridge is listening. */
+async function takeDownListedPackages(): Promise<void> {
+  for (const taken of await hostedPackages.removeTakenDown()) {
+    const courseForgotten = unregisterCmi5Course(DEFAULT_TENANT, `${bridgeBaseUrl}/scorm/packages/${taken.sha256}`);
+    if (taken.removed) bridgeLog(`[foxxi-bridge] hosted package ${taken.sha256} is taken down by the operator's list${courseForgotten ? '; its course is forgotten' : ''}`);
+    else bridgeWarn(`[foxxi-bridge] hosted package ${taken.sha256} is on the operator's take-down list and was not removed: ${taken.why ?? 'the pod did not remove it'}`);
+  }
+}
 
 /**
  * What a kept package's bytes say it is, parsed as an upload is and under the same inflation
@@ -11094,6 +11338,209 @@ attachHostedPackageRoutes(app, {
   onError: sendServerError,
 });
 
+// ── A package brought by anyone who signs ──────────────────────────────────────────────────────
+//
+// foxxi.upload_scorm_package is the operator's, by directory role. This is the same upload for a
+// wallet or a delegated agent with no account here, bounded as src/open-hosting.ts says: parsed and
+// kept the same way, the signer named as the uploader on its receipt, and played by the launch below.
+
+const openHosting = openHostingSettings(process.env);
+const openHostingBySigner = new SignerHourlyLimit(openHosting.perSignerHourly);
+const openHostingRateLimit = forwardedRateLimit({ windowMs: 3_600_000, limit: 20, identifier: 'open-hosting' });
+// ── A course page anyone can start (src/cmi5-player.ts) ─────────────────────────────────────────
+//
+// The learner is an Interego owner the learning account already signs in: a provisional guest
+// (u-try-play-, browser key) or an existing account. This only launches that owner's cmi5 attempt
+// and, when they hold both, records that the two actors are one reader. The book is the open
+// attempts and those links, kept beside the other lattice JSON so a restart can resume.
+const PLAYER_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/cmi5-player.json` : '';
+const playerBook = new PlayerBook();
+async function readPlayerBook(): Promise<boolean> {
+  if (!PLAYER_RESOURCE) return true;
+  const since = playerBook.generation;
+  try {
+    const response = await (globalThis.fetch as typeof fetch)(PLAYER_RESOURCE, { headers: { Accept: 'application/json' } });
+    if (response.status === 404) return true;
+    if (!response.ok) return false;
+    playerBook.load(await response.json());
+    // A change made while this read was in flight is still waiting to be written.
+    if (playerBook.generation === since) playerBook.dirty = false;
+    return true;
+  } catch { return false; }
+}
+async function writePlayerBook(): Promise<boolean> {
+  if (!PLAYER_RESOURCE || !playerBook.dirty) return true;
+  const f = globalThis.fetch as typeof fetch;
+  try {
+    const response = await f(PLAYER_RESOURCE, { headers: { Accept: 'application/json' } });
+    if (response.status !== 404) {
+      if (!response.ok) return false;
+      playerBook.load(await response.json());
+    }
+    const since = playerBook.generation;
+    const body = JSON.stringify(playerBook);
+    await f(PLAYER_RESOURCE.replace(/[^/]+$/, ''), { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
+    const written = await f(PLAYER_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body });
+    if (written.ok) { if (playerBook.generation === since) playerBook.dirty = false; return true; }
+  } catch { /* tried again below */ }
+  return false;
+}
+const persistPlayerBook = registryWriter(writePlayerBook);
+void readPlayerBook();
+attachCoursePlayerRoutes(app, {
+  baseUrl: bridgeBaseUrl,
+  authoritativeSource: String(authoritativeSource),
+  book: playerBook,
+  requireLearner: async (req) => {
+    const auth = coursePlayerAuth();
+    if (!auth) throw new PlayerError(503, 'player_sign_in_unavailable');
+    return learnerFromPlayerAuth(auth, req);
+  },
+  verifyGuest: async (req) => {
+    const auth = coursePlayerAuth();
+    if (!auth?.guestEnabled) throw new PlayerError(503, 'learning_guest_unavailable');
+    const guest = await auth.consumeGuestProof(req);
+    return { ...guest, guest: guest.userId.startsWith('u-try-play-') };
+  },
+  resolveCourse: async (courseId) => {
+    if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent */ } }
+    if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
+    return getCmi5Course(DEFAULT_TENANT, courseId) ?? null;
+  },
+  satisfied: learnerSatisfiedAus,
+  stageLaunch: stageLaunchData,
+  recordLaunched: async (tenant, statement, learner) => {
+    const id = await recordLaunchedStatement(tenant, statement);
+    keepCmi5OnLearnerPod({ ...statement, id }, { did: learner.did, podUrl: learner.podUrl, homePage: String(authoritativeSource) });
+  },
+  tenantFor: (learner) => lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS)),
+  dropSatisfaction: (tenant, learnerId, auIds) => { dropLearnerSatisfaction(tenant, learnerId, auIds); },
+  voidClaims: async (ownerDid, tenant, guestDid, where) => {
+    const result = await voidActorStatements({
+      did: ownerDid, homePage: String(authoritativeSource),
+      list: async () => (await getStatementStore(tenant).listAll()).filter(rec => statementNamesGuest(rec.statement, guestDid)),
+      store: (statement) => storeStatementDurably(statement, tenant),
+      mark: (targetId, voidingId) => getStatementStore(tenant).markVoided(targetId, voidingId),
+    });
+    await persistVoidCopies(result.voids, statement => keepCmi5OnLearnerPod(statement, { did: ownerDid, podUrl: where.podUrl, homePage: String(authoritativeSource) }));
+    return result.forgotten;
+  },
+  forgetActor: async (did, tenant, where) => {
+    const result = await voidActorStatements({
+      did, homePage: String(authoritativeSource),
+      list: () => getStatementStore(tenant).listAll(),
+      store: (statement) => storeStatementDurably(statement, tenant),
+      mark: (targetId, voidingId) => getStatementStore(tenant).markVoided(targetId, voidingId),
+    });
+    const launches = forgetCmi5Learner(tenant, did);
+    await clearActorStateDocuments(tenant, { homePage: String(authoritativeSource), name: did });
+    // The caller's pod, not only a launch still held in memory. A restart has no launch record,
+    // and the voids are still this learner's to keep.
+    const podUrl = where?.podUrl ?? launches.find(launch => launch.podUrl)?.podUrl;
+    if (podUrl) await persistVoidCopies(result.voids, statement => keepCmi5OnLearnerPod(statement, { did, podUrl, homePage: String(authoritativeSource) }));
+    return result.forgotten;
+  },
+  statementIds: async (did, tenant) => (await listStoredStatements(tenant))
+    .filter(rec => !rec.voided && (rec.statement.actor as { account?: { name?: string } } | undefined)?.account?.name === did)
+    .map(rec => rec.id),
+  storeStatement: (statement, tenant) => storeStatementDurably(statement, tenant),
+  onChange: persistPlayerBook,
+});
+
+// ── The front door: what a newcomer can do here, as a page for a person and as data for an agent.
+// It names only what this deployment offers (src/front-door.ts).
+app.get('/start', (req, res) => {
+  const dashboardUrl = process.env.FOXXI_DASHBOARD_URL ?? process.env.FOXXI_DASHBOARD_ORIGIN?.split(',')[0]?.trim();
+  const door = frontDoor({
+    bridgeUrl: bridgeBaseUrl.replace(/\/+$/, ''),
+    ...(dashboardUrl ? { dashboardUrl } : {}),
+    offered: new Set(activeAffordances.map(a => a.toolName)),
+    openHosting: { enabled: openHosting.enabled, maxZipMb: Math.floor(openHosting.maxZipBytes / (1024 * 1024)), perSignerHourly: openHosting.perSignerHourly },
+  });
+  res.vary('Accept');
+  res.setHeader('Access-Control-Allow-Origin', '*');
+  if (req.accepts(['application/json', 'text/html']) === 'text/html') {
+    res.setHeader('Content-Security-Policy', "default-src 'none'; style-src 'unsafe-inline'");
+    res.type('text/html').send(frontDoorHtml(door));
+    return;
+  }
+  res.json(door);
+});
+
+// ── A guest their browser keeps (src/play-grant.ts, DURABLE-GUEST.md) ───────────────────────
+// Off unless FOXXI_PLAY_SERVICE_PRIVATE_KEY and FOXXI_PLAY_AUDIENCE are both set. /play/guest says
+// which, so the dashboard asks for nothing it will be refused; /play/grant hands the one browser key
+// a request names the relay-signed grant identity admits a provisional owner on; /play/status is
+// the operator's check of the setup. None of the three takes or returns a credential.
+const playGrantSettings = playGrantConfig(process.env);
+const playGrants = playGrantSettings ? new PlayGrantService(playGrantSettings) : null;
+// The I2IDL-X learner workbench is a second application to identity, with its own service account
+// (i2idlx/LEARNING-CONNECTIONS.md, "Guest learners"). Off unless
+// FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY is set; the workbench's guest routes are its only caller.
+const learnerGuestSettings = learnerGuestGrantConfig(process.env, bridgeBaseUrl);
+const learnerGuestGrants = learnerGuestSettings ? new PlayGrantService(learnerGuestSettings) : null;
+const playGrantRateLimit = rateLimit({
+  windowMs: 3_600_000, limit: 10, ipv6Subnet: 56, identifier: 'play-grant',
+  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+});
+const playStatusRateLimit = rateLimit({
+  windowMs: 60_000, limit: 6, ipv6Subnet: 56, identifier: 'play-status',
+  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+});
+app.get('/play/guest', (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  res.json(playGrantSettings
+    ? { enabled: true, audience: playGrantSettings.audience, identityUrl: playGrantSettings.identityUrl }
+    : { enabled: false });
+});
+app.post('/play/grant', playGrantRateLimit, async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  if (!playGrants || !playGrantSettings) { res.status(404).json({ error: 'durable_guest_disabled' }); return; }
+  // Only the page identity is configured to admit guests for is handed a grant. A browser sets
+  // Origin itself, so this keeps another site's page from spending this application's admissions;
+  // it is no defence against a client that is not a browser, which the rate limit and identity's
+  // own caps bound.
+  if (req.headers.origin !== playGrantSettings.audience) { res.status(403).json({ error: 'play_grant_origin' }); return; }
+  try { res.json(await playGrants.grant(playGrantRequestBody(req.body))); }
+  catch (error) {
+    if (error instanceof PlayGrantError) { res.status(error.status).json({ error: error.code }); return; }
+    res.status(503).json({ error: 'play_grant_unavailable' });
+  }
+});
+app.get('/play/status', playStatusRateLimit, async (_req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  try {
+    res.json({ ...(playGrants ? await playGrants.status() : { enabled: false }),
+      ...(learnerGuestGrants ? { learnerWorkbench: await learnerGuestGrants.status() } : {}) });
+  } catch { res.status(503).json({ enabled: !!playGrants, ready: false, problem: 'status unavailable' }); }
+});
+
+app.post('/agent/scorm/host', openHostingRateLimit, async (req, res) => {
+  try {
+    if (!openHosting.enabled) { res.status(404).json({ error: 'hosting a package by signed request is closed on this bridge; an operator hosts with foxxi.upload_scorm_package' }); return; }
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const asked = openHostingRequest(auth.payload, openHosting);
+    if (!asked.ok) { res.status(asked.status).json({ error: asked.error }); return; }
+    const admitted = openHostingBySigner.admit(auth.callerDid);
+    if (!admitted.ok) {
+      res.setHeader('Retry-After', String(admitted.retryAfterSeconds));
+      res.status(429).json({ error: `this signer has brought ${openHosting.perSignerHourly} packages in the last hour; try again later`, retryAfterSeconds: admitted.retryAfterSeconds });
+      return;
+    }
+    const result = await uploadScormPackage({
+      tenantPodUrl: tenantPodUrl,
+      zipBase64: asked.zipBase64,
+      ...(asked.hintedTitle ? { hintedTitle: asked.hintedTitle } : {}),
+      uploaderDid: auth.callerDid,
+      host: (bytes, parsed) => hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable),
+      keepExport: (bytes, exported) => hostProjectExport(bytes, exported),
+    });
+    const refused = result.kind === 'refusal' && typeof result['iep:refusalStatus'] === 'number' ? result['iep:refusalStatus'] : undefined;
+    res.status(refused ?? 200).json({ ...result, uploader: auth.callerDid });
+  } catch (err) { sendServerError(res, err, 'open-hosting'); }
+});
+
 // ── cmi5 for a signed learner ─────────────────────────────────────────────────────────────────
 //
 // GET /cmi5/launch names any learner, so it is the operator's. This is the learner's own, signed
@@ -11103,20 +11550,37 @@ attachHostedPackageRoutes(app, {
 // grading tag. A cmi5 AU reports its own result, so it adds experience to the record, not graded
 // evidence for a credential.
 
-/** Keep one of a learner's own cmi5 statements on their pod, where the learner record reads it. */
-function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did: string; podUrl: string; homePage: string }): void {
+/** Keep one of a learner's own cmi5 statements on their pod, where the learner record reads it. False when that copy did not land. */
+async function keepCmi5OnLearnerPod(statement: Record<string, unknown>, learner: { did: string; podUrl: string; homePage: string }): Promise<boolean> {
   // Only the launch's own actor, whole: an AU is handed that Agent, and a statement about anyone
   // else (another homePage naming the same DID, or a Group) is not this learner's record to keep.
   const actor = statement.actor as { objectType?: unknown; account?: { homePage?: unknown; name?: unknown } } | undefined;
-  if ((actor?.objectType ?? 'Agent') !== 'Agent' || actor?.account?.name !== learner.did || actor?.account?.homePage !== learner.homePage) return;
+  if ((actor?.objectType ?? 'Agent') !== 'Agent' || actor?.account?.name !== learner.did || actor?.account?.homePage !== learner.homePage) return true;
   const verbId = String((statement.verb as { id?: unknown } | undefined)?.id ?? '');
   const objectId = String((statement.object as { id?: unknown } | undefined)?.id ?? '');
-  void composeIntoSharedLattice({
-    podUrl: learner.podUrl, agentDid: learner.did, label: actorForPod(learner.podUrl, MESH_ACTOR_LABELS),
-    terms: [learner.did, verbId, objectId], content: statement, contentType: 'xapi:Statement',
-    ...(typeof statement.timestamp === 'string' ? { ts: statement.timestamp } : {}),
-    projections: ['rdf', 'vc', 'activity'],
-  }).catch((e) => bridgeWarn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message));
+  try {
+    await composeIntoSharedLattice({
+      podUrl: learner.podUrl, agentDid: learner.did, label: actorForPod(learner.podUrl, MESH_ACTOR_LABELS),
+      terms: [learner.did, verbId, objectId], content: statement, contentType: 'xapi:Statement',
+      ...(typeof statement.timestamp === 'string' ? { ts: statement.timestamp } : {}),
+      projections: ['rdf', 'vc', 'activity'],
+    });
+    return true;
+  } catch (e) {
+    bridgeWarn('[foxxi][cmi5] keeping a statement on the learner pod failed:', (e as Error).message);
+    return false;
+  }
+}
+
+/**
+ * Any published cmi5 course, by the id the caller names. Registered courses live in the default
+ * tenant and are restored from the pod after a restart; a hosted package is restored from its bytes.
+ * The learner's own record is a different tenant, decided from their identity when the launch is built.
+ */
+async function publishedCmi5Course(courseId: string): Promise<ReturnType<typeof getCmi5Course>> {
+  if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent below */ } }
+  if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
+  return getCmi5Course(DEFAULT_TENANT, courseId);
 }
 
 app.post('/agent/cmi5/launch', async (req, res) => {
@@ -11125,10 +11589,7 @@ app.post('/agent/cmi5/launch', async (req, res) => {
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     const courseId = typeof auth.payload.course_id === 'string' ? auth.payload.course_id.trim() : '';
     if (!courseId) { res.status(400).json({ error: 'course_id is required: a cmi5 course published on this bridge (POST /content/publish-course)' }); return; }
-    // Published courses are registered in the default tenant, and come back from the pod after a restart.
-    if (!getCmi5Course(DEFAULT_TENANT, courseId)) { try { await restorePublishedCourse(DEFAULT_TENANT, courseId); } catch { /* answered as absent below */ } }
-    if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
-    const course = getCmi5Course(DEFAULT_TENANT, courseId);
+    const course = await publishedCmi5Course(courseId);
     if (!course) { res.status(404).json({ error: `no cmi5 course ${courseId} is published on this bridge` }); return; }
     const learner = await signedLearner(auth);
     const tenant = lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS));
@@ -11136,8 +11597,10 @@ app.post('/agent/cmi5/launch', async (req, res) => {
     if (!choice.ok) { res.status(choice.status).json({ error: choice.error, ...(choice.missingPrerequisites ? { missingPrerequisites: choice.missingPrerequisites } : {}) }); return; }
     const au = choice.au;
     const returnUrl = typeof auth.payload.return_url === 'string' && /^https?:\/\//.test(auth.payload.return_url) ? auth.payload.return_url : undefined;
+    const parameters = launchParametersFrom(au.launchParameters, auth.payload.launch_parameters);
+    if (!parameters.ok) { res.status(400).json({ error: parameters.error }); return; }
     const launch = buildCmi5Launch({
-      au: { id: au.id, url: new URL(au.url, `${bridgeBaseUrl}/`).toString(), moveOn: au.moveOn, title: au.title, ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}) },
+      au: { id: au.id, url: new URL(au.url, `${bridgeBaseUrl}/`).toString(), moveOn: au.moveOn, title: au.title, ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}), ...(parameters.value ? { launchParameters: parameters.value } : {}) },
       learner: { id: learner.did },
       lrsEndpoint: `${bridgeBaseUrl}/xapi`,
       fetchBaseUrl: `${bridgeBaseUrl}/cmi5/fetch`,
@@ -11148,6 +11611,10 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       learnerPod: learner.podUrl,
     });
     await stageLaunchData(tenant, launch, au.id);
+    if (launch.launched) {
+      const id = await recordLaunchedStatement(tenant, launch.launched);
+      keepCmi5OnLearnerPod({ ...launch.launched, id }, { did: learner.did, podUrl: learner.podUrl, homePage: String(authoritativeSource) });
+    }
     res.json({
       kind: 'cmi5-launch', courseId: course.id, auId: au.id, auTitle: au.title, moveOn: au.moveOn,
       ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}),
@@ -11157,6 +11624,106 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       note: 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
     });
   } catch (err) { sendServerError(res, err, 'cmi5-launch-signed'); }
+});
+
+// ── A reusable personal launch link ───────────────────────────────────────────────────────────
+//
+// The launch above is one fetch token, spent on first use and expired after 30 minutes. This mints
+// a link the learner can open again (src/cmi5-personal-link.ts): each open builds a fresh launch,
+// or continues the registration whose session has not ended, and redirects to the AU. The link is
+// kept on the tenant pod beside the dispatches, so a withdrawal survives a restart.
+const PERSONAL_LINKS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/cmi5-personal-links.json` : '';
+const personalLaunchLinks = new PersonalLaunchRegistry();
+let personalLinksReadAt = 0;
+async function readPersonalLinks(): Promise<'loaded' | 'absent' | 'failed'> {
+  if (!PERSONAL_LINKS_RESOURCE) { personalLinksReadAt = Date.now(); return 'absent'; }
+  const read = await readDurableRegistry(
+    () => (globalThis.fetch as typeof fetch)(PERSONAL_LINKS_RESOURCE, { headers: { Accept: 'application/json' } }),
+    (json) => { personalLaunchLinks.load(json); },
+  );
+  if (read !== 'failed') personalLinksReadAt = Date.now();
+  return read;
+}
+/**
+ * Write the registry to the pod. True when the pod holds what this process holds. A read that
+ * failed is not followed by a write: this process has not seen the links already there, and
+ * replacing the resource with its own copy would drop them. The write is tried again later.
+ */
+async function writePersonalLinks(): Promise<boolean> {
+  if (!PERSONAL_LINKS_RESOURCE || !personalLaunchLinks.dirty) return true;
+  personalLaunchLinks.dirty = false;
+  try {
+    const ok = await commitDurableRegistry({
+      resource: PERSONAL_LINKS_RESOURCE,
+      fetch: globalThis.fetch as typeof fetch,
+      load: (json) => { personalLaunchLinks.load(json); },
+      body: () => JSON.stringify(personalLaunchLinks),
+    });
+    if (ok) { personalLinksReadAt = Date.now(); return true; }
+  } catch { /* tried again below */ }
+  personalLaunchLinks.dirty = true;
+  return false;
+}
+const persistPersonalLinks = registryWriter(writePersonalLinks);
+void readPersonalLinks();
+
+function positiveLimit(raw: string | undefined, fallback: number): number {
+  if (!raw) return fallback;
+  const n = Number(raw);
+  return Number.isInteger(n) && n > 0 && n <= 10_000 ? n : fallback;
+}
+
+// ── The reviewed statements of a launched activity (src/cmi5-reviewed.ts) ────────────────────────
+//
+// An activity judged after its session asks here, with its cmi5 credential, for the passed, failed
+// or completed it may now send. This LMS asks the review service, signing with its own key. Where
+// to ask is a setting: all three of FOXXI_REVIEW_STATEMENTS_URL (the service's act),
+// FOXXI_REVIEW_STATEMENTS_POD (the pod it keeps its records on) and FOXXI_REVIEW_STATEMENTS_ACTION
+// (the action IRI that act is signed for), with FOXXI_BRIDGE_PRIVATE_KEY as the signing key.
+// Without them the route answers 501. The review service has to have registered this key's address.
+const reviewAsk = (() => {
+  const url = process.env.FOXXI_REVIEW_STATEMENTS_URL ?? '';
+  const podUrl = process.env.FOXXI_REVIEW_STATEMENTS_POD ?? '';
+  const action = process.env.FOXXI_REVIEW_STATEMENTS_ACTION ?? '';
+  const key = process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '';
+  if (!url && !podUrl && !action) return undefined;
+  const https = (v: string): boolean => { try { return new URL(v).protocol === 'https:'; } catch { return false; } };
+  if (!https(url) || !https(podUrl) || !/^[A-Za-z][A-Za-z0-9+.-]*:\S+$/.test(action) || !/^(0x)?[0-9a-fA-F]{64}$/.test(key)) {
+    bridgeWarn('[foxxi-bridge] WARNING: FOXXI_REVIEW_STATEMENTS_URL, _POD and _ACTION must all be set (https URLs and an action IRI) with FOXXI_BRIDGE_PRIVATE_KEY; GET /cmi5/reviewed answers 501 until they are.');
+    return undefined;
+  }
+  const wallet = importWallet(key.startsWith('0x') ? key : `0x${key}`, 'agent', 'foxxi-bridge');
+  bridgeLog(`[foxxi-bridge] reviewed statements are asked of ${new URL(url).host} as ${wallet.address}`);
+  return reviewServiceAsk({
+    url, podUrl, action, wallet,
+    fetch: async (input, init) => { await assertSafeFetchTarget(String(input)); return globalThis.fetch(input, init); },
+  });
+})();
+attachReviewedStatementsRoute(app, {
+  session: cmi5BearerSession,
+  ...(reviewAsk ? { ask: reviewAsk } : {}),
+  limiter: forwardedRateLimit({ windowMs: 60_000, limit: 30, identifier: 'cmi5-reviewed' }),
+});
+
+attachPersonalLaunchRoutes(app, {
+  baseUrl: bridgeBaseUrl,
+  registry: personalLaunchLinks,
+  authoritativeSource: String(authoritativeSource),
+  verifyCaller: verifyDelegatedCaller,
+  learnerOf: signedLearnerForLink,
+  tenantFor: (learner) => lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS)),
+  resolveCourse: async (courseId) => (await publishedCmi5Course(courseId)) ?? null,
+  satisfiedAus: learnerSatisfiedAus,
+  stageLaunch: stageLaunchData,
+  rateLimit: checkAgenticRateLimit,
+  opensPerMinute: positiveLimit(process.env.FOXXI_CMI5_GO_PER_IP, 60),
+  opensPerTokenPerMinute: positiveLimit(process.env.FOXXI_CMI5_GO_PER_TOKEN, 12),
+  persist: persistPersonalLinks,
+  reload: async () => {
+    if (personalLinksReadAt && Date.now() - personalLinksReadAt <= 30_000) return 'loaded' as const;
+    return readPersonalLinks();
+  },
+  serverError: (res, err, where) => sendServerError(res, err, where),
 });
 
 // ── Composable content: fragments and compositions ───────────────────
@@ -12281,26 +12848,27 @@ async function advanceScormPlay(play: ScormPlay, answersGiven: unknown): Promise
 const DISPATCHES_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/dispatches.json` : '';
 const scormDispatches = new DispatchRegistry();
 let dispatchesReadAt = 0;
-async function readDispatches(): Promise<void> {
-  if (!DISPATCHES_RESOURCE) return;
-  dispatchesReadAt = Date.now();
-  try {
-    const r = await (globalThis.fetch as typeof fetch)(DISPATCHES_RESOURCE, { headers: { Accept: 'application/json' } });
-    if (r.ok) scormDispatches.load(await r.json());
-  } catch { /* none yet, or the pod is unreachable: what this process holds stands */ }
+async function readDispatches(): Promise<'loaded' | 'absent' | 'failed'> {
+  if (!DISPATCHES_RESOURCE) { dispatchesReadAt = Date.now(); return 'absent'; }
+  const read = await readDurableRegistry(
+    () => (globalThis.fetch as typeof fetch)(DISPATCHES_RESOURCE, { headers: { Accept: 'application/json' } }),
+    (json) => { scormDispatches.load(json); },
+  );
+  if (read !== 'failed') dispatchesReadAt = Date.now();
+  return read;
 }
-/** Write the registry to the pod. True when the pod holds what this process holds. */
+/** Write the registry to the pod. True when the pod holds what this process holds. A failed read is not overwritten. */
 async function writeDispatches(): Promise<boolean> {
   if (!DISPATCHES_RESOURCE || !scormDispatches.dirty) return true;
   scormDispatches.dirty = false;
-  const f = globalThis.fetch as typeof fetch;
   try {
-    // Merge the durable copy in first, so another process's dispatches, counts and withdrawals are kept.
-    await readDispatches();
-    const container = DISPATCHES_RESOURCE.replace(/[^/]+$/, '');
-    await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
-    const w = await f(DISPATCHES_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(scormDispatches) });
-    if (w.ok) return true;
+    const ok = await commitDurableRegistry({
+      resource: DISPATCHES_RESOURCE,
+      fetch: globalThis.fetch as typeof fetch,
+      load: (json) => { scormDispatches.load(json); },
+      body: () => JSON.stringify(scormDispatches),
+    });
+    if (ok) { dispatchesReadAt = Date.now(); return true; }
   } catch { /* tried again below */ }
   scormDispatches.dirty = true;
   return false;
@@ -12535,20 +13103,26 @@ app.post('/agent/lti/launch', async (req, res) => {
     if (!rlL.ok) { res.status(429).json({ error: `rate limit — retry in ${rlL.retryAfterSeconds}s` }); return; }
     const courseId = typeof auth.payload.course_id === 'string' ? auth.payload.course_id.trim() : '';
     if (!courseId) { res.status(400).json({ error: 'course_id is required: a course this bridge\'s SCORM engine grades' }); return; }
-    const course = await resolveCourseForRead(courseId);
+    const connection = scopedLti?.course.id === courseId ? scopedLti : undefined;
+    const course = connection ? { courseId, title: connection.course.title } : await resolveCourseForRead(courseId);
     if (!course) { res.status(404).json({ error: `no course ${courseId} is played on this bridge's SCORM engine` }); return; }
     const learner = await signedLearner(auth);
     if (!await ltiPlatform.ensureReady()) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable', readiness: ltiPlatformReadiness.diagnostics() }); return; }
-    const start = ltiPlatform.beginLaunch({ sub: learner.did, podUrl: learner.podUrl }, { id: course.courseId, title: course.title });
+    const external = connection?.launch(learner.did, courseId);
+    if (connection && !external) { res.status(404).json({ error: 'course_not_found' }); return; }
+    const start = external?.start ?? ltiPlatform.beginLaunch({ sub: learner.did, podUrl: learner.podUrl }, { id: course.courseId, title: course.title });
     if (!start.ok) { res.status(start.status).json({ error: start.error }); return; }
+    const issuer = external?.platform ?? ltiPlatform.issuer;
     res.json({
       kind: 'lti-launch', courseId: course.courseId, title: course.title,
       initiationUrl: start.initiationUrl, expiresAt: start.expiresAt,
-      platform: { issuer: ltiPlatform.issuer, configuration: `${ltiPlatform.issuer}/.well-known/openid-configuration` },
+      platform: { issuer, configuration: `${issuer}/.well-known/openid-configuration` },
       context: start.context, resourceLink: start.resourceLink, lineItem: start.lineItem,
       learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl,
       gradebook: { affordance: actionUrl('urn:iep:action:foxxi:lti-gradebook-signed'), target: `${bridgeBaseUrl}/agent/lti/gradebook` },
-      note: 'Open initiationUrl once, within five minutes. It is a standard LTI 1.3 launch: the Tool\'s login, this LMS\'s authorization, a signed id_token posted to the Tool, then the course. A client without a browser follows the redirects, asks the authorization step for JSON, posts the form it returns, and plays the course as JSON. When the attempt ends it is in your record, and the Tool posts your grade to this LMS\'s gradebook over AGS.',
+      note: external
+        ? 'Open initiationUrl once within five minutes to launch the external course. The provider can post a score for this connection to your Foxxi gradebook until the connection expires.'
+        : 'Open initiationUrl once, within five minutes. It is a standard LTI 1.3 launch: the Tool\'s login, this LMS\'s authorization, a signed id_token posted to the Tool, then the course. A client without a browser follows the redirects, asks the authorization step for JSON, posts the form it returns, and plays the course as JSON. When the attempt ends it is in your record, and the Tool posts your grade to this LMS\'s gradebook over AGS.',
     });
   } catch (err) { sendServerError(res, err, 'lti-launch-signed'); }
 });
@@ -12563,9 +13137,25 @@ app.post('/agent/lti/gradebook', async (req, res) => {
       kind: 'lti-gradebook', platform: ltiPlatform.issuer, context: ltiPlatform.context,
       readiness: ltiPlatformReadiness.diagnostics(),
       learner: learner.did, ...(learner.via ? { via: learner.via } : {}),
-      rows: ltiPlatform.gradebookFor(learner.did),
+      rows: [...ltiPlatform.gradebookFor(learner.did), ...(scopedLti?.gradesFor(learner.did) ?? [])],
     });
   } catch (err) { sendServerError(res, err, 'lti-gradebook-signed'); }
+});
+
+const scopedLtiRevokeLimit = rateLimit({
+  windowMs: 60_000, limit: 15, ipv6Subnet: 56, identifier: 'lti-connection-revoke',
+  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+});
+app.post('/lti/connections/revoke', scopedLtiRevokeLimit, async (req, res) => {
+  if (!scopedLti) { res.sendStatus(404); return; }
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    if (auth.payload.action !== 'revoke-scoped-lti-connection') { res.status(400).json({ error: 'invalid_action' }); return; }
+    const learner = await signedLearner(auth);
+    if (!scopedLti.revoke(learner.did, auth.payload.course_id)) { res.sendStatus(404); return; }
+    res.status(204).end();
+  } catch (err) { sendServerError(res, err, 'lti-scoped-revoke'); }
 });
 
 // PUSH path: a relay (or any observer) POSTs a single context-descriptor for
@@ -12694,6 +13284,8 @@ attachWorkbenchRoutes(app, {
     relayOrigin: process.env.INTEREGO_RELAY_URL ?? 'https://relay.interego.xwisee.com',
     identityOrigin: process.env.INTEREGO_IDENTITY_URL ?? 'https://identity.interego.xwisee.com',
     podOrigin: (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })(),
+    // The workbench names the browser key and the challenge; the service signs for its own configured origin.
+    ...(learnerGuestGrants ? { guestGrant: async request => (await learnerGuestGrants.grant({ publicKeyThumbprint: request.publicKeyThumbprint, challenge: request.challenge })).playGrant } : {}),
     repository: (() => {
       try { return createLearningRepository({ baseUrl: bridgeBaseUrl, podUrl: tenantPodUrl,
         privateKey: process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '', fetch: guardedFetchFn(globalThis.fetch) as typeof fetch }); }
@@ -12810,9 +13402,11 @@ app.listen(PORT, () => {
   bridgeLog(`  Standards extension: http://localhost:${PORT}/agent/extend-standards  |  Guidance: http://localhost:${PORT}/guidance`);
   bridgeLog(`  Audience: ${audience} (${activeAffordances.length} affordances active; FOXXI_AUDIENCE=learner|admin|both)`);
   void seedDemoContent();
+  void takeDownListedPackages().catch(e => bridgeWarn(`[foxxi-bridge] the operator's take-down list could not be applied: ${(e as Error).message}`));
   // Warm the public-memories commons so a published memory resolves from the first
   // request after a restart, not only after a lazy on-miss rehydrate.
   void hydratePublicMemories(true).catch(e => bridgeWarn('[foxxi-bridge][memories] boot warm:', (e as Error).message));
+  void xapiProfileServer.ready().catch(e => bridgeWarn('[foxxi-bridge][xapi-profiles] boot warm:', (e as Error).message));
   // Load the durable course→author registry so a bare course URL resolves after a restart.
   void loadCourseAuthors().catch(e => bridgeWarn('[foxxi-bridge][courses] registry boot load:', (e as Error).message));
   // Default demand mode performs no boot or idle mesh scan. Only an explicit

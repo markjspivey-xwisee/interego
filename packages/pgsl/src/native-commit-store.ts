@@ -10,12 +10,17 @@ import type { PGSLInstance, Node, NodeProvenance } from './types.js';
 import { immutableArtifactCache } from './immutable-artifact-cache.js';
 
 export const NATIVE_COMMIT_MEDIA_TYPE = 'application/vnd.interego.native-commit+json';
+/** One request that stages several immutable representations into a container, a receipt each. */
+export const NATIVE_STAGE_MEDIA_TYPE = 'application/vnd.interego.native-stage+json';
 const JSON_TYPE = 'application/json';
+const STAGE_BATCH_ITEMS = 64, STAGE_BATCH_BYTES = 4 * 1024 * 1024;
 const PREFIX = 'urn:interego:native-commit:v1:';
 const HEAD = PREFIX + 'head', ENTRY = PREFIX + 'entry', LEAF = PREFIX + 'leaf';
 const BRANCH = PREFIX + 'branch', EMPTY = PREFIX + 'empty', PREVIOUS = PREFIX + 'previous';
 const REFERENCE = PREFIX + 'reference', OPERATION = PREFIX + 'operation', BYTES = PREFIX + 'bytes';
 const ATOMIC = PREFIX + 'atomic-checkpoint';
+/** Media type of a compact index node's payload: canonical JSON inside a byte holon. */
+const INDEX_NODE_TYPE = 'application/vnd.interego.native-index-node+json';
 const REVISION = /^sha256:[a-f0-9]{64}$/;
 const DEFAULT_LIMIT = 8 * 1024 * 1024;
 const LEAF_SIZE = 16;
@@ -91,7 +96,38 @@ export interface NativeHeadReadDiagnostic {
   readonly peakIndexReads: number;
   readonly indexReadConcurrency: number;
 }
+/** Value-free observations of one commit: durations, counts and sizes only. Never a head,
+ * scope, reference, record key or error text. */
+export interface NativeCommitDiagnostic {
+  readonly commitNumber: number;
+  /** 0=committed, 1=answered from an earlier identical operation, 2=head conflict, 3=other error. */
+  readonly outcome: 0 | 1 | 2 | 3;
+  /** 1 when the representations were staged through batched requests. */
+  readonly batched: 0 | 1;
+  /** 1 when the commit started from the caller's verified snapshot instead of reading the head. */
+  readonly fromExpected: 0 | 1;
+  readonly changes: number;
+  readonly elapsedMs: number;
+  /** Reading and verifying the head, and looking the operation up in it. */
+  readonly headMs: number;
+  /** The capability probe; 0 when a recent one was relied on. */
+  readonly probeMs: number;
+  /** Serializing, encrypting and index building, including reads of index nodes not yet
+   * held; everything between the probe and the head write that is not a staging request. */
+  readonly buildMs: number;
+  readonly stageMs: number;
+  readonly stageRequests: number;
+  readonly stagedItems: number;
+  readonly stagedBytes: number;
+  readonly headWriteMs: number;
+  readonly headReadMs: number;
+  /** Assembling the returned snapshot after the head is published. */
+  readonly resultMs: number;
+}
 export interface NativeCommitStoreOptions {
+  /** Optional numeric observation of every commit. Observer failures, including
+   * asynchronous rejection, never affect the commit. */
+  readonly onCommit?: (event: NativeCommitDiagnostic) => void;
   /** Explicit opt-in for an application's bounded rolling checkpoint format.
    * Existing immutable clients refuse this format after a CAS migration. */
   readonly atomicCheckpoint?: boolean;
@@ -100,6 +136,59 @@ export interface NativeCommitStoreOptions {
   readonly cacheImmutableReads?: boolean;
   /** Opt-in immediate-child prefetch. One limiter is shared by this client's full-index materializations. */
   readonly indexReadConcurrency?: number;
+  /** Opt-out of batched staging. A commit stages its changed records, the previous operation's
+   * record, the index nodes on the changed paths and the commit object before the head
+   * compare-and-set. When the server advertises `Interego-Native-Stage: 1`, they go in one
+   * request (several for a large commit) and each is confirmed by a receipt that names it and
+   * states the digest, size and type of the bytes it now holds; a missing, extra or mismatched
+   * receipt refuses the commit before the head is touched. `true` here, a server that does not
+   * advertise the operation, or a batch request that is not answered all stage each
+   * representation with its own conditional write and read-back, as before. */
+  readonly stageIndividually?: boolean;
+  /** Opt-in: how long (0 to 3 600 000 ms; default 0, a probe before every commit) a commit may
+   * rely on this client's last successful capability probe instead of sending another.
+   * The probe only decides which requests a commit sends; every write is still confirmed by
+   * its own receipt or read-back, so a server that changed within the period costs a refused
+   * commit or the slower staging path, never an unconfirmed write. `ready()` always probes. */
+  readonly capabilityProbeTtlMs?: number;
+  /** Opt-in reuse of the immutable commit object that backs a head. Every head read still
+   * fetches and verifies the head itself; what is skipped is the second fetch of the
+   * content-addressed commit object when this client has already fetched it, or staged it
+   * with a confirmation, and checked its digest. The kept bytes are decrypted and compared
+   * with the head on every use. As with the other reuse options, a hit no longer shows that
+   * the pod still serves that object, so integrity-audit callers leave this off (the default). */
+  readonly reuseBackingCommits?: boolean;
+  /** Opt-in: a commit whose `expected` is a snapshot object this client itself returned
+   * starts from that verified head instead of reading the head again first. A head that has
+   * since moved is then caught by the head compare-and-set, after staging and with the same
+   * conflict or replay outcome, not before staging. Any other `expected` value, and the
+   * default, read and compare the current head first. */
+  readonly commitFromExpectedSnapshot?: boolean;
+  /** Opt-in: write index nodes in the compact form. An index node holds up to sixteen
+   * references. As one wide PGSL tuple, each of those and every contiguous run of them is a
+   * node of its own, so sixteen references (about 5 KB) become several hundred nodes and
+   * roughly 440 KB of plaintext, and the root node is rewritten by every commit. The compact
+   * form is a byte holon (the same five-field tuple `createNativeByteArtifact` makes) whose
+   * payload is the canonical JSON of the same references. It is still a content-addressed,
+   * validated PGSL holon, encrypted and staged like any other artifact.
+   *
+   * Every client from this version on READS both forms, whatever this option says, so a
+   * store converts gradually as its paths are rewritten and the two kinds of writer can share
+   * a head. A client older than this option cannot read a compact node: turn it on only when
+   * every reader of the store has been upgraded. */
+  readonly compactIndexNodes?: boolean;
+  /** Opt-in reuse of decoded index nodes within this client, bounded by the
+   * total number of entries retained (least recently used nodes leave first).
+   * An index node is immutable and content addressed: it is kept only after it
+   * was fetched, digest-checked, decrypted and validated under the exact
+   * reference and hash prefix it is later asked for, so a hit proves the same
+   * content. The head itself is never cached: every read fetches and verifies
+   * the current head, and only nodes it shares with an earlier verified index
+   * are reused, so a changed head costs the changed paths, not the whole index.
+   * Concurrent reads of one node share a single fetch. What a hit no longer
+   * shows is that the pod still serves that artifact, so integrity-audit
+   * callers leave this off (the default). */
+  readonly indexNodeCacheEntries?: number;
   readonly onHeadRead?: (event: NativeHeadReadDiagnostic) => void;
   /** Already resolved and authorized through the adapter's capability/Type Index contract. */
   readonly scope: NativeCommitScope;
@@ -108,6 +197,23 @@ export interface NativeCommitStoreOptions {
   /** Explicit, verified owner binding; not a key discovered from an unsigned arbitrary URL. */
   readonly ownerPublicKey: string;
   readonly recipientPublicKeys: readonly string[];
+  /**
+   * The public keys whose sealing this store accepts on what it reads. Given, an artifact is read
+   * only when every one of its wrapped keys names one of these as its sender; it must include this
+   * client's own key, or the client could not read what it wrote.
+   *
+   * Without it the store checks whom an artifact is addressed to and not who sealed it. The
+   * recipients' public keys are in every stored envelope, so whoever can write the pod can seal an
+   * artifact of their own to those recipients and have it read as the store's. A wrapped key is a
+   * NaCl box, which opens only under the sender key it names, so naming a trusted sender cannot be
+   * faked without that sender's private key.
+   *
+   * What it does not cover. A recipient holds the content key of every artifact it can read, and can
+   * seal other content under a wrapped key copied from a genuine artifact: this keeps out whoever is
+   * not a recipient, not a recipient who turns writer. And it says nothing about an artifact being
+   * removed, or a head being put back to an earlier one, by whoever can write the pod.
+   */
+  readonly trustedSenderPublicKeys?: readonly string[];
   /** CSS's native storage domain is "css"; this is not the logical owner pod URL. */
   readonly storageDomain?: string;
   readonly maxArtifactBytes?: number;
@@ -117,6 +223,22 @@ export interface NativeAtomicCheckpoint {
   readonly artifact: NativeArtifact | null;
 }
 interface Representation { bytes: Uint8Array; revision: string; }
+/** One commit's representations awaiting a batched staging request. */
+interface StagePlan {
+  readonly pending: { url: string; bytes: Uint8Array; topUri: IRI }[];
+  readonly urls: Set<string>;
+  /** Run once everything added so far is confirmed staged. */
+  readonly confirmed: (() => void)[];
+  bytes: number;
+  /** False: each representation is written and read back at once; the plan only meters it. */
+  readonly batched: boolean;
+  stageMs: number; requests: number; items: number; stagedBytes: number;
+}
+interface CommitMeter {
+  outcome: 0 | 1 | 2 | 3; batched: 0 | 1; fromExpected: 0 | 1; changes: number;
+  headMs: number; probeMs: number; buildMs: number; headWriteMs: number; headReadMs: number;
+  resultAt?: number; plan?: StagePlan;
+}
 interface DecodedHead extends NativeSnapshot {
   logicalDigest: string; createdAt: string; previous: NativeSnapshotReference | null;
   index: NativeArtifactReference | null;
@@ -142,6 +264,19 @@ function recordSelection(keys: readonly string[]): readonly string[] {
   const selected = new Set<string>();
   for (const key of keys) { bounded(key, 4096, 'record selection key'); selected.add(key); }
   return Object.freeze([...selected].sort(compareStrings));
+}
+/** Ordered results from at most `limit` tasks in flight; no task starts after a failure. */
+async function mapBounded<T, R>(items: readonly T[], limit: number, task: (item: T) => Promise<R>): Promise<R[]> {
+  const results = new Array<R>(items.length);
+  let next = 0, failed = false;
+  const worker = async (): Promise<void> => {
+    while (!failed && next < items.length) {
+      const position = next++;
+      try { results[position] = await task(items[position]!); } catch (error) { failed = true; throw error; }
+    }
+  };
+  await Promise.all(Array.from({ length: Math.min(limit, items.length) }, worker));
+  return results;
 }
 function hashKey(key: string): string { return createHash('sha256').update(key).digest('hex'); }
 function fail(message: string, status = 503): never { throw new NativeCommitError(message, status); }
@@ -188,6 +323,12 @@ function valueOrNull(artifact: NativeArtifact, id: IRI | undefined): string | nu
   return node && node.kind === 'Atom' && typeof node.value === 'string' ? node.value : null;
 }
 
+/** Whether `part` is exactly the run of `whole` starting at `offset` that omits one item. */
+function sameItems(part: readonly string[], whole: readonly string[], offset: 0 | 1): boolean {
+  if (part.length !== whole.length - 1) return false;
+  for (let i = 0; i < part.length; i++) if (part[i] !== whole[i + offset]) return false;
+  return true;
+}
 /** Validate content addresses and complete acyclic closure; unrelated nodes are not published. */
 export function validateNativeArtifact(artifact: NativeArtifact): NativeArtifact {
   bounded(artifact.topUri, 4096, 'top URI');
@@ -216,8 +357,9 @@ export function validateNativeArtifact(artifact: NativeArtifact): NativeArtifact
         if (!node.left || !node.right) fail('Native fragment lacks constituents.');
         visit(node.left, depth + 1); visit(node.right, depth + 1);
         const left = artifact.nodes.get(node.left), right = artifact.nodes.get(node.right);
-        if (left?.kind !== 'Fragment' || right?.kind !== 'Fragment' || canonical(left.items) !== canonical(node.items.slice(0, -1))
-          || canonical(right.items) !== canonical(node.items.slice(1)) || node.height !== Math.max(left.height, right.height) + 1) fail('Native fragment constituents do not match its content.');
+        // Both constituents were visited above, so their items are arrays of strings.
+        if (left?.kind !== 'Fragment' || right?.kind !== 'Fragment' || !sameItems(left.items, node.items, 0)
+          || !sameItems(right.items, node.items, 1) || node.height !== Math.max(left.height, right.height) + 1) fail('Native fragment constituents do not match its content.');
       }
     } else fail('Unknown native node kind.');
     active.delete(id); output.set(id, node);
@@ -247,13 +389,29 @@ export function readNativeByteArtifact(input: NativeArtifact): { owner: IRI; con
 export class NativeCommitStore implements NativeCommitClient {
   private readonly scope: NativeCommitScope;
   private readonly recipients: readonly string[];
+  private readonly trustedSenders: ReadonlySet<string> | undefined;
   private readonly limit: number;
   private readonly artifactCacheNamespace = {};
   private readonly indexReadConcurrency: number;
   private indexReadsActive = 0;
   private readonly indexReadQueue: IndexReadJob[] = [];
   private headReadSequence = 0;
+  private commitSequence = 0;
+  private readonly indexNodeCacheLimit: number;
+  private readonly verifiedIndexNodes = new Map<string, { node: IndexNode; weight: number }>();
+  private verifiedIndexNodeWeight = 0;
+  private readonly indexNodeReads = new Map<string, Promise<IndexNode>>();
+  private readonly probeTtl: number;
+  private probed: { at: number; batchedStaging: boolean } | undefined;
+  /** Digest-checked commit objects by URL; a handful, since only recent heads are asked for. */
+  private readonly backingCommits = new Map<string, Uint8Array>();
+  /** The verified head behind each snapshot object this client handed out. */
+  private readonly snapshotHeads = new WeakMap<object, DecodedHead>();
   constructor(private readonly options: NativeCommitStoreOptions) {
+    this.probeTtl = options.capabilityProbeTtlMs ?? 0;
+    if (!Number.isSafeInteger(this.probeTtl) || this.probeTtl < 0 || this.probeTtl > 3_600_000) fail('Invalid native capability probe period.', 400);
+    this.indexNodeCacheLimit = options.indexNodeCacheEntries ?? 0;
+    if (!Number.isSafeInteger(this.indexNodeCacheLimit) || this.indexNodeCacheLimit < 0 || this.indexNodeCacheLimit > 4_000_000) fail('Invalid native index node cache capacity.', 400);
     this.indexReadConcurrency = options.indexReadConcurrency ?? 1;
     if (!Number.isSafeInteger(this.indexReadConcurrency) || this.indexReadConcurrency < 1 || this.indexReadConcurrency > 8) fail('Invalid native index read concurrency.', 400);
     const pod = uri(options.scope.pod), head = uri(options.scope.headUrl), container = uri(options.scope.artifactContainer);
@@ -264,16 +422,30 @@ export class NativeCommitStore implements NativeCommitClient {
     this.recipients = [...new Set(options.recipientPublicKeys)].sort();
     if (!publicKey(options.ownerPublicKey) || this.recipients.some(k => !publicKey(k)) || !this.recipients.includes(options.ownerPublicKey)
       || !this.recipients.includes(options.senderKeyPair.publicKey)) fail('Native storage requires explicit owner and stable reader recipients.', 400);
+    if (options.trustedSenderPublicKeys !== undefined) {
+      const trusted = new Set(options.trustedSenderPublicKeys);
+      if (trusted.size === 0 || [...trusted].some(k => !publicKey(k)) || !trusted.has(options.senderKeyPair.publicKey)) fail('Trusted native writers must be public keys and include this client\'s own.', 400);
+      this.trustedSenders = trusted;
+    }
     this.limit = options.maxArtifactBytes ?? DEFAULT_LIMIT;
     if (!Number.isSafeInteger(this.limit) || this.limit < 1024 || this.limit > DEFAULT_LIMIT) fail('Invalid native capacity.', 400);
   }
   /** Capability discovery only; a verified no-op CAS is the adapter's write-authority check. */
-  async ready(): Promise<void> {
+  async ready(): Promise<void> { await this.discover(); }
+  /** The same single probe; also whether the server stages several representations in one request. */
+  private async discover(): Promise<{ batchedStaging: boolean }> {
     let response: Response;
     try { response = await this.options.fetch(this.scope.headUrl, { method: 'OPTIONS', redirect: 'manual' }); }
     catch { return fail('Native atomic resource commits are unavailable.'); }
     if (!response.ok || response.headers.get('Interego-Native-Commit') !== '1'
       || !response.headers.get('Accept-Put')?.split(',').map(s => s.trim()).includes(NATIVE_COMMIT_MEDIA_TYPE)) fail('Native atomic resource commits are unavailable.');
+    this.probed = { at: Date.now(), batchedStaging: response.headers.get('Interego-Native-Stage') === '1' };
+    return this.probed;
+  }
+  private rememberBackingCommit(url: string, bytes: Uint8Array): void {
+    if (this.options.reuseBackingCommits !== true) return;
+    this.backingCommits.delete(url); this.backingCommits.set(url, Uint8Array.from(bytes));
+    while (this.backingCommits.size > 8) this.backingCommits.delete(this.backingCommits.keys().next().value!);
   }
   private target(url: string): URL {
     const parsed = uri(url), pod = uri(this.scope.pod);
@@ -318,6 +490,11 @@ export class NativeCommitStore implements NativeCommitClient {
     try { envelope = JSON.parse(Buffer.from(bytes).toString('utf8')) as EncryptedEnvelope; } catch { return fail('Native ciphertext is malformed.'); }
     const keys = Array.isArray(envelope?.wrappedKeys) ? envelope.wrappedKeys.map(k => k.recipientPublicKey).sort() : [];
     if (envelope.version !== 1 || envelope.algorithm !== 'X25519-XSalsa20-Poly1305' || canonical(keys) !== canonical(this.recipients)) fail('Native ciphertext recipient binding changed.');
+    // Addressed to the right readers is not the same as written by the right writer. Checked on
+    // every wrapped key, not only the one this client opens: the others are what the owner reads by.
+    if (this.trustedSenders && !envelope.wrappedKeys.every(k => typeof k.senderPublicKey === 'string' && this.trustedSenders!.has(k.senderPublicKey))) {
+      fail('Native ciphertext was not sealed by a trusted writer.');
+    }
     let plaintext: string | null;
     try { plaintext = openEncryptedEnvelope(envelope, this.options.senderKeyPair); } catch { return fail('Native ciphertext cannot be decrypted.'); }
     if (!plaintext) return fail('Native ciphertext cannot be decrypted; no empty-state fallback.');
@@ -367,20 +544,78 @@ export class NativeCommitStore implements NativeCommitClient {
     try { receipt = JSON.parse(Buffer.from(await this.bytes(response, 32_768)).toString('utf8')); } catch { return fail('Native commit acknowledgement is unreadable.'); }
     return this.receipt(receipt, response, url, bytes, expectedRevision);
   }
-  /** Every immutable representation is independently native CP-rooted before publication. */
-  private async stage(url: string, bytes: Uint8Array, topUri: IRI): Promise<void> {
+  /** Every immutable representation is independently native CP-rooted before publication:
+   * written and read back here, or, with a plan, confirmed by receipt in flushStaged(). */
+  private async stage(url: string, bytes: Uint8Array, topUri: IRI, plan?: StagePlan): Promise<void> {
+    if (!plan) return this.stageNow(url, bytes, topUri);
+    if (!plan.batched) {
+      const started = performance.now();
+      try { return await this.stageNow(url, bytes, topUri); }
+      finally { plan.stageMs += performance.now() - started; plan.requests += 2; plan.items++; plan.stagedBytes += bytes.length; }
+    }
+    if (plan.urls.has(url)) return;
+    // What a commit holds unstaged is bounded by one request, not by the size of the commit.
+    if (plan.pending.length && (plan.pending.length >= STAGE_BATCH_ITEMS || plan.bytes + bytes.length > STAGE_BATCH_BYTES)) await this.flushStaged(plan);
+    plan.urls.add(url); plan.pending.push({ url, bytes, topUri }); plan.bytes += bytes.length;
+  }
+  private async stageNow(url: string, bytes: Uint8Array, topUri: IRI): Promise<void> {
     try { await this.put(url, bytes, null); } catch (error) { if (!(error instanceof NativeCommitConflictError)) throw error; }
     const existing = await this.readRepresentation(url);
     if (!existing || !Buffer.from(existing.bytes).equals(Buffer.from(bytes))) fail('Native immutable artifact could not be read back unchanged.');
     this.decrypt(existing.bytes, topUri);
   }
-  private async persist(artifact: NativeArtifactInput): Promise<NativeArtifactReference> {
-    return this.persistPlaintext(artifact.topUri, serializeArtifact({ topUri: artifact.topUri, nodes: artifact.pgsl.nodes }));
+  /** Returns only when everything the plan holds is confirmed staged; the caller publishes
+   * the head after that and not before. */
+  private async flushStaged(plan: StagePlan): Promise<void> {
+    const items = plan.pending.splice(0), started = performance.now(); plan.bytes = 0;
+    try {
+      if (items.length) plan.requests++;
+      if (items.length && !await this.stageTogether(items)) {
+        // Not answered: each representation is confirmed by its own write and read-back instead.
+        for (const item of items) { plan.requests += 2; await this.stageNow(item.url, item.bytes, item.topUri); }
+      }
+    } finally {
+      plan.stageMs += performance.now() - started; plan.items += items.length;
+      for (const item of items) plan.stagedBytes += item.bytes.length;
+    }
+    for (const confirmed of plan.confirmed.splice(0)) confirmed();
   }
-  private async persistPlaintext(topUri: IRI, plaintext: Uint8Array): Promise<NativeArtifactReference> {
+  /** One request for all of `items`. False when the server did not answer it (nothing is
+   * assumed staged). An answer that does not confirm exactly these representations is refused. */
+  private async stageTogether(items: readonly { url: string; bytes: Uint8Array; topUri: IRI }[]): Promise<boolean> {
+    const container = this.scope.artifactContainer;
+    const named = items.map(item => {
+      this.target(item.url);
+      const name = item.url.slice(container.length);
+      if (!item.url.startsWith(container) || !name || name.includes('/')) fail('Native immutable reference is not content bound.');
+      return { name, contentType: JSON_TYPE, bodyBase64: Buffer.from(item.bytes).toString('base64') };
+    });
+    let response: Response;
+    try {
+      response = await this.options.fetch(container, { method: 'POST', redirect: 'manual',
+        headers: { 'Content-Type': NATIVE_STAGE_MEDIA_TYPE, Accept: JSON_TYPE }, body: JSON.stringify({ version: 1, items: named }) });
+    } catch { return false; }
+    if (!response.ok) { try { await response.body?.cancel(); } catch { /* already closed */ } return false; }
+    let answer: unknown;
+    try { answer = JSON.parse(Buffer.from(await this.bytes(response, 65_536)).toString('utf8')); } catch { return fail('Native staging acknowledgement is unreadable.'); }
+    if (!object(answer) || answer.version !== 1 || !Array.isArray(answer.receipts) || answer.receipts.length !== items.length) return fail('Native staging receipts do not cover the submitted representations.');
+    items.forEach((item, position) => {
+      const receipt: unknown = (answer.receipts as unknown[])[position];
+      if (!object(receipt) || receipt.name !== named[position]!.name || receipt.status !== 'staged' || typeof receipt.created !== 'boolean'
+        || receipt.bodyDigest !== digest(item.bytes) || receipt.size !== item.bytes.length || receipt.contentType !== JSON_TYPE
+        || typeof receipt.revision !== 'string' || !REVISION.test(receipt.revision)) fail('Native staging receipt is not bound to the submitted representation.');
+      // The same check a read-back gets: what was confirmed opens to the expected holon.
+      this.decrypt(item.bytes, item.topUri);
+    });
+    return true;
+  }
+  private async persist(artifact: NativeArtifactInput, plan?: StagePlan): Promise<NativeArtifactReference> {
+    return this.persistPlaintext(artifact.topUri, serializeArtifact({ topUri: artifact.topUri, nodes: artifact.pgsl.nodes }), plan);
+  }
+  private async persistPlaintext(topUri: IRI, plaintext: Uint8Array, plan?: StagePlan): Promise<NativeArtifactReference> {
     const bytes = this.encryptPlaintext(plaintext), bodyDigest = digest(bytes);
     const reference = { resourceUrl: this.resourceUrl('artifact', bodyDigest), bodyDigest, plaintextDigest: digest(plaintext), topUri };
-    await this.stage(reference.resourceUrl, bytes, reference.topUri);
+    await this.stage(reference.resourceUrl, bytes, reference.topUri, plan);
     return reference;
   }
   async readArtifact(reference: NativeArtifactReference): Promise<NativeArtifact> {
@@ -409,37 +644,111 @@ export class NativeCommitStore implements NativeCommitClient {
     this.checkReference(reference);
     return { key: value(artifact, row[1]), reference };
   }
+  private indexNodeKey(reference: NativeArtifactReference, prefix: string): string {
+    // Every binding and the hash prefix the node was validated under are part
+    // of the key: an alias cannot borrow another reference's verification.
+    return JSON.stringify([reference.resourceUrl, reference.bodyDigest, reference.plaintextDigest, reference.topUri, prefix]);
+  }
+  private rememberIndexNode(key: string, node: IndexNode): void {
+    if (!this.indexNodeCacheLimit) return;
+    const entries = node.kind === 'leaf' ? node.entries : node.children;
+    // Snapshots hand these references to callers; a cached one must not change.
+    for (const reference of entries.values()) Object.freeze(reference);
+    const old = this.verifiedIndexNodes.get(key);
+    if (old) { this.verifiedIndexNodes.delete(key); this.verifiedIndexNodeWeight -= old.weight; }
+    const weight = entries.size + 1;
+    if (weight > this.indexNodeCacheLimit) return;
+    this.verifiedIndexNodes.set(key, { node, weight }); this.verifiedIndexNodeWeight += weight;
+    while (this.verifiedIndexNodeWeight > this.indexNodeCacheLimit) {
+      const oldest = this.verifiedIndexNodes.keys().next().value!;
+      this.verifiedIndexNodeWeight -= this.verifiedIndexNodes.get(oldest)!.weight; this.verifiedIndexNodes.delete(oldest);
+    }
+  }
+  /** Nodes returned here are shared and never mutated: writers copy before changing. */
   private async indexNode(reference: NativeArtifactReference, prefix: string): Promise<IndexNode> {
+    if (!this.indexNodeCacheLimit) return this.readIndexNode(reference, prefix);
+    this.checkReference(reference);
+    const key = this.indexNodeKey(reference, prefix), cached = this.verifiedIndexNodes.get(key);
+    if (cached) { this.verifiedIndexNodes.delete(key); this.verifiedIndexNodes.set(key, cached); return cached.node; }
+    const pending = this.indexNodeReads.get(key);
+    if (pending) return pending;
+    const read = this.readIndexNode(reference, prefix).then(node => {
+      this.indexNodeReads.delete(key); this.rememberIndexNode(key, node); return node;
+    }, (error: unknown) => { this.indexNodeReads.delete(key); throw error; });
+    this.indexNodeReads.set(key, read);
+    return read;
+  }
+  private async readIndexNode(reference: NativeArtifactReference, prefix: string): Promise<IndexNode> {
     const artifact = await this.readArtifact(reference), row = fields(artifact, artifact.topUri), tag = value(artifact, row[0]);
-    if (row.length < 2 || row.length > LEAF_SIZE + 1) fail('Native index node exceeds its bounded fanout.');
-    if (tag === LEAF) {
+    // Either form yields (key, reference) pairs; the bindings below are checked on both alike.
+    let kind: string, pairs: { key: string; reference: NativeArtifactReference }[];
+    if (tag === BYTES) ({ kind, pairs } = this.compactIndexEntries(artifact));
+    else {
+      if (row.length < 2 || row.length > LEAF_SIZE + 1) fail('Native index node exceeds its bounded fanout.');
+      kind = tag; pairs = row.slice(1).map(id => this.parseReference(artifact, id, ENTRY));
+    }
+    if (kind === LEAF) {
       const entries = new Map<string, NativeArtifactReference>();
-      for (const id of row.slice(1)) {
-        const entry = this.parseReference(artifact, id, ENTRY); bounded(entry.key, 4300, 'index key');
+      for (const entry of pairs) {
+        bounded(entry.key, 4300, 'index key');
         if (!hashKey(entry.key).startsWith(prefix) || entries.has(entry.key)) fail('Native index leaf binding changed.');
         entries.set(entry.key, entry.reference);
       }
       return { kind: 'leaf', entries };
     }
-    if (tag !== BRANCH || prefix.length >= 64) return fail('Native index branch is malformed.');
+    if (kind !== BRANCH || prefix.length >= 64) return fail('Native index branch is malformed.');
     const children = new Map<string, NativeArtifactReference>();
-    for (const id of row.slice(1)) {
-      const child = this.parseReference(artifact, id, ENTRY);
+    for (const child of pairs) {
       if (!/^[a-f0-9]$/.test(child.key) || children.has(child.key)) fail('Native index branch binding changed.');
       children.set(child.key, child.reference);
     }
     return { kind: 'branch', children };
   }
-  private async saveIndex(node: IndexNode): Promise<NativeArtifactReference> {
-    const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
-    const entries = node.kind === 'leaf' ? node.entries : node.children;
-    const rows = [...entries].sort(([a], [b]) => compareStrings(a, b)).map(([key, reference]) => this.referenceTuple(pgsl, ENTRY, key, reference));
-    const topUri = ingest(pgsl, [literal(pgsl, node.kind === 'leaf' ? LEAF : BRANCH), ...rows]);
-    return this.persist({ pgsl, topUri });
+  /** The payload of a compact index node, accepted only as the exact canonical bytes a writer produces. */
+  private compactIndexEntries(artifact: NativeArtifact): { kind: string; pairs: { key: string; reference: NativeArtifactReference }[] } {
+    const body = readNativeByteArtifact(artifact);
+    if (body.owner !== this.scope.owner || body.contentType !== INDEX_NODE_TYPE || body.bytes.length > 262_144) return fail('Native index node owner or type binding changed.');
+    const text = Buffer.from(body.bytes).toString('utf8');
+    let parsed: unknown; try { parsed = JSON.parse(text); } catch { return fail('Native index node is malformed.'); }
+    if (!object(parsed) || Object.keys(parsed).length !== 2 || (parsed.kind !== 'leaf' && parsed.kind !== 'branch')
+      || !Array.isArray(parsed.entries) || parsed.entries.length < 1 || parsed.entries.length > LEAF_SIZE) return fail('Native index node exceeds its bounded fanout.');
+    const pairs = (parsed.entries as unknown[]).map(entry => {
+      if (!Array.isArray(entry) || entry.length !== 5 || entry.some(field => typeof field !== 'string')) return fail('Native index node is malformed.');
+      const [key, resourceUrl, bodyDigest, plaintextDigest, topUri] = entry as string[];
+      const reference = { resourceUrl: resourceUrl!, bodyDigest: bodyDigest!, plaintextDigest: plaintextDigest!, topUri: topUri as IRI };
+      this.checkReference(reference);
+      return { key: key!, reference };
+    });
+    // One encoding per node: sorted by key and canonical, so equal content cannot hide in different bytes.
+    if (text !== this.compactIndexPayload(parsed.kind, pairs.map(pair => [pair.key, pair.reference]))) fail('Native index node is not canonical.');
+    return { kind: parsed.kind === 'leaf' ? LEAF : BRANCH, pairs };
   }
-  private async buildIndex(entries: Map<string, NativeArtifactReference>, prefix: string): Promise<NativeArtifactReference | null> {
+  private compactIndexPayload(kind: 'leaf' | 'branch', entries: readonly (readonly [string, NativeArtifactReference])[]): string {
+    return canonical({ kind, entries: [...entries].sort(([a], [b]) => compareStrings(a, b))
+      .map(([key, reference]) => [key, reference.resourceUrl, reference.bodyDigest, reference.plaintextDigest, reference.topUri]) });
+  }
+  private async saveIndex(node: IndexNode, prefix: string, plan?: StagePlan): Promise<NativeArtifactReference> {
+    const entries = node.kind === 'leaf' ? node.entries : node.children;
+    let input: NativeArtifactInput;
+    if (this.options.compactIndexNodes === true) {
+      input = createNativeByteArtifact({ owner: this.scope.owner, contentType: INDEX_NODE_TYPE,
+        bytes: Buffer.from(this.compactIndexPayload(node.kind, [...entries])) });
+    } else {
+      const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
+      const rows = [...entries].sort(([a], [b]) => compareStrings(a, b)).map(([key, reference]) => this.referenceTuple(pgsl, ENTRY, key, reference));
+      input = { pgsl, topUri: ingest(pgsl, [literal(pgsl, node.kind === 'leaf' ? LEAF : BRANCH), ...rows]) };
+    }
+    const reference = await this.persist(input, plan);
+    // Staging confirmed this exact node and decrypted it; the next head read
+    // after this client's own commit need not fetch what it has just verified.
+    // With a plan that has not happened yet, so the node is kept only once it has.
+    const remember = (): void => this.rememberIndexNode(this.indexNodeKey(reference, prefix), node);
+    if (plan?.batched) plan.confirmed.push(remember); else remember();
+    return reference;
+  }
+  private async buildIndex(entries: Map<string, NativeArtifactReference>, prefix: string, plan?: StagePlan): Promise<NativeArtifactReference | null> {
     if (!entries.size) return null;
-    if (entries.size <= LEAF_SIZE) return this.saveIndex({ kind: 'leaf', entries });
+    if (entries.size <= LEAF_SIZE) return this.saveIndex({ kind: 'leaf', entries }, prefix, plan);
     if (prefix.length >= 64) return fail('Native index hash collision; existing state was not changed.');
     const groups = new Map<string, Map<string, NativeArtifactReference>>();
     for (const [key, value] of entries) {
@@ -448,15 +757,15 @@ export class NativeCommitStore implements NativeCommitClient {
       groups.get(nibble)!.set(key, value);
     }
     const children = new Map<string, NativeArtifactReference>();
-    for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) children.set(nibble, (await this.buildIndex(group, prefix + nibble))!);
-    return this.saveIndex({ kind: 'branch', children });
+    for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) children.set(nibble, (await this.buildIndex(group, prefix + nibble, plan))!);
+    return this.saveIndex({ kind: 'branch', children }, prefix, plan);
   }
-  private async updateIndex(root: NativeArtifactReference | null, changes: Map<string, NativeArtifactReference | null>, prefix = ''): Promise<NativeArtifactReference | null> {
+  private async updateIndex(root: NativeArtifactReference | null, changes: Map<string, NativeArtifactReference | null>, prefix = '', plan?: StagePlan): Promise<NativeArtifactReference | null> {
     const node: IndexNode = root ? await this.indexNode(root, prefix) : { kind: 'leaf', entries: new Map() };
     if (node.kind === 'leaf') {
       const entries = new Map(node.entries);
       for (const [key, value] of changes) { if (!hashKey(key).startsWith(prefix)) fail('Native index mutation escaped its branch.'); if (value) entries.set(key, value); else entries.delete(key); }
-      return this.buildIndex(entries, prefix);
+      return this.buildIndex(entries, prefix, plan);
     }
     const children = new Map(node.children), groups = new Map<string, Map<string, NativeArtifactReference | null>>();
     for (const [key, value] of changes) {
@@ -465,10 +774,10 @@ export class NativeCommitStore implements NativeCommitClient {
       if (!groups.has(nibble)) groups.set(nibble, new Map()); groups.get(nibble)!.set(key, value);
     }
     for (const [nibble, group] of [...groups].sort(([a], [b]) => compareStrings(a, b))) {
-      const child = await this.updateIndex(children.get(nibble) ?? null, group, prefix + nibble);
+      const child = await this.updateIndex(children.get(nibble) ?? null, group, prefix + nibble, plan);
       if (child) children.set(nibble, child); else children.delete(nibble);
     }
-    return children.size ? this.saveIndex({ kind: 'branch', children }) : null;
+    return children.size ? this.saveIndex({ kind: 'branch', children }, prefix, plan) : null;
   }
   private async lookup(root: NativeArtifactReference | null, key: string): Promise<NativeArtifactReference | null> {
     let reference = root, prefix = '';
@@ -573,9 +882,13 @@ export class NativeCommitStore implements NativeCommitClient {
     const match = reference.commitUrl.match(/\/commit-([a-f0-9]{64})\.json$/);
     if (!match) return fail('Invalid native commit reference.');
     this.expectedUrl(reference.commitUrl, 'commit', 'sha256:' + match[1]);
-    const stored = await this.readRepresentation(reference.commitUrl);
-    if (!stored || digest(stored.bytes) !== 'sha256:' + match[1]) return fail('Native commit history is unavailable or changed.');
-    return this.decodeHead(stored.bytes, reference.revision, reference.topUri);
+    const kept = this.options.reuseBackingCommits === true ? this.backingCommits.get(reference.commitUrl) : undefined;
+    const bytes = kept ?? (await this.readRepresentation(reference.commitUrl))?.bytes;
+    // The digest and the decryption below are checked on a kept copy exactly as on a fetched one.
+    if (!bytes || digest(bytes) !== 'sha256:' + match[1]) return fail('Native commit history is unavailable or changed.');
+    const decoded = this.decodeHead(bytes, reference.revision, reference.topUri);
+    if (!kept) this.rememberBackingCommit(reference.commitUrl, bytes);
+    return decoded;
   }
   private async current(): Promise<DecodedHead> {
     const stored = await this.readRepresentation(this.scope.headUrl);
@@ -586,7 +899,11 @@ export class NativeCommitStore implements NativeCommitClient {
     return head;
   }
   private indexReadContext(): IndexReadContext { return { stopped: false, failed: false, pending: new Set(), nodes: 0, branches: 0, leaves: 0, active: 0, peak: 0 }; }
-  private async complete(head: DecodedHead, context = this.indexReadContext()): Promise<DecodedHead> { return { ...head, records: await this.records(head.index, context) }; }
+  private async complete(head: DecodedHead, context = this.indexReadContext()): Promise<DecodedHead> {
+    const complete = { ...head, records: await this.records(head.index, context) };
+    this.snapshotHeads.set(complete, head);
+    return complete;
+  }
   private async observedHead(operation: 0 | 1, load: () => Promise<DecodedHead>): Promise<NativeSnapshot> {
     if (!this.options.onHeadRead) return this.complete(await load());
     const context = this.indexReadContext(), readNumber = ++this.headReadSequence, started = performance.now();
@@ -680,11 +997,12 @@ export class NativeCommitStore implements NativeCommitClient {
    * does not validate branches outside the explicitly returned selection. */
   private async selected(head: DecodedHead, keys: readonly string[]): Promise<DecodedHead> {
     const records = new Map<string, NativeArtifactReference>();
-    for (const key of keys) {
-      const reference = await this.lookup(head.index, 'record:' + key);
-      if (reference) records.set(key, reference);
-    }
-    return { ...head, records, selectedRecordKeys: keys };
+    // Independent paths under one already verified head: bounded, not serial.
+    const found = await mapBounded(keys, this.indexReadConcurrency, key => this.lookup(head.index, 'record:' + key));
+    keys.forEach((key, position) => { const reference = found[position]; if (reference) records.set(key, reference); });
+    const selected = { ...head, records, selectedRecordKeys: keys };
+    this.snapshotHeads.set(selected, head);
+    return selected;
   }
   async readHeadRecords(keys: readonly string[]): Promise<NativeSnapshot> {
     const selected = recordSelection(keys);
@@ -718,6 +1036,22 @@ export class NativeCommitStore implements NativeCommitClient {
       replayed, snapshot: selectedRecordKeys === undefined ? await this.complete(head) : await this.selected(head, selectedRecordKeys), resourceReceipt: receipt };
   }
   async commit(request: NativeCommitRequest): Promise<NativeCommitReceipt> {
+    if (!this.options.onCommit) return this.commitMeasured(request, undefined);
+    const meter: CommitMeter = { outcome: 3, batched: 0, fromExpected: 0, changes: 0, headMs: 0, probeMs: 0, buildMs: 0, headWriteMs: 0, headReadMs: 0 };
+    const started = performance.now(), commitNumber = ++this.commitSequence;
+    try { return await this.commitMeasured(request, meter); }
+    catch (error) { meter.outcome = error instanceof NativeCommitConflictError ? 2 : 3; throw error; }
+    finally {
+      const ended = performance.now(), plan = meter.plan, round = Math.round;
+      const event: NativeCommitDiagnostic = Object.freeze({ commitNumber, outcome: meter.outcome, batched: meter.batched, fromExpected: meter.fromExpected,
+        changes: meter.changes, elapsedMs: round(ended - started), headMs: round(meter.headMs), probeMs: round(meter.probeMs), buildMs: round(meter.buildMs),
+        stageMs: round(plan?.stageMs ?? 0), stageRequests: plan?.requests ?? 0, stagedItems: plan?.items ?? 0, stagedBytes: plan?.stagedBytes ?? 0,
+        headWriteMs: round(meter.headWriteMs), headReadMs: round(meter.headReadMs), resultMs: meter.resultAt === undefined ? 0 : round(ended - meter.resultAt) });
+      try { void Promise.resolve(this.options.onCommit(event)).catch(() => {}); } catch { /* Observation is never commit authority. */ }
+    }
+  }
+  private async commitMeasured(request: NativeCommitRequest, meter: CommitMeter | undefined): Promise<NativeCommitReceipt> {
+    const began = performance.now();
     // Detach caller selection before the first await, including its absence.
     const selectedRecordKeys = request.resultRecordKeys === undefined ? undefined : recordSelection(request.resultRecordKeys);
     bounded(request.operationId, 200, 'operation ID');
@@ -733,10 +1067,23 @@ export class NativeCommitStore implements NativeCommitClient {
       bounded(change.key, 4096, 'record key'); if (keys.has(change.key)) fail('Native mutation repeats a record key.', 400); keys.add(change.key);
     }
     const logicalDigest = digest(canonical({ scope: this.scope, changes: changes.map(c => ({ key: c.key, plaintextDigest: c.artifact?.plaintextDigest ?? null })) }));
-    const current = await this.current(), prior = await this.operation(request.operationId, current);
-    if (prior) { if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409); return this.result(prior, true, null, selectedRecordKeys); }
+    // Only an object this client returned is trusted as a verified head; a copy reads again.
+    const known = this.options.commitFromExpectedSnapshot === true ? this.snapshotHeads.get(request.expected) : undefined;
+    const current = known ?? await this.current(), prior = await this.operation(request.operationId, current);
+    if (meter) { meter.changes = changes.length; meter.fromExpected = known ? 1 : 0; meter.headMs = performance.now() - began; }
+    if (prior) {
+      if (prior.logicalDigest !== logicalDigest) fail('Native operation ID was already committed with different content.', 409);
+      if (meter) { meter.outcome = 1; meter.resultAt = performance.now(); }
+      return this.result(prior, true, null, selectedRecordKeys);
+    }
     if (current.revision !== request.expected.revision || canonical(current.reference) !== canonical(request.expected.reference)) throw new NativeCommitConflictError();
-    await this.ready();
+    const probing = performance.now();
+    const { batchedStaging } = this.probed && Date.now() - this.probed.at < this.probeTtl ? this.probed : await this.discover();
+    const batched = batchedStaging && this.options.stageIndividually !== true, building = performance.now();
+    // Without batching and without an observer there is no plan, exactly as before.
+    const plan: StagePlan | undefined = batched || meter
+      ? { pending: [], urls: new Set(), confirmed: [], bytes: 0, batched, stageMs: 0, requests: 0, items: 0, stagedBytes: 0 } : undefined;
+    if (meter) { meter.probeMs = building - probing; meter.batched = batched ? 1 : 0; meter.plan = plan; }
     const indexChanges = new Map<string, NativeArtifactReference | null>();
     // Digest reuse is local to this commit's fixed scope, encryption keys and recipients.
     const staged = new Map<string, NativeArtifactReference>();
@@ -745,7 +1092,7 @@ export class NativeCommitStore implements NativeCommitClient {
       if (change.artifact) {
         const plaintext = serializeArtifact(change.artifact);
         if (digest(plaintext) !== change.artifact.plaintextDigest) fail('Native artifact changed during commit.', 400);
-        reference = staged.get(change.artifact.plaintextDigest) ?? await this.persistPlaintext(change.artifact.topUri, plaintext);
+        reference = staged.get(change.artifact.plaintextDigest) ?? await this.persistPlaintext(change.artifact.topUri, plaintext, plan);
         staged.set(change.artifact.plaintextDigest, reference);
       }
       indexChanges.set('record:' + change.key, reference);
@@ -753,35 +1100,50 @@ export class NativeCommitStore implements NativeCommitClient {
     if (current.reference) {
       const pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: new Date().toISOString() });
       const topUri = tuple(pgsl, [OPERATION, current.operationId!, current.logicalDigest, current.reference.revision, current.reference.commitUrl, current.reference.topUri]);
-      indexChanges.set('operation:' + current.operationId!, await this.persist({ pgsl, topUri }));
+      indexChanges.set('operation:' + current.operationId!, await this.persist({ pgsl, topUri }, plan));
     }
-    const index = indexChanges.size ? await this.updateIndex(current.index, indexChanges) : current.index;
+    const index = indexChanges.size ? await this.updateIndex(current.index, indexChanges, '', plan) : current.index;
     const createdAt = new Date().toISOString(), pgsl = createPGSL({ wasAttributedTo: this.scope.owner, generatedAtTime: createdAt });
     const previous = current.reference ? tuple(pgsl, [PREVIOUS, current.reference.revision, current.reference.commitUrl, current.reference.topUri]) : literal(pgsl, EMPTY);
     const indexTuple = index ? this.referenceTuple(pgsl, REFERENCE, 'index', index) : literal(pgsl, EMPTY);
     const topUri = ingest(pgsl, [literal(pgsl, HEAD), literal(pgsl, this.scope.pod), literal(pgsl, this.scope.owner), literal(pgsl, this.scope.headUrl),
       literal(pgsl, request.operationId), literal(pgsl, logicalDigest), literal(pgsl, createdAt), previous, indexTuple]);
     const bytes = this.encrypt({ topUri, nodes: pgsl.nodes }), commitUrl = this.resourceUrl('commit', digest(bytes));
-    await this.stage(commitUrl, bytes, topUri);
+    await this.stage(commitUrl, bytes, topUri, plan);
+    // Nothing below runs until every representation this head refers to is confirmed staged.
+    if (plan?.batched) await this.flushStaged(plan);
+    // Confirmed staged, by receipt or read-back: the head about to be published is backed by it.
+    this.rememberBackingCommit(commitUrl, bytes);
+    const writing = performance.now();
+    if (meter) meter.buildMs = writing - building - (plan?.stageMs ?? 0);
     let receipt: NativeResourceReceipt | null;
     try { receipt = await this.put(this.scope.headUrl, bytes, current.revision); }
     catch (error) {
+      if (meter) meter.headWriteMs = performance.now() - writing;
       if (!(error instanceof NativeCommitConflictError)) throw error;
       const winner = await this.operation(request.operationId, await this.current());
-      if (winner && winner.logicalDigest === logicalDigest) return this.result(winner, true, null, selectedRecordKeys);
+      if (winner && winner.logicalDigest === logicalDigest) {
+        if (meter) { meter.outcome = 1; meter.resultAt = performance.now(); }
+        return this.result(winner, true, null, selectedRecordKeys);
+      }
       throw error;
     }
+    const reading = performance.now();
+    if (meter) meter.headWriteMs = reading - writing;
     if (!receipt) {
       const recovered = await this.operation(request.operationId, await this.current());
       if (!recovered || recovered.logicalDigest !== logicalDigest) return fail('Native head acknowledgement is uncertain; retry the same operation ID.');
+      if (meter) { meter.outcome = 1; meter.resultAt = performance.now(); }
       return this.result(recovered, true, null, selectedRecordKeys);
     }
     const committed = this.decodeHead(bytes, receipt.revision, topUri), actual = await this.readRepresentation(this.scope.headUrl);
+    if (meter) meter.headReadMs = performance.now() - reading;
     if (!actual || actual.revision !== receipt.revision || !Buffer.from(actual.bytes).equals(Buffer.from(bytes))) {
       const ancestor = await this.operation(request.operationId, await this.current());
       if (!ancestor || ancestor.reference?.revision !== receipt.revision || ancestor.reference.topUri !== topUri || ancestor.logicalDigest !== logicalDigest) return fail('Native committed head could not be verified unchanged.');
     }
     this.decrypt(bytes, topUri);
+    if (meter) { meter.outcome = 0; meter.resultAt = performance.now(); }
     return this.result(committed, false, receipt, selectedRecordKeys);
   }
 }

@@ -91,6 +91,11 @@ export class PgslDataAccessorFactory implements DataAccessor {
   ): Promise<void> {
     return (await this.accessor()).writeDocument(identifier, data, metadata);
   }
+  async stageDocuments(
+    ...args: Parameters<PgslDataAccessor['stageDocuments']>
+  ): ReturnType<PgslDataAccessor['stageDocuments']> {
+    return (await this.accessor()).stageDocuments(...args);
+  }
   async writeContainer(identifier: ResourceIdentifier, metadata: RepresentationMetadata): Promise<void> {
     return (await this.accessor()).writeContainer(identifier, metadata);
   }

@@ -36,6 +36,8 @@
  * Layer: L3 vertical (Foxxi).
  */
 import { randomBytes } from 'node:crypto';
+import { earlierMark, laterMark, perAddressLimiter, requestAddress, withdrawalState } from './revocable-registry.js';
+export { perAddressLimiter } from './revocable-registry.js';
 import AdmZip from 'adm-zip';
 import express, { type Express, type Request, type Response } from 'express';
 import { askCourse, type AskableCourse, type CourseAnswer } from './course-ask.js';
@@ -68,8 +70,8 @@ export interface DispatchRecord {
 export type DispatchState = 'live' | 'revoked' | 'expired' | 'exhausted';
 
 export function dispatchState(d: DispatchRecord, now: number): DispatchState {
-  if (d.revokedAt) return 'revoked';
-  if (d.expiresAt && Date.parse(d.expiresAt) <= now) return 'expired';
+  const withdrawal = withdrawalState(d, now);
+  if (withdrawal !== 'live') return withdrawal;
   if (d.launchLimit !== undefined && d.usage.launches >= d.launchLimit) return 'exhausted';
   return 'live';
 }
@@ -82,8 +84,8 @@ const STATE_WORDS: Record<Exclude<DispatchState, 'live'>, string> = {
 
 /** Two copies of one dispatch as one: the larger counts, the earlier withdrawal. */
 export function mergeDispatch(a: DispatchRecord, b: DispatchRecord): DispatchRecord {
-  const revokedAt = [a.revokedAt, b.revokedAt].filter((x): x is string => !!x).sort()[0];
-  const last = [a.usage.lastLaunchAt, b.usage.lastLaunchAt].filter((x): x is string => !!x).sort().at(-1);
+  const revokedAt = earlierMark(a.revokedAt, b.revokedAt);
+  const last = laterMark(a.usage.lastLaunchAt, b.usage.lastLaunchAt);
   return {
     ...a,
     ...(revokedAt ? { revokedAt } : {}),
@@ -568,21 +570,7 @@ export interface DispatchRouteDeps<P, C extends DispatchCourse = DispatchCourse>
  * A per-address fixed window for the routes a learner's browser reaches (launch, ask). Wider than an
  * agent's limit, because one organization's learners can share one address, and no model is called.
  */
-export function perAddressLimiter(max: number, windowMs: number, now: () => number = Date.now): (ip: string) => { ok: true } | { ok: false; retryAfterSeconds: number } {
-  const seen = new Map<string, { count: number; resetAt: number }>();
-  return (ip) => {
-    const t = now();
-    let e = seen.get(ip);
-    if (!e || t > e.resetAt) { e = { count: 0, resetAt: t + windowMs }; seen.set(ip, e); }
-    if (seen.size > 10_000) for (const [k, v] of seen) if (v.resetAt < t) seen.delete(k);
-    return ++e.count > max ? { ok: false, retryAfterSeconds: Math.ceil((e.resetAt - t) / 1000) } : { ok: true };
-  };
-}
-
-const clientIp = (req: Request): string => {
-  const xff = req.headers['x-forwarded-for'];
-  return typeof xff === 'string' ? xff.split(',').at(-1)!.trim() : Array.isArray(xff) ? xff.at(-1)!.trim() : req.ip ?? 'unknown';
-};
+const clientIp = requestAddress;
 const wantsJson = (req: Request): boolean => req.accepts(['html', 'json']) === 'json';
 const MAX_LAUNCH_LIMIT = 10_000_000;
 

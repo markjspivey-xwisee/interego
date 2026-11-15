@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
 import {
-  NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, createNativeByteArtifact, validateNativeArtifact,
+  NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, createNativeByteArtifact, readNativeByteArtifact, validateNativeArtifact,
   type NativeArtifact, type NativeArtifactReference, type NativeCommitClient,
   type NativeCommitReceipt, type NativeCommitRequest, type NativeCommitScope,
   type NativeSnapshot, type NativeSnapshotReference,
@@ -29,6 +29,8 @@ function primary(): TestPrimary {
 class TestNativeClient implements NativeCommitClient {
   beforeCommit?: (request: NativeCommitRequest) => Promise<void>;
   beforeSelection?: (keys: readonly string[]) => Promise<void>;
+  /** Runs after the head to materialize is fixed, as a real index walk would. */
+  duringFullRead?: () => Promise<void>;
   transformSelection?: (head: NativeSnapshot, keys: readonly string[]) => NativeSnapshot;
   readyFailure = false;
   readFailures = false;
@@ -45,7 +47,9 @@ class TestNativeClient implements NativeCommitClient {
     this.fullReads++;
     if (this.readFailures) throw new Error('native head unreadable');
     if (this.forbidFullReads) throw new Error('unexpected full native index scan');
-    return this.storage.head;
+    const head = this.storage.head;
+    await this.duringFullRead?.();
+    return head;
   }
   async readHeadRecords(keys: readonly string[]): Promise<NativeSnapshot> {
     this.selectedReads.push([...keys]);
@@ -233,7 +237,8 @@ describe('native Interego xAPI artifact adapter', () => {
     const full = await db.readHead(manyKeys);
     expect(full.selectedRecordKeys).toBeUndefined();
     expect(full.records.has(key)).toBe(true);
-    expect(client.selectedReads).toEqual([[key]]);
+    // The complete read first verifies which head it is about to materialize.
+    expect(client.selectedReads).toEqual([[key], []]);
     expect(client.fullReads).toBe(fullReadsBefore + 1);
   });
   it('keeps immutable replay and collision checks on selected statement paths and never acknowledges a refused CAS', async () => {
@@ -442,6 +447,26 @@ describe('native Interego xAPI artifact adapter', () => {
     const restarted = database(new TestNativeClient(client.storage)).forTenant('alice');
     expect((await restarted.get(target.id))?.voided).toBe(true);
   });
+  it('returns a linked guest and owner together, including the next page of the same query', async () => {
+    const client = new TestNativeClient(), db = database(client), store = db.forTenant('alias');
+    await db.ready();
+    const guest = record(), owner = record(), other = record();
+    guest.statement.actor = { account: { homePage: 'https://example.test', name: 'guest' } };
+    owner.statement.actor = { account: { homePage: 'https://example.test', name: 'owner' } };
+    other.statement.actor = { account: { homePage: 'https://example.test', name: 'other' } };
+    await store.put(guest); await store.put(owner); await store.put(other);
+    const filter = {
+      agent: { account: { homePage: 'https://example.test', name: 'owner' } },
+      alsoAgents: [{ account: { homePage: 'https://example.test', name: 'guest' } }],
+      limit: 1, ascending: true,
+    };
+    const page = await store.query(filter);
+    expect(page.statements).toHaveLength(1);
+    expect(page.more).toBeTruthy();
+    const rest = await store.query({ ...filter, cursor: page.more! });
+    expect([...page.statements, ...rest.statements].map(row => row.id).sort()).toEqual([guest.id, owner.id].sort());
+    expect([...page.statements, ...rest.statements].some(row => row.id === other.id)).toBe(false);
+  });
   it('retains binary documents, content type and CAS preconditions across independent clients', async () => {
     const storage = primary(), left = database(new TestNativeClient(storage)).forTenant('alice'), right = database(new TestNativeClient(storage)).forTenant('alice');
     const bytes = Buffer.from([0, 255, 128, 1]);
@@ -513,6 +538,110 @@ describe('native Interego xAPI artifact adapter', () => {
       bytes: Buffer.from(JSON.stringify({ format: 'foxxi-native-lrs/1', tenant: 'bob', kind: 'statement', id: row.id, value: ['value', null] })) });
     await client.commit({ operationId: randomUUID(), expected: await client.readHead(), changes: [{ key: db.key('alice', 'statement', row.id), artifact: fake }] });
     await expect(store.get(row.id)).rejects.toThrow(/binding/);
+  });
+});
+
+describe('native LRS complete-head sharing', () => {
+  const held = () => { let release!: () => void; const wait = new Promise<void>(resolve => { release = resolve; }); return { wait, release }; };
+  const turn = () => new Promise<void>(resolve => { setImmediate(resolve); });
+
+  it('materializes an unchanged head once for concurrent and later readers, and again only after it changes', async () => {
+    const client = new TestNativeClient(), db = database(client), store = db.forTenant('alice');
+    const first = record(randomUUID(), '2026-10-15T10:00:00.000Z');
+    await store.put(first);
+    expect(client.fullReads).toBe(0);
+    const gate = held(); client.duringFullRead = () => gate.wait;
+    const concurrent = [...Array.from({ length: 6 }, () => store.query({})), store.count(), store.listAll(), db.listTenants(), db.forTenant('bob').count()];
+    await turn(); await turn();
+    expect(client.fullReads).toBe(1);
+    gate.release(); client.duringFullRead = undefined;
+    const results = await Promise.all(concurrent);
+    for (const result of results.slice(0, 6)) expect((result as Awaited<ReturnType<typeof store.query>>).statements.map(row => row.id)).toEqual([first.id]);
+    expect(results.slice(6)).toEqual([1, [expect.objectContaining({ id: first.id })], ['alice'], 0]);
+    expect(client.fullReads).toBe(1);
+
+    // Later readers of the same head: validated against the pod, not re-materialized.
+    const probesBefore = client.selectedReads.filter(keys => keys.length === 0).length;
+    expect((await store.query({})).statements).toHaveLength(1);
+    expect(await store.count()).toBe(1);
+    expect(client.fullReads).toBe(1);
+    expect(client.selectedReads.filter(keys => keys.length === 0).length).toBe(probesBefore + 2);
+
+    // A point write reads selected paths only and moves the head.
+    const second = record(randomUUID(), '2026-10-15T10:00:01.000Z');
+    await store.put(second);
+    expect(client.fullReads).toBe(1);
+    expect((await store.query({ ascending: true })).statements.map(row => row.id)).toEqual([first.id, second.id]);
+    expect(client.fullReads).toBe(2);
+    expect(await store.count()).toBe(2);
+    expect(client.fullReads).toBe(2);
+  });
+
+  it('re-reads a head changed by another process and never serves the earlier one', async () => {
+    const storage = primary(), client = new TestNativeClient(storage), store = database(client).forTenant('alice');
+    const elsewhere = database(new TestNativeClient(storage)).forTenant('alice');
+    await store.put(record());
+    expect(await store.count()).toBe(1);
+    await elsewhere.put(record());
+    expect(await store.count()).toBe(2);
+    expect(client.fullReads).toBe(2);
+    expect(await store.count()).toBe(2);
+    expect(client.fullReads).toBe(2);
+  });
+
+  it('does not answer a reader from a materialization begun before its own write', async () => {
+    const client = new TestNativeClient(), store = database(client).forTenant('alice');
+    const first = record(randomUUID(), '2026-10-15T10:00:00.000Z');
+    await store.put(first);
+    const gate = held(); client.duringFullRead = () => gate.wait;
+    const early = store.query({});
+    await turn(); await turn();
+    expect(client.fullReads).toBe(1);
+    // The head moves while the first materialization is still in flight.
+    const second = record(randomUUID(), '2026-10-15T10:00:01.000Z');
+    await store.put(second);
+    const late = store.query({ ascending: true });
+    await turn(); await turn();
+    expect(client.fullReads).toBe(2);
+    gate.release();
+    expect((await late).statements.map(row => row.id)).toEqual([first.id, second.id]);
+    expect((await early).statements.map(row => row.id)).toEqual([first.id]);
+    client.duringFullRead = undefined;
+    expect((await store.query({})).statements).toHaveLength(2);
+    expect(client.fullReads).toBeLessThanOrEqual(3);
+  });
+
+  it('keeps concurrent point writes and attachment reads off the complete index', async () => {
+    const client = new TestNativeClient(), store = database(client).forTenant('alice');
+    await store.put(record());
+    client.forbidFullReads = true;
+    const bytes = Buffer.from('attachment'), sha = createHash('sha256').update(bytes).digest('hex');
+    const rows = Array.from({ length: 8 }, (_, index) => record(randomUUID(), '2026-10-15T10:00:0' + index + '.000Z'));
+    await Promise.all(rows.map((row, index) => index === 0
+      ? store.putWithAttachments(row, new Map([[sha, { data: bytes, contentType: 'text/plain' }]])) : store.put(row)));
+    for (const row of rows) expect((await store.get(row.id))?.id).toBe(row.id);
+    expect((await store.getAttachment(sha))?.data.equals(bytes)).toBe(true);
+    expect(await store.getAttachment('0'.repeat(64))).toBeNull();
+    expect(client.fullReads).toBe(0);
+  });
+
+  it('shares nothing when a failed materialization is retried, and nothing with a client that cannot probe its head', async () => {
+    const client = new TestNativeClient(), store = database(client).forTenant('alice');
+    await store.put(record());
+    client.duringFullRead = async () => { throw new Error('index node unavailable'); };
+    const failed = await Promise.allSettled([store.count(), store.count()]);
+    expect(failed.map(result => result.status)).toEqual(['rejected', 'rejected']);
+    client.duringFullRead = undefined;
+    expect(await store.count()).toBe(1);
+    expect(client.fullReads).toBe(2);
+
+    const legacy = new TestNativeClient();
+    (legacy as { readHeadRecords?: unknown }).readHeadRecords = undefined;
+    const plain = database(legacy).forTenant('alice');
+    await plain.put(record());
+    const reads = legacy.fullReads;
+    await Promise.all([plain.count(), plain.count()]);
+    expect(legacy.fullReads).toBe(reads + 2);
   });
 });
 
@@ -927,13 +1056,17 @@ describe('native LRS slow-query diagnostics', () => {
     db.client.readHead = async () => { await gate.wait(); return read(); };
     fakeClock(); const pending = store.query(filter); await gate.waiting; await vi.advanceTimersByTimeAsync(5000);
     gate.release(); expect((await pending).statements).toEqual([row]);
-    expect(stderr).toHaveBeenCalledTimes(2); expect(fetch).not.toHaveBeenCalled();
-    for (const [line] of stderr.mock.calls) {
-      expect(typeof line).toBe('string'); expect(line).toMatch(/^\[foxxi-lrs\] slow-query /);
-      const event = JSON.parse(String(line).slice('[foxxi-lrs] slow-query '.length)) as Record<string, unknown>;
-      expect(Object.keys(event).sort()).toEqual(keys);
-      for (const value of [capability, privateKey, owner, scope.pod, row.id, 'private-tenant-sentinel']) expect(String(line)).not.toContain(value);
-    }
+    expect(fetch).not.toHaveBeenCalled();
+    const lines = stderr.mock.calls.map(([line]) => { expect(typeof line).toBe('string'); return String(line); });
+    const slow = lines.filter(line => line.startsWith('[foxxi-lrs] slow-query ')), writes = lines.filter(line => line.startsWith('[foxxi-lrs] native-write '));
+    // Two slow-query lines for the paused query and one write line for the put; nothing else.
+    expect(slow).toHaveLength(2); expect(writes).toHaveLength(1); expect(lines).toHaveLength(3);
+    for (const line of slow) expect(Object.keys(JSON.parse(line.slice('[foxxi-lrs] slow-query '.length)) as Record<string, unknown>).sort()).toEqual(keys);
+    const written = JSON.parse(writes[0]!.slice('[foxxi-lrs] native-write '.length)) as Record<string, unknown>;
+    expect(Object.keys(written).sort()).toEqual(['attempts', 'changes', 'commitMs', 'elapsedMs', 'outcome', 'prepareMs', 'readMs', 'readyMs']);
+    for (const value of Object.values(written)) expect(typeof value).toBe('number');
+    expect(written).toMatchObject({ outcome: 0, attempts: 1 });
+    for (const line of lines) for (const value of [capability, privateKey, owner, scope.pod, row.id, 'private-tenant-sentinel']) expect(line).not.toContain(value);
     expect(vi.getTimerCount()).toBe(0); await db.close();
   });
   it('isolates asynchronous errors from the configured logger captured writable', async () => {
@@ -1022,4 +1155,39 @@ describe.skipIf(!fixtureInputs && !optionalPod)('LRS adapter over actual native 
       expect(await recovered.listTenants()).toEqual(['synthetic-alice']);
     } finally { await recovered.close(); }
   }, 120000);
+  it('stages a whole commit in one receipted request on the actual server, and the published state reads back exactly', async () => {
+    const pod = process.env.TEST_NATIVE_POD_URL!, id = randomUUID(), keys = deriveEncryptionKeyPair(privateKey, serviceOwner);
+    const nativeScope: NativeCommitScope = { pod, owner: serviceOwner,
+      headUrl: new URL('foxxi/lrs/native/staged-' + id + '/head', pod).href,
+      artifactContainer: new URL('foxxi/lrs/native/staged-' + id + '/artifacts/', pod).href };
+    const requests: Array<{ method: string; url: string; status: number }> = [];
+    const transport: typeof globalThis.fetch = async (input, init) => {
+      const headers = new Headers(init?.headers);
+      headers.set('Authorization', 'Bearer ' + (fixture ? NATIVE_CSS_FIXTURE_CAPABILITY : process.env.TEST_NATIVE_CAPABILITY));
+      const response = await fetch(input, { ...init, headers });
+      requests.push({ method: init?.method ?? 'GET', url: String(input), status: response.status });
+      return response;
+    };
+    const client = (stageIndividually?: boolean) => new NativeCommitStore({ scope: nativeScope, fetch: transport, senderKeyPair: keys,
+      ownerPublicKey: keys.publicKey, recipientPublicKeys: [keys.publicKey], stageIndividually });
+    const bytes = (text: string) => createNativeByteArtifact({ owner: serviceOwner, contentType: 'application/octet-stream', bytes: Buffer.from(text) });
+    const batched = client();
+    await batched.commit({ operationId: 'first-' + id, expected: await batched.readHead(), changes: [{ key: 'a', artifact: bytes('a') }] });
+    const from = requests.length;
+    const receipt = await batched.commit({ operationId: 'second-' + id, expected: await batched.readHead(),
+      changes: [{ key: 'b', artifact: bytes('b') }, { key: 'c', artifact: bytes('c') }] });
+    const during = requests.slice(from), immutable = during.filter(row => row.url.startsWith(nativeScope.artifactContainer));
+    // The server accepted the batch itself: a refused one would fall back to a PUT and a GET per representation.
+    expect(immutable.filter(row => row.method !== 'GET')).toEqual([{ method: 'POST', url: nativeScope.artifactContainer, status: 200 }]);
+    expect(during.filter(row => row.method === 'PUT').map(row => row.url)).toEqual([nativeScope.headUrl]);
+    expect(receipt.resourceReceipt?.resource).toBe(nativeScope.headUrl);
+    // A client that stages one at a time, and reads everything from the pod, sees the same state and extends it.
+    const individual = client(true), read = await individual.readHead();
+    expect([...read.records.keys()].sort()).toEqual(['a', 'b', 'c']);
+    for (const [key, reference] of read.records) expect(Buffer.from(readNativeByteArtifact(await individual.readArtifact(reference)).bytes).toString()).toBe(key);
+    const before = requests.length;
+    await individual.commit({ operationId: 'third-' + id, expected: read, changes: [{ key: 'd', artifact: bytes('d') }] });
+    expect(requests.slice(before).filter(row => row.method === 'POST')).toEqual([]);
+    expect([...(await batched.readHead()).records.keys()].sort()).toEqual(['a', 'b', 'c', 'd']);
+  }, 60000);
 });

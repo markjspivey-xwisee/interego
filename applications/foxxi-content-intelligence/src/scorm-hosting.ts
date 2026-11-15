@@ -41,9 +41,24 @@ import { readFileSync } from 'node:fs';
 import AdmZip from 'adm-zip';
 import type { Express, Response as ExpressResponse } from 'express';
 import type { Cmi5Course } from './cmi5-course.js';
+import { browserWantsPlayer, playerLocation } from './cmi5-player.js';
 
 /** A package's id: the sha-256 of its zip, in lowercase hex. */
 export const PACKAGE_SHA = /^[0-9a-f]{64}$/;
+
+/**
+ * The operator's take-down list, read from one setting: sha-256s separated by commas or
+ * whitespace, in either case. An entry that is no sha-256 is named in `ignored` and takes nothing
+ * down, so a typo cannot remove a package the operator did not mean.
+ */
+export function takenDownPackages(raw: unknown): { shas: ReadonlySet<string>; ignored: string[] } {
+  const shas = new Set<string>(), ignored: string[] = [];
+  for (const entry of (typeof raw === 'string' ? raw : '').split(/[\s,]+/).filter(Boolean)) {
+    const sha = entry.toLowerCase();
+    if (PACKAGE_SHA.test(sha)) shas.add(sha); else ignored.push(entry.slice(0, 80));
+  }
+  return { shas, ignored };
+}
 
 /**
  * The sandbox every response from a package is sent in: scripts, forms, popups and dialogs run,
@@ -268,6 +283,8 @@ export class HostedPackages {
     describePackage?: (bytes: Buffer) => PackageAbout | null;
     /** How long the background leaves a package it could not describe before trying it again. */
     retryAfterMs?: number;
+    /** Packages the operator has taken down (takenDownPackages): none of them is kept again. */
+    takenDown?: ReadonlySet<string>;
   }) {}
 
   /** The pod container packages are kept in. */
@@ -291,6 +308,7 @@ export class HostedPackages {
    */
   async keep(bytes: Buffer, about?: PackageAbout): Promise<{ sha256: string; url: string }> {
     const sha256 = sha256Of(bytes);
+    if (this.opts.takenDown?.has(sha256)) throw new Error('this package was taken down by the operator of this bridge');
     const url = this.urlOf(sha256);
     const fetchFn = this.opts.fetch ?? globalThis.fetch;
     // A Solid store does not always make the parent of a PUT, and on a fresh tenant pod nothing has
@@ -328,7 +346,7 @@ export class HostedPackages {
 
   /** What a package is: in hand, or read from beside it on the pod. Null when neither has it; the package is not opened. */
   async about(sha256: string): Promise<PackageAbout | null> {
-    if (!PACKAGE_SHA.test(sha256)) return null;
+    if (!PACKAGE_SHA.test(sha256) || this.opts.takenDown?.has(sha256)) return null;
     const had = this.abouts.get(sha256);
     if (had) return had;
     return once(this.aboutReads, sha256, async () => {
@@ -370,7 +388,8 @@ export class HostedPackages {
 
   /** A package, from memory or the pod, or null when it is not kept or its bytes are not what its id says. */
   async open(sha256: string): Promise<AdmZip | null> {
-    if (!PACKAGE_SHA.test(sha256)) return null;
+    // A package the operator took down is not served, whether or not the pod has removed it yet.
+    if (!PACKAGE_SHA.test(sha256) || this.opts.takenDown?.has(sha256)) return null;
     const had = this.held.get(sha256);
     if (had) { this.held.delete(sha256); this.held.set(sha256, had); return had.zip; }
     const bytes = await this.read(sha256);
@@ -398,7 +417,7 @@ export class HostedPackages {
   /** Describe a package from its own bytes and keep the description: once however many ask at once. */
   private describeFromPackage(sha256: string): Promise<PackageAbout | null> {
     const describe = this.opts.describePackage;
-    if (!describe || !PACKAGE_SHA.test(sha256)) return Promise.resolve(null);
+    if (!describe || !PACKAGE_SHA.test(sha256) || this.opts.takenDown?.has(sha256)) return Promise.resolve(null);
     return once(this.describing, sha256, async () => {
       // Described already: a launch described it while it waited its turn here (Codex, on #551).
       const known = this.abouts.get(sha256);
@@ -435,6 +454,44 @@ export class HostedPackages {
   }
 
   /**
+   * Take a package down: its bytes and what is kept beside it leave the pod, and nothing of it stays
+   * in hand, so it is no longer listed, opened or served. `removed` is whether the pod no longer
+   * keeps the package (it took the delete, or never had it); when the pod refused, the package is
+   * still dropped from memory and `why` says what the pod answered, so the caller can try again.
+   */
+  async remove(sha256: string): Promise<{ removed: boolean; why?: string }> {
+    if (!PACKAGE_SHA.test(sha256)) return { removed: false, why: 'not a package id: a sha-256, in lowercase hex' };
+    const had = this.held.get(sha256);
+    if (had) { this.held.delete(sha256); this.heldBytes -= had.bytes; }
+    this.abouts.delete(sha256);
+    this.undescribed.delete(sha256);
+    const queued = this.queue.indexOf(sha256);
+    if (queued >= 0) this.queue.splice(queued, 1);
+    const fetchFn = this.opts.fetch ?? globalThis.fetch;
+    let status: number;
+    try { status = (await fetchFn(this.urlOf(sha256), { method: 'DELETE' })).status; }
+    catch (e) { return { removed: false, why: `the pod could not be reached: ${(e as Error).message}` }; }
+    // What describes it goes too, best effort: without the package it describes nothing.
+    try { await fetchFn(this.aboutUrlOf(sha256), { method: 'DELETE' }); } catch { /* best effort */ }
+    // A read begun before the delete may have put it back in hand: drop it again.
+    const again = this.held.get(sha256);
+    if (again) { this.held.delete(sha256); this.heldBytes -= again.bytes; }
+    this.abouts.delete(sha256);
+    if ((status >= 200 && status < 300) || status === 404 || status === 410) return { removed: true };
+    return { removed: false, why: `the pod did not remove the package (HTTP ${status})` };
+  }
+
+  /**
+   * Remove every package the operator has taken down, as `remove` does. Run at start: a package
+   * listed while it was already kept goes then, and one already gone answers as removed.
+   */
+  async removeTakenDown(): Promise<Array<{ sha256: string; removed: boolean; why?: string }>> {
+    const done: Array<{ sha256: string; removed: boolean; why?: string }> = [];
+    for (const sha256 of this.opts.takenDown ?? []) done.push({ sha256, ...(await this.remove(sha256)) });
+    return done;
+  }
+
+  /**
    * The packages kept here: those the pod's package container lists, and any held in memory, at most
    * `max`. A pod that cannot be read gives the held ones.
    */
@@ -445,6 +502,7 @@ export class HostedPackages {
       if (r.ok) for (const m of (await r.text()).matchAll(/([0-9a-f]{64})\.zip\b/g)) shas.add(m[1]!);
     } catch { /* the pod did not answer: what is held is what can be listed */ }
     for (const sha of this.held.keys()) shas.add(sha);
+    for (const sha of this.opts.takenDown ?? []) shas.delete(sha);
     return [...shas].slice(0, max);
   }
 
@@ -547,6 +605,7 @@ export function attachHostedPackageRoutes(app: Express, deps: {
     try {
       const sha = PACKAGE_RECORD.exec(req.path)?.[1] ?? '';
       const course = await deps.courseFor(sha);
+      if (course && browserWantsPlayer(req)) { res.redirect(303, playerLocation(course.id)); return; }
       if (!course) {
         // An authoring tool's own export is kept here too, with no course: its record says how to fold it.
         const about = await deps.packages.about(sha);

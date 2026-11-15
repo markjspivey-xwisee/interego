@@ -52,6 +52,11 @@ export interface QueryFilter {
   statementId?: string;
   voidedStatementId?: string;
   agent?: Record<string, unknown>;
+  /**
+   * Further actors that satisfy `agent`. Set by a reader that knows two actors are one
+   * person. Absent means the agent filter is exact, as the xAPI query defines it.
+   */
+  alsoAgents?: ReadonlyArray<Record<string, unknown>>;
   verb?: string;
   activity?: string;
   registration?: string;
@@ -94,15 +99,22 @@ export interface StatementStore {
 
 // ── Filter / paginate helper ─────────────────────────────────────────
 
+function sameAgent(
+  a: { mbox?: string; openid?: string; account?: { name?: string; homePage?: string } } | undefined,
+  fa: { mbox?: string; openid?: string; account?: { name?: string; homePage?: string } } | undefined,
+): boolean {
+  return JSON.stringify(a) === JSON.stringify(fa)
+    || (!!fa?.mbox && a?.mbox === fa.mbox)
+    || (!!fa?.openid && a?.openid === fa.openid)
+    || (!!fa?.account?.name && a?.account?.name === fa.account.name && a?.account?.homePage === fa.account.homePage);
+}
+
 export function matchesFilter(rec: StoredStatement, f: QueryFilter): boolean {
   const s = rec.statement;
   if (f.agent) {
     const a = s.actor as { mbox?: string; openid?: string; account?: { name?: string; homePage?: string } } | undefined;
     const fa = f.agent as typeof a;
-    const same = JSON.stringify(a) === JSON.stringify(fa)
-      || (fa?.mbox && a?.mbox === fa.mbox)
-      || (fa?.openid && a?.openid === fa.openid)
-      || (fa?.account?.name && a?.account?.name === fa.account.name && a?.account?.homePage === fa.account.homePage);
+    const same = sameAgent(a, fa) || (f.alsoAgents?.some(extra => sameAgent(a, extra as typeof a)) ?? false);
     if (!same) return false;
   }
   if (f.verb && (s.verb as { id?: string } | undefined)?.id !== f.verb) return false;
@@ -117,7 +129,7 @@ export function matchesFilter(rec: StoredStatement, f: QueryFilter): boolean {
  *  same filter as page 1. `statementId`/`voidedStatementId` are excluded: those
  *  return a single statement and never paginate. */
 export type CursorQuery = Pick<QueryFilter,
-  'agent' | 'verb' | 'activity' | 'registration' | 'since' | 'until' | 'ascending' | 'limit'>;
+  'agent' | 'alsoAgents' | 'verb' | 'activity' | 'registration' | 'since' | 'until' | 'ascending' | 'limit'>;
 
 export interface DecodedCursor { offset: number; ts?: number; q?: CursorQuery }
 
@@ -140,6 +152,7 @@ export function encodeCursor(c: DecodedCursor): string {
 export function cursorQueryOf(f: QueryFilter): CursorQuery {
   const q: CursorQuery = {};
   if (f.agent !== undefined) q.agent = f.agent;
+  if (f.alsoAgents !== undefined) q.alsoAgents = f.alsoAgents;
   if (f.verb !== undefined) q.verb = f.verb;
   if (f.activity !== undefined) q.activity = f.activity;
   if (f.registration !== undefined) q.registration = f.registration;
@@ -252,8 +265,8 @@ function statementBodyEqual(a: Record<string, unknown>, b: Record<string, unknow
 //   round-38  TenantPartition.MAX        = 20_000  tenant partitions
 // What exhausts the heap is the PRODUCT — 20_000 × 50_000 = 1_000_000_000 resident
 // statements. Measured against these exact classes a representative xAPI 2.0 statement
-// costs ~845 B of heap, so the bridge's 3072 MiB heap (NODE_OPTIONS
-// --max-old-space-size=3072) is gone at ~3.8 M statements: 262x BELOW what the caps
+// costs ~845 B of heap, so a 3072 MiB heap (the NODE_OPTIONS
+// --max-old-space-size the bridge then ran with) is gone at ~3.8 M statements: 262x BELOW what the caps
 // allow. Neither cap can fire first — 20_000 tenants x 191 statements OOMs the process
 // with the per-tenant cap untouched, and 77 tenants x 50_000 OOMs it with the tenant cap
 // untouched. Both guards were unreachable on the path they were written for, which is why
@@ -289,6 +302,22 @@ export function residentStatementCount(): number { return residentStatements; }
 export function setResidentStatementBudget(n?: number): void {
   residentBudget = n === undefined ? defaultResidentBudget() : n;
 }
+/**
+ * The resident count and its budget as Prometheus gauges, for GET /metrics: how much of the
+ * process's memory is statements held in hand, at about 1 KiB each.
+ */
+export function residentStatementMetricLines(): string[] {
+  return [
+    '# HELP foxxi_bridge_lrs_resident_statements Statements held in memory across every in-memory store',
+    '# TYPE foxxi_bridge_lrs_resident_statements gauge',
+    `foxxi_bridge_lrs_resident_statements ${residentStatements}`,
+    '',
+    '# HELP foxxi_bridge_lrs_resident_statements_budget Statements the process may hold in memory before it evicts',
+    '# TYPE foxxi_bridge_lrs_resident_statements_budget gauge',
+    `foxxi_bridge_lrs_resident_statements_budget ${residentBudget}`,
+  ];
+}
+
 /** Test seam: forget every registered store. A store left registered by an earlier test is
  *  otherwise a candidate victim for a later test's eviction in the same process (since
  *  vitest 4, the same file), and its assertions would depend on run order. Fix the polluter. */
@@ -604,7 +633,26 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
   };
   const queryDiagnostics = new Console({ stdout: process.stderr, stderr: process.stderr, ignoreErrors: true });
   const client = new NativeCommitStore({ scope: config.scope, fetch: transport, senderKeyPair,
-    cacheImmutableReads: true, indexReadConcurrency: 8,
+    // Index nodes are immutable and content addressed. Keeping the verified
+    // ones means a head changed by one write is re-read along that write's
+    // paths only; the head itself is still fetched and verified on every read.
+    cacheImmutableReads: true, indexReadConcurrency: 8, indexNodeCacheEntries: 262_144,
+    // A write reads the head once and commits from that verified snapshot; the head
+    // compare-and-set still decides. The immutable commit object behind a head is fetched
+    // once, and the capability probe is repeated every five minutes, not before each write.
+    reuseBackingCommits: true, commitFromExpectedSnapshot: true, capabilityProbeTtlMs: 300_000,
+    // Index nodes as small byte holons, not wide tuples: a write rewrote about a megabyte of
+    // index for a few kilobytes of references. This bridge is the store's only reader.
+    compactIndexNodes: true,
+    onCommit: event => {
+      // Numbers only: phase durations, request and byte counts. See NativeCommitDiagnostic.
+      queryDiagnostics.warn('[foxxi-lrs] native-commit ' + JSON.stringify({
+        commitNumber: event.commitNumber, outcome: event.outcome, batched: event.batched, fromExpected: event.fromExpected,
+        changes: event.changes, elapsedMs: event.elapsedMs, headMs: event.headMs, probeMs: event.probeMs, buildMs: event.buildMs,
+        stageMs: event.stageMs, stageRequests: event.stageRequests, stagedItems: event.stagedItems, stagedBytes: event.stagedBytes,
+        headWriteMs: event.headWriteMs, headReadMs: event.headReadMs, resultMs: event.resultMs,
+      }));
+    },
     onHeadRead: event => {
       // Numeric projection only; operation/event/phase/outcome codes are documented
       // by NativeHeadReadDiagnostic. No scope, URL, record, query or error text.
@@ -615,10 +663,20 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
         peakIndexReads: event.peakIndexReads, indexReadConcurrency: event.indexReadConcurrency,
       }));
     },
-    ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
+    ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])],
+    // Only what this bridge or the store's owner sealed is read as the store's. The pod is written
+    // with a capability other services may hold too, and the recipients' public keys are public, so
+    // without this anyone who can write the pod could seal a record of their own and have it read
+    // here: a statement under any authority, the LMS's included. The owner is named because the
+    // owner is a recipient and may have sealed what is already there.
+    trustedSenderPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
   return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
     scopeIdentity: JSON.stringify(config.scope),
     cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner),
+    onWrite: event => {
+      queryDiagnostics.warn('[foxxi-lrs] native-write ' + JSON.stringify({ outcome: event.outcome, attempts: event.attempts, changes: event.changes,
+        elapsedMs: event.elapsedMs, readyMs: event.readyMs, readMs: event.readMs, prepareMs: event.prepareMs, commitMs: event.commitMs }));
+    },
     onSlowQuery: event => {
       // Explicit projection keeps future diagnostics from leaking query values.
       queryDiagnostics.warn('[foxxi-lrs] slow-query ' + JSON.stringify({ event: event.event, phase: event.phase, outcome: event.outcome,

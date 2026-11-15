@@ -342,6 +342,43 @@ export interface InteregoUiOptions {
   /** How many relay calls this bridge makes, and for whom (`RELAY_LIMITS` unless a test sets others), and the clock they are counted by. */
   readonly limits?: Partial<RelayLimits>;
   readonly now?: () => number;
+  /**
+   * Where this web app's own client ids at the relay are kept (`webAppClients`), which the handlers
+   * read to tell its relay-signed requests from another client's: a dynamic registration's id is
+   * added here when the relay gives it. server.ts passes the same one to the handlers.
+   */
+  readonly webAppClients?: WebAppClients;
+}
+
+/** This web app's own OAuth client ids at the relay (`webAppClients`). */
+export interface WebAppClients {
+  /** True for the web app's Client ID Metadata Document URL, or an id a dynamic registration gave it in this process. */
+  readonly has: (clientId: string) => boolean;
+  /** Keep an id a dynamic registration gave this web app. */
+  readonly add: (clientId: string) => void;
+}
+
+/** At most this many registered ids are kept: a process registers once, and again only after a registration that failed. */
+const WEB_APP_CLIENTS_MAX = 16;
+
+/**
+ * This web app's own OAuth client ids at the relay, for the handlers' `isWebAppClient`: its Client
+ * ID Metadata Document URL on `deploymentUrl` (the id the relay knows it by when it reads one), and
+ * each id a dynamic registration gave it in this process (an http deployment, or a relay that reads
+ * no metadata document). A registered id lives as long as this process: after a restart, or on
+ * another replica, a sign-in made under the old id is not this web app's here until the person
+ * signs in again.
+ */
+export function webAppClients(deploymentUrl: string): WebAppClients {
+  const cimd = `${deploymentUrl.replace(/\/+$/, '')}/ui/oauth/client.json`;
+  const registered = new Set<string>();
+  return {
+    has: (clientId) => clientId === cimd || registered.has(clientId),
+    add: (clientId) => {
+      if (registered.size >= WEB_APP_CLIENTS_MAX) registered.delete(registered.values().next().value as string);
+      registered.add(clientId);
+    },
+  };
 }
 
 /** What the page needs to send a person to the relay's sign-in page. */
@@ -469,6 +506,7 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
     return;
   }
   const relayFetch = o.relayFetch;
+  const ownClients = o.webAppClients;
   const base = o.deploymentUrl.replace(/\/+$/, '');
   const relay = new URL(o.relayUrl);
   const relayBase = relay.href.replace(/\/+$/, '');
@@ -660,6 +698,12 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
    * This client's id at the relay: the CIMD URL when the relay takes Client ID Metadata Documents
    * and the deployment URL is https; otherwise one registered by DCR, once per process (a failed
    * registration is tried again on the next sign-in).
+   *
+   * A DCR id is kept only in memory, so it changes when the process restarts, while access tokens
+   * issued to the earlier id stay live for up to an hour. Nothing here reads the `client_id` the
+   * relay can sign yet; before anything does, keep every id used within a token's lifetime (or
+   * persist the registration), or a restart refuses the people already signed in. See `client_id`
+   * in handleSignRequest, deploy/mcp-relay/server.ts.
    */
   async function clientIdFor(meta: RelayMetadata, caller: Caller): Promise<{ readonly clientId: string; readonly registration: StartConfig['registration'] }> {
     if (meta.cimd && cimdUsable) return { clientId: clientIdUrl, registration: 'client-id-metadata-document' };
@@ -679,6 +723,8 @@ function attachInteregoSignIn(app: Express, o: InteregoUiOptions | undefined): v
       if ((r.status !== 200 && r.status !== 201) || typeof id !== 'string' || id.length === 0 || id.length > 256) {
         throw new Declined(502, `The Interego relay did not register this page as a client (HTTP ${r.status}).`, 'relay-registration-refused');
       }
+      // The handlers read a request the relay signs for this client as this web app's (`client_id`).
+      ownClients?.add(id);
       return id;
     })();
     const pending = registered;

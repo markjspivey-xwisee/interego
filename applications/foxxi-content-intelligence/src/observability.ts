@@ -20,6 +20,8 @@
  * bounded by the affordance count.
  */
 
+import { memoryMetricLines, processMemory, type ProcessMemory } from './process-memory.js';
+
 interface HandlerStats {
   calls: number;
   errors: number;
@@ -121,7 +123,10 @@ export function renderMetrics(): string {
   lines.push('# HELP foxxi_bridge_vcs_issued_total W3C Verifiable Credentials minted');
   lines.push('# TYPE foxxi_bridge_vcs_issued_total counter');
   lines.push(`foxxi_bridge_vcs_issued_total ${counters.vcsIssued}`);
-  return lines.join('\n') + '\n';
+  lines.push('');
+  // What the process holds and what its container is charged for (src/process-memory.ts).
+  lines.push(...memoryMetricLines(processMemory()));
+  return lines.join('\n').replace(/\n+$/, '') + '\n';
 }
 
 /** JSON shape for the operator dashboard. */
@@ -132,6 +137,8 @@ export interface MetricsSnapshot {
   authFailures: number;
   bbsProofsDerived: number;
   vcsIssued: number;
+  /** What the process holds and what its container is charged for, in bytes. */
+  memory: ProcessMemory;
 }
 export function metricsJson(): MetricsSnapshot {
   const handlers: MetricsSnapshot['handlers'] = [];
@@ -149,5 +156,6 @@ export function metricsJson(): MetricsSnapshot {
     authFailures: counters.authFailures,
     bbsProofsDerived: counters.bbsProofsDerived,
     vcsIssued: counters.vcsIssued,
+    memory: processMemory(),
   };
 }

@@ -2,7 +2,8 @@
  * The host supplies its own authenticated course readers and live owner policy.
  * This adapter stores no course text, graph, package, questions or answer history.
  */
-import express, { type Express } from 'express';
+import type { Express } from 'express';
+import { routeJson } from './route-json.js';
 import { randomBytes } from 'node:crypto';
 import type { VerifiedResourceLaunch } from './lti13.js';
 
@@ -174,7 +175,7 @@ export class CourseSourceService {
 /** Attach only at a fixed operator-chosen endpoint. No caller-supplied fetch URL exists. */
 export function attachCourseSourceService(app: Express, path: string, config: CourseSourceServiceConfig): CourseSourceService {
   const service = new CourseSourceService(config);
-  app.post(path, express.json({ limit: '16kb' }), async (req, res) => {
+  app.post(path, routeJson({ limit: '16kb' }), async (req, res) => {
     const controller = new AbortController();
     const closed = () => { if (!res.writableEnded) controller.abort(); };
     res.once('close', closed);

@@ -19,6 +19,7 @@ import { privatePerformanceAffordances } from '../agentic-performance-practice/c
 import { telemetryAffordances } from '../llm-telemetry/affordances.js';
 import { semanticAffordances } from './src/i2idlx-semantic-affordances.js';
 import { authoredGlossaryAffordances } from './src/i2idlx-authored-affordances.js';
+import { xapiProfileServerAffordances } from './src/xapi-profile-server/affordances.js';
 import type {
   IRI,
 } from '@interego/core';
@@ -30,6 +31,7 @@ import type {
 export const foxxiAffordances: ReadonlyArray<Affordance> = [
   ...semanticAffordances,
   ...authoredGlossaryAffordances,
+  ...xapiProfileServerAffordances,
   // I2IDL-X workbench: the generic relay follows these signed external routes.
   // Identity, owner binding and editor checks live in src/i2idlx-workbench.ts.
   {
@@ -441,14 +443,14 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     action: 'urn:iep:action:foxxi:cmi5-launch-signed' as IRI,
     toolName: 'foxxi.cmi5_launch_signed',
     title: 'Launch a cmi5 activity for myself',
-    description: 'Launch an Assignable Unit of a cmi5 course published on this bridge, for yourself, signed by your wallet or by an agent holding your delegation (a relay connection, such as a Claude connector). The launch is for the signer and nobody else. The LMS stages LMS.LaunchData in the State resource and returns the conformant launch URL; the AU fetches its auth-token once. Its statements, and the `satisfied` the LMS records when they meet moveOn, land in your own record and are kept on your pod, where your IEEE P2997 learner record reads them. They count as experience, not as graded evidence for a credential: a cmi5 AU reports its own result. Without au_id, the first AU you have not satisfied; sequential progression is enforced (409 names the AU that comes first). Externally routed: sign_request the args, then POST the envelope.',
+    description: 'Launch an Assignable Unit of a cmi5 course published on this bridge, for yourself, signed by your wallet or by an agent holding your delegation (a relay connection, such as a Claude connector). The launch is for the signer and nobody else. The LMS stages LMS.LaunchData in the State resource and returns the conformant launch URL; the AU fetches its auth-token once, and that URL expires after 30 minutes. Its statements, and the `satisfied` the LMS records when they meet moveOn, land in your own record and are kept on your pod, where your IEEE P2997 learner record reads them. They count as experience, not as graded evidence for a credential: a cmi5 AU reports its own result. Without au_id, the first AU you have not satisfied; sequential progression is enforced (409 names the AU that comes first). For a link the learner can open again, use foxxi.cmi5_personal_launch. Externally routed: sign_request the args, then POST the envelope.',
     method: 'POST',
     targetTemplate: '{base}/agent/cmi5/launch',
     mediaType: 'application/json',
     externallyRouted: true,
     annotations: { title: 'Launch a cmi5 activity', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url? }): the published course, optionally the AU, optionally where the AU returns you.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, launch_parameters? }): the published course, optionally the AU, optionally where the AU returns you, optionally the launchParameters string that replaces the one in the course structure (cmi5 §10.2.3).' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -463,6 +465,112 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
         launchDataStaged: { type: 'boolean', description: 'LMS.LaunchData is in the State resource for the AU to read.' },
         progress: { type: 'string', description: 'Where the registration\'s moveOn state can be read.' },
         learner: { type: 'string', description: 'Who the launch is for: your wallet DID, or the person your delegation names.' },
+      },
+    },
+  },
+  {
+    action: 'urn:iep:action:foxxi:cmi5-personal-launch-signed' as IRI,
+    toolName: 'foxxi.cmi5_personal_launch',
+    title: 'Mint a reusable cmi5 launch link',
+    description: 'Mint a durable link for yourself, for one cmi5 course published on this bridge, signed by your wallet or by an agent holding your delegation. The link is GET /cmi5/go/<token>: the token is unguessable, shown only in this response, and the URL carries nothing that identifies the learner. The bridge stores a hash of the token. Each open starts a fresh fetch token and redirects to the activity. An open session continues; a session terminated before moveOn was met keeps the registration and starts a new session; a session that met moveOn, or was abandoned or waived, starts a new registration (Review when the activity is already satisfied). A link minted by a delegate ends when that delegation does. expires_in_days defaults to 90; null means the link does not expire on its own, except that it still cannot outlive the delegation. Without au_id the link follows the course. foxxi.cmi5_personal_launch_list lists the links minted for you. foxxi.cmi5_personal_launch_revoke withdraws one. Externally routed: sign_request the args, then POST the envelope.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/cmi5/go',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Mint a reusable cmi5 launch link', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, expires_in_days?, launch_parameters? }). expires_in_days is a whole number of days (1 to 3650) or null for no expiry; omitted means 90 days. launch_parameters, when present, replaces the course structure\'s launchParameters on every open (cmi5 §10.2.3); null clears it.' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: {
+      description: 'The link, 201: token, url, courseId, learner, expiresAt (absent when the link does not expire), state. 400 on a bad expires_in_days or return_url; 404 for a course or AU this bridge does not publish; 401 on auth failure; 429 when rate-limited.',
+      properties: {
+        kind: { type: 'string', description: '"cmi5-personal-launch".' },
+        token: { type: 'string', description: 'The unguessable token. It is not derived from the learner.' },
+        url: { type: 'string', description: 'GET this URL. It names the token and nothing else.' },
+        courseId: { type: 'string', description: 'The one course the link launches.' },
+        learner: { type: 'string', description: 'Who the link launches: your wallet DID, or the person your delegation names.' },
+        expiresAt: { type: 'string', description: 'When the link stops launching, if it expires.' },
+        state: { type: 'string', description: 'live | revoked | expired.' },
+      },
+      required: ['kind', 'token', 'url'],
+    },
+  },
+  {
+    action: 'urn:iep:action:foxxi:cmi5-personal-launch-revoke-signed' as IRI,
+    toolName: 'foxxi.cmi5_personal_launch_revoke',
+    title: 'Withdraw a reusable cmi5 launch link',
+    description: 'Withdraw one of your personal cmi5 launch links. The URL then stops launching. A session already open may finish. Pass the token, the link URL, or the id from foxxi.cmi5_personal_launch_list. Externally routed: sign_request the args, then POST the envelope.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/cmi5/go/revoke',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Withdraw a reusable cmi5 launch link', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, token }). token is the link\'s token or its full URL.' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: {
+      description: 'The withdrawn link. 404 when no such link of yours; 400 without a token; 401 on auth failure.',
+      properties: {
+        kind: { type: 'string', description: '"cmi5-personal-launch".' },
+        id: { type: 'string', description: 'The stored hash of the token. The token itself is not kept.' },
+        state: { type: 'string', description: 'revoked.' },
+        revokedAt: { type: 'string' },
+      },
+      required: ['kind', 'id'],
+    },
+  },
+  {
+    action: 'urn:iep:action:foxxi:cmi5-personal-launch-list-signed' as IRI,
+    toolName: 'foxxi.cmi5_personal_launch_list',
+    title: 'List your reusable cmi5 launch links',
+    description: 'List the personal cmi5 launch links minted for you, including ones an agent minted in your name. Each row is the stored record: the hash id, the course, when it expires, and whether it is live. The URL itself is not stored and is not returned. Externally routed: sign_request the args, then POST the envelope.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/cmi5/go/list',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'List your reusable cmi5 launch links', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp }).' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: {
+      description: 'The links minted for you. 503 when the stored list could not be read; 401 on auth failure; 429 when rate-limited.',
+      properties: {
+        kind: { type: 'string', description: '"cmi5-personal-launches".' },
+        learner: { type: 'string', description: 'Who the links launch: your wallet DID, or the person your delegation names.' },
+        count: { type: 'number' },
+        links: { type: 'array', description: 'One record per link. No token and no URL.', items: { type: 'object', additionalProperties: true } },
+      },
+      required: ['kind', 'learner', 'count', 'links'],
+    },
+  },
+  {
+    action: 'urn:iep:action:foxxi:host-package-signed' as IRI,
+    toolName: 'foxxi.host_package_signed',
+    title: 'Bring a package to be hosted here',
+    description: 'Bring a SCORM or cmi5 .zip, or an authoring tool\'s own export, to be hosted on this bridge, signed by your wallet or by an agent holding your delegation. No account or directory role is needed: any key may sign. It is parsed on arrival and kept by its sha-256 exactly as foxxi.upload_scorm_package keeps an operator\'s, with you named as the uploader on its receipt. A package with something to launch is listed at /scorm/packages and anyone may play it with foxxi.cmi5_launch_signed, each of its documents in a sandbox of its own. What a package reports is experience, not graded evidence. The deployment bounds this route: a largest package, a number per signer per hour, and it may be closed, in which case it answers 404.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/scorm/host',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'Bring a package to be hosted', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, zip_base64, hinted_title? }): the package, base64-encoded, and optionally a display name.' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    outputs: {
+      description: 'What the upload answers, with who brought it. 400 without a package; 401 on auth failure; 404 when the deployment has closed this route; 413 for a package larger than a signer may bring; 429 when the signer or the address has brought too many.',
+      properties: {
+        status: { type: 'string', description: 'parsed, or failed when the package could not be read.' },
+        hosted: { type: 'boolean', description: 'Whether the package is kept here to be played or folded.' },
+        packageSha256: { type: 'string', description: 'The sha-256 the package is kept and served under.' },
+        course: { type: 'object', description: 'The cmi5 course made of the package: its id, title and AUs. Launch it with foxxi.cmi5_launch_signed.', additionalProperties: true },
+        uploader: { type: 'string', description: 'Who brought it: your wallet DID, or the agent that signed.' },
       },
     },
   },
@@ -510,7 +618,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     outputs: {
       description: 'Your gradebook rows. 401 on auth failure.',
       properties: {
-        rows: { type: 'array', description: 'One per course: its line item and your result, rescaled to the line item\'s maximum, or null.', items: { type: 'object', additionalProperties: true } },
+        rows: { type: 'array', description: 'One per course, with its line item and your result, rescaled to the line item\'s maximum, or null. If a scored retake arrives after a finalized grade and is not itself FullyGraded (NotReady, Pending, PendingManual or Failed), result is the retained grade and retake is the latest provisional score and status.', items: { type: 'object', additionalProperties: true } },
         learner: { type: 'string', description: 'Whose rows these are: the LTI sub the LMS knows you by.' },
       },
     },
@@ -1452,7 +1560,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     mediaType: 'application/json', externallyRouted: true,
     annotations: { title: 'Keep private personal activity', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",statements:[{id,actor,verb,object,timestamp,result?,context?}]}). The relay supplies agent_id, subject_pod_url and fresh signature timestamp. Statement timestamps describe observed events.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",statements:[{id,actor,verb,object,timestamp,result?,context?}]}). The relay supplies agent_id, subject_pod_url and fresh signature timestamp, and may add client_id (the OAuth client its session token was issued to), which is accepted and not read. Statement timestamps describe observed events.' },
       { name: '_signature', type: 'string', required: true, description: 'The complete fresh signature returned by sign_request.' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -1471,7 +1579,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     mediaType: 'application/json', externallyRouted: true,
     annotations: { title: 'Read private personal activity', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",query:{statementId}}), or query filters verb/activity/registration/since/until/ascending/limit/cursor. The relay supplies agent_id, own pod stamp and fresh timestamp.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'sign_request({subject_did:<verified controlling user DID>,purpose:"personal-performance",query:{statementId}}), or query filters verb/activity/registration/since/until/ascending/limit/cursor. The relay supplies agent_id, own pod stamp and fresh timestamp, and may add client_id (the OAuth client its session token was issued to), which is accepted and not read.' },
       { name: '_signature', type: 'string', required: true, description: 'The complete fresh signature returned by sign_request.' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -2830,6 +2938,18 @@ export const foxxiAdminAffordances: ReadonlyArray<Affordance> = [
       { name: 'learner_first_name', type: 'string', required: false, description: 'Given name of the learner, forwarded to the SCORM Cloud registration record.' },
       { name: 'learner_last_name', type: 'string', required: false, description: 'Family name of the learner, forwarded to the SCORM Cloud registration record.' },
       { name: 'learner_email', type: 'string', required: false, description: 'Email address of the learner; SCORM Cloud keys the registration on it.' },
+    ],
+  },
+  {
+    action: 'urn:iep:action:foxxi:remove-hosted-package' as IRI,
+    toolName: 'foxxi.remove_hosted_package',
+    title: 'Take a hosted package down',
+    description: 'Take a package hosted on this bridge down, by its sha-256: an operator\'s upload or one a signer brought with foxxi.host_package_signed. Its bytes and what describes it are removed from the tenant pod and from this bridge, and its course is forgotten, so it is no longer listed at /scorm/packages, launched or served. What learners already recorded of it stays in their own records. Admin or delegated admin only.',
+    method: 'POST',
+    targetTemplate: '{base}/foxxi/remove_hosted_package',
+    annotations: { title: 'Take a hosted package down', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: 'package_sha256', type: 'string', required: true, description: 'The sha-256 the package is listed under at /scorm/packages, 64 hex characters.' },
     ],
   },
   {

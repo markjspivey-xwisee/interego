@@ -67,6 +67,13 @@ function routineFixture(deliver?: (event: WakeEvent) => Promise<void>) {
 }
 
 describe('explicit, ephemeral external-agent workbench sessions', () => {
+  it('accepts the transport fields a relay-signed request carries, client_id included, and nothing unlisted', () => {
+    const f = fixture();
+    // The relay signs agent_id, timestamp, subject_pod_url and the OAuth client its session's token was issued to.
+    const relay = { agent_id: ALICE, timestamp: '2026-11-09T12:00:00.000Z', subject_pod_url: 'https://pod.example/alice/', client_id: 'https://bridge.example/ui/oauth/client.json' };
+    fails(() => f.driver('claim', { invite_token: f.made.invite_token, ...relay, pod_name: 'alice' }), 400);
+    assert.equal(row(f.driver('claim', { invite_token: f.made.invite_token, ...relay }).driver).actor, ALICE);
+  });
   it('authorizes private browser capabilities only for a verified attached actor and revokes their lifetime', () => {
     const f = fixture();
     fails(() => f.store.authorizeBrowser(f.sid, f.made.browser_token), 409);

@@ -6,7 +6,7 @@
  * ── WHY THIS FILE EXISTS ─────────────────────────────────────────────────────
  *
  * `tools/railway-redeploy.mjs` used to compute `interego-${service}` inline. That holds
- * for nineteen of the twenty-two services and is wrong for three, so the assumption was
+ * for nineteen of the twenty-three services and is wrong for four, so the assumption was
  * invisible until the day it wasn't — and the day it wasn't, it blocked a legitimate
  * deploy for a naming reason dressed up as a safety one: `css` runs
  * `interego-css-pgsl`, so pinning it was refused even though a sha-tagged image of it
@@ -54,9 +54,9 @@ export const IMAGE_PREFIX = 'ghcr.io/markjspivey-xwisee';
  * them gets a specific refusal instead of "unknown service", which reads like a typo.
  */
 export const SERVICES = {
-  // ★ NINETEEN of the twenty-two rows below have an image that really is `interego-<service>`;
-  // the three that do not are css (interego-css-pgsl) and postgres/redis (upstream images,
-  // repo null). This said "Thirteen" and the table has grown since - the numbers are stated
+  // ★ TWENTY of the twenty-four rows below have an image that really is `interego-<service>`;
+  // the four that do not are css (interego-css-pgsl), postgres/redis (upstream images,
+  // repo null) and health-bridge (built by Railway from source, repo null). This said "Thirteen" and the table has grown since - the numbers are stated
   // here because the whole point of the file is that the mapping is NOT derivable, and a
   // count that drifts is the same class of claim the mapping replaced. Spelled out rather
   // than generated: a loop that fills these in is the derivation this file replaced.
@@ -96,6 +96,10 @@ export const SERVICES = {
   // container's SIGTERM, during which a replayed envelope could be accepted once more.
   'wrd-bridge': { repo: 'interego-wrd-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
   'pev-bridge': { repo: 'interego-pev-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
+  // The coached world: one shared world, held in process. Added after the service was created
+  // (2026-11-14), like the bridges above. A singleton for a plainer reason than theirs: a second
+  // container would be a second world, with its own map, feed and guests.
+  'coached-world-bridge': { repo: 'interego-coached-world-bridge', health: '/health', singleton: true, maxOverlapSeconds: 0, drainingMustBeUnset: true },
   bridge: { repo: 'interego-bridge', health: '/health' },
   dashboard: { repo: 'interego-dashboard', health: '/health' },
   'pgsl-browser': { repo: 'interego-pgsl-browser', health: '/health' },
@@ -216,6 +220,15 @@ export const SERVICES = {
   // this line is the one to revisit.
   postgres: { repo: null, upstream: 'postgres:16', health: null },
   redis: { repo: null, upstream: 'redis:7-alpine', health: null },
+
+  // Not a datastore and not an image of ours either: Railway builds this service itself, from
+  // applications/health-bridge/Dockerfile on a branch of its own, so there is no
+  // `interego-health-bridge` image at any tag and no commit of master to hold it to. It is
+  // listed, on the owner's say (2026-11-11), so that the audit stops reporting a service that
+  // is meant to be there as one nobody knows about. `repo: null` keeps every image tool away
+  // from it: repointing it at an interego image would put another application on its volume.
+  // It sleeps when idle and has no build sha to ask for, so no health path is probed.
+  'health-bridge': { repo: null, builtBy: 'railway', upstream: 'a Railway source build (applications/health-bridge/Dockerfile)', health: null },
 };
 
 /**
@@ -224,13 +237,18 @@ export const SERVICES = {
  *
  *   relay        below 1.0 CPU / 2 GiB: OOM-killed, surfacing as generic 502s with
  *                EMPTY logs (the process is gone before it writes anything).
- *   foxxi-bridge below 2 CPU / 4 GiB: surfaces as a bogus "issuer seed unset". The
- *                4 GiB is arithmetic, not taste — this service runs with
- *                NODE_OPTIONS=--max-old-space-size=3072 (read off the live service on
- *                2026-08-03), so V8 is licensed to grow old-space to 3 GiB and will not
- *                GC defensively to stay under a smaller cgroup cap. 3 GiB heap +
- *                off-heap (buffers, code, stacks) needs the 4th GiB.
+ *   foxxi-bridge below 2 CPU / 2 GiB: surfaces as a bogus "issuer seed unset". The
+ *                2 GiB is arithmetic, not taste — this service runs with
+ *                NODE_OPTIONS=--max-old-space-size=1536 (set on the live service on
+ *                2026-11-11, down from 3072, after the boot-time lattice stopped
+ *                holding 2.5 GiB and the process settled at about 350 MiB), so V8 is
+ *                licensed to grow old-space to 1.5 GiB and will not GC defensively to
+ *                stay under a smaller cgroup cap. 1.5 GiB heap + off-heap (buffers,
+ *                code, stacks) needs the rest.
  *                ★ Change that NODE_OPTIONS and this number is wrong.
+ *   health-bridge its cap as set on the live service and read on 2026-11-11: 0.25 CPU /
+ *                500000000 bytes. It runs at that cap, so that is the smallest allocation it is
+ *                known to work with; what it looks like below it has not been observed.
  *
  * ── WHY THIS TABLE IS SAFE TO WRITE DOWN AND THE IMAGE TAG WAS NOT ──────────
  * Same rule as SERVICES above: it holds no claim about what production IS. It records
@@ -253,7 +271,8 @@ export const SERVICES = {
  */
 export const LIMIT_FLOORS = {
   relay: { cpu: 1, memoryBytes: 2 * 1024 * 1024 * 1024 },
-  'foxxi-bridge': { cpu: 2, memoryBytes: 4 * 1024 * 1024 * 1024 },
+  'foxxi-bridge': { cpu: 2, memoryBytes: 2 * 1024 * 1024 * 1024 },
+  'health-bridge': { cpu: 0.25, memoryBytes: 500_000_000 },
 };
 
 /**
@@ -551,9 +570,12 @@ export function resolveImageRepo(service) {
   if (entry.repo === null) {
     return {
       ok: false,
-      reason: `"${service}" is a datastore running the upstream image ${entry.upstream}. ` +
-        'This repository does not build it, and repointing it at an interego image would ' +
-        'replace the datastore with an application on top of its live volume.',
+      reason: entry.builtBy === 'railway'
+        ? `"${service}" is ${entry.upstream}, not an image this repository publishes. ` +
+          'Repointing it at an interego image would replace it with another application on top of its live volume.'
+        : `"${service}" is a datastore running the upstream image ${entry.upstream}. ` +
+          'This repository does not build it, and repointing it at an interego image would ' +
+          'replace the datastore with an application on top of its live volume.',
     };
   }
   return { ok: true, repo: `${IMAGE_PREFIX}/${entry.repo}` };

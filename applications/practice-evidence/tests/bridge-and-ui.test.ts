@@ -21,7 +21,7 @@ import { join, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { Parser } from 'n3';
-import { canonicalJson, importWallet, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
+import { canonicalJson, importWallet, parseHypermediaMarkdown, sha256, sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import type { Express, NextFunction, Request as ExpressRequest, Response as ExpressResponse } from 'express';
 import { chatAgentJs } from '../../_shared/chat-agent/index.js';
 import { createVerticalBridge } from '../../_shared/vertical-bridge/index.js';
@@ -45,6 +45,13 @@ const HERE = fileURLToPath(new URL('.', import.meta.url));
 const VERTICAL = join(HERE, '..');
 const REPO = join(VERTICAL, '..', '..');
 const read = (p: string): string => readFileSync(join(VERTICAL, p), 'utf8');
+/**
+ * The stylesheet as a screen `px` wide applies it, for jsdom, which lays nothing out and applies an `@media screen` rule but
+ * no width query: each min-width or max-width query (every one this stylesheet has is in em, alone) is kept, as `screen`,
+ * where that width meets it, and set aside, as `print`, where it does not. Real Chromium from 300 px up is the QA's check.
+ */
+const atWidth = (css: string, px: number): string =>
+  css.replace(/@media \((min|max)-width: ([\d.]+)em\)/g, (_m, k: string, em: string) => `@media ${(k === 'min' ? px >= Number(em) * 16 : px <= Number(em) * 16) ? 'screen' : 'print'}`);
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 //  The world: one pod, demo role wallets, three bridges
@@ -175,7 +182,8 @@ describe('the bridge over HTTP: one route and one tool per declared affordance, 
   });
 
   it('every signed affordance declares the relay\'s {_signed_payload, _signature} beside envelope, so act … sign_payload:true reaches it', () => {
-    const unsigned = new Set(['pev.list_scenarios', 'pev.calibration', 'pev.draft_scenario_packet', 'pev.sign_as_demo_role']);
+    // The scenario list is plain or signed (a signed read that is not a chat assistant's carries the stakes), so it declares them too.
+    const unsigned = new Set(['pev.calibration', 'pev.draft_scenario_packet', 'pev.sign_as_demo_role']);
     const signed = pevAffordances.filter((a) => !unsigned.has(a.toolName));
     expect(signed).toHaveLength(pevAffordances.length - unsigned.size);
     for (const a of signed) {
@@ -294,6 +302,10 @@ describe('the web UI is served under a strict content policy', () => {
    */
   const EXAMPLE_CONNECTOR_HTML = 'https://<wbr>relay<wbr>.example<wbr>.test<wbr>/mcp';
   const ASSET_ELSEWHERE = /(?:src|<link[^>]+href)="(?:https?:)?\/\//i;
+  /** OpenAI's own setup guide, which the ChatGPT steps follow and link to. */
+  const OPENAI_GUIDE = 'https://developers.openai.com/api/docs/guides/custom-mcp-server';
+  /** A claim about which plans offer custom connectors: each company's to say, and it changes, so no page makes one. */
+  const PLAN_CLAIM = /plans? (?:that|which) allows?|needs a plan|plan must|plans? (?:can't|don't|without)|Some \w+ plans|\b(?:Plus|Pro|Business|Enterprise|Team) plan/i;
 
   it('serves the landing page to a browser at / as a constant, under the UI policy, in customer words', async () => {
     const r = await fetch(`${demo.base}/`, { headers: { accept: BROWSER } });
@@ -335,8 +347,85 @@ describe('the web UI is served under a strict content policy', () => {
     for (const s of ['When you copy a step into Claude, ChatGPT or another chat app, it sees what you paste', 'Claude, ChatGPT or any chat app, with copy and paste.']) expect(html).toContain(s);
     for (const s of ['Interego sign-in service', 'the Interego connector passes', 'Claude or ChatGPT with the Interego connector, or any chat app']) expect(connected).toContain(s);
     // With it: the four steps, the relay this workspace signs in through, and nothing about not offering it.
-    for (const s of ['Set it up in four steps', `<code>${EXAMPLE_CONNECTOR_HTML}</code>`, 'Connect your AI', 'with a passkey', 'No connector? Copy and paste.']) expect(connected).toContain(s);
+    for (const s of ['Set it up in four steps', `<code>${EXAMPLE_CONNECTOR_HTML}</code>`, 'Connect your AI', 'with a passkey', 'No connector? Copy and paste.',
+      // ChatGPT's steps in the order its dialog asks, as the Connect dialog's ChatGPT tab gives them: the server, then its URL and OAuth,
+      // then the risk warning (a step of its own in OpenAI's guide), creating the plugin and installing it.
+      '<li class="step"><p class="step__text">In Claude, open Settings, then Connectors, then Add custom connector. In ChatGPT on the web, open Plugins → + → Add custom MCP server (<a', `<a href="${OPENAI_GUIDE}" rel="noopener">OpenAI's guide to custom MCP servers</a>`,
+      // Signing in is every app's step, so the step that holds it says so rather than reading as ChatGPT's alone.
+      '<li class="step"><p class="step__text">In ChatGPT, accept the warning, create it as a plugin and install it. In either app, sign in with your Interego account when asked.</p></li>',
+      'Whether you can add a connector depends on your plan or workspace settings.', 'A judge your admin appoints, a different person with their own Interego account, assesses it',
+      // The bridge refuses a judgment from the principal that started the session, so each claim names the account or wallet it was started with.
+      'You can\'t assess a session with the account or wallet you started it with, and neither can your assistant on a session you started with your Interego account, even in a new chat.']) expect(connected).toContain(s);
+    expect(connected.indexOf('as its Server URL, with OAuth')).toBeLessThan(connected.indexOf('accept the warning'));
+    expect(connected.indexOf('accept the warning')).toBeLessThan(connected.indexOf('sign in with your Interego account when asked'));
+    expect(connected).not.toMatch(/Add custom MCP server, accept the warning/);
+    expect(connected).not.toContain('Then sign in with your Interego account');
+    expect(html).toContain('You can\'t assess a session with the wallet you started it with, and neither can your assistant. A judge your admin appoints assesses it with their own AI assistant.');
+    for (const page of [html, connected]) expect(page).not.toContain('You can\'t assess your own session');
+    expect(html).not.toContain('developers.openai.com');
+    for (const page of [html, connected]) expect(page).not.toMatch(PLAN_CLAIM);
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in', 'On this workspace: copy and paste']) expect(connected).not.toContain(s);
+  });
+
+  it('says what is enforced: the weights and the pass mark are left out of what is sent a chat assistant, which a scenario list read by nobody in particular bears out, and a judge still assesses in a new chat', async () => {
+    // What list-scenarios gives an assistant a person asks to list them: a scored scenario's criteria and levels in words,
+    // and none of its weights, level values or pass rule (an answer to a chat is the same; see chat-stakes.test.ts).
+    const listed = (await demoHandlers['pev.list_scenarios']!({})) as { scenarios: Out[]; stakesWithheld?: string };
+    const md = listed.scenarios.find((s) => s['scenarioIri'] === S['md']);
+    const rubric = md?.['rubric'] as { criteria: Out[] } & Out;
+    expect([md?.['assessmentUse'], 'passRule' in rubric, rubric.criteria.every((c) => !('weight' in c) && (c['levels'] as Out[]).every((l) => !('value' in l))), typeof listed.stakesWithheld])
+      .toEqual(['pass-gate', false, true, 'string']);
+    const off = connectorPages(contactPages(), null);
+    const on = connectorPages(contactPages(), { relayUrl: 'https://relay.example.test' });
+    const faq = (page: string): string => /<summary class="faq__q">How is AI used\?<\/summary><div class="faq__a"><p>(.*?)<\/p>/.exec(page)?.[1] ?? '';
+    const feature = (page: string): string => /<h3 class="feature__title">AI declared and checked<\/h3><p class="feature__text">(.*?)<\/p>/.exec(page)?.[1] ?? '';
+    const section = (page: string, id: string): string => page.slice(page.indexOf(`<section id="${id}"`), page.indexOf('</section>', page.indexOf(`<section id="${id}"`)));
+    // The three AI steps never hand an assistant the stakes, and no answer to a chat does: where an assistant can connect,
+    // the page says the answers leave them out; either way the web app shows them to people. It claims no more than is
+    // enforced: a key the person gives an AI tool reads what the person reads (chat-stakes.test.ts).
+    const steps = 'AI never decides how a scenario is used, never calculates a score and never has the final say. None of those three steps gives an assistant the weights or the pass mark';
+    const keyHeld = ' with an address an admin registered. An AI tool you give your own signing key to reads what you read.';
+    expect(faq(on.landing).endsWith(`${steps}, nor does anything Practice Evidence sends a chat assistant through the Interego connector. The web app shows them to people signed in with Interego, or${keyHeld}`)).toBe(true);
+    expect(faq(off.landing).endsWith(`${steps}. The web app shows them to people signed in${keyHeld}`)).toBe(true);
+    for (const page of [on.landing, off.landing]) {
+      expect(feature(page)).toBe('Every AI reply and every AI assessment shows which model produced it and who chose that model. The AI must quote the learner, and a quote that '
+        + 'doesn\'t match, word for word, doesn\'t count. Practice Evidence leaves the weights and the pass mark out of what it sends a chat assistant, and no AI calculates the score.');
+      expect(page).not.toMatch(/No AI assistant ever receives/);
+      // A record a person downloads or copies holds everything: the page says so rather than claim more than the answers do.
+      expect(page).toContain('A record you download or copy to your own storage holds everything, the weights and the pass mark included');
+    }
+    // Drafting saves feedback only, so it never gives the assistant a pass mark: the author sets one in the web app.
+    expect(section(on.help, 'authors')).toContain('The AI never chooses how the scenario is used or scored, and drafting never gives it a pass mark: you set any pass mark in the web app.');
+    // A claim about what an assistant sees would be one about what people paste: the pages speak of what Practice Evidence sends.
+    for (const page of [on.landing, off.landing, on.help, off.help, read('bridge/ui/landing.html'), read('bridge/ui/help.html')]) {
+      expect(page).not.toMatch(/never sees? (?:the weights|a pass mark|the pass mark)/);
+      expect(page).not.toContain('does read them');
+    }
+    // A judge still pastes the message into a new chat, not one where they reviewed sessions: that chat has read other
+    // assessments' levels, which neither step of the message shows. The guide no longer says the weights are there.
+    expect(section(on.help, 'judges')).toContain('<li class="step"><p class="step__text">Paste the message a learner sends you into a new chat with the Interego connector on, '
+      + 'not one where you reviewed sessions: your assistant saw other assessments\' levels there. Practice Evidence leaves the weights and the pass mark out of what it sends your assistant. Your assistant fetches the session,');
+    expect(section(on.help, 'claude-chatgpt')).toContain('<li>Paste the message a learner sent you into a new chat. Your assistant shows you the levels and quotes and waits for your go-ahead.</li>');
+    // A judge is registered by their own account's Member ID, never their assistant's; a learner's own assistant hands the
+    // session on rather than assess it; and a learner whose workspace has no judge yet is told whom to ask.
+    expect(section(on.help, 'judges')).toContain('To be appointed, send your admin your Member ID: sign in here with Interego and copy it from the account menu. '
+      + 'It names your own account (it has :users: in it), not the assistant that acts for you.');
+    expect(section(on.help, 'admins')).toContain("The Member ID is the ID of the judge's own account (it has :users: in it), never the ID of an assistant that acts for them");
+    expect(section(on.help, 'learners')).toContain("Your own assistant doesn't assess your session: when the conversation ends, it tells you to send it to your judge.");
+    for (const page of [on.help, off.help]) expect(section(page, 'learners')).toContain('If the session page says your workspace has no judge yet, ask your admin to add one.');
+    expect(section(on.help, 'claude-chatgpt')).toContain('It doesn\'t get the weights, the points for each level, the pass mark, or any score or pass result: Practice Evidence leaves them out of what it sends a chat assistant through the connector, and the web app shows them to you. An AI tool you give your own signing key to reads what you read.');
+    // An author's assistant edits a scored scenario's words and keeps its stakes; the stakes are changed in the web app.
+    // Only the words: a chat that changes which criteria or levels there are, or their order, is refused (chat-stakes.test.ts).
+    expect(section(on.help, 'authors')).toContain('Your AI assistant can edit the words of a scored scenario and of its criteria and levels (not which criteria and levels there are, or their order), and the new version keeps the weights, points and pass mark as they were: it doesn\'t get them, so change those here.');
+    expect(section(off.help, 'authors')).not.toContain('Your AI assistant can edit a scored scenario');
+    // A scored session's signed record and statement carry the score, so a chat is not sent to fetch them.
+    expect(section(on.help, 'claude-chatgpt')).not.toContain('Download my signed record');
+    // Nor does the landing page suggest asking a chat for it: from a chat, a scored session's download holds no content.
+    expect(on.landing).not.toContain('Download my signed record');
+    expect(section(on.help, 'claude-chatgpt')).toContain('To download your signed record, copy it to your own storage or create a learning record from a scored session, use the web app,');
+    // A wallet that holds no role cannot do those for a scored session, and the guide says so rather than send it to the web app it is in.
+    expect(section(on.help, 'claude-chatgpt')).toContain('use the web app, signed in with Interego or with an address your admin registered. A crypto wallet that holds no role in the workspace can\'t do these for a scored session, and its download holds the signatures without the session\'s content, so ask your admin to register its address.');
+    expect(on.help).not.toContain('into that chat');
   });
 
   it('keeps the agent view at / for agents, for ?format= and for every Accept that is not a browser asking for a page', async () => {
@@ -397,7 +486,7 @@ describe('the web UI is served under a strict content policy', () => {
     expect(chat).toContain('This workspace doesn\'t offer Interego sign-in, so Claude or ChatGPT can\'t connect to it.');
     for (const s of ['/mcp', 'Add custom connector', 'Connect your AI', 'id="workspace-address"']) expect(chat).not.toContain(s);
     for (const s of ['Get the hand-off', 'by their wallet address']) expect(html).toContain(s);
-    for (const s of ['your plan must allow custom connectors', 'Appoint at least one judge, by their Interego Member ID', 'with a passkey']) expect(html).not.toContain(s);
+    for (const s of ['Appoint at least one judge, by their Interego Member ID', 'with a passkey', 'Add custom MCP server', 'developers.openai.com']) expect(html).not.toContain(s);
     // A judge here assesses with any chat app, and the guide says plainly that this web app can't save the
     // assessment: it takes a tool of the judge's own, never an ordinary step on a page.
     expect(section(html, 'judges')).toContain('This web app can\'t save an assessment yet: saving one takes a tool of your own (your own agent or script) that signs it with your key.');
@@ -416,11 +505,40 @@ describe('the web UI is served under a strict content policy', () => {
     expect(section(connected, 'glossary')).not.toContain('<dt>Wallet address</dt>');
     // With it, the connector's steps and this workspace's relay, as its Connect dialog shows it.
     for (const s of [`<code>${EXAMPLE_CONNECTOR_HTML}</code>`, 'In each new chat, turn on Interego from the chat\'s tools menu (+).', 'id="workspace-address"',
-      'Appoint at least one judge, by their Interego Member ID', 'your plan must allow custom connectors', 'under <strong>Send to your judge</strong>',
+      'Appoint at least one judge, by their Interego Member ID', 'under <strong>Send to your judge</strong>',
+      // ChatGPT's steps as OpenAI's guide gives them, and the guide one link away; what decides whether a connector can be added, naming no plan.
+      'In ChatGPT on the web, open Plugins → + → Add custom MCP server (see <a',
+      `<a href="${OPENAI_GUIDE}" rel="noopener">OpenAI's guide to custom MCP servers</a>`, '(in ChatGPT, as its Server URL, with OAuth)',
+      'In ChatGPT, accept the warning, create it as a plugin and install it. In either app, sign in with your Interego account when asked.',
+      'In ChatGPT, type @ in a chat and choose Interego; it asks before each write unless you let it remember your choice for that tool in that chat.',
+      'Judging needs Claude or ChatGPT with the Interego connector; whether you can add one depends on your plan or workspace settings.',
+      // Who judges: a different person with their own account, appointed by Member ID; never the learner or the learner's assistant.
+      'A judge is a different person from the learner, with their own Interego account, whom an admin appoints by Member ID.',
+      // The bridge refuses a judgment by account: a session started with a wallet belongs to the wallet, so each claim names the account.
+      'You can\'t assess a session you started with your Interego account. Nor can a learner\'s own assistant assess a session the learner started with their Interego account, even in a new chat or told to act as a judge: it acts as that account.',
+      'Your assistant acts as your Interego account, so it can\'t assess a session you started with that account, in a new chat or in any role.',
+      // Whether a save was kept is asked of the workspace, never judged from what the chat saw, and the fetch of the session
+      // answers it, so the message pasted again, in the same chat or a new one, stops at an assessment already saved; and when
+      // the assistant can't tell, the judge is told how to find out.
+      'An assessment is tied to the exact session, conversation and rubric your assistant fetched. When your assistant fetches the session, the workspace also tells it whether an assessment of yours is already saved, '
+        + 'and if one is, your assistant tells you so and stops: the same message pasted again, in this chat or a new one, never saves a second one, '
+        + 'unless the learner contested the review or it was withdrawn, which asks for a new assessment. '
+        + 'If the session changed since it was fetched, saving is refused: your assistant fetches it again, and assesses it again only if none of yours is saved. '
+        + 'If a save goes wrong another way (an error, no answer, or it loses track), it fetches the session again to check instead of saving twice, and tells you whether your assessment is saved. '
+        + 'If it can\'t tell, ask the learner whether their session page shows your assessment.',
       'Send your admin your Member ID (account menu → Your Member ID → Copy) or, signed in with a wallet, your wallet address (Getting started → Copy my wallet address).', 'Sign in with Interego (or another way', 'What the Interego sign-in service sees', '<dt>Interego connector</dt>',
       '<dt>Your sign-in has ended</dt>', 'add and remove people by Member ID',
       'Signed in with a wallet, send your wallet address instead (Getting started → Copy my wallet address); a judge needs a Member ID to assess from Claude or ChatGPT.']) expect(connected).toContain(s);
     for (const s of ['can\'t save an assessment yet', 'Send your wallet address to your admin', 'Sign in with your crypto wallet']) expect(connected).not.toContain(s);
+    // ChatGPT's steps in the order its dialog asks, as the Connect dialog gives them: the URL and OAuth before the warning.
+    const chatSection = section(connected, 'claude-chatgpt');
+    expect(chatSection.indexOf('as its Server URL, with OAuth')).toBeLessThan(chatSection.indexOf('accept the warning'));
+    expect(connected).not.toMatch(/Add custom MCP server, accept the warning/);
+    expect(connected).not.toContain('Then sign in with your Interego account');
+    // No page claims the bridge refuses more than it does: it refuses an assessment from the account or key that started the session.
+    for (const page of [html, connected]) expect(section(page, 'judges')).not.toContain('You can\'t assess your own practice');
+    expect(section(html, 'judges')).toContain('You can\'t assess a session you started with the key you sign with.');
+    for (const page of [html, connected]) expect(page).not.toMatch(PLAN_CLAIM);
     for (const s of [DEFAULT_CONNECTOR_ADDRESS, 'doesn\'t offer Interego sign-in']) expect(connected).not.toContain(s);
     // The pages and the code that fills them change together: a page without its blocks, an unclosed
     // block or a connector address left outside a block stops the bridge, and so does a relay that is no web address.
@@ -721,6 +839,49 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(p.errors).toEqual([]);
   }, SLOW);
 
+  it('a wallet that holds no role, on its own reviewed scored session: why its learning record cannot be made here, and a download that says what it left out', async () => {
+    const attemptIri = S['attempt'];
+    expect(attemptIri, 'the first driven test leaves a judged and reviewed attempt').toBeTruthy();
+    // The same learner's key, on a bridge that holds no demo keys: a wallet nobody registered, as open enrolment leaves it.
+    const ana = W.learner;
+    const saved: string[] = [];
+    const p = await openUi(plain, (w) => {
+      w['TextEncoder'] = TextEncoder;
+      // A browser that saves files: the download's link is clicked, and jsdom, which navigates nowhere, is not asked to follow it.
+      Object.assign(w.URL, { createObjectURL: (): string => 'blob:pev-test', revokeObjectURL: (): void => undefined });
+      w.HTMLAnchorElement.prototype.click = function click(this: HTMLAnchorElement): void { saved.push(this.download); };
+      w['ethereum'] = {
+        request: async ({ method, params }: { method: string; params?: string[] }): Promise<unknown> => {
+          if (method === 'eth_requestAccounts') return [ana.address];
+          if (method === 'personal_sign') return signMessageRaw(ana, Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8'));
+          throw new Error(`unsupported ${method}`);
+        },
+      };
+    });
+    await p.until(() => p.q('article.scenario'), 'the scenarios');
+    p.q('#connect-wallet')!.click();
+    await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
+    p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri!)}`;
+    const panel = await p.until(() => p.q('section.projections'), 'the learning-record panel');
+    // The levels, and on this, the person's own session, only the way that works for it: register the address.
+    expect(p.text('#assessment')).toContain("aren't shown to an address that holds no role in this workspace. Ask your admin to register this address to see them.");
+    expect(p.text('#assessment')).not.toContain('Sign in with Interego');
+    // The panel says why its buttons are off, and on the buttons too.
+    const needsRole = "Its learning record carries the score and whether it met the pass mark, which aren't shown to an address that holds no role in this workspace, so you can't create one here, copy this session to your own storage, or download its content. Ask your admin to register this address.";
+    expect(panel.querySelector('.record-needs-role')?.textContent).toBe(needsRole);
+    expect(panel.textContent).not.toContain('so this can be shared as practice evidence');
+    const made = p.all(button(PEV_ACTION.projectAttempt)) as HTMLButtonElement[];
+    expect(made.map((b) => [b.disabled, b.title])).toEqual([[true, needsRole], [true, needsRole]]);
+    expect(p.q(button(PEV_ACTION.holderCopy))).toBeNull();
+    // The download is not called the record: it says it holds the signatures, and why its content was left out.
+    p.click(button(PEV_ACTION.exportRecord));
+    const got = await p.until(() => p.all('#view .callout').find((c) => (c.textContent ?? '').includes('Downloaded')) ?? p.q('#view .actions .refusal'), 'the download');
+    expect(got.querySelector('.callout__title')?.textContent ?? got.textContent).toMatch(/^Downloaded the signatures of \d+ saved versions, without their content\.$/);
+    expect(got.textContent).toContain("A scored session's content holds the score and the pass mark, which aren't shown to an address that holds no role in this workspace, so the download leaves it out. Ask your admin to register this address, then download it again for the whole record.");
+    expect(saved).toHaveLength(1);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
   it('the main screens speak to customers: no protocol words, codes or statuses outside Technical details', async () => {
     const attemptIri = S['attempt'];
     expect(attemptIri, 'the first driven test leaves a judged and reviewed attempt').toBeTruthy();
@@ -888,6 +1049,63 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     p.w.location.hash = '#/calibration';
     await p.until(() => p.text('#view h1') === 'AI judge quality', 'the calibration view');
     await p.until(() => p.text('#view').includes('This is not accuracy against a known answer.'), 'the metric note');
+    // Calibration's fingerprints are its own, and every table of them says so, so nobody looks for a scenario's there.
+    const note = "The rubric fingerprints in this table are calibration's own: they don't match the fingerprints shown with a scenario or a session.";
+    expect((p.w.eval('calibrationNote()') as HTMLElement).textContent).toBe(note);
+    for (const table of p.all('#view .calibration-all')) expect(table.closest('details')?.querySelector('.calibration-note')?.textContent).toBe(note);
+    // A results page's table of people who judged says so only when its answer left the stakes out: a reader of the stakes
+    // is shown the plain fingerprint, the same one a scenario shows.
+    const cell = {
+      judgeId: 'did:example:judge', judgeKind: 'person', promptTemplateHash: 'own-prompt', grouping: 'rubric-version', rubricHash: 'ab'.repeat(32),
+      criterionId: 'asks-their-view', criterionTitle: 'Asks for their view', criterionContentHash: 'cd'.repeat(32), kind: 'pev/abababababababab/asks-their-view',
+      samples: 1, humanSamples: 1, distinctHumanConfirmers: 1, demoOutcomes: 0, agreementRate: null, meanBrier: null, meanLevelDistance: null, normalisedLevelDistance: null,
+      unverifiedRate: null, blindSamples: 0, blindAgreementRate: null, repeatSamples: 0, repeatAgreement: null, auditSampleSamples: 0, auditSampleAgreementRate: null,
+      auditSampleCoverage: null, auditSamplePartial: false, status: 'Hypothetical', standing: { evaluated: false, clears: false, why: 'a person', effect: 'None.' },
+    };
+    const judgeCard = (r: Out): HTMLElement => p.w.eval(`personJudgeCard(${JSON.stringify(r)})`) as HTMLElement;
+    expect(judgeCard({ personJudgeCells: [cell] }).querySelector('.calibration-note')).toBeNull();
+    expect(judgeCard({ personJudgeCells: [cell], stakesWithheld: 'left out' }).querySelector('.calibration-note')?.textContent).toBe(note);
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
+  it('a wallet author opens a feedback-only scenario to edit without signing, and signs once to edit a scored one', async () => {
+    let listed = (await demoHandlers['pev.list_scenarios']!({})) as { scenarios: Out[] };
+    if (!listed.scenarios.some((s) => s['scenarioKey'] === 'renegotiate-scope')) {
+      const pub = await direct(demoHandlers, 'pev.author_scenario', W.author, PEV_ACTION.authorScenario,
+        { scenario: demoScenarioInput('renegotiate-scope'), status: 'published', draftAssistance: { used: false } });
+      expect(pub['kind']).toBeUndefined();
+      listed = (await demoHandlers['pev.list_scenarios']!({})) as { scenarios: Out[] };
+    }
+    const feedbackOnly = listed.scenarios.find((s) => s['scenarioKey'] === 'renegotiate-scope')!;
+    expect(feedbackOnly['assessmentUse']).toBe('feedback-only');
+    const signs: string[] = [];
+    const p = await openUi(plain, (w) => {
+      w['TextEncoder'] = TextEncoder;
+      w['ethereum'] = {
+        request: async ({ method, params }: { method: string; params?: string[] }): Promise<unknown> => {
+          if (method === 'eth_requestAccounts') return [W.author.address];
+          if (method === 'personal_sign') {
+            const text = Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8');
+            signs.push(text);
+            return signMessageRaw(W.author, text);
+          }
+          throw new Error(`unsupported ${method}`);
+        },
+      };
+    });
+    await p.until(() => p.q('article.scenario'), 'the scenarios');
+    p.q('#connect-wallet')!.click();
+    await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
+    const title = (): string => (p.q('[data-field="title"] input') as HTMLInputElement | null)?.value ?? '';
+    // A feedback-only scenario has no weights, points or pass mark to read, so the wallet is not asked.
+    const before = signs.length;
+    p.w.location.hash = `#/author/${encodeURIComponent(String(feedbackOnly['scenarioIri']))}`;
+    await p.until(() => title() === 'Renegotiating a deadline with a client', 'the feedback-only scenario in the editor');
+    expect(signs.length).toBe(before);
+    // A scored one needs them: one signed read, which this registered author's address gets them in.
+    p.w.location.hash = `#/author/${encodeURIComponent(S['md'] ?? '')}`;
+    await p.until(() => title() === 'Following up on a missed deadline', 'the scored scenario in the editor');
+    expect(signs.slice(before).map((t) => (JSON.parse(t) as Out)['action'])).toEqual([PEV_ACTION.listScenarios]);
     expect(p.errors).toEqual([]);
   }, SLOW);
 
@@ -941,10 +1159,33 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect(paste.errors).toEqual([]);
   }, SLOW);
 
+  it('signing manually as the only way keeps its header on one line down to 360 px, saying what it said, and below takes a second line under the brand', async () => {
+    // No Interego sign-in and no wallet: Connect your AI, the "Signing manually" badge and Other ways to sign in. At 300 px they
+    // ran 87 px past the screen (13 at 375); from 360 px the brand and the badge give way instead, and nothing else changes.
+    const p = await openUi(plain);
+    await p.until(() => p.q('.app-header #acting-as.badge') && p.q('article.scenario'), 'the header, signing manually');
+    expect(p.all('.app-header__actions > :not(.menu)').map((el) => el.id || el.className)).toEqual(['product-switch', 'connect-ai-button', 'acting-as', 'signin-other']);
+    const css = await (await fetch(`${plain.base}/ui/app.css`)).text();
+    const sheet = p.d.createElement('style');
+    p.d.head.append(sheet);
+    const cs = (sel: string): CSSStyleDeclaration => p.w.getComputedStyle(p.q(sel) ?? p.d.querySelector(sel)!);
+    for (const px of [1280, 768, 600, 360, 344, 300]) {
+      sheet.textContent = atWidth(css, px);
+      const two = px < 360;
+      // Below 360 px the second line keeps room for a label on two lines, so --header-h is the same whichever it is.
+      expect([px, cs('.app-header__inner').flexWrap, cs('.app-header__actions').flexBasis, cs('html').getPropertyValue('--header-h')]).toEqual([px, two ? 'wrap' : '', two ? '100%' : '', two ? '7.3125rem' : '4rem']);
+      // Connect your AI says so from 30em, as it always did: shortening it is only for a header holding another way to sign in too.
+      expect([px, cs('#connect-ai-button > .hide-below-sm').display === 'none', cs('#acting-as').flexShrink, cs('.app-header .brand').flexShrink]).toEqual([px, px < 480, '10000', '10000']);
+    }
+    sheet.remove();
+    expect(p.errors).toEqual([]);
+  }, SLOW);
+
   it('a workspace with no AI of its own and no Interego sign-in: copy and paste in plain words, no chat hand-off, no connector address, and no key outside Advanced', async () => {
     const ana = W.learner;
     const asked: string[] = [];
     const copied: string[] = [];
+    const signs: string[] = [];
     const p = await openUi(noModel, (w) => {
       w['TextEncoder'] = TextEncoder;
       const f = w['fetch'] as (input: unknown, init?: RequestInit) => Promise<Response>;
@@ -953,7 +1194,11 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
       w['ethereum'] = {
         request: async ({ method, params }: { method: string; params?: string[] }): Promise<unknown> => {
           if (method === 'eth_requestAccounts') return [ana.address];
-          if (method === 'personal_sign') return signMessageRaw(ana, Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8'));
+          if (method === 'personal_sign') {
+            const text = Buffer.from(String(params?.[0]).slice(2), 'hex').toString('utf8');
+            signs.push(text);
+            return signMessageRaw(ana, text);
+          }
           throw new Error(`unsupported ${method}`);
         },
       };
@@ -972,6 +1217,23 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     expect([p.text('.app-header #connect-wallet'), p.q('.app-header #connect-wallet .hide-below-md')?.textContent]).toEqual(['Use a crypto wallet', 'crypto ']);
     p.q('#connect-wallet')!.click();
     await p.until(() => p.text('#acting-as').startsWith('Signed in with wallet'), 'the connected wallet');
+    // A scored scenario's weights and pass mark come only to a signed read. The wallet is asked for one when the person
+    // chooses to see them, not when the list loads, and that one signature (over the act and the storage alone) serves
+    // every list read while it is kept.
+    const scored = await p.until(() => p.all('article.scenario').find((a) => (a.textContent ?? '').includes('Scored · pass mark')), 'a scored scenario');
+    const signedBefore = signs.length;
+    expect([(scored.textContent ?? '').includes('Weight '), signs.some((t) => t.includes(PEV_ACTION.listScenarios))]).toEqual([false, false]);
+    const show = scored.querySelector<HTMLElement>('.stakes-note button')!;
+    expect(show.textContent).toBe('Show the weights and pass mark');
+    show.click();
+    // This wallet holds no role here (enrolment is open, and anything can make a key, an AI assistant too), so the signed
+    // read still leaves the stakes out, and the page says how to see them instead of offering the same button again.
+    const noRole = await p.until(() => p.all('article.scenario .stakes-note').find((n) => (n.textContent ?? '').includes('no role')), 'the no-role note');
+    // This workspace offers no Interego sign-in, so the note does not suggest one: registering the address is the way.
+    expect(noRole.textContent).toBe("How much each criterion counts, the points for each level and the pass mark aren't shown to an address that holds no role in this workspace. Ask your admin to register this address to see them.");
+    expect([noRole.querySelector('button'), p.all('article.scenario').some((a) => /Weight \d|Pass mark: at least/.test(a.textContent ?? ''))]).toEqual([null, false]);
+    expect(signs.slice(signedBefore).map((t) => (JSON.parse(t) as Out)['action'])).toEqual([PEV_ACTION.listScenarios]);
+    expect(Object.keys(JSON.parse(signs[signs.length - 1]!) as Out).sort()).toEqual(['action', 'issuedAt', 'nonce', 'podUrl', 'v']);
     // Getting started words the learner's steps as this workspace offers them: copy and paste, and the judge hand-off.
     (await p.until(() => p.all('.checklist button').find((b) => (b.textContent ?? '').startsWith('Show all')), 'Getting started')).click();
     await p.until(() => p.all('.checklist__item').length === 8, 'every learner step');
@@ -1220,6 +1482,82 @@ describe('the web UI works, driven in a DOM against the real handlers', () => {
     }
     expect(p.errors).toEqual([]);
   }, SLOW);
+
+  it('a quote found in more than one line says which line is highlighted: the one it was saved in, which need not be the first; with the text deleted, nothing is called highlighted', async () => {
+    // A world of its own: one pod, the roles a judging needs, and an ended session whose first and second lines share words.
+    const own = inMemoryPod();
+    const h = createPevHandlers({ ...base, fetchFn: own.fetchFn, holderFetchFn: own.fetchFn, model: scriptedPracticeModel(), demoSigner: demoSignerOf(W) }) as Handlers;
+    for (const [who, role] of [['author', 'author'], ['reviewer', 'reviewer'], ['judge-agent', 'judge']] as const) {
+      expect((await direct(h, 'pev.register_role', W.admin, PEV_ACTION.registerRole, { address: W[who].address, role, change: 'add' }))['changed']).toBe(true);
+    }
+    const pub = await direct(h, 'pev.author_scenario', W.author, PEV_ACTION.authorScenario, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } });
+    expect((await direct(h, 'pev.ratify_scenario', W.reviewer, PEV_ACTION.ratifyScenario, { scenarioIri: pub['scenarioIri'], version: 1, scenarioHash: pub['scenarioHash'] }))['status']).toBe('ratified');
+    const started = await direct(h, 'pev.start_attempt', W.learner, PEV_ACTION.startAttempt, { scenarioIri: pub['scenarioIri'], scenarioVersion: 1, coached: false });
+    const attemptIri = String(started['attemptIri']);
+    const mine = [
+      'Thanks for coming in. I would like us to agree a new date today, once I hear what got in the way.',
+      'I see. So I would like us to agree a new date today, once I hear what got in the way from your side.',
+      'Let us write it down before Friday so we both remember it.',
+    ];
+    for (let i = 0; i < mine.length; i += 1) {
+      const r = await direct(h, 'pev.record_turns', W.learner, PEV_ACTION.recordTurns, {
+        attemptIri, turnIndex: 2 * i + 1, learnerText: mine[i], counterpartText: DEMO_LINES.sam[i], endAfter: i === mine.length - 1,
+        counterpartDisclosure: { provider: 'scripted', model: 'demo-learner-agent' },
+      });
+      expect(r['kind']).toBeUndefined();
+    }
+    const packet = await direct(h, 'pev.judge_packet', W['judge-agent'], PEV_ACTION.judgePacket, { attemptIri });
+    const binding = packet['binding'] as Out;
+    // The judge names the second line for one quote, a line that does not hold the other, and the third line for a quote said once.
+    const quotes: Record<string, { text: string; turnIndex: number }> = {
+      'specific-observation': { text: 'agree a new date today', turnIndex: 3 },
+      'asks-their-view': { text: 'hear what got in the way', turnIndex: 5 },
+      'agrees-next-step': { text: 'write it down before Friday', turnIndex: 5 },
+    };
+    const rubric = (demoScenarioInput('missed-deadline', 2)['rubric'] as { criteria: { id: string; levels: { id: string }[] }[] }).criteria;
+    const saved = await direct(h, 'pev.record_judgment', W['judge-agent'], PEV_ACTION.recordJudgment, {
+      attemptIri, attemptHeadUrl: binding['attemptHeadUrl'], transcriptHash: binding['transcriptHash'], rubricHash: binding['rubricHash'],
+      judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+      judgment: { criteria: rubric.map((c) => ({ criterionId: c.id, level: c.levels[c.levels.length - 1]!.id, quotes: [quotes[c.id]!], rationale: 'The quoted words show it.' })) },
+    });
+    expect(saved['kind']).toBeUndefined();
+    const l = await serve(h);
+    const p = await openUi(l);
+    await p.until(() => p.text('#bar').includes('DEMO MODE'), 'the demo banner');
+    await asRole(p, 'learner');
+    p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri)}`;
+    await p.until(() => p.all('.judgments .quote.ok').length === 3, 'the three quotes that checked out');
+    // Each line as the page draws it, by its turn: the learner's lines are turns 1, 3 and 5.
+    expect(p.all('.bubble.me').map((b) => b.dataset['turn'])).toEqual(['1', '3', '5']);
+    const note = (criterion: string): string | null => p.q(`.criterion-feedback[data-criterion="${criterion}"] .quote.ok .text-tertiary`)?.textContent ?? null;
+    // Found in lines 1 and 3, saved in line 3 where the AI named it: the note names line 3, not the first.
+    expect(note('specific-observation')).toBe('Found 2 times in the lines as the AI was shown them; the one highlighted is in line 3.');
+    // Found in lines 1 and 3, the AI named line 5: saved in the first place it was found, and the note says so.
+    expect(note('asks-their-view')).toBe('Found 2 times in the lines as the AI was shown them; the one highlighted is in line 1. The AI named line 5; it was found in line 1.');
+    // Found once, where the AI named it: no note.
+    expect(note('agrees-next-step')).toBeNull();
+    // The highlights are where the notes say: each quote marked in the line it was saved in, and nowhere else.
+    expect(p.all('.transcript mark').map((m) => [m.closest<HTMLElement>('[data-turn]')?.dataset['turn'], m.title, m.textContent])).toEqual([
+      ['1', 'asks-their-view', 'hear what got in the way'],
+      ['3', 'specific-observation', 'agree a new date today'],
+      ['5', 'agrees-next-step', 'write it down before Friday'],
+    ]);
+    // Once the learner deletes the conversation text, the page draws no highlight: the note names the line the quote was saved from, and calls nothing highlighted.
+    const v = await direct(h, 'pev.get_attempt', W.learner, PEV_ACTION.getAttempt, { attemptIri });
+    const red = await direct(h, 'pev.redact_attempt', W.learner, PEV_ACTION.redactAttempt, { attemptIri, target: v['currentTarget'], why: 'The learner deleted the words of their practice.' });
+    expect(red['state']).toBe('redacted');
+    p.w.location.hash = '#/mine';
+    await p.until(() => p.text('#view h1') === 'My practice', 'my practice');
+    p.w.location.hash = `#/attempt/${encodeURIComponent(attemptIri)}`;
+    await p.until(() => p.text('#state') === 'Conversation text deleted' && p.all('.judgments .quote.ok').length === 3, 'the session, its text deleted');
+    expect(p.all('.transcript mark')).toEqual([]);
+    expect(p.all('.judgments .quote.ok q').map((x) => x.textContent)).toEqual(Array(3).fill('(deleted with the conversation text)'));
+    expect(note('specific-observation')).toBe('Found 2 times in the lines as the AI was shown them; it was saved from line 3.');
+    expect(note('asks-their-view')).toBe('Found 2 times in the lines as the AI was shown them; it was saved from line 1. The AI named line 5; it was found in line 1.');
+    expect(note('agrees-next-step')).toBeNull();
+    expect(p.text('.judgments')).not.toContain('highlighted');
+    expect(p.errors).toEqual([]);
+  }, SLOW);
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
@@ -1267,7 +1605,8 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     // The landing page and the guide follow that sign-in and nothing else, as the web app's Connect dialog does:
     // no separate connector option, so a relay trusted without PEV_RELAY_URL gets copy and paste on all three.
     expect(server).not.toMatch(/chatConnector|connector:/);
-    expect(server).toMatch(/\.\.\.\(relayDelegation !== undefined \? \{ relayDelegation \} : \{\}\) \}, \.\.\.contact \}\n\s*: contact\);/);
+    // The sign-in carries the web app's own client ids, which the handlers read a relay-signed client_id against.
+    expect(server).toMatch(/\.\.\.\(relayDelegation !== undefined \? \{ relayDelegation \} : \{\}\), webAppClients: webApp \}, \.\.\.contact \}\n\s*: contact\);/);
     expect(server).toContain("but the web app, the landing page and the guide offer no Interego sign-in and no connector, only copy and paste. Set PEV_RELAY_URL");
     expect(server).toContain("const uiSignIn = relayUrl !== undefined && relayAddresses.length > 0 && identityHost !== undefined;");
     expect(server).toContain('relayFetch: relayCallFetch(baseFetch, { privateRelay: relayIsLoopback })');
@@ -1405,4 +1744,60 @@ describe('server.ts composes and listens; every other file keeps to its rules', 
     expect([...terms].filter((t) => !html.includes(`id="${t}"`))).toEqual([]);
     expect(html).toContain('<link rel="alternate" type="text/turtle" href="pev.ttl" />');
   });
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+//  What a judge packet weighs on the wire
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('a judge packet over HTTP is its JSON and the bridge\'s envelope, not copies of it', () => {
+  it('answers the packet with no Markdown copy (it offers no next-step control), keeps the full snapshot for a Markdown reader, and a refusal stays small', async () => {
+    // A world of its own: one pod, the roles a judging needs, an attempt of three exchanges that has ended.
+    const own = inMemoryPod();
+    const h = createPevHandlers({ ...base, fetchFn: own.fetchFn, holderFetchFn: own.fetchFn, model: scriptedPracticeModel() }) as Handlers;
+    for (const [who, role] of [['author', 'author'], ['reviewer', 'reviewer'], ['judge-agent', 'judge']] as const) {
+      expect((await direct(h, 'pev.register_role', W.admin, PEV_ACTION.registerRole, { address: W[who].address, role, change: 'add' }))['changed']).toBe(true);
+    }
+    const pub = await direct(h, 'pev.author_scenario', W.author, PEV_ACTION.authorScenario, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } });
+    expect((await direct(h, 'pev.ratify_scenario', W.reviewer, PEV_ACTION.ratifyScenario, { scenarioIri: pub['scenarioIri'], version: 1, scenarioHash: pub['scenarioHash'] }))['status']).toBe('ratified');
+    const started = await direct(h, 'pev.start_attempt', W.learner, PEV_ACTION.startAttempt, { scenarioIri: pub['scenarioIri'], scenarioVersion: 1, coached: false });
+    for (let i = 0; i < 3; i += 1) {
+      const r = await direct(h, 'pev.record_turns', W.learner, PEV_ACTION.recordTurns, {
+        attemptIri: started['attemptIri'], turnIndex: 2 * i + 1, learnerText: DEMO_LINES.ana[i], counterpartText: DEMO_LINES.sam[i], endAfter: i === 2,
+        counterpartDisclosure: { provider: 'scripted', model: 'demo-learner-agent' },
+      });
+      expect(r['kind']).toBeUndefined();
+    }
+    const l = await serve(h);
+    const ask = async (w: Wallet, accept: string): Promise<{ status: number; type: string; text: string }> => {
+      const r = await fetch(`${l.base}/pev/judge_packet`, { method: 'POST', headers: { 'content-type': 'application/json', accept },
+        body: JSON.stringify({ envelope: await envelope(w, PEV_ACTION.judgePacket, { attemptIri: started['attemptIri'] }) }) });
+      return { status: r.status, type: r.headers.get('content-type') ?? '', text: await r.text() };
+    };
+    const got = await ask(W['judge-agent'], 'application/json');
+    expect(got.status).toBe(200);
+    const packet = JSON.parse(got.text) as Out;
+    expect(packet['https://schema.org/encoding']).toBeUndefined();
+    expect(packet['execution']).toBe('client-required');
+    // The transcript travels once. What the bridge adds is its JSON-LD envelope: the context, the types and two affordances.
+    const { '@context': _ctx, '@type': _type, conformsToShape: _shape, affordances: _aff, ...payload } = packet;
+    expect(Buffer.byteLength(got.text) - Buffer.byteLength(JSON.stringify(payload))).toBeLessThan(3_500);
+    expect(got.text.split(DEMO_LINES.ana[1]!).length - 1).toBe(1);
+    // Escaped once more inside a relay's act result, it stays far below a chat client's tool-result limit.
+    expect(JSON.stringify(got.text).length).toBeLessThan(20_000);
+    // Asked for as Markdown, the one document still carries the whole packet, losslessly.
+    const md = await ask(W['judge-agent'], 'text/markdown');
+    expect([md.status, md.type]).toEqual([200, expect.stringContaining('text/markdown')]);
+    const snapshot = JSON.parse(String(parseHypermediaMarkdown(md.text).fields?.['schema:text'])) as Out;
+    expect([snapshot['request'], snapshot['binding'], snapshot['recordWith']]).toEqual([packet['request'], packet['binding'], packet['recordWith']]);
+    expect(md.text).toContain('```json\n');
+    // A one-sentence refusal arrives as that sentence in the envelope.
+    const stranger = await ask(W['second-learner'], 'application/json');
+    expect(stranger.status).toBe(403);
+    expect((JSON.parse(stranger.text) as Out)['https://schema.org/encoding']).toBeUndefined();
+    expect(Buffer.byteLength(stranger.text)).toBeLessThan(4_000);
+    // The action manifest says which pod the bridge writes to, as its entry point does.
+    const manifest = await (await fetch(`${l.base}/affordances`, { headers: { accept: 'text/turtle' } })).text();
+    expect(manifest).toContain(`rdfs:comment "Capabilities exposed by the practice-evidence vertical bridge. It is configured to write to the pod ${DEMO_POD}.`);
+  }, SLOW);
 });

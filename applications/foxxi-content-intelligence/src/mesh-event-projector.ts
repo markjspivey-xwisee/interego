@@ -34,12 +34,14 @@
 
 import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
-import { verbRequiresObjectType, verbIsDeclared } from './xapi-profile.js';
+import { verbRequiresObjectType, verbIsDeclared, descriptorProjectionCategory, performanceCategoriesFor, SUPERSEDED_DESCRIPTOR_TYPE } from './xapi-profile.js';
 import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from '../../agentic-performance-practice/src/agent-trajectory.js';
 
 /** xAPI core voiding verb (ADL) — the protocol-native mapping for a Retracted descriptor. */
 const ADL_VOIDED = 'http://adlnet.gov/expapi/verbs/voided';
+const ADL_COMPLETED = 'http://adlnet.gov/expapi/verbs/completed';
+const ADL_FAILED = 'http://adlnet.gov/expapi/verbs/failed';
 /** Fallback object type when a descriptor declares no conformsTo/facet type — names the
  *  ENVELOPE act (a context assertion), never a domain. */
 const ASSERTED_CONTEXT_TYPE = `${FOXXI_NS}AssertedContext`;
@@ -258,7 +260,7 @@ export function projectMeshEntry(
         actor,
         verb,
         object: { objectType: 'StatementRef', id: deterministicUuid(superseded ?? entry.descriptorUrl) },
-        context: { extensions },
+        context: { extensions, contextActivities: { category: [descriptorProjectionCategory()] } },
         ...(ts ? { timestamp: ts } : {}),
       }
     : {
@@ -273,7 +275,13 @@ export function projectMeshEntry(
         },
         context: {
           extensions,
-          ...(superseded ? { contextActivities: { other: [{ id: superseded, objectType: 'Activity' }] } } : {}),
+          // What kind of statement this is, for the profile's templates to select on
+          // (xapi-profile.ts): a descriptor projection always, and a performance record when
+          // the verb is an outcome.
+          contextActivities: {
+            category: [descriptorProjectionCategory(), ...(verb.id === ADL_COMPLETED || verb.id === ADL_FAILED ? performanceCategoriesFor(objectType) : [])],
+            ...(superseded ? { other: [{ id: superseded, objectType: 'Activity', definition: { type: SUPERSEDED_DESCRIPTOR_TYPE } }] } : {}),
+          },
         },
         // result is emitted ONLY when the envelope actually carried an outcome
         // (success / scoreScaled); for a bare context descriptor it stays absent —

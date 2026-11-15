@@ -58,7 +58,7 @@ describe('the Learn page', () => {
     expect(card).toContain('launchUrlFrom(await postSigned(launcher.href, signerFor(session), { course_id: p.course.id }))');
     // The list needs no signature: it is fetched plainly, not signed.
     expect(card).toMatch(/fetch\(listHref, \{ headers: \{ Accept: 'application\/json' \} \}\)/);
-    expect(read('../dashboard-app/src/components/LearnPanel.tsx')).toContain('<HostedPackagesCard session={session} />');
+    expect(read('../dashboard-app/src/components/LearnPanel.tsx')).toContain('<HostedPackagesCard session={session} refresh={brought} />');
   });
 
   it('says so when the bridge is still reading packages it has not listed, rather than that none are hosted', () => {

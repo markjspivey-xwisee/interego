@@ -132,6 +132,60 @@ passport:registeredOn a owl:ObjectProperty ;
     rdfs:range registry:Registry ;
     rdfs:comment "Public registries this agent is listed on. Lets a passport-reader find aggregated reputation across the agent's active registries." .
 
+# ── Standing: what an identity service states about a subject ──
+#
+#  Attributes of a subject's standing with the identity service that vouches for it. They are
+#  stated by that service (in its introspection answer, say), never by the subject, and they are
+#  the same attributes for every kind of principal: a registered owner, a delegated agent, a
+#  service account and a provisional (browser-key) account differ in their VALUES. An `abac:`
+#  policy predicate constrains them; `@interego/abac/portable` builds a subject's attribute graph
+#  from them. Informative (L2): which of them a service states is that service's choice.
+
+passport:provisional a owl:DatatypeProperty ;
+    rdfs:label "provisional" ;
+    rdfs:comment "True while the subject's standing rests on a provisional authority (possession of a key, bounded by a fixed end) and not on an enrolled credential's sign-in. False for a registered principal." ;
+    rdfs:range xsd:boolean .
+
+passport:claimed a owl:DatatypeProperty ;
+    rdfs:label "claimed" ;
+    rdfs:comment "True once a provisional subject holds an enrolled credential, so that the identity outlives its provisional authority." ;
+    rdfs:range xsd:boolean .
+
+passport:establishedAt a owl:DatatypeProperty ;
+    rdfs:label "established at" ;
+    rdfs:comment "When the subject's standing began, in Unix seconds." ;
+    rdfs:range xsd:integer .
+
+passport:standingUntil a owl:DatatypeProperty ;
+    rdfs:label "standing until" ;
+    rdfs:comment "When the subject's standing ends, in Unix seconds, where it has a fixed end." ;
+    rdfs:range xsd:integer .
+
+passport:admittedBy a owl:DatatypeProperty ;
+    rdfs:label "admitted by" ;
+    rdfs:comment "The origin of a service that admitted the subject or that the subject has since used. Many-valued. An identity service may state only the asking service's own origin." ;
+    rdfs:range xsd:anyURI .
+
+passport:linkedTo a owl:ObjectProperty ;
+    rdfs:label "linked to" ;
+    rdfs:comment "The identity this subject is linked to as its main account: usage under this subject is attributable to that one. A subject is linked to at most one identity; many may be linked to the same one. Additive: a link rewrites no record made before it." ;
+    rdfs:seeAlso passport:previousIdentity .
+
+passport:role a owl:DatatypeProperty ;
+    rdfs:label "role" ;
+    rdfs:comment "A role a directory states the subject holds (for example in a tenant). Many-valued; the names are the directory's." ;
+    rdfs:range xsd:string .
+
+passport:acceptedTermsVersion a owl:DatatypeProperty ;
+    rdfs:label "accepted terms version" ;
+    rdfs:comment "The version of the service terms the subject agreed to when its standing began." ;
+    rdfs:range xsd:string .
+
+passport:proofKeyThumbprint a owl:DatatypeProperty ;
+    rdfs:label "proof key thumbprint" ;
+    rdfs:comment "The RFC 7638 thumbprint of the key a provisional subject proves possession of." ;
+    rdfs:range xsd:string .
+
 # ── Alignments ──────────────────────────────────────────────
 
 passport:Passport rdfs:seeAlso iep:ContextDescriptor , registry:RegistryEntry ;

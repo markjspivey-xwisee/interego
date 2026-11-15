@@ -573,7 +573,7 @@ export function createVerticalBridge(opts: VerticalBridgeOptions): Express {
     }
     const turtle = affordancesManifestTurtle(manifestIri, opts.affordances, deploymentUrl, {
       verticalLabel: `${opts.verticalName} affordance manifest`,
-      rdfsComment: `Capabilities exposed by the ${opts.verticalName} vertical bridge. Generic Interego agents discover via this manifest; ergonomic clients use the MCP tool surface at /mcp.`,
+      rdfsComment: `Capabilities exposed by the ${opts.verticalName} vertical bridge.${opts.defaultPodUrl ? ` It is configured to write to the pod ${opts.defaultPodUrl}.` : ''} Generic Interego agents discover via this manifest; ergonomic clients use the MCP tool surface at /mcp.`,
     });
     res.type('text/turtle').send(turtle);
   });

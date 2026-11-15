@@ -1,0 +1,100 @@
+# xapix: — xapi-x, a superset of xAPI made by decoration (Foxxi vertical)
+#
+# Vertical vocabulary. Non-normative. Layer: application-over-L3, like i2x:.
+# It adds no term to iep: or to any other Interego namespace, and it redefines
+# nothing in xAPI 2.0 or xAPI Profiles 1.0. Every term here is something a plain
+# LRS or a plain profile processor may ignore.
+#
+# Status of every term below: declared, not yet emitted. The first xapi-x profile
+# declares four iep: terms the lrs-adapter already writes; those are defined in the
+# iep: vocabulary and are not repeated here.
+
+@prefix xapix: <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix#> .
+@prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix owl:   <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs:  <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dct:   <http://purl.org/dc/terms/> .
+@prefix xsd:   <http://www.w3.org/2001/XMLSchema#> .
+@prefix skos:  <http://www.w3.org/2004/02/skos/core#> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix> a owl:Ontology ;
+  dct:title "xapix: — xapi-x" ;
+  rdfs:comment "Decorations that make an xAPI statement or an xAPI profile say what plain xAPI cannot: what signed descriptor a statement is a projection of, what it supersedes, what design idea a concept evidences, what can be done next, and who attests a statement's place in a sequence. Vertical (Foxxi). Not protocol." .
+
+# ── What a term is ──────────────────────────────────────────────────────────
+
+xapix:Decoration a owl:Class ;
+  rdfs:label "decoration" ;
+  rdfs:comment "Something xapi-x adds to a statement (an extension key) or to a profile (a property on a concept or a template). Removing every decoration leaves a valid xAPI statement or a valid xAPI profile that says less." .
+
+# ── Provenance ──────────────────────────────────────────────────────────────
+
+xapix:Projection a owl:Class ;
+  rdfs:label "projection" ;
+  rdfs:comment "Activity type of the category a statement carries when it is a projection of a signed context descriptor. A statement template selects on it, so only statements that claim to be projections are held to the provenance rules." .
+
+xapix:descriptorDigest a owl:DatatypeProperty ;
+  rdfs:subPropertyOf dct:identifier ;
+  rdfs:label "descriptor digest" ;
+  rdfs:comment "Context extension. The content hash of the signed descriptor named by iep:sourceDescriptor, as 'sha256:' and 64 hex characters, taken over the descriptor's bytes as served. With it the link can be checked: a descriptor fetched from that IRI that hashes differently is not the one this statement was projected from." ;
+  rdfs:range xsd:string .
+
+# ── Supersession ────────────────────────────────────────────────────────────
+
+xapix:supersedesStatement a owl:DatatypeProperty ;
+  rdfs:label "supersedes statement" ;
+  rdfs:comment "Context extension. The ids (UUIDs) of the earlier statements this statement replaces as the current account, because the descriptor it projects iep:supersedes the descriptors they projected. It voids nothing: a statement that was wrong and must stop counting is voided by xAPI's own voiding statement as well." ;
+  rdfs:range xsd:string .
+
+# ── Typed links from a profile ──────────────────────────────────────────────
+
+xapix:evidences a owl:ObjectProperty ;
+  rdfs:label "evidences" ;
+  rdfs:comment "On a profile's concept (a verb, an activity type). The design idea a statement using the concept is evidence of, named by a concept of the I2IDL glossary or of i2x:. It is not a SKOS mapping: the target is a design idea, not an xAPI concept of the same type, so the profile's own broadMatch and exactMatch do not apply. A link is a proposal until it is reviewed." .
+
+xapix:offers a owl:ObjectProperty ;
+  rdfs:label "offers" ;
+  rdfs:comment "On a profile's statement template. An affordance a consumer may follow once it holds a statement that follows the template. The target describes itself (its method, target and expected input); a consumer follows it and builds no URL." ;
+  rdfs:range iep:Affordance .
+
+# ── Hypermedia on a statement ───────────────────────────────────────────────
+
+xapix:controls a owl:ObjectProperty ;
+  rdfs:label "controls" ;
+  rdfs:comment "Context extension. The IRI of a document listing what can be done next about this statement. A statement is stored once and read for years, so it carries a link to its controls and never the controls themselves. A statement that names a source descriptor needs none: the descriptor carries its own affordances." .
+
+# ── Ordering and who attests it ─────────────────────────────────────────────
+
+xapix:previous a owl:DatatypeProperty ;
+  rdfs:label "previous" ;
+  rdfs:comment "Context extension. The id (UUID) of the statement the emitter says came immediately before this one in the same registration. Absent on the first. It is the emitter's claim until xapix:previousDigest or xapix:orderAttestation backs it." ;
+  rdfs:range xsd:string .
+
+xapix:previousDigest a owl:DatatypeProperty ;
+  rdfs:label "previous digest" ;
+  rdfs:comment "Context extension. The content hash of the statement named by xapix:previous, as 'sha256:' and 64 hex characters. A run of statements each carrying it is a chain: nobody can reorder, alter or insert into it afterwards without breaking a digest. A chain does not show that nothing was left off its end. The hash is taken over the RFC 8785 canonical JSON of the statement as its emitter sent it, without the stored, authority and version members, which an LRS sets." ;
+  rdfs:range xsd:string .
+
+xapix:orderAttestation a owl:ObjectProperty ;
+  rdfs:label "order attestation" ;
+  rdfs:comment "Context extension. The IRI of a signed descriptor that lists, in order, the digests of the statements of a registration. Whoever signed it attests that order and that the list is whole as of its signing. Anyone may sign one: an emitter for the order it emitted in, an LRS operator for the order it stored in, a third party for what it observed. The signer is named with the conclusion, and the reader decides whether to trust them." .
+
+xapix:OrderBasis a owl:Class ;
+  rdfs:label "order basis" ;
+  rdfs:comment "What stands behind a statement's place in a sequence. A consumer reports the basis with any conclusion that depends on order, and a conclusion over several statements has the weakest basis among them." .
+
+xapix:ProviderClaimed a owl:NamedIndividual, xapix:OrderBasis ;
+  rdfs:label "provider claimed" ;
+  rdfs:comment "The order rests on what the emitter wrote and nothing checks: the timestamp, xapix:previous alone, or any counter. The weakest basis." .
+
+xapix:StoreAssigned a owl:NamedIndividual, xapix:OrderBasis ;
+  rdfs:label "store assigned" ;
+  rdfs:comment "The order rests on the stored time the LRS assigned. It is the order of arrival at that one store, on that store's word." .
+
+xapix:Chained a owl:NamedIndividual, xapix:OrderBasis ;
+  rdfs:label "chained" ;
+  rdfs:comment "The order rests on a chain of xapix:previousDigest values that the consumer recomputed. Fixed since emission; says nothing about omissions at the end." .
+
+xapix:Attested a owl:NamedIndividual, xapix:OrderBasis ;
+  rdfs:label "attested" ;
+  rdfs:comment "The order rests on a signed xapix:orderAttestation whose signature and digests the consumer verified. The strongest basis, and only as trustworthy as its signer." .

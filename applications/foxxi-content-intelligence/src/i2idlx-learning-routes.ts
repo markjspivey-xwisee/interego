@@ -23,6 +23,15 @@ export interface LearningRoutesConfig extends LearningAccountAuthConfig {
   launchRequestsPerMinute?: number;
 }
 const object = (v: unknown): v is Row => !!v && typeof v === 'object' && !Array.isArray(v);
+/**
+ * Everything a provisional guest may ask of `/i2idlx/api/learning`: joining a connection as a
+ * learner, its own links, and reading its own courses, progress, readiness and released review.
+ * A guest also has `/i2idlx/api/learning/launch`. It has nothing an owner has (connectors, policies,
+ * course maps, approving links, LTI), no progress notifications (a subscription would outlive the
+ * guest) and no AI learning context (which needs a paired agent a guest cannot register).
+ */
+export const GUEST_LEARNING_OPERATIONS: ReadonlySet<string> = new Set(['request-link', 'my-links', 'discover', 'confirm-link', 'revoke-link',
+  'courses', 'progress', 'course-readiness', 'quiz-review']);
 function fail(res: Response, cause: unknown): void {
   const known = cause instanceof LearningAuthError || cause instanceof LearningConnectionsError || cause instanceof LearningRepositoryError
     || cause instanceof LearningProviderError || cause instanceof LearningContextError || cause instanceof LearningLtiError || cause instanceof LearningLaunchError || cause instanceof LearningMapError || cause instanceof LearningNotificationsError;
@@ -52,8 +61,9 @@ export function attachLearningRoutes(app: Express, config: LearningRoutesConfig)
     let admitted = false;
     try {
       enter(); admitted = true;
-      const principal = await auth.resolve(req); auth.assertMutation(req, principal);
+      const principal = await auth.resolve(req, { allowGuest: true }); auth.assertMutation(req, principal);
       const body = argumentsOf(req), operation = body.operation;
+      if (principal.guest && (typeof operation !== 'string' || !GUEST_LEARNING_OPERATIONS.has(operation))) throw new LearningAuthError(403, 'learning_guest_refused');
       if (operation === 'course-readiness' || operation === 'quiz-review') { reply(res, await journey.request(principal, body)); return; }
       if (['enable-progress-notifications', 'disable-progress-notifications', 'progress-notification-status'].includes(String(operation))) {
         const result = await notifications.request(principal, body);
@@ -101,7 +111,7 @@ export function attachLearningRoutes(app: Express, config: LearningRoutesConfig)
     const close = () => { if (!res.writableEnded) cancelled.abort(); }; res.on('close', close);
     try {
       enter(); admitted = true;
-      const principal = await auth.resolve(req); auth.assertMutation(req, principal);
+      const principal = await auth.resolve(req, { allowGuest: true }); auth.assertMutation(req, principal);
       const result = await launch.launch(principal, argumentsOf(req), cancelled.signal);
       if (!cancelled.signal.aborted) { res.set('Referrer-Policy', 'no-referrer').set('Pragma', 'no-cache'); reply(res, result); }
     } catch (cause) { if (!cancelled.signal.aborted) fail(res, cause); }

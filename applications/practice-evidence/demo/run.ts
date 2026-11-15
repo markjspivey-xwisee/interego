@@ -197,7 +197,7 @@ export function demoScenarioInput(key: 'missed-deadline' | 'renegotiate-scope', 
           {
             id: 'asks-their-view', title: 'Asks for their view', description: 'Invites the colleague\'s account before deciding anything.', weight: version === 2 ? 2 : 1,
             levels: [lvl('no', 'Not asked', 'Never asks for their side.', 0), lvl('late', 'Late', 'Asks only after deciding what happens next.', 50),
-              lvl('first', 'First', 'Asks for their side before saying anything else about it.', 100)],
+              lvl('first', 'First', 'Asks for their side before deciding anything.', 100)],
           },
           {
             id: 'agrees-next-step', title: 'Agrees a next step', description: 'Leaves with a concrete step, an owner and a date.', weight: 2,
@@ -336,7 +336,7 @@ function judgeAnswer(user: string, nth: number): string {
         ? { criterionId: id, level: 'first', quotes: [{ text: 'what got in the way this time from your side?', turnIndex: 3 }],
           rationale: 'Asks for his side before deciding anything.', probabilities: { no: 0.05, late: 0.25, first: 0.7 } }
         : { criterionId: id, level: 'late', quotes: [{ text: 'what got in the way this time from your side?', turnIndex: 3 }],
-          rationale: 'Asks for his side, but only after stating the facts of the miss; asking before anything else would reach First.', probabilities: { no: 0.1, late: 0.6, first: 0.3 } });
+          rationale: 'Asks for his side, but reads the question as coming once the next step was settled; asking before deciding anything would reach First.', probabilities: { no: 0.1, late: 0.6, first: 0.3 } });
     } else if (id === 'agrees-next-step') {
       criteria.push({ criterionId: id, level: 'owner-and-date',
         quotes: [{ text: 'send me a status note by Tuesday at 10am', turnIndex: 5 }, { text: FABRICATED_QUOTE, turnIndex: 5 }],
@@ -614,10 +614,12 @@ export async function runDemo(opts: DemoOptions = {}): Promise<DemoReport> {
     const grants: readonly (readonly [string, DemoRoleName, Role])[] = [
       ['author', 'author', 'author'], ['reviewer', 'reviewer', 'reviewer'], ['second reviewer', 'second-reviewer', 'reviewer'],
       ['judge agent as judge', 'judge-agent', 'judge'], ['judge agent as agent', 'judge-agent', 'agent'],
+      // A key reads a scored scenario's stakes (its own result included) only once an admin registered it.
+      ['first learner', 'learner', 'learner'], ['second learner', 'second-learner', 'learner'],
     ];
     for (const [i, [label, who, role]] of grants.entries()) {
       const fields = { address: W[who].address, role, change: 'add' };
-      await step(`1${'abcde'[i] ?? ''}`, `admin registers the ${label}${i === 0 ? ' (signed-request envelope form)' : ''}`, { status: 200 },
+      await step(`1${'abcdefg'[i] ?? ''}`, `admin registers the ${label}${i === 0 ? ' (signed-request envelope form)' : ''}`, { status: 200 },
         async () => (i === 0
           ? A(PEV_ACTION.registerRole, await signedRequestEnvelope(W.admin, { v: 1, action: PEV_ACTION.registerRole, issuedAt: clock.peek(), nonce: nextNonce(), podUrl: DEMO_POD, ...fields }))
           : act(A, W.admin, PEV_ACTION.registerRole, fields)),
@@ -953,7 +955,7 @@ export async function runDemo(opts: DemoOptions = {}): Promise<DemoReport> {
           ...want([...scripted, ...agent].every((c) => c['status'] === 'Hypothetical'), 'a cell is not Hypothetical'),
           ...want(scripted.every((c) => obj(c['standing'])['evaluated'] === false), 'a scripted fixture was evaluated for standing'),
           ...want(agent.every((c) => obj(c['standing'])['evaluated'] === true && obj(c['standing'])['clears'] === false
-            && /^\d+ outcome\(s\) of pev\/[0-9a-f]{16}\/[a-z0-9-]+, below 20$/.test(str(obj(c['standing'])['why']))), 'the agent judge\'s standing is not "below 20"'),
+            && /^\d+ outcome\(s\) of this criterion, below 20$/.test(str(obj(c['standing'])['why']))), 'the agent judge\'s standing is not "below 20"'),
           ...want(r.body['personJudgeCellsWithheld'] === 0, 'person-judge cells were withheld'),
           ...want(scripted.some((c) => typeof c['repeatSamples'] === 'number' && (c['repeatSamples'] as number) >= 1 && c['repeatAgreement'] !== undefined), 'no test-retest figures for the scripted judge'),
           ...want(scripted.every((c) => 'auditSampleCoverage' in c && 'auditSamplePartial' in c), 'audit coverage is not reported'),

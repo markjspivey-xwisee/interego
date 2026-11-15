@@ -1,0 +1,647 @@
+<!doctype html>
+<!--
+  Role-play player: a cmi5 assignable unit in one page.
+
+  Launched by an LMS with the cmi5 launch parameters (endpoint, fetch, actor, registration,
+  activityId), it reads a scenario (player.json names the default), plays it, and writes xAPI:
+  initialized, one statement per exchange, one score per rubric criterion, terminated.
+
+  Where the scenario says resultAfterReview, the player sends no completed of its own. On a later
+  launch of the same registration it asks the LMS (GET /cmi5/reviewed, with the session's cmi5
+  credential) for the result a reviewer signed off, and sends that.
+
+  Nothing about a course, a scenario or a learner is in this file. The first script takes the cmi5
+  launch from the URL; it is the bootstrap Foxxi puts into the pages it hosts, kept here because
+  this page is served from elsewhere.
+-->
+<html lang="en"><head><script>(function () {
+  function memoryStorage() {
+    var items = new Map();
+    return {
+      getItem: function (k) { k = String(k); return items.has(k) ? items.get(k) : null; },
+      setItem: function (k, v) { items.set(String(k), String(v)); },
+      removeItem: function (k) { items.delete(String(k)); },
+      clear: function () { items.clear(); },
+      key: function (i) { var keys = Array.from(items.keys()); return i < keys.length ? keys[i] : null; },
+      get length() { return items.size; }
+    };
+  }
+  ['localStorage', 'sessionStorage'].forEach(function (name) {
+    var usable = false;
+    try { var s = window[name]; s.setItem('foxxi-probe', '1'); s.removeItem('foxxi-probe'); usable = true; } catch (e) {}
+    if (!usable) { try { Object.defineProperty(window, name, { value: memoryStorage(), configurable: true }); } catch (e) {} }
+  });
+  var q = new URLSearchParams(location.search);
+  var endpoint = q.get('endpoint'), fetchUrl = q.get('fetch'), registration = q.get('registration'), activityId = q.get('activityId'), actor = null;
+  try { actor = JSON.parse(q.get('actor') || 'null'); } catch (e) { actor = null; }
+  if (!endpoint || !fetchUrl || !registration || !activityId || !actor || !actor.account) return;
+  while (endpoint.charAt(endpoint.length - 1) === '/') endpoint = endpoint.slice(0, -1);
+  var cfg = window.__foxxiPlayerConfig = {
+    lrs: endpoint, registration: registration, courseIri: activityId, actor: actor,
+    learnerDid: actor.account.name, identityServer: actor.account.homePage, learnerName: actor.name || ''
+  };
+  cfg.ready = fetch(fetchUrl, { method: 'POST' })
+    .then(function (r) { if (!r.ok) throw new Error('the launch did not hand over its auth-token (' + r.status + ')'); return r.json(); })
+    .then(function (body) {
+      if (!body || typeof body['auth-token'] !== 'string') throw new Error('the launch handed over no auth-token');
+      cfg.authorization = 'Basic ' + body['auth-token'];
+      var state = endpoint + '/activities/state?' + new URLSearchParams({ stateId: 'LMS.LaunchData', activityId: activityId, agent: JSON.stringify(actor), registration: registration }).toString();
+      return fetch(state, { headers: { Authorization: cfg.authorization, 'X-Experience-API-Version': '2.0.0' } });
+    })
+    .then(function (r) { return r.ok ? r.json() : null; })
+    .then(function (data) { if (data && data.contextTemplate) cfg.contextTemplate = data.contextTemplate; });
+})();</script><meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1,viewport-fit=cover">
+<title>Role-play practice</title>
+<style>
+:root{--bg:#f6f7f9;--card:#fff;--ink:#14161a;--ink2:#5b616e;--ink3:#8a909c;--line:#e4e7ec;--accent:#2f6bff;--accent2:#e9efff;--good:#13854e;--goodbg:#e6f6ee;--warn:#b25e00;--warnbg:#fff3e2;--bad:#c4372c;--radius:18px;--shadow:0 1px 2px rgba(16,24,40,.06),0 4px 16px rgba(16,24,40,.06)}
+@media (prefers-color-scheme:dark){:root{--bg:#0e1013;--card:#171a1f;--ink:#eef0f3;--ink2:#a9b0bc;--ink3:#7c8491;--line:#2a2f37;--accent:#6e95ff;--accent2:#1d2742;--good:#3fcf8e;--goodbg:#13281e;--warn:#ffb454;--warnbg:#2c2213;--bad:#ff6b5f;--shadow:none}}
+*{box-sizing:border-box}html,body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 -apple-system,BlinkMacSystemFont,"Segoe UI",Inter,Roboto,sans-serif;-webkit-font-smoothing:antialiased}
+.wrap{max-width:560px;margin:0 auto;padding:20px 16px 48px}
+header{display:flex;align-items:center;justify-content:space-between;gap:12px;margin-bottom:18px}
+.brand{display:flex;align-items:center;gap:10px;font-weight:700;font-size:18px;letter-spacing:-.01em}
+.logo{width:30px;height:30px;border-radius:9px;background:var(--accent);display:grid;place-items:center;color:#fff;font-size:15px;font-weight:800}
+.chip{font-size:12px;padding:5px 10px;border-radius:999px;background:var(--card);border:1px solid var(--line);color:var(--ink2);white-space:nowrap}
+.chip.ok{background:var(--goodbg);border-color:transparent;color:var(--good)}.chip.warn{background:var(--warnbg);border-color:transparent;color:var(--warn)}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:20px;box-shadow:var(--shadow);margin-bottom:14px}
+h1{font-size:26px;line-height:1.2;letter-spacing:-.02em;margin:0 0 6px}h2{font-size:18px;margin:0 0 10px;letter-spacing:-.01em}
+.sub{color:var(--ink2);margin:0 0 14px}.small{font-size:13px;color:var(--ink3)}
+.btn{appearance:none;border:0;border-radius:14px;padding:14px 18px;font:600 16px/1.2 inherit;cursor:pointer;width:100%;transition:transform .12s ease,background .2s,opacity .2s}
+.btn:active{transform:scale(.98)}.btn.primary{background:var(--accent);color:#fff}.btn.ghost{background:transparent;color:var(--ink);border:1px solid var(--line)}
+.btn:disabled{opacity:.45;cursor:default}
+.row{display:flex;gap:10px;flex-wrap:wrap}.row>.btn{flex:1 1 140px}
+.persona{display:flex;gap:14px;align-items:flex-start;padding:14px;border:1px solid var(--line);border-radius:14px;margin-bottom:10px;cursor:pointer;transition:border-color .15s,background .15s;background:var(--card)}
+.persona:hover{border-color:var(--accent)}.persona.sel{border-color:var(--accent);background:var(--accent2)}
+.av{flex:0 0 44px;height:44px;border-radius:50%;display:grid;place-items:center;font-weight:700;color:#fff;background:var(--accent)}
+.pname{font-weight:650}.ptag{font-size:12px;color:var(--ink2)}.pdesc{font-size:14px;color:var(--ink2);margin-top:4px}
+.lvl{font-size:11px;font-weight:700;letter-spacing:.04em;text-transform:uppercase;color:var(--ink3);margin-left:6px}
+.steps{list-style:none;padding:0;margin:0 0 16px}.steps li{display:flex;gap:12px;margin-bottom:12px}.steps b{display:block}
+.num{flex:0 0 26px;height:26px;border-radius:50%;background:var(--accent2);color:var(--accent);display:grid;place-items:center;font-size:13px;font-weight:700}
+.toggle{display:flex;align-items:center;justify-content:space-between;gap:12px;padding:14px;border:1px solid var(--line);border-radius:14px;margin-bottom:14px;cursor:pointer}
+.sw{flex:0 0 46px;height:28px;border-radius:999px;background:var(--line);position:relative;transition:background .2s}.sw::after{content:"";position:absolute;top:3px;left:3px;width:22px;height:22px;border-radius:50%;background:#fff;transition:transform .2s;box-shadow:0 1px 3px rgba(0,0,0,.2)}
+.sw.on{background:var(--accent)}.sw.on::after{transform:translateX(18px)}
+.callhead{display:flex;align-items:center;gap:14px}
+.bigav{flex:0 0 56px;height:56px;border-radius:50%;display:grid;place-items:center;font-weight:800;font-size:20px;color:#fff;background:var(--accent);position:relative}
+.bigav.talk::after{content:"";position:absolute;inset:-6px;border-radius:50%;border:2px solid var(--accent);animation:pulse 1.2s ease-out infinite}
+@keyframes pulse{from{opacity:.9;transform:scale(.95)}to{opacity:0;transform:scale(1.25)}}
+.meter{height:8px;border-radius:999px;background:var(--line);overflow:hidden;margin-top:6px}.meter>i{display:block;height:100%;border-radius:999px;background:var(--accent);transition:width .6s cubic-bezier(.2,.8,.2,1),background .6s}
+.dots{display:flex;gap:4px;margin-top:12px}.dots i{flex:1;height:4px;border-radius:999px;background:var(--line);transition:background .4s}.dots i.on{background:var(--accent)}
+.line{font-size:19px;line-height:1.45;margin:16px 0 6px;letter-spacing:-.005em;animation:in .35s ease-out}
+.cite{font-size:13px;color:var(--ink3)}
+.hint{display:flex;gap:10px;align-items:flex-start;background:var(--accent2);color:var(--ink);border-radius:14px;padding:12px 14px;font-size:14px;margin:12px 0;animation:in .35s ease-out}
+.hint b{color:var(--accent)}
+.mic{width:76px;height:76px;border-radius:50%;border:0;background:var(--accent);color:#fff;display:grid;place-items:center;margin:8px auto 6px;cursor:pointer;transition:transform .15s}
+.mic.live{animation:breathe 1s ease-in-out infinite alternate}@keyframes breathe{to{transform:scale(1.08)}}
+.mic svg{width:30px;height:30px}
+.heard{text-align:center;font-size:14px;color:var(--ink2);min-height:21px}
+.choice{display:flex;gap:10px;padding:14px 16px;border:1px solid var(--line);border-radius:14px;margin-bottom:10px;cursor:pointer;background:var(--card);transition:border-color .15s,background .15s;animation:in .35s ease-out both}
+.choice:hover{border-color:var(--ink3)}.choice.match{border-color:var(--accent);background:var(--accent2)}
+.choice .k{color:var(--ink3);font-weight:700}
+@keyframes in{from{opacity:0;transform:translateY(6px)}to{opacity:1;transform:none}}
+.ringwrap{display:flex;align-items:center;gap:18px;flex-wrap:wrap}
+.pill{display:inline-block;font-size:13px;font-weight:650;padding:4px 10px;border-radius:999px}.pill.ok{background:var(--goodbg);color:var(--good)}.pill.no{background:var(--warnbg);color:var(--warn)}
+.bar{margin:10px 0}.bar .t{display:flex;justify-content:space-between;font-size:14px}.bar .tr{height:10px;border-radius:999px;background:var(--line);overflow:hidden;margin-top:4px}.bar .tr i{display:block;height:100%;width:0;background:var(--accent);border-radius:999px;transition:width 1s cubic-bezier(.2,.8,.2,1)}
+.rw{border-top:1px solid var(--line);padding:12px 0}.rw:first-of-type{border-top:0}.rw .say{font-weight:600}.rw .was{font-size:14px;color:var(--ink2);margin-top:4px}
+a{color:var(--accent)}.hide{display:none!important}
+.track{font-size:13px;color:var(--ink2)}.track code{font-size:12px}
+</style></head><body>
+<div class="wrap">
+<header><div class="brand"><div class="logo" id="logo">·</div><span id="brand">Role-play practice</span></div><span id="chip" class="chip">Loading…</span></header>
+
+<section id="s-loading"><div class="card"><h2 id="loadtitle">Loading your practice…</h2><p class="sub" id="loadmsg"></p></div></section>
+
+<section id="s-welcome" class="hide">
+  <div class="card">
+    <h1 id="headline"></h1>
+    <p class="sub" id="blurb"></p>
+    <div id="personas"></div>
+    <button class="btn primary" id="go">Start practice</button>
+    <p class="small" id="voicenote" style="margin:10px 0 0"></p>
+  </div>
+</section>
+
+<section id="s-consent" class="hide">
+  <div class="card">
+    <h2>Before you start</h2>
+    <ul class="steps">
+      <li><span class="num">1</span><div><b>The <span class="cprole">other person</span> is simulated</b><span class="small">Played by this app. Their voice is your device's text-to-speech.</span></div></li>
+      <li><span class="num">2</span><div><b>This practice is scored</b><span class="small">Your scores go to your private learning record so your coach can suggest what to practise next.</span></div></li>
+      <li><span class="num">3</span><div><b>What is saved, and what isn't</b><span class="small">If you speak, your browser turns your speech into text. That recognised text of what you said is saved with your scores, along with the replies you chose. No audio is recorded or saved.</span></div></li>
+      <li><span class="num">4</span><div><b>You're in control</b><span class="small">Prefer not to have your words saved? Tap replies instead of speaking. Say no here and the session ends, with nothing scored.</span></div></li>
+    </ul>
+    <div class="toggle" id="agree"><span>I agree to a scored practice session, including saving the text of what I say</span><span class="sw" id="sw"></span></div>
+    <div class="row"><button class="btn primary" id="consentyes" disabled>Continue</button><button class="btn ghost" id="consentno">Not now</button></div>
+  </div>
+</section>
+
+<section id="s-call" class="hide">
+  <div class="card">
+    <div class="callhead"><div class="bigav" id="cav"></div>
+      <div style="flex:1;min-width:0"><div class="pname" id="cname"></div>
+        <div class="small"><span id="moodword"></span> · <span id="stepword"></span></div>
+        <div class="meter"><i id="moodbar"></i></div></div></div>
+    <div class="dots" id="dots"></div>
+    <div class="line" id="cline"></div><div class="cite" id="cgoal"></div>
+    <div class="hint" id="hint"><b>Coach</b><span id="hinttext"></span></div>
+    <div id="voicebox"><button class="mic" id="mic" aria-label="Speak your reply"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round"><rect x="9" y="3" width="6" height="11" rx="3"/><path d="M5 11a7 7 0 0 0 14 0M12 18v3"/></svg></button>
+      <div class="heard" id="heard"></div></div>
+    <div id="choices" style="margin-top:12px"></div>
+    <div class="row" style="margin-top:6px"><button class="btn ghost" id="coachbtn">Coach: on</button><button class="btn ghost" id="voicebtn"></button></div>
+  </div>
+</section>
+
+<section id="s-results" class="hide">
+  <div class="card"><div class="ringwrap">
+    <svg width="128" height="128" viewBox="0 0 128 128"><circle cx="64" cy="64" r="52" fill="none" stroke="var(--line)" stroke-width="12"/><circle id="ring" cx="64" cy="64" r="52" fill="none" stroke="var(--accent)" stroke-width="12" stroke-linecap="round" transform="rotate(-90 64 64)" style="transition:stroke-dashoffset 1.1s cubic-bezier(.2,.8,.2,1)"/><text id="ringt" x="64" y="64" text-anchor="middle" font-size="30" font-weight="700" fill="var(--ink)">0</text><text id="ringmax" x="64" y="86" text-anchor="middle" font-size="13" fill="var(--ink3)"></text></svg>
+    <div style="flex:1;min-width:180px"><span class="pill" id="passpill"></span><p class="sub" id="passcopy" style="margin-top:8px"></p><div class="cite" id="ending"></div></div></div></div>
+  <div class="card"><h2>How you scored</h2><div id="bars"></div></div>
+  <div class="card" id="rwcard"><h2>Say it like this instead</h2><div id="rws"></div></div>
+  <div class="card"><h2>Your next step</h2><p id="next" style="margin:0 0 12px"></p><div id="nextlinks"></div>
+    <p class="small" id="realnote" style="margin:12px 0 0"></p></div>
+  <div class="card"><h2>Saved to your record</h2><p class="track" id="trackstatus">Sending…</p></div>
+</section>
+
+<section id="s-reviewed" class="hide"><div class="card"><h2 id="rvtitle">Your reviewed result</h2><p class="sub" id="rvmsg"></p><p class="track" id="rvtrack"></p><button class="btn primary hide" id="rvretry" style="margin-top:12px">Try again</button></div></section>
+
+<section id="s-declined" class="hide"><div class="card"><h2>No problem</h2><p class="sub" id="declinedmsg">Nothing was scored.</p></div></section>
+</div>
+<script>
+/* Interego role-play player (generic). Nothing about a course, a scenario or a learner is in this file:
+   - the learner (actor) comes from the cmi5 launch (Foxxi's bootstrap: window.__foxxiPlayerConfig);
+   - the scenario, personas, call flows, rubric, pass rule and xAPI profile IRIs come from a scenario
+     document (Practice Evidence ScenarioSpec shape + scripted flows), chosen by cmi5 LMS.LaunchData
+     launchParameters, else the launch URL's `scenario`, else player.json's default;
+   - any participant pseudonym comes from launchParameters or the launch URL, never from the package. */
+"use strict";
+const FOXXI = "https://foxxi-bridge.interego.xwisee.com/ns/foxxi#";   // Foxxi platform vocabulary
+const CMI5_CAT = "https://w3id.org/xapi/cmi5/context/categories/cmi5";
+const q = new URLSearchParams(location.search);
+const registration = q.get("registration") || "";
+const activityId = q.get("activityId") || "urn:interego:roleplay:preview";
+const $ = id => document.getElementById(id);
+const show = id => { for (const s of document.querySelectorAll("section")) s.classList.add("hide"); $(id).classList.remove("hide"); window.scrollTo(0,0); };
+const cfg = window.__foxxiPlayerConfig;
+let S = null, X = null, CRITS = [], P = {}, profileCheck = {checked:false, missing:[]};
+let tracked = false, trackErr = null, sent = [], chain = Promise.resolve();
+const t0 = Date.now(); let callStart = 0;
+const iso = ms => "PT" + Math.max(1, Math.round(ms/1000)) + "S";
+const uuid = () => (crypto.randomUUID ? crypto.randomUUID() : "xxxxxxxx-xxxx-4xxx-yxxx-xxxxxxxxxxxx".replace(/[xy]/g, c => { const r = Math.random()*16|0; return (c=="x"?r:(r&3|8)).toString(16); }));
+function setChip(text, cls){ const c=$("chip"); c.textContent=text; c.className="chip "+(cls||""); }
+function fail(msg){ setChip("Can't start", "warn"); $("loadtitle").textContent = "This practice couldn't load"; $("loadmsg").textContent = msg; show("s-loading"); }
+
+// ---------- launch parameters (cmi5 §10.2.4 launchParameters, then the launch URL) ----------
+function parseParams(raw){
+  if (!raw) return {};
+  if (typeof raw === "object") return raw;
+  try { const o = JSON.parse(raw); if (o && typeof o === "object") return o; } catch(e) {}
+  const o = {}; new URLSearchParams(raw).forEach((v,k)=>o[k]=v); return o;
+}
+async function launchParams(){
+  let lp = {};
+  if (cfg && cfg.authorization) {
+    try {
+      const u = cfg.lrs + "/activities/state?" + new URLSearchParams({stateId:"LMS.LaunchData", activityId: cfg.courseIri, agent: JSON.stringify(cfg.actor), registration: cfg.registration});
+      const r = await fetch(u, {headers:{Authorization: cfg.authorization, "X-Experience-API-Version":"2.0.0"}});
+      if (r.ok) { const d = await r.json(); P.launchData = d; lp = parseParams(d && d.launchParameters); }
+    } catch(e) {}
+  }
+  const fromUrl = {};
+  for (const k of ["scenario","persona","participantPseudonym","attemptGraph","contextKind","actorKind"]) if (q.get(k)) fromUrl[k] = q.get(k);
+  P.sources = {launchParameters: Object.keys(lp), url: Object.keys(fromUrl)};
+  return Object.assign({}, fromUrl, lp);   // the LMS's launchParameters win over the URL
+}
+async function loadScenario(ref){
+  if (ref && typeof ref === "object") return {doc: ref, from: "launchParameters (inline)"};
+  let url = ref;
+  if (!url) { const pj = await (await fetch(new URL("player.json", location.href))).json(); url = pj.defaultScenario; P.defaultFrom = "player.json"; }
+  const abs = new URL(url, location.href).toString();
+  const r = await fetch(abs, {headers:{Accept:"application/ld+json, application/json;q=0.9"}});
+  if (!r.ok) throw new Error("scenario " + abs + " answered " + r.status);
+  return {doc: await r.json(), from: abs};
+}
+function checkScenario(s){
+  const need = ["scenarioKey","title","rubric","personas","xapi","activity"];
+  if (s.resultAfterReview === true && !(s.rubricRef && s.xapi.verbs && s.xapi.verbs.turn && s.xapi.extensions && s.xapi.extensions.counterpartLine && s.xapi.extensions.rubric)) throw new Error("the scenario leaves its result to a reviewer but names no rubricRef, turn verb, counterpart-line extension or rubric extension");
+  const miss = need.filter(k => !s[k]); if (miss.length) throw new Error("the scenario is missing " + miss.join(", "));
+  if (!Array.isArray(s.rubric.criteria) || !s.rubric.criteria.length) throw new Error("the scenario's rubric has no criteria");
+  if (!Array.isArray(s.personas) || !s.personas.length) throw new Error("the scenario has no personas");
+  for (const k of ["verbs","activityTypes","extensions"]) if (!s.xapi[k]) throw new Error("the scenario's xapi block has no " + k);
+}
+async function checkProfile(){
+  // Every IRI the scenario uses must be a concept the named profile declares (format-agnostic text check).
+  try {
+    const r = await fetch(X.profile, {headers:{Accept:"application/ld+json, text/turtle;q=0.8"}});
+    const body = await r.text();
+    const iris = [...Object.values(X.verbs), ...Object.values(X.activityTypes), ...Object.values(X.extensions)].filter(i => i.startsWith(X.profile));
+    profileCheck = {checked: r.ok, missing: iris.filter(i => !body.includes(i))};
+  } catch(e) { profileCheck = {checked:false, error: e.message, missing:[]}; }
+}
+
+// ---------- rubric (Practice Evidence pass-gate semantics: points*100 >= minPercent*max and required levels) ----------
+const lowVal = c => Math.min(...c.levels.map(l => l.value));
+const topVal = c => Math.max(...c.levels.map(l => l.value));
+const levelOf = (c, v) => { let best = c.levels[0]; for (const l of c.levels) if (l.value <= v && l.value >= best.value) best = l; return best; };
+function maxTotal(){ return CRITS.reduce((a,c)=>a + (c.weight||1)*topVal(c), 0); }
+function assess(sc){
+  const rule = S.rubric.passRule || {minPercent: 0, requiredLevels: {}};
+  let pts = 0; CRITS.forEach((c,i)=> pts += (c.weight||1)*sc[i]);
+  const max = maxTotal();
+  const unmet = Object.entries(rule.requiredLevels||{}).filter(([id, need]) => { const i = CRITS.findIndex(c=>c.id===id); const c = CRITS[i];
+    const idx = l => c.levels.findIndex(x => x.id === l); return idx(levelOf(c, sc[i]).id) < idx(need); }).map(([id])=>id);
+  return {points: pts, max, pass: pts*100 >= rule.minPercent*max && unmet.length === 0, unmet,
+    minTotal: Math.ceil(rule.minPercent*max/100 - 1e-9), required: Object.keys(rule.requiredLevels||{}).map(id => { const c = CRITS.find(x=>x.id===id); return c ? (c.xapiKey || c.title || c.id) : id; })};
+}
+
+// ---------- tracking ----------
+let persona = null;
+const L = t => ({[S.language || "en-US"]: t});
+function scenarioAct(){ return {objectType:"Activity", id: activityId, definition:{type: X.activityTypes.scenario, name: L(S.activity.name), description: L(S.activity.description), extensions:{[X.extensions.concepts]: S.activity.concepts || []}}}; }
+const attemptGraph = () => P.attemptGraph || ("urn:graph:interego:roleplay:" + S.scenarioKey + ":attempt:" + registration);
+function ctx(cmi5, parent){
+  const tpl = (cfg && cfg.contextTemplate) || {};
+  const tplCA = tpl.contextActivities || {};
+  const ext = Object.assign({}, tpl.extensions || {});
+  if (P.participantPseudonym) ext[X.extensions.pseudonym] = P.participantPseudonym;
+  ext[X.extensions.scenario] = persona ? persona.variantOf : S.source;
+  ext[X.extensions.attemptGraph] = attemptGraph();
+  ext[X.extensions.callId] = registration;
+  if (X.extensions.rubric && S.rubricRef) ext[X.extensions.rubric] = S.rubricRef;
+  ext[FOXXI+"contextKind"] = P.contextKind || "training";
+  ext[FOXXI+"actorKind"] = P.actorKind || "human";
+  const cat = [{objectType:"Activity", id: X.profileVersion}]; if (cmi5) cat.push({objectType:"Activity", id:CMI5_CAT});
+  const grouping = (tplCA.grouping || []).slice();
+  grouping.push({objectType:"Activity", id: attemptGraph(), definition:{type: X.activityTypes.attempt, name: L(S.title + " practice " + registration.slice(0,8))}});
+  const ca = {category:cat, grouping:grouping};
+  if (parent) ca.parent = [scenarioAct()];
+  return {registration: registration, platform: (S.ui && S.ui.brand ? S.ui.brand + " " : "") + "role-play player" + (P.contextKind === "agent-test" ? " (agent test)" : ""), language: S.language || "en-US", extensions: ext, contextActivities: ca};
+}
+let lastTs = 0;
+function nextTs(){ let n = Date.now(); if (n <= lastTs) n = lastTs + 1; lastTs = n; return new Date(n).toISOString(); }
+/* `keep`, when given, holds the statement across calls: the first call builds it and a later call
+   sends that same document again, id and timestamp included. A send whose answer was lost may have
+   been stored, and sending a new statement for it would leave two. */
+function send(verbKey, verbLabel, object, result, cmi5, parent, keep){
+  if (!tracked) return Promise.resolve(null);
+  const st = (keep && keep.st) || {id: uuid(), actor: cfg.actor, verb:{id: X.verbs[verbKey], display:{"en-US":verbLabel}}, object: object, context: ctx(cmi5, parent), timestamp: nextTs()};
+  if (result && !st.result) st.result = result;
+  if (keep) keep.st = st;
+  chain = chain.then(async () => {
+    // A refusal that a later try gets past is not a failure of this statement: only the last answer is kept.
+    let err = null;
+    for (let i=0;i<3;i++){
+      try {
+        const r = await fetch(cfg.lrs + "/statements", {method:"POST", headers:{"Content-Type":"application/json","X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization}, body: JSON.stringify(st)});
+        if (r.ok) { sent.push({id: st.id, verb: verbLabel}); return st.id; }
+        // The same document sent before and stored then: the LRS holds this id already. That is this statement recorded, once.
+        if (r.status === 409 && keep) {
+          const g = await fetch(cfg.lrs + "/statements?statementId=" + encodeURIComponent(st.id), {headers:{"X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization}});
+          if (g.ok && sameStatement(await g.json(), st)) { sent.push({id: st.id, verb: verbLabel}); return st.id; }
+        }
+        err = "LRS answered " + r.status + " on " + verbLabel + ": " + (await r.text()).slice(0,200);
+        if (r.status < 500) break;
+      } catch(e){ err = e.message; }
+      await new Promise(r => setTimeout(r, 600*(i+1)));
+    }
+    trackErr = err; setChip("Not saving", "warn"); throw new Error(err);
+  });
+  return chain.catch(() => null);
+}
+
+// ---------- voice ----------
+const SR = window.SpeechRecognition || window.webkitSpeechRecognition;
+let voiceOut = !!window.speechSynthesis, coach = true, rec = null, listening = false, pending = null;
+function pickVoice(){ const lang = (S && S.language) || "en-US"; const vs = (window.speechSynthesis && speechSynthesis.getVoices()) || [];
+  return vs.find(v=>v.lang===lang && /Samantha|Google|Aria|Jenny|Natural/i.test(v.name)) || vs.find(v=>v.lang===lang) || vs.find(v=>v.lang.slice(0,2)===lang.slice(0,2)) || null; }
+function speak(text, m){
+  if (!voiceOut || !window.speechSynthesis || !text) return;
+  try { speechSynthesis.cancel(); const u = new SpeechSynthesisUtterance(text); const v = pickVoice(); if (v) u.voice = v; u.lang = S.language || "en-US";
+    u.rate = m > bands()[1] ? 1.12 : m < bands()[0]-5 ? 0.98 : 1.04; u.pitch = m > bands()[1] ? 1.05 : 1;
+    u.onstart = () => $("cav").classList.add("talk"); u.onend = u.onerror = () => $("cav").classList.remove("talk");
+    speechSynthesis.speak(u); } catch(e){}
+}
+const STOP = new Set("a an the and or but so to of on in at for is it its it's i i'm im you your you're we our us me my this that be can will just let with as are was do have has had there their they them".split(" "));
+const toks = s => s.toLowerCase().replace(/[^\p{L}\p{N}$ ]/gu," ").split(/\s+/).filter(w => w && !STOP.has(w));
+function bestMatch(said, choices){
+  const a = new Set(toks(said)); let best = -1, bi = -1;
+  choices.forEach((c,i) => { const b = new Set(toks(c.text)); let inter = 0; for (const w of a) if (b.has(w)) inter++;
+    const s = inter / Math.sqrt(Math.max(1,a.size) * Math.max(1,b.size)); if (s > best){ best = s; bi = i; } });
+  return best >= 0.12 ? bi : -1;
+}
+function listen(){
+  if (!SR) return;
+  if (listening && rec){ rec.stop(); return; }
+  rec = new SR(); rec.lang = S.language || "en-US"; rec.interimResults = true; rec.maxAlternatives = 1;
+  let finalText = "";
+  rec.onresult = e => { let t = ""; for (const r of e.results) t += r[0].transcript; finalText = t; $("heard").textContent = "“" + t + "”"; };
+  rec.onerror = e => { listening = false; $("mic").classList.remove("live");
+    $("heard").textContent = e.error === "not-allowed" || e.error === "service-not-allowed" ? "The microphone isn't available here. Tap a reply below instead." : "Didn't catch that. Try again, or tap a reply."; };
+  rec.onend = () => { listening = false; $("mic").classList.remove("live");
+    if (!finalText) return; const ch = stageObj().choices; const i = bestMatch(finalText, ch);
+    document.querySelectorAll(".choice").forEach(el => el.classList.remove("match"));
+    if (i < 0) { $("heard").textContent = "“" + finalText + "” · That didn't match a reply. Try again, or tap one."; return; }
+    pending = {i, said: finalText};
+    document.querySelectorAll(".choice")[i].classList.add("match");
+    $("heard").innerHTML = "";
+    const t = document.createElement("div"); t.textContent = "“" + finalText + "”"; $("heard").appendChild(t);
+    const b = document.createElement("button"); b.className = "btn primary"; b.style.marginTop = "10px"; b.textContent = "Use the highlighted reply"; b.onclick = () => pick(pending.i, pending.said); $("heard").appendChild(b);
+  };
+  try { window.speechSynthesis && speechSynthesis.cancel(); rec.start(); listening = true; $("mic").classList.add("live"); $("heard").textContent = "Listening…"; }
+  catch(e){ $("heard").textContent = "The microphone isn't available here. Tap a reply below instead."; }
+}
+
+// ---------- play ----------
+let sel = null, stage = 0, mood = 50, picks = [], variantAt = -1, finished = false;
+const bands = () => (S.ui && S.ui.moodBands) || [40, 70];
+const role = () => (S.ui && S.ui.counterpartRole) || "other person";
+function initials(n){ return n.split(/[ ,]+/).filter(Boolean).slice(0,2).map(w=>w[0]).join(""); }
+function renderPersonas(){
+  const box = $("personas"); box.innerHTML = "";
+  S.personas.forEach(p => { const d = document.createElement("div"); d.className = "persona" + (p.id===sel?" sel":"");
+    d.innerHTML = '<div class="av"></div><div><div><span class="pname"></span><span class="lvl"></span></div><div class="ptag"></div><div class="pdesc"></div></div>';
+    d.querySelector(".av").textContent = initials(p.name); d.querySelector(".pname").textContent = p.name;
+    d.querySelector(".lvl").textContent = p.level ? "Level " + p.level : ""; d.querySelector(".ptag").textContent = p.mood || ""; d.querySelector(".pdesc").textContent = p.backstory || "";
+    d.onclick = () => { sel = p.id; renderPersonas(); }; box.appendChild(d); });
+}
+function variantApplies(v){ return v && v.when && typeof v.when.moodAbove === "number" ? mood > v.when.moodAbove : false; }
+function stageObj(){ const s = persona.stages[stage];
+  if (s.variant && variantAt === stage) return {goal:s.variant.goal, hint:s.variant.hint, line:s.variant.line, choices:s.variant.choices, evidenceFor: s.variant.evidenceFor || s.evidenceFor};
+  const b = bands(); return {goal:s.goal, hint:s.hint, line: stage===0 ? persona.firstLine : (s.lines||[])[mood<b[0]?0:mood<=b[1]?1:2], choices:s.choices, evidenceFor: s.evidenceFor}; }
+function moodWord(m){ return m<25?"Calm":m<50?"Settling":m<75?"Tense":"Upset"; }
+function scores(){ const s = CRITS.map(()=>0); picks.forEach(p => CRITS.forEach((c,i)=> s[i] += (p.effects[c.id]||0))); return s.map((n,i)=>Math.max(lowVal(CRITS[i]), Math.min(topVal(CRITS[i]), n))); }
+function renderStage(){
+  const s = stageObj(), n = persona.stages.length;
+  $("cname").textContent = persona.name; $("cav").textContent = initials(persona.name);
+  $("moodword").textContent = moodWord(mood); $("stepword").textContent = "Step " + (stage+1) + " of " + n;
+  const mb = $("moodbar"); mb.style.width = mood + "%"; mb.style.background = mood > bands()[1] ? "var(--bad)" : "var(--accent)";
+  const dots = $("dots"); if (dots.children.length !== n) { dots.innerHTML = ""; for (let i=0;i<n;i++) dots.appendChild(document.createElement("i")); }
+  [...dots.children].forEach((d,i)=>d.classList.toggle("on", i<stage));
+  const ln = $("cline"); ln.textContent = "“" + s.line + "”"; ln.style.animation="none"; void ln.offsetWidth; ln.style.animation="";
+  $("cgoal").textContent = persona.name + " · Your goal: " + s.goal;
+  let h = s.hint; const sc = scores();
+  const miss = ((S.ui && S.ui.missingHints) || []).find(m => stage >= m.fromStage && sc[CRITS.findIndex(c=>c.id===m.criterion)] <= 0);
+  if (miss) h = miss.text; else if (mood > bands()[1] && stage>0 && variantAt!==stage) h = ((S.ui && S.ui.upsetHint) || "") + s.hint;
+  $("hinttext").textContent = " " + h; $("hint").classList.toggle("hide", !coach);
+  const box = $("choices"); box.innerHTML = "";
+  s.choices.forEach((c,i) => { const d = document.createElement("div"); d.className = "choice"; d.style.animationDelay = (i*70)+"ms";
+    d.innerHTML = '<span class="k"></span><span class="tx"></span>'; d.querySelector(".k").textContent = String.fromCharCode(65+i); d.querySelector(".tx").textContent = c.text;
+    d.onclick = () => pick(i, null); box.appendChild(d); });
+  $("heard").textContent = SR ? "Tap the mic and say your reply, or tap one below." : "";
+  pending = null; speak(s.line, mood);
+}
+function pick(i, said){
+  if (finished) return;
+  if (listening && rec) try{ rec.abort(); }catch(e){}
+  const s = stageObj(); const c = s.choices[i];
+  picks.push({stage, variant: variantAt===stage, i, effects:c.effects||{}, best:!!c.best, text:c.text, note:c.note||"", said: said||"", goal:s.goal, evidenceFor: s.evidenceFor||[], bestText: (s.choices.find(x=>x.best)||c).text});
+  if (X.verbs.turn && X.extensions.counterpartLine) {
+    const n = picks.length, def = {name: L("Exchange " + n), extensions:{[X.extensions.counterpartLine]: s.line}};
+    if (X.activityTypes.turn) def.type = X.activityTypes.turn;
+    // What the learner said, as recognised, or the reply they tapped. The reply it was matched to is kept beside it.
+    const res = {response: said || c.text};
+    if (said && X.extensions.matchedReply) res.extensions = {[X.extensions.matchedReply]: c.text};
+    send("turn", "took a turn", {objectType:"Activity", id: activityId + "/turn/" + n, definition: def}, res, false, true);
+  }
+  mood = Math.max(0, Math.min(100, mood + (c.mood||0)));
+  stage++;
+  if (stage >= persona.stages.length) return finish();
+  if (variantApplies(persona.stages[stage].variant)) variantAt = stage;
+  renderStage();
+}
+function evidence(ci){
+  const id = CRITS[ci].id;
+  const rel = picks.filter(p => (p.effects[id]||0) !== 0 || p.evidenceFor.includes(id));
+  return rel.map(p => "Step " + (p.stage+1) + " (" + p.goal + "): " + (p.said ? "said \"" + p.said + "\", matched " : "chose ") + "\"" + p.text + "\"").join(" | ").slice(0, 1500);
+}
+function nextStep(sc, a){
+  for (const r of (S.nextSteps || [])) {
+    const w = r.when || {};
+    if (w.criterionBelow && !Object.entries(w.criterionBelow).some(([id,v]) => sc[CRITS.findIndex(c=>c.id===id)] < v)) continue;
+    if (typeof w.passed === "boolean" && w.passed !== a.pass) continue;
+    if (w.variantOf && w.variantOf !== persona.variantOf) continue;
+    return r;
+  }
+  return {text: a.pass ? "You passed. Try the next one up." : "Run it again and focus on the steps flagged above."};
+}
+function barText(a){ const req = a.required.length ? " with no zero on " + a.required.join(", ").replace(/, ([^,]*)$/, " or $1") : ""; return "the bar of " + a.minTotal + " of " + a.max + req; }
+async function finish(){
+  finished = true; if (window.speechSynthesis) speechSynthesis.cancel();
+  const sc = scores(), a = assess(sc), total = a.points, max = a.max;
+  const dur = iso(Date.now() - callStart);
+  show("s-results");
+  const C = 2*Math.PI*52, ring = $("ring"); ring.setAttribute("stroke-dasharray", C); ring.setAttribute("stroke-dashoffset", C);
+  setTimeout(()=>ring.setAttribute("stroke-dashoffset", C*(1-total/max)), 80); $("ringmax").textContent = "of " + max;
+  let n=0; const tick=setInterval(()=>{ $("ringt").textContent = n; if (n>=total) clearInterval(tick); n++; }, 60);
+  const deferred = S.resultAfterReview === true;
+  $("passpill").textContent = deferred ? (a.pass ? "Unreviewed: over the bar" : "Unreviewed: under the bar") : (a.pass ? "Passed" : "Not passed yet"); $("passpill").className = "pill " + (a.pass?"ok":"no");
+  const bt = barText(a); $("passcopy").textContent = (a.pass ? "You cleared " + bt + "." : "The bar is " + bt.replace(/^the bar of /, "") + ". You're closer than you think.")
+    + (deferred ? " This is the player's own score. A reviewer reads what you said and decides the result." : "");
+  const b = bands(); $("ending").textContent = persona.name + ": “" + persona.endings[mood<b[0]?0:mood<=b[1]?1:2] + "”";
+  const bars = $("bars"); bars.innerHTML = "";
+  CRITS.forEach((c,i) => { const d = document.createElement("div"); d.className = "bar"; d.innerHTML = '<div class="t"><span></span><span></span></div><div class="tr"><i></i></div>';
+    d.querySelector(".t span").textContent = c.title || c.id; d.querySelectorAll(".t span")[1].textContent = sc[i] + " / " + topVal(c); bars.appendChild(d);
+    setTimeout(()=>{ d.querySelector("i").style.width = (sc[i]/topVal(c)*100) + "%"; }, 120 + i*90); });
+  const weak = picks.filter(p => !p.best); const rws = $("rws"); rws.innerHTML = "";
+  $("rwcard").classList.toggle("hide", weak.length===0);
+  weak.forEach(p => { const d = document.createElement("div"); d.className="rw"; d.innerHTML = '<div class="say"></div><div class="was"></div>';
+    d.querySelector(".say").textContent = "“" + p.bestText + "”"; d.querySelector(".was").textContent = "Instead of: “" + (p.said || p.text) + "” " + p.note; rws.appendChild(d); });
+  const ns = nextStep(sc, a); $("next").textContent = ns.text; $("nextlinks").innerHTML = "";
+  if (ns.link) { const el = document.createElement("a"); el.href = ns.link.href; el.target = "_blank"; el.rel = "noopener"; el.className = "btn primary"; el.style.display="block"; el.style.textAlign="center"; el.style.textDecoration="none"; el.textContent = ns.link.label; $("nextlinks").appendChild(el); }
+  if (!tracked) { $("trackstatus").textContent = "Preview mode: this run wasn't launched from a course, so it isn't saved. " + freshNote(); return; }
+  CRITS.forEach((c,i) => send("scored", "scored",
+    {objectType:"Activity", id: c.activityId, definition:{type: X.activityTypes.criterion, name: L(c.title || c.id), description: L(c.description), extensions:{[X.extensions.criterionKey]: c.xapiKey || c.id, [X.extensions.concepts]: c.concepts || []}}},
+    {score:{raw:sc[i], min:lowVal(c), max:topVal(c), scaled: Math.round(sc[i]/topVal(c)*10000)/10000}, response: evidence(i)}, false, true));
+  const crit = {}; CRITS.forEach((c,i)=>crit[c.xapiKey || c.id]=sc[i]);
+  // cmi5 allows one completed per registration. Where the result is a reviewer's to decide, it is sent
+  // after the review, in a later session of this registration (see recordReviewed), never from here.
+  if (!deferred) send("completed", "completed", scenarioAct(),
+    {completion:true, success:a.pass, score:{raw:total, min:0, max:max, scaled: Math.round(total/max*10000)/10000}, duration: dur,
+     response: role().replace(/^./, m=>m.toUpperCase()) + ": " + persona.name + " (" + (persona.mood||"") + "). Final mood: " + moodWord(mood) + ".",
+     extensions:{[X.extensions.passBar]:{minTotal:a.minTotal, maxTotal:max, noZeroOn:a.required, minPercent:(S.rubric.passRule||{}).minPercent}, [X.extensions.criterionScores]:crit}}, true, false);
+  await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);
+  window.__rolePlaySent = sent;
+  $("trackstatus").textContent = trackErr ? "Some results didn't save (" + trackErr + ")."
+    : deferred ? "Your " + picks.length + " exchanges and " + CRITS.length + " scores are saved. The course is not complete yet: " + ((S.ui && S.ui.reviewNote) || "a reviewer signs the result off first. Open this course again afterwards to record it.")
+    : "All " + sent.length + " results saved to your learning record" + (P.contextKind === "agent-test" ? " (agent test run)." : ".");
+  if (!trackErr) setChip("Saved", "ok");
+}
+const freshNote = () => (S && S.ui && S.ui.freshLinkNote) || "Ask for a fresh course link.";
+
+// ---------- a reviewed result (the LMS's GET /cmi5/reviewed, with this session's cmi5 credential) ----------
+/* Returns {state:"none"} when the LMS says there is nothing under review here, so a practice may start;
+   {state:"waiting", why} when this registration's practice is with a reviewer;
+   {state:"ready", statements} when the reviewed statements are for this session;
+   {state:"elsewhere"} when they were fixed for another session;
+   {state:"unknown", why} when the LMS could not be asked or did not give one of those answers.
+   A practice starts only on "none": this registration holds one conversation, and a second one
+   played because the LMS was unreachable would be a conversation nobody takes. */
+async function askReviewed(){
+  if (!S.resultAfterReview || !cfg || !cfg.authorization) return {state:"none"};
+  let r, b;
+  try {
+    r = await fetch(new URL("/cmi5/reviewed", cfg.lrs), {headers:{Authorization: "Bearer " + cfg.authorization.replace(/^Basic\s+/, ""), Accept:"application/json"}});
+    b = await r.json().catch(() => null);
+  } catch(e) { return {state:"unknown", why: "the LMS could not be reached"}; }
+  if (r.ok && b && Array.isArray(b.statements) && b.statements.length) return b.usableInSession === true ? {state:"ready", statements: b.statements} : {state:"elsewhere"};
+  const err = b && b.error;
+  if (r.status === 409 && err === "no_reviewed_statements") return {state:"waiting", why: b.reason || ""};
+  // Nothing was taken from this registration, the LMS asks no review service, or this launch is not
+  // one that records a result (Browse, Review): there is no reviewed result to wait for.
+  if (r.status === 409 && (err === "registration_not_under_review" || err === "not_a_normal_launch")) return {state:"none"};
+  if (r.status === 501 && err === "no_review_service") return {state:"none"};
+  return {state:"unknown", why: "the LMS answered " + r.status + (err ? " (" + err + ")" : "")};
+}
+/* Whether `stored` holds everything `issued` says. An LRS adds to what it stores (stored, authority,
+   version, an objectType, a display) and may reorder a list of activities, so what it holds can say
+   more. It may not say anything different: every field of the issued statement has to be there with
+   the same value, to any depth. */
+function holds(stored, issued){
+  if (issued === null || typeof issued !== "object") return stored === issued;
+  if (Array.isArray(issued)) return Array.isArray(stored) && stored.length === issued.length && issued.every(x => stored.some(y => holds(y, x)));
+  if (stored === null || typeof stored !== "object" || Array.isArray(stored)) return false;
+  return Object.keys(issued).every(k => holds(stored[k], issued[k]));
+}
+const sameInstant = (a, b) => typeof a === "string" && typeof b === "string" && Date.parse(a) === Date.parse(b);
+function sameStatement(stored, issued){
+  if (!stored || !issued) return false;
+  const {timestamp: ti, ...restIssued} = issued, {timestamp: ts} = stored;
+  return holds(stored, restIssued) && (ti === undefined || sameInstant(ts, ti));
+}
+/* Sends the reviewed statements exactly as given, in order. An id the LRS already holds is read back:
+   only an equal statement is this result recorded. */
+async function postReviewed(st){
+  const h = {"Content-Type":"application/json","X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization};
+  const r = await fetch(cfg.lrs + "/statements", {method:"POST", headers:h, body: JSON.stringify(st)});
+  if (r.ok) return "sent";
+  if (r.status === 409) {
+    const g = await fetch(cfg.lrs + "/statements?statementId=" + encodeURIComponent(st.id), {headers:h});
+    if (g.ok && sameStatement(await g.json(), st)) return "already";
+    return "differs";
+  }
+  return "refused " + r.status;
+}
+let sessionOpened = false;
+const visitStart = {};   // this visit's initialized, kept so that trying again sends the same statement
+async function recordReviewed(got, again){
+  show("s-reviewed");
+  // cmi5 has initialized come first in a session. Nothing reviewed is sent until the LRS has taken
+  // it: a passed in a session with no initialized is not a session's statement.
+  if (!sessionOpened) {
+    chain = Promise.resolve(); trackErr = null;   // a send that failed earlier does not hold up this one
+    sessionOpened = (await send("initialized", "initialized", scenarioAct(), null, true, false, visitStart)) !== null;
+  }
+  if (!sessionOpened) {
+    $("rvtitle").textContent = "This visit could not be started";
+    $("rvmsg").textContent = "The learning record did not take the start of this visit" + (trackErr ? " (" + trackErr + ")" : "") + ", so nothing else was sent. Try again in a moment.";
+    setChip("Not saved", "warn");
+    const btn = $("rvretry"); btn.classList.remove("hide"); btn.disabled = false;
+    btn.onclick = async () => { btn.disabled = true; $("rvmsg").textContent = "Trying again…"; await recordReviewed(got, true); };
+    return;
+  }
+  if (got.state === "waiting") {
+    $("rvtitle").textContent = "With a reviewer";
+    $("rvmsg").textContent = "Your practice is saved and is waiting for a reviewer to sign it off. Nothing more is needed from you here. Open this course again once it has been reviewed.";
+  } else if (got.state === "elsewhere") {
+    $("rvtitle").textContent = "Your reviewed result";
+    // What is known: it was issued for another visit. Whether it was recorded in that visit is not known here.
+    $("rvmsg").textContent = "Your reviewed result was issued for a different visit to this course, so it cannot be recorded in this one. It may already be in your learning record from that visit. If your course still shows as not complete, ask for the result to be issued again, then open this course once more.";
+  } else {
+    // In order, and no further than the first one the learning record does not take: a completed
+    // without the passed or failed before it would be a result nobody reviewed.
+    const verbs = got.statements.map(x => (x.verb && x.verb.id || "").split("/").pop());
+    const out = [];
+    for (const st of got.statements) {
+      let o; try { o = await postReviewed(st); } catch(e) { o = "unreachable"; }
+      out.push(o);
+      if (o !== "sent" && o !== "already") break;
+    }
+    const ok = out.length === got.statements.length && out.every(o => o === "sent" || o === "already");
+    window.__rolePlayReviewed = {outcomes: out, verbs};
+    if (!ok) {
+      // The session stays open: these statements are for this session only, and ending it would
+      // leave them with nowhere to be sent. Trying again sends from the start; one already stored
+      // is read back and compared, not stored twice.
+      const done = out.filter(o => o === "sent" || o === "already").length;
+      $("rvtitle").textContent = "Your reviewed result is not recorded yet";
+      $("rvmsg").textContent = "The learning record did not take " + verbs[out.length - 1] + " (" + out[out.length - 1] + ")."
+        + (done ? " " + verbs.slice(0, done).join(" and ") + " was recorded." : " Nothing was recorded.") + " Nothing further was sent. You can try again now, or leave this page open and try later.";
+      setChip("Not saved", "warn");
+      const btn = $("rvretry"); btn.classList.remove("hide"); btn.disabled = false;
+      btn.onclick = async () => { btn.disabled = true; $("rvmsg").textContent = "Trying again…"; await recordReviewed(got, true); };
+      return;
+    }
+    $("rvretry").classList.add("hide");
+    $("rvtitle").textContent = "Your reviewed result is recorded";
+    $("rvmsg").textContent = "A reviewer signed off your practice. Recorded for this course: " + verbs.join(" and ") + ".";
+    setChip("Recorded", "ok");
+  }
+  await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);
+  $("rvtrack").textContent = trackErr ? "This visit didn't save (" + trackErr + ")." : "";
+}
+/* The LMS could not say whether a reviewed result is waiting. Nothing is started and nothing is sent. */
+function reviewUnknown(got){
+  show("s-reviewed"); setChip("Can't check", "warn");
+  $("rvtitle").textContent = "Couldn't check for your reviewed result";
+  $("rvmsg").textContent = "This course records a result only after a reviewer signs it off, and whether yours is ready could not be checked (" + got.why + "). No new practice was started. Try again in a moment.";
+  const btn = $("rvretry"); btn.classList.remove("hide"); btn.disabled = false;
+  btn.onclick = async () => { btn.disabled = true; $("rvmsg").textContent = "Checking again…"; await begin(); };
+}
+/* Asks the LMS, then starts what its answer calls for: a practice, a reviewed result to record, or neither. */
+async function begin(){
+  const got = await askReviewed();
+  window.__rolePlay.reviewed = got.state;
+  if (got.state === "unknown") return reviewUnknown(got);
+  $("rvretry").classList.add("hide");
+  if (got.state !== "none") return recordReviewed(got);
+  setChip(P.contextKind === "agent-test" ? "Tracked (agent test)" : "Tracked", "ok");
+  show("s-welcome");
+  await send("initialized", "initialized", scenarioAct(), null, true, false);
+}
+
+// ---------- start ----------
+(async () => {
+  let ready = false;
+  if (cfg) { try { await cfg.ready; ready = !!cfg.authorization; if (!ready) throw new Error("no auth-token"); }
+    catch(e){ trackErr = e.message; } }
+  Object.assign(P, await launchParams());
+  try { const got = await loadScenario(P.scenario); S = got.doc; P.scenarioFrom = got.from; checkScenario(S); }
+  catch(e){ return fail("The scenario couldn't be read (" + e.message + ")."); }
+  X = S.xapi; CRITS = S.rubric.criteria;
+  sel = (P.persona && S.personas.some(p=>p.id===P.persona)) ? P.persona : S.personas[0].id;
+  document.title = (S.ui && S.ui.brand ? S.ui.brand + ": " : "") + S.title;
+  $("brand").textContent = (S.ui && S.ui.brand) || "Role-play practice"; $("logo").textContent = ((S.ui && S.ui.brand) || "R")[0];
+  $("headline").textContent = (S.ui && S.ui.headline) || S.title; $("blurb").textContent = (S.ui && S.ui.blurb) || S.situation || "";
+  document.querySelectorAll(".cprole").forEach(e => e.textContent = role());
+  $("voicebtn").textContent = role().replace(/^./, m=>m.toUpperCase()) + " voice: on";
+  $("realnote").textContent = (S.ui && S.ui.realPracticeNote) || ""; $("declinedmsg").textContent = "Nothing was scored. " + freshNote();
+  renderPersonas();
+  $("voicenote").textContent = SR ? "Voice works best in Chrome or Edge. You can always tap a reply instead." : "Voice input isn't available in this browser, so you'll tap replies. The " + role() + " still speaks if your device supports it.";
+  if (!SR) $("mic").classList.add("hide");
+  if (!window.speechSynthesis) { voiceOut = false; $("voicebtn").classList.add("hide"); }
+  show("s-welcome");
+  await checkProfile();
+  window.__rolePlay = {scenarioFrom: P.scenarioFrom, sources: P.sources, pseudonymSupplied: !!P.participantPseudonym, profileCheck, contextKind: P.contextKind || "training"};
+  if (!cfg) { setChip("Preview, not saved", "warn"); return; }
+  if (!ready) { setChip("Not saving", "warn"); $("voicenote").textContent = "This link couldn't connect to your record (" + trackErr + "). It may have been used already. " + freshNote(); return; }
+  tracked = true; setChip(P.contextKind === "agent-test" ? "Tracked (agent test)" : "Tracked", "ok");
+  await begin();
+})();
+$("mic").onclick = listen;
+$("coachbtn").onclick = () => { coach = !coach; $("coachbtn").textContent = "Coach: " + (coach?"on":"off"); $("hint").classList.toggle("hide", !coach); };
+$("voicebtn").onclick = () => { voiceOut = !voiceOut; $("voicebtn").textContent = role().replace(/^./, m=>m.toUpperCase()) + " voice: " + (voiceOut?"on":"off"); if (!voiceOut && window.speechSynthesis) speechSynthesis.cancel(); };
+$("go").onclick = () => { if (!tracked && cfg && !trackErr) return; show("s-consent"); };
+let agreed = false;
+$("agree").onclick = () => { agreed = !agreed; $("sw").classList.toggle("on", agreed); $("consentyes").disabled = !agreed; };
+const consentAct = () => ({objectType:"Activity", id: activityId + "#consent", definition:{type: X.activityTypes.consent, name: L("Consent to a scored practice session, including the recognised text of what the learner says (no audio)")}});
+$("consentyes").onclick = async () => {
+  persona = S.personas.find(p=>p.id===sel); mood = persona.startMood ?? 50; stage = 0; picks = []; variantAt = -1; callStart = Date.now();
+  send("consented", "consented", consentAct(), {success:true, response:"Agreed in the player: scores, chosen replies and recognised speech text saved; no audio"}, false, true);
+  show("s-call"); renderStage();
+};
+$("consentno").onclick = async () => {
+  persona = S.personas.find(p=>p.id===sel);
+  send("declinedConsent", "declined-consent", consentAct(), {success:false, response:"Declined in the player"}, false, true);
+  await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);
+  show("s-declined");
+};
+</script>
+</body></html>

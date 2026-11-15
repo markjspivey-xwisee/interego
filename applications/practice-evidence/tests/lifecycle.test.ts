@@ -181,6 +181,8 @@ describe('roles are changed by an admin envelope and kept as a signed registry r
       [W.author, 'author'], [W.coAuthor, 'author'], [W.coAuthor, 'reviewer'], [W.reviewer, 'reviewer'], [W.reviewer2, 'reviewer'],
       [W.reviewer3, 'reviewer'], [W.judgeAgent, 'judge'], [W.judgeAgent, 'agent'], [W.judgePerson, 'judge'], [W.judgePerson, 'reviewer'],
       [W.agentReviewer, 'reviewer'], [W.agentReviewer, 'agent'], [W.agentLearner, 'agent'],
+      // A key reads a scored scenario's stakes, its own results included, only once an admin registered it.
+      [W.ana, 'learner'],
     ];
     const formB = await signedRequestEnvelope(W.admin, {
       v: 1, action: PEV_ACTION.registerRole, timestamp: new Date(clock.t).toISOString(), nonce: nonce(), pod_url: POD,
@@ -258,12 +260,19 @@ describe('authoring: evidence-first declarations, versions, ratification, drafti
     S['oneTurn'] = String(oneTurn['scenarioIri']);
   }, SLOW);
 
-  it('lists published heads with their full rubric, hides drafts unless asked, and lists every version of one scenario', async () => {
+  it('lists published heads with their rubric (its stakes only to a signed read), hides drafts unless asked, and lists every version of one scenario', async () => {
     const list = ok((await H['pev.list_scenarios']!({})) as Out);
     const views = list['scenarios'] as Out[];
     const md = views.find((v) => v['scenarioIri'] === S['md'])!;
     expect([md['version'], md['status'], md['ratified']]).toEqual([2, 'published', false]);
-    expect(md['rubric']).toBeTruthy();
+    // Read by nobody in particular: the criteria and levels in words, and none of the weights, level values or pass rule.
+    const plainRubric = md['rubric'] as Out;
+    expect([md['assessmentUse'], 'passRule' in plainRubric, 'passGateWhy' in md, typeof list['stakesWithheld']]).toEqual(['pass-gate', false, false, 'string']);
+    expect((plainRubric['criteria'] as Out[]).every((c) => !('weight' in c) && (c['levels'] as Out[]).every((l) => !('value' in l) && typeof l['label'] === 'string'))).toBe(true);
+    // Signed with a key a person holds, as the web app signs for a wallet: the whole rubric.
+    const signed = ok(await act(H, 'pev.list_scenarios', W.ana, {}, { scenario_iri: S['md'] }));
+    const signedRubric = (signed['scenario'] as Out)['rubric'] as { passRule: { minPercent: number }; criteria: { weight: number }[] };
+    expect([typeof signedRubric.passRule.minPercent, signedRubric.criteria.every((c) => typeof c.weight === 'number'), signed['stakesWithheld']]).toEqual(['number', true, undefined]);
     expect(String(md['evidenceNote'])).toContain('once a reviewer ratifies it');
     expect(views.some((v) => v['scenarioIri'] === S['mdDraft'])).toBe(false);
     expect((list['bridge'] as Out)['counterpartRoute']).toBe('scripted');
@@ -518,13 +527,17 @@ describe('judging: the platform checks every quote and computes the result; judg
       ...pay, judgment: { criteria: judgment.criteria.map((c) => ({ ...c, rationale: '' })) },
     }), 400, 'judgment-shape');
     const rec = ok(await act(H, 'pev.record_judgment', W.judgeAgent, pay));
-    const ja = rec['judgment'] as JudgmentResult;
+    // The judge is told how their own quotes were checked; the rest of the judgment is in the record.
+    expect([(rec['judgment'] as Out)['index'], ((rec['judgment'] as Out)['judge'] as Out)['kind'], (rec['judgment'] as Out)['unverifiedCriteria']]).toEqual([0, 'agent', []]);
+    const recorded = async (): Promise<JudgmentResult[]> => ok(await act(H, 'pev.get_attempt', W.reviewer, { attemptIri: S['b2'] }))['judgments'] as JudgmentResult[];
+    const ja = (await recorded())[0]!;
     expect([ja.judge.kind, ja.chosenBy, ja.promptTemplateHash, ja.route, ja.unverifiedCriteria.length]).toEqual(['agent', 'judge-registry', JUDGE_PROMPT_TEMPLATE_HASH, 'client-packet', 0]);
     const pk2 = ok(await act(H, 'pev.judge_packet', W.judgePerson, { attemptIri: S['b2'] }));
     const rec2 = ok(await act(H, 'pev.record_judgment', W.judgePerson, {
       ...pay, ...(pk2['binding'] as Out), judgeDisclosure: { provider: 'acme', model: 'judge-7', usedPacketPrompt: false },
     }));
-    const jp = rec2['judgment'] as JudgmentResult;
+    expect((rec2['judgment'] as Out)['index']).toBe(1);
+    const jp = (await recorded())[1]!;
     expect([jp.judge.kind, jp.promptTemplateHash, jp.repeatOf]).toEqual(['person', 'own-prompt', null]);
   }, SLOW);
 });
@@ -1234,6 +1247,102 @@ describe('a review is checked against the registry as it stood when it was signe
 });
 
 // ═════════════════════════════════════════════════════════════════════════════════════════════
+//  What the judge packet tells its caller about their own assessment
+// ═════════════════════════════════════════════════════════════════════════════════════════════
+
+describe('the judge packet says whether the caller\'s own assessment is saved and still counts, and nothing more', () => {
+  it('yourAssessment is null until the caller judges, set after, null again once the learner contests, never set by another judge; no packet carries the stakes, for a judge who is also a reviewer or an admin too', async () => {
+    const judgeAdmin = wallet('judge-admin');
+    ok(await act(H, 'pev.register_role', W.admin, { address: judgeAdmin.address, role: 'judge', change: 'add' }));
+    // The same pod and clock, on a bridge whose admins include that judge.
+    const asAdmin = make({ model: scriptedPracticeModel(), adminAddresses: [W.admin.address, judgeAdmin.address] });
+    const started = ok(await act(H, 'pev.start_attempt', W.ben, { scenarioIri: S['md'], scenarioVersion: 2, coached: false }));
+    const iri = String(started['attemptIri']);
+    ok(await act(H, 'pev.record_turns', W.ben, {
+      attemptIri: iri, turnIndex: 1, learnerText: DEMO_LINES.ana[0], counterpartText: DEMO_LINES.sam[0], endAfter: true,
+      counterpartDisclosure: { provider: 'scripted', model: 'demo-learner-agent' },
+    }));
+    // A pass gate: its rubric has weights, level values and a pass rule, and no packet carries any of them.
+    const spec = specOf(demoScenarioInput('missed-deadline', 2));
+    expect([spec.assessmentUse, spec.rubric.passRule?.minPercent, spec.rubric.criteria.map((c) => c.weight)]).toEqual(['pass-gate', 70, [2, 2, 2]]);
+    const STAKES = /weight|"value"|passRule|minPercent|requiredLevels|meetsPassRule|percent|"points"|unmet|provisional|agreement|nextSteps/i;
+    const packet = async (w: Wallet, h: Handlers = H): Promise<Out> => {
+      const p = ok(await act(h, 'pev.judge_packet', w, { attemptIri: iri }));
+      expect(JSON.stringify(p)).not.toMatch(/weight|"value"|passRule|minPercent|requiredLevels|meetsPassRule|percent/i);
+      // The field is the answer's last, so an answer cut short has none; when set it holds two keys and nothing else.
+      expect(Object.keys(p).at(-1)).toBe('yourAssessment');
+      const yours = p['yourAssessment'];
+      if (yours !== null) expect(Object.keys(yours as Out).sort()).toEqual(['judgedAt', 'saved']);
+      return p;
+    };
+    // A judge, a judge who is also a reviewer, and a judge who is also an admin.
+    const yoursFor = async (): Promise<unknown[]> => [
+      (await packet(W.judgeAgent))['yourAssessment'], (await packet(W.judgePerson))['yourAssessment'], (await packet(judgeAdmin, asAdmin))['yourAssessment'],
+    ];
+    expect(await yoursFor()).toEqual([null, null, null]);
+    expect((await packet(W.ben))['yourAssessment']).toBeNull();
+    // A read: the same signed envelope is answered twice, so fetching the packet again never spends a nonce.
+    const envelope = await envelopeFor(W.judgeAgent, 'pev.judge_packet', { attemptIri: iri });
+    for (let i = 0; i < 2; i += 1) expect(ok((await H['pev.judge_packet']!({ envelope })) as Out)['yourAssessment']).toBeNull();
+    const judgment = {
+      criteria: [
+        { criterionId: 'specific-observation', level: 'specific', quotes: [{ text: 'The quarterly report was due Thursday at noon', turnIndex: 1 }], rationale: 'Names the report and when it was due.' },
+        { criterionId: 'asks-their-view', level: 'no', quotes: [], rationale: 'Never asks for their side.' },
+        { criterionId: 'agrees-next-step', level: 'none', quotes: [], rationale: 'No next step is agreed.' },
+      ],
+    };
+    // What the judge's own assistant reads once it saved: that it was saved and how its own quotes were checked. Never a
+    // judgment's provisional result (weights, level values, percent, pass mark, the levels a pass needs), the agreement
+    // (every judgment's levels), the first judgment's result, often another judge's, or what the next level asks for: the
+    // same chat may assess again, this attempt once it is reopened or another learner's attempt of this scenario.
+    const saved = (r: Out): Out => {
+      expect(JSON.stringify(r)).not.toMatch(STAKES);
+      expect(Object.keys(r)).toEqual(['attemptIri', 'descriptorUrl', 'state', 'judgmentCount', 'judgment', 'currentTarget', 'recorded']);
+      const j = r['judgment'] as Out;
+      expect(Object.keys(j)).toEqual(['index', 'judgedAt', 'judge', 'criteria', 'unverifiedCriteria']);
+      expect((j['criteria'] as Out[]).map((c) => [c['criterionId'], c['levelId'], c['status'], (c['quotes'] as Out[]).map((q) => q['verified'])]))
+        .toEqual(judgment.criteria.map((c) => [c.criterionId, c.level, c.quotes.length > 0 ? 'verified' : 'no-quote-needed', c.quotes.map(() => true)]));
+      return j;
+    };
+    const record = async (w: Wallet, h: Handlers = H, o: { issuedAt?: string } = {}): Promise<Out> => {
+      const pk = ok(await act(h, 'pev.judge_packet', w, { attemptIri: iri }, {}, o));
+      return saved(ok(await act(h, 'pev.record_judgment', w, {
+        attemptIri: iri, ...(pk['binding'] as Out), judgment, judgeDisclosure: { provider: 'scripted', model: 'demo-judge-agent', usedPacketPrompt: true },
+      }, {}, o)));
+    };
+    // One judge's judgment is theirs alone: the other judges still have none.
+    const first = await record(W.judgeAgent);
+    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: first['judgedAt'] }, null, null]);
+    // The second judge's answer says nothing of the first judge's judgment.
+    const second = await record(W.judgePerson);
+    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: first['judgedAt'] }, { saved: true, judgedAt: second['judgedAt'] }, null]);
+    expect((await packet(W.ben))['yourAssessment']).toBeNull();
+    // A reviewer signs off: judging is closed, and the packet is refused, as before.
+    const head = ok(await act(H, 'pev.get_attempt', W.reviewer3, { attemptIri: iri }));
+    const reviewed = ok(await act(H, 'pev.countersign_attempt', W.reviewer3, {
+      attemptIri: iri, target: head['currentTarget'], levels: levels([['specific-observation', 'specific'], ['asks-their-view', 'no'], ['agrees-next-step', 'none']]), sawJudgeLevelsFirst: true,
+    }));
+    refused(await act(H, 'pev.judge_packet', W.judgeAgent, { attemptIri: iri }), 409, 'attempt-already-reviewed');
+    // The learner contests: judging reopens and keeps the judgments made before it, and none of them counts any more.
+    // This bridge's clock stands still from here, so the contest and the judgment after it carry the same time: what
+    // decides whether a judgment came after the reopening is the order they were written in, not their times.
+    const still = { t: clock.t + 1000 };
+    const stopped = make({ model: scriptedPracticeModel(), now: () => new Date(still.t) });
+    const at = { issuedAt: new Date(still.t).toISOString() };
+    const contested = ok(await act(stopped, 'pev.contest_review', W.ben, { attemptIri: iri, target: reviewed['currentTarget'], why: 'The deadline I named was the one we had agreed on.' }, {}, at));
+    expect(await yoursFor()).toEqual([null, null, null]);
+    // A judge assesses the reopened session once: that one counts, and only for them.
+    const third = await record(W.judgeAgent, stopped, at);
+    const stored = (ok(await act(H, 'pev.get_attempt', W.reviewer3, { attemptIri: iri }))['judgments'] as JudgmentResult[]).at(-1)!;
+    expect([stored.index, stored.repeatOf, stored.judgedAt]).toEqual([third['index'], 0, third['judgedAt']]);
+    expect((await act(H, 'pev.get_attempt', W.reviewer3, { attemptIri: iri }))['reopenings']).toMatchObject([{ at: third['judgedAt'] }]);
+    expect(contested['state']).toBe('contested');
+    expect(await yoursFor()).toEqual([{ saved: true, judgedAt: third['judgedAt'] }, null, null]);
+    expect((await packet(W.ben))['yourAssessment']).toBeNull();
+  }, SLOW);
+});
+
+// ═════════════════════════════════════════════════════════════════════════════════════════════
 //  Replays, records out of place, spending limits, and who may confirm a judge they chose
 // ═════════════════════════════════════════════════════════════════════════════════════════════
 
@@ -1420,6 +1529,9 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     const o = ok(await act(keyed, 'pev.override_attempt', W.reviewer2, { attemptIri: V['attempt'], target, levels: lv, sawJudgeLevelsFirst: true }, {}, on));
     expect([o['state'], o['modalStatus'], o['projectable']]).toEqual(['overridden', 'Asserted', true]);
     expect(vault.store.get(String(o['descriptorUrl']))).toMatch(/iep:modalStatus iep:Asserted/);
+    // A key builds a scored statement only once an admin registered it (chat-stakes.test.ts).
+    refused(await act(keyed, 'pev.project_attempt', W.ana, { attemptIri: V['attempt'], format: 'xapi' }, {}, on), 403, 'stakes-not-in-chat');
+    ok(await act(keyed, 'pev.register_role', W.admin, { address: W.ana.address, role: 'learner', change: 'add' }, {}, on));
     const x = ok(await act(keyed, 'pev.project_attempt', W.ana, { attemptIri: V['attempt'], format: 'xapi' }, {}, on));
     expect(statementProblems(x['statement'], 'xapi', 'pass-gate')).toEqual([]);
     V['audit'] = String(x['auditDescriptorUrl']);
@@ -1458,8 +1570,9 @@ describe('with a record key, operator-pod records are sealed to it, still verify
   }, SLOW);
 
   it('no public byte on the pod names a learner or links an attempt to one: role entry, contest and a declined projection included', async () => {
-    // Ana's role entry, her contest and a second request for a statement each write a record.
-    ok(await act(keyed, 'pev.register_role', W.admin, { address: W.ana.address, role: 'learner', change: 'add' }, {}, on));
+    // Ana's role entries (registered as a learner before, now as a judge too), her contest and a second request for a
+    // statement each write a record.
+    ok(await act(keyed, 'pev.register_role', W.admin, { address: W.ana.address, role: 'judge', change: 'add' }, {}, on));
     const v = ok(await act(keyed, 'pev.get_attempt', W.ana, { attemptIri: V['attempt'] }, {}, on));
     const c = ok(await act(keyed, 'pev.contest_review', W.ana, { attemptIri: V['attempt'], target: v['currentTarget'], why: 'Sam agreed the date with me; please read turn five again.' }, {}, on));
     expect(c['state']).toBe('contested');
@@ -1703,6 +1816,8 @@ describe('with a record key, operator-pod records are sealed to it, still verify
         vault.store.set(g, kept);
       }
     }
+    // Registered as a learner, Ben's key builds the scored statement (chat-stakes.test.ts).
+    ok(await act(fresh, 'pev.register_role', W.admin, { address: W.ben.address, role: 'learner', change: 'add' }, {}, on));
     expect(ok(await act(fresh, 'pev.project_attempt', W.ben, { attemptIri: bIri, format: 'xapi' }, {}, on))['practiceEvidence']).toBe(true);
   }, SLOW);
 
@@ -2253,6 +2368,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
     expect(stored()).toBe(before);
     // The bridge holding the key goes on: it reads the sealed head, finds version 1 ratified, and
     // projects; the queue still has Ben's attempt; the author tries the draft, keyed under its key.
+    ok(await act(keyedLate, 'pev.register_role', W.admin, { address: W.ana.address, role: 'learner', change: 'add' }, {}, onLate));
     const y = ok(await act(keyedLate, 'pev.project_attempt', W.ana, { attemptIri: ana, format: 'xapi' }, {}, onLate));
     expect(y['practiceEvidence']).toBe(true);
     expect(ok(await act(keyedLate, 'pev.review_queue', W.reviewer, {}, {}, onLate))['awaitingReview']).toBe(1);
@@ -2286,7 +2402,7 @@ describe('with a record key, operator-pod records are sealed to it, still verify
       ok(await act(plainW, 'pev.end_conversation', w, { attemptIri: iri, turnIndex: 1 + 2 * lines.length }, {}, onWin));
       return ok(await act(plainW, 'pev.judge_attempt', w, { attemptIri: iri }, {}, onWin));
     };
-    const lv = levels([['specific-observation', 'specific'], ['asks-their-view', 'first', 'Asks for his side before saying anything else about it.'],
+    const lv = levels([['specific-observation', 'specific'], ['asks-their-view', 'first', 'Asks for his side before deciding anything.'],
       ['agrees-next-step', 'owner-and-date', 'Sam owns the status note and Tuesday 10am is the date; the second quote is not in the transcript.']]);
     const ana = await startOn(W.ana, 'missed-deadline');
     const ja = await judged(W.ana, ana, DEMO_LINES.ana);
@@ -2427,7 +2543,7 @@ describe('records read and found trusted are kept across acts, for a bounded tim
   const setup = async (): Promise<void> => {
     if (C['attempt']) return;
     const h = make(cdeps());
-    for (const [who, role] of [[W.author, 'author'], [W.reviewer, 'reviewer']] as const) {
+    for (const [who, role] of [[W.author, 'author'], [W.reviewer, 'reviewer'], [W.ana, 'learner']] as const) {
       ok(await act(h, 'pev.register_role', W.admin, { address: who.address, role, change: 'add' }, {}, on));
     }
     const p = ok(await act(h, 'pev.author_scenario', W.author, { scenario: demoScenarioInput('missed-deadline', 2), status: 'published', draftAssistance: { used: false } }, {}, on));
@@ -2801,11 +2917,18 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     const o = ok(await ract(RH, 'pev.override_attempt', AG.reviewerUi, { attemptIri: X['a'], target: view['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }));
     expect([o['state'], o['reviewer'], o['projectable']]).toEqual(['overridden', P.reviewer, true]);
     expect(rpod.store.get(String(o['descriptorUrl']))).toContain(P.reviewer);
-    const p = ok(await ract(RH, 'pev.project_attempt', AG.ana, { attemptIri: X['a'], format: 'xapi' }));
+    // From her web UI agent the statement names her DID; from her chat agent a scored statement, which carries the score,
+    // is refused before anything is written (chat-stakes.test.ts).
+    const p = ok(await ract(RH, 'pev.project_attempt', agentOf('practice-evidence-u-pk-0000000000d4', P.ana), { attemptIri: X['a'], format: 'xapi' }));
     expect(((p['statement'] as Out)['actor'] as Out)['account']).toMatchObject({ name: P.ana });
-    const ex = ok(await ract(RH, 'pev.export_record', AG.ana, { attemptIri: X['a'] }));
+    refused(await ract(RH, 'pev.project_attempt', AG.ana, { attemptIri: X['a'], format: 'xapi' }), 403, 'stakes-not-in-chat');
+    // Her record from the web UI agent holds the graphs, and how to re-verify an envelope the relay signed; from her chat
+    // agent, the descriptors alone, and it says so (chat-stakes.test.ts).
+    const ex = ok(await ract(RH, 'pev.export_record', agentOf('practice-evidence-u-pk-0000000000d4', P.ana), { attemptIri: X['a'] }));
     expect([ex['relayAddresses'], ex['identityHost']]).toEqual([[RELAY.address.toLowerCase()], IDH]);
     expect((ex['verify'] as string[]).some((x) => x.includes('relay-delegated'))).toBe(true);
+    const fromChat = ok(await ract(RH, 'pev.export_record', AG.ana, { attemptIri: X['a'] }));
+    expect([(fromChat['graphsLeftOut'] as Out)['remedy'], (fromChat['versions'] as Out[]).every((v) => v['graphTrig'] === null)]).toEqual(['web-app', true]);
     // A bridge that no longer lists the relay: the route is off, and the review it attested does
     // not re-verify, so the attempt cannot leave as evidence there (a skip audit says so).
     const off = createPevHandlers(relayDeps({ relayDelegation: { relayAddresses: [], identityHost: IDH, fetchDidDocument } })) as Handlers;
@@ -2846,7 +2969,8 @@ describe('Interego sign-in: a request the relay signed acts as the person whose 
     });
     const o = ok(await ract(RH, 'pev.override_attempt', AG.reviewerUi, { action: web(PEV_ACTION.overrideAttempt), attemptIri: iri, target: view['currentTarget'], levels: lv, sawJudgeLevelsFirst: true }));
     expect([o['state'], o['projectable']]).toEqual(['overridden', true]);
-    ok(await ract(RH, 'pev.project_attempt', AG.ben, { action: web(PEV_ACTION.projectAttempt), attemptIri: iri, format: 'xapi' }));
+    // From his web UI agent: a scored statement is not built for a chat (chat-stakes.test.ts).
+    ok(await ract(RH, 'pev.project_attempt', agentOf('practice-evidence-u-pk-0000000000e5', P.ben), { action: web(PEV_ACTION.projectAttempt), attemptIri: iri, format: 'xapi' }));
     // A key-held envelope in that form is read the same way.
     expect(Array.isArray(ok(await act(RH, 'pev.get_attempt', W.ana, { action: web(PEV_ACTION.getAttempt) }, {}, { pod: RPOD }))['attempts'])).toBe(true);
   }, SLOW);

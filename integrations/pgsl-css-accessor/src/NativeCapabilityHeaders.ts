@@ -8,6 +8,7 @@ export class NativeCapabilityHeaders extends HttpHandler {
       response.setHeader('Accept-Put', NATIVE_COMMIT_MEDIA_TYPE);
       response.setHeader('Interego-Native-Commit', '1');
       response.setHeader('Interego-Native-Delete', '1');
+      response.setHeader('Interego-Native-Stage', '1');
     }
   }
 }

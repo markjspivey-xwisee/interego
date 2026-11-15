@@ -36,6 +36,11 @@ COPY deploy/identity/provisional-play-admission.ts ./
 COPY deploy/identity/provisional-play-provider.ts ./
 COPY deploy/identity/provisional-play-routes.ts ./
 COPY deploy/identity/provisional-play-cleanup.ts ./
+COPY deploy/identity/provisional-general-guest.ts ./
+COPY deploy/identity/provisional-general-guest-routes.ts ./
+COPY deploy/identity/provisional-guest-link.ts ./
+COPY deploy/identity/provisional-guest-link-routes.ts ./
+COPY deploy/identity/provisional-guest-link-dashboard.ts ./
 COPY deploy/identity/surface-agent-restore.ts ./
 COPY deploy/identity/rate-limit.ts ./
 COPY deploy/identity/first-sign-in.ts ./
