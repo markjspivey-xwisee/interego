@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-15 — Practice Evidence: a launched learner named by WebID is the signer
+
+Found on the first run against the deployed Foxxi LMS. Foxxi launches a learner
+under their WebID, `https://<identity host>/users/<id>/profile#me`. Practice
+Evidence compared the launched actor with the DID the learner signs as,
+`did:web:<identity host>:users:<id>`, as two strings. So every import of a
+registration Foxxi launched for a signed-in person was refused with
+`not-your-registration`, after the registration had read as one whole
+conversation against the scenario.
+
+`launchedActorIsSigner` takes the WebID only when it is exactly the one built
+from the signer's own DID on the identity host the bridge is set up with. The
+host serves both for the one account. Another account, another host, another
+path, a key-held signer and a bridge with no identity host all still match by
+DID only.
+
 ## 2026-11-15 — The Foxxi profile server serves the xapi-x profile
 
 The xapi-x profile was on the pod, which serves its triples and judges nothing.

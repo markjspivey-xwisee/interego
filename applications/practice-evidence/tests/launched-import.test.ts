@@ -15,8 +15,7 @@ import { PEV_ACTION, readShapesTurtle, toolNameOf } from '../src/ontology.js';
 import { coerceScenario, rubricHash, type ScenarioSpec } from '../src/practice.js';
 import { didOf, recordGraphTurtle, signEnvelope, type AttemptBody } from '../src/records.js';
 import {
-  launchNotVerified, launchVocabularyProblems, lmsAuthorityProblems, readLaunchedCall, scenarioVersionRef, sendingSessionProblems, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary,
-} from '../src/launched-import.js';
+  launchNotVerified, launchVocabularyProblems, lmsAuthorityProblems, readLaunchedCall, scenarioVersionRef, sendingSessionProblems, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary, launchedActorIsSigner } from '../src/launched-import.js';
 import { buildLaunchedStatements, launchedRefusals, VERB_COMPLETED, VERB_PASSED } from '../src/projections.js';
 
 type Out = Record<string, unknown>;
@@ -738,4 +737,39 @@ describe('pev.import_launched_attempt', () => {
     lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', o2), ...call(o2)] } });
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ registration: REG10 }), readOf(REG10)), 422, 'registration-not-a-conversation');
   }, SLOW);
+});
+
+describe('who a launched actor is', () => {
+  const HOST = 'identity.example.test';
+  const DID = `did:web:${HOST}:users:u-pk-0123456789ab`;
+  const WEBID = `https://${HOST}/users/u-pk-0123456789ab/profile#me`;
+
+  it('is the signer when named by the DID the signer signs as, with or without an identity host', () => {
+    expect(launchedActorIsSigner(DID, DID, HOST)).toBe(true);
+    expect(launchedActorIsSigner(DID, DID, null)).toBe(true);
+    expect(launchedActorIsSigner(didOf(W.ana.address), didOf(W.ana.address), null)).toBe(true);
+  });
+
+  it('is the signer when named by that account\'s WebID on the identity host', () => {
+    expect(launchedActorIsSigner(WEBID, DID, HOST)).toBe(true);
+  });
+
+  it('is not the signer for another account, another host, another document, or no identity host', () => {
+    expect(launchedActorIsSigner(`https://${HOST}/users/u-pk-ffffffffffff/profile#me`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner('https://other.example.test/users/u-pk-0123456789ab/profile#me', DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`http://${HOST}/users/u-pk-0123456789ab/profile#me`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/u-pk-0123456789ab/profile`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/u-pk-0123456789ab/profile#me?x`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/agents/u-pk-0123456789ab/profile#me`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(WEBID, DID, null)).toBe(false);
+    expect(launchedActorIsSigner(WEBID, DID, 'other.example.test')).toBe(false);
+  });
+
+  it('never reads a WebID for a key-held signer, an agent, or an id with structure in it', () => {
+    expect(launchedActorIsSigner(WEBID, didOf(W.ana.address), HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/claude-u-pk-0123456789ab/profile#me`, `did:web:${HOST}:agents:claude-u-pk-0123456789ab`, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/a/../b/profile#me`, `did:web:${HOST}:users:a/../b`, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/a:b/profile#me`, `did:web:${HOST}:users:a:b`, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users//profile#me`, `did:web:${HOST}:users:`, HOST)).toBe(false);
+  });
 });

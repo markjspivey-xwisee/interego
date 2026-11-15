@@ -88,7 +88,7 @@ import {
   buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, CMI5_SESSION_EXT, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
   type ProjectionFormat,
 } from '../src/projections.js';
-import { launchNotVerified, readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary, type LmsAuthority } from '../src/launched-import.js';
+import { launchNotVerified, readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary, type LmsAuthority, launchedActorIsSigner } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
   readCache, readChain, readHead, readHeadsOfKind, readRecord, readRoleRegistry, readRoleRegistryAt, refreshHeads, signRecordAuthorship,
@@ -2234,8 +2234,9 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
   }
   const c = readOut.call;
   // The LRS answered the signer of lrs_read with their own statements. That signer has to be the
-  // person signing this act: the actor the LMS launched is named by the same DID.
-  if (c.launch.actor.name !== s.signerDid) {
+  // person signing this act: the actor the LMS launched is named by the same DID, or by that
+  // account's WebID on the identity host (`launchedActorIsSigner`).
+  if (!launchedActorIsSigner(c.launch.actor.name, s.signerDid, ctx.identityHost)) {
     throw decline(403, 'The registration\'s statements name another actor than the one signing this act; a learner takes only their own conversation.', 'not-your-registration');
   }
 
