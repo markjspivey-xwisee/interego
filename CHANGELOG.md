@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-11-15 — xapi-x: a design for a superset of xAPI made by decoration, and a first profile
+
+The owner asked for "our own xapi-x with our relevant decorations to make it a
+superset", the way i2idl-x is a superset of the I2IDL glossary. The design is in
+`applications/foxxi-content-intelligence/xapix/README.md`, written to be accepted
+or changed before much code exists; eleven questions for the owner are at its end.
+
+**The rule.** Every xapi-x statement is a valid xAPI 2.0 statement and every
+xapi-x profile is a valid xAPI Profiles 1.0 document. A plain LRS and a plain
+profile processor lose only the decorations. Decorations go in three places the
+standards already leave open: a statement's extensions, a category activity, and
+a property on a profile's concept or template whose key is an absolute IRI.
+
+**What the design covers**, each with a worked statement: what signed descriptor
+a statement is a projection of and whether the projection lost anything; modal
+status, and what must not be concluded from a statement that is not asserted;
+how a corrected statement relates to xAPI voiding and to `iep:supersedes`; links
+from a profile's concepts to i2idl-x concepts; how a statement or a template
+offers what can be done next without a consumer building a URL; who may claim a
+statement's place in a sequence; and what a profile gains, with eleven lint rules.
+
+**In code.** The `xapix:` namespace (`src/xapix/namespace.ts`) sits under the same
+relay root as `i2x:`, outside every protocol namespace, with all 15 terms
+declared in `xapix/xapix.ttl`; a test fails when the two lists differ. The first
+xapi-x profile (`src/xapix/profile.ts`) declares the four `iep:` keys the
+lrs-adapter has always written under `result.extensions` (`sourceDescriptor`,
+`modalStatus`, `coherentNarratives`, `projectionLossy`), which no profile
+declared, and one template that requires a source descriptor and a modal status.
+The statement the adapter posts is now built by a function of its own
+(`applications/lrs-adapter/src/projection-statement.ts`, behaviour unchanged), and
+a test runs that function through the specification's `validates` against the
+profile.
+
+**Not done.** Nothing is published: `xapix:` and the profile's IRI do not resolve
+until the graphs are put on the pod, which is the owner's step. No emitter writes
+an `xapix:` term. The profile is not added to the Foxxi profile server.
+
+**Found, not changed.** Only the lrs-adapter writes the four keys;
+learner-performer-companion does not. The adapter leaves `projectionLossy` off a
+Hypothetical projection with one narrative while its audit row calls that
+projection lossy, so an absent flag cannot be read as false. Foxxi's projector
+says the same things under `foxxi:` keys in `context.extensions`.
+
 ## 2026-11-15 — xAPI profiles: every template has a statement that follows it, and the profiles declare what statements carry
 
 Four of this repository's applications publish an xAPI Profile. They were read
