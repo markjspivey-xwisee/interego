@@ -14,10 +14,11 @@ import { ProfileServer, ProfileServerError, mountProfileServerReads } from '../s
 import { mountProfileHosting } from '../src/xapi-profile-server/authoring-http.js';
 import { builtInProfiles } from '../src/xapi-profile-server/built-in.js';
 import { lintProfile } from '../src/xapi-profile-server/lint.js';
+import { lintXapixProfile, lintXapixStatements } from '../src/xapix/lint.js';
 import type { Json } from '../src/xapi-profile-server/processor.js';
 import { FOXXI_PROFILE_ID } from '../src/xapi-profile.js';
 import { buildXapixProfileDoc, XAPIX_PROFILE_VERSION_ID, XAPIX_PROJECTION_TEMPLATE_ID } from '../src/xapix/profile.js';
-import { IEP_DECORATIONS, XAPIX_PROFILE_ID } from '../src/xapix/namespace.js';
+import { IEP_DECORATIONS, XAPIX_PROFILE_ID, xapix } from '../src/xapix/namespace.js';
 
 const BASE = 'https://bridge.example/xapi/profiles';
 const projected = (): Json => buildProjectionStatement({
@@ -69,6 +70,9 @@ describe('the xapi-x profile on the profile server', () => {
     expect(lintProfile(buildXapixProfileDoc(), examples)).toEqual([]);
     // Without its example the template has none, and the lint says so: the example is doing the work.
     expect(lintProfile(buildXapixProfileDoc()).map(f => [f.code, f.at])).toEqual([['template-example', XAPIX_PROJECTION_TEMPLATE_ID]]);
+    // The profile declares every xapix: key a statement may carry, and lints clean under the xapi-x rules too.
+    expect(lintXapixProfile(buildXapixProfileDoc() as Json, examples)).toEqual([]);
+    expect(lintXapixStatements([projected()], [buildXapixProfileDoc() as Json])).toEqual([]);
   });
 
   it('is listed by the server as built in, with nobody named as having added it', async () => {
@@ -88,6 +92,9 @@ describe('the xapi-x profile on the profile server', () => {
     // The keys are `iep:` IRIs, not children of the profile's: they resolve to this profile's declaration all the same.
     for (const key of Object.values(IEP_DECORATIONS))
       expect(await (await resource(key)).json(), key).toMatchObject({ id: key, type: 'ResultExtension', inScheme: XAPIX_PROFILE_VERSION_ID });
+    // And the xapix: terms, which are on the relay's origin and declared here.
+    expect(await (await resource(xapix('Projection'))).json()).toMatchObject({ id: xapix('Projection'), type: 'ActivityType' });
+    expect(await (await resource(xapix('previousDigest'))).json()).toMatchObject({ id: xapix('previousDigest'), type: 'ContextExtension' });
     const triples = await resource(XAPIX_PROFILE_ID, 'application/n-triples');
     expect(triples.status).toBe(200);
     expect(await triples.text()).toContain(`<${XAPIX_PROJECTION_TEMPLATE_ID}>`);
