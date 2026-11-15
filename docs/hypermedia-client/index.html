@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-IwoMzlxysRc5vucyicrcPi6Bw9gOjp037yLX6z7VpMM='; style-src 'sha256-2fMl6VtdGFOYNdDnFQCRvmDOQzQTGlnITAJO8XiFELY='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-CISFTAqnhjKrTyx2WxjWEBjBuiO6pvbq34QZgS1cTZc='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -92,6 +92,7 @@
     .desc-note { margin-top: 6px; }
     .code-sm { font-size: 12px; }
     .confirm { font-size: 13px; }
+    .dest { font-size: 12px; color: var(--muted); }
     details > summary { cursor: pointer; font-weight: 650; margin: 8px 0; }
     .crumbs { font: 12px var(--mono); color: var(--muted); margin: 0 0 8px; }
     .empty { color: var(--muted); font-style: italic; padding: 12px 4px; }
@@ -840,6 +841,11 @@ function coerceValue(field, value) {
   }
   return value;
 }
+// An enum's entries as the select offers them: each as text (an object as its
+// JSON), with no entry for null, which the blank "unset" option already is.
+function enumOptions(field) {
+  return asList(field.enum).filter(v => v != null).map(asText);
+}
 // A field's pattern is shown in its hint and never run: a remote regular
 // expression can take time exponential in the input, and the server that
 // receives the value is the one that enforces it.
@@ -857,7 +863,8 @@ function validateFields(control, supplied) {
     const text = structured ? (typeof found === "string" ? found : JSON.stringify(typed)) : (typed == null ? "" : String(typed));
     if (!structured && field.minLength != null && text.length < field.minLength) errors.push(field.name + ": shorter than minLength " + field.minLength);
     if (!structured && field.maxLength != null && text.length > field.maxLength) errors.push(field.name + ": longer than maxLength " + field.maxLength);
-    if (!structured && field.enum && field.enum.length && !field.enum.map(String).includes(text)) errors.push(field.name + ": must be one of " + field.enum.join(", "));
+    const allowed = enumOptions(field);
+    if (!structured && allowed.length && !allowed.includes(text)) errors.push(field.name + ": must be one of " + allowed.join(", "));
     if (!structured && field.minInclusive != null && Number(typed) < Number(field.minInclusive)) errors.push(field.name + ": below minInclusive");
     if (!structured && field.maxInclusive != null && Number(typed) > Number(field.maxInclusive)) errors.push(field.name + ": above maxInclusive");
     values[field.name] = typed;
@@ -962,8 +969,9 @@ function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;"
 // Markup built from remote data goes through esc(), iriSpan() and the
 // renderers below, and nowhere else. Every remote string is escaped as text.
 // The only attribute a remote value can fill is data-iri, and it holds an
-// https URL as the URL parser normalised it, so it carries no quote, space
-// or angle bracket. The click handler follows a data-iri with fetch(); the page
+// https URL as the URL parser normalised it, with the apostrophe the parser
+// leaves in a path or fragment percent-encoded too, so it carries no quote,
+// space or angle bracket. It is still escaped, inside double quotes. The click handler follows a data-iri with fetch(); the page
 // has no link a remote document can make the browser navigate. An http IRI is
 // shown as text, because the page would refuse to fetch it.
 function followable(iri) {
@@ -971,7 +979,7 @@ function followable(iri) {
   if (!/^https:\/\//i.test(raw)) return null;
   try {
     const u = new URL(raw);
-    return u.protocol === "https:" ? u.href : null;
+    return u.protocol === "https:" ? u.href.replace(/'/g, "%27") : null;
   } catch { return null; }
 }
 function iriSpan(iri, label) {
@@ -1017,7 +1025,7 @@ function inlineMarkdown(line) {
   return html + linkify(line.slice(last));
 }
 function renderMarkdown(src) {
-  const parts = asText(src).split("```");
+  const parts = asText(src).replace(/\r\n?/g, "\n").split("```");
   let html = "";
   parts.forEach((part, i) => {
     if (i % 2 === 1) { html += "<pre>" + linkify(part.replace(/^[\w+-]*\n/, "")) + "</pre>"; return; }
@@ -1117,9 +1125,10 @@ function fieldControl(field) {
   const key = esc(field.name);
   const val = esc(fieldDefaultText(field));
   let input;
-  if (field.enum && field.enum.length && !field.jsonKind) {
+  const options = enumOptions(field);
+  if (options.length && !field.jsonKind) {
     const chosen = asText(field.defaultValue);
-    input = `<select data-field="${key}"><option value=""></option>${field.enum.map(v => `<option value="${esc(asText(v))}" ${asText(v) === chosen ? "selected" : ""}>${esc(asText(v))}</option>`).join("")}</select>`;
+    input = `<select data-field="${key}"><option value=""></option>${options.map(v => `<option value="${esc(v)}" ${v === chosen ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
   } else if (field.rawBody || field.jsonKind || (field.maxLength && field.maxLength > 200) || /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
     input = `<textarea data-field="${key}" ${req ? "required" : ""}>${val}</textarea>`;
   } else {
@@ -1155,6 +1164,10 @@ function renderDetail() {
   });
   state.formFor = c;
 }
+function destinationHost(c) {
+  const head = asText(c.template || c.target).split("{")[0];
+  try { const u = new URL(head); return u.protocol === "https:" ? u.host : null; } catch { return null; }
+}
 function detailHtml(c, desc) {
   const transport = classifyTransport(c, desc.url);
   const target = c.template || c.target || "(none)";
@@ -1168,12 +1181,17 @@ function detailHtml(c, desc) {
       target: ${iriSpan(c.target, target)}
     </div>`;
   if (c.unsafe) html += `<div class="warn">Unsafe operation. The default is a dry run that shows the exact request. Confirm before anything is sent.</div>`;
+  // The host a control sends to, so a form cannot pass for one that goes elsewhere.
+  const host = destinationHost(c);
+  const dest = transport !== "http" ? "" : host ? `<span class="dest">Sends to <code>${esc(host)}</code></span>`
+    : `<span class="dest">The address comes from a template; the dry run shows it.</span>`;
   html += `<form id="invokeForm">${c.fields.map(fieldControl).join("") || '<div class="empty">No input fields.</div>'}
     <div class="actions">
       ${c.unsafe ? `<button type="submit" class="secondary" data-mode="dry">Dry run</button>
         <label class="confirm"><input type="checkbox" id="confirmUnsafe"> I confirm this write</label>
         <button type="submit" class="danger" data-mode="live" disabled id="liveBtn">Invoke</button>`
         : `<button type="submit" data-mode="live">Invoke</button><button type="submit" class="secondary" data-mode="dry">Dry run</button>`}
+      ${dest}
     </div>
   </form>
   <div id="result"></div>`;
@@ -1269,35 +1287,49 @@ function selectRel(rel, values) {
     }
   }
 }
-document.getElementById("loadBtn").addEventListener("click", async () => {
-  const url = document.getElementById("url").value.trim();
-  if (!url) return;
-  try { await loadDescriptorUrl(url); } catch (err) {
-    setStatus(String(err.message || err));
-    document.getElementById("list").innerHTML = `<div class="warn">${esc(err.message || err)}</div>`;
-  }
-});
-document.getElementById("url").addEventListener("keydown", (ev) => {
-  if (ev.key === "Enter") document.getElementById("loadBtn").click();
-});
-document.getElementById("backBtn").addEventListener("click", async () => {
-  const prev = state.history.pop();
-  document.getElementById("backBtn").disabled = state.history.length === 0;
-  if (prev) {
-    try { await loadDescriptorUrl(prev, false); } catch (err) { setStatus(String(err.message || err)); }
-  }
-});
-document.body.addEventListener("click", async (ev) => {
-  const card = ev.target.closest(".card");
-  if (card && card.dataset.rel) { selectRel(card.dataset.rel); return; }
-  const iriEl = ev.target.closest("[data-iri]");
-  if (iriEl && iriEl.dataset.iri) {
-    const iri = iriEl.dataset.iri;
-    if (!/^https:\/\//.test(iri)) return;
-    try { await loadDescriptorUrl(iri); } catch (err) { setStatus("Follow failed: " + (err.message || err)); }
-  }
-});
-(async function boot() {
+// The page does not run inside another page's frame: a page that framed it
+// could cover it and steer the clicks that confirm a write. A <meta> policy
+// cannot say frame-ancestors and GitHub Pages sends no headers, so the page
+// checks for itself.
+function framed() {
+  try { return window.top !== window.self; } catch { return true; }
+}
+function refuseFramed() {
+  for (const id of ["url", "loadBtn", "backBtn", "proxy"]) document.getElementById(id).disabled = true;
+  setStatus("This page does not run inside another page. Open it in a tab of its own.");
+}
+function start() {
+  document.getElementById("loadBtn").addEventListener("click", async () => {
+    const url = document.getElementById("url").value.trim();
+    if (!url) return;
+    try { await loadDescriptorUrl(url); } catch (err) {
+      setStatus(String(err.message || err));
+      document.getElementById("list").innerHTML = `<div class="warn">${esc(err.message || err)}</div>`;
+    }
+  });
+  document.getElementById("url").addEventListener("keydown", (ev) => {
+    if (ev.key === "Enter") document.getElementById("loadBtn").click();
+  });
+  document.getElementById("backBtn").addEventListener("click", async () => {
+    const prev = state.history.pop();
+    document.getElementById("backBtn").disabled = state.history.length === 0;
+    if (prev) {
+      try { await loadDescriptorUrl(prev, false); } catch (err) { setStatus(String(err.message || err)); }
+    }
+  });
+  document.body.addEventListener("click", async (ev) => {
+    const card = ev.target.closest(".card");
+    if (card && card.dataset.rel) { selectRel(card.dataset.rel); return; }
+    const iriEl = ev.target.closest("[data-iri]");
+    if (iriEl && iriEl.dataset.iri) {
+      const iri = iriEl.dataset.iri;
+      if (!/^https:\/\//.test(iri)) return;
+      try { await loadDescriptorUrl(iri); } catch (err) { setStatus("Follow failed: " + (err.message || err)); }
+    }
+  });
+  boot();
+}
+async function boot() {
   const params = new URLSearchParams(location.search);
   if (!document.getElementById("url").value) {
     document.getElementById("url").value = params.get("url") || "https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx-catalog";
@@ -1320,7 +1352,8 @@ document.body.addEventListener("click", async (ev) => {
       document.documentElement.dataset.ready = "error";
     }
   }
-})();
+}
+if (framed()) refuseFramed(); else start();
 
   </script>
 </body>

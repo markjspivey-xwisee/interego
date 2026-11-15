@@ -1373,34 +1373,51 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
 
 
 
+# Remote text printed to a terminal could carry control sequences that set the
+# window title, recolour or erase what is on screen, or write the clipboard.
+# Every C0 and C1 control character except newline and tab, and DEL, is shown
+# as a visible \xNN escape instead. --json output needs none of this: JSON
+# escapes every control character.
+_TERMINAL_CONTROLS = re.compile(r"[\x00-\x08\x0b-\x1f\x7f-\x9f]")
+
+
+def tty_safe(text: Any) -> str:
+    return _TERMINAL_CONTROLS.sub(lambda m: "\\x%02x" % ord(m.group()), str(text))
+
+
+def say(text: Any = "", file: Any = None) -> None:
+    """print() for anything that may hold remote text, in text mode."""
+    print(tty_safe(text), file=file or sys.stdout)
+
+
 def print_control_table(descriptor: Descriptor) -> None:
-    print(descriptor.title)
-    print(descriptor.url)
+    say(descriptor.title)
+    say(descriptor.url)
     if descriptor.types:
-        print("types: " + ", ".join(local_name(t) or t for t in descriptor.types))
+        say("types: " + ", ".join(local_name(t) or t for t in descriptor.types))
     if descriptor.description:
-        print(textwrap.fill(descriptor.description, 100))
-    print()
+        say(textwrap.fill(descriptor.description, 100))
+    say()
     safe = [c for c in descriptor.controls if not c.unsafe]
     unsafe = [c for c in descriptor.controls if c.unsafe]
     for label, group in (("Safe (GET / read)", safe), ("Unsafe (writes and non-GET)", unsafe)):
-        print(f"== {label} ({len(group)}) ==")
+        say(f"== {label} ({len(group)}) ==")
         if not group:
-            print("  (none)\n")
+            say("  (none)\n")
             continue
         for control in group:
             transport = classify_transport(control, descriptor.url)
             target = control.template or control.target or ""
-            print(f"  {control.method:<6} {short_rel(control.rel):<42} {transport:<8} {control.title}")
-            print(f"         rel: {control.rel}")
+            say(f"  {control.method:<6} {short_rel(control.rel):<42} {transport:<8} {control.title}")
+            say(f"         rel: {control.rel}")
             if target:
-                print(f"         target: {target}")
+                say(f"         target: {target}")
             if control.media_type:
-                print(f"         media: {control.media_type}")
+                say(f"         media: {control.media_type}")
             if control.fields:
                 names = ", ".join(("*" if f.required or (f.min_count or 0) >= 1 else "") + f.name for f in control.fields)
-                print(f"         fields: {names}")
-        print()
+                say(f"         fields: {names}")
+        say()
 
 
 def parse_field_args(items: list[str]) -> dict[str, Any]:
@@ -1427,7 +1444,7 @@ def cmd_describe(args: argparse.Namespace) -> int:
     control = descriptor.find(args.rel)
     if not control:
         known = ", ".join(short_rel(c.rel) for c in descriptor.controls[:20])
-        raise SystemExit(f"No control matching {args.rel!r}. Known (sample): {known}")
+        raise SystemExit(tty_safe(f"No control matching {args.rel!r}. Known (sample): {known}"))
     public = control.to_public()
     public["transport"] = classify_transport(control, descriptor.url)
     print(json.dumps(public, indent=2))
@@ -1439,13 +1456,13 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     control = descriptor.find(args.rel)
     if not control:
         known = ", ".join(short_rel(c.rel) for c in descriptor.controls[:20])
-        raise SystemExit(f"No control matching {args.rel!r}. Known (sample): {known}")
+        raise SystemExit(tty_safe(f"No control matching {args.rel!r}. Known (sample): {known}"))
     supplied = parse_field_args(args.field or [])
     values, errors = validate_fields(control, supplied)
     if errors:
-        print("Validation failed:", file=sys.stderr)
+        say("Validation failed:", file=sys.stderr)
         for err in errors:
-            print("  - " + err, file=sys.stderr)
+            say("  - " + err, file=sys.stderr)
         return 2
     plan = resolve_plan(control, values, descriptor.url)
     result = invoke_plan(plan, confirm=args.confirm, dry_run=True if args.dry_run else None)
@@ -1453,31 +1470,31 @@ def cmd_invoke(args: argparse.Namespace) -> int:
         print(json.dumps(result, indent=2))
         return 0
     req = result["request"]
-    print(f"{req['method']} {req.get('url') or '(no HTTP URL)'}")
-    print(f"transport: {req['transport']}")
+    say(f"{req['method']} {req.get('url') or '(no HTTP URL)'}")
+    say(f"transport: {req['transport']}")
     for note in req.get("notes") or []:
-        print(f"note: {note}")
+        say(f"note: {note}")
     if req.get("mcp"):
-        print("mcp:")
-        print(textwrap.indent(json.dumps(req["mcp"], indent=2), "  "))
+        say("mcp:")
+        say(textwrap.indent(json.dumps(req["mcp"], indent=2), "  "))
     if req.get("bodyText"):
-        print("body:")
-        print(textwrap.indent(str(req["bodyText"]), "  "))
+        say("body:")
+        say(textwrap.indent(str(req["bodyText"]), "  "))
     if result.get("dryRun"):
-        print(result.get("message", "Dry run."))
+        say(result.get("message", "Dry run."))
         return 0
     if result.get("blocked"):
-        print(result.get("message"))
+        say(result.get("message"))
         return 3
     resp = result.get("response") or {}
-    print(f"HTTP {resp.get('status')}  {resp.get('contentType')}")
+    say(f"HTTP {resp.get('status')}  {resp.get('contentType')}")
     body = resp.get("body")
     text = resp.get("bodyText") or ""
     if isinstance(body, (dict, list)):
         pretty = json.dumps(body, indent=2)
-        print(pretty if len(pretty) < 8000 else pretty[:8000] + "\n…")
+        say(pretty if len(pretty) < 8000 else pretty[:8000] + "\n…")
     else:
-        print(text if len(text) < 8000 else text[:8000] + "\n…")
+        say(text if len(text) < 8000 else text[:8000] + "\n…")
     return 0 if (resp.get("status") or 500) < 400 else 4
 
 
@@ -1512,7 +1529,7 @@ def main(argv: list[str] | None = None) -> int:
     try:
         return args.func(args)
     except Exception as exc:  # noqa: BLE001
-        print(f"error: {exc}", file=sys.stderr)
+        say(f"error: {exc}", file=sys.stderr)
         return 1
 
 

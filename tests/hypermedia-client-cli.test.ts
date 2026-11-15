@@ -28,6 +28,10 @@ const LONG_NAME = 'rest-param-' + '-'.repeat(60_000) + '\nx';
 let server: Server;
 let base = '';
 const seen: string[] = [];
+// Terminal control sequences: a window title (OSC 0), colour (CSI), a clipboard write (OSC 52),
+// a carriage return that would overwrite the line, and a C1 control.
+const ESC = '\x1b]0;PWNED-TITLE\x07\x1b[31mRED\x1b[0m\x1b]52;c;cHduZWQ=\x07\r\x9b2J';
+const CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/;
 // A local file a descriptor must not be able to make hmc.py read.
 const SECRET = 'HMC-LOCAL-FILE-SECRET';
 let dir = '';
@@ -59,6 +63,15 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       ...['to-file', 'to-ftp'].map(name => ({ '@id': `${base}/schemes#${name}`, '@type': 'iep:Affordance',
         'iep:action': `urn:${name}`, 'hydra:method': 'GET', 'hydra:title': `Redirect ${name}`, 'hydra:target': `${base}/${name}` })),
     ])),
+    '/escapes': json({ ...descriptor('escapes', [
+      { '@id': `${base}/escapes#e`, '@type': 'iep:Affordance', 'iep:action': `urn:e${ESC}`,
+        'hydra:method': 'GET', 'hydra:title': `ok${ESC}`, 'hydra:description': ESC, 'hydra:target': `${base}/escaped-body`,
+        'hydra:expects': { type: 'object', properties: { [`f${ESC}`]: { type: 'string', default: `v${ESC}`, minLength: 999 } } } },
+      { '@id': `${base}/escapes#b`, '@type': 'iep:Affordance', 'iep:action': `urn:b${ESC}`,
+        'hydra:method': 'GET', 'hydra:title': `body${ESC}`, 'hydra:target': `${base}/escaped-body` },
+    ]), 'dct:title': `Title${ESC}`, 'dct:description': `Desc${ESC}` }),
+    // A header value may carry a C1 byte (Node refuses C0 ones), so the content type gets one.
+    '/escaped-body': () => ({ type: 'text/plain; x=\x9b2J', body: `body${ESC}` }),
     '/to-file': () => ({ status: 302, headers: { location: secretUrl } }),
     '/to-ftp': () => ({ status: 302, headers: { location: 'ftp://127.0.0.1:9/x' } }),
   };
@@ -153,5 +166,37 @@ describe('hmc.py: http and https only', () => {
     expect(r.code).not.toBe(0);
     expect(r.stdout + r.stderr).not.toContain(SECRET);
     expect(r.stderr).toMatch(REFUSED);
+  });
+});
+
+describe('hmc.py: remote text reaches the terminal as text', () => {
+  it('shows control characters in a listing as visible escapes', async () => {
+    const r = await hmc(['list', `${base}/escapes`]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).not.toMatch(CONTROL);
+    expect(r.stdout).toContain('Title\\x1b]0;PWNED-TITLE\\x07\\x1b[31mRED');
+    expect(r.stdout).toContain('\\x9b2J');
+  });
+
+  it('shows them as escapes in a validation failure and a response too', async () => {
+    const failed = await hmc(['invoke', `${base}/escapes`, `urn:e${ESC}`]);
+    expect(failed.code).toBe(2);
+    expect(failed.stderr).toContain('shorter than minLength');
+    expect(failed.stdout + failed.stderr).not.toMatch(CONTROL);
+    const sent = await hmc(['invoke', `${base}/escapes`, `urn:b${ESC}`]);
+    expect(sent.code, sent.stderr).toBe(0);
+    expect(sent.stdout).toContain('body\\x1b]0;');
+    expect(sent.stdout + sent.stderr).not.toMatch(CONTROL);
+    // --json output was already safe: JSON escapes every control character.
+    const json = await hmc(['list', `${base}/escapes`, '--json']);
+    expect(json.stdout).not.toMatch(CONTROL);
+    expect((JSON.parse(json.stdout) as { title: string }).title).toBe(`Title${ESC}`);
+  });
+
+  it('shows them as escapes in an error message', async () => {
+    const r = await hmc(['describe', `${base}/escapes`, `urn:none${ESC}`]);
+    expect(r.code).not.toBe(0);
+    expect(r.stderr).toContain('No control matching');
+    expect(r.stdout + r.stderr).not.toMatch(CONTROL);
   });
 });

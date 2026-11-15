@@ -41,10 +41,10 @@ python3 hmc.py describe URL act-get-scheme
 python3 hmc.py invoke URL act-get-scheme
 python3 hmc.py invoke URL act-query-glossary   --field query='SELECT (COUNT(?c) AS ?n) WHERE { ?c a <http://www.w3.org/2004/02/skos/core#Concept> }'
 python3 hmc.py invoke URL act-rest-listConcepts --field limit=2
-python3 hmc.py invoke URL act-propose-mapping --field graph_iri=x --field graph_content='@prefix : <x:> . :a :b :c .'
+python3 hmc.py invoke URL act-propose-mapping --field graph_iri=x --field graph_content='@prefix : <urn:x:> . :subject :predicate :object .'
 ```
 
-The last command is a dry run: unsafe operations never send unless you pass `--confirm`.
+The last command is a dry run: unsafe operations never send unless you pass `--confirm`. Its values have to satisfy the shape the catalog publishes: on 2026-11-15 that asked for a `graph_content` of at least 40 characters. Both clients check a shape's required fields, lengths, ranges and enumerations before they plan a request, and leave patterns to the server.
 
 Web app: use the hosted page, open `index.html` directly as a file, or point any static server at this directory. There is no build step and nothing to install.
 
@@ -97,7 +97,11 @@ URI templates use RFC 6570 percent-encoding of UTF-8 (`encodeURIComponent` seman
 - Unsafe operations default to a dry run that prints the exact URL, headers, body, and MCP call. The web UI requires an explicit checkbox before Invoke is enabled. The CLI requires `--confirm`.
 - The web app shows everything a remote document or response contains as text. An HTML response is shown as source, not rendered. Only an `https` URL becomes followable, and following one fetches it as a descriptor; an `http` IRI is shown as text. Nothing a remote document sends becomes a link the browser navigates, a script, a style, an event handler, or a form field's `name`.
 - The page sends requests over `https` only, with or without a proxy, and does not hand a proxy an internal address (see [The proxy field](#the-proxy-field)).
+- Next to **Invoke**, the page names the host the control sends to (or says that a template decides it, and the dry run shows where).
+- The page does not run inside another page's frame. Open it in a tab of its own.
+- A control that cannot be drawn shows a warning and no form, and a form only ever invokes the control it was built for.
 - `hmc.py` sends requests to `http` and `https` URLs only, and follows a redirect only to another of those. A descriptor that names a `file:`, `ftp:` or `data:` URL, or a redirect to one, is refused before anything is read.
+- In text mode, `hmc.py` shows control characters in remote text as `\xNN` escapes, so a document cannot send the terminal control sequences. `--json` output escapes them as JSON does.
 - The page carries a Content-Security-Policy: no source by default, its own inline script and stylesheet allowed by SHA-256 hash only, no inline event handlers, `connect-src https:`, and `object-src`, `base-uri` and `form-action` set to `'none'`. Editing the inline script or `<style>` changes its hash, so the policy has to be updated with it; `tests/hypermedia-client-rendering.test.ts` fails and prints the expected hash when they disagree. That test also loads the page with hostile documents and responses and checks what reaches the DOM.
 - Do not live-invoke write controls such as `act-propose-mapping`, `act-ratify`, `act-publish-classified`, `act-align-course-concept`, `write-xapi-statements-signed`, `act-request-upstream-review` (it opens a GitHub issue form), or `coverage-query`.
 

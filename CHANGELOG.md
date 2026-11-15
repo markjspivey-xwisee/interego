@@ -106,6 +106,24 @@ template that does not start with one as `unknown`. The new CLI tests serve
 such descriptors and redirects from 127.0.0.1 and check that each is refused
 and nothing local is printed; each failed before.
 
+**Smaller fixes.** Markdown with CRLF line endings rendered as one paragraph;
+line endings are normalised first, as the earlier renderer did. An enum entry
+that was not a string was offered as its JSON but validated as
+`[object Object]`, so it could never be chosen, and a `null` entry added a
+second blank option; both sides now use the JSON text and `null` adds nothing.
+A followable IRI's apostrophe, which the URL parser leaves in a path, is
+percent-encoded too, so the attribute holds no quote of any kind. The page
+names the host a control sends to next to its **Invoke** button, so a form
+cannot pass for one that goes elsewhere, and it does not run inside another
+page's frame: it disables its controls and says to open it in a tab of its own.
+`hmc.py` printed remote titles, descriptions, field names and response bodies
+to the terminal as they were, so a document could set the window title, recolour
+or erase lines, or ask the terminal to write the clipboard; in text mode every
+C0 and C1 control character except newline and tab is now shown as a `\xNN`
+escape. Each of these has a test that failed before. The README's example of
+a dry run failed the catalog's current shape (`graph_content` needs 40
+characters); the new example was dry-run against the live catalog.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and
@@ -139,8 +157,12 @@ form properties, so the test checks both structurally. They were checked once
 by hand in Chromium (the page loads and invokes under its policy with no
 violation; the old page's **Dry run** reloaded it), and that check is not in CI.
 GitHub Pages cannot send response headers, and a `<meta>` policy cannot set
-`frame-ancestors`, so framing the page is not restricted. `hmc.py` prints remote text to a
-terminal as it is and was not reviewed for terminal control sequences.
+`frame-ancestors`, so the page checks for itself whether it is framed; a browser
+that ran it with scripts off would show its static markup, which does nothing.
+The page still shares its origin with `docs/client-sign.html`, so keeping that
+page's stored token out of reach rests on this file's escaping and policy. Only
+hosting the client on an origin of its own would not; that is the owner's
+decision, and it is not made here.
 
 ## 2026-11-15 — Foxxi: guest-learner docs caught up with the course player
 

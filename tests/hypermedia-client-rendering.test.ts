@@ -31,6 +31,8 @@ const HOST = 'https://hostile.example';
 // A CORS proxy the person typed in. The test's fetch answers for it as a forwarding proxy would.
 const PROXY = 'https://myproxy.example';
 const PLAIN_HTTP = 'http://plain.example/d3';
+// The URL parser leaves an apostrophe unencoded in a path; the page encodes it before it writes the IRI.
+const APOSTROPHE = `${HOST}/a'onclick='pwn(21)`;
 
 // Every payload calls pwn(); the page installs nothing by that name, the test does.
 const X = {
@@ -60,7 +62,7 @@ const descriptor = {
   '@type': ['hydra:Collection', X.img],
   'dct:title': `Title ${X.img}`,
   'dct:description': `${X.script}${X.dq}${X.sq}`,
-  'rdfs:seeAlso': [...BAD_URLS, QUOTED, PLAIN_HTTP, `${HOST}/next`],
+  'rdfs:seeAlso': [...BAD_URLS, QUOTED, APOSTROPHE, PLAIN_HTTP, `${HOST}/next`],
   'iep:affordance': [
     ...['markdown', 'html', 'json', 'sparql', 'plain', 'long'].map(kind => ({
       '@id': `${HOST}/desc#read-${kind}`, '@type': 'iep:Affordance', 'iep:action': `urn:read-${kind}`,
@@ -199,12 +201,18 @@ const scope = {
 const turtleFirst = { '@context': CTX, '@id': `${HOST}/ttl`, 'dct:title': 'From JSON-LD',
   'iep:affordance': [{ '@id': `${HOST}/ttl#r`, '@type': 'iep:Affordance', 'iep:action': 'urn:ttl', 'hydra:method': 'GET',
     'hydra:title': 'Turtle host read', 'hydra:target': `${HOST}/body/plain` }] };
+// An enum whose entries are not all strings: an object, a string and a null.
+const enumDoc = { '@context': CTX, '@id': `${HOST}/enum`,
+  'iep:affordance': [{ '@id': `${HOST}/enum#e`, '@type': 'iep:Affordance', 'iep:action': 'urn:enum', 'hydra:method': 'GET',
+    'hydra:title': 'Enum read', 'hydra:target': `${HOST}/body/plain`,
+    'hydra:expects': { type: 'object', properties: { b: { enum: [{ x: 1 }, 'plain', null], default: { x: 1 } } } } }] };
 // Documents served at exact paths on HOST, in addition to /desc, /hm and /body/<kind>.
 const DOCS: Record<string, { type: string; text: string }> = {
   '/pair': { type: 'application/ld+json', text: JSON.stringify(pair) },
   '/slow-pattern': { type: 'application/ld+json', text: JSON.stringify(slowPattern) },
   '/long-name': { type: 'application/ld+json', text: JSON.stringify(longName) },
   '/scope': { type: 'application/ld+json', text: JSON.stringify(scope) },
+  '/enum': { type: 'application/ld+json', text: JSON.stringify(enumDoc) },
 };
 
 function respond(text: string, type: string, status = 200): Response {
@@ -276,7 +284,7 @@ function assertInert(t: Loaded, where: string) {
     if (el.id && !PAGE_IDS.has(el.id)) problems.push(`#${el.id.slice(0, 40)}`);
     if (inBody) for (const c of el.classList) if (!STYLE_CLASSES.has(c)) problems.push(`.${c.slice(0, 40)}`);
     const iri = el.getAttribute('data-iri');
-    if (iri != null && !/^https:\/\/[^\s"<>]+$/.test(iri)) problems.push(`data-iri=${iri.slice(0, 60)}`);
+    if (iri != null && !/^https:\/\/[^\s"'<>]+$/.test(iri)) problems.push(`data-iri=${iri.slice(0, 60)}`);
   }
   expect([...new Set(problems)], where).toEqual([]);
   expect(t.pwned, where).toEqual([]);
@@ -302,7 +310,7 @@ describe('hypermedia client: hostile remote data stays inert', () => {
       // Only the https seeAlso links become followable, each as the URL parser normalises it,
       // so the quotes in QUOTED are percent-encoded rather than carried into the attribute.
       const see = [...document.querySelectorAll('#meta [data-iri]')].map(e => e.getAttribute('data-iri'));
-      expect(see).toEqual([new URL(QUOTED).href, `${HOST}/next`]);
+      expect(see).toEqual([new URL(QUOTED).href, `${HOST}/a%27onclick=%27pwn(21)`, `${HOST}/next`]);
       // An http IRI is shown, not offered as a link the page would then refuse to fetch.
       for (const u of [...BAD_URLS, PLAIN_HTTP]) expect(document.getElementById('meta')!.textContent).toContain(u);
       expect(card(document, 'Read markdown')!.querySelector('h3')!.textContent).toBe(`Read markdown ${X.img}`);
@@ -579,6 +587,66 @@ describe('hypermedia client: a confirmation belongs to one control', () => {
       expect(t.calls.filter(c => c.url.includes('/delete-b') || c.url.includes('/write-a'))).toEqual([]);
       expect(t.errors).toEqual([]);
     } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: rendering details', () => {
+  it('renders Markdown with CRLF line endings', async () => {
+    const crlf = '# Title\r\n\r\n- one\r\n- two\r\n\r\nText\r\nmore';
+    const t = load(`?url=${encodeURIComponent(HOST + '/desc')}&autoload=1`, { markdown: { type: 'text/markdown', text: crlf } });
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready']).toBe('list'));
+      click(t, card(document, 'Read markdown ')!);
+      click(t, button(document, 'live'));
+      await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toMatch(/Response HTTP 200/));
+      expect(document.querySelector('#result .md h1')!.textContent).toBe('Title');
+      expect([...document.querySelectorAll('#result .md li')].map(li => li.textContent)).toEqual(['one', 'two']);
+      expect(document.querySelector('#result .md p')!.innerHTML).toBe('Text<br>more');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('offers and accepts an enum entry that is not a string, as its JSON', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/enum')}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready']).toBe('list'));
+      click(t, card(document, 'Enum read')!);
+      const select = document.querySelector<HTMLSelectElement>('#invokeForm select')!;
+      // The blank option stands for "unset"; a null entry adds no second one.
+      expect([...select.options].map(o => o.value)).toEqual(['', '{"x":1}', 'plain']);
+      expect(select.value).toBe('{"x":1}');
+      click(t, button(document, 'dry'));
+      await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toContain('Dry run'));
+      expect(document.getElementById('result')!.textContent).not.toContain('Validation failed');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('names the host a control sends to next to its buttons', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/desc')}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready']).toBe('list'));
+      click(t, card(document, 'Write')!);
+      expect(document.querySelector('#invokeForm .actions .dest')!.textContent).toBe('Sends to hostile.example');
+      assertInert(t, 'destination');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('does not run inside another page\'s frame', async () => {
+    const calls: string[] = [];
+    const outer = new JSDOM('<!doctype html><iframe></iframe>', { url: 'https://framer.example/', runScripts: 'dangerously' });
+    try {
+      const frame = outer.window.document.querySelector('iframe')!.contentWindow!;
+      Object.assign(frame, { fetch: async (input: string) => { calls.push(String(input)); return respond('{}', 'application/json'); } });
+      frame.document.open(); frame.document.write(HTML); frame.document.close();
+      const document = frame.document;
+      expect(document.getElementById('status')!.textContent).toMatch(/does not run inside another page/);
+      expect((document.getElementById('loadBtn') as HTMLButtonElement).disabled).toBe(true);
+      (document.getElementById('loadBtn') as HTMLButtonElement).click();
+      await new Promise(r => setTimeout(r, 50));
+      expect(calls).toEqual([]);
+    } finally { outer.window.close(); }
   });
 });
 
