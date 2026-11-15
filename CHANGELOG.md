@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-15 — Foxxi: a cmi5 launch's credential survives a restart
+
+Every deploy of the Foxxi bridge ended every practice in progress. A launch is
+kept on the pod and read back at startup. The auth-token its assignable unit
+writes with was a random string whose meaning was a row in a table in the
+process, and that table was not kept. After a restart the launch was back and
+its credential was not, so the unit's next statement was answered 401. Two
+deploys within five minutes did that twice to one learner on the first run
+against the deployed bridge.
+
+The token now carries what it is for (tenant, registration, session, an expiry
+24 hours on) under an HMAC keyed from `FOXXI_ISSUER_KEY_SEED`
+(`src/cmi5-auth-token.ts`). Nothing is stored for it. The launch it names must
+still be held, in that tenant, every time it is shown, so forgetting a learner
+still ends their tokens.
+
+Not changed: the one-time fetch token is still held in the process, so a launch
+URL made before a restart and opened after it must be made again. A launch
+recorded in the two seconds before a restart may not have reached the pod, and
+its token then names a launch the new process does not hold. With no
+`FOXXI_ISSUER_KEY_SEED` the key is random per process and tokens end with it,
+as before. Changing that secret ends every token minted under the old one.
+
 ## 2026-11-15 — Practice Evidence: a launched learner named by WebID is the signer
 
 Found on the first run against the deployed Foxxi LMS. Foxxi launches a learner

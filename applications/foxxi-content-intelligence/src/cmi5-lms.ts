@@ -31,7 +31,8 @@
  * standard; this is a conformant implementation of its LMS surface.
  */
 
-import { randomUUID } from 'node:crypto';
+import { createHash, randomBytes, randomUUID } from 'node:crypto';
+import { CMI5_AUTH_TOKEN_TTL_MS, mintCmi5AuthToken, readCmi5AuthToken } from './cmi5-auth-token.js';
 import express, { type Express, type Request, type Response } from 'express';
 import { DEFAULT_TENANT, TenantPartition, type TenantId } from './tenant-context.js';
 import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
@@ -137,11 +138,35 @@ interface FetchTokenRecord {
 /** Fetch tokens minted by launches, keyed by the token the AU presents. */
 const fetchTokens = new Map<string, FetchTokenRecord>();
 /**
- * Auth-tokens the LRS accepts as Bearer → their tenant, and the one launch registration they may
- * touch. A learner's launches all share their lens tenant, so the tenant alone let one launch's
- * token read another's statements and write `passed` into it (the automated review of #478).
+ * The key the auth-tokens are signed under (src/cmi5-auth-token.ts). Until the bridge gives it one
+ * derived from its own secret, it is random and lasts as long as the process: tokens then end with
+ * a restart, as they did when they were rows in a table here.
  */
-const authTokenLaunch = new Map<string, { tenant: TenantId; registration: string; sessionId: string }>();
+let authTokenKey: Buffer = randomBytes(32);
+
+/**
+ * Sign auth-tokens under a key derived from the bridge's own secret, so a process started with the
+ * same secret reads the tokens the last one minted. An empty secret changes nothing.
+ */
+export function configureCmi5AuthTokenSecret(secret: string): void {
+  if (secret) authTokenKey = createHash('sha256').update(`foxxi-cmi5-auth-token-key:${secret}`).digest();
+}
+
+/**
+ * What an auth-token the LRS is shown is bound to: its tenant, and the one launch registration and
+ * session it may touch. A learner's launches all share their lens tenant, so the tenant alone let
+ * one launch's token read another's statements and write `passed` into it (the automated review of
+ * #478). The token proves this bridge minted it; the launch it names must still be held here, in
+ * that tenant, or the token is good for nothing. Forgetting a learner forgets their launches, and
+ * with them every token minted for them.
+ */
+function authTokenBinding(token: string): { tenant: TenantId; registration: string; sessionId: string; launch: LaunchRecord } | null {
+  const read = readCmi5AuthToken(token, authTokenKey, Date.now());
+  if (!read) return null;
+  const launch = launches.get(read.registration);
+  if (!launch || String(launch.tenant) !== read.tenant) return null;
+  return { tenant: launch.tenant, registration: read.registration, sessionId: read.sessionId, launch };
+}
 const FETCH_TOKEN_TTL_MS = 30 * 60_000; // a launch must be fetched within 30 min
 
 // ── moveOn orchestration state ──────────────────────────────────────
@@ -439,7 +464,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
   // The one-time fetch token + the auth-token the AU will end up with. A resumed session gets a
   // new fetch token: the previous one was single-use, and the registration stays the same.
   const fetchToken = `ft-${randomUUID()}`;
-  const authToken = `cmi5-${tenant === DEFAULT_TENANT ? 'd' : '0'}-${randomUUID()}`;
+  const authToken = mintCmi5AuthToken({ tenant: String(tenant), registration, sessionId }, authTokenKey, Date.now() + CMI5_AUTH_TOKEN_TTL_MS);
   fetchTokens.set(fetchToken, {
     authToken, tenant, registration, sessionId, auId: req.au.id,
     expiresAt: Date.now() + FETCH_TOKEN_TTL_MS, redeemed: false,
@@ -601,7 +626,6 @@ export function redeemFetchToken(token: string):
     return { ok: false, status: 401, body: { 'error-code': '4', 'error-text': 'fetch token already used (single-use, cmi5 §8)' } };
   }
   rec.redeemed = true;
-  authTokenLaunch.set(rec.authToken, { tenant: rec.tenant, registration: rec.registration, sessionId: rec.sessionId });
   return { ok: true, body: { 'auth-token': rec.authToken } };
 }
 
@@ -611,12 +635,12 @@ export function redeemFetchToken(token: string):
  * Returns null for tokens this module did not mint.
  */
 export function cmi5BearerTenant(token: string): TenantId | null {
-  return authTokenLaunch.get(token)?.tenant ?? null;
+  return authTokenBinding(token)?.tenant ?? null;
 }
 
 /** The launch registration a cmi5-issued auth-token is bound to: the LRS holds its reads and writes to it. */
 export function cmi5BearerRegistration(token: string): string | null {
-  return authTokenLaunch.get(token)?.registration ?? null;
+  return authTokenBinding(token)?.registration ?? null;
 }
 
 /**
@@ -624,9 +648,8 @@ export function cmi5BearerRegistration(token: string): string | null {
  * assignable unit writes its statements as that actor (cmi5 9.2) and as nobody else.
  */
 export function cmi5BearerActor(token: string): { homePage: string; name: string } | null {
-  const bound = authTokenLaunch.get(token);
-  const launch = bound ? launches.get(bound.registration) : undefined;
-  return launch && bound && launch.tenant === bound.tenant ? { homePage: launch.authoritativeSource, name: launch.learner.id } : null;
+  const bound = authTokenBinding(token);
+  return bound ? { homePage: bound.launch.authoritativeSource, name: bound.launch.learner.id } : null;
 }
 
 /**
@@ -637,9 +660,9 @@ export function cmi5BearerActor(token: string): { homePage: string; name: string
  * it says nothing about the later one. Null for a token this LMS did not issue.
  */
 export function cmi5BearerSession(token: string): { registration: string; sessionId: string; launchMode: Cmi5LaunchMode; closed: boolean; superseded: boolean } | null {
-  const bound = authTokenLaunch.get(token);
-  const launch = bound ? launches.get(bound.registration) : undefined;
-  if (!bound || !launch || launch.tenant !== bound.tenant || !launch.sessionId) return null;
+  const bound = authTokenBinding(token);
+  const launch = bound?.launch;
+  if (!bound || !launch || !launch.sessionId) return null;
   const superseded = launch.sessionId !== bound.sessionId;
   return {
     registration: launch.registration, sessionId: bound.sessionId, launchMode: launch.launchMode ?? 'Normal',
@@ -987,7 +1010,6 @@ export function forgetCmi5Learner(tenant: TenantId, learnerId: string): Forgotte
     });
   }
   for (const [token, rec] of fetchTokens) if (registrations.has(rec.registration) && rec.tenant === tenant) fetchTokens.delete(token);
-  for (const [token, rec] of authTokenLaunch) if (registrations.has(rec.registration) && rec.tenant === tenant) authTokenLaunch.delete(token);
   // Satisfaction alone (copied in by a link, with no launch of its own) is state too: without marking
   // the snapshot, a restart would bring it back.
   const hadSatisfaction = satisfiedAus.get(tenant)?.delete(learnerId) === true;
