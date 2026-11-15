@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-11-15 — CI: the hosted cold builds run when a file their images copy changes
+
+`hosted-image-builds.yml` cold-builds six images on a pull request, but only
+when the pull request touches one of the paths it lists. The interego-bridge
+and Discord images now copy `tools/prune-image-dev-tools.mjs` and run it inside
+their `npm ci` layer, and the list did not name it, so a pull request changing
+only the script built no image before merge; the other seven bridges that run
+it are built only after merge. The relay's reference stage had the same gap
+for the compositions it compiles in: `integrations/application-runtime/`,
+`integrations/affordance-surface/` and two `applications/llm-telemetry/` files.
+All five are on the list now.
+
+`integrations/tests/hosted-docker-build-inputs.test.ts` reads the workflow's
+paths and its matrix, and checks that every tracked file each of those
+Dockerfiles copies from the context matches a path, so the next COPY added
+without a path fails there. Before the fix it listed the prune script for both
+images and twenty files of the relay's.
+
+Not covered: no build was dispatched for the seven bridges that only build
+after merge, so the RUN that prunes has not yet run in a real image; the first
+`build-ghcr` dispatch for one of them (for example `-f image=interego-wsp-bridge`)
+will show it and give a measured layer size. The path filter is read with a
+small pattern matcher of the test's own, which does not read negated patterns
+and fails if one appears.
+
 ## 2026-11-15 — Images: the prune reaches workspace copies and deletes only platform packages
 
 `tools/prune-image-dev-tools.mjs` walked only the root node_modules. When a
