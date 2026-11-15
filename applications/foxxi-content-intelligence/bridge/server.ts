@@ -11109,10 +11109,7 @@ mountProfileAuthoring(app, xapiProfileAuthoring, {
     return auth.ok ? { ok: true, callerDid: auth.callerDid, payload: auth.payload as Record<string, unknown> } : { ok: false, status: auth.status, error: auth.error };
   },
   // Writing a profile is many small edits, so it has its own allowance, apart from adding whole profiles.
-  guard: rateLimit({
-    windowMs: 3_600_000, limit: 600, ipv6Subnet: 56, identifier: 'xapi-profile-authoring',
-    standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
-  }),
+  limit: { windowMs: 3_600_000, limit: 600, ipv6Subnet: 56, identifier: 'xapi-profile-authoring' },
   // A published version goes to the same public lattice an added one does, under the same count per signer.
   beforePublish: did => {
     const admitted = xapiProfileAddsBySigner.admit(did);

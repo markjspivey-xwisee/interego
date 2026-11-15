@@ -8,7 +8,6 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
-import { rateLimit } from 'express-rate-limit';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -96,7 +95,7 @@ beforeAll(async () => {
   mountProfileAuthoring(app, authoring, {
     base: BASE,
     verify: fakeSigner,
-    guard: rateLimit({ windowMs: 60_000, limit: 100_000, standardHeaders: 'draft-8', legacyHeaders: false }),
+    limit: { windowMs: 60_000, limit: 100_000 },
   });
   mountProfileHosting(app, server, { base: BASE });
   http = app.listen(0, '127.0.0.1');
@@ -144,7 +143,7 @@ describe('the lint tells a writer what to change', () => {
     mountProfileAuthoring(app, new ProfileAuthoring(makeServer(), { hostedUnder: `${BASE}/p/` }), {
       base: BASE,
       verify: async body => { verified++; return fakeSigner(body); },
-      guard: rateLimit({ windowMs: 60_000, limit: 2, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' } }),
+      limit: { windowMs: 60_000, limit: 2 },
     });
     const limited = app.listen(0, '127.0.0.1');
     await new Promise<void>(resolve => limited.once('listening', () => resolve()));

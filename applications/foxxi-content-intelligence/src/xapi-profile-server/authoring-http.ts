@@ -12,6 +12,7 @@
  * with `deprecated: true`.
  */
 import type { Express, Request, Response, RequestHandler } from 'express';
+import { rateLimit, type Options as RateLimitOptions } from 'express-rate-limit';
 import { LintRefused, type DraftView, type ProfileAuthoring } from './authoring.js';
 import { emptyExamples, type ExternalTerm, type ProfileExamples } from './lint.js';
 import { ProfileServerError, type ProfileServer, type Resolved } from './service.js';
@@ -27,10 +28,11 @@ export interface AuthoringRouteOptions {
   readonly base: string;
   readonly verify: VerifySigned;
   /**
-   * The rate limiter run before each signed route. Required: each of these routes verifies a
-   * signature, which costs more than the request does, so none is mounted without a limit.
+   * How many requests a caller may make to the signed routes, and over what time. Required: each
+   * of these routes verifies a signature, which costs more than the request does, so none is
+   * mounted without a limit. The limiter is made here, beside the routes it guards.
    */
-  readonly guard: RequestHandler;
+  readonly limit: Pick<RateLimitOptions, 'windowMs' | 'limit'> & Partial<RateLimitOptions>;
   /** Called before a publication with who is publishing; throws a ProfileServerError to refuse it (a count per signer, say). */
   readonly beforePublish?: (by: string) => void;
   /** How the bridge sends an action's result (it adds the links that follow). Defaults to plain JSON. */
@@ -58,7 +60,7 @@ const count = (v: unknown): number => Array.isArray(v) ? v.length : 0;
 
 export function mountProfileAuthoring(app: Express, authoring: ProfileAuthoring, o: AuthoringRouteOptions): void {
   const send = o.send ?? ((_req, res, payload) => { res.json(payload); });
-  const guard = o.guard;
+  const guard = rateLimit({ standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' }, ...o.limit });
   const signed = (title: string, run: (payload: Body, by: string) => Promise<Body>): RequestHandler => async (req, res) => {
     try {
       const auth = await o.verify(req.body);
