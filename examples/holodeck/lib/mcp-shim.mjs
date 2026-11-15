@@ -16,9 +16,9 @@
 // it would have crashed at startup. Nothing caught it then, because no CI workflow
 // triggered on examples/**, and this file signs and POSTs to the PRODUCTION RELAY with a
 // per-agent wallet. CI now boots it (mcp-shim-boots.test.mjs, from bridge-typecheck.yml).
-// No workspace declares v1 today. It is installed at the root only as a peer of the
-// Claude agent SDK, which the root dev dependency `@agentclientprotocol/claude-agent-acp`
-// brings, so a v1 import here would resolve now and stop resolving when that changes.
+// The root package.json declares v1 as a dev dependency, for
+// tools/probe-sse-mcp-handshake-live.ts alone, so a v1 import here would resolve; it would
+// still be the wrong SDK for this file.
 import { Server } from '@modelcontextprotocol/server';
 import { serveStdio } from '@modelcontextprotocol/server/stdio';
 import { Wallet } from 'ethers';

@@ -1,5 +1,91 @@
 # Changelog
 
+## 2026-11-15 — Dependencies: the agent SDK's Linux builds name their libc, the root takes `@anthropic-ai/sdk` 0.99.0, and the v1 MCP SDK is declared
+
+A review of the claude-agent-acp change (the "Dependencies: claude-code-acp
+replaced" entry below) found three things in its lockfile and manifest. This
+entry fixes them and corrects that entry's size estimate and its reason for
+leaving `@anthropic-ai/sdk` alone.
+
+The libc field. npm 10.9.4 wrote the four Linux packages of
+`@anthropic-ai/claude-agent-sdk` 0.3.312 without the `libc` field their published
+manifests declare: glibc for linux-x64 and linux-arm64, musl for the two -musl
+builds. `npm ci` checks an optional package's platform against the lockfile, so on
+a glibc host it installed both the glibc and the musl build of the Claude binary:
+in every Ubuntu CI job, in the nightly-emergent `node_modules` cache, and in the
+images that keep the root dev dependencies. Checked with npm's own Arborist and the
+platform check `npm ci` applies (npm-install-checks), under npm 10.9.4 and 10.8.2
+on a glibc x64 host: the previous lockfile selects both claude-agent-sdk-linux-x64
+and claude-agent-sdk-linux-x64-musl, and this one only the first. The four entries
+now carry `libc`, as the four claude-code-linux entries already did, by the same
+kind of hand edit that keeps those. From the published unpacked sizes, the root
+install on linux x64 is now about 196 MB larger than master's (315 MB added, 119 MB
+removed), where the previous lockfile made it about 500 MB larger. No image was
+built.
+
+`@anthropic-ai/sdk`. The root asked for `^0.91.1`, below the agent SDK's peer
+`>=0.93.0`, so npm nested the agent SDK under the successor with its own
+`@anthropic-ai/sdk` 1.8.0, published 2026-11-10: five days old, against the
+two-week rule that kept the successor at 0.99.1. That also took the agent SDK off
+the root, where master had 0.2.44, so the examples that import it
+(`examples/tic-tac-toe-*.mjs`, `examples/tic-tac-toe-tournament/agents/*.mjs` and
+`examples/rev195-self-improving/`) no longer resolved it, and their documented
+install, `npm i --no-save @anthropic-ai/claude-agent-sdk zod` from the repo root,
+failed with ERESOLVE against the root's 0.91.1. The reason given for not moving the
+root, that a move meant the new 1.x major, missed 0.99.0 (2026-05-27), the last 0.x
+release, which satisfies the peer. The root now asks for `^0.99.0`. Its changelog
+from 0.91.1 to 0.99.0 records no breaking change, `messages.create` keeps its three
+signatures, it has no install script, and the fifteen benchmark scripts that import
+it call only `new Anthropic({ apiKey })` and `messages.create`. They are in no
+tsconfig program and were not run.
+
+Placement. `npm install --package-lock-only` keeps placements it already has, so
+regenerating left the agent SDK, `@agentclientprotocol/sdk` 2.1.0, diff 9.0.0 and
+the 1.8.0 copy nested under the successor, where the earlier regeneration had put
+them while claude-code-acp's copies still sat at the root. Those four entries were
+deleted from the lockfile and the same command placed the first three at the root;
+1.8.0 is gone, since the root's 0.99.0 satisfies the peer. `@opentelemetry/api`
+1.10.0, which only 1.8.0 required and master's lockfile did not have, stayed behind
+as an optional peer of vitest; it was deleted the same way, and npm did not bring it
+back. Against the previous lockfile, then: the agent SDK 0.3.312,
+`@agentclientprotocol/sdk` 2.1.0 and diff 9.0.0 move to the root; `@anthropic-ai/sdk`
+1.8.0 and `@opentelemetry/api` 1.10.0 are removed; the root's `@anthropic-ai/sdk`
+goes from 0.91.1 to 0.99.0; standardwebhooks, `@stablelib/base64` and fast-sha256,
+now required by 0.99.0, lose the `peer` flag; and the libc fields above are added.
+No other entry changes. With the agent SDK back at the root the examples resolve it,
+at 0.3.312 rather than master's 0.2.44 (they were not run), and their documented
+install resolves, checked with Arborist's ideal-tree build, which writes nothing.
+
+The v1 MCP SDK. `tools/probe-sse-mcp-handshake-live.ts` imports
+`@modelcontextprotocol/sdk` (v1) and is in `tsconfig.check.json`, but no manifest
+declared it: it was at the root only because npm placed the agent SDK's peer there.
+The root now declares it as a dev dependency, `^1.32.2`, the version already locked,
+so the typechecked probe's import belongs to the repository. It and its
+dependencies ajv-formats, json-schema-typed and zod-to-json-schema lose the `peer`
+flag. The probe's header and the holodeck shim's comment
+(`examples/holodeck/lib/mcp-shim.mjs`) say why it is declared.
+
+Two lines in the dependency entry below that ran to 117 and 96 characters are
+rewrapped with their paragraphs. The editor examples that ran
+`npx @agentclientprotocol/claude-agent-acp` unpinned, which outside the repo
+fetches the newest release (0.107.x, with previews several times a day) rather than
+the 0.99.1 the witness was checked against, were changed with the witness fix (the
+"session's mode is read where the agent states it" entry) to run the installed
+agent.
+
+Checks: loaded with Arborist, the new lockfile has no invalid edge and no missing
+required one; every peer of the agent SDK resolves at the root. `npm audit` on the
+lockfile reports 23 moderate and no high, the same packages as before this entry.
+The `tsconfig.check.json` typecheck, the agent-development-practice tests, the
+holodeck shim boot test, the relay's `no-frozen-dependency.test.ts`, the lint gate,
+changelog-lint and ontology-lint pass. The local `node_modules` still holds the
+packages from before the migration, so none of these ran against the new ones.
+
+Not covered: no image was built, and the size figures are from published unpacked
+sizes. The benchmarks and the examples that import the agent SDK were not run. The
+lockfiles of `demos/interego-bridge` and the four `examples/` apps named in the
+entry below still list `@anthropic-ai/sdk` `^0.80.0` and were not regenerated.
+
 ## 2026-11-15 — Editor witness: a session's mode is read where the agent states it, and a mode switch counts when it is given
 
 A review of the witness rule from the "mode switch is read from the tool call it
@@ -136,26 +222,26 @@ minimatch for claude-code-acp only, and claude-code-acp has left the tree. There
 were no other overrides.
 
 **Lockfile.** Regenerated with `npm install --package-lock-only --ignore-scripts`
-(npm 10.9.4). No entry changed version. Added, all dev: the successor 0.99.1;
-under it, `@agentclientprotocol/sdk` 2.1.0, `@anthropic-ai/claude-agent-sdk`
-0.3.312, `@anthropic-ai/sdk` 1.8.0 and diff 9.0.0; the agent SDK's eight
-optional per-platform packages, 0.3.312 (darwin arm64 and x64, linux arm64, x64
-and their musl builds, win32 arm64 and x64); and, at the root,
-`@opentelemetry/api` 1.10.0, standardwebhooks 1.1.1, `@stablelib/base64` 1.0.1
-and fast-sha256 1.3.0, which that `@anthropic-ai/sdk` depends on, directly or
-through standardwebhooks. Removed: claude-code-acp 0.16.2 with the
-balanced-match 4.0.4, brace-expansion 5.0.12 and minimatch 10.2.6 nested under it; `@agentclientprotocol/sdk` 0.14.1;
+(npm 10.9.4). No entry changed version. Added, all dev: the successor 0.99.1; under
+it, `@agentclientprotocol/sdk` 2.1.0, `@anthropic-ai/claude-agent-sdk` 0.3.312,
+`@anthropic-ai/sdk` 1.8.0 and diff 9.0.0; the agent SDK's eight optional
+per-platform packages, 0.3.312 (darwin arm64 and x64, linux arm64, x64 and their
+musl builds, win32 arm64 and x64); and, at the root, `@opentelemetry/api` 1.10.0,
+standardwebhooks 1.1.1, `@stablelib/base64` 1.0.1 and fast-sha256 1.3.0, which that
+`@anthropic-ai/sdk` depends on, directly or through standardwebhooks. Removed:
+claude-code-acp 0.16.2 with the balanced-match 4.0.4, brace-expansion 5.0.12 and
+minimatch 10.2.6 nested under it; `@agentclientprotocol/sdk` 0.14.1;
 `@anthropic-ai/claude-agent-sdk` 0.2.44 with its fifteen optional `@img/sharp`
 packages; and diff 8.0.3. `@modelcontextprotocol/sdk` 1.32.2 and three of its
 dependencies (ajv-formats, json-schema-typed, zod-to-json-schema) only gain the
-`peer` flag. The v1 MCP SDK stays at the root at 1.32.2, now as the agent SDK's
-peer (`^1.29.0`), so `tools/probe-sse-mcp-handshake-live.ts`, which imports it and
-is in `tsconfig.check.json`, still resolves it in CI, at the same version as
-before. npm 10.9.4 also dropped the `libc` fields of the four Linux packages of
-the Claude Code CLI and the flags of the `applications/foxxi-content-intelligence`
-entry; those lines are kept as they are on master, as in the 2026-11-11 entry.
-Loaded with npm's own Arborist, the new lockfile has no invalid edge and no
-missing required one anywhere in the tree.
+`peer` flag. The v1 MCP SDK stays at the root at 1.32.2, now as the agent SDK's peer
+(`^1.29.0`), so `tools/probe-sse-mcp-handshake-live.ts`, which imports it and is in
+`tsconfig.check.json`, still resolves it in CI, at the same version as before. npm
+10.9.4 also dropped the `libc` fields of the four Linux packages of the Claude Code
+CLI and the flags of the `applications/foxxi-content-intelligence` entry; those
+lines are kept as they are on master, as in the 2026-11-11 entry. Loaded with npm's
+own Arborist, the new lockfile has no invalid edge and no missing required one
+anywhere in the tree.
 
 **`@anthropic-ai/sdk`.** The agent SDK declares three peers that are not
 optional: `@anthropic-ai/sdk` `>=0.93.0`, `@modelcontextprotocol/sdk` `^1.29.0`
@@ -169,7 +255,11 @@ program, and are not run by any deployed service. Neither the successor nor the
 agent SDK imports it at run time: their compiled JavaScript contains no import of
 it, and only their type declarations name it. A root bump to 0.93 or later would
 change the benchmarks' SDK for nothing this change needs, and the current line is
-a new major, 1.x, that nobody has run the benchmarks against.
+a new major, 1.x, that nobody has run the benchmarks against. That reasoning was
+wrong on two counts, and the "agent SDK's Linux builds name their libc" entry
+corrects it: 0.99.0, the last 0.x release, satisfies the peer, and leaving the root
+at 0.91.1 cost something, since it pushed the agent SDK off the root, where the
+examples that import it had found it.
 
 **Deployed images.** The images that run a plain `npm ci` against the root
 lockfile and keep its dev dependencies (listed in the 2026-11-11 entry) will carry
@@ -177,12 +267,14 @@ the successor and the agent SDK 0.3.312 instead of claude-code-acp and agent SDK
 0.2.44. Nothing in them imports either. The size changes, though: 0.2.44's main
 package was 80 MB unpacked, and 0.3.312 ships Claude Code as a native binary in a
 per-platform package, 294 MB unpacked for linux x64 (287 MB for the musl build).
-npm 10.9.4 writes no `libc` field for those packages, so an npm that checks libc
-against the lockfile cannot rule out the musl build on the Debian-based images.
-Expect each such image's `node_modules` to grow by roughly 230 MB, or roughly
-520 MB if both builds are installed. That is an estimate from the published
-unpacked sizes; no image was built here. Auto-deploy rebuilds every image that installs from the
-root manifests (`tools/deploy-bundle-scope.ts`).
+npm 10.9.4 writes no `libc` field for those packages, and the estimate first
+written here, roughly 230 MB with roughly 520 MB only if both builds were
+installed, was wrong: without the field, `npm ci` installs both builds on a glibc
+host, which comes to about 500 MB over master from the published unpacked sizes.
+The "agent SDK's Linux builds name their libc" entry adds the field, and with it
+the growth over master is about 196 MB on linux x64. No image was built here.
+Auto-deploy rebuilds every image that installs from the root manifests
+(`tools/deploy-bundle-scope.ts`).
 
 **The witness and the probe.** `adapters/reject-always-probe/launch.mjs` now
 defaults to `node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js`,
@@ -221,23 +313,23 @@ claude-code-acp and the old agent SDK, so none of these ran against the new
 packages, and neither the successor, the witness nor the probe was run. CI
 installs from the lockfile.
 
-Not covered: no editor session was run through the witness or the probe against
-the successor. The image growth above is not measured, and dropping dev
-dependencies from those images is a separate change. On Node 20, which most CI
-jobs use, `npm ci` warns that the successor wants Node 22 and installs it anyway;
-running it needs Node 22. The `@anthropic-ai/sdk` 1.8.0 under the successor is
-five days old, chosen by npm because the agent SDK's peer range has no upper
-bound. The lockfiles of `demos/interego-bridge` and of `examples/dashboard`,
-`multi-agent`, `personal-bridge` and `pgsl-browser` still list claude-code-acp in
-their copy of the root manifest. They were already behind it (they list
-`@anthropic-ai/sdk` `^0.80.0`) and were not regenerated. The probe still takes a
-tool's name from the request's title; the successor also offers it as
-`toolCall.name`, which the probe does not read. 0.107.0's menu files are identical,
-but moving to it is not free for the witness: there a session with no
+Not covered: no editor session was run through the witness or the probe against the
+successor. The image growth above is not measured, and dropping dev dependencies
+from those images is a separate change. On Node 20, which most CI jobs use, `npm ci`
+warns that the successor wants Node 22 and installs it anyway; running it needs
+Node 22. The `@anthropic-ai/sdk` 1.8.0 this change put under the successor was five days
+old, chosen by npm because the agent SDK's peer range has no upper bound; the "Linux
+builds name their libc" entry removes it. The lockfiles of `demos/interego-bridge`
+and of `examples/dashboard`, `multi-agent`, `personal-bridge` and `pgsl-browser`
+still list claude-code-acp in their copy of the root manifest. They were already
+behind it (they list `@anthropic-ai/sdk` `^0.80.0`) and were not regenerated. The
+probe still takes a tool's name from the request's title; the successor also offers
+it as `toolCall.name`, which the probe does not read. 0.107.0's menu files are
+identical, but moving to it is not free for the witness: there a session with no
 `permissions.defaultMode` starts in auto, announced only in the session/new result,
 which the witness reads since the "session's mode is read where the agent states it"
-entry. It should wait until 0.107.0 has been out two weeks. minimatch keeps its moderate advisory, fixed only in 11.0.1, on the
-eslint and electron-builder chains.
+entry. It should wait until 0.107.0 has been out two weeks. minimatch keeps its
+moderate advisory, fixed only in 11.0.1, on the eslint and electron-builder chains.
 
 ## 2026-11-15 — Editor witness: a mode switch is read from the tool call it answered, not from the option's id
 
