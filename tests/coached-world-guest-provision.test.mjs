@@ -288,8 +288,9 @@ test('a second applied run writes nothing and says so', async () => {
   const { result, out } = await run(f, { apply: true });
   assert.equal(f.events.length, before);
   assert.equal(f.store['svc-identity'].PROVISIONAL_PLAY_CLIENTS, value);
-  assert.deepEqual(result.redeploy, []);
-  assert.match(out, /Nothing needed writing/);
+  // It still names both services: it cannot know whether what the first run wrote was deployed.
+  assert.deepEqual(result.redeploy, [IDENTITY_SERVICE, WORLD_SERVICE]);
+  assert.match(out, /Nothing needed writing in this run\. Redeploy, in this order: identity, then coached-world-bridge/);
 });
 
 test('the merge keeps every other entry as it was, and updates an entry for this origin only in its own fields', () => {

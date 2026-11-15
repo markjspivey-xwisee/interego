@@ -264,10 +264,13 @@ export async function provisionGuest({ gql, fetch: request, apply = false, accep
   log(`Agent the relay signs it as: ${agentDid}`);
   log(`Pod: ${podUrl}`);
   log(`Applications in PROVISIONAL_PLAY_CLIENTS${apply ? '' : ' after an applied run'}: ${merged.origins.join(', ')}`);
-  const redeploy = [IDENTITY_SERVICE, WORLD_SERVICE].filter((s) => done[s].set.length > 0);
+  // Both services, always: this run cannot tell whether a setting an EARLIER run wrote (one that
+  // then failed part-way) has been deployed since, so a successful run never names fewer.
+  const redeploy = [IDENTITY_SERVICE, WORLD_SERVICE];
+  const wrote = redeploy.some((s) => done[s].set.length > 0);
   if (!apply) log('dry run: nothing written. Re-run with apply ticked to write the above.');
-  else if (redeploy.length === 0) log('Nothing needed writing. A setting written by an earlier run takes effect only when its service is next deployed.');
-  else log(`Written without deploying. Redeploy, in this order: ${redeploy.join(', then ')}. Nothing above is in effect until then.`);
+  else log(`${wrote ? 'Written without deploying' : 'Nothing needed writing in this run'}. Redeploy, in this order: ${redeploy.join(', then ')}: `
+    + 'a setting written by this run or an earlier one is in effect only once its service has been deployed since.');
   log(`The door's host (${new URL(door).host}) must be routed to the ${IDENTITY_SERVICE} service; this tool adds no domain.`);
   return { applied: apply, ready: true, address, agentDid, podUrl, origins: merged.origins, services: done, redeploy: apply ? redeploy : [] };
 }
