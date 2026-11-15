@@ -1,4 +1,5 @@
 import { FOXXI_NS } from './foxxi-vocab.js';
+import { IEP_DECORATIONS, MODAL_STATUSES } from './xapix/namespace.js';
 
 // ── What tells one kind of Foxxi statement from another ───────────────────────────────────────
 //
@@ -204,6 +205,22 @@ const extensions = [
 
 // ── Statement templates ─────────────────────────────────────────────
 
+/**
+ * The xapi-x decoration rules a descriptor-projection template carries (xapix/README.md, section 7
+ * and decision 6): the four `iep:` keys under `result.extensions`, which the xapi-x profile
+ * declares and this profile does not redeclare.
+ *
+ * Each is `recommended`, not `included`. The projector has written its own `foxxi:` keys for as
+ * long as it has projected descriptors and writes these beside them only since 2026-11-15, so a
+ * stored statement without them is still a projection this profile accepts. One that carries them
+ * is held to them: the modal status has to be one this template's verb can say.
+ */
+const projectionDecorationRules = (statuses: ReadonlyArray<typeof MODAL_STATUSES[number]>): Array<{ location: string; presence?: string; any?: unknown[]; all?: unknown[] }> => [
+  { location: 'result.extensions["' + IEP_DECORATIONS.sourceDescriptor + '"]', presence: 'recommended' },
+  { location: 'result.extensions["' + IEP_DECORATIONS.modalStatus + '"]', presence: 'recommended', any: [...statuses] },
+  { location: 'result.extensions["' + IEP_DECORATIONS.projectionLossy + '"]', presence: 'recommended', all: [true, false] },
+];
+
 const templates = [
   // ── Composition plays (composition-play.ts) ──────────────────────────
   // A learner, person or agent, stepping through the fragments a composition resolved to for them.
@@ -408,6 +425,7 @@ const templates = [
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
       { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', any: ['agent'] },
+      ...projectionDecorationRules(['Asserted', 'Quoted']),
     ],
   },
   {
@@ -417,6 +435,7 @@ const templates = [
     verb: `${FOXXI_NS}verbs/intended`,
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
+      ...projectionDecorationRules(['Hypothetical']),
     ],
   },
   {
@@ -426,6 +445,7 @@ const templates = [
     verb: `${FOXXI_NS}verbs/considered`,
     rules: [
       { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
+      ...projectionDecorationRules(['Counterfactual']),
     ],
   },
   {
@@ -571,10 +591,11 @@ export function verbRequiresObjectType(verbIri: string): boolean {
   return ts.length > 0 && ts.every(t => (t as { objectActivityType?: unknown }).objectActivityType != null);
 }
 
-/** True when the verb IRI is a DECLARED concept of this profile. A projector that STORES a
- *  statement into the LRS must only coin declared verbs, or the "every emitted verb is a
- *  declared, enforceable profile concept" invariant breaks (the LRS would hold a statement its
- *  own profile rejects). Undeclared source verbs are mapped to a structural modal verb instead. */
+/** True when the verb IRI is one this profile's statements use: a verb it declares, or another
+ *  publisher's verb its templates name (FOXXI_EXTERNAL_TERMS). A projector that STORES a
+ *  statement into the LRS must only use these, or the "every emitted verb is an enforceable
+ *  profile verb" invariant breaks (the LRS would hold a statement its own profile rejects).
+ *  Other source verbs are mapped to a structural modal verb instead. */
 export function verbIsDeclared(verbIri: string): boolean {
   return verbs.some(v => v.id === verbIri);
 }
@@ -781,6 +802,32 @@ export function buildProfileDoc(spec: ProfileSpec): Record<string, unknown> {
  *  + agent-performance patterns) rather than re-mint them. */
 export const FOXXI_PROFILE_PARTS = { verbs, activityTypes, extensions, templates, patterns } as const;
 
+/**
+ * A term is Foxxi's own when its IRI is in Foxxi's namespace or under the profile's IRI. Only
+ * those are declared as concepts of the profile.
+ *
+ * `verbs` and `activityTypes` above also list the ADL and cmi5 terms Foxxi's statements use, with
+ * a note of what Foxxi uses each for. Those terms are their publishers': cmi5 and xAPI fix the
+ * IRIs (a cmi5 statement has to use cmi5's verbs, and voiding is xAPI's own verb), so the
+ * statements go on using them, and the profile's templates name them. The profile used to declare
+ * them as concepts too, each with a label and a definition of Foxxi's writing and `inScheme` this
+ * profile, which is a profile claiming to define another publisher's term. It no longer does.
+ */
+const isFoxxisOwn = (iri: string): boolean => iri.startsWith(FOXXI_NS) || iri.startsWith(`${FOXXI_PROFILE_ID}/`);
+
+/**
+ * The terms other publishers define that this profile's templates name, by IRI and type and
+ * nothing else. They are not concepts of the profile. The profile server's lint is given this list
+ * (xapi-profile-server/built-in.ts), as a writer names external terms for a profile they publish.
+ */
+export const FOXXI_EXTERNAL_TERMS: ReadonlyArray<{ id: string; type: string }> = [
+  ...verbs.filter(v => !isFoxxisOwn(v.id)).map(v => ({ id: v.id as string, type: 'Verb' })),
+  ...activityTypes.filter(a => !isFoxxisOwn(a.id)).map(a => ({ id: a.id as string, type: 'ActivityType' })),
+  // Named by the `interacted` and `experienced-performance` templates; never listed above.
+  { id: `${ADL}/activities/interaction`, type: 'ActivityType' },
+  { id: `${ADL}/activities/performance`, type: 'ActivityType' },
+];
+
 // ── Statement-template conformance (xAPI Profile spec §5) ───────────
 // Given a statement whose verb is a profile concept, match it against that
 // verb's declared StatementTemplate(s) and check the template's rules
@@ -914,8 +961,8 @@ export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Reco
     author: { type: 'Organization', name: 'Interego — Foxxi Content Intelligence', url: new URL(FOXXI_PROFILE_ID).origin },
     generatedAt: versionInfo.generatedAt,
     concepts: [
-      ...verbs.map(v => ({ ...v, type: 'Verb' })),
-      ...activityTypes.map(a => ({ ...a, type: 'ActivityType' })),
+      ...verbs.filter(v => isFoxxisOwn(v.id)).map(v => ({ ...v, type: 'Verb' })),
+      ...activityTypes.filter(a => isFoxxisOwn(a.id)).map(a => ({ ...a, type: 'ActivityType' })),
       ...extensions.map(e => ({ ...e, type: 'ContextExtension' })),
     ],
     templates,

@@ -19,9 +19,9 @@ import { lintProfile, type ExampleSequence, type ExampleStatement, type External
 import { xapiProfileServerAffordances } from '../src/xapi-profile-server/affordances.js';
 import type { Json as PJson } from '../src/xapi-profile-server/processor.js';
 import type { Json } from '../src/xapi-profile-server/rdf.js';
-import { buildFoxxiProfileDoc, FOXXI_NS } from '../src/xapi-profile.js';
-import { projectMeshEntry } from '../src/mesh-event-projector.js';
-import { ingestExternalRun } from '../src/agent-run-ingest.js';
+import { buildFoxxiProfileDoc, FOXXI_EXTERNAL_TERMS } from '../src/xapi-profile.js';
+import { foxxiProfileExamples } from '../src/xapi-profile-server/built-in-examples.js';
+import { IEP_DECORATIONS } from '../src/xapix/namespace.js';
 import { loadPackFile } from '../../coached-world/src/pack.js';
 import { buildProfile as buildWorldProfile } from '../../coached-world/src/profile.js';
 import { buildMissionStatements } from '../../coached-world/src/statements.js';
@@ -418,94 +418,28 @@ async function roundTrip(doc: Obj, ex: ProfileExamples, external: ExternalTerm[]
   const published = view.publishable ? await tool.publish(id, ALICE) : undefined;
   return { view, published, own, at };
 }
+
 const example = (id: string, follows: string[], statement: unknown): ExampleStatement => ({ id, follows, statement: json<PJson>(statement) });
 
 describe('Foxxi\'s own profile goes through author, lint, publish and host with no findings', () => {
   const doc = buildFoxxiProfileDoc({ generatedAt: '2026-07-22T00:00:00.000Z' }) as Obj & { templates: Obj[]; patterns: Obj[]; concepts: Obj[] };
   const T = (name: string) => `${doc.id as string}/templates/${name}`;
-  const Pn = (name: string) => `${doc.id as string}/patterns/${name}`;
-  const ADL = 'http://adlnet.gov/expapi', W3 = 'https://w3id.org/xapi/adl/verbs';
-  const C = 'https://example.org/courses/made-up';
-  const learner = { mbox: 'mailto:fictional-learner@example.org' };
-  const registration = '33333333-3333-4333-8333-333333333333';
-  const st = (v: string, type: string | undefined, more: object = {}) => ({ actor: learner, verb: { id: v }, object: { id: `${C}/thing`, ...(type ? { definition: { type } } : {}) }, ...more });
-  const ext = (name: string, value: unknown) => ({ extensions: { [`${FOXXI_NS}${name}`]: value } });
-  const parent = (type: string) => ({ contextActivities: { parent: [{ id: C, definition: { type } }] } });
-  const lesson = `${ADL}/activities/lesson`, course = `${ADL}/activities/course`;
-  const projected = (entry: Partial<Parameters<typeof projectMeshEntry>[0]>) => projectMeshEntry({
-    descriptorUrl: 'https://pod.example/fictional-agent/context-graphs/1790000000000.ttl', describes: ['urn:graph:made-up-1790000000000'],
-    conformsTo: ['https://example.org/types/RefundDecision'], modalStatus: 'Asserted', ...entry }, 'https://pod.example/fictional-agent/')!.statement;
-  const run = ingestExternalRun({ agentDid: 'did:web:example.org:agents:fictional', task: { name: 'Sort the made-up invoices' },
-    toolCalls: [{ tool: 'made_up_tool', success: true }], outcome: { success: true, quality: 0.9 } });
-
-  // One template each, written by hand where no single function emits the statement.
-  const alone: Record<string, unknown> = {
-    launched: st(`${ADL}/verbs/launched`, course, { context: { registration, contextActivities: { category: [{ id: 'https://w3id.org/xapi/cmi5/context/categories/cmi5' }] } } }),
-    initialized: st(`${ADL}/verbs/initialized`, lesson),
-    terminated: st(`${ADL}/verbs/terminated`, lesson),
-    satisfied: st(`${W3}/satisfied`, course), abandoned: st(`${W3}/abandoned`, lesson), waived: st(`${W3}/waived`, lesson),
-    'slide-viewed': st(`${ADL}/verbs/experienced`, lesson, { context: { ...parent(course), ...ext('slideId', 'slide-3') } }),
-    'scene-completed': st(`${FOXXI_NS}verbs/scene-completed`, `${FOXXI_NS}activities/scene`),
-    interacted: st(`${ADL}/verbs/interacted`, `${ADL}/activities/interaction`),
-    passed: st(`${ADL}/verbs/passed`, course, { result: { success: true, score: { scaled: 0.9 } } }),
-    'lesson-passed': st(`${ADL}/verbs/passed`, lesson, { result: { success: true, score: { scaled: 0.9 } } }),
-    asked: st(`${FOXXI_NS}verbs/asked`, `${FOXXI_NS}activities/concept-graph-node`),
-    retrieved: st(`${FOXXI_NS}verbs/retrieved`, `${FOXXI_NS}activities/concept-graph-node`),
-    enrolled: st(`${FOXXI_NS}verbs/enrolled`, course),
-    credentialed: st(`${FOXXI_NS}verbs/credentialed`, `${FOXXI_NS}activities/credential`),
-    'wallet-exported': st(`${FOXXI_NS}verbs/wallet-exported`, `${FOXXI_NS}activities/credential`),
-    'framework-aligned': st(`${FOXXI_NS}verbs/framework-aligned`, `${FOXXI_NS}activities/framework`),
-    'affordance-invoked': st(`${FOXXI_NS}verbs/affordance-invoked`, `${FOXXI_NS}activities/affordance`, { context: ext('affordanceTool', 'foxxi.made_up_tool') }),
-    'policy-decided': st(`${FOXXI_NS}verbs/policy-decided`, undefined, { context: ext('policyId', 'https://pod.example/policies/made-up') }),
-    authored: st(`${FOXXI_NS}verbs/authored`, course),
-    asserted: st(`${FOXXI_NS}verbs/asserted`, undefined, { context: ext('substrateDescriptorIri', 'https://pod.example/fictional-agent/context-graphs/1.ttl') }),
-    'fragment-experienced': st(`${ADL}/verbs/experienced`, `${FOXXI_NS}activities/fragment`, { context: { registration, ...parent(`${FOXXI_NS}activities/composition`),
-      extensions: { [`${FOXXI_NS}competency`]: 'https://example.org/competencies/made-up', [`${FOXXI_NS}compositionPosition`]: 0, [`${FOXXI_NS}alternativesOffered`]: ['urn:made-up:fragment'] } } }),
-    'question-answered': { ...st(`${ADL}/verbs/answered`, undefined, { result: { response: 'true' }, context: { registration, ...parent(`${FOXXI_NS}activities/fragment`) } }),
-      object: { id: `${C}/question`, definition: { type: `${ADL}/activities/cmi.interaction`, interactionType: 'true-false' } } },
-    'composition-completed': st(`${ADL}/verbs/completed`, `${FOXXI_NS}activities/composition`, { result: { completion: true }, context: { registration } }),
-    completed: st(`${ADL}/verbs/completed`, course, { result: { completion: true } }),
-    'course-failed': st(`${ADL}/verbs/failed`, course, { result: { success: false } }),
-    'lesson-completed': st(`${ADL}/verbs/completed`, lesson, { result: { completion: true } }),
-    'lesson-failed': st(`${ADL}/verbs/failed`, lesson, { result: { success: false, score: { scaled: 0.2 } } }),
-    'experienced-activity': st(`${ADL}/verbs/experienced`, course),
-    'experienced-performance': st(`${ADL}/verbs/experienced`, `${ADL}/activities/performance`),
-    // And what the emitters build.
-    'performed-descriptor': projected({ verb: `${FOXXI_NS}performed` }),
-    'intended-descriptor': projected({ modalStatus: 'Hypothetical' }),
-    'considered-descriptor': projected({ modalStatus: 'Counterfactual' }),
-    'production-performance-completed': projected({ success: true }),
-    'production-performance-failed': projected({ success: false }),
-    'performed-production': run.statements[0],
-    'voided-statement': { actor: learner, verb: { id: `${ADL}/verbs/voided` }, object: { objectType: 'StatementRef', id: '11111111-1111-4111-8111-111111111111' } },
-  };
-  const statements: ExampleStatement[] = [
-    ...Object.entries(alone).map(([name, statement]) => example(name, [T(name)], statement)),
-    // A descriptor that revises another is a descriptor too, and a retracted one is a voiding too:
-    // these two templates add a determining property to another's, so their examples claim both.
-    example('superseding-descriptor', [T('performed-descriptor'), T('superseding-descriptor')],
-      projected({ verb: `${FOXXI_NS}performed`, supersedes: ['https://pod.example/fictional-agent/context-graphs/1780000000000.ttl'] })),
-    example('voided-descriptor', [T('voided-descriptor'), T('voided-statement')], projected({ modalStatus: 'Retracted' })),
-  ];
-  const sequence = (pattern: string, ...members: string[]): ExampleSequence => ({ id: pattern, pattern: Pn(pattern), statements: members });
-  const sequences = [
-    sequence('course-session', 'launched', 'initialized', 'slide-viewed', 'asked', 'retrieved', 'scene-completed', 'slide-viewed', 'passed', 'terminated'),
-    sequence('composition-attempt', 'question-answered', 'fragment-experienced', 'fragment-experienced', 'composition-completed'),
-    sequence('credentialing', 'passed', 'credentialed'),
-    sequence('agent-performance-stream', 'performed-descriptor', 'intended-descriptor', 'considered-descriptor'),
-    sequence('revision-arc', 'performed-descriptor', 'superseding-descriptor'),
-  ];
+  // The examples the deployment keeps with the profile (src/xapi-profile-server/built-in-examples.ts).
+  const { statements, sequences } = foxxiProfileExamples();
 
   it('has an example for each of its templates and primary patterns, and the lint finds nothing', async () => {
     expect(statements.length).toBe(doc.templates.length);
     expect(sequences.length).toBe(doc.patterns.filter(p => p.primary === true).length);
-    // Two of its templates name an activity type another publisher defines and the profile does not
-    // declare. Unvouched, the lint says so; they are that publisher's terms, so they are named as
+    // Its templates name verbs and activity types ADL and cmi5 define, and the four keys the xapi-x
+    // profile declares. The profile declares none of them. Unvouched, on a server that holds no
+    // other profile, the lint says so; they are their publishers' terms, so they are named as
     // external and not copied into this profile's concepts.
     const unvouched = await roundTrip(doc, { statements, sequences });
-    expect(unvouched.view.findings.map(f => [f.code, f.at])).toEqual([['undeclared-term', T('experienced-performance')], ['undeclared-term', T('interacted')]]);
+    expect(unvouched.view.findings.length).toBeGreaterThan(0);
+    expect([...new Set(unvouched.view.findings.map(f => f.code))]).toEqual(['undeclared-term']);
+    expect(unvouched.view.findings.map(f => f.at)).toEqual(expect.arrayContaining([T('experienced-performance'), T('interacted'), T('launched'), T('performed-descriptor')]));
     expect(unvouched.published).toBeUndefined();
-    const external = ['performance', 'interaction'].map(name => ({ id: `${ADL}/activities/${name}`, type: 'ActivityType' }));
+    const external = [...FOXXI_EXTERNAL_TERMS.map(t => ({ ...t })), ...Object.values(IEP_DECORATIONS).map(id => ({ id, type: 'ResultExtension' }))];
     const { view, published, own, at } = await roundTrip(doc, { statements, sequences }, external);
     expect(view.findings).toEqual([]);
     const version = `${doc.id as string}/v/1`;
@@ -515,7 +449,7 @@ describe('Foxxi\'s own profile goes through author, lint, publish and host with 
     // What is hosted is what was written, with the time of this publication.
     expect(own.resolve(doc.id as string)!.body).toEqual({ ...doc, versions: [{ id: version, generatedAtTime: at }] });
     for (const part of [...doc.concepts, ...doc.templates, ...doc.patterns]) expect(own.resolve(part.id as string)?.body, String(part.id)).toMatchObject({ id: part.id, inScheme: version });
-    expect(await own.validateTemplates(alone['slide-viewed'], version)).toMatchObject({ comments: [], templates: [T('slide-viewed')] });
+    expect(await own.validateTemplates(statements.find(e => e.id === 'slide-viewed')!.statement, version)).toMatchObject({ comments: [], templates: [T('slide-viewed')] });
   });
 
   it('says what each of its extensions carries', () => {

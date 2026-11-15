@@ -42,6 +42,12 @@ export type ProfileRecord =
 export interface ProfileServerOptions {
   /** Profiles that are part of the deployment itself (Foxxi's own). Never removable, never persisted. */
   readonly builtIn: () => Json[];
+  /**
+   * What each built-in profile is kept with: the examples its lint is run with and the terms of
+   * other publishers its templates name. Served where a published version's are. A built-in
+   * profile was never published from a draft, so this is the deployment's own say-so, from code.
+   */
+  readonly builtInKept?: () => Array<{ profile: string; examples: ProfileExamples; external: ExternalTerm[] }>;
   /** Keep a record durably. Resolves with where it went, or throws. */
   readonly persist?: (record: ProfileRecord, held?: HeldProfile) => Promise<{ holonUri?: string; persisted?: boolean }>;
   /** Every record kept so far. */
@@ -68,6 +74,8 @@ export class ProfileServer {
   /** profile IRI → the agent that first added it. */
   private readonly owners = new Map<string, string>();
   private readonly builtInIds = new Set<string>();
+  /** version IRI of a built-in profile → what it is kept with. */
+  private readonly builtInWith = new Map<string, { examples: ProfileExamples; external: ExternalTerm[] }>();
   /** version IRI → what it was published with. A version here is immutable. */
   private readonly publishedVersions = new Map<string, { examples: ProfileExamples; external: ExternalTerm[]; at: string }>();
   /** version IRI → a publication waiting on its durable write. The version is not held until that lands. */
@@ -77,6 +85,11 @@ export class ProfileServer {
 
   constructor(private readonly options: ProfileServerOptions) {
     for (const doc of options.builtIn()) this.builtInIds.add(this.dataset.add(doc).id);
+    for (const kept of options.builtInKept?.() ?? []) {
+      const held = this.builtInIds.has(kept.profile) ? this.dataset.get(kept.profile) : undefined;
+      if (!held) throw new Error(`${kept.profile} is not one of this deployment's built-in profiles, so nothing is kept with it.`);
+      this.builtInWith.set(held.version, { examples: kept.examples, external: kept.external });
+    }
   }
 
   /** Replay what was kept. Safe to call on every request: it runs once, and again after a failure. */
@@ -215,6 +228,11 @@ export class ProfileServer {
 
   /** What a version was published with, when it was published from a draft here. */
   published(version: string): { examples: ProfileExamples; external: ExternalTerm[]; at: string } | undefined { return this.publishedVersions.get(version); }
+
+  /** What a version is kept with: what it was published with, or for a built-in profile what the deployment keeps with it. `at` is absent for a built-in. */
+  keptWith(version: string): { examples: ProfileExamples; external: ExternalTerm[]; at?: string } | undefined {
+    return this.publishedVersions.get(version) ?? this.builtInWith.get(version);
+  }
 
   /** The type of a concept that a held profile other than `except` declares: a term known to this server. */
   knownTerm(iri: string, except?: string): string | undefined {

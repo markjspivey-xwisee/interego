@@ -35,6 +35,7 @@
 import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { verbRequiresObjectType, verbIsDeclared, descriptorProjectionCategory, performanceCategoriesFor, SUPERSEDED_DESCRIPTOR_TYPE } from './xapi-profile.js';
+import { IEP_DECORATIONS, MODAL_STATUSES } from './xapix/namespace.js';
 import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from '../../agentic-performance-practice/src/agent-trajectory.js';
 
@@ -225,12 +226,28 @@ export function projectMeshEntry(
   // Task outcome — ONLY when the envelope actually carries it (honest; the
   // protocol envelope normally does not, so this stays absent for bare
   // descriptors). Never derived from modal status / trust / ground-truth.
-  const result = (typeof entry.success === 'boolean' || typeof entry.scoreScaled === 'number')
+  const outcome = (typeof entry.success === 'boolean' || typeof entry.scoreScaled === 'number')
     ? {
         ...(typeof entry.success === 'boolean' ? { success: entry.success } : {}),
         ...(typeof entry.scoreScaled === 'number' ? { score: { scaled: entry.scoreScaled } } : {}),
       }
     : undefined;
+  // What every projection of a descriptor states, under the keys the lrs-adapter writes and the
+  // xapi-x profile declares (xapix/README.md, decision 6): which descriptor, the modal status of
+  // its claim, and whether the statement says less than the descriptor does. The `foxxi:` keys
+  // in context.extensions below say the first of these too and are still written, so a reader of
+  // either vocabulary finds it. Lossy is the adapter's test (projectionIsLossy): the claim was
+  // not asserted, which a statement cannot say outside an extension. A status the envelope does
+  // not state is Asserted, as `modalMode` reads it.
+  const modalStatus = (MODAL_STATUSES as readonly string[]).includes(entry.modalStatus ?? '') ? entry.modalStatus! : 'Asserted';
+  const result = {
+    ...outcome,
+    extensions: {
+      [IEP_DECORATIONS.sourceDescriptor]: entry.descriptorUrl,
+      [IEP_DECORATIONS.modalStatus]: modalStatus,
+      [IEP_DECORATIONS.projectionLossy]: modalStatus !== 'Asserted',
+    },
+  };
 
   // Context extensions — all envelope-derived, none fabricated.
   const extensions: Record<string, unknown> = {
@@ -283,10 +300,10 @@ export function projectMeshEntry(
             ...(superseded ? { other: [{ id: superseded, objectType: 'Activity', definition: { type: SUPERSEDED_DESCRIPTOR_TYPE } }] } : {}),
           },
         },
-        // result is emitted ONLY when the envelope actually carried an outcome
-        // (success / scoreScaled); for a bare context descriptor it stays absent —
-        // disposition + calibration read a real signal, never a fabricated one.
-        ...(result ? { result } : {}),
+        // An OUTCOME (success / score) is in the result ONLY when the envelope actually
+        // carried one; for a bare context descriptor the result holds the provenance keys
+        // and nothing else — disposition + calibration read a real signal, never a fabricated one.
+        result,
         ...(ts ? { timestamp: ts } : {}),
       };
 
@@ -307,7 +324,7 @@ export function projectMeshEntry(
     objectId: graph,
     objectName: label,
     objectType,
-    ...(typeof result?.success === 'boolean' ? { result: { success: result.success } } : {}),
+    ...(typeof outcome?.success === 'boolean' ? { result: { success: outcome.success } } : {}),
     ...(superseded ? { supersedesId: superseded } : {}),
   };
 
