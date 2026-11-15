@@ -44,6 +44,7 @@ import { ProfileServer, ProfileServerError, mountProfileServerReads, MAX_PROFILE
 import { validates as profileValidates } from '../src/xapi-profile-server/processor.js';
 import { buildFoxxiProfileDoc as ownXapiProfileDoc, FOXXI_PROFILE_ID as OWN_XAPI_PROFILE_ID } from '../src/xapi-profile.js';
 import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
+import { builtInProfiles } from '../src/xapi-profile-server/built-in.js';
 import { mountProfileAuthoring, mountProfileHosting } from '../src/xapi-profile-server/authoring-http.js';
 import { PROFILE_GENERATED_AT as OWN_XAPI_PROFILE_GENERATED_AT } from '../src/xapi-lrs.js';
 import { createOwnLtiReconciliation, validateRecoveryEntry, type RecoveryEntry } from '../src/lti-own-reconciliation.js';
@@ -10976,7 +10977,8 @@ const XAPI_PROFILE_RECORD = 'xapi:ProfileRecord';
 const xapiProfileServerBase = `${bridgeBaseUrl}/xapi/profiles`;
 
 const xapiProfileServer = new ProfileServer({
-  builtIn: () => [ownXapiProfileDoc({ generatedAt: OWN_XAPI_PROFILE_GENERATED_AT }) as never],
+  // Foxxi's own profile and the xapi-x profile: both are this deployment's, served from its code.
+  builtIn: () => builtInProfiles() as never,
   isOperator: did => adminWebId !== '' && did === adminWebId,
   hydrate: async () => {
     if (!XAPI_PROFILES_POD) return [];
