@@ -1,5 +1,16 @@
 # Changelog
 
+## 2026-11-15 — A workflow that provisions the coached world's guest door without a secret reaching a log
+
+Turning on real guests for the coached world, and the general guest beside them, needed an operator to make a key, create an account with it, and hand-edit identity's `PROVISIONAL_PLAY_CLIENTS`, a value that stops identity at start when it is malformed. This adds a dispatch-only workflow that does it inside the runner. Merging it changes nothing: nothing runs until someone dispatches it from master, and unticked `apply` is a dry run.
+
+- **`tools/coached-world-guest-provision.mjs`** (`.github/workflows/coached-world-guest-provision.yml`), after the pattern of `tools/vertical-bridges-provision.mjs`: the token is pinned to the fleet's project and environment, variables are read on the runner and all but the few it needs are dropped, and every write carries `skipDeploys: true`.
+- **Order.** The service key on `coached-world-bridge` (used if set and never overwritten; otherwise generated and written before anything is created with it); the service's identity account and its agent's registration with the relay, through Foxxi's `setup-play-service.mjs`; `CPW_IDENTITY_URL`, `CPW_GENERAL_GUEST`, `CPW_GENERAL_GUEST_DOOR_ORIGIN` on the world; then on identity the merged `PROVISIONAL_PLAY_CLIENTS`, `GENERAL_GUEST_DOOR_ORIGIN`, and `PROVISIONAL_GENERAL_GUEST=1` last. A run that fails is completed by the next one with the same key.
+- **Terms.** The account is created only with `apply`, and where identity states hosted terms only when `accept_terms_version` is the version it states. Otherwise the run names that version and stops before any write.
+- **The client list.** Every other application's entry is carried over as parsed; an entry for this origin is changed only in the fields the tool sets. The existing value and the merged one are checked against identity's rules before any write. The tool mirrors those rules, and `applications/coached-world/tests/the-guest-entry-is-one-identity-accepts.test.ts` holds the mirror to identity's own `parsePlayClients`, `isGuestReturnPath` and `parseDoorOrigin`.
+- **What is printed.** The service wallet's address, the agent DID, the pod, variable names, the origins in the client list, and the services to redeploy. No key, token, or other application's entry (`tests/coached-world-guest-provision.test.mjs`, which also runs on pull requests that touch the tool).
+- **`setup-play-service.mjs`** takes an optional `serviceName` for the account's name and the agent's label, so the coached world's service is not called Foxxi's. The command line and its default are unchanged.
+
 ## 2026-11-15 — jev-harness: the gate and the selection diff the event's own SHAs
 
 Three pull requests on 2026-11-14 got no review verdict: #899, #901 and #905.

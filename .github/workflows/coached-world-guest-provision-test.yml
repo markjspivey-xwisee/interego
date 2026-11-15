@@ -1,0 +1,26 @@
+name: Coached world guest provisioning fixture
+on:
+  pull_request:
+    paths:
+      - 'tools/coached-world-guest-provision.mjs'
+      - 'tools/vertical-bridges-provision.mjs'
+      - 'applications/foxxi-content-intelligence/tools/setup-play-service.mjs'
+      - 'tests/coached-world-guest-provision.test.mjs'
+      - '.github/workflows/coached-world-guest-provision.yml'
+      - '.github/workflows/coached-world-guest-provision-test.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  provision-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: npm ci --ignore-scripts
+      - run: node --test tests/coached-world-guest-provision.test.mjs
