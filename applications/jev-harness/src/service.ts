@@ -16,7 +16,7 @@ import { publishGraph, publishJudgment, recordTrajectoryStep, type RelayClient }
 import { attestationGraphIri, attestationPayload, calibrationFingerprint, calibrationGraphIri, calibrationPayload, peerAttestationPayload, type AttestationDraft, type PeerAttestationInput } from './calibration-publish.js';
 import { fetchPodAttestations, reputationOf, REPUTATION_POLICY, type PodAttestation } from './reputation.js';
 import type { AggregationPolicy, ReputationSnapshot } from '@interego/registry';
-import { changedFiles, inventory, repositoryName, unifiedDiff, type RepoInventory } from './repo.js';
+import { changedFiles, describeDiffRange, diffRange, inventory, repositoryName, unifiedDiff, type RepoInventory } from './repo.js';
 import type { RepositorySource } from './repository-source.js';
 import { fetchPodOutcomes } from './pod-calibration.js';
 import { judgmentFromContent, type PodJudgment } from './pod-judgment.js';
@@ -147,7 +147,11 @@ export class Harness {
     const j = await this.readRepository((root) => {
       const { baseRef, headRef, ...rest } = input;
       const diff = rest.diff || (baseRef ? unifiedDiff(root, baseRef, headRef) : '');
-      if (!diff) throw new HarnessError(400, 'review-gate needs a diff or a base_ref that yields one');
+      if (!diff) {
+        // Say which commits were compared: an empty range is the whole diagnosis (see DiffRange).
+        const compared = !rest.diff && baseRef ? `: ${describeDiffRange(diffRange(root, baseRef, headRef))}` : '';
+        throw new HarnessError(400, `review-gate needs a diff or a base_ref that yields one${compared}`);
+      }
       return reviewGate(this.jev, this.inventory(undefined, root), { ...rest, diff });
     });
     return this.finish(j, { verb: 'gated', objectName: `${j.verdict}${input.title ? ` for ${input.title.slice(0, 80)}` : ''}` });

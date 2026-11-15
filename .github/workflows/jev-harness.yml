@@ -141,13 +141,23 @@ jobs:
       # selection (a sensitive path changed) to bridge-typecheck.yml, which runs the whole suite on
       # this same head and which the decision waits for, instead of running it here a second time
       # (eight minutes on #454, calibrating nothing).
+      # ★ The diff is between the event's own base and head SHAs, since 2026-11-15. It was
+      # origin/<base>...HEAD, and origin/<base> moves: #899, #901 and #905 merged before their job
+      # reached its checkout, master then contained the head, the three-dot diff was empty, the
+      # selection fell back to the whole suite with "no changed files were given" and the gate
+      # answered 400 with no verdict. The event's SHAs are fixed when the event is made, both are
+      # ancestors of the merge ref this job checks out, and no later merge changes what they name.
+      # A manual run has no pull request: it compares the default branch with the checkout.
       - name: Follow the selection chain
         id: selection
         continue-on-error: true
+        env:
+          DIFF_BASE: ${{ github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}
+          DIFF_HEAD: ${{ github.event.pull_request.head.sha || 'HEAD' }}
         run: |
           cd "$HARNESS_DIR"
           npx tsx bin/follow.ts "http://localhost:$BRIDGE_PORT/affordances" select-tests \
-            --arg base_ref="origin/${{ github.base_ref }}" --arg head_ref=HEAD \
+            --arg base_ref="$DIFF_BASE" --arg head_ref="$DIFF_HEAD" \
             --then run-selected-tests --run --skip-full-run --then triage --outcome \
             --repo "${{ github.workspace }}"
       - name: Comment the selection on the pull request
@@ -165,13 +175,16 @@ jobs:
         env:
           PR_TITLE: ${{ github.event.pull_request.title }}
           PR_BODY: ${{ github.event.pull_request.body }}
+          # The same two SHAs the selection read; the follower prints what they resolve to.
+          DIFF_BASE: ${{ github.event.pull_request.base.sha || format('origin/{0}', github.event.repository.default_branch) }}
+          DIFF_HEAD: ${{ github.event.pull_request.head.sha || 'HEAD' }}
         run: |
           cd "$HARNESS_DIR"
           printf '%s' "$PR_BODY" > pr-body.md
           GATE_FLAG=--gate-blocks-only
           if [ "$JEV_REQUIRE_HUMAN_REVIEW" = "true" ]; then GATE_FLAG=--gate; fi
           npx tsx bin/follow.ts "http://localhost:$BRIDGE_PORT/affordances" review-gate \
-            --arg base_ref="origin/${{ github.base_ref }}" --arg head_ref=HEAD \
+            --arg base_ref="$DIFF_BASE" --arg head_ref="$DIFF_HEAD" \
             --arg title="$PR_TITLE" --file description=pr-body.md "$GATE_FLAG" \
             --repo "${{ github.workspace }}"
       - name: Comment the gate on the pull request

@@ -67,6 +67,8 @@ npm run follow -- http://localhost:6090/affordances review-gate --arg base_ref=o
 
 `follow <document> <verb>` dereferences the document (the manifest or any judgment), finds the affordance or control by its `iep:action`, merges the control's prefilled `arguments` with `--arg/--json/--file`, validates, and acts. `--then` chains along the controls each result affords; `--run` performs the declarative `run-selected-tests` locally (vitest with color off, the log stripped of escape codes, and a file counted as failing from its FAIL line or its per-file summary); `--outcome` scores the first judgment of the chain with what the chain observed.
 
+`base_ref` and `head_ref` are diffed three-dot, from their merge base to the head, so a moving base such as `origin/master` only names the change while it does not yet contain the head. Once the change has merged that diff is empty. A pull request's own base and head SHAs keep naming it afterwards, and CI passes those. When a `base_ref` is given, `follow` first prints the commits both refs resolve to and their merge base.
+
 Artifacts land in `<repo>/.jev-harness/judgments/<id>.{json,payload.ttl,trig,md}`.
 
 ## Publishing to the pod
