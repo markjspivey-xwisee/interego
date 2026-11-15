@@ -1,5 +1,58 @@
 # Changelog
 
+## 2026-11-15 — Dependencies: @hono/node-server 2.1.8, in place of Dependabot's #861
+
+This lands Dependabot's #861 with the changelog entry its checks needed.
+
+- **Root lockfile:** one entry changes. `@hono/node-server` moves from 1.19.17
+  to 2.1.8. No package is added or removed, and no other version moves. Two
+  packages depend on it, and 2.1.8 satisfies both, so they keep sharing one
+  copy: `@modelcontextprotocol/node` 2.1.2, the relay's MCP transport, which
+  asks for `^1.19.9 || ^2.1.3`, and the dev-only v1 `@modelcontextprotocol/sdk`
+  1.32.2 under claude-code-acp, which asks for `^1.19.9 || ^2.0.5`.
+- **Audit:** `npm audit` goes from 24 moderate findings to 23. Both advisories
+  it reported for 1.19.17 are gone. One is in the package's static file server
+  (`serveStatic`). The other is in how a backslash in a request path is read.
+  The advisory data `npm audit` uses lists the first as fixed only from 2.1.3,
+  so a newer 1.x would not have cleared it from the audit.
+- **What 2.x changes:** the 2.0.0 release notes list two breaking changes. It
+  needs Node 20 or later, and the Vercel adapter (`@hono/node-server/vercel`) is
+  removed; the notes say the rest of the public API stays the same. The two
+  published packages agree. 2.1.8's main entry exports what 1.19.17's did
+  (`serve`, `createAdaptorServer`, `getRequestListener`, `RequestError`) plus
+  `upgradeWebSocket`, and `getRequestListener` takes the same options. The
+  package is now ES modules first, with a CommonJS build beside it.
+- **What uses it:** both MCP packages import one function, `getRequestListener`,
+  and call it with `overrideGlobalObjects: false`, which 2.1.8 handles as 1.19.17
+  did. The relay reaches it only through `NodeStreamableHTTPServerTransport`,
+  which `deploy/mcp-relay/mcp-serving.ts` uses for clients that open a legacy MCP
+  session. `toNodeHandler` and `toWebRequest`, the relay's other imports from
+  that package, do not use it. No source file in this repository imports
+  `@hono/node-server` or `hono`, and nothing calls `serveStatic` or the Vercel
+  adapter.
+- **Node:** the repository already asks for Node 20 or later, the relay image
+  runs Node 22, and `@modelcontextprotocol/node` 2.1.2 itself asks for Node 20.
+- **The relay image does not install from this lockfile.** `deploy/Dockerfile.relay`
+  installs the relay's runtime dependencies from `deploy/mcp-relay/package.json`
+  with no lockfile, so npm picks the newest matching versions on each image build.
+  For `^1.19.9 || ^2.1.3` that is 2.1.8 today. Every relay image built since
+  `@modelcontextprotocol/node` 2.1.2 came out on 23 October already runs a 2.1.x,
+  whichever was newest the day it was built. The copy in the root lockfile is the
+  one tests and local runs use, and the one the bridge images get from `npm ci`.
+  No bridge source imports `@modelcontextprotocol/node` or the v1 SDK.
+- **#861's own checks:** its test-selection job could not pass because a
+  Dependabot run gets no secrets. This branch runs it with the usual secrets.
+
+Not covered: the local checkout's `node_modules` still holds 1.19.17, so the
+relay's test suite and `tests/client-interaction-mcp.test.ts`, which opens legacy
+MCP sessions through that transport, passed here against 1.19.17, not 2.1.8. CI
+installs from the lockfile and runs them against 2.1.8. Which 2.1.x the deployed
+relay runs was not checked. `hono` itself, at 4.13.14 in the root lockfile, has
+five advisories in `npm audit` (four moderate, one low), fixed in 4.13.16; it is
+a separate entry, left for its own change. The relay image already resolves the
+newest 4.x. The other moderate findings, in the Solid server, eslint,
+electron-builder and claude-code-acp chains, are unchanged.
+
 ## 2026-11-15 — Foxxi: a cmi5 launch's credential survives a restart
 
 Every deploy of the Foxxi bridge ended every practice in progress. A launch is
