@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-11-15 — jev-harness: the gate and the selection diff the event's own SHAs
+
+Three pull requests on 2026-11-14 got no review verdict: #899, #901 and #905.
+Each had merged before its judge job reached its checkout (13 minutes, 60
+seconds and 6 seconds before). The job compared `origin/master...HEAD`, and
+`origin/master` moves. Once master held the pull request, the merge base of the
+two was the pull request's own head, whose tree is the tree of the merge ref
+the job checks out, so the diff was empty. The selection fell back to the whole
+suite with "no changed files were given", and the gate answered 400
+"review-gate needs a diff or a base_ref that yields one". Rebuilding each merge
+ref from the SHAs in the logs gives 0 changed files against the merged master
+and 38, 7 and 51 against the event's base.
+
+The workflow now passes the pull request event's `base.sha` and `head.sha` to
+both steps. They are fixed when the event is made and a later merge does not
+change what they name. A manual run, which has no pull request, compares the
+default branch with the checkout.
+
+`follow` prints the commits a `base_ref` and `head_ref` resolve to, and their
+merge base, before it acts, so the job log says which diff was judged. The
+gate's 400 for an empty range now names the same commits.
+
+Not changed: what the gate checks, the close-time scoring, and the auto-merge
+rules. The three pull requests keep their gap; nothing here judges them again.
+A selection given a base that yields no changed files still answers with the
+whole suite, as before.
+
 ## 2026-11-14 — A general guest can be linked to an existing registered account, from any browser or device
 
 A general guest could be kept only by claiming it: giving it a credential of its own, which makes it a new account. This adds the other way, behind the same setting (`PROVISIONAL_GENERAL_GUEST=1`) and inert without it: linking the guest to an account the visitor already has. Nothing is turned on by this change and no setting is changed anywhere.

@@ -158,6 +158,51 @@ export function unifiedDiff(root: string, baseRef: string, headRef?: string): st
   return git(root, ['diff', '--no-color', '--unified=3', range]) ?? '';
 }
 
+/**
+ * What a base and head ref resolve to in this checkout, and where their three-dot diff starts.
+ *
+ * ★ The diff is `mergeBase..head`, so it is only the change under review while the base does not
+ * yet contain the head. A base named by a moving ref (`origin/master`) stops being that the moment
+ * the pull request merges: the base then contains everything the head holds, the merge base is
+ * the pull request's own head, and the diff is empty. (A CI job's HEAD is the merge of that head
+ * into the old base, a commit the base never contains, but its tree is the head's whenever the
+ * branch was up to date, so nothing differs.) On 2026-11-14 three pull requests (#899, #901, #905) merged
+ * before their job reached its checkout, and each gate answered 400 with no verdict recorded.
+ * A caller that has them passes the pull request event's immutable base and head SHAs instead:
+ * no later merge moves those.
+ */
+export interface DiffRange {
+  readonly baseRef: string;
+  /** Absent when the diff is of the working tree against the base. */
+  readonly headRef?: string;
+  /** Commit the ref resolves to, or null when it does not resolve here. */
+  readonly base: string | null;
+  readonly head: string | null;
+  readonly mergeBase: string | null;
+  /** True when the head's tree is the merge base's: the base already holds all of it, and the diff is empty. */
+  readonly nothingToReview: boolean;
+}
+
+export function diffRange(root: string, baseRef: string, headRef?: string): DiffRange {
+  const commit = (ref: string): string | null => git(root, ['rev-parse', '--verify', '--quiet', `${ref}^{commit}`])?.trim() || null;
+  const base = commit(baseRef);
+  const head = commit(headRef ?? 'HEAD');
+  const mergeBase = base && head ? git(root, ['merge-base', base, head])?.trim() || null : null;
+  return {
+    baseRef, ...(headRef ? { headRef } : {}), base, head, mergeBase,
+    // `diff --quiet` exits 1 for a difference, which git() reports as null.
+    nothingToReview: Boolean(headRef) && head !== null && mergeBase !== null && git(root, ['diff', '--quiet', mergeBase, head]) !== null,
+  };
+}
+
+/** One line for a job log: the refs as given, the commits they named, and the merge base. */
+export function describeDiffRange(range: DiffRange): string {
+  const named = (ref: string, sha: string | null): string => (sha === null ? `${ref} (does not resolve)` : sha === ref ? sha : `${sha} (${ref})`);
+  const head = range.headRef ? named(range.headRef, range.head) : `the working tree at ${range.head ?? 'no commit'}`;
+  const note = range.nothingToReview ? '; the base already holds everything in the head (merged already?), so the diff between them is empty' : '';
+  return `base ${named(range.baseRef, range.base)}  head ${head}  merge-base ${range.mergeBase ?? 'none'}${note}`;
+}
+
 /** Paths named in a unified diff's `diff --git a/x b/y` headers. */
 export function pathsInDiff(diff: string): string[] {
   const out = new Set<string>();
