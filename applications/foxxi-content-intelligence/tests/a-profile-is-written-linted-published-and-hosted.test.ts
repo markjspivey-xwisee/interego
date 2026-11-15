@@ -409,7 +409,8 @@ describe('the affordances are the surface', () => {
 
 /** Author → lint → publish → host, on a server of its own. Returns what the host then serves. */
 async function roundTrip(doc: Obj, ex: ProfileExamples, external: ExternalTerm[] = []) {
-  const own = new ProfileServer({ builtIn: () => [] });
+  // A version is published only once it is kept, so this server has somewhere that says it kept it.
+  const own = new ProfileServer({ builtIn: () => [], persist: async () => ({ persisted: true }) });
   const at = '2026-11-15T12:00:00.000Z';
   const tool = new ProfileAuthoring(own, { now: () => new Date(at) });
   const id = doc.id as string;

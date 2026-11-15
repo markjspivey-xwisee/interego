@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-11-15 — A profile version is published only once its durable write is acknowledged
+
+Two defects in the profile authoring service that merged the same day
+(`applications/foxxi-content-intelligence/src/xapi-profile-server/`), found by a
+reviewer reading the source and confirmed against it before this change.
+
+**What was wrong.** `ProfileServer.publish` put the new version in the in-memory
+index, marked it published, and wrote it to the pod afterwards. A failed write
+was caught and turned into `persisted: false`, and the route answered
+`ok: true, immutable: true` beside it. The version answered at every read route
+until the next restart and then stopped. A retry in the same process was refused
+with 409, because the version was already held. And `ProfileAuthoring.publish`
+deleted the draft from its map and from the draft store whatever `persisted`
+said, so the writer had lost the draft of a version that had not been kept.
+
+**What it does now.** The durable write comes first. `publish` works out what the
+document would be held as without holding it (`ProfileDataset.prepare`, new),
+writes it, and holds it only when `persist` answers `persisted: true`. A write
+that throws, answers `persisted: false`, or does not say, throws
+`PublicationNotKept` (503). The route answers
+`{ ok: false, published: false, persisted: false, draftKept: true, retry }` with
+no `immutable`. The version is in no index, no named graph, and not in the
+examples route; the profile's earlier version stays current; the draft is
+untouched in memory and in the store; and publishing again publishes the same
+version. A server given no `persist`, or a bridge with no profiles pod, publishes
+nothing. While the write is on its way the version is reserved: adding or
+publishing it again is a 409, and so is another agent claiming the profile.
+
+The draft is closed only after the version is kept. If the store then cannot
+drop the draft, the publication is still reported: it was kept.
+
+**Examples are public, and the writer is now told.** The examples a draft is
+linted with are published with the version and served unsigned at
+`GET /xapi/profiles/examples?iri=`. That was true and unstated at authoring
+time. The draft and publish affordances say it, every draft answer carries
+`examplesWhenPublished`, and a publication answers with the `examples` address.
+No behaviour of that route changed.
+
+**Not done.** `ProfileServer.add` and `remove` (whole documents, not drafts)
+still answer `ok` with `persisted: false` when their write fails; they predate
+the authoring service and their callers read the flag. A write that lands on the
+pod but whose answer is lost is reported as not kept; a retry then writes a
+second record of the same version, and at the next start the earlier one wins.
+A refused publication still counts against the signer's hourly allowance.
+
+Test: `tests/a-profile-version-is-published-only-once-it-is-kept.test.ts`, with a
+made-up pod that throws, declines, or stays silent on command.
+
 ## 2026-11-15 — Foxxi's xAPI profile server writes, lints, publishes and hosts profiles
 
 The profile server held documents an agent added whole. Adding a version again

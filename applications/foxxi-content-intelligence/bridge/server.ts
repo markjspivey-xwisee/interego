@@ -11100,7 +11100,8 @@ app.post('/agent/xapi-profiles/remove', xapiProfileWriteRateLimit, async (req, r
 
 // Writing a profile here and hosting it: a draft, a lint, a publication, and every IRI of a held
 // profile answering with content negotiation (src/xapi-profile-server/authoring.ts). Drafts are
-// held in memory; a published version goes to the lattice with the versions that were added.
+// held in memory; a published version goes to the lattice with the versions that were added, and
+// is published only once that write is acknowledged (with no pod configured, nothing is published).
 const xapiProfileAuthoring = new ProfileAuthoring(xapiProfileServer, { hostedUnder: `${xapiProfileServerBase}/p/` });
 mountProfileAuthoring(app, xapiProfileAuthoring, {
   base: xapiProfileServerBase,
