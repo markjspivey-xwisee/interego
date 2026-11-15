@@ -1,5 +1,115 @@
 # Changelog
 
+## 2026-11-15 — Editor witness: a session's mode is read where the agent states it, and a mode switch counts when it is given
+
+A review of the witness rule from the "mode switch is read from the tool call it
+answered" entry below found it wrong for `@agentclientprotocol/claude-agent-acp` in
+three ways, and found a fourth fault while the fix was being written. All are in
+`applications/agent-development-practice/adapters/editor-witness/src/measure.ts`.
+
+The mode a session starts in. The witness counted every request under `default`
+until a `current_mode_update` said otherwise. That held for claude-code-acp, which
+started every session in default. The successor starts a session in the user's
+`permissions.defaultMode`, a resumed or loaded one in the mode it was last in, and
+from 0.107.0 one with no defaultMode in auto. It says so only in its result for
+`session/new`, `load`, `resume` or `fork`, which the witness did not read, and
+announces nothing. A developer whose settings say acceptEdits or auto would have had
+every request counted under default, and the "not consent data" warning would never
+have been printed. The witness now reads the start mode from those results
+(`modes.currentModeId`, else the `mode` config option), the mode in each
+`config_option_update`, and the mode the editor sets with `session/set_mode` or
+`session/set_config_option`, from the agent's result (neither agent announces a
+set_mode, and the successor answers set_config_option with its config options).
+Modes are kept per session. A request from a session whose mode was never stated is
+counted as "unannounced", with its own warning, instead of being taken for default.
+
+The claim that waited for an announcement. An ExitPlanMode answer was held in one
+slot shared by every session, emptied by any permission request and replaced by any
+answer, until a `current_mode_update` reclassified it. The successor awaits other
+work between the answer and its announcement. A request from a background subagent
+or another thread, or the answer to an earlier pending request, arriving in between
+left exit-plan-auto, exit-plan-bypass or exit-plan-accept-edits counted as a standing
+allow_always grant on `switch_mode`, with no warning. So did a clear-context answer
+whose restart failed, since that path publishes no mode, and a mode update from one
+session could claim another session's answer. Now an answer that is not a rejection,
+to a request about a tool call of ACP kind `switch_mode`, is a mode switch when it is
+given: allowing such a call switches the mode whatever comes next. The agent's later
+`current_mode_update` in the same session only confirms it, and the summary counts
+the switches never confirmed instead of turning them back into grants. The old
+agent's route, an optionId naming the mode for a call whose kind is not switch_mode,
+is kept, held per session and matched against that session's next announcement of
+the mode. A mode the editor set confirms and reclassifies nothing.
+
+The protocol version. The only guard against a session on the draft ACP v2 was the
+variable `launch.mjs` sets. v2 has no `current_mode_update` and puts the tool call
+under `subject`, so every plan approval would have read as a grant on "unknown" and
+the summary would not have said it measured nothing. The witness now reads
+`protocolVersion` from the agent's answer to `initialize`; at 2 or more the summary
+prints a NOT MEASURED verdict and no counts. The witness README's first
+editor-settings example and the usage text in `src/cli.ts` now carry
+`"env": { "CLAUDE_AGENT_ACP_PROTOCOL": "v1" }`, as the probe README's already did.
+
+The fourth fault predates the migration. A permission answer was joined to its
+request on the JSON-RPC id alone. Both peers number their own requests from small
+integers, so the agent's result for an editor request with the same id as a pending
+permission request (a finished `session/prompt`, say) was taken for the answer: the
+request left the pending set, and the person's real answer was then ignored. The
+join is now per direction.
+
+A reject_always answer on a switch_mode call was counted as a standing denial of the
+tool kind switch_mode, so the verdict said a non-empty deny set existed. The
+reject-always probe could put that option on the plan approval ("Reject always
+(Approve)"), and choosing it means staying in plan mode. Such answers are now
+reported on their own line, outside the deny set and the verdict. The probe
+(`adapters/reject-always-probe/src/inject.ts`) no longer adds the option to a
+switch_mode menu: its standing rule, keyed on "Approve", would have answered every
+later plan approval "No, keep planning", so the session could never leave plan mode.
+Like the witness, the probe now takes a request's tool kind from the announced tool
+call when the request leaves it out.
+
+The menu comment in `measure.ts` now gives the other orders the successor sends
+ExitPlanMode in (bypass first after a session in bypassPermissions; the reject first
+when Claude Code asks to open on the decline option), and says the optionId route
+applies to a call whose kind is not switch_mode. The test fixtures carry the plan in
+the tool call's content, where each agent puts it.
+
+Tallies are not comparable across these changes. For sessions with claude-code-acp,
+`standingGrantsByTool`, `asksAfterStandingGrant` and the "rule did not stick" warning
+from before the entry below are not comparable field for field with later ones:
+requests were counted under the tool kind "unknown" and are now counted under the
+kind announced for the call, and a "plan" rejection followed by a "plan" update was a
+mode switch and is now a rejection. `modeRequests` from before this entry is not
+comparable either, since a session whose mode was never stated was counted as
+default. EnterPlanMode is classified differently by the two agents: the successor
+gives it kind switch_mode, so approving it counts as a mode switch, while
+claude-code-acp gave it kind "other", so there it stays an allow. Tallies made with
+different agents therefore differ for reasons that are not about the developer. No
+tally is recorded in the repository.
+
+Tests (`applications/agent-development-practice/tests/editor-witness-is-transparent.test.ts`):
+seventeen are new, two of them replacing the tests that asserted the
+misclassification (that an answer's claim does not outlive a new request, and that a
+switch undoes only its own grant, now on the old agent's menu, where grants are still
+undone). Fifteen fail against the previous rule, run with the typecheck setup left
+out because they read the new tally fields; the other two pass there and guard what
+must not change: a session opened in default is not warned about, and a switch on the
+old menu undoes only its own grant. Two existing tests now open their session first.
+The module has 49 tests. The probe change was checked by driving `inject.ts` with a
+stand-in agent: the plan approval, its kind known only from the announced tool call,
+was forwarded unchanged, and a Bash request still got the option.
+
+The dependency entry below said moving to 0.107.0 would need no witness change. That
+was wrong: there a session with no defaultMode starts in auto, which only the start
+mode reading in this entry would see. It is corrected there.
+
+Not covered: no editor session was run through the witness or the probe against
+either agent. An editor that advertises the ACP subagents capability gets a child
+session per subagent, with no session/new result, so the child's requests count as
+unannounced unless the agent sends a config option update for it. After a switch the
+agent never confirmed, the witness does not know the new mode, and that session's
+later requests stay under the mode it last saw; the summary says how many such
+switches there were.
+
 ## 2026-11-15 — Dependencies: claude-code-acp replaced by its renamed successor, claude-agent-acp 0.99.1
 
 `@zed-industries/claude-code-acp` 0.16.2, a root dev dependency, is deprecated.
@@ -122,9 +232,11 @@ bound. The lockfiles of `demos/interego-bridge` and of `examples/dashboard`,
 their copy of the root manifest. They were already behind it (they list
 `@anthropic-ai/sdk` `^0.80.0`) and were not regenerated. The probe still takes a
 tool's name from the request's title; the successor also offers it as
-`toolCall.name`, which the probe does not read. Moving to 0.107.0 needs no
-witness change, since its menu files are identical, once it has been out two
-weeks. minimatch keeps its moderate advisory, fixed only in 11.0.1, on the
+`toolCall.name`, which the probe does not read. 0.107.0's menu files are identical,
+but moving to it is not free for the witness: there a session with no
+`permissions.defaultMode` starts in auto, announced only in the session/new result,
+which the witness reads since the "session's mode is read where the agent states it"
+entry. It should wait until 0.107.0 has been out two weeks. minimatch keeps its moderate advisory, fixed only in 11.0.1, on the
 eslint and electron-builder chains.
 
 ## 2026-11-15 — Editor witness: a mode switch is read from the tool call it answered, not from the option's id

@@ -51,12 +51,20 @@ let traced = 0;
 
 const REJECT_ALWAYS_ID = 'iep_reject_always';
 const PERMISSION_METHOD = 'session/request_permission';
+const UPDATE_METHOD = 'session/update';
+/** ACP's ToolKind for a tool call that switches the session mode, such as a plan approval. */
+const SWITCH_MODE_KIND = 'switch_mode';
 
 interface PermOption { optionId?: unknown; kind?: unknown; name?: unknown }
 interface Frame {
   id?: unknown;
   method?: unknown;
-  params?: { toolCall?: { kind?: unknown; title?: unknown }; options?: PermOption[]; [k: string]: unknown };
+  params?: {
+    toolCall?: { kind?: unknown; title?: unknown; toolCallId?: unknown };
+    update?: { toolCallId?: unknown; kind?: unknown; status?: unknown };
+    options?: PermOption[];
+    [k: string]: unknown;
+  };
   result?: { outcome?: { outcome?: unknown; optionId?: unknown } };
   [k: string]: unknown;
 }
@@ -92,6 +100,9 @@ const pending = new Map<string, { toolName: string; toolKind: string; kinds: Map
 /** requestId -> when we forwarded it, so the answer's latency is visible. A human takes
  *  seconds; an editor answering from policy takes milliseconds. That gap is the tell. */
 const askedAtMs = new Map<string, number>();
+/** toolCallId -> the kind the agent announced for that open call, for a request that leaves
+ *  the kind out (the old agent's always did; the successor's do for a JetBrains AIR client). */
+const announcedKind = new Map<string, string>();
 
 const tally = {
   requestsSeen: 0,
@@ -163,12 +174,24 @@ function handleFromAgent(line: string): void {
     if (traced === TRACE_CAP) note('[probe] frame trace cap reached; further frames not logged');
   }
 
-  if (!f || f.method !== PERMISSION_METHOD) { process.stdout.write(line + '\n'); return; }
+  if (!f || f.method !== PERMISSION_METHOD) {
+    // Remember each open tool call's kind, as the witness does. Read only; the frame is
+    // forwarded as it came.
+    const u = f?.method === UPDATE_METHOD ? f.params?.update : undefined;
+    if (typeof u?.toolCallId === 'string') {
+      if (u.status === 'completed' || u.status === 'failed') announcedKind.delete(u.toolCallId);
+      else if (typeof u.kind === 'string') announcedKind.set(u.toolCallId, u.kind);
+    }
+    process.stdout.write(line + '\n');
+    return;
+  }
 
   tally.requestsSeen += 1;
   const p = f.params;
   const toolName = toolNameOf(p);
-  const toolKind = typeof p?.toolCall?.kind === 'string' ? p.toolCall.kind : 'unknown';
+  const callId = p?.toolCall?.toolCallId;
+  const toolKind = typeof p?.toolCall?.kind === 'string' ? p.toolCall.kind
+    : (typeof callId === 'string' ? announcedKind.get(callId) : undefined) ?? 'unknown';
 
   // ── already denied forever: answer it ourselves, do not ask again ──
   const rule = standing.get(toolName);
@@ -192,8 +215,13 @@ function handleFromAgent(line: string): void {
   }
 
   // ── add the missing option, unless the agent already offers it ──
+  // ★ NOT ON A MODE SWITCH. A plan approval (ACP tool kind switch_mode) asks whether the
+  // session changes mode, not whether a tool may act. A standing deny there would be keyed
+  // on its title ("Approve" for the successor's "Approve Plan") and would answer every later
+  // plan approval "No, keep planning", so the session could never leave plan mode; and it
+  // denies no tool, so it is no evidence for a deny set either.
   const options = Array.isArray(p?.options) ? [...p!.options] : [];
-  if (!options.some(o => o.kind === 'reject_always')) {
+  if (toolKind !== SWITCH_MODE_KIND && !options.some(o => o.kind === 'reject_always')) {
     options.push({ optionId: REJECT_ALWAYS_ID, kind: 'reject_always', name: `Reject always (${toolName})` });
     tally.menusAugmented += 1;
   }
@@ -342,8 +370,9 @@ function finish(): void {
     '',
   ];
   if (tally.menusAugmented === 0) {
-    lines.push('  No menu was augmented — either no permission was requested, or the agent',
-      '  already offers reject_always (in which case use the witness alone).');
+    lines.push('  No menu was augmented — either no permission was requested, every request was',
+      '  a mode switch such as a plan approval (never augmented), or the agent already',
+      '  offers reject_always (in which case use the witness alone).');
   } else if (tally.rejectAlwaysChosen === 0) {
     lines.push('  RESULT: the option was OFFERED and never taken. That is a real negative:',
       '  unlike increment 0, the developer could have chosen it and did not.');

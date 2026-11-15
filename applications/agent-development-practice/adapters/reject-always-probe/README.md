@@ -59,7 +59,7 @@ Chain the witness in front of the probe, and give each the next program after `-
     "--json", "<repo>/witness.json", "--",
     "npx", "tsx", "<repo>/applications/agent-development-practice/adapters/reject-always-probe/src/inject.ts",
     "--json", "<repo>/probe.json", "--",
-    "npx", "@agentclientprotocol/claude-agent-acp"
+    "node", "<repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"
   ],
   "env": { "CLAUDE_AGENT_ACP_PROTOCOL": "v1" }
 }
@@ -69,7 +69,13 @@ The `env` line keeps the session on ACP v1, which is what the witness and the pr
 The agent serves the draft ACP v2 to an editor that asks for version 2 or later; there a
 permission request carries its tool call under `subject`, so the probe would key every
 standing rule on one "unknown" tool, and there is no `current_mode_update` for the witness
-to read. `launch.mjs` sets it itself. The agent needs Node 22 or later.
+to read. `launch.mjs` sets it itself. The agent needs Node 22 or later, and is the one
+installed at the repo root (`npm install` there once): `npx @agentclientprotocol/claude-agent-acp`
+would fetch the newest release outside the repo, not the version the lockfile pins.
+
+The probe never adds the option to a mode switch (ACP tool kind `switch_mode`, such as a
+plan approval). A standing deny there would answer every later plan approval "No, keep
+planning", so the session could never leave plan mode, and it denies no tool.
 
 On Windows with Node 22, `npx` fails here (`spawn npx ENOENT`, and `npx.cmd` gives `EINVAL`
 because Node 22 will not spawn a `.cmd` without a shell). Call `tsx` directly instead:

@@ -12,16 +12,20 @@
  * summary when the session ends, to answer the one question the rest of the design is
  * gated on: do always-scoped denials actually happen?
  *
- * Usage, in your editor's agent settings:
+ * Usage, in your editor's agent settings, with the agent installed at the repo root (a root
+ * dev dependency; Node 22 or later):
  *   command: npx
  *   args:    ["tsx", "<repo>/applications/agent-development-practice/adapters/editor-witness/src/cli.ts",
- *             "--", "npx", "@agentclientprotocol/claude-agent-acp"]
+ *             "--", "node", "<repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"]
+ *   env:     { "CLAUDE_AGENT_ACP_PROTOCOL": "v1" }
  *
- * Or from a terminal, against the agent installed at the repo root (Node 22 or later):
- *   npx tsx src/cli.ts -- node <repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
+ * Or from a terminal:
+ *   CLAUDE_AGENT_ACP_PROTOCOL=v1 npx tsx src/cli.ts -- node <repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
  *
- * Keep the agent on ACP v1 (CLAUDE_AGENT_ACP_PROTOCOL=v1 in its environment): this reads
- * v1 frames, and that agent serves the draft v2 to an editor asking for version 2 or later.
+ * The env entry keeps the agent on ACP v1: this reads v1 frames, and that agent serves the
+ * draft v2 to an editor asking for version 2 or later. A session on v2 anyway is reported as
+ * not measured. The installed agent, not `npx @agentclientprotocol/claude-agent-acp`, which
+ * outside the repo fetches whatever release is newest rather than the one the lockfile pins.
  *
  * --json <path>  also write the tally as JSON (still local; nothing leaves the machine)
  */
@@ -42,7 +46,7 @@ const { jsonOut, cmd } = parseArgv(process.argv.slice(2));
 if (cmd.length === 0) {
   process.stderr.write(
     'editor-witness: give the agent command after `--`.\n' +
-    '  e.g. npx tsx src/cli.ts -- npx @agentclientprotocol/claude-agent-acp\n');
+    '  e.g. npx tsx src/cli.ts -- node <repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js\n');
   process.exit(2);
 }
 

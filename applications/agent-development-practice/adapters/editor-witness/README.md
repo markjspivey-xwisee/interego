@@ -35,32 +35,45 @@ number it prints.
 
 ## Use it
 
-Point your editor's ACP agent command at the witness, and pass the real agent after `--`:
+Point your editor's ACP agent command at the witness, and pass the real agent after `--`.
+The agent is the one installed at the repo root (a root dev dependency, so run `npm install`
+there once); it needs Node 22 or later and a signed-in Claude Code:
 
 ```jsonc
 {
   "command": "npx",
   "args": ["tsx", "<repo>/applications/agent-development-practice/adapters/editor-witness/src/cli.ts",
-           "--", "npx", "@agentclientprotocol/claude-agent-acp"]
+           "--", "node", "<repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js"],
+  "env": { "CLAUDE_AGENT_ACP_PROTOCOL": "v1" }
 }
 ```
 
-Or try it from a terminal against the agent installed at the repo root (a root dev
-dependency; it needs Node 22 or later and a signed-in Claude Code):
+Run the installed agent rather than `npx @agentclientprotocol/claude-agent-acp`: outside the
+repo, npx fetches the newest release, which can change several times a day, while the
+witness's rules were checked against the menus of the version the root lockfile pins.
+
+Or try it from a terminal:
 
 ```sh
-npx tsx src/cli.ts -- node <repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
+CLAUDE_AGENT_ACP_PROTOCOL=v1 npx tsx src/cli.ts -- node <repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 ```
 
 (This used to name the ACP SDK's example agent, which its 2.x releases no longer ship.)
 
-**Keep the session on ACP v1.** The witness forwards the editor's `initialize` and reads
-v1 frames. `@agentclientprotocol/claude-agent-acp` serves the draft ACP v2 to an editor that
-asks for protocol version 2 or later, and v2 has no `current_mode_update` and puts a
-permission request's tool call under `subject`, so modes and tool kinds would go unseen.
-Set `CLAUDE_AGENT_ACP_PROTOCOL=v1` in the agent's environment (an `env` entry beside
-`command` in most editors' agent settings) to have it negotiate such an editor down to v1.
-The probe's `launch.mjs` does this for you.
+**Keep the session on ACP v1; that is what the `env` line is for.** The witness forwards the
+editor's `initialize` and reads v1 frames. `@agentclientprotocol/claude-agent-acp` serves the
+draft ACP v2 to an editor that asks for protocol version 2 or later, and v2 has no
+`current_mode_update` and puts a permission request's tool call under `subject`, so modes and
+tool kinds would go unseen. `CLAUDE_AGENT_ACP_PROTOCOL=v1` has it negotiate such an editor down
+to v1. If a session is on v2 anyway, the witness reads the version from the agent's answer to
+`initialize`, and its summary says the session was NOT MEASURED instead of printing counts.
+The probe's `launch.mjs` sets the variable itself.
+
+**Which mode each request arose in** is read per session: from the agent's result for
+`session/new`, `load`, `resume` or `fork` (the successor starts a session in your
+`permissions.defaultMode`, not necessarily `default`, and announces nothing), from its mode
+updates, and from the editor's own `session/set_mode` and `session/set_config_option`. A
+request from a session whose mode was never stated is counted as `unannounced`.
 
 `--json <path>` also writes the tally to a file. Still local.
 
