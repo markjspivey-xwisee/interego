@@ -233,11 +233,14 @@ describe('consent is counted by correlating the answer back to the request', () 
    * ★ THE DISTINCTION THE INSTRUMENT EXISTS TO PROTECT.
    *
    * Zero always-scoped denials means "developers declined" only if the option was ON THE
-   * MENU. The production ACP agent (@zed-industries/claude-code-acp) offers exactly
-   * allow_always / allow_once / reject_once and NEVER constructs reject_always — verified
-   * against its own dist and against a live session through this tee. Reporting that as
-   * "the thesis is unsupported" states a conclusion the run did not earn: nobody could
-   * have chosen a button that was never rendered.
+   * MENU. The production ACP agent offers exactly allow_always / allow_once / reject_once
+   * and NEVER constructs reject_always. That was verified for @zed-industries/claude-code-acp,
+   * whose ids are the ones below, against its own dist and against a live session through
+   * this tee. Its successor, @agentclientprotocol/claude-agent-acp, was read from its dist
+   * only (permissions/options/shared.js: allow-once / allow-with-updates / reject), and
+   * builds no reject_always either. Reporting that as "the thesis is unsupported" states a
+   * conclusion the run did not earn: nobody could have chosen a button that was never
+   * rendered.
    */
   const realWorldReq = (id: number, toolKind: string) => JSON.stringify({
     jsonrpc: '2.0', id, method: 'session/request_permission',
@@ -269,10 +272,11 @@ describe('consent is counted by correlating the answer back to the request', () 
   /**
    * ★ THE MODE DECIDES WHO ANSWERED.
    *
-   * The production agent advertises acceptEdits ("Auto-accept file edit operations"),
-   * dontAsk ("Don’t prompt for permissions, deny if not pre-approved") and
-   * bypassPermissions ("Bypass all permission checks"), and announces a switch as
-   * session/update with sessionUpdate: "current_mode_update". That frame carries no
+   * The production agent advertises acceptEdits ("Automatically accept all file edits"),
+   * auto ("Claude handles permission decisions") and bypassPermissions ("Accepts all
+   * permissions"); its predecessor advertised dontAsk ("Don’t prompt for permissions, deny
+   * if not pre-approved") in place of auto. Both announce a switch as session/update with
+   * sessionUpdate: "current_mode_update". That frame carries no
    * `kind`, so the original handler dropped it — leaving a tally in which forty human
    * decisions and forty agent auto-accepts look identical.
    */
@@ -316,10 +320,13 @@ describe('consent is counted by correlating the answer back to the request', () 
   /**
    * ★ TRAP (b) — an "allow_always" that is really a SESSION MODE SWITCH.
    *
-   * Verbatim from the production agent's ExitPlanMode prompt: the allow_always option's
-   * optionId is "acceptEdits", a MODE, and choosing it grants nothing about the tool being
-   * asked about. Counted naively it invents a grant and hides a mode change that
-   * reinterprets every answer after it.
+   * The ids and names are those of the old agent's ExitPlanMode prompt
+   * (@zed-industries/claude-code-acp 0.16.2): the allow_always option's optionId is
+   * "acceptEdits", a MODE, and choosing it grants nothing about the tool being asked about.
+   * Counted naively it invents a grant and hides a mode change that reinterprets every
+   * answer after it. The tool kind here is not that agent's (it sent none in the request),
+   * so this case is caught by the optionId naming the mode. The successor's menu, whose ids
+   * name no mode, follows below.
    */
   const exitPlanReq = (id: number) => JSON.stringify({
     jsonrpc: '2.0', id, method: 'session/request_permission',
@@ -361,6 +368,254 @@ describe('consent is counted by correlating the answer back to the request', () 
     expect(t.outcomeByKind['allow_always']).toBe(1);
     expect(t.standingGrantsByTool).toEqual({ edit: 1 });
     expect(t.modeSwitchesMistakableForGrants).toHaveLength(0);
+  });
+
+  /**
+   * ★ TRAP (b) ON THE SUCCESSOR'S MENU, WHERE NO OPTION ID IS A MODE NAME.
+   *
+   * @agentclientprotocol/claude-agent-acp, the renamed successor of claude-code-acp, read
+   * from its own dist (permissions/options/tools.js, options/shared.js, effects.js; 0.99.1
+   * and 0.107.0 are byte-identical there). Its ExitPlanMode menu, verbatim and in the order
+   * it is sent (options.js sorts allow_once, then allow_always, then the rejects). The
+   * clear-context option appears when the request carries a plan; "42% used" is the share
+   * of the context window, which varies.
+   */
+  const SUCCESSOR_EXIT_PLAN = [
+    { optionId: 'exit-plan-default', name: 'Yes, manually approve edits', kind: 'allow_once' },
+    { optionId: 'exit-plan-clear-auto', name: 'Yes, clear context (42% used) and use auto mode', kind: 'allow_always' },
+    { optionId: 'exit-plan-auto', name: 'Yes, and use auto mode', kind: 'allow_always' },
+    { optionId: 'exit-plan-bypass', name: 'Yes, and bypass permissions', kind: 'allow_always' },
+    { optionId: 'reject', name: 'No, keep planning', kind: 'reject_once' },
+  ];
+  /** The same menu when the session offers neither auto nor bypass (tools.js). */
+  const SUCCESSOR_EXIT_PLAN_NO_ELEVATED = [
+    { optionId: 'exit-plan-default', name: 'Yes, manually approve edits', kind: 'allow_once' },
+    { optionId: 'exit-plan-clear-accept-edits', name: 'Yes, clear context (42% used) and auto-accept edits', kind: 'allow_always' },
+    { optionId: 'exit-plan-accept-edits', name: 'Yes, auto-accept edits', kind: 'allow_always' },
+    { optionId: 'reject', name: 'No, keep planning', kind: 'reject_once' },
+  ];
+  /** The request as a v1 client that is not JetBrains AIR receives it (tool-calls/renderer.js). */
+  const successorExitPlanReq = (id: number, options: readonly object[] = SUCCESSOR_EXIT_PLAN) => JSON.stringify({
+    jsonrpc: '2.0', id, method: 'session/request_permission',
+    params: {
+      sessionId: 'sess-1',
+      toolCall: {
+        toolCallId: `toolu_${id}`, name: 'ExitPlanMode', status: 'pending',
+        rawInput: { plan: 'Rename the helper and update its callers.' },
+        title: 'Approve Plan', kind: 'switch_mode', content: [],
+      },
+      options,
+    },
+  });
+  /** The successor sends this right after every mode change (acp-agent.js, updateConfigOption). */
+  const configOptionUpdate = JSON.stringify({
+    jsonrpc: '2.0', method: 'session/update',
+    params: { sessionId: 'sess-1', update: { sessionUpdate: 'config_option_update', configOptions: [] } },
+  });
+
+  // effects.js: each allowing ExitPlanMode answer returns a session `setMode` to this mode,
+  // and acp-agent.js announces it with current_mode_update before anything else.
+  it.each([
+    ['auto', SUCCESSOR_EXIT_PLAN, 'exit-plan-auto', 'auto', 'allow_always'],
+    ['bypass', SUCCESSOR_EXIT_PLAN, 'exit-plan-bypass', 'bypassPermissions', 'allow_always'],
+    ['auto-accept', SUCCESSOR_EXIT_PLAN_NO_ELEVATED, 'exit-plan-accept-edits', 'acceptEdits', 'allow_always'],
+    ['default', SUCCESSOR_EXIT_PLAN, 'exit-plan-default', 'default', 'allow_once'],
+  ] as const)('reads the successor\'s %s answer on ExitPlanMode as a mode switch, not a standing grant',
+    async (_label, options, optionId, mode, kind) => {
+      const { observer, finish } = createTally();
+      await runScript([
+        ['agent',  modeUpdate('plan') + '\n'],
+        ['agent',  successorExitPlanReq(1, options) + '\n'],
+        ['editor', ans(1, optionId) + '\n'],
+        ['agent',  modeUpdate(mode) + '\n'],
+        ['agent',  configOptionUpdate + '\n'],
+      ], [observer]);
+      const t = finish();
+      expect(t.modeSwitchesMistakableForGrants).toEqual([{ optionId, kind, toolKind: 'switch_mode' }]);
+      expect(t.outcomeByKind, 'the answer is a mode decision, not one about a tool').toEqual({});
+      expect(t.standingGrantsByTool).toEqual({});
+      expect(t.modeTimeline).toEqual(['plan', mode]);
+      expect(summarise(t)).toMatch(/SESSION MODE SWITCHES/);
+    });
+
+  it('reads it as a mode switch when the mode announced is not the one the option names', async () => {
+    // session-mode.js: with a model that cannot run auto mode, "use auto mode" lands in
+    // acceptEdits, after an advisory. Matching ids against modes could never see this.
+    const advisory = JSON.stringify({
+      jsonrpc: '2.0', method: 'session/update',
+      params: { sessionId: 'sess-1', update: { sessionUpdate: 'agent_message_chunk', content: { type: 'text',
+        text: '**Auto mode unavailable:** the selected model does not support Auto mode; using Accept edits instead.' } } },
+    });
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  successorExitPlanReq(1) + '\n'],
+      ['editor', ans(1, 'exit-plan-auto') + '\n'],
+      ['agent',  advisory + '\n'],
+      ['agent',  modeUpdate('acceptEdits') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.modeSwitchesMistakableForGrants).toHaveLength(1);
+    expect(t.standingGrantsByTool).toEqual({});
+    expect(t.modeTimeline).toEqual(['acceptEdits']);
+  });
+
+  it('reads a clear-context answer as a mode switch although the mode comes after a restart', async () => {
+    // exit-plan.js: the agent denies the call, starts a fresh context, and only then
+    // announces the mode; the old call's update arrives in between.
+    const failedCall = JSON.stringify({
+      jsonrpc: '2.0', method: 'session/update',
+      params: { sessionId: 'sess-1', update: { sessionUpdate: 'tool_call_update', toolCallId: 'toolu_1', status: 'failed' } },
+    });
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  successorExitPlanReq(1) + '\n'],
+      ['editor', ans(1, 'exit-plan-clear-auto') + '\n'],
+      ['agent',  failedCall + '\n'],
+      ['agent',  modeUpdate('auto') + '\n'],
+      ['agent',  configOptionUpdate + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.modeSwitchesMistakableForGrants).toEqual([
+      { optionId: 'exit-plan-clear-auto', kind: 'allow_always', toolKind: 'switch_mode' },
+    ]);
+    expect(t.standingGrantsByTool).toEqual({});
+  });
+
+  it('keeps the successor\'s "No, keep planning" a rejection, even if a mode update follows', async () => {
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  successorExitPlanReq(1) + '\n'],
+      ['editor', ans(1, 'reject') + '\n'],
+      // The successor announces nothing here; a mode update from elsewhere (a model switch
+      // that clamps auto mode, say) must not turn the refusal into a switch.
+      ['agent',  modeUpdate('acceptEdits') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.outcomeByKind).toEqual({ reject_once: 1 });
+    expect(t.modeSwitchesMistakableForGrants).toHaveLength(0);
+  });
+
+  it('still counts the successor\'s allow-with-updates as a standing grant when a mode update follows', async () => {
+    // The mirror case on the new menu, verbatim from options/shell.js. A mode update after
+    // it is not this answer's doing: Bash is not a mode-switching tool.
+    const bashReq = JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'session/request_permission',
+      params: {
+        sessionId: 'sess-1',
+        toolCall: { toolCallId: 'toolu_1', name: 'Bash', status: 'pending', rawInput: { command: 'npm test' },
+          title: 'npm test', kind: 'execute', content: [] },
+        options: [
+          { optionId: 'allow-once', name: 'Yes', kind: 'allow_once' },
+          { optionId: 'allow-with-updates', name: 'Yes, and don\'t ask again for npm test commands', kind: 'allow_always' },
+          { optionId: 'reject', name: 'No', kind: 'reject_once' },
+        ],
+      },
+    });
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  bashReq + '\n'],
+      ['editor', ans(1, 'allow-with-updates') + '\n'],
+      ['agent',  modeUpdate('acceptEdits') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.outcomeByKind).toEqual({ allow_always: 1 });
+    expect(t.standingGrantsByTool).toEqual({ execute: 1 });
+    expect(t.modeSwitchesMistakableForGrants).toHaveLength(0);
+    expect(t.modeTimeline).toEqual(['acceptEdits']);
+  });
+
+  it('finds the tool kind on the announced tool call when the request leaves it out', async () => {
+    // The old agent's requests carried no `kind`, and the successor leaves it out for a
+    // JetBrains AIR client; both announce the tool call, with its kind, before asking.
+    const announced = JSON.stringify({
+      jsonrpc: '2.0', method: 'session/update',
+      params: { sessionId: 'sess-1', update: { sessionUpdate: 'tool_call', toolCallId: 'toolu_1',
+        title: 'Approve Plan', kind: 'switch_mode', status: 'pending' } },
+    });
+    const kindless = JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'session/request_permission',
+      params: { sessionId: 'sess-1', toolCall: { toolCallId: 'toolu_1', title: 'Approve Plan' }, options: SUCCESSOR_EXIT_PLAN },
+    });
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  announced + '\n'],
+      ['agent',  kindless + '\n'],
+      ['editor', ans(1, 'exit-plan-bypass') + '\n'],
+      ['agent',  modeUpdate('bypassPermissions') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.modeSwitchesMistakableForGrants).toEqual([
+      { optionId: 'exit-plan-bypass', kind: 'allow_always', toolKind: 'switch_mode' },
+    ]);
+    expect(t.standingGrantsByTool).toEqual({});
+  });
+
+  it('still reads the old agent\'s ExitPlanMode menu, verbatim, as a mode switch', async () => {
+    // @zed-industries/claude-code-acp 0.16.2, dist/acp-agent.js: the tool call is announced
+    // with kind switch_mode, and the request repeats only id, input and title.
+    const announced = JSON.stringify({
+      jsonrpc: '2.0', method: 'session/update',
+      params: { sessionId: 'sess-1', update: { _meta: { claudeCode: { toolName: 'ExitPlanMode' } },
+        toolCallId: 'toolu_1', sessionUpdate: 'tool_call', rawInput: { plan: 'p' }, status: 'pending',
+        title: 'Ready to code?', kind: 'switch_mode', content: [] } },
+    });
+    const oldReq = JSON.stringify({
+      jsonrpc: '2.0', id: 1, method: 'session/request_permission',
+      params: {
+        options: [
+          { kind: 'allow_always', name: 'Yes, and auto-accept edits', optionId: 'acceptEdits' },
+          { kind: 'allow_once', name: 'Yes, and manually approve edits', optionId: 'default' },
+          { kind: 'reject_once', name: 'No, keep planning', optionId: 'plan' },
+        ],
+        sessionId: 'sess-1',
+        toolCall: { toolCallId: 'toolu_1', rawInput: { plan: 'p' }, title: 'Ready to code?' },
+      },
+    });
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  announced + '\n'],
+      ['agent',  oldReq + '\n'],
+      ['editor', ans(1, 'acceptEdits') + '\n'],
+      ['agent',  modeUpdate('acceptEdits') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.modeSwitchesMistakableForGrants).toEqual([
+      { optionId: 'acceptEdits', kind: 'allow_always', toolKind: 'switch_mode' },
+    ]);
+    expect(t.outcomeByKind).toEqual({});
+    expect(t.standingGrantsByTool).toEqual({});
+  });
+
+  it('does not carry an answer\'s claim on the next mode update past a new request', async () => {
+    // A mode update belongs to the answer just given. Once the agent has asked something
+    // else, an earlier ExitPlanMode answer that never saw its update cannot claim a later one.
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  successorExitPlanReq(1) + '\n'],
+      ['editor', ans(1, 'exit-plan-auto') + '\n'],
+      ['agent',  req(2, 'edit') + '\n'],
+      ['agent',  modeUpdate('auto') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.modeSwitchesMistakableForGrants).toHaveLength(0);
+    expect(t.outcomeByKind).toEqual({ allow_always: 1 });
+  });
+
+  it('undoes only the grant the switching answer itself added', async () => {
+    // The first answer never saw its mode announced, so its grant stands; the second is
+    // a confirmed switch, and reclassifying it must not take the first one away too.
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  successorExitPlanReq(1) + '\n'],
+      ['editor', ans(1, 'exit-plan-auto') + '\n'],
+      ['agent',  successorExitPlanReq(2) + '\n'],
+      ['editor', ans(2, 'exit-plan-auto') + '\n'],
+      ['agent',  modeUpdate('auto') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.modeSwitchesMistakableForGrants).toHaveLength(1);
+    expect(t.standingGrantsByTool).toEqual({ switch_mode: 1 });
+    expect(t.asksAfterStandingGrant).toBe(1);
   });
 
   /**

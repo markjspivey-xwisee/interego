@@ -107,8 +107,12 @@ const tally = {
 
 /**
  * The tool's stable name. ACP puts the human-facing title on toolCall.title; the agent's own
- * rules key on the tool NAME, which claude-code-acp surfaces in _meta when it is available.
- * Falling back to the title is imperfect but still far finer-grained than `kind`.
+ * rules key on the tool NAME. This reads it from the request's `_meta.toolName` when a peer
+ * puts it there. Neither production agent does: @zed-industries/claude-code-acp named the
+ * tool only on the tool_call update it announced first (`_meta.claudeCode.toolName`), and
+ * @agentclientprotocol/claude-agent-acp puts it on the request's `toolCall.name` (for a
+ * client other than JetBrains AIR). So in practice the name comes from the title. Falling
+ * back to the title is imperfect but still far finer-grained than `kind`.
  */
 function toolNameOf(p: Frame['params']): string {
   const meta = (p as { _meta?: Record<string, unknown> } | undefined)?._meta;
@@ -265,10 +269,13 @@ function handleFromEditor(line: string): void {
   // back faster than a human could read the prompt is honoured ONCE and never persisted,
   // and it is reported loudly rather than counted.
   /**
-   * ★ Translate to an option THIS menu actually offered. 'reject' is claude-code-acp's id
-   * for its ordinary tool menu, but its ExitPlanMode menu uses acceptEdits / default / plan
-   * — so a hardcoded 'reject' sends an optionId the agent never offered, which is precisely
-   * the failure the translation exists to avoid. Resolved from the request's own options.
+   * ★ Translate to an option THIS menu actually offered, found by its KIND, never by an id.
+   * The ids are the agent's own and have changed under us: @zed-industries/claude-code-acp
+   * used 'reject' on its ordinary tool menu but acceptEdits / default / plan on ExitPlanMode,
+   * so a hardcoded 'reject' would have sent an optionId that menu never offered. Its
+   * successor, @agentclientprotocol/claude-agent-acp, offers 'reject' (kind reject_once) on
+   * every menu, ExitPlanMode included ("No, keep planning"), but renamed every other id.
+   * Resolved from the request's own options.
    */
   const rejectIdFor = (kinds: Map<string, string>): string | null => {
     for (const [optionId, kind] of kinds) if (kind === 'reject_once') return optionId;

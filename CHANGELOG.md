@@ -1,5 +1,61 @@
 # Changelog
 
+## 2026-11-15 — Editor witness: a mode switch is read from the tool call it answered, not from the option's id
+
+The agent-development-practice editor witness
+(`applications/agent-development-practice/adapters/editor-witness/src/measure.ts`)
+counts consent decisions on an ACP stream. An allow on ExitPlanMode changes the
+session's mode and grants nothing about a tool, so the witness takes those answers
+out of its grant counts. It recognised one only when the `current_mode_update`
+that followed named the same mode as the chosen option's id. That held for
+`@zed-industries/claude-code-acp`, whose ExitPlanMode ids were mode names
+(acceptEdits, default, plan). Its renamed successor,
+`@agentclientprotocol/claude-agent-acp`, which the next change installs, uses
+exit-plan-auto, exit-plan-bypass, exit-plan-accept-edits, exit-plan-default and
+three exit-plan-clear ids, and reject for "No, keep planning". No id is a mode
+name, and "use auto mode" lands in acceptEdits on a model without auto mode. So
+every auto, bypass or auto-accept answer on ExitPlanMode would have been counted
+as a standing allow_always grant, and every default answer as an allow_once, with
+no warning.
+
+The rule now: an answer that is not a rejection, to a request about a tool call of
+ACP tool kind `switch_mode`, is a mode switch when the agent announces a
+`current_mode_update` before it asks anything else. Both agents give ExitPlanMode
+that kind, and the successor gives it to EnterPlanMode too. An answer whose id
+names the announced mode still counts, which keeps the old agent's menu working
+when the tool kind was not seen. A rejection is never reclassified, and a mode
+update that arrives after a new request no longer reaches back to an earlier
+answer. Reclassifying an answer removes only the standing grant that answer added.
+A request that leaves the tool kind out takes the kind the agent announced for the
+same tool call: the old agent's requests never carried one, and the successor's
+leave it out for a JetBrains AIR client. With the old agent every request had
+therefore been counted under the tool kind "unknown". The summary now says how
+many of the switches were labelled allow_always instead of calling them all that.
+
+The tests (`applications/agent-development-practice/tests/editor-witness-is-transparent.test.ts`)
+quote the successor's menu verbatim from its dist (`permissions/options/tools.js`,
+`options/shared.js`, `effects.js`), which is byte-identical in 0.99.1 and 0.107.0.
+Its auto, bypass, auto-accept and default answers, the auto-mode fallback, and the
+clear-context answer whose mode is announced after a restart are read as mode
+switches. "No, keep planning" stays a rejection when a mode update follows it, and
+allow-with-updates on Bash stays a standing grant when one follows it. The old
+agent's menu, verbatim from its 0.16.2 dist, is still read as a switch, and the
+existing test of it is unchanged. Eight of the eleven tests written first failed
+against the old rule. The other three passed against it, and each fails against a
+rule that reads any following mode update as a switch, which was checked by
+changing the rule. A twelfth, that a switch undoes only its own grant, was added
+with the change and fails without that limit. The comments that quoted the
+production menu and its mode descriptions, in `measure.ts`, in that test and in
+the reject-always probe (`adapters/reject-always-probe/src/inject.ts`), now quote
+both agents. The probe's logic is unchanged: it finds the reject option by kind,
+and the successor offers reject on every menu.
+
+Not covered: the witness still sees only the modes the agent announces. Neither
+agent announces a mode the editor sets with `session/set_mode`, and an Edit
+permission's allow-with-updates that carries a switch to acceptEdits changes the
+mode without a `current_mode_update`. No session was run through the witness
+against either agent for this change.
+
 ## 2026-11-15 — Foxxi: a cmi5 launch's credential survives a restart
 
 Every deploy of the Foxxi bridge ended every practice in progress. A launch is

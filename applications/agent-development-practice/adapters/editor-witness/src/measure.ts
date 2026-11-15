@@ -31,6 +31,10 @@ import type { Frame, Observation, Observer } from './transport.js';
 /** ACP tokens. Confined to this file on purpose — see the header. */
 const PERMISSION_METHOD = 'session/request_permission';
 const UPDATE_METHOD = 'session/update';
+/** ACP's ToolKind for a tool call that switches the session mode. */
+const SWITCH_MODE_KIND = 'switch_mode';
+/** Tool call statuses after which no permission request can name that call. */
+const TERMINAL_STATUSES = new Set(['completed', 'failed']);
 
 export interface Tally {
   /** Permission requests seen, whether or not an answer came back. */
@@ -62,12 +66,15 @@ export interface Tally {
    * ★ THE SESSION MODES SEEN, AND HOW MANY PERMISSION REQUESTS AROSE UNDER EACH.
    *
    * Without this the tally is uninterpretable, because the mode decides WHO answered.
-   * The production agent advertises, in its own words:
-   *   default            "Standard behavior, prompts for dangerous operations"
-   *   acceptEdits        "Auto-accept file edit operations"
-   *   plan               "Planning mode, no actual tool execution"
-   *   dontAsk            "Don't prompt for permissions, deny if not pre-approved"
-   *   bypassPermissions  "Bypass all permission checks"
+   * The production agent, @agentclientprotocol/claude-agent-acp, advertises in its own
+   * words (dist/session-mode.js):
+   *   default            "Always ask before making changes"
+   *   acceptEdits        "Automatically accept all file edits"
+   *   plan               "Create a plan before making changes"
+   *   auto               "Claude handles permission decisions"
+   *   bypassPermissions  "Accepts all permissions" (only when bypass is allowed)
+   * Its predecessor, @zed-industries/claude-code-acp, also had dontAsk ("Don't prompt for
+   * permissions, deny if not pre-approved") and no auto.
    *
    * So `{allow_once: 40}` means forty human decisions under `default`, and something
    * else entirely if the developer switched to acceptEdits at 09:05 — after which the
@@ -82,21 +89,37 @@ export interface Tally {
   /** Mode transitions in order, so a mid-session switch is visible rather than averaged. */
   modeTimeline: string[];
   /**
-   * ★ TRAP (b) — "allow_always" answers that were really SESSION MODE SWITCHES.
+   * ★ TRAP (b) — answers that were really SESSION MODE SWITCHES, most of them labelled
+   * "allow_always".
    *
-   * The production agent's ExitPlanMode prompt is, verbatim:
+   * The production agent's ExitPlanMode prompt, from @agentclientprotocol/claude-agent-acp
+   * (dist/permissions/options/tools.js), verbatim and in the order it is sent:
+   *   { optionId: "exit-plan-default",    name: "Yes, manually approve edits", kind: "allow_once" }
+   *   { optionId: "exit-plan-clear-auto", name: "Yes, clear context (N% used) and use auto mode", kind: "allow_always" }
+   *   { optionId: "exit-plan-auto",       name: "Yes, and use auto mode", kind: "allow_always" }
+   *   { optionId: "exit-plan-bypass",     name: "Yes, and bypass permissions", kind: "allow_always" }
+   *   { optionId: "reject",               name: "No, keep planning", kind: "reject_once" }
+   * With neither auto nor bypass on offer, the auto and bypass entries become
+   * exit-plan-clear-accept-edits and exit-plan-accept-edits ("Yes, auto-accept edits").
+   * Its predecessor, @zed-industries/claude-code-acp, sent instead:
    *   { kind: "allow_always", name: "Yes, and auto-accept edits", optionId: "acceptEdits" }
    *   { kind: "allow_once",   name: "Yes, and manually approve edits", optionId: "default" }
    *   { kind: "reject_once",  name: "No, keep planning",  optionId: "plan" }
    *
-   * Those optionIds ARE mode names. Choosing the first does not grant anything about the
-   * tool being asked about — it puts the whole session into acceptEdits, where the agent
-   * answers subsequent prompts itself. Counting it as "always-allow this tool" adds a
-   * grant that was never made and hides a mode change that reinterprets everything after.
+   * Choosing an allow here grants nothing about the tool being asked about. It puts the
+   * whole session into another mode (dist/permissions/effects.js: auto, bypassPermissions,
+   * acceptEdits or default), where the agent may answer later prompts itself. Counting it as
+   * "always-allow this tool" adds a grant that was never made and hides a mode change that
+   * reinterprets everything after.
    *
-   * Detected from the wire rather than a vendor list: a mode switch announces itself, the
-   * agent emitting `current_mode_update` with `currentModeId` equal to the optionId just
-   * chosen. When that arrives the outcome is reclassified here instead of being guessed at.
+   * Detected from the wire rather than from either vendor's ids: an allowing answer to a
+   * request about a mode-switching tool call (ACP tool kind `switch_mode`, which both agents
+   * give ExitPlanMode, and the successor also EnterPlanMode) is a mode switch once the agent
+   * announces a `current_mode_update` before it asks anything else. The old agent's ids were
+   * mode names, so an answer whose optionId equals the announced mode also counts, for a
+   * request whose tool kind was never seen. A rejection is never reclassified. The successor's
+   * ids never name a mode, and "use auto mode" lands in acceptEdits on a model without auto
+   * mode, so the new rule does not compare the option with the mode at all.
    */
   modeSwitchesMistakableForGrants: Array<{ optionId: string; kind: string; toolKind: string }>;
   /**
@@ -158,8 +181,13 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
   /** toolKind -> true once an always-scoped GRANT is in force for it (trap a). */
   const standingGrant = new Set<string>();
   /** The most recent answered outcome, so a following current_mode_update can reclassify
-   *  it (trap b). Kept as one slot: a mode update follows its own answer immediately. */
-  let lastAnswer: { optionId: string; kind: string; toolKind: string } | null = null;
+   *  it (trap b). Kept as one slot, and emptied by the next permission request: the agent
+   *  announces a mode its answer chose before it asks anything else. */
+  let lastAnswer: { optionId: string; kind: string; toolKind: string; grantAdded: boolean } | null = null;
+  /** toolCallId -> the kind the agent announced for that call, while the call is open. A
+   *  permission request may leave the kind out (the old agent always did, and the
+   *  successor does for a JetBrains AIR client), since the editor already holds it. */
+  const announcedKind = new Map<string, string>();
 
   /** id -> { optionId -> kind, toolKind } for requests awaiting an answer. */
   const pending = new Map<string, { kinds: Map<string, string>; toolKind: string }>();
@@ -185,11 +213,15 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
       tally.permissionRequests++;
       bump(tally.modeRequests, currentMode);
       const id = idOf(f);
+      // A new question: any mode update from here on is not the last answer's doing.
+      lastAnswer = null;
       const p = f.params as {
-        toolCall?: { kind?: unknown };
+        toolCall?: { kind?: unknown; toolCallId?: unknown };
         options?: ReadonlyArray<{ optionId?: unknown; kind?: unknown }>;
       } | undefined;
-      const toolKind = typeof p?.toolCall?.kind === 'string' ? p.toolCall.kind : 'unknown';
+      const callId = p?.toolCall?.toolCallId;
+      const toolKind = typeof p?.toolCall?.kind === 'string' ? p.toolCall.kind
+        : (typeof callId === 'string' ? announcedKind.get(callId) : undefined) ?? 'unknown';
       // A standing grant should stop this tool asking again. If it asks anyway the rule did
       // not stick, and the allow_always total means something different — so it is counted
       // rather than assumed away.
@@ -217,18 +249,22 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
       if (u?.['sessionUpdate'] === 'current_mode_update') {
         const mode = u['currentModeId'];
         if (typeof mode === 'string') {
-          // ★ TRAP (b), resolved from the wire. If the answer just given named this very
-          // mode as its optionId, it was a MODE SWITCH, not a grant on the tool that was
-          // asked about. Undo the misclassification rather than leave a grant that was
-          // never made standing in the tally.
-          if (lastAnswer && lastAnswer.optionId === mode) {
-            tally.modeSwitchesMistakableForGrants.push({ ...lastAnswer });
-            const k = lastAnswer.kind;
+          // ★ TRAP (b), resolved from the wire. An allowing answer about a mode-switching
+          // tool call, followed by this announcement before anything else was asked, was a
+          // MODE SWITCH, not a grant on the tool that was asked about. So was an answer that
+          // named this very mode as its optionId (the old agent's ids). Undo the
+          // misclassification rather than leave a grant that was never made standing in
+          // the tally. A rejection is never a switch, whatever follows it.
+          if (lastAnswer && !lastAnswer.kind.startsWith('reject')
+            && (lastAnswer.toolKind === SWITCH_MODE_KIND || lastAnswer.optionId === mode)) {
+            const { optionId, kind: k, toolKind } = lastAnswer;
+            tally.modeSwitchesMistakableForGrants.push({ optionId, kind: k, toolKind });
             if (tally.outcomeByKind[k]) {
               tally.outcomeByKind[k] -= 1;
               if (tally.outcomeByKind[k] === 0) delete tally.outcomeByKind[k];
             }
-            if (k === 'allow_always') {
+            // Undo only the grant this answer added: an earlier one for the same tool stands.
+            if (lastAnswer.grantAdded) {
               standingGrant.delete(lastAnswer.toolKind);
               const t = lastAnswer.toolKind;
               if (tally.standingGrantsByTool[t]) {
@@ -247,6 +283,13 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
       }
       const kind = u?.['kind'];
       if (typeof kind === 'string') bump(tally.toolCallsByKind, kind);
+      // Remember each open call's kind for a request that names the call without it, and
+      // forget it once the call has ended, so a long session does not accumulate them.
+      const callId = u?.['toolCallId'];
+      if (typeof callId === 'string') {
+        if (TERMINAL_STATUSES.has(String(u?.['status']))) announcedKind.delete(callId);
+        else if (typeof kind === 'string') announcedKind.set(callId, kind);
+      }
       return;
     }
 
@@ -262,15 +305,17 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
 
     const kind = ctx.kinds.get(outcome.optionId) ?? 'unknown';
     bump(tally.outcomeByKind, kind);
-    // Held so an immediately following current_mode_update can reclassify it (trap b).
-    lastAnswer = { optionId: outcome.optionId, kind, toolKind: ctx.toolKind };
     // ★ TRAP (a). A standing GRANT is recorded per TOOL, not as a tick in a frequency:
     // the tool stops asking afterwards, so a second one for the same tool cannot occur
     // and the total counts tools placed under a rule, not times you said yes.
-    if (kind.startsWith('allow') && kind.endsWith('always') && !standingGrant.has(ctx.toolKind)) {
+    const grantAdded = kind.startsWith('allow') && kind.endsWith('always') && !standingGrant.has(ctx.toolKind);
+    if (grantAdded) {
       standingGrant.add(ctx.toolKind);
       bump(tally.standingGrantsByTool, ctx.toolKind);
     }
+    // Held so a current_mode_update announced before the next question can reclassify it
+    // (trap b).
+    lastAnswer = { optionId: outcome.optionId, kind, toolKind: ctx.toolKind, grantAdded };
     // "always" is the axis that matters: a once-scoped answer is a UI event, an
     // always-scoped one is a rule the human intends to persist.
     if (kind.startsWith('reject') && kind.endsWith('always')) {
@@ -368,14 +413,16 @@ export function summarise(t: Tally): string {
     }
   }
 
-  // ★ Trap (b): a mode switch wearing an allow_always label.
+  // ★ Trap (b): a mode switch wearing an allow_always (or allow_once) label.
   if (t.modeSwitchesMistakableForGrants.length > 0) {
     const ids = [...new Set(t.modeSwitchesMistakableForGrants.map(m => m.optionId))].join(', ');
+    const labelledAlways = t.modeSwitchesMistakableForGrants.filter(m => m.kind === 'allow_always').length;
     lines.push('',
-      `  NOTE: ${t.modeSwitchesMistakableForGrants.length} answer(s) labelled allow_always were`,
-      `  SESSION MODE SWITCHES (${ids}), not grants on the tool being asked about. They have`,
-      '  been removed from the outcome counts — the agent confirmed each by announcing the',
-      '  matching current_mode_update, so this is observed, not inferred from a vendor list.');
+      `  NOTE: ${t.modeSwitchesMistakableForGrants.length} answer(s) were SESSION MODE SWITCHES (${ids}), not decisions`,
+      `  about the tool being asked about; ${labelledAlways} of them were labelled allow_always. They have`,
+      '  been removed from the outcome counts — each answered a mode-switching tool call (or',
+      '  named the mode), and the agent then announced a current_mode_update before asking',
+      '  anything else, so this is observed, not inferred from a vendor list.');
   }
 
   lines.push('');
