@@ -1145,16 +1145,22 @@ _XSD_INTEGERS = frozenset({
     "integer", "int", "long", "short", "byte", "nonNegativeInteger", "positiveInteger",
     "negativeInteger", "nonPositiveInteger", "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte",
 })
-_XSD_DECIMALS = frozenset({"decimal", "double", "float"})
+_XSD_DOUBLES = frozenset({"double", "float"})
 # A number as JSON can carry one: a sign, digits with an optional fraction and an
 # optional exponent. NaN, inf, hex, digit separators ("1_000", which int() and
 # float() accept) and trailing text are not numbers here. Each pattern matches an
 # input in one way only, so a long remote default costs linear time.
 _DECIMAL_LEXICAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
 _INTEGER_LEXICAL = re.compile(r"[+-]?[0-9]+")
+# The spaces a number may have around it. The page strips the same four, so the
+# two clients read every input alike; str.strip() would also take U+001C to
+# U+001F, U+0085 and others that the page's String.prototype.trim leaves.
+_SPACES = " \t\r\n"
 
 
 def _numeric_kind(fld: Field) -> str | None:
+    """"integer", "decimal" or "double" (for double and float), or None for a
+    field that does not hold a number."""
     if fld.json_kind:
         return None
     dt = _text(fld.datatype)
@@ -1163,8 +1169,10 @@ def _numeric_kind(fld: Field) -> str | None:
     local = dt.rsplit("#", 1)[-1]
     if local in _XSD_INTEGERS:
         return "integer"
-    if local in _XSD_DECIMALS:
+    if local == "decimal":
         return "decimal"
+    if local in _XSD_DOUBLES:
+        return "double"
     return None
 
 
@@ -1176,16 +1184,42 @@ def _lexical_number(value: Any) -> int | float | None:
         return value
     if isinstance(value, float):
         return value if math.isfinite(value) else None
-    if not isinstance(value, str) or not _DECIMAL_LEXICAL.fullmatch(value.strip()):
+    if not isinstance(value, str) or not _DECIMAL_LEXICAL.fullmatch(value.strip(_SPACES)):
         return None
-    number = float(value.strip())
+    number = float(value.strip(_SPACES))
     return number if math.isfinite(number) else None
 
 
+def _decimal_key(text: str) -> str:
+    """The decimal a numeral writes, as its significant digits and the power of
+    ten of the last one: "2.50", "25e-1" and "+2.5" all give "25e-1", and every
+    zero gives "0". The text has matched _DECIMAL_LEXICAL. An exponent of more
+    than 15 digits puts a nonzero value past any double (and can be past what
+    int() reads), so it gives a key that no double's text gives. The page's
+    decimalKey is the same."""
+    negative = text.startswith("-")
+    mantissa, _, exponent = text.lstrip("+-").lower().partition("e")
+    whole, _, fraction = mantissa.partition(".")
+    digits = whole + fraction
+    significant = digits.lstrip("0").rstrip("0")
+    if not significant:
+        return "0"
+    exp_digits = exponent.lstrip("+-").lstrip("0") or "0"
+    if len(exp_digits) > 15:
+        return "out of range"
+    scale = -int(exp_digits) if exponent.startswith("-") else int(exp_digits)
+    trailing = len(digits.rstrip("0"))
+    power = scale - len(fraction) + (len(digits) - trailing)
+    return ("-" if negative else "") + significant + "e" + str(power)
+
+
 def _coerce_number(kind: str, value: Any) -> int | float:
-    """A number field's value is the number its text writes, or a ValueError:
-    never NaN, inf, a cut-off fraction or a number other than the one written."""
-    text = str(value).strip()
+    """A number field's value is the number its text writes, or a ValueError,
+    never NaN or inf. An integer is sent exactly, at any length int() reads. A
+    decimal is sent as a float, so one whose float's shortest text, which is
+    what json.dumps sends, writes another decimal is refused. A double or float
+    is the double nearest its text, which is the value XSD gives that text."""
+    text = str(value).strip(_SPACES)
     if kind == "integer":
         if not _INTEGER_LEXICAL.fullmatch(text):
             raise ValueError("not an integer")
@@ -1198,7 +1232,30 @@ def _coerce_number(kind: str, value: Any) -> int | float:
     number = float(text)
     if not math.isfinite(number):
         raise ValueError("not a finite number")
+    if kind == "decimal" and _decimal_key(text) != _decimal_key(repr(number)):
+        raise ValueError("decimal cannot be sent exactly")
     return number
+
+
+def _enum_has_number(fld: Field, kind: str, number: int | float) -> bool:
+    """A number field's value is in its enum when an entry, read as a number of
+    the field's type, is the same number: "1.0"^^xsd:decimal admits 1, and "+1"
+    admits 1 in a long field. An entry that reads as no such number admits
+    nothing. The page compares the same way."""
+    for entry in fld.enum:
+        if isinstance(entry, bool) or not isinstance(entry, (int, float, str)):
+            continue
+        try:
+            if isinstance(entry, float) and entry.is_integer() and abs(entry) < 1e21:
+                # The page reads JSON 2.0 as the number 2 and writes it "2", so it is an integer there too.
+                text = str(int(entry))
+            else:
+                text = entry if isinstance(entry, str) else str(entry)
+            if _coerce_number(kind, text) == number:
+                return True
+        except ValueError:
+            continue
+    return False
 
 
 def coerce_value(fld: Field, value: Any) -> Any:
@@ -1245,11 +1302,11 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
                 used = alias
                 break
         # Spaces around a number are not part of it, so a number field holding only spaces is empty.
-        numeric = _numeric_kind(fld) is not None
+        numeric = _numeric_kind(fld)
         if numeric and isinstance(found, str):
-            found = found.strip()
+            found = found.strip(_SPACES)
         if (found is None or found == "") and fld.default is not None:
-            found = fld.default.strip() if numeric and isinstance(fld.default, str) else fld.default
+            found = fld.default.strip(_SPACES) if numeric and isinstance(fld.default, str) else fld.default
         required = fld.required or (fld.min_count or 0) >= 1
         if found is None or found == "":
             if required:
@@ -1269,8 +1326,13 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
         # A field's pattern is reported by `describe` and never run: a remote
         # regular expression can take time exponential in the input, and the
         # server that receives the value is the one that enforces it.
-        if not structured and fld.enum and text not in {str(x) for x in fld.enum}:
-            errors.append(f"{fld.name}: must be one of {sorted(str(x) for x in fld.enum)}")
+        if not structured and fld.enum:
+            if numeric and isinstance(typed, (int, float)):
+                listed = _enum_has_number(fld, numeric, typed)
+            else:
+                listed = text in {str(x) for x in fld.enum}
+            if not listed:
+                errors.append(f"{fld.name}: must be one of {sorted(str(x) for x in fld.enum)}")
         # A numeric bound needs a number to compare: a value that is none is an
         # error, not a pass. A bound that is not a number, such as a date, is
         # the server's to check.

@@ -44,7 +44,7 @@ python3 hmc.py invoke URL act-rest-listConcepts --field limit=2
 python3 hmc.py invoke URL act-propose-mapping --field graph_iri=x --field graph_content='@prefix : <urn:x:> . :subject :predicate :object .'
 ```
 
-The last command is a dry run: unsafe operations never send unless you pass `--confirm`. Its values have to satisfy the shape the catalog publishes: on 2026-11-15 that asked for a `graph_content` of at least 40 characters. Both clients check a shape's required fields, lengths, ranges and enumerations, and that a number field holds a number of its type, before they plan a request, and leave patterns to the server.
+The last command is a dry run: unsafe operations never send unless you pass `--confirm`. Its values have to satisfy the shape the catalog publishes: on 2026-11-15 that asked for a `graph_content` of at least 40 characters. Both clients check a shape's required fields, lengths, ranges and enumerations, and that a number field holds a number of its type, before they plan a request, and leave patterns to the server. A number field's enumeration is checked by value, so `1` matches an entry written `1.0`. An integer or decimal that a JSON number would change is refused rather than rounded (the page's integers stop at 2^53); a double or float field takes the double nearest what was typed.
 
 Web app: use the hosted page, open `index.html` directly as a file, or point any static server at this directory. There is no build step and nothing to install.
 

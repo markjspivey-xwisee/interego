@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-y8eBnfFjJwLHQpIRJZbByJbxZuQyinJw+3mVhu/Xqxg='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-XMhg28MOUlwei8Ec8K0m3Bqbq7LY8DmJNUn5K97CzUU='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -828,14 +828,27 @@ function templatePathValue(spec, value, op, encOp) {
 // implies, such as unsignedByte's 0 to 255, is left to the server, as xsd:int's was.
 const XSD_INTEGERS = new Set(["integer", "int", "long", "short", "byte", "nonNegativeInteger", "positiveInteger",
   "negativeInteger", "nonPositiveInteger", "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte"]);
-const XSD_DECIMALS = new Set(["decimal", "double", "float"]);
+const XSD_DOUBLES = new Set(["double", "float"]);
+// "integer", "decimal" or "double" (for double and float), or null for a field
+// that does not hold a number.
 function numericKind(field) {
   if (field.jsonKind) return null;
   const dt = asText(field.datatype);
   const hash = dt.lastIndexOf("#");
   if (hash < 0) return null;
   const local = dt.slice(hash + 1);
-  return XSD_INTEGERS.has(local) ? "integer" : (XSD_DECIMALS.has(local) ? "decimal" : null);
+  if (XSD_INTEGERS.has(local)) return "integer";
+  if (local === "decimal") return "decimal";
+  return XSD_DOUBLES.has(local) ? "double" : null;
+}
+// The spaces a number may have around it: space, tab, CR and LF. hmc.py strips
+// the same four, so the two clients read every input alike; String.prototype.trim
+// would also take U+FEFF and others that Python's strip leaves, and the reverse.
+function trimSpaces(s) {
+  let a = 0; let b = s.length;
+  while (a < b && " \t\r\n".includes(s[a])) a++;
+  while (b > a && " \t\r\n".includes(s[b - 1])) b--;
+  return s.slice(a, b);
 }
 // A number as JSON can carry one: a sign, digits with an optional fraction and
 // an optional exponent. NaN, Infinity, hex, digit separators and trailing text
@@ -846,25 +859,67 @@ const INTEGER_LEXICAL = /^[+-]?[0-9]+$/;
 // The finite number a value or a remote bound writes, or null when it writes none.
 function lexicalNumber(v) {
   if (typeof v === "number") return Number.isFinite(v) ? v : null;
-  if (typeof v !== "string" || !DECIMAL_LEXICAL.test(v.trim())) return null;
-  const n = Number(v.trim());
+  if (typeof v !== "string" || !DECIMAL_LEXICAL.test(trimSpaces(v))) return null;
+  const n = Number(trimSpaces(v));
   return Number.isFinite(n) ? n : null;
 }
+// The decimal a numeral writes, as its significant digits and the power of ten
+// of the last one: "2.50", "25e-1" and "+2.5" all give "25e-1", and every zero
+// gives "0". The text has passed DECIMAL_LEXICAL. An exponent of more than 15
+// digits puts a nonzero value past any double, and past what a double counts
+// exactly, so it gives a key that no double's text gives. hmc.py's
+// _decimal_key is the same.
+function decimalKey(text) {
+  let s = text;
+  const negative = s[0] === "-";
+  if (s[0] === "-" || s[0] === "+") s = s.slice(1);
+  let e = s.indexOf("e");
+  if (e < 0) e = s.indexOf("E");
+  const mantissa = e < 0 ? s : s.slice(0, e);
+  const exponent = e < 0 ? "0" : s.slice(e + 1);
+  const dot = mantissa.indexOf(".");
+  const fraction = dot < 0 ? "" : mantissa.slice(dot + 1);
+  const digits = (dot < 0 ? mantissa : mantissa.slice(0, dot)) + fraction;
+  let a = 0; while (a < digits.length && digits[a] === "0") a++;
+  let b = digits.length; while (b > a && digits[b - 1] === "0") b--;
+  if (a === b) return "0";
+  let expDigits = exponent[0] === "-" || exponent[0] === "+" ? exponent.slice(1) : exponent;
+  let z = 0; while (z < expDigits.length - 1 && expDigits[z] === "0") z++;
+  expDigits = expDigits.slice(z);
+  if (expDigits.length > 15) return "out of range";
+  const power = Number(exponent) - fraction.length + (digits.length - b);
+  return (negative ? "-" : "") + digits.slice(a, b) + "e" + power;
+}
 // A number field's value is the number its text writes, or a validation error
-// naming the field: never NaN, Infinity, a rounded integer or a cut-off fraction.
+// naming the field, never NaN or Infinity. An integer or a decimal is exact, so
+// one that a JSON number would change is refused: an integer past 2^53, which a
+// double rounds, or a decimal whose double's shortest text, which is what
+// JSON.stringify sends, writes another decimal. A double or float is the double
+// nearest its text, which is the value XSD gives that text.
 function coerceNumber(field, kind, value) {
-  const t = String(value).trim();
+  const t = trimSpaces(String(value));
   if (kind === "integer") {
     if (!INTEGER_LEXICAL.test(t)) throw new Error(field.name + ": not an integer");
     const n = Number(t);
-    // Past 2^53 a JSON number is rounded, so the page refuses rather than send another one.
     if (!Number.isSafeInteger(n)) throw new Error(field.name + ": integer too large to send exactly");
     return n;
   }
   if (!DECIMAL_LEXICAL.test(t)) throw new Error(field.name + ": not a number");
   const n = Number(t);
   if (!Number.isFinite(n)) throw new Error(field.name + ": not a finite number");
+  if (kind === "decimal" && decimalKey(t) !== decimalKey(String(n))) throw new Error(field.name + ": decimal cannot be sent exactly");
   return n;
+}
+// A number field's value is in its enum when an entry, read as a number of the
+// field's type, is the same number: "1.0"^^xsd:decimal admits 1, and "+1" admits
+// 1 in a long field. The select offers each entry as it is written, and that text
+// reads as the entry's number. An entry that reads as no such number admits
+// nothing. hmc.py compares the same way.
+function enumHasNumber(field, kind, n) {
+  return asList(field.enum).some(v => {
+    if (typeof v !== "number" && typeof v !== "string") return false;
+    try { return coerceNumber(field, kind, String(v)) === n; } catch { return false; }
+  });
 }
 function coerceValue(field, value) {
   if (value == null || value === "") return null;
@@ -905,8 +960,8 @@ function validateFields(control, supplied) {
   for (const field of control.fields) {
     const aliases = [field.name, field.variable, field.path && localName(field.path)].filter(Boolean);
     // Spaces around a number are not part of it, so a number field holding only spaces is empty.
-    const numeric = numericKind(field) != null;
-    const trim = (v) => (numeric && typeof v === "string" ? v.trim() : v);
+    const numeric = numericKind(field);
+    const trim = (v) => (numeric && typeof v === "string" ? trimSpaces(v) : v);
     let found = aliases.map(a => trim(supplied[a])).find(v => v != null && v !== "");
     if ((found == null || found === "") && field.defaultValue != null) found = trim(field.defaultValue);
     const required = field.required || (field.minCount || 0) >= 1;
@@ -918,7 +973,8 @@ function validateFields(control, supplied) {
     if (!structured && field.minLength != null && text.length < field.minLength) errors.push(field.name + ": shorter than minLength " + field.minLength);
     if (!structured && field.maxLength != null && text.length > field.maxLength) errors.push(field.name + ": longer than maxLength " + field.maxLength);
     const allowed = enumOptions(field);
-    if (!structured && allowed.length && !allowed.includes(text)) errors.push(field.name + ": must be one of " + allowed.join(", "));
+    const listed = numeric && typeof typed === "number" ? enumHasNumber(field, numeric, typed) : allowed.includes(text);
+    if (!structured && allowed.length && !listed) errors.push(field.name + ": must be one of " + allowed.join(", "));
     // A numeric bound needs a number to compare: a value that is none is an
     // error, not a pass. A bound that is not a number, such as a date, is the
     // server's to check.

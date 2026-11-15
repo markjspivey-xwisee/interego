@@ -91,8 +91,8 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       { '@id': '_:l2', 'rdf:first': { '@value': 'two' }, 'rdf:rest': { '@id': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil' } },
     ])),
     '/list-ok': () => ({ type: 'text/plain', body: 'fine' }),
-    // A write whose fields are numbers: a required decimal bounded 1 to 10, two integer types, and
-    // a field with a numeric range but no datatype.
+    // A write whose fields are numbers: a required decimal bounded 1 to 10, two integer types, a
+    // field with a numeric range but no datatype, an unbounded decimal and a double.
     '/numbers': json(descriptor('numbers', [{ '@id': `${base}/numbers#w`, '@type': 'iep:Affordance',
       'iep:action': 'urn:numbers', 'hydra:method': 'POST', 'hydra:title': 'Numeric write', 'hydra:target': `${base}/num-target`,
       'hydra:expects': { '@id': `${base}/numbers#S` } }], [
@@ -101,8 +101,25 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
         { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer` },
         { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long` },
         { 'sh:path': 'urn:p:level', 'sh:name': 'level', 'sh:minInclusive': 1, 'sh:maxInclusive': 5 },
+        { 'sh:path': 'urn:p:price', 'sh:name': 'price', 'sh:datatype': `${XSD}decimal` },
+        { 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', 'sh:datatype': `${XSD}double` },
       ] },
     ])),
+    // Number fields whose sh:in entries are written in other ways than the number a person would
+    // type, as in the page's test: typed literals "1.0" and "2.50" for a decimal, "1.0E0" and a
+    // JSON 0.5 for a double, "+1" and "02" for a long, and JSON 1 and 2.0 for an integer.
+    // JSON.stringify writes 2.0 as 2, so the 2.0 is put in the text by hand.
+    '/num-enum': () => ({ type: 'application/ld+json', body: JSON.stringify(descriptor('num-enum', [{ '@id': `${base}/num-enum#w`,
+      '@type': 'iep:Affordance', 'iep:action': 'urn:num-enum', 'hydra:method': 'POST', 'hydra:title': 'Numeric enum write',
+      'hydra:target': `${base}/num-target`, 'hydra:expects': { '@id': `${base}/num-enum#S` } }], [
+      { '@id': `${base}/num-enum#S`, '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': 'urn:p:version', 'sh:name': 'version', 'sh:datatype': `${XSD}decimal`,
+          'sh:in': { '@list': [{ '@value': '1.0', '@type': `${XSD}decimal` }, { '@value': '2.50', '@type': `${XSD}decimal` }] } },
+        { 'sh:path': 'urn:p:scale', 'sh:name': 'scale', 'sh:datatype': `${XSD}double`, 'sh:in': [{ '@value': '1.0E0', '@type': `${XSD}double` }, 0.5] },
+        { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long`, 'sh:in': { '@list': ['+1', '02'] } },
+        { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer`, 'sh:in': [1, 'COUNT-TWO'] },
+      ] },
+    ])).replace('"COUNT-TWO"', '2.0') }),
     '/num-target': () => ({ type: 'application/json', body: '{"ok":true}' }),
   };
 }
@@ -226,6 +243,16 @@ describe('hmc.py: numeric fields', () => {
     ['count', '1_000', 'count: not an integer'],
     ['size', '1.5', 'size: not an integer'],
     ['level', 'abc', 'level: not a number'],
+    // Only a space, tab, CR or LF around a number is not part of it, the set the page strips too.
+    ['amount', '\x1c5', 'amount: not a number'],
+    ['amount', '5\u00a0', 'amount: not a number'],
+    ['amount', '5\u0085', 'amount: not a number'],
+    // A decimal is exact, so one that a JSON number (a double) would change is refused, as on the
+    // page: the first would pass maxInclusive 10 as 10.
+    ['amount', '10.0000000000000001', 'amount: decimal cannot be sent exactly'],
+    ['price', '9007199254740993', 'price: decimal cannot be sent exactly'],
+    ['price', '0.10000000000000001', 'price: decimal cannot be sent exactly'],
+    ['price', '1e-400', 'price: decimal cannot be sent exactly'],
   ])('refuses %s=%j with a confirmed write, and sends nothing', async (name, value, message) => {
     const before = sent();
     const r = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount=2', '--field', `${name}=${value}`, '--confirm']);
@@ -236,17 +263,59 @@ describe('hmc.py: numeric fields', () => {
   });
 
   it('sends numbers written as numbers as numbers, an integer of any size exactly', async () => {
+    // A double is the double nearest its text, the value XSD gives that text.
     const dry = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount= 2.5 ', '--field', 'count=-3',
-      '--field', 'size=+12345678901234567890', '--field', 'level=3', '--dry-run', '--json']);
+      '--field', 'size=+12345678901234567890', '--field', 'level=3', '--field', 'price=\t2.50\r\n',
+      '--field', 'ratio=0.10000000000000001', '--dry-run', '--json']);
     expect(dry.code, dry.stderr).toBe(0);
     // JSON.parse would round the long integer, so its text is checked as printed.
     expect(dry.stdout).toContain('"size": 12345678901234567890');
     const body = (JSON.parse(dry.stdout) as { request: { body: Record<string, unknown> } }).request.body;
-    expect({ ...body, size: null }).toEqual({ amount: 2.5, count: -3, size: null, level: '3' });
+    expect({ ...body, size: null }).toEqual({ amount: 2.5, count: -3, size: null, level: '3', price: 2.5, ratio: 0.1 });
     const before = sent();
     const live = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount=2.5', '--confirm']);
     expect(live.code, live.stderr).toBe(0);
     expect(sent()).toBe(before + 1);
+  });
+});
+
+describe('hmc.py: numbers in an enum', () => {
+  const plan = async (fields: string[]) => {
+    const r = await hmc(['invoke', `${base}/num-enum`, 'urn:num-enum', ...fields.flatMap(f => ['--field', f]), '--dry-run', '--json']);
+    return { r, body: r.code === 0 ? (JSON.parse(r.stdout) as { request: { body: unknown } }).request.body : null };
+  };
+
+  it('accepts an entry as the number it is, as the page does, however either is written', async () => {
+    const d = await hmc(['describe', `${base}/num-enum`, 'urn:num-enum']);
+    expect(d.code, d.stderr).toBe(0);
+    const fields = (JSON.parse(d.stdout) as { fields: Array<{ name: string; in: unknown[] }> }).fields;
+    expect(Object.fromEntries(fields.map(f => [f.name, f.in]))).toEqual({
+      version: ['1.0', '2.50'], scale: ['1.0E0', 0.5], size: ['+1', '02'], count: [1, 2],
+    });
+    const cases: Array<[string[], Record<string, number>]> = [
+      // Each entry as it is offered, which is what the page's select submits.
+      [['version=1.0', 'scale=1.0E0', 'size=+1', 'count=1'], { version: 1, scale: 1, size: 1, count: 1 }],
+      [['version=2.50', 'scale=0.5', 'size=02', 'count=2'], { version: 2.5, scale: 0.5, size: 2, count: 2 }],
+      // The same numbers written another way.
+      [['version=1', 'scale=1', 'size=1', 'count=2'], { version: 1, scale: 1, size: 1, count: 2 }],
+      [['version=2.5', 'scale=5e-1', 'size=2', 'count=+1'], { version: 2.5, scale: 0.5, size: 2, count: 1 }],
+    ];
+    for (const [given, body] of cases) {
+      const { r, body: sent } = await plan(given);
+      expect(r.code, `${given.join(' ')}: ${r.stderr}`).toBe(0);
+      expect(sent, given.join(' ')).toEqual(body);
+    }
+  });
+
+  it.each([
+    ['version=3', 'version: must be one of'],
+    ['scale=2', 'scale: must be one of'],
+    ['size=3', 'size: must be one of'],
+    ['count=3', 'count: must be one of'],
+  ])('refuses %s, which is no entry', async (given, message) => {
+    const { r } = await plan([given]);
+    expect(r.code, r.stdout + r.stderr).toBe(2);
+    expect(r.stderr).toContain(message);
   });
 });
 

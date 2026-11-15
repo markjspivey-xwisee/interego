@@ -131,19 +131,39 @@ object, `{"@list": ["draft", "published"]}` alone or in a one-element array, was
 read as a single entry, the list's own JSON, so both clients refused `draft`.
 Both now take the list's members, unwrapping `@value` and `@id` as they do any
 literal, and still read RDF `rdf:first` / `rdf:rest` lists and plain arrays; an
-empty list object restricts nothing, as an empty enum does. A decimal, double or
-float field turned text that was not a number into `NaN`, which the page sent as
-`null` and `hmc.py` as `NaN` (it also took `nan` and `1_000`), and the range
-checks let it through; the page cut `1.5` in an integer field to `1`. A number
-field now takes only a sign, digits, a fraction and an exponent, with spaces
-around them ignored, and otherwise reports `<name>: not a number` or
-`<name>: not an integer`, so **Dry run**, **Invoke** and `hmc.py invoke` refuse
-and send nothing. A value that is not a number fails a numeric `minInclusive`
-or `maxInclusive` instead of passing it. `long`, `short`, `byte` and the other
-XSD integer types are read as integers too; the bounds those types imply are
-left to the server, as `int`'s were. The page refuses an integer past 2^53
-rather than round it; `hmc.py` sends one of any size exactly. Each case has a
-page and a command-line test that failed before.
+empty list object restricts nothing, as an empty enum does. On the page a
+decimal, double or float field turned any text that was not a number into
+`NaN` and sent it as `null`; `hmc.py` refused most such text but took `NaN`,
+`nan`, `inf` and `1_000`. The range checks let `NaN` through, and the page cut
+`1.5` in an integer field to `1`. A number field now takes only a sign, digits,
+a fraction and an exponent, with spaces around them ignored, and otherwise
+reports `<name>: not a number` or `<name>: not an integer`, so **Dry run**,
+**Invoke** and `hmc.py invoke` refuse and send nothing. A value that is not a
+number fails a numeric `minInclusive` or `maxInclusive` instead of passing it.
+`long`, `short`, `byte` and the other XSD integer types are read as integers
+too; the bounds those types imply are left to the server, as `int`'s were. The
+page refuses an integer past 2^53 rather than round it; `hmc.py` sends exactly
+any integer Python reads (up to 4,300 digits) and reports a longer one as
+`integer too long`. Each case but these two limits has a page and a
+command-line test that failed before; the 2^53 refusal has a page test.
+
+**Numbers in an enum, and exact decimals.** A number field's `sh:in` was then
+checked against the text of the number it held, so the page offered entries it
+would never accept: `"1.0"^^xsd:decimal`, `"2.50"`, `"1.0E0"^^xsd:double`, and
+`+1` or `02` in a `long` field each failed once chosen, while `hmc.py`, which
+compared the text typed, accepted them. Both clients now accept a value when an
+entry, read as a number of the field's type, is the same number, so `1` and
+`1.0` both match `"1.0"^^xsd:decimal`. A decimal was also rounded to a double
+without a word: 2^53 + 1 (9007199254740993) was sent as 2^53, `1e-400` as `0`,
+and `10.0000000000000001` as `10`, which then passed a `maxInclusive` of 10. An
+`xsd:decimal` is exact, so both clients now refuse one whose JSON number would
+write another decimal, with `<name>: decimal cannot be sent exactly`, as the
+page refuses an integer past 2^53. A double or float field still takes the
+double nearest its text, which is the value XSD gives that text. And the two
+clients trimmed different characters around a number: the page's `trim` took
+U+FEFF, and Python's `strip` took U+001C to U+001F and U+0085. Both now trim
+space, tab, CR and LF only. Each of the three changes has a page test and a
+command-line test that failed before. The CSP script hash is updated.
 
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so

@@ -225,8 +225,8 @@ const listEnum = { '@context': CTX, '@id': `${HOST}/list-enum`,
     { '@id': '_:l1', 'rdf:first': 'one', 'rdf:rest': { '@id': '_:l2' } },
     { '@id': '_:l2', 'rdf:first': { '@value': 'two' }, 'rdf:rest': { '@id': RDF_NIL } },
   ] };
-// A write whose fields are numbers: a required decimal bounded 1 to 10, two integer types, and a
-// field with a numeric range but no datatype.
+// A write whose fields are numbers: a required decimal bounded 1 to 10, two integer types, a
+// field with a numeric range but no datatype, an unbounded decimal and a double.
 const numbers = { '@context': CTX, '@id': `${HOST}/numbers`,
   'iep:affordance': [{ '@id': `${HOST}/numbers#w`, '@type': 'iep:Affordance', 'iep:action': 'urn:numbers', 'hydra:method': 'POST',
     'hydra:title': 'Numeric write', 'hydra:target': `${HOST}/num-target`, 'hydra:expects': { '@id': `${HOST}/numbers#S` } }],
@@ -235,7 +235,24 @@ const numbers = { '@context': CTX, '@id': `${HOST}/numbers`,
     { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer` },
     { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long` },
     { 'sh:path': 'urn:p:level', 'sh:name': 'level', 'sh:minInclusive': 1, 'sh:maxInclusive': 5 },
+    { 'sh:path': 'urn:p:price', 'sh:name': 'price', 'sh:datatype': `${XSD}decimal` },
+    { 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', 'sh:datatype': `${XSD}double` },
   ] }] };
+// Number fields whose sh:in entries are written in other ways than the number a person would
+// type: typed literals "1.0" and "2.50" for a decimal, "1.0E0" and a JSON 0.5 for a double, "+1"
+// and "02" for a long, and JSON 1 and 2.0 for an integer. The same document is served to hmc.py.
+const numEnum = { '@context': CTX, '@id': `${HOST}/num-enum`,
+  'iep:affordance': [{ '@id': `${HOST}/num-enum#w`, '@type': 'iep:Affordance', 'iep:action': 'urn:num-enum', 'hydra:method': 'POST',
+    'hydra:title': 'Numeric enum write', 'hydra:target': `${HOST}/num-target`, 'hydra:expects': { '@id': `${HOST}/num-enum#S` } }],
+  '@graph': [{ '@id': `${HOST}/num-enum#S`, '@type': 'sh:NodeShape', 'sh:property': [
+    { 'sh:path': 'urn:p:version', 'sh:name': 'version', 'sh:datatype': `${XSD}decimal`,
+      'sh:in': { '@list': [{ '@value': '1.0', '@type': `${XSD}decimal` }, { '@value': '2.50', '@type': `${XSD}decimal` }] } },
+    { 'sh:path': 'urn:p:scale', 'sh:name': 'scale', 'sh:datatype': `${XSD}double`, 'sh:in': [{ '@value': '1.0E0', '@type': `${XSD}double` }, 0.5] },
+    { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long`, 'sh:in': { '@list': ['+1', '02'] } },
+    { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer`, 'sh:in': [1, 'COUNT-TWO'] },
+  ] }] };
+// JSON.stringify writes 2.0 as 2, so the 2.0 is put in the text by hand.
+const numEnumText = JSON.stringify(numEnum).replace('"COUNT-TWO"', '2.0');
 // Documents served at exact paths on HOST, in addition to /desc, /hm and /body/<kind>.
 const DOCS: Record<string, { type: string; text: string }> = {
   '/pair': { type: 'application/ld+json', text: JSON.stringify(pair) },
@@ -246,6 +263,7 @@ const DOCS: Record<string, { type: string; text: string }> = {
   '/list-enum': { type: 'application/ld+json', text: JSON.stringify(listEnum) },
   '/numbers': { type: 'application/ld+json', text: JSON.stringify(numbers) },
   '/num-target': { type: 'application/json', text: '{"ok":true}' },
+  '/num-enum': { type: 'application/ld+json', text: numEnumText },
 };
 
 function respond(text: string, type: string, status = 200): Response {
@@ -730,6 +748,15 @@ describe('hypermedia client: numeric fields', () => {
     ['size', '9007199254740993', 'size: integer too large to send exactly'],
     ['level', 'abc', 'level: not a number'],
     ['level', '7', 'level: above maxInclusive'],
+    // Only a space, tab, CR or LF around a number is not part of it, the set hmc.py strips too.
+    ['amount', '\uFEFF5', 'amount: not a number'],
+    ['amount', '5\u00A0', 'amount: not a number'],
+    // A decimal is exact, so one that a JSON number (a double) would change is refused, as an
+    // integer past 2^53 is: the first would pass maxInclusive 10 as 10.
+    ['amount', '10.0000000000000001', 'amount: decimal cannot be sent exactly'],
+    ['price', '9007199254740993', 'price: decimal cannot be sent exactly'],
+    ['price', '0.10000000000000001', 'price: decimal cannot be sent exactly'],
+    ['price', '1e-400', 'price: decimal cannot be sent exactly'],
   ];
 
   it('refuses input that is not a number of the field\'s type, on Dry run and on a confirmed Invoke, and sends nothing', async () => {
@@ -757,13 +784,14 @@ describe('hypermedia client: numeric fields', () => {
       await new Promise(r => setTimeout(r, 50));
       expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
 
-      // Numbers written as numbers are sent as numbers; surrounding spaces are not part of one.
-      fill({ amount: ' 2.5 ', count: '-3', size: '+7', level: '3' });
+      // Numbers written as numbers are sent as numbers; surrounding spaces are not part of one. A
+      // double is the double nearest its text, the value XSD gives that text.
+      fill({ amount: ' 2.5 ', count: '-3', size: '+7', level: '3', price: '\t2.50 ', ratio: '0.10000000000000001' });
       result.innerHTML = '';
       click(t, button(document, 'dry'));
       await vi.waitFor(() => expect(result.textContent).toContain('Dry run — nothing was sent.'));
       const planned = JSON.parse(result.querySelector('pre')!.textContent!) as { body: unknown };
-      expect(planned.body).toEqual({ amount: 2.5, count: -3, size: 7, level: '3' });
+      expect(planned.body).toEqual({ amount: 2.5, count: -3, size: 7, level: '3', price: 2.5, ratio: 0.1 });
       click(t, button(document, 'live'));
       await vi.waitFor(() => expect(result.textContent).toMatch(/Response HTTP 200/));
       expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([{ url: `${HOST}/num-target`, method: 'POST' }]);
@@ -782,6 +810,38 @@ describe('hypermedia client: numeric fields', () => {
       expect(shown).toContain('amount: not a number');
       expect(shown).toContain('count: not an integer');
       expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: numbers in an enum', () => {
+  it('offers each entry as it is written and accepts it as the number it is', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/num-enum')}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+      click(t, card(document, 'Numeric enum write')!);
+      const select = (name: string) => document.querySelector<HTMLSelectElement>(`#invokeForm select[data-field="${name}"]`)!;
+      const options = (name: string) => [...select(name).options].map(o => o.value);
+      expect(options('version')).toEqual(['', '1.0', '2.50']);
+      expect(options('scale')).toEqual(['', '1.0E0', '0.5']);
+      expect(options('size')).toEqual(['', '+1', '02']);
+      expect(options('count')).toEqual(['', '1', '2']);
+      const result = document.getElementById('result')!;
+      const picks: Array<[Record<string, string>, Record<string, number>]> = [
+        [{ version: '1.0', scale: '1.0E0', size: '+1', count: '1' }, { version: 1, scale: 1, size: 1, count: 1 }],
+        [{ version: '2.50', scale: '0.5', size: '02', count: '2' }, { version: 2.5, scale: 0.5, size: 2, count: 2 }],
+      ];
+      for (const [chosen, body] of picks) {
+        for (const [name, value] of Object.entries(chosen)) select(name).value = value;
+        result.innerHTML = '';
+        click(t, button(document, 'dry'));
+        await vi.waitFor(() => expect(result.textContent).toMatch(/Dry run — nothing was sent\.|Validation failed/));
+        expect(result.textContent, JSON.stringify(chosen)).not.toContain('Validation failed');
+        expect((JSON.parse(result.querySelector('pre')!.textContent!) as { body: unknown }).body).toEqual(body);
+      }
+      expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+      assertInert(t, 'numeric enum');
     } finally { t.dom.window.close(); }
   });
 });
