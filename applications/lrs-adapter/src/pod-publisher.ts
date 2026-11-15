@@ -20,6 +20,7 @@ import {
   publish,
 } from '@interego/solid';
 import { LrsClient, type LrsClientConfig, type XapiStatement } from './lrs-client.js';
+import { buildProjectionStatement, keepsSeveralNarratives, IEP_NS } from './projection-statement.js';
 import { createHash } from 'node:crypto';
 import type {
   IRI,
@@ -222,38 +223,12 @@ export async function projectDescriptorToLrs(
     lossNotes.push('Source descriptor was Hypothetical; projected per caller request; xAPI consumers may treat as committed unless they read extensions');
   }
 
-  const stmt: XapiStatement = {
-    id: crypto.randomUUID(),
-    actor: args.actor,
-    verb: { id: args.verbId, display: { 'en-US': args.verbDisplay ?? args.verbId.split('/').pop() ?? 'observed' } },
-    object: {
-      objectType: 'Activity',
-      id: args.objectId,
-      definition: { name: { 'en-US': args.objectName ?? args.descriptorIri } },
-    },
-    result: {
-      response: args.coherentNarratives?.[0] ?? '',
-      extensions: {} as Record<string, unknown>,
-    },
-    timestamp: nowIso(),
-  };
-
-  // xAPI extension KEYS are dereferenceable predicate IRIs under the published iep:
-  // vocabulary now (…/ns/iep#<term>), not opaque urns — each GETs its definition.
-  const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
-  const exts: Record<string, unknown> = {
-    [`${IEP}sourceDescriptor`]: args.descriptorIri,
-    [`${IEP}modalStatus`]: args.modalStatus ?? 'Asserted',
-  };
-
-  if (args.coherentNarratives && args.coherentNarratives.length > 1) {
-    exts[`${IEP}coherentNarratives`] = args.coherentNarratives;
-    exts[`${IEP}projectionLossy`] = true;
-    lossNotes.push(`Source had ${args.coherentNarratives.length} coherent narratives; first emitted in result.response, remainder in result.extensions[${IEP}coherentNarratives]`);
+  // The statement itself is built in projection-statement.ts, so it can be checked against a
+  // profile without an LRS or a pod.
+  const stmt: XapiStatement = buildProjectionStatement(args, crypto.randomUUID(), nowIso());
+  if (keepsSeveralNarratives(args)) {
+    lossNotes.push(`Source had ${args.coherentNarratives?.length ?? 0} coherent narratives; first emitted in result.response, remainder in result.extensions[${IEP_NS}coherentNarratives]`);
   }
-
-  // eslint-disable-next-line @typescript-eslint/no-explicit-any
-  (stmt['result'] as any).extensions = exts;
 
   // Post to LRS
   const statementId = await client.postStatement(stmt);
