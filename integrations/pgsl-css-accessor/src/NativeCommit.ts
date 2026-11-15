@@ -14,7 +14,33 @@ export interface NativeCommitCommand {
   version: 1;
   expectedRevision: string | null;
   contentType: string;
-  bodyBase64: string;
+  /** The representation itself. Exactly one of `bodyBase64` and `source` is present. */
+  bodyBase64?: string;
+  /**
+   * Instead of the bytes: a native document in the same pod that already holds this exact
+   * representation. The commit happens only if it does (digest, size and media type).
+   */
+  source?: NativeCommitSource;
+}
+export interface NativeCommitSource { path: string; bodyDigest: string; size: number; }
+
+/**
+ * Where a source may be, given the document being committed. A source is named by path alone, so
+ * it is always on the target's own origin, and it must lie under the target's top-level container:
+ * whoever may write the target is writing inside that pod, and gains nothing from a source there
+ * that a read of it would not give. Auxiliary resources and containers are never sources.
+ */
+export function nativeCommitSourceResource(target: string, source: NativeCommitSource): string {
+  const refuse = (): never => { throw new BadRequestHttpError('Native commit source is not a document in the same pod'); };
+  const at = new URL(target), path = source.path;
+  if (path.length > 2048 || !path.startsWith('/') || path.endsWith('/') || /[?#\\\s]/.test(path) || /\.(?:meta|acl|acr)$/.test(path)) refuse();
+  const segments = path.split('/').slice(1);
+  if (segments.length < 2 || segments.some(segment => segment === '' || segment === '.' || segment === '..' || /%2f|%5c|%2e/i.test(segment))) refuse();
+  const resolved = new URL(path, at);
+  if (resolved.origin !== at.origin || resolved.pathname !== path || resolved.href === at.href) refuse();
+  const pod = at.pathname.split('/')[1];
+  if (!pod || at.pathname.split('/').length < 3 || segments[0] !== pod) refuse();
+  return resolved.href;
 }
 export interface NativeEngineReceipt {
   status: 'committed'; revision: string; bodyDigest: string; contentType: string;
@@ -64,7 +90,7 @@ export function nativeRevisionEtag(revision: string, contentType: string): strin
   return `"${revision}-${representation}"`;
 }
 
-export async function readNativeCommitCommand(stream: Readable): Promise<{ command: NativeCommitCommand; bytes: Buffer }> {
+export async function readNativeCommitCommand(stream: Readable): Promise<{ command: NativeCommitCommand; bytes?: Buffer }> {
   const chunks: Buffer[] = [];
   let size = 0;
   for await (const chunk of stream) {
@@ -78,15 +104,26 @@ export async function readNativeCommitCommand(stream: Readable): Promise<{ comma
   catch { throw new BadRequestHttpError('Native commit command must be valid JSON'); }
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new BadRequestHttpError('Invalid native commit command');
   const body = value as Record<string, unknown>;
-  if (Object.keys(body).some(key => !['version', 'expectedRevision', 'contentType', 'bodyBase64'].includes(key))
+  if (Object.keys(body).some(key => !['version', 'expectedRevision', 'contentType', 'bodyBase64', 'source'].includes(key))
     || body.version !== 1 || !Object.hasOwn(body, 'expectedRevision')
     || !(body.expectedRevision === null || isNativeRevision(body.expectedRevision))
     || typeof body.contentType !== 'string' || body.contentType.length > 255
     || !/^[A-Za-z0-9!#$%&'*+.^_|~-]+\/[A-Za-z0-9!#$%&'*+.^_|~-]+(?:;[^\r\n]*)?$/.test(body.contentType)
     || isNativeCommitMediaType(body.contentType) || body.contentType === 'internal/container'
-    || typeof body.bodyBase64 !== 'string' || body.bodyBase64.length % 4 !== 0) {
+    || Object.hasOwn(body, 'bodyBase64') === Object.hasOwn(body, 'source')) {
     throw new BadRequestHttpError('Invalid native commit command');
   }
+  if (Object.hasOwn(body, 'source')) {
+    const source = body.source as Record<string, unknown> | null;
+    if (!source || typeof source !== 'object' || Array.isArray(source)
+      || Object.keys(source).some(key => !['path', 'bodyDigest', 'size'].includes(key))
+      || typeof source.path !== 'string' || !isNativeRevision(source.bodyDigest)
+      || !Number.isSafeInteger(source.size) || (source.size as number) < 0 || (source.size as number) > NATIVE_COMMIT_MAX_BYTES) {
+      throw new BadRequestHttpError('Invalid native commit command');
+    }
+    return { command: body as unknown as NativeCommitCommand };
+  }
+  if (typeof body.bodyBase64 !== 'string' || body.bodyBase64.length % 4 !== 0) throw new BadRequestHttpError('Invalid native commit command');
   // The alphabet and padding are proven by the exact re-encoding below. A pattern match over the
   // whole body said the same thing first, at many times the cost on a megabyte.
   const bytes = Buffer.from(body.bodyBase64, 'base64');
@@ -110,12 +147,15 @@ export function requireNativeCommitScope(resource: string, command: NativeCommit
 }
 
 /** Only the requested document's actual engine commit can populate this request's receipt. */
-export function setNativeCommitReceipt(resource: string, command: NativeCommitCommand, bytes: Buffer, receipt: NativeEngineReceipt): void {
+export function setNativeCommitReceipt(resource: string, command: NativeCommitCommand, bytes: Buffer | { bodyDigest: string; size: number }, receipt: NativeEngineReceipt): void {
   const scope = nativeCommitScope.getStore();
-  const digest = `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+  // Bound to the bytes submitted, or, for a commit from a source, to the digest and size the
+  // caller stated and the engine found the source to hold.
+  const digest = Buffer.isBuffer(bytes) ? `sha256:${createHash('sha256').update(bytes).digest('hex')}` : bytes.bodyDigest;
+  const length = Buffer.isBuffer(bytes) ? bytes.length : bytes.size;
   if (!scope || scope.resource !== resource || scope.receipt || scope.expectedRevision !== command.expectedRevision
     || receipt.status !== 'committed' || receipt.path !== resource || !isNativeRevision(receipt.revision)
-    || receipt.bodyDigest !== digest || receipt.contentType !== command.contentType || receipt.size !== bytes.length) {
+    || receipt.bodyDigest !== digest || receipt.contentType !== command.contentType || receipt.size !== length) {
     throw new InternalServerError('Native commit receipt did not bind the requested representation');
   }
   scope.receipt = { ...receipt, version: 1, resource, expectedRevision: command.expectedRevision };
