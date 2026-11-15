@@ -949,6 +949,8 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
     ],
     "notes": [
       "Refused unless the lint has no findings. A published version is immutable, and what it leaves out of the version before stays resolvable as deprecated.",
+      "A version is published only once its durable write is acknowledged. Otherwise the answer is 503 with ok: false and published: false, the version answers nowhere, the draft is kept, and the same version can be published again.",
+      "The examples of a draft are published with the version and are then public, served unsigned at /xapi/profiles/examples.",
       "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
     ]
   },
