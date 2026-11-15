@@ -8,6 +8,7 @@
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
+import { rateLimit } from 'express-rate-limit';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { dirname, join } from 'node:path';
@@ -80,6 +81,10 @@ const act = async (path: string, payload: object, as = ALICE) => {
   const r = await fetch(`${origin}/agent/xapi-profiles/${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ as, payload }) });
   return { status: r.status, body: await r.json() as Record<string, unknown> & { findings?: LintFinding[]; document?: Obj } };
 };
+const fakeSigner = async (body: unknown) => {
+  const b = body as { as?: string; payload?: Record<string, unknown> };
+  return typeof b?.as === 'string' ? { ok: true as const, callerDid: b.as, payload: b.payload ?? {} } : { ok: false as const, status: 401, error: 'agent signature required' };
+};
 const get = (path: string, accept?: string) => fetch(`${origin}${path}`, accept ? { headers: { Accept: accept } } : {});
 const resource = (iri: string, accept?: string) => get(`/xapi/profiles/resource?iri=${encodeURIComponent(iri)}`, accept);
 
@@ -90,10 +95,8 @@ beforeAll(async () => {
   app.use(express.json({ limit: '2mb' }));
   mountProfileAuthoring(app, authoring, {
     base: BASE,
-    verify: async body => {
-      const b = body as { as?: string; payload?: Record<string, unknown> };
-      return typeof b?.as === 'string' ? { ok: true, callerDid: b.as, payload: b.payload ?? {} } : { ok: false, status: 401, error: 'agent signature required' };
-    },
+    verify: fakeSigner,
+    guard: rateLimit({ windowMs: 60_000, limit: 100_000, standardHeaders: 'draft-8', legacyHeaders: false }),
   });
   mountProfileHosting(app, server, { base: BASE });
   http = app.listen(0, '127.0.0.1');
@@ -132,6 +135,30 @@ describe('the lint tells a writer what to change', () => {
     expect(codes(lint(d => { d.concepts[4]!.schema = 'https://example.org/schemas/tide'; }))).toEqual(['schema-both']);
     expect(codes(lint(d => { d.concepts[4]!.inlineSchema = 'a number'; }))).toEqual(['schema-unreadable']);
     expect(codes(lint(d => { delete d.prefLabel; delete d.author; d.conformsTo = 'something else'; }))).toEqual(['label', 'profile-author', 'profile-conforms-to']);
+  });
+
+  it('mounts no signed route without its limit: past it, a request is refused before its signature is read', async () => {
+    const app = express();
+    app.use(express.json());
+    let verified = 0;
+    mountProfileAuthoring(app, new ProfileAuthoring(makeServer(), { hostedUnder: `${BASE}/p/` }), {
+      base: BASE,
+      verify: async body => { verified++; return fakeSigner(body); },
+      guard: rateLimit({ windowMs: 60_000, limit: 2, standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' } }),
+    });
+    const limited = app.listen(0, '127.0.0.1');
+    await new Promise<void>(resolve => limited.once('listening', () => resolve()));
+    try {
+      const post = (path: string) => fetch(`http://127.0.0.1:${(limited.address() as AddressInfo).port}/agent/xapi-profiles/${path}`,
+        { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ as: ALICE, payload: {} }) });
+      expect((await post('draft')).status).toBe(200);
+      expect((await post('draft')).status).toBe(200);
+      for (const path of ['draft', 'lint', 'publish']) {
+        const refused = await post(path);
+        expect([path, refused.status, await refused.json()]).toEqual([path, 429, { error: 'too_many_requests' }]);
+      }
+      expect(verified).toBe(2);
+    } finally { await new Promise(resolve => limited.close(resolve)); }
   });
 
   it('finds a verb, an activity type or an extension that nothing declares, and one declared as another kind', () => {
