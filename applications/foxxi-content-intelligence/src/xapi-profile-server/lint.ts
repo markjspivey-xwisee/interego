@@ -52,6 +52,7 @@ export interface LintOptions {
 
 export const CONCEPT_TYPES = ['Verb', 'ActivityType', 'AttachmentUsageType', 'ContextExtension', 'ResultExtension', 'ActivityExtension',
   'StateResource', 'AgentProfileResource', 'ActivityProfileResource', 'Activity'] as const;
+const PROFILE_CONTEXT = 'https://w3id.org/xapi/profiles/context';
 const EXTENSION_TYPES = ['ContextExtension', 'ResultExtension', 'ActivityExtension'];
 const PATTERN_KINDS = ['sequence', 'alternates', 'optional', 'oneOrMore', 'zeroOrMore'] as const;
 const ACTIVITY_TYPE_PROPERTIES = ['objectActivityType', 'contextGroupingActivityType', 'contextParentActivityType', 'contextOtherActivityType', 'contextCategoryActivityType'] as const;
@@ -62,7 +63,10 @@ const hasText = (v: unknown): boolean => isObject(v) && Object.values(v).some(x 
 /** Which kind of extension a rule's path reads, from where it sits in a statement. */
 function extensionsNamed(path: string): Array<{ iri: string; type: string }> {
   const out: Array<{ iri: string; type: string }> = [];
-  for (const m of path.matchAll(/([A-Za-z]+)\.extensions\s*\[\s*(?:'([^']+)'|"([^"]+)")\s*\]/g)) {
+  // `$["context"]["extensions"][…]` reads the same place as `$.context.extensions[…]`: put a quoted
+  // plain name back in dot form first, so what is found does not depend on which the writer chose.
+  const dotted = path.replace(/\[\s*(?:'([A-Za-z_][A-Za-z0-9_]*)'|"([A-Za-z_][A-Za-z0-9_]*)")\s*\]/g, (_m, single?: string, double?: string) => `.${single ?? double}`);
+  for (const m of dotted.matchAll(/([A-Za-z]+)\.extensions\s*\[\s*(?:'([^']+)'|"([^"]+)")\s*\]/g)) {
     const iri = m[2] ?? m[3]!;
     out.push({ iri, type: m[1] === 'context' ? 'ContextExtension' : m[1] === 'result' ? 'ResultExtension' : 'ActivityExtension' });
   }
@@ -89,7 +93,9 @@ export function lintProfile(doc: unknown, examples: ProfileExamples = emptyExamp
   const version = options.version ?? (typeof versions[0]?.id === 'string' ? versions[0].id : undefined);
   if (!isIri(doc.id)) say('profile-id', 'profile', 'id', 'The profile has no id that is an IRI.', 'Give the profile an "id": the IRI it is known by.');
   if (!list(doc.type).includes('Profile')) say('profile-type', 'profile', 'type', 'The profile does not say it is one.', 'Set "type": "Profile".');
-  if (doc['@context'] === undefined) say('profile-context', 'profile', '@context', 'The document has no @context, so it is not read as JSON-LD.', 'Set "@context": "https://w3id.org/xapi/profiles/context".');
+  // The server reads a profile with the xAPI Profiles context whatever the document says. A document
+  // that names another, or none, would mean one thing as JSON-LD and another as the triples served.
+  if (!list(doc['@context']).includes(PROFILE_CONTEXT)) say('profile-context', 'profile', '@context', doc['@context'] === undefined ? 'The document has no @context, so it is not read as JSON-LD.' : 'The @context does not include the xAPI Profiles context, so its terms are not read as the ones the specification defines.', `Set "@context": "${PROFILE_CONTEXT}", or an array that includes it.`);
   if (doc.conformsTo !== 'https://w3id.org/xapi/profiles#1.0') say('profile-conforms-to', 'profile', 'conformsTo', 'The profile does not say which specification it conforms to.', 'Set "conformsTo": "https://w3id.org/xapi/profiles#1.0".');
   if (!hasText(doc.prefLabel)) say('label', 'profile', 'prefLabel', 'The profile has no label.', 'Give it a "prefLabel": a language map such as { "en": "…" }.');
   if (!hasText(doc.definition)) say('definition', 'profile', 'definition', 'The profile has no definition.', 'Give it a "definition": a language map saying what the profile is for.');

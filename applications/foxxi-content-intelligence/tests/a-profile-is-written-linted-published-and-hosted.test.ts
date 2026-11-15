@@ -144,6 +144,20 @@ describe('the lint tells a writer what to change', () => {
       [`${P}/templates/sketch`, 'templates[2].objectActivityType'],
     ]);
     expect(codes(lint(d => { d.concepts[4]!.type = 'ResultExtension'; }))).toEqual(['term-kind']);
+    // The same place written with brackets is the same place: the extension is still found.
+    const bracketed = (d: Parameters<NonNullable<Parameters<typeof lint>[0]>>[0]) => {
+      const rule = (d.templates[1] as unknown as { rules: Array<{ location: string }> }).rules[1]!;
+      const written = rule.location.replace(/\.([A-Za-z]+)\.extensions\[/, (_m, holder: string) => `["${holder}"]['extensions'][`);
+      expect(written).not.toBe(rule.location);
+      rule.location = written;
+    };
+    expect(lint(bracketed)).toEqual([]);
+    expect(lint(d => { bracketed(d); d.concepts = d.concepts.filter(c => c.type !== 'ContextExtension' && c.type !== 'ResultExtension' && c.type !== 'ActivityExtension'); })
+      .filter(f => f.code === 'undeclared-term').map(f => f.path)).toEqual(['templates[1].rules[1].location']);
+    // A context that is not the specification's is a different document from the triples served for it.
+    for (const context of [null, {}, 'https://example.org/another-context', ['https://example.org/another-context']])
+      expect(codes(lint(d => { (d as unknown as Record<string, unknown>)['@context'] = context; }))).toEqual(['profile-context']);
+    expect(lint(d => { (d as unknown as Record<string, unknown>)['@context'] = ['https://w3id.org/xapi/profiles/context', { ex: 'https://example.org/' }]; })).toEqual([]);
     // A term another publisher defines is known when the writer vouches for it, or another held profile declares it.
     const elsewhere = whole(d => { d.concepts = d.concepts.filter(c => c.id !== `${P}/verbs/sketched`); });
     expect(codes(lintProfile(elsewhere, examples))).toEqual(['undeclared-term']);
