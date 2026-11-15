@@ -641,8 +641,9 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
     // compare-and-set still decides. The immutable commit object behind a head is fetched
     // once, and the capability probe is repeated every five minutes, not before each write.
     // The head write is confirmed by its receipt, which is bound to the digest and size of the
-    // bytes written, and is not read back a second time.
-    reuseBackingCommits: true, commitFromExpectedSnapshot: true, acceptHeadReceipt: true, capabilityProbeTtlMs: 300_000,
+    // bytes written, and is not read back a second time. The head's bytes are the staged commit
+    // object's, so the head write names that object and does not upload them again.
+    reuseBackingCommits: true, commitFromExpectedSnapshot: true, acceptHeadReceipt: true, commitHeadFromStaged: true, capabilityProbeTtlMs: 300_000,
     // Index nodes as small byte holons, not wide tuples: a write rewrote about a megabyte of
     // index for a few kilobytes of references. This bridge is the store's only reader.
     compactIndexNodes: true,

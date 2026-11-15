@@ -172,6 +172,14 @@ export interface NativeCommitStoreOptions {
    * Off by default: without it the head is read back and compared, as before.
    */
   readonly acceptHeadReceipt?: boolean;
+  /**
+   * Publish the head by naming the commit object this commit has just confirmed staged, in place
+   * of sending the head's bytes (they are the same bytes). Used only when the server advertises
+   * `Interego-Native-Commit-Source`. The server commits only if that document holds the stated
+   * digest and size, the head compare-and-set is the same one, and the receipt is checked against
+   * the bytes as always. A server that refuses is sent the ordinary commit. Off by default.
+   */
+  readonly commitHeadFromStaged?: boolean;
   /** Opt-in: write index nodes in the compact form. An index node holds up to sixteen
    * references. As one wide PGSL tuple, each of those and every contiguous run of them is a
    * node of its own, so sixteen references (about 5 KB) become several hundred nodes and
@@ -410,7 +418,7 @@ export class NativeCommitStore implements NativeCommitClient {
   private verifiedIndexNodeWeight = 0;
   private readonly indexNodeReads = new Map<string, Promise<IndexNode>>();
   private readonly probeTtl: number;
-  private probed: { at: number; batchedStaging: boolean } | undefined;
+  private probed: { at: number; batchedStaging: boolean; sourceCommit: boolean } | undefined;
   /** Digest-checked commit objects by URL; a handful, since only recent heads are asked for. */
   private readonly backingCommits = new Map<string, Uint8Array>();
   /** The verified head behind each snapshot object this client handed out. */
@@ -441,13 +449,14 @@ export class NativeCommitStore implements NativeCommitClient {
   /** Capability discovery only; a verified no-op CAS is the adapter's write-authority check. */
   async ready(): Promise<void> { await this.discover(); }
   /** The same single probe; also whether the server stages several representations in one request. */
-  private async discover(): Promise<{ batchedStaging: boolean }> {
+  private async discover(): Promise<{ batchedStaging: boolean; sourceCommit: boolean }> {
     let response: Response;
     try { response = await this.options.fetch(this.scope.headUrl, { method: 'OPTIONS', redirect: 'manual' }); }
     catch { return fail('Native atomic resource commits are unavailable.'); }
     if (!response.ok || response.headers.get('Interego-Native-Commit') !== '1'
       || !response.headers.get('Accept-Put')?.split(',').map(s => s.trim()).includes(NATIVE_COMMIT_MEDIA_TYPE)) fail('Native atomic resource commits are unavailable.');
-    this.probed = { at: Date.now(), batchedStaging: response.headers.get('Interego-Native-Stage') === '1' };
+    this.probed = { at: Date.now(), batchedStaging: response.headers.get('Interego-Native-Stage') === '1',
+      sourceCommit: response.headers.get('Interego-Native-Commit-Source') === '1' };
     return this.probed;
   }
   private rememberBackingCommit(url: string, bytes: Uint8Array): void {
@@ -535,7 +544,13 @@ export class NativeCommitStore implements NativeCommitClient {
       || typeof input.topUri !== 'string' || !isPgslNodeId(input.topUri) || typeof input.opaqueUri !== 'string' || !isPgslNodeId(input.opaqueUri)) fail('Native commit receipt is not bound to the submitted resource.');
     return input as unknown as NativeResourceReceipt;
   }
-  private async put(url: string, bytes: Uint8Array, expectedRevision: string | null): Promise<NativeResourceReceipt | null> {
+  /**
+   * `from` names a native document in the same pod that this client has just confirmed holds
+   * exactly `bytes`. The request then carries that document's path with the digest and size of
+   * the bytes in place of the bytes themselves; the server commits only if the document holds
+   * them, and the receipt is checked against `bytes` exactly as for a commit that carried them.
+   */
+  private async put(url: string, bytes: Uint8Array, expectedRevision: string | null, from?: string): Promise<NativeResourceReceipt | null> {
     this.target(url);
     const headers: Record<string, string> = { 'Content-Type': NATIVE_COMMIT_MEDIA_TYPE, Accept: JSON_TYPE };
     if (expectedRevision === null) headers['If-None-Match'] = '*';
@@ -543,10 +558,15 @@ export class NativeCommitStore implements NativeCommitClient {
     let response: Response;
     try {
       response = await this.options.fetch(url, { method: 'PUT', redirect: 'manual', headers,
-        body: JSON.stringify({ version: 1, expectedRevision, contentType: JSON_TYPE, bodyBase64: Buffer.from(bytes).toString('base64') }) });
+        body: JSON.stringify(from === undefined
+          ? { version: 1, expectedRevision, contentType: JSON_TYPE, bodyBase64: Buffer.from(bytes).toString('base64') }
+          : { version: 1, expectedRevision, contentType: JSON_TYPE, source: { path: this.target(from).pathname, bodyDigest: digest(bytes), size: bytes.length } }) });
     } catch { return null; }
     if (response.status === 412) throw new NativeCommitConflictError();
     if (response.status >= 500) return null;
+    // A server that will not commit from the source was sent nothing it could have stored: the
+    // same commit is made again with its bytes, under the same expected revision.
+    if (!response.ok && from !== undefined) return this.put(url, bytes, expectedRevision);
     if (!response.ok) fail('Native commit was not confirmed.');
     let receipt: unknown;
     try { receipt = JSON.parse(Buffer.from(await this.bytes(response, 32_768)).toString('utf8')); } catch { return fail('Native commit acknowledgement is unreadable.'); }
@@ -1086,7 +1106,7 @@ export class NativeCommitStore implements NativeCommitClient {
     }
     if (current.revision !== request.expected.revision || canonical(current.reference) !== canonical(request.expected.reference)) throw new NativeCommitConflictError();
     const probing = performance.now();
-    const { batchedStaging } = this.probed && Date.now() - this.probed.at < this.probeTtl ? this.probed : await this.discover();
+    const { batchedStaging, sourceCommit } = this.probed && Date.now() - this.probed.at < this.probeTtl ? this.probed : await this.discover();
     const batched = batchedStaging && this.options.stageIndividually !== true, building = performance.now();
     // Without batching and without an observer there is no plan, exactly as before.
     const plan: StagePlan | undefined = batched || meter
@@ -1125,7 +1145,8 @@ export class NativeCommitStore implements NativeCommitClient {
     const writing = performance.now();
     if (meter) meter.buildMs = writing - building - (plan?.stageMs ?? 0);
     let receipt: NativeResourceReceipt | null;
-    try { receipt = await this.put(this.scope.headUrl, bytes, current.revision); }
+    // The head is the commit object's own bytes, and that object was confirmed staged just above.
+    try { receipt = await this.put(this.scope.headUrl, bytes, current.revision, sourceCommit && this.options.commitHeadFromStaged === true ? commitUrl : undefined); }
     catch (error) {
       if (meter) meter.headWriteMs = performance.now() - writing;
       if (!(error instanceof NativeCommitConflictError)) throw error;

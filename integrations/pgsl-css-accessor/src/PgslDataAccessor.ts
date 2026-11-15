@@ -47,7 +47,7 @@ import {
 import { LdpStore } from '../../../packages/pgsl-store/dist/ldp.js';
 import {
   isNativeCommitMediaType, NATIVE_REVISION_PREDICATE, NATIVE_BODY_DIGEST_PREDICATE,
-  nativeSnapshot, readNativeCommitCommand, requireNativeCommitScope, setNativeCommitReceipt,
+  nativeCommitSourceResource, nativeSnapshot, readNativeCommitCommand, requireNativeCommitScope, setNativeCommitReceipt,
 } from './NativeCommit.js';
 import { nativeDeleteScope } from './NativeDelete.js';
 
@@ -160,11 +160,23 @@ export class PgslDataAccessor implements DataAccessor {
     if (isNativeCommitMediaType(contentType)) {
       const { command, bytes } = await readNativeCommitCommand(data);
       requireNativeCommitScope(identifier.path, command);
-      const receipt = await this.ldp.commitResource(this.pod, identifier.path, bytes, command.contentType, {
+      if (command.source) {
+        // The same compare-and-set and the same receipt as a commit that carries its bytes; the
+        // representation is the one a native document in this pod already holds.
+        const { bodyDigest, size } = command.source;
+        const outcome = await this.ldp.commitResourceFrom(this.pod, identifier.path, nativeCommitSourceResource(identifier.path, command.source), {
+          expectedRevision: command.expectedRevision, bodyDigest, size, contentType: command.contentType,
+        });
+        if (outcome.status === 'source-mismatch') throw new ConflictHttpError('Native commit source does not hold the stated representation');
+        if (outcome.status === 'conflict') throw new PreconditionFailedHttpError('Native resource revision changed');
+        setNativeCommitReceipt(identifier.path, command, { bodyDigest, size }, outcome);
+        return;
+      }
+      const receipt = await this.ldp.commitResource(this.pod, identifier.path, bytes!, command.contentType, {
         expectedRevision: command.expectedRevision,
       });
       if (receipt.status === 'conflict') throw new PreconditionFailedHttpError('Native resource revision changed');
-      setNativeCommitReceipt(identifier.path, command, bytes, receipt);
+      setNativeCommitReceipt(identifier.path, command, bytes!, receipt);
       return;
     }
     const meta = await this.extractMeta(metadata);
