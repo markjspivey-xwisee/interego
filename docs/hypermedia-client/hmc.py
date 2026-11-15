@@ -860,14 +860,56 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
     )
 
 
+# Every URL hmc.py fetches comes from the command line or from a document
+# someone else wrote, so it fetches http and https and nothing else: no file:,
+# ftp: or data: URL, whether a descriptor names it or a redirect leads to it.
+WEB_SCHEMES = ("http", "https")
+
+
+def is_web_url(url: str | None) -> bool:
+    return bool(url) and urllib.parse.urlsplit(str(url)).scheme.lower() in WEB_SCHEMES
+
+
+def _require_web_url(url: str, refused: str = "nothing was sent to") -> None:
+    if not is_web_url(url):
+        raise RuntimeError(f"hmc.py sends requests to http and https URLs only; {refused} {url}")
+
+
+class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
+    """Follows a redirect only to another http or https URL."""
+
+    def http_error_302(self, req, fp, code, msg, headers):  # type: ignore[no-untyped-def]
+        location = headers.get("location") or headers.get("uri")
+        if location:
+            _require_web_url(urllib.parse.urljoin(req.full_url, location), "refused a redirect to")
+        return super().http_error_302(req, fp, code, msg, headers)
+
+    http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
+
+
+def _web_opener() -> urllib.request.OpenerDirector:
+    """urlopen's handlers without the file, ftp and data ones; a URL of another
+    scheme reaches UnknownHandler and fails."""
+    opener = urllib.request.OpenerDirector()
+    for handler in (
+        urllib.request.ProxyHandler(), urllib.request.UnknownHandler(),
+        urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(),
+        urllib.request.HTTPDefaultErrorHandler(), _WebOnlyRedirects(),
+        urllib.request.HTTPErrorProcessor(),
+    ):
+        opener.add_handler(handler)
+    return opener
+
+
 def http_request(url: str, method: str = "GET", headers: dict[str, str] | None = None,
                  data: bytes | None = None, timeout: int = 60) -> tuple[int, dict[str, str], bytes]:
+    _require_web_url(url)
     req_headers = {"User-Agent": USER_AGENT}
     if headers:
         req_headers.update(headers)
     request = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
     try:
-        with urllib.request.urlopen(request, timeout=timeout) as resp:
+        with _web_opener().open(request, timeout=timeout) as resp:
             return resp.getcode() or 200, {k.lower(): v for k, v in resp.headers.items()}, resp.read()
     except urllib.error.HTTPError as exc:
         body = exc.read() if exc.fp else b""
@@ -1197,7 +1239,9 @@ def is_mcp_tool_url(target: str | None) -> bool:
 
 def classify_transport(control: Control, descriptor_url: str) -> str:
     if control.template:
-        return "http"
+        # Before expansion, only what precedes the first variable is known.
+        head = control.template.split("{", 1)[0]
+        return "http" if not head or is_web_url(head) else "unknown"
     if is_mcp_tool_url(control.target):
         return "mcp"
     if is_junction_target(control.target, descriptor_url, control.id):
@@ -1245,8 +1289,10 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
 
     if control.template:
         url = expand_uri_template(control.template, values)
-        transport = "http"
+        transport = "http" if is_web_url(url) else "unknown"
         notes.append(f"Expanded hydra:IriTemplate {control.template}")
+        if transport != "http":
+            notes.append("The template does not expand to an http or https URL; hmc.py does not fetch it.")
         used: set[str] = set()
         for match in re.finditer(r"\{[+#./;?&]?([^{}]+)\}", control.template):
             used.update(part.split("*", 1)[0].split(":", 1)[0] for part in match.group(1).split(","))
@@ -1300,6 +1346,8 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
         return result
     if unsafe and not confirm:
         raise RuntimeError("Refusing to execute an unsafe operation without --confirm")
+    if plan.url:
+        _require_web_url(plan.url)
     if plan.transport != "http" or not plan.url:
         result["message"] = "No plain-HTTP transport is available for this control. Use the Interego relay MCP call documented in request.mcp."
         result["blocked"] = "mcp-required"

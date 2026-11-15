@@ -48,7 +48,7 @@ The last command is a dry run: unsafe operations never send unless you pass `--c
 
 Web app: use the hosted page, open `index.html` directly as a file, or point any static server at this directory. There is no build step and nothing to install.
 
-The web app reads JSON-LD and HyperMarkdown. A host that serves only Turtle needs `?format=jsonld`, or use `hmc.py`, which reads Turtle when `rdflib` is installed.
+The web app reads JSON-LD and HyperMarkdown, not Turtle. When a host answers in Turtle, the page asks it again with `?format=jsonld`. For a host that serves only Turtle, use `hmc.py`, which reads Turtle when `rdflib` is installed.
 
 Deep link example:
 
@@ -62,6 +62,8 @@ The proxy field is optional, and it is empty unless you type into it. The page n
 
 It takes the absolute `https://` URL of a CORS proxy you run yourself. The page sends each request to that URL with the target appended as a `url` query parameter (`<proxy>?url=<encoded target>`, or `&url=` when the proxy URL already has a query). Use it only for a descriptor host that does not send `Access-Control-Allow-Origin`.
 
+The targets the page hands a proxy are the ones it would fetch without one: `https` URLs only. It also never hands a proxy a loopback, private, link-local or shared address written as a literal, or a `localhost` name, because a proxy on your own machine can reach those and the page cannot. A public name that resolves to such an address is not caught by the page; only the proxy sees the address a name resolves to, so a proxy you run should refuse those itself.
+
 A proxy sees every request sent through it, including the body of any write you confirm. Use one you control.
 
 This directory used to ship a local forwarding proxy, `proxy.py`. It was removed: a server that fetches whatever URL it is handed has to defend every address it can reach, and the hosted page does not need one for the hosts it was written against.
@@ -72,7 +74,7 @@ HyperMarkdown projections print a `target` that is often the document's own acti
 
 The client therefore:
 
-1. Fetches the authority document, preferring JSON-LD (`Accept: application/ld+json`, then `?format=jsonld`), then Turtle, then HyperMarkdown `:::control` blocks.
+1. Fetches the authority document, preferring JSON-LD (`Accept: application/ld+json`, then `?format=jsonld`), then Turtle (read by `hmc.py` when `rdflib` is installed; the page cannot parse it), then HyperMarkdown `:::control` blocks.
 2. Walks `iep:affordance` / `hmd:control` / `hydra:supportedOperation`, plus any node typed `hydra:Operation`, `iep:Affordance`, or `hmd:Control`.
 3. Reads the live `hydra:target`, `hydra:method`, `hydra:expects`, `hydra:returns`, `dcat:mediaType` / `hydra:returnsContentType`, and any linked `hydra:IriTemplate`.
 4. Classifies transport:
@@ -93,8 +95,9 @@ URI templates use RFC 6570 percent-encoding of UTF-8 (`encodeURIComponent` seman
 - GET / HEAD / OPTIONS are treated as safe and may be sent.
 - POST, PUT, PATCH, DELETE, anything with `iep:destructiveHint true`, or `iep:readOnlyHint false` is unsafe.
 - Unsafe operations default to a dry run that prints the exact URL, headers, body, and MCP call. The web UI requires an explicit checkbox before Invoke is enabled. The CLI requires `--confirm`.
-- The web app shows everything a remote document or response contains as text. An HTML response is shown as source, not rendered. Only an `http(s)` URL becomes followable, and following one fetches it as a descriptor; nothing a remote document sends becomes a link the browser navigates, a script, a style, an event handler, or a form field's `name`.
-- The page sends requests over `https` only.
+- The web app shows everything a remote document or response contains as text. An HTML response is shown as source, not rendered. Only an `https` URL becomes followable, and following one fetches it as a descriptor; an `http` IRI is shown as text. Nothing a remote document sends becomes a link the browser navigates, a script, a style, an event handler, or a form field's `name`.
+- The page sends requests over `https` only, with or without a proxy, and does not hand a proxy an internal address (see [The proxy field](#the-proxy-field)).
+- `hmc.py` sends requests to `http` and `https` URLs only, and follows a redirect only to another of those. A descriptor that names a `file:`, `ftp:` or `data:` URL, or a redirect to one, is refused before anything is read.
 - The page carries a Content-Security-Policy: no source by default, its own inline script and stylesheet allowed by SHA-256 hash only, no inline event handlers, `connect-src https:`, and `object-src`, `base-uri` and `form-action` set to `'none'`. Editing the inline script or `<style>` changes its hash, so the policy has to be updated with it; `tests/hypermedia-client-rendering.test.ts` fails and prints the expected hash when they disagree. That test also loads the page with hostile documents and responses and checks what reaches the DOM.
 - Do not live-invoke write controls such as `act-propose-mapping`, `act-ratify`, `act-publish-classified`, `act-align-course-concept`, `write-xapi-statements-signed`, `act-request-upstream-review` (it opens a GitHub issue form), or `coverage-query`.
 

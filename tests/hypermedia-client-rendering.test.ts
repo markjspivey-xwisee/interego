@@ -10,7 +10,7 @@
  *     event handler, style, frame, link or form target can arrive from remote data;
  *   - every id belongs to the page, and no element carries a `name`, so remote field
  *     names cannot shadow the form's own properties in a browser;
- *   - every followable IRI is http(s), and the page has no href or src at all except
+ *   - every followable IRI is https, and the page has no href or src at all except
  *     http(s) or a fragment;
  *   - every class is one the stylesheet defines, so remote values cannot restyle a
  *     control as a confirmation or a warning;
@@ -28,6 +28,9 @@ import { describe, expect, it, vi } from 'vitest';
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
 const HOST = 'https://hostile.example';
+// A CORS proxy the person typed in. The test's fetch answers for it as a forwarding proxy would.
+const PROXY = 'https://myproxy.example';
+const PLAIN_HTTP = 'http://plain.example/d3';
 
 // Every payload calls pwn(); the page installs nothing by that name, the test does.
 const X = {
@@ -57,7 +60,7 @@ const descriptor = {
   '@type': ['hydra:Collection', X.img],
   'dct:title': `Title ${X.img}`,
   'dct:description': `${X.script}${X.dq}${X.sq}`,
-  'rdfs:seeAlso': [...BAD_URLS, QUOTED, `${HOST}/next`],
+  'rdfs:seeAlso': [...BAD_URLS, QUOTED, PLAIN_HTTP, `${HOST}/next`],
   'iep:affordance': [
     ...['markdown', 'html', 'json', 'sparql', 'plain', 'long'].map(kind => ({
       '@id': `${HOST}/desc#read-${kind}`, '@type': 'iep:Affordance', 'iep:action': `urn:read-${kind}`,
@@ -101,6 +104,7 @@ const markdown = [
   `Text with ${X.svg} and ${X.close} and ${X.iframe} and ${X.base}.`, '',
   ...BAD_URLS.map(u => `- [click ${u}](${u})`),
   `- [quoted](${QUOTED})`,
+  `- [plain link](${PLAIN_HTTP})`,
   `- [two words](https://hostile.example/a onmouseover=pwn\`1\` b)`,
   `- [https://hostile.example/inner ${X.dq}](https://hostile.example/outer)`,
   `- **bold ${X.img}** and https://hostile.example/bare"onmouseover="pwn()`, '',
@@ -175,11 +179,32 @@ const longName = {
     'hydra:title': 'Long name', 'hydra:target': `${HOST}/body/plain`, 'hydra:expects': { '@id': `${HOST}/long-name#S` } }],
   '@graph': [{ '@id': `${HOST}/long-name#S`, '@type': 'sh:NodeShape', 'sh:property': [{ 'sh:path': `${HOST}/p`, 'sh:name': LONG_NAME }] }],
 };
+// GET controls whose address is not a public https URL. Through a proxy the person runs, often on
+// their own machine, each would reach somewhere a web page cannot.
+const OFF_LIMITS = ['file:///etc/passwd', 'http://169.254.169.254/latest/meta-data/', 'http://127.0.0.1:8080/admin',
+  'gopher://127.0.0.1:6379/_x', 'https://127.0.0.1/admin', 'https://localhost/admin', 'https://api.localhost/x',
+  'https://[::1]/x', 'https://[::ffff:127.0.0.1]/x', 'https://[fd00::1]/x', 'https://[fe80::1]/x', 'https://10.1.2.3/x',
+  'https://172.16.0.1/x', 'https://192.168.1.1/x', 'https://169.254.169.254/latest/meta-data/', 'https://0.0.0.0/x',
+  'https://100.64.0.1/x', 'https://2130706433/x', 'https://0x7f.1/x', 'https://localhost./x'];
+const scope = {
+  '@context': CTX, '@id': `${HOST}/scope`,
+  'iep:affordance': [
+    ...OFF_LIMITS.map((template, i) => ({ '@id': `${HOST}/scope#${i}`, '@type': 'iep:Affordance', 'iep:action': `urn:scope-${i}`,
+      'hydra:method': 'GET', 'hydra:title': `Scope ${i} target`, 'hydra:template': template })),
+    { '@id': `${HOST}/scope#ok`, '@type': 'iep:Affordance', 'iep:action': 'urn:scope-ok', 'hydra:method': 'GET',
+      'hydra:title': 'Public read', 'hydra:template': `${HOST}/body/plain` },
+  ],
+};
+// Turtle unless ?format=jsonld is asked for, which this page reads.
+const turtleFirst = { '@context': CTX, '@id': `${HOST}/ttl`, 'dct:title': 'From JSON-LD',
+  'iep:affordance': [{ '@id': `${HOST}/ttl#r`, '@type': 'iep:Affordance', 'iep:action': 'urn:ttl', 'hydra:method': 'GET',
+    'hydra:title': 'Turtle host read', 'hydra:target': `${HOST}/body/plain` }] };
 // Documents served at exact paths on HOST, in addition to /desc, /hm and /body/<kind>.
 const DOCS: Record<string, { type: string; text: string }> = {
   '/pair': { type: 'application/ld+json', text: JSON.stringify(pair) },
   '/slow-pattern': { type: 'application/ld+json', text: JSON.stringify(slowPattern) },
   '/long-name': { type: 'application/ld+json', text: JSON.stringify(longName) },
+  '/scope': { type: 'application/ld+json', text: JSON.stringify(scope) },
 };
 
 function respond(text: string, type: string, status = 200): Response {
@@ -197,10 +222,15 @@ function load(query: string, extra: Record<string, { type: string; text: string 
       pwn: (...args: unknown[]) => { pwned.push(JSON.stringify(args)); },
       fetch: async (input: string, init: RequestInit = {}) => {
         const url = String(input); calls.push({ url, method: String(init.method || 'GET') });
-        const u = new URL(url);
+        const asked = new URL(url);
+        const u = asked.origin === PROXY ? new URL(asked.searchParams.get('url') || 'about:blank') : asked;
         if (u.origin !== HOST) return respond('not here', 'text/plain', 404);
         if (u.pathname === '/desc') return respond(JSON.stringify(descriptor), 'application/ld+json');
         if (u.pathname === '/hm') return respond(hyperMarkdown, 'text/markdown');
+        if (u.pathname === '/ttl') {
+          return u.searchParams.get('format') === 'jsonld' ? respond(JSON.stringify(turtleFirst), 'application/ld+json')
+            : respond('@prefix dct: <http://purl.org/dc/terms/> .\n<> dct:title "From Turtle" .\n', 'text/turtle');
+        }
         const doc = Object.prototype.hasOwnProperty.call(DOCS, u.pathname) ? DOCS[u.pathname] : undefined;
         if (doc) return respond(doc.text, doc.type);
         const kind = u.pathname.replace('/body/', '');
@@ -246,7 +276,7 @@ function assertInert(t: Loaded, where: string) {
     if (el.id && !PAGE_IDS.has(el.id)) problems.push(`#${el.id.slice(0, 40)}`);
     if (inBody) for (const c of el.classList) if (!STYLE_CLASSES.has(c)) problems.push(`.${c.slice(0, 40)}`);
     const iri = el.getAttribute('data-iri');
-    if (iri != null && !/^https?:\/\/[^\s"<>]+$/.test(iri)) problems.push(`data-iri=${iri.slice(0, 60)}`);
+    if (iri != null && !/^https:\/\/[^\s"<>]+$/.test(iri)) problems.push(`data-iri=${iri.slice(0, 60)}`);
   }
   expect([...new Set(problems)], where).toEqual([]);
   expect(t.pwned, where).toEqual([]);
@@ -269,11 +299,12 @@ describe('hypermedia client: hostile remote data stays inert', () => {
       assertInert(t, 'list');
       expect(document.querySelector('#meta strong')!.textContent).toBe(`Title ${X.img}`);
       expect(document.getElementById('meta')!.textContent).toContain(`${X.script}${X.dq}${X.sq}`);
-      // Only the http(s) seeAlso links become followable, each as the URL parser normalises it,
+      // Only the https seeAlso links become followable, each as the URL parser normalises it,
       // so the quotes in QUOTED are percent-encoded rather than carried into the attribute.
       const see = [...document.querySelectorAll('#meta [data-iri]')].map(e => e.getAttribute('data-iri'));
       expect(see).toEqual([new URL(QUOTED).href, `${HOST}/next`]);
-      for (const u of BAD_URLS) expect(document.getElementById('meta')!.textContent).toContain(u);
+      // An http IRI is shown, not offered as a link the page would then refuse to fetch.
+      for (const u of [...BAD_URLS, PLAIN_HTTP]) expect(document.getElementById('meta')!.textContent).toContain(u);
       expect(card(document, 'Read markdown')!.querySelector('h3')!.textContent).toBe(`Read markdown ${X.img}`);
       // A method that is not a method gets no class of its own choosing.
       const redress = [...document.querySelectorAll('.card')].find(c => c.textContent!.includes('</textarea>'))!;
@@ -315,10 +346,12 @@ describe('hypermedia client: hostile remote data stays inert', () => {
         for (const s of [X.img, X.script, X.svg, X.close, X.iframe, X.base, '<a href="javascript:pwn()">raw link</a>']) expect(shown).toContain(s);
         expect(document.querySelector('#result h1')!.textContent).toBe(`Heading ${X.img}`);
         expect(document.querySelector('#result strong')!.textContent).toBe(`bold ${X.img}`);
-        // Link text stays text; only http(s) destinations are followable, and none of the others leak in.
+        // Link text stays text; only https destinations are followable, and none of the others leak in.
         const iris = [...document.querySelectorAll('#result [data-iri]')].map(e => e.getAttribute('data-iri'));
         expect(iris).toContain('https://hostile.example/outer');
         for (const u of BAD_URLS) expect(shown).toContain(`[click ${u}](${u})`);
+        // A link to an http address is not followable, so its address stays in view as text.
+        expect(shown).toContain(`[plain link](${PLAIN_HTTP})`);
       } else if (kind === 'html') {
         expect(document.querySelector('#result iframe')).toBeNull();
         expect(shown).toContain(X.script);
@@ -387,6 +420,61 @@ describe('hypermedia client: requests', () => {
       expect(document.getElementById('status')!.textContent).toMatch(/https/);
       expect(t.calls).toEqual([]);
     } finally { t.dom.window.close(); }
+  });
+
+  /** Fill the proxy field and load `path` from HOST through it, as a person would. */
+  async function loadViaProxy(path: string): Promise<Loaded> {
+    const t = load('');
+    const { document } = t;
+    (document.getElementById('proxy') as HTMLInputElement).value = PROXY + '/';
+    (document.getElementById('url') as HTMLInputElement).value = HOST + path;
+    click(t, document.getElementById('loadBtn')!);
+    await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+    return t;
+  }
+  const proxiedTargets = (t: Loaded) => t.calls.filter(c => c.url.startsWith(PROXY + '/')).map(c => new URL(c.url).searchParams.get('url'));
+
+  it('with a proxy, still sends nothing to a URL that is not https', async () => {
+    const t = load('');
+    try {
+      const { document } = t;
+      (document.getElementById('proxy') as HTMLInputElement).value = PROXY + '/';
+      (document.getElementById('url') as HTMLInputElement).value = 'http://hostile.example/desc';
+      click(t, document.getElementById('loadBtn')!);
+      await vi.waitFor(() => expect(document.getElementById('status')!.textContent).toMatch(/https/));
+      expect(t.calls).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('with a proxy, hands it only public https targets, whatever a descriptor names', async () => {
+    const t = await loadViaProxy('/scope');
+    try {
+      const { document } = t;
+      expect(proxiedTargets(t)).toEqual([`${HOST}/scope`]);
+      for (let i = 0; i < OFF_LIMITS.length; i++) {
+        click(t, card(document, `Scope ${i} `)!);
+        click(t, button(document, 'live'));
+        await vi.waitFor(() => expect(document.getElementById('result')!.textContent, OFF_LIMITS[i]).toMatch(/nothing was sent/));
+      }
+      expect(proxiedTargets(t)).toEqual([`${HOST}/scope`]);
+      // A public https target still goes through the proxy.
+      click(t, card(document, 'Public read')!);
+      click(t, button(document, 'live'));
+      await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toMatch(/Response HTTP 200/));
+      expect(proxiedTargets(t)).toEqual([`${HOST}/scope`, `${HOST}/body/plain`]);
+      expect(t.calls.filter(c => !c.url.startsWith(PROXY + '/'))).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('asks a Turtle host for JSON-LD, with or without a proxy', async () => {
+    for (const viaProxy of [false, true]) {
+      const t = viaProxy ? await loadViaProxy('/ttl?format=turtle') : load(`?url=${encodeURIComponent(HOST + '/ttl?format=turtle')}&autoload=1`);
+      try {
+        const { document } = t;
+        await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+        expect(document.querySelector('#meta strong')!.textContent, `proxy: ${viaProxy}`).toBe('From JSON-LD');
+      } finally { t.dom.window.close(); }
+    }
   });
 });
 

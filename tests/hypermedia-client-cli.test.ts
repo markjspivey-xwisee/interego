@@ -2,13 +2,17 @@
  * docs/hypermedia-client/hmc.py, the command-line twin of the hypermedia client page, run as a
  * real `python3 -I` process against descriptors this test serves on 127.0.0.1. Everything it
  * reads comes from a document someone else wrote, so it is held to what the page is held to:
- * remote text costs linear time and is not run as a regular expression.
+ * remote text costs linear time and is not run as a regular expression, and a document cannot
+ * point it at anything but an http(s) URL.
  *
  * Python is required. CI's Ubuntu runners have python3; set PYTHON to use another interpreter.
  */
 import { spawn, spawnSync } from 'node:child_process';
+import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 
@@ -24,6 +28,10 @@ const LONG_NAME = 'rest-param-' + '-'.repeat(60_000) + '\nx';
 let server: Server;
 let base = '';
 const seen: string[] = [];
+// A local file a descriptor must not be able to make hmc.py read.
+const SECRET = 'HMC-LOCAL-FILE-SECRET';
+let dir = '';
+let secretUrl = '';
 
 function descriptor(id: string, affordances: object[], graph: object[] = []) {
   return {
@@ -44,6 +52,15 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       [{ '@id': `${base}/long-name#S`, '@type': 'sh:NodeShape', 'sh:property': [{ 'sh:path': `${base}/p`, 'sh:name': LONG_NAME },
         { 'sh:path': `${base}/p2`, 'sh:name': 'rest-param-query-limit' }] }])),
     '/ok': () => ({ type: 'text/plain', body: 'fine' }),
+    '/schemes': json(descriptor('schemes', [
+      ...[['file', secretUrl], ['data', `data:text/plain;base64,${Buffer.from(SECRET).toString('base64')}`], ['ftp', 'ftp://127.0.0.1:9/x']].map(([name, template]) => ({
+        '@id': `${base}/schemes#${name}`, '@type': 'iep:Affordance', 'iep:action': `urn:${name}`, 'hydra:method': 'GET',
+        'hydra:title': `Template ${name}`, 'hydra:template': template })),
+      ...['to-file', 'to-ftp'].map(name => ({ '@id': `${base}/schemes#${name}`, '@type': 'iep:Affordance',
+        'iep:action': `urn:${name}`, 'hydra:method': 'GET', 'hydra:title': `Redirect ${name}`, 'hydra:target': `${base}/${name}` })),
+    ])),
+    '/to-file': () => ({ status: 302, headers: { location: secretUrl } }),
+    '/to-ftp': () => ({ status: 302, headers: { location: 'ftp://127.0.0.1:9/x' } }),
   };
 }
 
@@ -65,6 +82,9 @@ function hmc(args: string[], timeoutMs = 30_000): Promise<Run> {
 beforeAll(async () => {
   const probe = spawnSync(PYTHON, ['--version'], { encoding: 'utf8' });
   if (probe.status !== 0) throw new Error(`${PYTHON} is needed to test docs/hypermedia-client/hmc.py (set PYTHON to another interpreter): ${probe.error || probe.stderr}`);
+  dir = mkdtempSync(join(tmpdir(), 'hmc-'));
+  writeFileSync(join(dir, 'secret.txt'), SECRET);
+  secretUrl = new URL(`file://${join(dir, 'secret.txt')}`).href;
   server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || '/', base);
     seen.push(`${req.method} ${url.pathname}${url.search}`);
@@ -78,6 +98,7 @@ beforeAll(async () => {
 });
 afterAll(async () => {
   await new Promise<void>(resolve => server ? server.close(() => resolve()) : resolve());
+  if (dir) rmSync(dir, { recursive: true, force: true });
 });
 
 describe('hmc.py: remote text costs linear time', () => {
@@ -104,5 +125,33 @@ describe('hmc.py: remote text costs linear time', () => {
     const r = await hmc(['describe', `${base}/slow-pattern`, 'urn:r']);
     expect(r.code, r.stderr).toBe(0);
     expect((JSON.parse(r.stdout) as { fields: Array<{ pattern: string }> }).fields[0]!.pattern).toBe(SLOW_PATTERN);
+  });
+});
+
+describe('hmc.py: http and https only', () => {
+  const REFUSED = /sends requests to http and https URLs only/;
+
+  it.each(['file', 'data', 'ftp'])('refuses a %s: template from a descriptor, before any request', async name => {
+    const r = await hmc(['invoke', `${base}/schemes`, `urn:${name}`]);
+    expect(r.code).not.toBe(0);
+    expect(r.stdout + r.stderr).not.toContain(SECRET);
+    expect(r.stderr).toMatch(REFUSED);
+    // The listing does not call it an http control either.
+    const d = await hmc(['describe', `${base}/schemes`, `urn:${name}`]);
+    expect((JSON.parse(d.stdout) as { transport: string }).transport).toBe('unknown');
+  });
+
+  it.each(['to-file', 'to-ftp'])('refuses a redirect %s', async name => {
+    const r = await hmc(['invoke', `${base}/schemes`, `urn:${name}`]);
+    expect(r.code).not.toBe(0);
+    expect(r.stdout + r.stderr).not.toContain(SECRET);
+    expect(r.stderr).toMatch(/refused a redirect to (file|ftp):/);
+  });
+
+  it('refuses a descriptor address that is not http(s)', async () => {
+    const r = await hmc(['list', secretUrl]);
+    expect(r.code).not.toBe(0);
+    expect(r.stdout + r.stderr).not.toContain(SECRET);
+    expect(r.stderr).toMatch(REFUSED);
   });
 });

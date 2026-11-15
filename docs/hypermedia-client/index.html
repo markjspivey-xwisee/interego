@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Jcl7ez5voVhT+VEMquiEWL4Cz1rXdNPUZuyFrIGlI+M='; style-src 'sha256-2fMl6VtdGFOYNdDnFQCRvmDOQzQTGlnITAJO8XiFELY='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-IwoMzlxysRc5vucyicrcPi6Bw9gOjp037yLX6z7VpMM='; style-src 'sha256-2fMl6VtdGFOYNdDnFQCRvmDOQzQTGlnITAJO8XiFELY='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -626,21 +626,47 @@ function stripFrag(url) { const u = new URL(url); u.hash = ""; return u.toString
 function proxyBase() {
   return document.getElementById("proxy").value.trim();
 }
-// Every request leaves over https: an absolute https proxy URL with the target
-// as its `url` query parameter, or the https target itself. The page's
+// A host a proxy on the person's own machine or network could reach and this
+// page could not: a loopback, private, link-local, shared or unspecified
+// address written as a literal, or a localhost name. The URL parser has already
+// turned other spellings of an IPv4 address (2130706433, 0x7f.1) into dotted
+// form. A public name that resolves to such an address is not caught here; the
+// proxy is the only thing that sees the resolved address.
+function internalHost(hostname) {
+  const h = hostname.toLowerCase().replace(/\.$/, "");
+  if (h === "localhost" || h.endsWith(".localhost")) return true;
+  const v4 = /^(\d+)\.(\d+)\.(\d+)\.(\d+)$/.exec(h);
+  if (v4) {
+    const [a, b] = [Number(v4[1]), Number(v4[2])];
+    return a === 0 || a === 10 || a === 127 || (a === 169 && b === 254) || (a === 172 && b >= 16 && b <= 31) ||
+      (a === 192 && b === 168) || (a === 100 && b >= 64 && b <= 127);
+  }
+  if (h.startsWith("[")) {
+    const v6 = h.slice(1, -1);
+    return v6 === "::" || v6 === "::1" || v6.startsWith("::ffff:") || /^f[cd][0-9a-f]{2}:/.test(v6) || /^fe[89ab][0-9a-f]:/.test(v6);
+  }
+  return false;
+}
+// Every request goes to an https URL, and with a proxy as without one: the
+// target itself, or an absolute https proxy URL with the target as its `url`
+// query parameter. A proxy is also never handed an internal host. The page's
 // Content-Security-Policy (connect-src https:) refuses anything else anyway;
 // this says so before the request instead of after.
 function viaProxy(url) {
   const proxy = proxyBase();
-  const out = proxy ? proxy + (proxy.includes("?") ? "&" : "?") + "url=" + encodeURIComponent(url) : String(url);
-  let parsed = null;
-  try { parsed = new URL(out); } catch {}
-  if (!parsed || parsed.protocol !== "https:") {
-    throw new Error(proxy
-      ? "The proxy field needs an absolute https:// URL; nothing was sent."
-      : "This page sends requests over https only; nothing was sent to " + out);
+  let target = null;
+  try { target = new URL(url); } catch {}
+  if (!target || target.protocol !== "https:") {
+    throw new Error("This page sends requests over https only; nothing was sent to " + url);
   }
-  return parsed.toString();
+  if (!proxy) return target.toString();
+  if (internalHost(target.hostname)) {
+    throw new Error("The proxy is not given internal or local addresses; nothing was sent to " + target);
+  }
+  let out = null;
+  try { out = new URL(proxy + (proxy.includes("?") ? "&" : "?") + "url=" + encodeURIComponent(target.toString())); } catch {}
+  if (!out || out.protocol !== "https:") throw new Error("The proxy field needs an absolute https:// URL; nothing was sent.");
+  return out.toString();
 }
 async function fetchText(url, accept) {
   const res = await fetch(viaProxy(url), { headers: { Accept: accept || "*/*" } });
@@ -658,31 +684,25 @@ async function fetchAuthority(url) {
     const kind = classifyPayload(res.text, res.contentType);
     return kind ? { ...res, kind, finalUrl: candidate } : null;
   };
-  const preferJsonLd = async (candidate, got) => {
-    if (!got || got.kind === "jsonld" || !proxyBase()) return got;
-    if (got.kind !== "turtle") return got;
-    try {
-      const alt = await attempt(withFormat(candidate, "jsonld"));
-      if (alt && alt.kind === "jsonld") return alt;
-    } catch {}
-    return got;
-  };
-  if (hasFmt) {
-    const got = await preferJsonLd(url, await attempt(url));
-    if (got) return got;
-  } else {
-    const got = await preferJsonLd(url, await attempt(url));
-    if (got) {
-      if (got.kind !== "jsonld") {
-        try {
-          const alt = await attempt(withFormat(url, "jsonld"));
-          if (alt && alt.kind === "jsonld") return alt;
-        } catch {}
-      }
-      return got;
+  // JSON-LD is preferred. An answer in another form is retried as
+  // ?format=jsonld, except that a format the address names itself is kept
+  // when the page can read it; Turtle it cannot, so that is always retried.
+  // This is the same with or without a proxy.
+  const got = await attempt(url);
+  if (got) {
+    if (got.kind === "jsonld" || (hasFmt && got.kind !== "turtle")) return got;
+    const jsonld = withFormat(url, "jsonld");
+    if (jsonld !== url) {
+      try {
+        const alt = await attempt(jsonld);
+        if (alt && alt.kind === "jsonld") return alt;
+      } catch {}
     }
+    return got;
+  }
+  if (!hasFmt) {
     for (const fmt of ["jsonld", "turtle", "markdown"]) {
-      const alt = await preferJsonLd(withFormat(url, fmt), await attempt(withFormat(url, fmt)));
+      const alt = await attempt(withFormat(url, fmt));
       if (alt) return alt;
     }
   }
@@ -942,15 +962,16 @@ function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;"
 // Markup built from remote data goes through esc(), iriSpan() and the
 // renderers below, and nowhere else. Every remote string is escaped as text.
 // The only attribute a remote value can fill is data-iri, and it holds an
-// http(s) URL as the URL parser normalised it, so it carries no quote, space
+// https URL as the URL parser normalised it, so it carries no quote, space
 // or angle bracket. The click handler follows a data-iri with fetch(); the page
-// has no link a remote document can make the browser navigate.
+// has no link a remote document can make the browser navigate. An http IRI is
+// shown as text, because the page would refuse to fetch it.
 function followable(iri) {
   const raw = asText(iri).trim();
-  if (!/^https?:\/\//i.test(raw)) return null;
+  if (!/^https:\/\//i.test(raw)) return null;
   try {
     const u = new URL(raw);
-    return (u.protocol === "https:" || u.protocol === "http:") ? u.href : null;
+    return u.protocol === "https:" ? u.href : null;
   } catch { return null; }
 }
 function iriSpan(iri, label) {
@@ -979,7 +1000,7 @@ function linkify(src) {
   return html + esc(src.slice(last));
 }
 // A small Markdown subset: fenced code, # to ### headings, - and * list items,
-// **bold**, [label](http(s) URL), bare URLs and paragraphs. Text is escaped
+// **bold**, [label](https URL), bare URLs and paragraphs. Text is escaped
 // piece by piece as it is placed, markup that has been built is never scanned
 // again, and every pattern is bounded, so the work stays linear in the input.
 function inlineMarkdown(line) {
@@ -988,7 +1009,9 @@ function inlineMarkdown(line) {
   let last = 0;
   for (const m of line.matchAll(re)) {
     html += linkify(line.slice(last, m.index));
-    html += m[2] != null ? iriSpan(m[2], m[1]) : "<strong>" + linkify(m[3]) + "</strong>";
+    // A link the page would not follow is shown as the text it was written as.
+    if (m[2] != null) html += followable(m[2]) ? iriSpan(m[2], m[1]) : linkify(m[0]);
+    else html += "<strong>" + linkify(m[3]) + "</strong>";
     last = m.index + m[0].length;
   }
   return html + linkify(line.slice(last));
@@ -1270,7 +1293,7 @@ document.body.addEventListener("click", async (ev) => {
   const iriEl = ev.target.closest("[data-iri]");
   if (iriEl && iriEl.dataset.iri) {
     const iri = iriEl.dataset.iri;
-    if (!/^https?:\/\//.test(iri)) return;
+    if (!/^https:\/\//.test(iri)) return;
     try { await loadDescriptorUrl(iri); } catch (err) { setStatus("Follow failed: " + (err.message || err)); }
   }
 });

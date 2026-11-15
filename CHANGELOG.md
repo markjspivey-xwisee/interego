@@ -51,7 +51,7 @@ markup. Before this change:
   value that was not a string, stopped the document loading.
 
 Now every remote string is escaped as it is placed and built markup is never
-scanned again. Only an `http(s)` URL becomes followable, written as the URL
+scanned again. Only an `https` URL becomes followable, written as the URL
 parser normalises it, and following it fetches it; the page has no link a remote
 document can make the browser navigate. A badge's class is a method the
 stylesheet knows or `other`. Maps keyed by remote names have no prototype, and
@@ -83,6 +83,29 @@ budget: through an invoke link in the page, and as a `python3 -I hmc.py`
 process (`tests/hypermedia-client-cli.test.ts`, which needs `python3`); each
 took 8 s or more before.
 
+**Requests go only where they should.** With the proxy field empty, the page
+refused any target that was not `https`; with it filled in, it checked only
+that the proxy's own address was `https`, so a descriptor's GET control could
+hand the person's proxy a `file:`, `gopher:` or plain-`http` address, or a
+loopback or cloud-metadata host. The target must now be `https` either way,
+and a proxy is never handed a loopback, private, link-local, shared or
+unspecified address written as a literal, or a `localhost` name. A public name
+that resolves to such an address is the proxy's to refuse; the page cannot see
+what a name resolves to. `http` IRIs are no longer drawn as links the page would
+then refuse to follow; they are text, and a Markdown link to one is shown as it
+was written. A host that answers in Turtle is asked again for
+`?format=jsonld` whether or not a proxy is set; the retry used to depend on the
+proxy, a leftover from the proxy that converted Turtle.
+
+`hmc.py` passed any URL to `urlopen`, which also opens `file:`, `ftp:` and
+`data:` URLs, and called every template an `http` control. A descriptor's GET
+control could make `hmc.py invoke` print a local file. It now sends requests
+to `http` and `https` URLs only, through an opener without the file, FTP and
+data handlers, follows a redirect only to `http` or `https`, and lists a
+template that does not start with one as `unknown`. The new CLI tests serve
+such descriptors and redirects from 127.0.0.1 and check that each is refused
+and nothing local is printed; each failed before.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and
@@ -100,7 +123,7 @@ run, and Markdown, HTML, JSON, SPARQL and plain-text responses, it checks that
 only element and attribute kinds the page itself writes appear, that no element
 has an event handler, a style attribute, a `name`, or an id the page did not
 choose, that every
-`href`/`src` is `http(s)` or a fragment and every followable IRI is `http(s)`,
+`href`/`src` is `http(s)` or a fragment and every followable IRI is `https`,
 that every class is one the stylesheet defines, that the hostile strings show up
 as text verbatim, and that nothing ran. It also checks that a `proxy` parameter
 in the page address is ignored, that a non-`https` URL is refused before any
