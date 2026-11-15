@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 93 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 97 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 93
+  affordances: 97
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -37,6 +37,10 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.i2idlx_authored_shapes` | Read the deployment-owned Hypothetical authored layer with origin and source binding. | `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/authored-shapes.ttl` *(HTTP only)* |
 | `foxxi.xapi_profile_add` | Add a version of an xAPI Profile as yourself, by its contents (profile) or by the https address it is published at (uri), when that address is on a host this d… | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/add` *(HTTP only)* |
 | `foxxi.xapi_profile_remove` | Take down a profile you added (every version) or one version of it, named by iri. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/remove` *(HTTP only)* |
+| `foxxi.xapi_profile_draft` | Open, read, edit or discard your draft of an xAPI Profile, in xAPI Profiles 1.0 JSON-LD. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/draft` *(HTTP only)* |
+| `foxxi.xapi_profile_lint` | Check a profile before it is published and get findings a writer can act on: each names the term, where in the document it is, what is wrong and what to change. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/lint` *(HTTP only)* |
+| `foxxi.xapi_profile_publish` | Publish your draft of a profile as a version. | `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/publish` *(HTTP only)* |
+| `foxxi.xapi_profile_resolve` | Dereference any IRI held on the profile server: a profile (its current version), one version, or a concept, statement template or pattern. | `GET https://foxxi-bridge.interego.xwisee.com/xapi/profiles/resource` *(HTTP only)* |
 | `foxxi.xapi_profile_sparql` | Ask a SPARQL SELECT or ASK query of the profiles held. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/sparql` *(HTTP only)* |
 | `foxxi.xapi_profile_validate_templates` | Run the specification's statement template validation (Part Three, 2.1) for one xAPI Statement against a profile on the server, named by its id. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_templates` *(HTTP only)* |
 | `foxxi.xapi_profile_validate_patterns` | Run the specification's pattern validation (Part Three, 2.2) for an array of xAPI Statements against a profile on the server, named by its id. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_patterns` *(HTTP only)* |

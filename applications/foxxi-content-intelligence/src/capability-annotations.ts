@@ -916,6 +916,52 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
       "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
     ]
   },
+  "foxxi.xapi_profile_draft": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by any wallet, or by an agent holding a delegation"
+    ],
+    "notes": [
+      "A draft is its writer's and is held in memory: it does not survive a restart, and every answer carries the whole draft so it can be sent back.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_lint": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by any wallet, or by an agent holding a delegation"
+    ],
+    "notes": [
+      "Judges examples with the specification's own validation and pattern matching; stores nothing.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_publish": {
+    "implementation": "implemented",
+    "mode": "write",
+    "authorization": "signed",
+    "requires": [
+      "A request signed by the agent that wrote the draft"
+    ],
+    "notes": [
+      "Refused unless the lint has no findings. A published version is immutable, and what it leaves out of the version before stays resolvable as deprecated.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
+  "foxxi.xapi_profile_resolve": {
+    "implementation": "implemented",
+    "mode": "read",
+    "authorization": "public",
+    "requires": [],
+    "notes": [
+      "Serves a profile, a version, a concept, a statement template or a pattern by IRI as JSON-LD or N-Triples, by the Accept header.",
+      "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
+    ]
+  },
   "foxxi.xapi_profile_sparql": {
     "implementation": "implemented",
     "mode": "read",

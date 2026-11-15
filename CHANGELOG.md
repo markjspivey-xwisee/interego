@@ -1,5 +1,59 @@
 # Changelog
 
+## 2026-11-15 — Foxxi's xAPI profile server writes, lints, publishes and hosts profiles
+
+The profile server held documents an agent added whole. Adding a version again
+replaced it, taking one down made its IRIs stop answering, the only read was the
+document by `?iri=`, and the only check on the way in was shape. It is now an
+authoring tool and a host, as four more affordances on the Foxxi vertical
+(`src/xapi-profile-server/affordances.ts`).
+
+**Write** (`foxxi.xapi_profile_draft`). One draft per profile IRI, held under the
+agent that opened it, in xAPI Profiles 1.0 JSON-LD: replace the document, or set
+metadata and put or remove concepts, statement templates, patterns and examples.
+Opening a draft of a profile already held copies its current version into a new
+one. A refused edit leaves the draft as it was.
+
+**Lint** (`foxxi.xapi_profile_lint`). Findings name the term, where in the
+document it is, what is wrong and what to change. They cover labels, definitions
+and `inScheme`; every verb, activity type, attachment usage type and extension a
+template names being declared, held here in another profile, or listed as an
+external term; a schema on every extension; templates with the same determining
+properties; JSONPath the specification allows; pattern shape, references and
+cycles; an example statement for every template; and an example run for every
+primary pattern. Examples are judged by `processor.ts` (`validates`, `follows`,
+`matches`), the same functions a hosted version is validated with. There is no
+second matcher.
+
+**Publish** (`foxxi.xapi_profile_publish`). Refused with the findings unless
+there are none. `generatedAtTime` is set at publication. A later version states
+`wasRevisionOf`. A published version is never replaced, and its author cannot
+take it down. What a version leaves out of the one before is carried in it marked
+`deprecated`, and a deprecated template or pattern judges no statements.
+
+**Host** (`foxxi.xapi_profile_resolve`). A profile, a version, a concept, a
+statement template or a pattern answers by IRI as JSON-LD, or as N-Triples for
+`Accept: text/turtle` or `application/n-triples`. A profile written under
+`/xapi/profiles/p/` answers at its own IRIs, and so do the version, templates and
+patterns of the deployment's own profile under `/xapi/profile/`, which answered
+nothing before.
+
+Foxxi's own profile and both coached-world profiles go through draft, lint,
+publish and host in the tests with no findings. Two things had to be true first.
+Twenty-two Foxxi extensions had no schema; each now has an `inlineSchema`. And
+two Foxxi templates name an activity type another publisher defines that the
+profile does not declare; the test names them as external terms and does not
+copy them into the profile's concepts.
+
+**Not built.** Drafts are held in memory and do not survive a restart; every
+answer carries the whole draft so it can be sent back. An example claims the
+templates it follows, so "follows it and only it" is exact-set equality: a
+template that adds a determining property to another's (Foxxi has two) needs an
+example that claims both. Extension values in examples are not checked against
+the extension's schema. Nothing checks that a revision keeps the meaning of a
+term it keeps. There is no HTML representation and no editor screen. The
+deployment's own profile is still served from code, without examples.
+
 ## 2026-11-15 — xapi-x is published, and its eleven open questions are decided
 
 The xapi-x design ended with eleven questions for the owner, who answered:

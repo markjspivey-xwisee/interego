@@ -189,8 +189,9 @@ describe('over HTTP', () => {
 describe('the affordances', () => {
   it('name the paths the routes are at', () => {
     const targets = xapiProfileServerAffordances.map(a => a.targetTemplate);
-    expect(targets).toEqual(['{base}/agent/xapi-profiles/add', '{base}/agent/xapi-profiles/remove', '{base}/xapi/profiles/sparql',
-      '{base}/xapi/profiles/validate_templates', '{base}/xapi/profiles/validate_patterns']);
-    expect(new Set(xapiProfileServerAffordances.map(a => a.toolName)).size).toBe(5);
+    expect(targets).toEqual(['{base}/agent/xapi-profiles/add', '{base}/agent/xapi-profiles/remove',
+      '{base}/agent/xapi-profiles/draft', '{base}/agent/xapi-profiles/lint', '{base}/agent/xapi-profiles/publish', '{base}/xapi/profiles/resource',
+      '{base}/xapi/profiles/sparql', '{base}/xapi/profiles/validate_templates', '{base}/xapi/profiles/validate_patterns']);
+    expect(new Set(xapiProfileServerAffordances.map(a => a.toolName)).size).toBe(9);
   });
 });
