@@ -95,7 +95,8 @@ export function lintProfile(doc: unknown, examples: ProfileExamples = emptyExamp
   if (!list(doc.type).includes('Profile')) say('profile-type', 'profile', 'type', 'The profile does not say it is one.', 'Set "type": "Profile".');
   // The server reads a profile with the xAPI Profiles context whatever the document says. A document
   // that names another, or none, would mean one thing as JSON-LD and another as the triples served.
-  if (!list(doc['@context']).includes(PROFILE_CONTEXT)) say('profile-context', 'profile', '@context', doc['@context'] === undefined ? 'The document has no @context, so it is not read as JSON-LD.' : 'The @context does not include the xAPI Profiles context, so its terms are not read as the ones the specification defines.', `Set "@context": "${PROFILE_CONTEXT}", or an array that includes it.`);
+  // An entry of the array has to BE the context IRI: equality with a whole entry, not a search inside a string.
+  if (!list(doc['@context']).some(entry => entry === PROFILE_CONTEXT)) say('profile-context', 'profile', '@context', doc['@context'] === undefined ? 'The document has no @context, so it is not read as JSON-LD.' : 'The @context does not include the xAPI Profiles context, so its terms are not read as the ones the specification defines.', `Set "@context": "${PROFILE_CONTEXT}", or an array that includes it.`);
   if (doc.conformsTo !== 'https://w3id.org/xapi/profiles#1.0') say('profile-conforms-to', 'profile', 'conformsTo', 'The profile does not say which specification it conforms to.', 'Set "conformsTo": "https://w3id.org/xapi/profiles#1.0".');
   if (!hasText(doc.prefLabel)) say('label', 'profile', 'prefLabel', 'The profile has no label.', 'Give it a "prefLabel": a language map such as { "en": "…" }.');
   if (!hasText(doc.definition)) say('definition', 'profile', 'definition', 'The profile has no definition.', 'Give it a "definition": a language map saying what the profile is for.');
