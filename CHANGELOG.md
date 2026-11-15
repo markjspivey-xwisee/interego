@@ -34,6 +34,41 @@ evidence link or an offer, and the lint is not yet an affordance. Foxxi's
 projector writing the `iep#` keys is in another branch; it does not yet write
 the category or what a statement supersedes, and it projects a Quoted descriptor
 with an outcome verb, which rule X4 finds.
+## 2026-11-15 — Foxxi: a hosted cmi5 package keeps its own moveOn
+
+Found on the first run against the deployed bridge. A package uploaded and
+hosted on Foxxi becomes a cmi5 course, one unit per launchable file. Every such
+unit was given `moveOn="CompletedOrPassed"`, written into the code, whatever the
+package was. That is right for a SCORM package, which has no rule to carry. A
+cmi5 package has one: its course structure says what satisfies each unit. A unit
+declared `CompletedAndPassed` was satisfied on Foxxi by a `completed` alone, so
+a learner who failed and finished had satisfied it. Its mastery score and launch
+parameters were dropped the same way.
+
+`cmi5PackageUnits` reads each unit's moveOn, mastery score and launch parameters
+from the course structure, by the file its `<url>` names. They are kept in the
+package's description and applied when the course is built. A unit that leaves
+moveOn out, and every SCORM package, moves on as before.
+
+A package hosted before this keeps the description it was given, without these.
+It takes them when it is uploaded again.
+
+## 2026-11-15 — Foxxi: guest-learner docs caught up with the course player
+
+Documentation and comments only; no behaviour changes.
+
+- `i2idlx/LEARNING-CONNECTIONS.md` listed the only routes open to a guest and
+  did not mention the course player, whose `/learn` routes now take the same
+  guest session. It also now says that every guest, from either page, counts
+  against the workbench application's lifetime `maxPods`, which is never
+  refunded.
+- The header of `i2idlx/app/src/learning-guest.js` said the identity token is
+  dropped unread. That is true of the sign-in; `guestFreshCredential`, added
+  with the course player, returns a fresh token to its caller without storing
+  it. The header says so.
+- `src/cmi5-reviewed.ts`: the comment on a refusal said the review service's
+  words are not passed on. Its reason code and up to 20 bounded `problems`
+  strings are. The comment and the test's comment now say that.
 
 ## 2026-11-15 — Foxxi: a cmi5 launch's credential survives a restart
 
