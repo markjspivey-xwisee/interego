@@ -40,7 +40,7 @@ const concepts = [
   {
     id: IEP_DECORATIONS.modalStatus, type: 'ResultExtension',
     prefLabel: { en: 'modal status' },
-    definition: { en: 'Whether the source descriptor asserts its claim (Asserted), puts it forward without committing to it (Hypothetical), or states what did not happen (Counterfactual). A statement that is not Asserted is not evidence that anything occurred: it must not be counted as a completion, a success, a score or an attempt.' },
+    definition: { en: 'Whether the source descriptor asserts its claim (Asserted), puts it forward without committing to it (Hypothetical), states what did not happen (Counterfactual), or repeats a claim someone else made without endorsing it (Quoted). A statement that is not Asserted is not evidence that anything occurred: it must not be counted as a completion, a success, a score or an attempt.' },
     inlineSchema: schema({ enum: [...MODAL_STATUSES] }),
   },
   {
@@ -52,7 +52,7 @@ const concepts = [
   {
     id: IEP_DECORATIONS.projectionLossy, type: 'ResultExtension',
     prefLabel: { en: 'projection lossy' },
-    definition: { en: 'True when the statement says less than the descriptor it was projected from. Absent means not stated, not false: emitters have written it only alongside several narratives.' },
+    definition: { en: 'True when the statement says less than the descriptor it was projected from, false when it says as much. Statements written before 2026-11-15 carry it only when it is true, so on those an absent value means not stated, not false.' },
     inlineSchema: schema({ type: 'boolean' }),
   },
 ];

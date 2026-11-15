@@ -6,8 +6,8 @@
 # LRS or a plain profile processor may ignore.
 #
 # Status of every term below: declared, not yet emitted. The first xapi-x profile
-# declares four iep: terms the lrs-adapter already writes (see README.md, section 1);
-# those are defined in docs/ns/iep.ttl and are not repeated here.
+# declares four iep: terms the lrs-adapter already writes; those are defined in the
+# iep: vocabulary and are not repeated here.
 
 @prefix xapix: <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix#> .
 @prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
@@ -36,7 +36,7 @@ xapix:Projection a owl:Class ;
 xapix:descriptorDigest a owl:DatatypeProperty ;
   rdfs:subPropertyOf dct:identifier ;
   rdfs:label "descriptor digest" ;
-  rdfs:comment "Context extension. The content hash of the signed descriptor named by iep:sourceDescriptor, as 'sha256:' and 64 hex characters. With it the link can be checked: a descriptor fetched from that IRI that hashes differently is not the one this statement was projected from." ;
+  rdfs:comment "Context extension. The content hash of the signed descriptor named by iep:sourceDescriptor, as 'sha256:' and 64 hex characters, taken over the descriptor's bytes as served. With it the link can be checked: a descriptor fetched from that IRI that hashes differently is not the one this statement was projected from." ;
   rdfs:range xsd:string .
 
 # ── Supersession ────────────────────────────────────────────────────────────
@@ -50,7 +50,7 @@ xapix:supersedesStatement a owl:DatatypeProperty ;
 
 xapix:evidences a owl:ObjectProperty ;
   rdfs:label "evidences" ;
-  rdfs:comment "On a profile's concept (a verb, an activity type). The design idea a statement using the concept is evidence of, named by a concept of the I2IDL glossary or of i2x:. It is not a SKOS mapping: the target is a design idea, not an xAPI concept of the same type, so the profile's own broadMatch and exactMatch do not apply." .
+  rdfs:comment "On a profile's concept (a verb, an activity type). The design idea a statement using the concept is evidence of, named by a concept of the I2IDL glossary or of i2x:. It is not a SKOS mapping: the target is a design idea, not an xAPI concept of the same type, so the profile's own broadMatch and exactMatch do not apply. A link is a proposal until it is reviewed." .
 
 xapix:offers a owl:ObjectProperty ;
   rdfs:label "offers" ;
@@ -72,12 +72,12 @@ xapix:previous a owl:DatatypeProperty ;
 
 xapix:previousDigest a owl:DatatypeProperty ;
   rdfs:label "previous digest" ;
-  rdfs:comment "Context extension. The content hash of the statement named by xapix:previous, as 'sha256:' and 64 hex characters. A run of statements each carrying it is a chain: nobody can reorder, alter or insert into it afterwards without breaking a digest. A chain does not show that nothing was left off its end." ;
+  rdfs:comment "Context extension. The content hash of the statement named by xapix:previous, as 'sha256:' and 64 hex characters. A run of statements each carrying it is a chain: nobody can reorder, alter or insert into it afterwards without breaking a digest. A chain does not show that nothing was left off its end. The hash is taken over the RFC 8785 canonical JSON of the statement as its emitter sent it, without the stored, authority and version members, which an LRS sets." ;
   rdfs:range xsd:string .
 
 xapix:orderAttestation a owl:ObjectProperty ;
   rdfs:label "order attestation" ;
-  rdfs:comment "Context extension. The IRI of a signed descriptor that lists, in order, the digests of the statements of a registration. Whoever signed it attests that order and that the list is whole as of its signing." .
+  rdfs:comment "Context extension. The IRI of a signed descriptor that lists, in order, the digests of the statements of a registration. Whoever signed it attests that order and that the list is whole as of its signing. Anyone may sign one: an emitter for the order it emitted in, an LRS operator for the order it stored in, a third party for what it observed. The signer is named with the conclusion, and the reader decides whether to trust them." .
 
 xapix:OrderBasis a owl:Class ;
   rdfs:label "order basis" ;
