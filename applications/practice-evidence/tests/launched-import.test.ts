@@ -7,7 +7,7 @@
  * network, no environment reads.
  */
 import { describe, it, expect } from 'vitest';
-import { importWallet, sha256, validateAgainstShape, type Wallet } from '@interego/core';
+import { importWallet, sha256, sha256Hex, signMessageRaw, validateAgainstShape, type Wallet } from '@interego/core';
 import { createPevHandlers, LAUNCHED_JUDGMENT_TEMPLATE_HASH, type PevDeps } from '../bridge/handlers.js';
 import { operatorPodFetch, readHead } from '../bridge/pod-helpers.js';
 import { demoKey, demoScenarioInput, inMemoryPod } from '../demo/run.js';
@@ -15,8 +15,7 @@ import { PEV_ACTION, readShapesTurtle, toolNameOf } from '../src/ontology.js';
 import { coerceScenario, rubricHash, type ScenarioSpec } from '../src/practice.js';
 import { didOf, recordGraphTurtle, signEnvelope, type AttemptBody } from '../src/records.js';
 import {
-  launchNotVerified, launchVocabularyProblems, lmsAuthorityProblems, readLaunchedCall, scenarioVersionRef, sendingSessionProblems, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary,
-} from '../src/launched-import.js';
+  launchNotVerified, launchVocabularyProblems, lmsAuthorityProblems, readLaunchedCall, scenarioVersionRef, sendingSessionProblems, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary, launchedActorIsSigner } from '../src/launched-import.js';
 import { buildLaunchedStatements, launchedRefusals, VERB_COMPLETED, VERB_PASSED } from '../src/projections.js';
 
 type Out = Record<string, unknown>;
@@ -417,6 +416,53 @@ describe('pev.import_launched_attempt', () => {
     ]);
   }, SLOW);
 
+  it('takes a registration launched under the WebID of the person the relay signs for, and no other person\'s', async () => {
+    // A person signed in through the Interego relay: the relay signs for their agent, and the
+    // identity host says whose agent it is. The LMS launched them under their WebID on that host.
+    const IDH = 'identity.example.test';
+    const relayW = importWallet(key('relay'), 'agent', 'relay');
+    const person = `did:web:${IDH}:users:u-pk-00000000c0de`;
+    const agent = `did:web:${IDH}:agents:claude-u-pk-00000000c0de`;
+    const R = createPevHandlers({
+      ...base, launchImport: IMPORT,
+      relayDelegation: { relayAddresses: [relayW.address], identityHost: IDH, fetchDidDocument: async () => ({ id: agent, controller: person }) },
+    }) as Handlers;
+    const relayAct = async (payload: Out, extra: Out): Promise<Out> => {
+      const sp = JSON.stringify({
+        v: 1, action: PEV_ACTION.importLaunchedAttempt, nonce: nonce(), pod_url: POD, agent_id: agent,
+        subject_pod_url: 'https://pods.example.test/self/', timestamp: new Date(clock.t).toISOString(), ...payload,
+      });
+      return (await R['pev.import_launched_attempt']!({ _signed_payload: sp, _signature: await signMessageRaw(relayW, `sha256:${sha256Hex(sp)}`), ...extra })) as Out;
+    };
+    const before = pod.store.size;
+
+    // Launched for somebody else on the same host: the statements are whole, and they are not this person's.
+    const REG4 = '7e57c0de-0000-4000-8000-0000000000a4';
+    const other = { actor: `https://${IDH}/users/u-pk-00000000beef/profile#me`, registration: REG4, session: '7e57c0de-0000-4000-8000-0000000000b4' };
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', other), ...call(other)] } });
+    refused(await relayAct(pay({ registration: REG4 }), readOf(REG4)), 403, 'not-your-registration');
+    // Their own id, on another host.
+    const elsewhere = { ...other, actor: 'https://identity.other.test/users/u-pk-00000000c0de/profile#me' };
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', elsewhere), ...call(elsewhere)] } });
+    refused(await relayAct(pay({ registration: REG4 }), readOf(REG4)), 403, 'not-your-registration');
+    expect(pod.store.size).toBe(before);
+
+    // Launched for them, under their WebID.
+    const mine = { ...other, actor: `https://${IDH}/users/u-pk-00000000c0de/profile#me` };
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', mine), ...call(mine)] } });
+    const r = ok(await relayAct(pay({ registration: REG4 }), readOf(REG4)));
+    const a = (await readHead(POD, String(r['attemptIri']), TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    // The attempt is the person's, by the DID they sign as; the launch keeps the name the LMS gave.
+    expect(a.learner.did).toBe(person);
+    expect(a.lmsLaunch?.actor.name).toBe(mine.actor);
+
+    // A key-held signer is never matched to a WebID, on this bridge either.
+    const REG5 = '7e57c0de-0000-4000-8000-0000000000a5';
+    const asAna = { actor: `https://${IDH}/users/${W.ana.address}/profile#me`, registration: REG5, session: '7e57c0de-0000-4000-8000-0000000000b5' };
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', asAna), ...call(asAna)] } });
+    refused(await act(R, 'pev.import_launched_attempt', W.ana, pay({ registration: REG5 }), readOf(REG5)), 403, 'not-your-registration');
+  }, SLOW);
+
   it('lets a reviewer decide the levels, after which the statements for the unit can be built', async () => {
     ok(await act(H, 'pev.register_role', W.admin, { address: W.ben.address, role: 'reviewer', change: 'add' }));
     const seen = ok(await act(H, 'pev.get_attempt', W.ben, { attemptIri: S['attempt'] }));
@@ -738,4 +784,39 @@ describe('pev.import_launched_attempt', () => {
     lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', o2), ...call(o2)] } });
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ registration: REG10 }), readOf(REG10)), 422, 'registration-not-a-conversation');
   }, SLOW);
+});
+
+describe('who a launched actor is', () => {
+  const HOST = 'identity.example.test';
+  const DID = `did:web:${HOST}:users:u-pk-0123456789ab`;
+  const WEBID = `https://${HOST}/users/u-pk-0123456789ab/profile#me`;
+
+  it('is the signer when named by the DID the signer signs as, with or without an identity host', () => {
+    expect(launchedActorIsSigner(DID, DID, HOST)).toBe(true);
+    expect(launchedActorIsSigner(DID, DID, null)).toBe(true);
+    expect(launchedActorIsSigner(didOf(W.ana.address), didOf(W.ana.address), null)).toBe(true);
+  });
+
+  it('is the signer when named by that account\'s WebID on the identity host', () => {
+    expect(launchedActorIsSigner(WEBID, DID, HOST)).toBe(true);
+  });
+
+  it('is not the signer for another account, another host, another document, or no identity host', () => {
+    expect(launchedActorIsSigner(`https://${HOST}/users/u-pk-ffffffffffff/profile#me`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner('https://other.example.test/users/u-pk-0123456789ab/profile#me', DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`http://${HOST}/users/u-pk-0123456789ab/profile#me`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/u-pk-0123456789ab/profile`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/u-pk-0123456789ab/profile#me?x`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/agents/u-pk-0123456789ab/profile#me`, DID, HOST)).toBe(false);
+    expect(launchedActorIsSigner(WEBID, DID, null)).toBe(false);
+    expect(launchedActorIsSigner(WEBID, DID, 'other.example.test')).toBe(false);
+  });
+
+  it('never reads a WebID for a key-held signer, an agent, or an id with structure in it', () => {
+    expect(launchedActorIsSigner(WEBID, didOf(W.ana.address), HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/claude-u-pk-0123456789ab/profile#me`, `did:web:${HOST}:agents:claude-u-pk-0123456789ab`, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/a/../b/profile#me`, `did:web:${HOST}:users:a/../b`, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users/a:b/profile#me`, `did:web:${HOST}:users:a:b`, HOST)).toBe(false);
+    expect(launchedActorIsSigner(`https://${HOST}/users//profile#me`, `did:web:${HOST}:users:`, HOST)).toBe(false);
+  });
 });

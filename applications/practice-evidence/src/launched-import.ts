@@ -117,6 +117,26 @@ export interface ReadLaunchedInput {
  * The call a registration's statements describe, or every reason they do not describe one.
  * `statements` is what the LRS returned for the registration, in any order.
  */
+/** A user id as the identity host mints it: no separator a URL or a DID would read as structure. */
+const LAUNCH_USER_ID = /^[A-Za-z0-9][A-Za-z0-9._-]{0,127}$/;
+
+/**
+ * Whether the actor an LMS launched is the person signing. An LMS names its learner one of two
+ * ways: by the DID the person signs as, or by that account's WebID on the identity host. For the
+ * user `<id>` of the host `<host>` those are `did:web:<host>:users:<id>` and
+ * `https://<host>/users/<id>/profile#me`, and the host serves both for the one account. So the
+ * WebID is taken only when it is exactly the one built from the signer's own DID on the identity
+ * host this bridge is set up with. A key-held signer has no account there and matches by DID only.
+ */
+export function launchedActorIsSigner(actorName: string, signerDid: string, identityHost: string | null): boolean {
+  if (actorName === signerDid) return true;
+  if (identityHost === null || identityHost === '') return false;
+  const prefix = `did:web:${identityHost}:users:`;
+  if (!signerDid.startsWith(prefix)) return false;
+  const id = signerDid.slice(prefix.length);
+  return LAUNCH_USER_ID.test(id) && actorName === `https://${identityHost}/users/${id}/profile#me`;
+}
+
 /**
  * A scenario version as a statement names it: the scenario's IRI and `#version-<n>`. A published
  * version never changes, so this names one rubric for good.
