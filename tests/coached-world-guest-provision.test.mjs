@@ -3,7 +3,7 @@
  * for. Every name, key, token and origin here is made up for the test.
  *
  * That the merged PROVISIONAL_PLAY_CLIENTS is one identity's own `parsePlayClients` accepts is
- * tests/the-coached-world-guest-entry-is-one-identity-accepts.test.ts (it needs the TypeScript).
+ * applications/coached-world/tests/the-guest-entry-is-one-identity-accepts.test.ts (it needs the TypeScript).
  */
 import assert from 'node:assert/strict';
 import test from 'node:test';

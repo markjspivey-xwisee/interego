@@ -24,7 +24,7 @@
  * application's entry is carried over untouched, and the merged value is checked against the
  * rules identity enforces (`parsePlayClients` in deploy/identity/provisional-play.ts, mirrored in
  * `checkPlayClients` below and held to the real one by
- * tests/the-coached-world-guest-entry-is-one-identity-accepts.test.ts) before it is sent.
+ * applications/coached-world/tests/the-guest-entry-is-one-identity-accepts.test.ts) before it is sent.
  *
  * ★ NOTHING IS DEPLOYED. Every write carries `skipDeploys: true`; the run ends by naming the
  * services to redeploy. Without `apply` nothing is written and no key is generated.

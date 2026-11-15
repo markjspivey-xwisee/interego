@@ -8,11 +8,11 @@
  * Every origin, agent and pod here is made up.
  */
 import { describe, expect, it } from 'vitest';
-import { parsePlayClients, isGuestReturnPath as identityReturnPath } from '../deploy/identity/provisional-play.js';
-import { parseDoorOrigin } from '../deploy/identity/provisional-general-guest-routes.js';
+import { parsePlayClients, isGuestReturnPath as identityReturnPath } from '../../../deploy/identity/provisional-play.js';
+import { parseDoorOrigin } from '../../../deploy/identity/provisional-general-guest-routes.js';
 import {
   IDENTITY_URL, NAMESPACE, RETURN_PATH, WORLD_ORIGIN, checkDoorOrigin, checkPlayClients, isGuestReturnPath, mergePlayClients,
-} from '../tools/coached-world-guest-provision.mjs';
+} from '../../../tools/coached-world-guest-provision.mjs';
 
 const SERVICE = { agentDid: 'did:web:identity.example:agents:mcp-client-u-eth-0a1b2c3d4e5f', podUrl: 'https://pods.example/u-eth-0a1b2c3d4e5f/', maxPods: 25 };
 const OTHER = { agentDid: 'did:web:identity.example:agents:lanternfall-service', podUrl: 'https://pods.example/lanternfall/' };
