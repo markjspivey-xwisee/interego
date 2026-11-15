@@ -20,6 +20,7 @@
 import { readFileSync, mkdirSync, writeFileSync } from 'node:fs';
 import { join, resolve } from 'node:path';
 import { act, affordancesIn, chainExitCode, dereference, findAffordance, fullRunLeftToTheSuite, mergeArguments, runSelectedTests, validateAgainstShape, type ResolvedAffordance, runNeedsTriage } from '../src/follower.js';
+import { describeDiffRange, diffRange } from '../src/repo.js';
 
 interface Cli {
   url: string;
@@ -127,6 +128,14 @@ async function followOne(documentUrl: string, verb: string, overrides: Record<st
 async function main(): Promise<void> {
   const cli = parseCli(process.argv.slice(2));
   mkdirSync(cli.out, { recursive: true });
+  // The commits a base_ref and head_ref name in this checkout, printed before anything is judged:
+  // which diff a selection or a gate read is otherwise nowhere in the job log.
+  const baseRef = cli.args['base_ref'];
+  if (typeof baseRef === 'string' && baseRef) {
+    const headRef = cli.args['head_ref'];
+    console.log(`▸ ${cli.verb} range: ${describeDiffRange(diffRange(cli.repo, baseRef, typeof headRef === 'string' && headRef ? headRef : undefined))}
+`);
+  }
   let current = await followOne(cli.url, cli.verb, cli.args, cli);
   let last = current.body as { url?: string; judgment?: { kind?: string; verdict?: string; id?: string } };
   console.log(`▸ ${cli.verb}\n${summarize(current.body)}\n`);
