@@ -25,6 +25,28 @@
  * per-record projection (PodStatementStore) because queries and
  * voiding semantics require it; the LMS surfaces here use snapshots
  * because that's the natural unit of their state.
+ *
+ * ── WHAT A SNAPSHOT IS ON THE POD (2026-11-15) ─────────────────────────────────────────────
+ *
+ * Two things were wrong with the plain snapshots (every surface but the LTI Platform gradebook),
+ * found when a restart of the deployed bridge lost every cmi5 launch.
+ *
+ * They were written once. `publish()` PUTs a graph with `If-None-Match: *` and takes a 412 as
+ * done, because a graph it publishes is meant never to change. A snapshot is the opposite: one
+ * name, rewritten. So the first write of each snapshot graph was the only one. The descriptor
+ * beside it kept being rewritten, which is what made it look alive. On the deployed pod the cmi5
+ * graph was from 2026-09-26 and its descriptor from the same minute as the check; the LTI and
+ * xAPI-document graphs were from July. Every restart since had restored the first write.
+ *
+ * They were plain text. The graph is on a pod anyone can read, and held each launch's learner,
+ * their pod, the course and the registration.
+ *
+ * So a snapshot is now sealed to the bridge's own key (`SnapshotPodConfig.sealKey`, derived from
+ * `FOXXI_BRIDGE_PRIVATE_KEY` for this pod) and its graph is overwritten on every write. A bridge
+ * with no key writes no snapshot: state it cannot seal stays in the process. On read, the sealed
+ * graph is taken when there is one, and only when this bridge sealed it. The plain graph an
+ * earlier bridge left is read only where no sealed one exists yet, so the first start after this
+ * change restores what the last one did. Nothing here removes that plain graph.
  */
 
 import {
@@ -54,7 +76,7 @@ import type {
   PGSLInstance,
 } from '@interego/pgsl';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { parseTrig, readIriValue, readStringValue, canonicalJson, envelopeFromJson, openEncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
+import { parseTrig, readIriValue, readStringValue, canonicalJson, deriveEncryptionKeyPair, envelopeFromJson, openEncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
 import { verifyMessage } from 'ethers';
 import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
@@ -101,17 +123,53 @@ export interface SnapshotPodConfig {
   podUrl: string;
   authoritativeSource: IRI;
   fetch: typeof globalThis.fetch;
+  /** The key a plain snapshot is sealed to, and opened with. Without one no plain snapshot is written. */
+  sealKey?: EncryptionKeyPair;
 }
 
 function podConfig(): SnapshotPodConfig | null {
   const podUrl = process.env.FOXXI_TENANT_POD_URL;
   const authoritativeSource = process.env.FOXXI_AUTHORITATIVE_SOURCE;
   if (!podUrl || !authoritativeSource) return null;
+  const pod = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
+  const secret = process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '';
   return {
-    podUrl: podUrl.endsWith('/') ? podUrl : `${podUrl}/`,
+    podUrl: pod,
     authoritativeSource: authoritativeSource as unknown as IRI,
     fetch: globalThis.fetch.bind(globalThis),
+    ...(/^(?:0x)?[a-f0-9]{64}$/i.test(secret) ? { sealKey: deriveEncryptionKeyPair(secret, `urn:foxxi:tenant-snapshot:v1:${pod}`) } : {}),
   };
+}
+
+/** Where a surface's sealed snapshot graph is kept. */
+function sealedGraphUrl(config: { podUrl: string }, surface: string): string {
+  return `${config.podUrl}foxxi/snapshots/${surface}-snapshot-graph.envelope.jose.json`;
+}
+
+/**
+ * The pod's fetch, with one difference: a PUT of this snapshot's graph replaces what is there.
+ * `publish()` sends that PUT with `If-None-Match: *`, for graphs that never change.
+ */
+function overwritingGraph(fetchFn: typeof globalThis.fetch, graphUrl: string): typeof globalThis.fetch {
+  return async (input, init) => {
+    if (String(input) !== graphUrl || (init?.method ?? 'GET').toUpperCase() !== 'PUT') return fetchFn(input, init);
+    const headers = new Headers(init?.headers);
+    headers.delete('if-none-match');
+    return fetchFn(input, { ...init, headers });
+  };
+}
+
+const unsealedWarned = new Set<string>();
+
+/** The snapshot inside a sealed graph, when this key sealed it for itself; null for anything else. */
+function openSealedBundle<T>(body: string, key: EncryptionKeyPair): T | null {
+  try {
+    if (Buffer.byteLength(body, 'utf8') > 12 * 1024 * 1024) return null;
+    const envelope = envelopeFromJson(body);
+    const wrappedKeys = envelope.wrappedKeys.filter(w => w.senderPublicKey === key.publicKey && w.recipientPublicKey === key.publicKey);
+    const plain = wrappedKeys.length === 1 ? openEncryptedEnvelope({ ...envelope, wrappedKeys }, key) : null;
+    return plain === null ? null : decodePodBundle<T>(plain);
+  } catch { return null; }
 }
 
 function snapshotDescriptor(args: {
@@ -219,6 +277,16 @@ async function doPublish(reg: SnapshotRegistration): Promise<void> {
     catch (err) { console.error(`[pod-snapshot/${reg.surface}] publish failed:`, (err as Error).message); }
     return;
   }
+  // A snapshot is state about people. It goes to the pod sealed, or not at all.
+  const sealKey = config.sealKey;
+  if (!sealKey) {
+    if (!unsealedWarned.has(reg.surface)) {
+      unsealedWarned.add(reg.surface);
+      process.stderr.write(`[pod-snapshot/${reg.surface}] not written: this bridge has no key to seal it with, so its state will not survive a restart
+`);
+    }
+    return;
+  }
   const slug = `${reg.surface}-snapshot`;
   const graphIri = `urn:foxxi:${reg.surface}-snapshot:v${reg.version}` as IRI;
   const descriptorIri = `${graphIri}#descriptor` as IRI;
@@ -248,10 +316,11 @@ async function doPublish(reg: SnapshotRegistration): Promise<void> {
   });
   try {
     await withPublishLock(() => publish(descriptor, graphContent, config.podUrl, {
-      fetch: config.fetch,
+      fetch: overwritingGraph(config.fetch, sealedGraphUrl(config, reg.surface)),
       containerPath: 'foxxi/snapshots/',
       descriptorSlug: slug,
       graphSlug: `${slug}-graph`,
+      encrypt: { senderKeyPair: sealKey, recipients: [sealKey.publicKey] },
     }));
     reg.lastPublishedAt = Date.now();
     reg.lastPublishedDescriptorIri = descriptorIri;
@@ -345,21 +414,33 @@ export async function flushSnapshot(surface: string): Promise<void> {
  * publisher always uses the same slug), so a single GET suffices.
  */
 export async function loadLatestSnapshot<T>(surface: string, config: {
-  podUrl: string; authoritativeSource: IRI; fetch: FetchFn;
+  podUrl: string; authoritativeSource: IRI; fetch: FetchFn; sealKey?: EncryptionKeyPair;
 } | null = podConfig()): Promise<T | null> {
   if (!config) return null;
   const graphUrl = `${config.podUrl}foxxi/snapshots/${surface}-snapshot-graph.trig`;
+  const read = (url: string, accept: string): Promise<string | null> => withTransientRetry(async () => {
+    const r = await config.fetch(url, { headers: { Accept: accept, 'Cache-Control': 'no-cache' } });
+    if (!r.ok) {
+      // 404 means no snapshot yet (first run) — surface as a sentinel so
+      // the outer caller can return null without retrying.
+      if (r.status === 404) return null;
+      throw new Error(`snapshot fetch failed: ${r.status} ${r.statusText}`);
+    }
+    return r.text();
+  });
   try {
-    const ttl = await withTransientRetry(async () => {
-      const r = await config.fetch(graphUrl, { headers: { Accept: 'application/trig, text/turtle' } });
-      if (!r.ok) {
-        // 404 means no snapshot yet (first run) — surface as a sentinel so
-        // the outer caller can return null without retrying.
-        if (r.status === 404) return null;
-        throw new Error(`snapshot fetch failed: ${r.status} ${r.statusText}`);
+    if (config.sealKey) {
+      const sealed = await read(sealedGraphUrl(config, surface), 'application/jose+json, application/json');
+      if (sealed !== null) {
+        // A sealed graph is the snapshot. One this bridge cannot open is not replaced by the plain
+        // graph of an earlier bridge: that one stopped being written, and would restore old state.
+        const opened = openSealedBundle<T>(sealed, config.sealKey);
+        if (opened === null) process.stderr.write(`[pod-snapshot/${surface}] hydrate failed: the sealed snapshot was not sealed by this bridge's key
+`);
+        return opened;
       }
-      return r.text();
-    });
+    }
+    const ttl = await read(graphUrl, 'application/trig, text/turtle');
     if (ttl === null) return null;
     return decodePodBundle<T>(ttl);
   } catch (err) {
