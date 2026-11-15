@@ -483,7 +483,7 @@ import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerActor, cmi5Be
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
-import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, takenDownPackages, type PackageAbout } from '../src/scorm-hosting.js';
+import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, takenDownPackages, type PackageAbout, cmi5PackageUnits } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes } from '../src/lti-platform.js';
@@ -11280,12 +11280,18 @@ function describeHostedPackage(bytes: Buffer): PackageAbout | null {
   if (exported) return { title: exported.title, launchable: [], exportOf: exported.tool };
   const pkg = unwrapScormPackage(bytes);
   const launchable = pkg.resources.filter(r => r.isLaunchable).map(r => r.path).filter(isPackagePath);
-  return launchable.length ? { title: pkg.title, launchable } : null;
+  if (!launchable.length) return null;
+  // A cmi5 package says what satisfies each of its units; a SCORM package has nothing to say.
+  const units = pkg.format === 'cmi5' ? cmi5PackageUnits(pkg.manifestRaw, launchable) : undefined;
+  return { title: pkg.title, launchable, ...(units ? { units } : {}) };
 }
 
 /** Keep a parsed package, and what it is beside it, and register it as a cmi5 course; say how to launch it, or why it is not kept. */
 async function hostUploadedPackage(bytes: Buffer, title: string, launchable: readonly string[]): Promise<Record<string, unknown>> {
-  const about: PackageAbout = { title, launchable: launchable.filter(isPackagePath) };
+  // What the package's own course structure says of its units, read from the bytes being kept.
+  let units: PackageAbout['units'];
+  try { units = describeHostedPackage(bytes)?.units; } catch { units = undefined; }
+  const about: PackageAbout = { title, launchable: launchable.filter(isPackagePath), ...(units ? { units } : {}) };
   if (!about.launchable.length) return { hosted: false, hostedWhy: 'the package names no launchable SCO inside it, so there is nothing to play' };
   let kept: { sha256: string; url: string };
   try { kept = await hostedPackages.keep(bytes, about); }
