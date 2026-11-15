@@ -21,7 +21,11 @@
  *
  * (a) Every Dockerfile that installs the root lockfile with devDependencies either prunes in the
  *     same RUN or never lets that node_modules reach the image it builds. Both lists are pinned,
- *     so a parser that silently matched nothing cannot pass.
+ *     so a parser that silently matched nothing cannot pass. And the parser fails closed for a
+ *     Dockerfile nobody has written yet: it reads every form of COPY and of npm install that
+ *     Docker and npm accept (globs, `.`, JSON form, `--from` a stage, `VAR=x npm ci`, npm's
+ *     aliases, `--prefix`), and an npm install it cannot attribute to a manifest it saw copied,
+ *     or to packages the command names, fails the test instead of passing unseen.
  * (b) Nothing deployed needs the packages: npm marks every one of them dev-only and nothing else
  *     depends on them; no file an image ships references them except four named developer tools
  *     that are copied along with their directories; and the static import closure of everything
@@ -67,6 +71,17 @@ const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
 const patternBody = (p: string): string => p.split('*').map(escape).join('[a-z0-9][a-z0-9-]*');
 const NAME = `(?:${PRUNE_PATTERNS.map(patternBody).join('|')})`;
 const isPrunedName = (name: string): boolean => new RegExp(`^${NAME}$`).test(name);
+
+// ── The tree, as git tracks it ─────────────────────────────────────────────────────────────────
+
+const git = (...args: string[]): string[] =>
+  execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 }).split('\n').filter(Boolean);
+const TRACKED = git('ls-files');
+/** Every Dockerfile, whatever its naming: `Dockerfile`, `Dockerfile.x`, `x.Dockerfile`, `Containerfile`. */
+const DOCKERFILES = TRACKED.filter(f =>
+  /(^|\/)(?:Dockerfile|Containerfile)(?:\.[^/]+)?$|\.(?:Dockerfile|dockerfile|Containerfile)$/.test(f));
+/** The files npm installs from. Where each lands in an image is all the analyser follows of a COPY. */
+const NPM_INPUTS = TRACKED.filter(f => /(^|\/)(?:package\.json|package-lock\.json|npm-shrinkwrap\.json)$/.test(f));
 
 // ── Reading a Dockerfile ───────────────────────────────────────────────────────────────────────
 
@@ -116,10 +131,23 @@ function ancestry(stages: readonly Stage[], stage: Stage): Stage[] {
 }
 
 const tokens = (args: string): string[] => args.trim().split(/\s+/).filter(Boolean);
-const copyParts = (args: string): { sources: string[]; dest: string } => {
-  const parts = tokens(args).filter(t => !t.startsWith('--'));
-  return { sources: parts.slice(0, -1), dest: parts[parts.length - 1] ?? '' };
-};
+/** A COPY or ADD: its `--flags`, sources and destination, in shell form or JSON form. */
+function copyParts(args: string): { flags: string[]; sources: string[]; dest: string } {
+  const flags: string[] = [];
+  let rest = args.trim();
+  for (let m = /^(--\S+)\s+/.exec(rest); m; m = /^(--\S+)\s+/.exec(rest)) {
+    flags.push(m[1]!);
+    rest = rest.slice(m[0].length);
+  }
+  let parts = tokens(rest);
+  if (rest.startsWith('[')) {
+    try { parts = (JSON.parse(rest) as unknown[]).map(String); } catch { /* not JSON after all: words */ }
+  }
+  return { flags, sources: parts.slice(0, -1), dest: parts[parts.length - 1] ?? '' };
+}
+const copyFrom = (flags: readonly string[]): string | undefined =>
+  flags.map(f => /^--from=(.+)$/.exec(f)?.[1]).find((x): x is string => x !== undefined);
+
 /** The shell command of a RUN or CMD, without `--mount`/`--network` flags; exec form joined. */
 function shellOf(args: string): string {
   const trimmed = args.trim();
@@ -129,21 +157,140 @@ function shellOf(args: string): string {
   return trimmed.replace(/^(?:--\S+\s+)+/, '');
 }
 
-interface RootInstall {
+/** Shell commands split on `&&`, `||`, `;`, `|` and newlines outside quotes, each with the operator before it. */
+function shellSegments(shell: string): { text: string; after: string }[] {
+  const out: { text: string; after: string }[] = [];
+  let quote = '';
+  let current = '';
+  let after = '';
+  for (let i = 0; i < shell.length; i++) {
+    const c = shell[i]!;
+    if (quote) {
+      current += c;
+      if (c === '\\' && quote === '"' && i + 1 < shell.length) current += shell[++i];
+      else if (c === quote) quote = '';
+      continue;
+    }
+    if (c === '"' || c === "'") { quote = c; current += c; continue; }
+    const op = /^(?:&&|\|\||;|\||\n)/.exec(shell.slice(i, i + 2))?.[0];
+    if (op) {
+      out.push({ text: current, after });
+      current = '';
+      after = op;
+      i += op.length - 1;
+      continue;
+    }
+    current += c;
+  }
+  out.push({ text: current, after });
+  return out;
+}
+
+const GLOB = /[*?[]/;
+/** A COPY source pattern as Go's filepath.Match reads it: `*` and `?` stop at `/`; `**` is taken to cross it. */
+function globRegex(pattern: string): RegExp {
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!;
+    if (c === '*') {
+      if (pattern[i + 1] === '*') { out += '.*'; i++; } else out += '[^/]*';
+    } else if (c === '?') out += '[^/]';
+    else if (c === '[' && pattern.indexOf(']', i + 2) > 0) {
+      const end = pattern.indexOf(']', i + 2);
+      out += `[${pattern.slice(i + 1, end).replace(/\\/g, '\\\\')}]`;
+      i = end;
+    } else if (c === '\\' && i + 1 < pattern.length) out += escape(pattern[++i]!);
+    else out += escape(c);
+  }
+  return new RegExp(`^${out}$`);
+}
+
+/**
+ * Which of `files` a COPY source takes from the build context (the repository root), each with
+ * its path below the destination: `null` when the source named the file itself, so where it
+ * lands depends on whether the destination is a directory. A directory source, `.` and a glob
+ * that matches a directory copy that directory's contents, as Docker does.
+ */
+function contextMatches(source: string, files: readonly string[]): { file: string; within: string | null }[] {
+  const s = source.replace(/^(?:\.\/)+/, '').replace(/^\/+/, '').replace(/\/+$/, '');
+  if (s === '' || s === '.') return files.map(file => ({ file, within: file }));
+  const out: { file: string; within: string | null }[] = [];
+  if (GLOB.test(s)) {
+    const rx = globRegex(s);
+    for (const file of files) {
+      const parts = file.split('/');
+      for (let k = 1; k <= parts.length; k++) {
+        if (!rx.test(parts.slice(0, k).join('/'))) continue;
+        out.push({ file, within: k === parts.length ? null : parts.slice(k).join('/') });
+        break;
+      }
+    }
+    return out;
+  }
+  for (const file of files) {
+    if (file === s) out.push({ file, within: null });
+    else if (file.startsWith(`${s}/`)) out.push({ file, within: file.slice(s.length + 1) });
+  }
+  return out;
+}
+
+const placeAt = (dest: string, within: string | null, name: string, intoDir: boolean): string =>
+  within !== null ? posix.join(dest, within) : intoDir ? posix.join(dest, posix.basename(name)) : dest;
+
+/** npm's install commands and every alias npm 10 accepts for them. */
+const NPM_INSTALL_VERBS = new Set([
+  'ci', 'clean-install', 'ic', 'install-clean', 'isntall-clean',
+  'install', 'add', 'i', 'in', 'ins', 'inst', 'insta', 'instal', 'isnt', 'isnta', 'isntal', 'isntall',
+  'install-test', 'it', 'install-ci-test', 'cit', 'clean-install-test', 'sit',
+]);
+/** npm options whose value may follow as the next word. */
+const NPM_VALUE_FLAGS = new Set(['--prefix', '-C', '--omit', '--include', '--only', '--workspace', '-w', '--loglevel',
+  '--registry', '--cache', '--userconfig', '--globalconfig', '--location', '--install-strategy', '--tag', '--before']);
+/** node options whose value follows as the next word. */
+const NODE_VALUE_FLAGS = new Set(['--import', '-r', '--require', '--loader', '--experimental-loader', '--env-file', '--conditions', '-C']);
+
+/** What an npm install installs from. */
+type InstallKind =
+  /** The root package.json or package-lock.json is in the directory it installs. */
+  | 'root'
+  /** Another package.json or lockfile from the repository is there. */
+  | 'other'
+  /** `-g`: the packages it names, outside any project. */
+  | 'global'
+  /** No manifest the analyser saw copied there, but it names what it installs (tarballs, `pg@8`). */
+  | 'named'
+  /** None of those: the analyser cannot say what this installs, so the test fails until it can. */
+  | 'unattributed';
+
+interface NpmInstall {
   readonly line: number;
+  /** The npm command, without the environment assignments or wrappers before it. */
   readonly command: string;
-  /** The directory the root lockfile was copied to, which is where node_modules lands. */
+  /** The directory it installs, which is where node_modules lands. */
   readonly dir: string;
   readonly stage: Stage;
-  /** The prune script ran later in the same RUN, from a copy this stage chain made of it. */
-  readonly pruned: boolean;
+  readonly kind: InstallKind;
+  /** Whether devDependencies are installed: nothing omits them, or `--include=dev` puts them back. */
+  readonly keepsDev: boolean;
+  /** The package specs it names. */
+  readonly named: string[];
+  /** The prune script ran later in the same RUN, joined by `&&` or `;`, on this install's node_modules. */
+  pruned: boolean;
+  /** A `||` or `|` came after the install, so a prune after it does not certainly run once it is done. */
+  broken: boolean;
 }
+
+/** An install of the ROOT manifests that keeps devDependencies. */
+type RootInstall = NpmInstall & { readonly kind: 'root'; readonly keepsDev: true };
 
 interface Analysis {
   readonly dockerfile: string;
   readonly stages: Stage[];
   /** The stage CI builds: images.json's `target`, or the last one. */
   readonly built: Stage;
+  /** Every npm install in the file. */
+  readonly npm: NpmInstall[];
+  /** The ones that install the root manifests with devDependencies. */
   readonly installs: RootInstall[];
 }
 
@@ -151,62 +298,133 @@ const IMAGES = (JSON.parse(readFileSync(join(ROOT, 'deploy/images.json'), 'utf8'
   images: { image: string; dockerfile: string; target?: string }[];
 }).images;
 
+/** A package spec's name: `@scope/name@1` is `@scope/name`, `pg@8` is `pg`. */
+const specName = (spec: string): string =>
+  spec.startsWith('@') ? spec.split('@').slice(0, 2).join('@') : spec.split('@')[0]!;
+
 /**
- * Every install of the ROOT lockfile that keeps devDependencies: `npm ci` or `npm install` run in
- * the directory a `COPY ... package-lock.json ...` put the root lockfile, without `--prefix`,
- * `--global` or any way of omitting dev. Records each instruction's working directory as it goes.
+ * Every npm install in a Dockerfile, with what it installs from. The analyser follows where each
+ * COPY or ADD puts the repository's package.json, package-lock.json and npm-shrinkwrap.json files
+ * (and the prune script), in any form Docker accepts: a literal path, `./path`, a glob, a
+ * directory, `.` (the whole context), JSON form, and `--from` an earlier stage. A RUN is split
+ * into commands outside quotes; leading `VAR=value` assignments and `env`/`exec`-style wrappers
+ * are read past, as are npm's options before the verb; every npm alias of `ci` and `install`
+ * counts; `--prefix`/`-C` moves the install. An install counts as pruned only when the script
+ * runs after it in the same RUN, joined by `&&` or `;`, on that install's own node_modules.
  */
 function analyse(dockerfile: string, text = readFileSync(join(ROOT, dockerfile), 'utf8')): Analysis {
   const stages = parseDockerfile(text);
-  const installs: RootInstall[] = [];
-  interface State { workdir: string; lockDir: string | null; production: boolean; scripts: Set<string> }
+  const npm: NpmInstall[] = [];
+  interface State { workdir: string; manifests: Map<string, string>; omitsDev: boolean; scripts: Set<string> }
   const states = new Map<Stage, State>();
   for (const stage of stages) {
     const parent = stageNamed(stages, stage.base);
     const inherited = parent ? states.get(parent) : undefined;
     const state: State = inherited
-      ? { ...inherited, scripts: new Set(inherited.scripts) }
-      : { workdir: '/', lockDir: null, production: false, scripts: new Set() };
+      ? { ...inherited, manifests: new Map(inherited.manifests), scripts: new Set(inherited.scripts) }
+      : { workdir: '/', manifests: new Map(), omitsDev: false, scripts: new Set() };
     for (const ins of stage.instructions) {
       if (ins.op === 'WORKDIR') state.workdir = posix.resolve(state.workdir, ins.args.trim());
       ins.cwd = state.workdir;
-      if (ins.op === 'ENV' && /\bNODE_ENV[= ]+["']?production\b/.test(ins.args)) state.production = true;
-      else if (ins.op === 'COPY' && !/--from[= ]/.test(ins.args)) {
-        const { sources, dest } = copyParts(ins.args);
-        const intoDir = dest.endsWith('/') || dest === '.' || sources.length > 1;
-        const target = (source: string): string => intoDir
-          ? posix.join(posix.resolve(state.workdir, dest), posix.basename(source))
-          : posix.resolve(state.workdir, dest);
-        for (const source of sources) {
-          if (source === 'package-lock.json') state.lockDir = posix.dirname(target(source));
-          if (source === SCRIPT_PATH) state.scripts.add(target(source));
+      if (ins.op === 'ENV') {
+        const nodeEnv = /\bNODE_ENV[= ]+["']?([\w-]+)/.exec(ins.args);
+        if (nodeEnv) state.omitsDev = nodeEnv[1] === 'production';
+        if (/\bnpm_config_(?:omit[= ]+["']?[\w,]*dev|production[= ]+["']?true)\b/i.test(ins.args)) state.omitsDev = true;
+      } else if (ins.op === 'COPY' || ins.op === 'ADD') {
+        const { flags, sources, dest } = copyParts(ins.args);
+        const destAbs = posix.resolve(state.workdir, dest);
+        const intoDir = dest.endsWith('/') || dest === '.' || sources.length > 1 || sources.some(s => GLOB.test(s))
+          || destAbs === state.workdir;
+        const from = copyFrom(flags);
+        if (from === undefined) {
+          for (const source of sources) {
+            if (/^[a-z][a-z0-9+.-]*:\/\//i.test(source)) continue;
+            for (const { file, within } of contextMatches(source, NPM_INPUTS)) state.manifests.set(placeAt(destAbs, within, file, intoDir), file);
+            for (const { within } of contextMatches(source, [SCRIPT_PATH])) state.scripts.add(placeAt(destAbs, within, SCRIPT_PATH, intoDir));
+          }
+        } else {
+          // Out of an earlier stage: whatever that stage had at the source path. Out of any other
+          // image the analyser knows nothing, so an install that needs it stays unattributed.
+          const source = stageNamed(stages, from);
+          const known = source ? states.get(source) : undefined;
+          for (const raw of known ? sources : []) {
+            const abs = posix.resolve('/', raw);
+            for (const [path, file] of known!.manifests) {
+              const within = path === abs ? null : abs === '/' ? path.slice(1) : path.startsWith(`${abs}/`) ? path.slice(abs.length + 1) : undefined;
+              if (within !== undefined) state.manifests.set(placeAt(destAbs, within, path, intoDir), file);
+            }
+          }
         }
       } else if (ins.op === 'RUN') {
         let cwd = state.workdir;
-        const pending: { command: string; dir: string }[] = [];
-        for (const raw of shellOf(ins.args).split(/&&|\|\||;|\|/)) {
-          const seg = raw.trim().replace(/^(?:[({]\s*|(?:then|else|do)\s+)+/, '').trim();
-          const cd = /^cd\s+(\S+)/.exec(seg);
-          if (cd) { cwd = posix.resolve(cwd, cd[1]!); continue; }
-          if (/^npm\s+(?:ci|install|i)(?:\s|$)/.test(seg)) {
-            const devOmitted = /--omit[= ]dev\b|--production\b|--only[= ]prod/.test(seg) || state.production;
-            const elsewhere = /--prefix\b|(?:^|\s)(?:-g|--global)\b/.test(seg);
-            if (state.lockDir !== null && cwd === state.lockDir && !devOmitted && !elsewhere) pending.push({ command: seg, dir: cwd });
-            continue;
+        const pending: NpmInstall[] = [];
+        for (const { text: raw, after } of shellSegments(shellOf(ins.args))) {
+          if (after === '||' || after === '|') for (const p of pending) p.broken = true;
+          let seg = raw.trim().replace(/^(?:[({!]\s*|(?:then|else|elif|do|if|while|until)\s+)+/, '').replace(/[\s)}]+$/, '').trim();
+          const assignments: string[] = [];
+          for (let m = /^(?:(?:env|exec|command|time|nice|nohup|sudo)\s+|([A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*))\s+)/.exec(seg); m;
+            m = /^(?:(?:env|exec|command|time|nice|nohup|sudo)\s+|([A-Za-z_][A-Za-z0-9_]*=(?:"[^"]*"|'[^']*'|\S*))\s+)/.exec(seg)) {
+            if (m[1]) assignments.push(m[1]);
+            seg = seg.slice(m[0].length);
           }
-          const node = /^node\s+(\S+)/.exec(seg);
-          if (node && pending.length && state.scripts.has(posix.resolve(cwd, node[1]!))) {
-            for (const p of pending.splice(0)) installs.push({ ...p, line: ins.line, stage, pruned: true });
+          const words = tokens(seg);
+          const program = posix.basename(words[0] ?? '');
+          if (program === 'cd') {
+            if (words[1] && words[1] !== '-') cwd = posix.resolve(cwd, words[1]);
+          } else if (program === 'npm') {
+            const flags: [string, string | true][] = [];
+            const positional: string[] = [];
+            for (let i = 1; i < words.length; i++) {
+              const w = words[i]!;
+              if (!w.startsWith('-') || w === '-') positional.push(w);
+              else if (w.includes('=')) flags.push([w.slice(0, w.indexOf('=')), w.slice(w.indexOf('=') + 1)]);
+              else if (NPM_VALUE_FLAGS.has(w) && i + 1 < words.length) flags.push([w, words[++i]!]);
+              else flags.push([w, true]);
+            }
+            const verb = positional.shift();
+            if (!verb || !NPM_INSTALL_VERBS.has(verb)) continue;
+            const values = (...names: string[]): (string | true)[] => flags.filter(([n]) => names.includes(n)).map(([, v]) => v);
+            const lists = (name: string, item: string): boolean => values(name).some(v => typeof v === 'string' && v.split(',').includes(item));
+            const prefix = values('--prefix', '-C').filter((v): v is string => typeof v === 'string').at(-1);
+            const dir = prefix === undefined ? cwd : posix.resolve(cwd, prefix);
+            const omitsDev = state.omitsDev || lists('--omit', 'dev') || values('--production').some(v => v === true || v === 'true')
+              || values('--only').some(v => typeof v === 'string' && /^prod/.test(v))
+              || assignments.some(a => /^(?:NODE_ENV=["']?production|npm_config_omit=["']?[\w,]*dev|npm_config_production=["']?true)\b/i.test(a));
+            const keepsDev = !omitsDev || lists('--include', 'dev');
+            const lock = state.manifests.get(posix.join(dir, 'package-lock.json')) ?? state.manifests.get(posix.join(dir, 'npm-shrinkwrap.json'));
+            const manifest = state.manifests.get(posix.join(dir, 'package.json'));
+            const global = values('-g', '--global').some(v => v !== 'false') || values('--location').includes('global');
+            const kind: InstallKind = global ? 'global'
+              : lock === 'package-lock.json' || manifest === 'package.json' ? 'root'
+                : lock !== undefined || manifest !== undefined ? 'other'
+                  : positional.length ? 'named' : 'unattributed';
+            const install: NpmInstall = { line: ins.line, command: seg, dir, stage, kind, keepsDev, named: positional, pruned: false, broken: false };
+            npm.push(install);
+            if (kind === 'root' && keepsDev) pending.push(install);
+          } else if (program === 'node') {
+            let i = 1;
+            let evaluates = false;
+            for (; i < words.length && words[i]!.startsWith('-'); i++) {
+              if (/^(?:-e|--eval|-p|--print)$/.test(words[i]!)) evaluates = true;
+              if (NODE_VALUE_FLAGS.has(words[i]!)) i++;
+            }
+            const script = words[i];
+            if (evaluates || !script || !state.scripts.has(posix.resolve(cwd, script))) continue;
+            const args = words.slice(i + 1);
+            if (args.includes('--list')) continue;
+            const named = args.filter(a => !a.startsWith('-'));
+            const targets = (named.length ? named : ['node_modules']).map(a => posix.resolve(cwd, a));
+            for (const p of pending) if (!p.broken && targets.includes(posix.join(p.dir, 'node_modules'))) p.pruned = true;
           }
         }
-        for (const p of pending) installs.push({ ...p, line: ins.line, stage, pruned: false });
       }
     }
     states.set(stage, state);
   }
   const target = IMAGES.find(i => i.dockerfile === dockerfile)?.target;
   const built = (target ? stageNamed(stages, target) : undefined) ?? stages[stages.length - 1]!;
-  return { dockerfile, stages, built, installs };
+  const installs = npm.filter((i): i is RootInstall => i.kind === 'root' && i.keepsDev);
+  return { dockerfile, stages, built, npm, installs };
 }
 
 /**
@@ -214,16 +432,17 @@ function analyse(dockerfile: string, text = readFileSync(join(ROOT, dockerfile),
  * that stage is FROM, or when any COPY --from a stage descending from it takes the install
  * directory, its node_modules, or a directory above them.
  */
-function shipped(a: Analysis, install: RootInstall): boolean {
+function shipped(a: Analysis, install: NpmInstall): boolean {
   if (ancestry(a.stages, a.built).includes(install.stage)) return true;
   const nm = `${install.dir}/node_modules`;
   for (const s of a.stages) {
     for (const ins of s.instructions) {
-      const from = /--from[= ](\S+)/.exec(ins.args);
-      if (ins.op !== 'COPY' || !from) continue;
-      const source = stageNamed(a.stages, from[1]!);
+      if (ins.op !== 'COPY') continue;
+      const { flags, sources } = copyParts(ins.args);
+      const from = copyFrom(flags);
+      const source = from === undefined ? undefined : stageNamed(a.stages, from);
       if (!source || !ancestry(a.stages, source).includes(install.stage)) continue;
-      for (const raw of copyParts(ins.args).sources) {
+      for (const raw of sources) {
         const src = posix.resolve(ins.cwd, raw).replace(/\/$/, '') || '/';
         if (src === '/' || src === install.dir || install.dir.startsWith(`${src}/`) || src === nm || src.startsWith(`${nm}/`)) return true;
       }
@@ -231,11 +450,6 @@ function shipped(a: Analysis, install: RootInstall): boolean {
   }
   return false;
 }
-
-const git = (...args: string[]): string[] =>
-  execFileSync('git', args, { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 }).split('\n').filter(Boolean);
-const TRACKED = git('ls-files');
-const DOCKERFILES = TRACKED.filter(f => /(^|\/)Dockerfile(\.[^/]+)?$/.test(f));
 
 /** The images that install the root lockfile with devDependencies and ship it: they must prune. */
 const MUST_PRUNE = [
@@ -265,6 +479,15 @@ const unprunedShipped = (a: Analysis): string[] => a.installs.filter(i => !i.pru
   .map(i => `${a.dockerfile}:${i.line} \`${i.command}\` ships ${i.dir}/node_modules without `
     + `\`&& node ${SCRIPT_PATH}\` in the same RUN, after a COPY of the script`);
 
+/** npm installs the analyser cannot attribute to anything: each one fails the test until it can. */
+const unattributed = (a: Analysis): string[] => a.npm.filter(i => i.kind === 'unattributed')
+  .map(i => `${a.dockerfile}:${i.line} \`${i.command}\` in ${i.dir}: no package.json or lockfile from the repository `
+    + 'was seen copied there, and it names no package');
+
+/** Installs that name one of the pruned packages outright. */
+const namesPruned = (a: Analysis): string[] => a.npm.filter(i => i.named.some(n => isPrunedName(specName(n))))
+  .map(i => `${a.dockerfile}:${i.line} \`${i.command}\``);
+
 describe('(a) a root install that keeps devDependencies is pruned in the same RUN, or never shipped', () => {
   const analyses = DOCKERFILES.map(d => analyse(d));
   const installs = analyses.flatMap(a => a.installs.map(i => ({ a, i })));
@@ -277,6 +500,22 @@ describe('(a) a root install that keeps devDependencies is pruned in the same RU
 
   it('every install whose node_modules reaches the image runs the prune script right after it, in the same RUN', () => {
     expect(analyses.flatMap(unprunedShipped)).toEqual([]);
+  });
+
+  it('every npm install in every Dockerfile is placed, so one the parser cannot read fails rather than passes', () => {
+    expect(analyses.flatMap(unattributed)).toEqual([]);
+    expect(analyses.flatMap(namesPruned)).toEqual([]);
+    // Each kind occurs in the tree today, so none of the branches above is dead.
+    const kinds = new Set(analyses.flatMap(a => a.npm.map(i => i.kind)));
+    expect([...kinds].sort()).toEqual(['global', 'named', 'other', 'root']);
+    expect(analyses.flatMap(a => a.npm).length).toBeGreaterThan(20);
+  });
+
+  it('reads every Dockerfile an image is built from, however it is named', () => {
+    expect(IMAGES.map(i => i.dockerfile).filter(d => !DOCKERFILES.includes(d))).toEqual([]);
+    expect(DOCKERFILES).toContain('integrations/pgsl-css-accessor/Dockerfile');
+    const names = ['Dockerfile', 'deploy/Dockerfile.x', 'deploy/x.Dockerfile', 'deploy/x.dockerfile', 'x/Containerfile'];
+    expect(names.filter(f => /(^|\/)(?:Dockerfile|Containerfile)(?:\.[^/]+)?$|\.(?:Dockerfile|dockerfile|Containerfile)$/.test(f))).toEqual(names);
   });
 
   it('the installs that do not prune are exactly the build-stage-only ones, and those really are not shipped', () => {
@@ -310,6 +549,62 @@ describe('(a) a root install that keeps devDependencies is pruned in the same RU
     const taken = relay.replace('COPY --from=build /app/node_modules ./node_modules', 'COPY --from=build /workspace/node_modules ./node_modules');
     expect(taken).not.toBe(relay);
     expect(unprunedShipped(analyse('deploy/Dockerfile.relay', taken))).toHaveLength(1);
+  });
+
+  it('reads every way of copying the root lockfile and of running npm, and of pruning somewhere else', () => {
+    const wsp = readFileSync(join(ROOT, 'deploy/Dockerfile.wsp-bridge'), 'utf8');
+    const install = `RUN npm ci && node ${SCRIPT_PATH}`;
+    const lockCopy = 'COPY package.json package-lock.json tsconfig.base.json tsconfig.json ./';
+    expect(wsp).toContain(install);
+    expect(wsp).toContain(lockCopy);
+    const plain = wsp.replace(install, 'RUN npm ci');
+    const count = (text: string): number => unprunedShipped(analyse('deploy/Dockerfile.wsp-bridge', text)).length;
+    /** Each of these ships the root devDependencies unpruned, so each must be found exactly once. */
+    const unpruned: Record<string, string> = {
+      'the literal form': plain,
+      'COPY package*.json': plain.replace(lockCopy, 'COPY package*.json tsconfig.base.json tsconfig.json ./'),
+      'COPY ./package-lock.json': plain.replace(lockCopy, 'COPY ./package.json ./package-lock.json tsconfig.base.json tsconfig.json ./'),
+      'JSON-form COPY': plain.replace(lockCopy, 'COPY ["package.json", "package-lock.json", "tsconfig.base.json", "tsconfig.json", "./"]'),
+      'COPY with --chown into the absolute dir': plain.replace(lockCopy, 'COPY --chown=node:node package.json package-lock.json tsconfig.base.json tsconfig.json /app/'),
+      'COPY . .': plain.replace(lockCopy, 'COPY . .'),
+      'an env-prefixed npm ci': wsp.replace(install, 'RUN NODE_OPTIONS=--max-old-space-size=4096 npm ci'),
+      'env before npm': wsp.replace(install, 'RUN env CI=1 npm ci'),
+      'npm clean-install': wsp.replace(install, 'RUN npm clean-install'),
+      'npm install-clean': wsp.replace(install, 'RUN npm install-clean'),
+      'npm isntall': wsp.replace(install, 'RUN npm isntall'),
+      'a flag before the verb': wsp.replace(install, 'RUN npm --loglevel=warn ci'),
+      'npm ci in a subshell': wsp.replace(install, 'RUN (npm ci)'),
+      'npm ci --prefix from elsewhere': wsp.replace(install, 'RUN cd /tmp && npm ci --prefix /app'),
+      'dev omitted, then included again': wsp.replace(install, 'RUN npm ci --omit=dev --include=dev'),
+      'a prune of another directory': wsp.replace(install, `RUN npm ci && node ${SCRIPT_PATH} /tmp`),
+      'a prune from another directory': wsp.replace(install, `RUN npm ci && cd /tmp && node ${SCRIPT_PATH}`),
+      'a prune that runs only when npm ci fails': wsp.replace(install, `RUN npm ci || node ${SCRIPT_PATH}`),
+      'a prune that only lists': wsp.replace(install, `RUN npm ci && node ${SCRIPT_PATH} --list`),
+      'a fresh image that copies the whole context': 'FROM node:22-slim\nWORKDIR /app\nCOPY . .\nRUN npm ci\nCMD ["npx", "tsx", "server.ts"]\n',
+      'a lockfile carried over from an earlier stage': 'FROM node:22-slim AS manifests\nWORKDIR /src\nCOPY package.json package-lock.json ./\n'
+        + 'FROM node:22-slim\nWORKDIR /app\nCOPY --from=manifests /src/ ./\nRUN npm ci\nCMD ["npx", "tsx", "server.ts"]\n',
+    };
+    expect(Object.fromEntries(Object.entries(unpruned).map(([k, t]) => [k, count(t)])))
+      .toEqual(Object.fromEntries(Object.keys(unpruned).map(k => [k, 1])));
+    /** And each of these does prune the install it follows. */
+    const pruned: Record<string, string> = {
+      'the node_modules it installed, named': wsp.replace(install, `RUN npm ci && node ${SCRIPT_PATH} node_modules`),
+      'the node_modules it installed, absolute': wsp.replace(install, `RUN npm ci && node ${SCRIPT_PATH} /app/node_modules`),
+      'after a semicolon': wsp.replace(install, `RUN npm ci; node ${SCRIPT_PATH}`),
+      'with node flags and an env prefix': wsp.replace(install, `RUN NODE_OPTIONS=x npm ci && node --no-warnings ${SCRIPT_PATH}`),
+    };
+    expect(Object.fromEntries(Object.entries(pruned).map(([k, t]) => [k, count(t)])))
+      .toEqual(Object.fromEntries(Object.keys(pruned).map(k => [k, 0])));
+    /** An install the analyser cannot place is a failure of its own, not a pass. */
+    const unplaced: Record<string, string> = {
+      'npm ci with nothing copied': 'FROM node:22-slim\nWORKDIR /app\nRUN npm ci\n',
+      'a lockfile out of an image the analyser cannot read': 'FROM node:22-slim\nWORKDIR /app\nCOPY --from=node:22 /srv/package-lock.json ./\nRUN npm ci\n',
+      'a lockfile copied to a file of another name': 'FROM node:22-slim\nWORKDIR /srv\nCOPY package-lock.json /app\nWORKDIR /app\nRUN npm ci\n',
+    };
+    expect(Object.fromEntries(Object.entries(unplaced).map(([k, t]) => [k, unattributed(analyse('deploy/Dockerfile.x', t)).length])))
+      .toEqual(Object.fromEntries(Object.keys(unplaced).map(k => [k, 1])));
+    expect(namesPruned(analyse('deploy/Dockerfile.css',
+      readFileSync(join(ROOT, 'deploy/Dockerfile.css'), 'utf8').replace('@solid/community-server@7', '@anthropic-ai/claude-code@2')))).toHaveLength(1);
   });
 });
 
@@ -345,24 +640,27 @@ const SHIPPED_DEVELOPER_TOOLS: Readonly<Record<string, string>> = {
     'spawns the claude CLI for the local demo runner (demos/run-all.*); in the interego-bridge image only because demos/ is copied whole',
 };
 
-/** The step-2 scope: what any image ships or runs. Every Dockerfile's COPY sources, plus the trees named. */
+/**
+ * The step-2 scope: what any image ships or runs. Every file any Dockerfile's COPY or ADD takes
+ * from the context, read the way (a) reads them (so `.` is the whole tree and a glob is matched),
+ * plus the trees named.
+ */
 function shippedScope(): string[] {
-  const prefixes = new Set<string>(['deploy/', 'demos/']);
-  for (const f of TRACKED) {
-    const m = /^(applications\/[^/]+\/(?:bridge|src)\/|packages\/[^/]+\/src\/)/.exec(f);
-    if (m) prefixes.add(m[1]!);
-  }
+  const named = (f: string): boolean => f.startsWith('deploy/') || f.startsWith('demos/')
+    || /^(?:applications\/[^/]+\/(?:bridge|src)\/|packages\/[^/]+\/src\/)/.test(f);
+  const copied = new Set<string>();
   for (const d of DOCKERFILES) {
     for (const stage of parseDockerfile(readFileSync(join(ROOT, d), 'utf8'))) {
       for (const ins of stage.instructions) {
-        if (ins.op !== 'COPY' || /--from[= ]/.test(ins.args)) continue;
-        for (const s of copyParts(ins.args).sources) prefixes.add(s.replace(/^\.\//, ''));
+        if (ins.op !== 'COPY' && ins.op !== 'ADD') continue;
+        const { flags, sources } = copyParts(ins.args);
+        if (copyFrom(flags) !== undefined) continue;
+        for (const s of sources) for (const { file } of contextMatches(s, TRACKED)) copied.add(file);
       }
     }
   }
-  const covers = (f: string): boolean => [...prefixes].some(p => (p.endsWith('/') ? f.startsWith(p) : f === p || f.startsWith(`${p}/`)));
   // The prune script names the packages in order to delete them.
-  return TRACKED.filter(f => /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|sh)$/.test(f) && f !== SCRIPT_PATH && covers(f));
+  return TRACKED.filter(f => /\.(?:ts|tsx|mts|cts|js|jsx|mjs|cjs|sh)$/.test(f) && f !== SCRIPT_PATH && (copied.has(f) || named(f)));
 }
 
 /** Specifiers a source imports, re-exports or requires. Comments included: reaching too far is safe. */

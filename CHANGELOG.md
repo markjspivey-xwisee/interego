@@ -1,5 +1,48 @@
 # Changelog
 
+## 2026-11-15 — Images: the prune check reads every way of copying the lockfile and running npm
+
+The test that keeps the Claude developer tools out of the images,
+`integrations/tests/images-ship-no-claude-dev-tools.test.ts`, recognised the
+root lockfile only when a COPY named `package-lock.json` literally, and an
+install only when a command began `npm ci`, `npm install` or `npm i`. A new
+Dockerfile written any other way installed the root devDependencies, the
+Claude Code CLI among them, and passed every check: `COPY package*.json ./`,
+`COPY ./package-lock.json`, `COPY . .`, a JSON-form COPY,
+`NODE_OPTIONS=... npm ci`, `npm clean-install`, `npm --loglevel=warn ci`,
+`(npm ci)` and `npm ci --prefix /app` each found no install at all. It also
+counted an install as pruned whenever the script ran after it, so
+`node tools/prune-image-dev-tools.mjs /tmp` passed while pruning nothing in
+/app, and so did a prune after `||`, which runs only when `npm ci` fails.
+
+The test now follows where every COPY and ADD puts the repository's
+package.json and lockfiles, and the prune script, in any form Docker accepts: a
+literal or `./` path, a glob, a directory, `.`, JSON form, or `--from` an earlier
+stage. It splits a RUN into commands outside quotes, reads past `VAR=value`
+assignments, `env`-style wrappers and npm's options before the verb, accepts
+every alias npm 10 has for `ci` and `install`, and follows `--prefix`. A prune
+counts only when it runs after the install in the same RUN, joined by `&&` or
+`;`, on that install's own node_modules. And it fails closed: an npm install it
+cannot attribute to a manifest it saw copied, or to packages the command names,
+fails the test, as does one that names a pruned package. Every Dockerfile in
+`deploy/images.json` must be one the test reads, and `x.Dockerfile` and
+`Containerfile` names are read too. The shipped-file scan uses the same reading,
+so a `COPY . .` puts the whole tree in its scope.
+
+The test carries twenty-one rewritten COPY, npm and prune lines that must each
+be caught, four that must each count as pruned, and three installs it must
+refuse to place. Of the first twenty written, seventeen passed unnoticed under
+the old reading. The thirty npm installs in today's Dockerfiles all place:
+twelve install the root manifests (the nine pruned images and the three build
+stages), thirteen another manifest, one is global and four name their packages.
+
+Not covered: installs by yarn, pnpm or bun are not read (the one bun install,
+in `deploy/Dockerfile.pgsl-sweep`, writes its own manifest); `RUN` heredocs,
+shell variables in paths, and a `cd` inside a subshell (taken to last after it)
+are read naively; a RUN that writes its own package.json is classified by the
+packages it names; and `.dockerignore` is not applied, which can only make the
+test see more copied than Docker does.
+
 ## 2026-11-15 — Images: the Claude developer tools no longer ship in nine images
 
 Nine images install the root lockfile with a plain `npm ci` and keep its
