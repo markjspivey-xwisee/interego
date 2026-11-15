@@ -123,6 +123,9 @@ export class ProfileServer {
     // A publication waiting on its durable write has the version, and the profile for its writer.
     if (this.publishing.has(version)) throw new ProfileServerError(409, `${version} is being published now.`);
     if ([...this.publishing.values()].some(p => p.id === id && p.by !== by)) throw new ProfileServerError(409, `${id} is being published by another agent now.`);
+    // The two checks above on what is held, made on what is about to be: an IRI is a profile or a version, not both.
+    if (this.publishing.has(id)) throw new ProfileServerError(409, `${id} is being published now as a version, and cannot also be a profile.`);
+    if ([...this.publishing.values()].some(p => p.id === version)) throw new ProfileServerError(409, `${version} is being published now as a profile, and cannot also be a version.`);
     const held = this.dataset.prepare(doc);
     if (held.stated.length > MAX_PROFILE_TRIPLES)
       throw new ProfileServerError(413, `The profile states ${held.stated.length} triples; this server holds profiles of up to ${MAX_PROFILE_TRIPLES}.`);
@@ -190,6 +193,10 @@ export class ProfileServer {
     const held = this.admit(doc, by);
     if (!this.options.persist) throw new PublicationNotKept(held.id, version, 'this server has no durable store to keep a published version in.');
     this.publishing.set(version, { id: held.id, by });
+    // Its bytes are counted from here, so what is on its way to the pod is inside the ceiling that
+    // `add` and other publications are measured against. They are given back if it is not kept.
+    this.keptBytes += size;
+    let landed = false;
     try {
       let kept: { holonUri?: string; persisted?: boolean };
       try { kept = await this.options.persist({ kind: 'published', doc, examples, external, by, at }, held); }
@@ -197,10 +204,13 @@ export class ProfileServer {
       if (kept.persisted !== true) throw new PublicationNotKept(held.id, version, 'the durable write was not acknowledged.');
       this.dataset.put(held);
       this.owners.set(held.id, by);
-      this.keptBytes += size;
       this.publishedVersions.set(held.version, { examples, external, at });
+      landed = true;
       return { held, ...(kept.holonUri ? { holonUri: kept.holonUri } : {}), persisted: true };
-    } finally { this.publishing.delete(version); }
+    } finally {
+      this.publishing.delete(version);
+      if (!landed) this.keptBytes -= size;
+    }
   }
 
   /** What a version was published with, when it was published from a draft here. */

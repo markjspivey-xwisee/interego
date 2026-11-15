@@ -26,7 +26,11 @@ examples route; the profile's earlier version stays current; the draft is
 untouched in memory and in the store; and publishing again publishes the same
 version. A server given no `persist`, or a bridge with no profiles pod, publishes
 nothing. While the write is on its way the version is reserved: adding or
-publishing it again is a 409, and so is another agent claiming the profile.
+publishing it again is a 409, and so is another agent claiming the profile. The
+same holds across roles: nobody adds a profile named as the version on its way,
+or a version named as the profile. Its bytes count against the server's 12 MB
+from the moment the write starts, and are given back if it is not kept, so two
+publications that do not fit together are not both written.
 
 The draft is closed only after the version is kept. If the store then cannot
 drop the draft, the publication is still reported: it was kept.

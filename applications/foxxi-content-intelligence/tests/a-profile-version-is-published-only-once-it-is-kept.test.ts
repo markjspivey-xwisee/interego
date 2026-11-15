@@ -217,12 +217,54 @@ describe('while the durable write is still on its way', () => {
     await expect(server.add(doc, KEEPER)).rejects.toMatchObject({ status: 409 });
     await expect(server.add({ ...doc, versions: [{ id: `${P}/v/other` }] }, 'did:example:passer-by')).rejects.toMatchObject({ status: 409 });
     await expect(authoring.publish(P, KEEPER)).rejects.toMatchObject({ status: 409 });
+    // An IRI is a profile or a version, not both: nobody adds a profile named as the version on
+    // its way, or a version named as the profile on its way.
+    const other = { '@context': 'https://w3id.org/xapi/profiles/context', type: 'Profile' };
+    await expect(server.add({ ...other, id: V1, versions: [{ id: `${V1}/v/1` }] }, 'did:example:passer-by')).rejects.toMatchObject({ status: 409 });
+    await expect(server.add({ ...other, id: `${BASE}/p/elsewhere`, versions: [{ id: P }] }, 'did:example:passer-by')).rejects.toMatchObject({ status: 409 });
 
     hold = undefined;
     release();
     expect((await publishing).body).toMatchObject({ ok: true, version: V1, persisted: true });
     expect((await resource(V1)).status).toBe(200);
     expect(kept).toHaveLength(1);
+  });
+});
+
+describe('the room a server has', () => {
+  // Two made-up versions that each fit in what is left, and do not fit together.
+  const padding = 'x'.repeat(200_000);
+  const big = (name: string): Obj => ({ '@context': 'https://w3id.org/xapi/profiles/context', id: `${BASE}/p/${name}`, type: 'Profile',
+    versions: [{ id: `${BASE}/p/${name}/v/1` }], definition: lang(padding) });
+  const none = { statements: [], sequences: [] };
+  const fill = async () => {
+    // 49 documents of about 250 KB: a little over 300 KB short of the 12 MB the server keeps.
+    for (let i = 0; i < 49; i++) await server.add({ ...big(`ballast-${i}`), definition: lang('y'.repeat(250_000)) }, KEEPER);
+  };
+
+  it('counts a publication on its way, so two that do not fit together are not both written', async () => {
+    await fill();
+    let reached!: () => void, release!: () => void;
+    const atThePod = new Promise<void>(resolve => { reached = resolve; });
+    hold = { reached, release: new Promise<void>(resolve => { release = resolve; }) };
+    const before = kept.length;
+
+    const first = server.publish(big('first'), none, [], KEEPER, '2026-04-01T06:00:00.000Z');
+    await atThePod;
+    await expect(server.publish(big('second'), none, [], KEEPER, '2026-04-01T06:00:01.000Z')).rejects.toMatchObject({ status: 507 });
+    await expect(server.add(big('third'), KEEPER)).rejects.toMatchObject({ status: 507 });
+    hold = undefined;
+    release();
+    await expect(first).resolves.toMatchObject({ persisted: true });
+    expect(kept.length).toBe(before + 1);
+  });
+
+  it('is given back when a publication is not kept', async () => {
+    await fill();
+    weather = 'throws';
+    await expect(server.publish(big('first'), none, [], KEEPER, '2026-04-01T06:00:00.000Z')).rejects.toBeInstanceOf(PublicationNotKept);
+    weather = 'lands';
+    await expect(server.publish(big('second'), none, [], KEEPER, '2026-04-01T06:00:01.000Z')).resolves.toMatchObject({ persisted: true });
   });
 });
 
