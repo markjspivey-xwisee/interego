@@ -280,6 +280,7 @@ async function expectNativeOptions(worker: Worker, resource: string): Promise<vo
   assert.equal(response.headers['interego-native-commit'], '1', 'OPTIONS must advertise native commit version 1 explicitly');
   assert.equal(response.headers['interego-native-delete'], '1', 'OPTIONS must advertise native delete version 1 explicitly');
   assert.equal(response.headers['interego-native-stage'], '1', 'OPTIONS must advertise batched native staging version 1 explicitly');
+  assert.equal(response.headers['interego-native-commit-source'], '1', 'OPTIONS must advertise commits from a source version 1 explicitly');
   assert.equal((await wire(worker, resource)).status, 404, 'OPTIONS must not create the probed resource');
 }
 
@@ -410,6 +411,78 @@ async function batchedStagingContract(left: Worker, right: Worker, baseUrl: stri
 }
 
 /** Every response must bind bytes and metadata from ONE committed native revision. */
+/** A head committed by naming a document that already holds its bytes: same CAS, same receipt, no upload. */
+async function commitFromSourceContract(left: Worker, right: Worker, baseUrl: string, prefix: string): Promise<void> {
+  const pod = `${baseUrl}${prefix}-source-${randomUUID()}/`, container = `${pod}artifacts/`, head = `${pod}head`;
+  const path = (url: string): string => new URL(url).pathname;
+  const from = (worker: Worker, resource: string, expectedRevision: string | null, source: Record<string, unknown>, extra: Record<string, unknown> = {}): Promise<WireResponse> =>
+    wire(worker, resource, 'PUT', { 'content-type': mediaType, ...(expectedRevision === null ? { 'if-none-match': '*' } : { 'if-match': `"${expectedRevision}"` }) },
+      Buffer.from(JSON.stringify({ version: 1, expectedRevision, contentType: 'application/json', source, ...extra })));
+  const digest = (bytes: Buffer): string => `sha256:${createHash('sha256').update(bytes).digest('hex')}`;
+  const first = stageItem('commit'), second = stageItem('commit');
+  stageReceipts(await stageRequest(left, container, [first, second]), [first, second], [true, true]);
+  const named = (item: StageItem): Record<string, unknown> => ({ path: path(container + item.name), bodyDigest: digest(item.bytes), size: item.bytes.length });
+
+  // Create, read from the other server, then move with the usual compare-and-set.
+  const created = await from(left, head, null, named(first));
+  assert.equal(created.status, 200, 'a head is committed from a staged document in the same pod');
+  const one = JSON.parse(created.body.toString('utf8')) as Receipt;
+  assert.deepEqual([one.resource, one.expectedRevision, one.bodyDigest, one.size, one.contentType], [head, null, digest(first.bytes), first.bytes.length, 'application/json']);
+  assert.ok(strongEtag(created).includes(one.revision));
+  const readHead = async (worker: Worker, bytes: Buffer, revision: string): Promise<void> => {
+    const got = await wire(worker, head, 'GET', { accept: 'application/json' });
+    assert.equal(got.status, 200); assert.deepEqual(got.body, bytes);
+    assert.equal(got.headers['interego-revision'], revision); assert.equal(got.headers['interego-body-digest'], digest(bytes));
+  };
+  await readHead(right, first.bytes, one.revision);
+  assert.equal((await from(right, head, null, named(second))).status, 412, 'a head that exists is not created again');
+  const moved = await from(right, head, one.revision, named(second));
+  assert.equal(moved.status, 200);
+  const two = JSON.parse(moved.body.toString('utf8')) as Receipt;
+  assert.notEqual(two.revision, one.revision);
+  await readHead(left, second.bytes, two.revision);
+  assert.equal((await from(left, head, one.revision, named(first))).status, 412, 'a stale expected revision is the usual conflict');
+  // The head is native-managed like any other, and a commit that carries its bytes still moves it.
+  assert.equal((await wire(left, head, 'PUT', { 'content-type': 'application/json' }, Buffer.from('{}'))).status, 409);
+  const bytes = Buffer.from(JSON.stringify({ direct: randomUUID() }));
+  const direct = await wire(left, head, 'PUT', { 'content-type': mediaType, 'if-match': `"${two.revision}"` },
+    Buffer.from(JSON.stringify({ version: 1, expectedRevision: two.revision, contentType: 'application/json', bodyBase64: bytes.toString('base64') })));
+  assert.equal(direct.status, 200);
+  const three = (JSON.parse(direct.body.toString('utf8')) as Receipt).revision;
+
+  // Refusals leave the head where it was.
+  const refused = async (source: Record<string, unknown>, status: number, why: string, extra?: Record<string, unknown>): Promise<void> => {
+    assert.equal((await from(left, head, three, source, extra)).status, status, why);
+    await readHead(right, bytes, three);
+  };
+  const good = named(first);
+  await refused({ ...good, bodyDigest: digest(second.bytes) }, 409, 'another digest');
+  await refused({ ...good, size: first.bytes.length + 1 }, 409, 'another size');
+  await refused({ ...good, path: path(container) + 'commit-' + '0'.repeat(64) + '.json' }, 409, 'a document that does not exist');
+  await refused({ ...good, path: path(head) }, 400, 'the head itself');
+  await refused({ ...good, path: path(container) }, 400, 'a container');
+  await refused({ ...good, path: path(container + first.name) + '.acl' }, 400, 'an auxiliary resource');
+  await refused({ ...good, path: container + first.name }, 400, 'an absolute URL');
+  await refused({ ...good, path: path(container) + '../artifacts/' + first.name }, 400, 'a path with dot segments');
+  await refused({ ...good, path: path(container + first.name) + '?x=1' }, 400, 'a path with a query');
+  await refused({ ...good, extra: true }, 400, 'an unknown source field');
+  await refused(good, 400, 'a source and bytes together', { bodyBase64: first.bytes.toString('base64') });
+  // Another pod: the same bytes staged there are not a source for this head.
+  const elsewhere = `${baseUrl}${prefix}-other-${randomUUID()}/artifacts/`;
+  stageReceipts(await stageRequest(left, elsewhere, [first]), [first], [true]);
+  await refused({ ...good, path: path(elsewhere + first.name) }, 400, 'a document in another pod');
+  // An ordinary document with the same bytes is not a native source.
+  const ordinary = `${pod}ordinary.json`;
+  assert.equal((await wire(left, ordinary, 'PUT', { 'content-type': 'application/json' }, first.bytes)).status, 201);
+  await refused({ ...good, path: path(ordinary) }, 409, 'an ordinary document');
+  // Media type is part of what is stated.
+  assert.equal((await wire(left, head, 'PUT', { 'content-type': mediaType, 'if-match': `"${three}"` },
+    Buffer.from(JSON.stringify({ version: 1, expectedRevision: three, contentType: 'text/plain', source: good })))).status, 409);
+  await readHead(left, bytes, three);
+  // A document at the top level has no pod to share.
+  assert.equal((await from(left, `${baseUrl}${prefix}-toplevel-${randomUUID()}`, null, good)).status, 400);
+}
+
 async function concurrentReadCoherence(left: Worker, right: Worker, resource: string): Promise<{ receipt: Receipt; bytes: Buffer; etag: string }> {
   const bodyForVersion = (version: number): Buffer => {
     const bytes = Buffer.alloc(128 * 1024 + version % 7, version & 0xff);
@@ -622,6 +695,8 @@ async function main(): Promise<void> {
     for (const worker of [left, right]) await expectNativeOptions(worker, invalidResource);
     beginPhase('batched-staging');
     await batchedStagingContract(left, right, baseUrl, prefix);
+    beginPhase('commit-from-source');
+    await commitFromSourceContract(left, right, baseUrl, prefix);
 
     beginPhase('reject-missing-condition');
     const missingHeader = await commit(left, invalidResource, null, bodyA, {});
