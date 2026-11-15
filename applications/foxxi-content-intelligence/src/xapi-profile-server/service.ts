@@ -17,9 +17,11 @@
  * take down any.
  */
 import type { Express, Request, Response, RequestHandler } from 'express';
+import { turtleIriRef } from '@interego/core';
 import { ProfileDataset, SparqlRefused, type HeldProfile } from './dataset.js';
 import { follows, validates, type Json as PJson } from './processor.js';
-import { versionsOf, type Json } from './rdf.js';
+import { toRdfTerm, versionsOf, type Json } from './rdf.js';
+import type { ExternalTerm, ProfileExamples } from './lint.js';
 
 type Obj = { [key: string]: Json };
 const isObj = (v: unknown): v is Obj => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -33,6 +35,8 @@ export const MAX_PATTERN_STATEMENTS = 500;
 /** What is kept for each added version, and replayed when the bridge starts. */
 export type ProfileRecord =
   | { kind: 'added'; doc: Json; by: string; at: string; source?: string }
+  /** A version published from a draft: never replaced, and kept with the examples it was linted with. */
+  | { kind: 'published'; doc: Json; examples: ProfileExamples; external: ExternalTerm[]; by: string; at: string }
   | { kind: 'removed'; iri: string; by: string; at: string };
 
 export interface ProfileServerOptions {
@@ -54,6 +58,8 @@ export class ProfileServer {
   /** profile IRI → the agent that first added it. */
   private readonly owners = new Map<string, string>();
   private readonly builtInIds = new Set<string>();
+  /** version IRI → what it was published with. A version here is immutable. */
+  private readonly publishedVersions = new Map<string, { examples: ProfileExamples; external: ExternalTerm[]; at: string }>();
   private hydrated: Promise<void> | undefined;
   private keptBytes = 0;
 
@@ -68,6 +74,11 @@ export class ProfileServer {
       for (const r of [...records].sort((a, b) => a.at.localeCompare(b.at))) {
         try {
           if (r.kind === 'added') { this.keptBytes += sizeOf(r.doc); this.hold(r.doc, r.by); }
+          else if (r.kind === 'published') {
+            this.keptBytes += sizeOf(r.doc) + sizeOf(r.examples);
+            const held = this.hold(r.doc, r.by);
+            this.publishedVersions.set(held.version, { examples: r.examples, external: r.external ?? [], at: r.at });
+          }
           else this.drop(r.iri);
         } catch { /* a record that no longer reads is skipped, not fatal */ }
       }
@@ -85,6 +96,7 @@ export class ProfileServer {
     // profile's: without this, a document naming a different profile could replace it, the
     // deployment's own included.
     const version = versionsOf(doc).current.id;
+    if (this.publishedVersions.has(version)) throw new ProfileServerError(409, `${version} is published, and a published version is not changed. Publish a new version that revises it.`);
     const taken = this.dataset.all().find(h => h.version === version || h.id === version);
     if (taken && taken.id !== id) throw new ProfileServerError(409, `${version} is already held as a version of ${taken.id}.`);
     if (this.dataset.all().some(h => h.version === id)) throw new ProfileServerError(409, `${id} is held here as a version, not as a profile.`);
@@ -99,6 +111,7 @@ export class ProfileServer {
 
   private drop(iri: string): string[] {
     const gone = this.dataset.remove(iri);
+    for (const version of gone) this.publishedVersions.delete(version);
     if (!this.dataset.all().some(h => h.id === iri)) this.owners.delete(iri);
     return gone;
   }
@@ -127,10 +140,100 @@ export class ProfileServer {
     if (!target) throw new ProfileServerError(404, `No profile or version ${iri} is held here.`);
     if (this.builtInIds.has(target.id)) throw new ProfileServerError(409, `${target.id} is this deployment's own profile and cannot be taken down.`);
     if (this.owners.get(target.id) !== by && !this.options.isOperator?.(by)) throw new ProfileServerError(403, 'Only the agent that added a profile, or the operator, takes it down.');
+    // What was published stays: others may hold statements that name it. The operator can still take it down.
+    if (!this.options.isOperator?.(by) && this.dataset.all().some(h => (h.id === iri || h.version === iri) && this.publishedVersions.has(h.version)))
+      throw new ProfileServerError(409, 'A published version is not taken down by its author. Publish a new version: what it leaves out stays resolvable, marked deprecated.');
     const removed = this.drop(iri);
     let persisted = false;
     if (this.options.persist) { try { persisted = (await this.options.persist({ kind: 'removed', iri, by, at: new Date().toISOString() })).persisted === true; } catch { persisted = false; } }
     return { removed, persisted };
+  }
+
+  /**
+   * Publish a version: held like an added one, and from then on immutable. The caller (./authoring.ts)
+   * has linted the document and fixed its `generatedAtTime`; this refuses a version already held.
+   */
+  async publish(doc: Json, examples: ProfileExamples, external: ExternalTerm[], by: string, at: string): Promise<{ held: HeldProfile; holonUri?: string; persisted: boolean }> {
+    await this.ready();
+    const why = whyNotAddable(doc);
+    if (why) throw new ProfileServerError(400, why);
+    const version = versionsOf(doc).current.id;
+    if (this.dataset.all().some(h => h.version === version)) throw new ProfileServerError(409, `${version} is already held here. A published version is not changed: give the draft a new version IRI.`);
+    const size = sizeOf(doc) + sizeOf(examples);
+    if (this.options.persist && this.keptBytes + size > MAX_KEPT_BYTES) throw new ProfileServerError(507, 'This server has kept as many profile documents as it holds; an operator has to make room.');
+    const held = this.hold(doc, by);
+    this.keptBytes += size;
+    this.publishedVersions.set(held.version, { examples, external, at });
+    let kept: { holonUri?: string; persisted?: boolean } = {};
+    if (this.options.persist) {
+      try { kept = await this.options.persist({ kind: 'published', doc, examples, external, by, at }, held); }
+      catch { kept = { persisted: false }; }
+    }
+    return { held, ...(kept.holonUri ? { holonUri: kept.holonUri } : {}), persisted: kept.persisted === true };
+  }
+
+  /** What a version was published with, when it was published from a draft here. */
+  published(version: string): { examples: ProfileExamples; external: ExternalTerm[]; at: string } | undefined { return this.publishedVersions.get(version); }
+
+  /** The type of a concept that a held profile other than `except` declares: a term known to this server. */
+  knownTerm(iri: string, except?: string): string | undefined {
+    for (const held of this.dataset.all()) {
+      if (held.id === except) continue;
+      const concepts = (held.doc as Obj).concepts;
+      const found = Array.isArray(concepts) ? concepts.find(c => isObj(c) && c.id === iri) : undefined;
+      if (isObj(found) && typeof found.type === 'string') return found.type;
+    }
+    return undefined;
+  }
+
+  /**
+   * What an IRI names here: a profile (its current version), a version, or a concept, statement
+   * template or pattern. A term is read from the current version of its profile when that version
+   * has it, and otherwise from the latest version that did, marked deprecated: an IRI that was
+   * once published keeps answering.
+   */
+  resolve(iri: string): Resolved | undefined {
+    const whole = this.dataset.get(iri);
+    if (whole) return { kind: whole.id === iri ? 'profile' : 'version', held: whole, body: whole.doc as Obj };
+    const current = new Set(this.dataset.current().map(h => h.version));
+    const newestFirst = [...this.dataset.all()].sort((a, b) => Number(current.has(b.version)) - Number(current.has(a.version))
+      || (Date.parse(b.generatedAtTime ?? '') || 0) - (Date.parse(a.generatedAtTime ?? '') || 0));
+    for (const held of newestFirst) {
+      for (const [key, kind] of [['concepts', 'concept'], ['templates', 'template'], ['patterns', 'pattern']] as const) {
+        const terms = (held.doc as Obj)[key];
+        const term = Array.isArray(terms) ? terms.find(t => isObj(t) && t.id === iri) : undefined;
+        if (!isObj(term)) continue;
+        const superseded = !current.has(held.version);
+        const context = (held.doc as Obj)['@context'] ?? 'https://w3id.org/xapi/profiles/context';
+        return { kind, held, body: { '@context': context, ...term, ...(superseded ? { deprecated: true } : {}) }, deprecated: superseded || term.deprecated === true };
+      }
+    }
+    return undefined;
+  }
+
+  /** A held version, or with `iri` what it states about one term and the blank nodes that leads to, as N-Triples. */
+  ntriples(held: HeldProfile, iri?: string): string {
+    // A term that cannot be written safely is null, and the triple it is in is left out.
+    const term = (stored: string): string | null => {
+      const t = toRdfTerm(stored);
+      if (t.type === 'uri') return turtleIriRef(t.value);
+      if (t.type === 'bnode') return /^[A-Za-z0-9]+$/.test(t.value) ? `_:${t.value}` : null;
+      const text = JSON.stringify(t.value);
+      if (t['xml:lang']) return /^[A-Za-z]+(-[A-Za-z0-9]+)*$/.test(t['xml:lang']) ? `${text}@${t['xml:lang']}` : text;
+      if (!t.datatype) return text;
+      const datatype = turtleIriRef(t.datatype);
+      return datatype === null ? null : `${text}^^${datatype}`;
+    };
+    let triples = held.stated;
+    if (iri !== undefined) {
+      const subjects = new Set([iri]);
+      for (let grew = true; grew;) {
+        grew = false;
+        for (const t of held.stated) if (subjects.has(t.subject) && t.object.startsWith('_:') && !subjects.has(t.object)) { subjects.add(t.object); grew = true; }
+      }
+      triples = held.stated.filter(t => subjects.has(t.subject));
+    }
+    return triples.map(t => [term(t.subject), term(t.predicate), term(t.object)]).filter(parts => parts.every(p => p !== null)).map(parts => `${parts.join(' ')} .\n`).join('');
   }
 
   owner(profileId: string): string | undefined { return this.builtInIds.has(profileId) ? undefined : this.owners.get(profileId); }
@@ -142,7 +245,9 @@ export class ProfileServer {
     if (!held) throw new ProfileServerError(400, `No profile with id ${profile} is on this server. GET the server root for the ones that are, or add it.`);
     const doc = held.doc as Obj;
     const list = (v: Json | undefined) => (Array.isArray(v) ? v.filter(isObj) : []) as unknown as PJson[];
-    return { held, templates: list(doc.templates), patterns: list(doc.patterns) };
+    // A deprecated template or pattern stays in the document so its IRI resolves, and judges nothing.
+    const live = (all: PJson[]) => all.filter(p => p.deprecated !== true);
+    return { held, templates: live(list(doc.templates)), patterns: live(list(doc.patterns)) };
   }
 
   /** The specification's /validate_templates: no comments means the statement validates. */
@@ -172,6 +277,17 @@ export class ProfileServer {
     catch (e) { return { comments: [(e as Error).message] }; }
     return r.follows ? { comments: [], ...(r.pattern ? { pattern: r.pattern } : {}) } : { comments: r.reasons };
   }
+}
+
+/** What `resolve` found for an IRI. */
+export interface Resolved {
+  readonly kind: 'profile' | 'version' | 'concept' | 'template' | 'pattern';
+  /** The version the answer is read from. */
+  readonly held: HeldProfile;
+  /** The JSON-LD to serve. */
+  readonly body: { [key: string]: Json };
+  /** True for a term its profile's current version no longer has, or marks deprecated. */
+  readonly deprecated?: boolean;
 }
 
 function sizeOf(doc: unknown): number { try { return Buffer.byteLength(JSON.stringify(doc) ?? ''); } catch { return 0; } }

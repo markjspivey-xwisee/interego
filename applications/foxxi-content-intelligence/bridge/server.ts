@@ -42,7 +42,9 @@ import { rateLimit } from 'express-rate-limit';
 import { SignerHourlyLimit, openHostingRequest, openHostingSettings } from '../src/open-hosting.js';
 import { ProfileServer, ProfileServerError, mountProfileServerReads, MAX_PROFILE_BYTES, type ProfileRecord } from '../src/xapi-profile-server/service.js';
 import { validates as profileValidates } from '../src/xapi-profile-server/processor.js';
-import { buildFoxxiProfileDoc as ownXapiProfileDoc } from '../src/xapi-profile.js';
+import { buildFoxxiProfileDoc as ownXapiProfileDoc, FOXXI_PROFILE_ID as OWN_XAPI_PROFILE_ID } from '../src/xapi-profile.js';
+import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
+import { mountProfileAuthoring, mountProfileHosting } from '../src/xapi-profile-server/authoring-http.js';
 import { PROFILE_GENERATED_AT as OWN_XAPI_PROFILE_GENERATED_AT } from '../src/xapi-lrs.js';
 import { createOwnLtiReconciliation, validateRecoveryEntry, type RecoveryEntry } from '../src/lti-own-reconciliation.js';
 import { createOwnLtiReconciliationStore } from '../src/lti-own-reconciliation-store.js';
@@ -11094,6 +11096,35 @@ app.post('/agent/xapi-profiles/remove', xapiProfileWriteRateLimit, async (req, r
     if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
     sendServerError(res, err, 'route-handler');
   }
+});
+
+// Writing a profile here and hosting it: a draft, a lint, a publication, and every IRI of a held
+// profile answering with content negotiation (src/xapi-profile-server/authoring.ts). Drafts are
+// held in memory; a published version goes to the lattice with the versions that were added.
+const xapiProfileAuthoring = new ProfileAuthoring(xapiProfileServer, { hostedUnder: `${xapiProfileServerBase}/p/` });
+mountProfileAuthoring(app, xapiProfileAuthoring, {
+  base: xapiProfileServerBase,
+  verify: async body => {
+    const auth = await verifyDelegatedCaller(body as never);
+    return auth.ok ? { ok: true, callerDid: auth.callerDid, payload: auth.payload as Record<string, unknown> } : { ok: false, status: auth.status, error: auth.error };
+  },
+  // Writing a profile is many small edits, so it has its own allowance, apart from adding whole profiles.
+  guard: rateLimit({
+    windowMs: 3_600_000, limit: 600, ipv6Subnet: 56, identifier: 'xapi-profile-authoring',
+    standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
+  }),
+  // A published version goes to the same public lattice an added one does, under the same count per signer.
+  beforePublish: did => {
+    const admitted = xapiProfileAddsBySigner.admit(did);
+    if (!admitted.ok) throw new ProfileServerError(429, `This signer has added or published as many profile versions as one signer may in an hour; try again in ${admitted.retryAfterSeconds} seconds.`);
+  },
+  send: (req, res, payload, title) => { sendActionResult(req, res, payload, bridgeBaseUrl, title, []); },
+});
+mountProfileHosting(app, xapiProfileServer, {
+  base: xapiProfileServerBase,
+  // The deployment's own profile is served at /xapi/profile; its version, templates and patterns
+  // have IRIs beneath that, which answered nothing.
+  own: OWN_XAPI_PROFILE_ID.startsWith(`${bridgeBaseUrl}/`) ? [{ path: new URL(OWN_XAPI_PROFILE_ID).pathname, iri: OWN_XAPI_PROFILE_ID }] : [],
 });
 
 // ── Credentials through any signed connection ─────────────────────────────────────────────────

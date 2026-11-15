@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 93 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 97 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -113,6 +113,65 @@ Take down a profile you added (every version) or one version of it, named by iri
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, iri: <profile or version IRI> }). |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_draft`
+
+**Write or edit a draft of an xAPI Profile**
+
+Open, read, edit or discard your draft of an xAPI Profile, in xAPI Profiles 1.0 JSON-LD. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. Name the profile by its IRI. With nothing else, the draft is opened (or read): empty for a new profile, or the current version copied into a new version for one already held, which is how a published profile is revised. An IRI on this deployment is under {base}/xapi/profiles/p/ (for example {base}/xapi/profiles/p/my-profile), and then the profile, its versions and every term you give an IRI beneath it are served at their own addresses; an IRI on your own domain is accepted too and is read through the resolve affordance. Edit with any of: document (replace the whole profile document), set (prefLabel, definition, seeAlso, author, conformsTo), put ({ concepts, templates, patterns }: each entry is added, or replaces the one with its id; inScheme is set to the draft's version for you), remove (ids of concepts, templates, patterns or examples), version (the IRI of the version being written), examples ({ statements: [{ id?, follows: [template IRIs], statement }], sequences: [{ id?, pattern, statements: [statements or example-statement ids] }], replace? }) and external (terms another publisher defines that your templates name: [{ id, type }]). Examples are not part of the profile document; they are kept beside it, and the lint needs them. Every answer carries the whole draft and the lint's findings. Drafts are working state held in memory: one that matters should be kept from the answer, and can be sent back whole as document and examples. Without profile, the answer lists the drafts you have open. Up to 256 KB of document and 512 KB of examples; 10 drafts per agent, 100 on the server.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-draft-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/draft` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, profile?: <profile IRI>, version?, document?, set?, put?, remove?, examples?, external?, discard?: true }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_lint`
+
+**Lint an xAPI Profile draft**
+
+Check a profile before it is published and get findings a writer can act on: each names the term, where in the document it is, what is wrong and what to change. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. Name your draft by profile, or send any document with its examples to lint without keeping it. No findings means: the profile and every concept, statement template and pattern has a label and a definition and an inScheme equal to the version being written; every verb, activity type, attachment usage type and extension a template names is declared in the profile, declared by another profile held on this server, or listed as an external term; every extension has an inlineSchema or a schema, and not both; no two templates have the same determining properties; every rule's location and selector is JSONPath the specification allows; every pattern states exactly one of sequence, alternates, optional, oneOrMore and zeroOrMore, names only templates and patterns of the profile and does not contain itself; every statement template has an example statement that the specification's validation says follows exactly the templates the example claims; and every primary pattern has an example run that the specification's pattern matching accepts as one complete pass. The examples are judged by the same processor a published version is validated with. A draft is linted as the version it would be published as: parts an earlier version had that the draft leaves out appear in it as deprecated.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-lint-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/lint` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, profile?: <profile IRI of your draft> — or document: <a profile document>, examples?: { statements, sequences }, external?: [{ id, type }] }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_publish`
+
+**Publish a draft as a version of an xAPI Profile**
+
+Publish your draft of a profile as a version. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. Refused with the findings (422) unless the lint has none. On publication the version's generatedAtTime is set to that moment, and when the profile already has a version here the new one states wasRevisionOf it. A published version is immutable: it is never replaced, adding the same version again is refused, and its author cannot take it down. What an earlier version had that this one leaves out (a concept, a statement template, a pattern) is carried into the new version marked deprecated, so its IRI still resolves and says so; a deprecated template or pattern judges no statements. The version becomes a holon in the public lattice with its document and examples, is queryable at /sparql, usable by its IRI at /validate_templates and /validate_patterns, and served by the resolve affordance. The draft is closed.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-publish-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/xapi-profiles/publish` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, profile: <profile IRI of your draft> }). |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.xapi_profile_resolve`
+
+**Read a hosted xAPI Profile, version, concept, statement template or pattern by its IRI**
+
+Dereference any IRI held on the profile server: a profile (its current version), one version, or a concept, statement template or pattern. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The answer is JSON-LD in the xAPI Profiles context by default; send Accept: text/turtle or application/n-triples for its triples (N-Triples, which is also Turtle), and anything else is a 406. A term is read from the current version of its profile; one that the current version no longer has is read from the latest version that had it and carries deprecated: true, so an IRI that was once published keeps answering. Link headers name the version the answer came from, the profile, and the version it revises. A profile written here under {base}/xapi/profiles/p/ is also served at its own IRI and so is each of its terms, with the same content negotiation. GET {base}/xapi/profiles/examples?iri=<version> returns the example statements and sequences a version was published with. No signature is needed.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-resolve`
+- HTTP: `GET https://foxxi-bridge.interego.xwisee.com/xapi/profiles/resource` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/ld+json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `iri` | string | yes | The IRI of a profile, a version, a concept, a statement template or a pattern. |
 
 ## `foxxi.xapi_profile_sparql`
 
