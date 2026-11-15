@@ -40,7 +40,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import AdmZip from 'adm-zip';
 import type { Express, Response as ExpressResponse } from 'express';
-import type { Cmi5Course } from './cmi5-course.js';
+import { LAUNCH_PARAMETERS_MAX, parseXml, type Cmi5Course, type Cmi5MoveOn, type XmlNode } from './cmi5-course.js';
 import { browserWantsPlayer, playerLocation } from './cmi5-player.js';
 
 /** A package's id: the sha-256 of its zip, in lowercase hex. */
@@ -185,10 +185,16 @@ export function scormRuntimeSource(): string {
 }
 
 /**
- * A package as a cmi5 course: one AU per launchable SCO, each launched from its file here, moving
- * on when the SCO says it completed or passed. The course's id is the package's own address. A SCO
- * whose path is not a package path is not an AU: its launch URL, resolved, would leave the
- * package's files for another of the bridge's routes.
+ * A package as a cmi5 course: one AU per launchable SCO, each launched from its file here. The
+ * course's id is the package's own address. A SCO whose path is not a package path is not an AU:
+ * its launch URL, resolved, would leave the package's files for another of the bridge's routes.
+ *
+ * A SCORM SCO moves on when it says it completed or passed: SCORM has no rule of its own to carry.
+ * A cmi5 package does. Its course structure says, for each unit, what satisfies it, the mastery
+ * score, and the launch parameters, and those are what the LMS applies (`PackageAbout.units`).
+ * Until 2026-11-15 they were not read, and every hosted unit moved on when it completed or passed,
+ * whatever its course structure said: a unit declared `CompletedAndPassed` was satisfied by a
+ * `completed` alone.
  */
 export function hostedPackageCourse(bridgeBaseUrl: string, sha256: string, pkg: PackageAbout): Cmi5Course {
   const root = `${bridgeBaseUrl.replace(/\/+$/, '')}/scorm/packages/${sha256}`;
@@ -202,8 +208,10 @@ export function hostedPackageCourse(bridgeBaseUrl: string, sha256: string, pkg: 
       id: `${root}/au/${i}`,
       title: n > 1 ? `${pkg.title} (${i + 1} of ${n})` : pkg.title,
       url: `${root}/files/${href.split('/').map(encodeURIComponent).join('/')}`,
-      moveOn: 'CompletedOrPassed' as const,
+      moveOn: pkg.units?.[href]?.moveOn ?? ('CompletedOrPassed' as const),
       launchMethod: 'AnyWindow' as const,
+      ...(pkg.units?.[href]?.masteryScore !== undefined ? { masteryScore: pkg.units[href]!.masteryScore } : {}),
+      ...(pkg.units?.[href]?.launchParameters ? { launchParameters: pkg.units[href]!.launchParameters } : {}),
     })),
   };
 }
@@ -231,17 +239,84 @@ export interface PackageAbout {
   launchable: readonly string[];
   /** The authoring tool whose own export this is, when it is one; it then launches nothing. */
   exportOf?: string;
+  /** What a cmi5 package's course structure says of a launchable file, by its path in the package. */
+  units?: Readonly<Record<string, PackageUnit>>;
+}
+
+/** What a cmi5 course structure says of one assignable unit that the LMS has to apply. */
+export interface PackageUnit {
+  moveOn?: Cmi5MoveOn;
+  masteryScore?: number;
+  launchParameters?: string;
+}
+
+const MOVE_ON: ReadonlySet<string> = new Set(['Passed', 'Completed', 'CompletedAndPassed', 'CompletedOrPassed', 'NotApplicable']);
+
+/** One unit's settings, keeping only what is well formed; null when nothing is. */
+function unitFrom(raw: unknown): PackageUnit | null {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return null;
+  const r = raw as Record<string, unknown>;
+  const unit: PackageUnit = {
+    ...(typeof r['moveOn'] === 'string' && MOVE_ON.has(r['moveOn']) ? { moveOn: r['moveOn'] as Cmi5MoveOn } : {}),
+    ...(typeof r['masteryScore'] === 'number' && r['masteryScore'] >= 0 && r['masteryScore'] <= 1 ? { masteryScore: r['masteryScore'] } : {}),
+    ...(typeof r['launchParameters'] === 'string' && r['launchParameters'] !== '' && r['launchParameters'].length <= LAUNCH_PARAMETERS_MAX ? { launchParameters: r['launchParameters'] } : {}),
+  };
+  return Object.keys(unit).length ? unit : null;
+}
+
+/** The units of a description, for the files it launches and no others; undefined when there are none. */
+function unitsFrom(raw: unknown, launchable: readonly string[]): Record<string, PackageUnit> | undefined {
+  if (!raw || typeof raw !== 'object' || Array.isArray(raw)) return undefined;
+  const out: Record<string, PackageUnit> = {};
+  for (const href of launchable) {
+    const unit = Object.prototype.hasOwnProperty.call(raw, href) ? unitFrom((raw as Record<string, unknown>)[href]) : null;
+    if (unit) out[href] = unit;
+  }
+  return Object.keys(out).length ? out : undefined;
+}
+
+/**
+ * What a cmi5 course structure says of the files a package launches: each unit's moveOn, mastery
+ * score and launch parameters, by the file its `<url>` names. A unit that leaves moveOn out gets
+ * none here, and the hosted default stands. Two units naming one file are one launchable file
+ * here, so the first in the document speaks for it. Undefined for a document that is not a course
+ * structure, or says nothing of these files.
+ */
+export function cmi5PackageUnits(cmi5Xml: string, launchable: readonly string[]): Record<string, PackageUnit> | undefined {
+  let root: XmlNode | null;
+  try { root = parseXml(cmi5Xml); } catch { return undefined; }
+  if (!root || root.tag !== 'courseStructure') return undefined;
+  const wanted = new Set(launchable);
+  const found: Record<string, unknown> = {};
+  const walk = (n: XmlNode): void => {
+    if (n.tag === 'au') {
+      const href = (n.children.find(c => c.tag === 'url')?.text ?? '').trim().replace(/^\.\//, '');
+      if (wanted.has(href) && !Object.prototype.hasOwnProperty.call(found, href)) {
+        const score = n.attrs['masteryScore'];
+        found[href] = {
+          moveOn: n.attrs['moveOn'],
+          ...(score !== undefined && score.trim() !== '' ? { masteryScore: Number(score) } : {}),
+          launchParameters: (n.children.find(c => c.tag === 'launchParameters')?.text ?? '').trim(),
+        };
+      }
+    }
+    for (const c of n.children) walk(c);
+  };
+  walk(root);
+  return unitsFrom(found, launchable);
 }
 
 /** A description read back from beside a package, when it is one of that package: with something to launch, or an export. */
 export function aboutFrom(sha256: string, body: unknown): PackageAbout | null {
-  const b = body as { packageSha256?: unknown; title?: unknown; launchable?: unknown; exportOf?: unknown } | null;
+  const b = body as { packageSha256?: unknown; title?: unknown; launchable?: unknown; exportOf?: unknown; units?: unknown } | null;
   if (!b || b.packageSha256 !== sha256 || typeof b.title !== 'string' || !Array.isArray(b.launchable)) return null;
   // An export launches nothing, whatever a description beside it says.
   const exportOf = typeof b.exportOf === 'string' ? b.exportOf.trim() : '';
   if (exportOf) return { title: b.title, launchable: [], exportOf };
   const launchable = b.launchable.filter((p): p is string => typeof p === 'string' && isPackagePath(p));
-  return launchable.length ? { title: b.title, launchable } : null;
+  if (!launchable.length) return null;
+  const units = unitsFrom(b.units, launchable);
+  return units ? { title: b.title, launchable, units } : { title: b.title, launchable };
 }
 
 /** The answer already on its way for a key, or new work, forgotten once it arrives. */
@@ -335,7 +410,8 @@ export class HostedPackages {
     // An export launches nothing; a package names only the SCOs inside it.
     const launchable = exportOf ? [] : about.launchable.filter(isPackagePath);
     if (!PACKAGE_SHA.test(sha256) || (!launchable.length && !exportOf)) return;
-    const kept: PackageAbout = exportOf ? { title: about.title, launchable, exportOf } : { title: about.title, launchable };
+    const units = exportOf ? undefined : unitsFrom(about.units, launchable);
+    const kept: PackageAbout = exportOf ? { title: about.title, launchable, exportOf } : { title: about.title, launchable, ...(units ? { units } : {}) };
     this.abouts.set(sha256, kept);
     try {
       await (this.opts.fetch ?? globalThis.fetch)(this.aboutUrlOf(sha256), {
