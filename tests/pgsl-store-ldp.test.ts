@@ -171,6 +171,62 @@ describe('pgsl-store: LDP resource CRUD over the PGSL store (S2 core, no CSS)', 
     }
   });
 
+  it('commits a head from a native document that already holds the representation, without its bytes', async () => {
+    const { ldp } = setup();
+    const bytes = enc.encode('{"the":"commit object"}'), contentType = 'application/json';
+    const staged = await ldp.stageResources(POD, [{ path: 'a/commit-1', bytes, contentType }]);
+    if (staged.status !== 'staged') throw new Error('expected a staged document');
+    const { bodyDigest, size } = staged.receipts[0]!;
+    const stated = { bodyDigest, size, contentType };
+    // Create, with the same receipt a commit carrying the bytes would give.
+    const created = await ldp.commitResourceFrom(POD, 'a/head', 'a/commit-1', { expectedRevision: null, ...stated });
+    if (created.status !== 'committed') throw new Error('expected a commit');
+    expect(created).toMatchObject({ path: 'a/head', bodyDigest, size, contentType });
+    const head = (await ldp.readResource(POD, 'a/head'))!;
+    expect(dec.decode(head.bytes)).toBe(dec.decode(bytes));
+    expect(head).toMatchObject({ revision: created.revision, bodyDigest, contentType });
+    // It is a native head: an ordinary overwrite cannot move it, and the source is untouched.
+    await expect(ldp.writeResource(POD, 'a/head', enc.encode('x'), contentType)).rejects.toThrow();
+    expect((await ldp.stat(POD, 'a/commit-1'))!.revision).toBe(staged.receipts[0]!.revision);
+    // The compare-and-set is the usual one.
+    expect(await ldp.commitResourceFrom(POD, 'a/head', 'a/commit-1', { expectedRevision: null, ...stated })).toEqual({ status: 'conflict', revision: created.revision });
+    const next = enc.encode('{"the":"next commit"}');
+    const second = await ldp.stageResources(POD, [{ path: 'a/commit-2', bytes: next, contentType }]);
+    if (second.status !== 'staged') throw new Error('expected a staged document');
+    const moved = await ldp.commitResourceFrom(POD, 'a/head', 'a/commit-2', { expectedRevision: created.revision, bodyDigest: second.receipts[0]!.bodyDigest, size: next.length, contentType });
+    expect(moved.status).toBe('committed');
+    expect(dec.decode((await ldp.readResource(POD, 'a/head'))!.bytes)).toBe(dec.decode(next));
+    // The same bytes again are a new revision of the head, as with any commit.
+    if (moved.status !== 'committed') throw new Error('expected a commit');
+    const again = await ldp.commitResourceFrom(POD, 'a/head', 'a/commit-2', { expectedRevision: moved.revision, bodyDigest: second.receipts[0]!.bodyDigest, size: next.length, contentType });
+    expect(again.status).toBe('committed');
+    if (again.status === 'committed') expect(again.revision).not.toBe(moved.revision);
+  });
+
+  it('refuses a commit from a source that is absent, ordinary, or not exactly what was stated, and writes nothing', async () => {
+    const { ldp } = setup();
+    const bytes = enc.encode('held'), contentType = 'application/json';
+    const staged = await ldp.stageResources(POD, [{ path: 'a/held', bytes, contentType }]);
+    if (staged.status !== 'staged') throw new Error('expected a staged document');
+    const { bodyDigest, size } = staged.receipts[0]!;
+    await ldp.writeResource(POD, 'a/ordinary', bytes, contentType);
+    const attempts: [string, { bodyDigest: string; size: number; contentType: string }][] = [
+      ['a/missing', { bodyDigest, size, contentType }],
+      ['a/ordinary', { bodyDigest, size, contentType }], // same bytes, but not a native head
+      ['a/held', { bodyDigest: 'sha256:' + '0'.repeat(64), size, contentType }],
+      ['a/held', { bodyDigest, size: size + 1, contentType }],
+      ['a/held', { bodyDigest, size, contentType: 'text/plain' }],
+      ['a/', { bodyDigest, size, contentType }],
+    ];
+    for (const [source, stated] of attempts) {
+      expect(await ldp.commitResourceFrom(POD, 'a/head', source, { expectedRevision: null, ...stated })).toEqual({ status: 'source-mismatch' });
+    }
+    expect(await ldp.readResource(POD, 'a/head')).toBeNull();
+    await expect(ldp.commitResourceFrom(POD, 'a/held', 'a/held', { expectedRevision: staged.receipts[0]!.revision, bodyDigest, size, contentType })).rejects.toThrow(/itself/);
+    // A source in another pod is another keyspace: it is simply not there.
+    expect(await ldp.commitResourceFrom('https://pod/other/', 'a/head', 'a/held', { expectedRevision: null, bodyDigest, size, contentType })).toEqual({ status: 'source-mismatch' });
+  });
+
   it('survives restart: a fresh LdpStore over the same backing still reads', async () => {
     const fdb = new InMemoryFdb();
     const codecs = new CodecRegistry().register(rdfCodec);

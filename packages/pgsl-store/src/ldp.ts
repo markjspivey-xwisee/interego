@@ -147,6 +147,18 @@ export class LdpStore {
     })) };
   }
 
+  /**
+   * Commit `path` as the representation the native head at `source` already holds, without the
+   * bytes: see PgslStore.commitResourceFrom. `source-mismatch` when the source is absent, is not
+   * a native head, or does not hold exactly the stated digest, size and media type.
+   */
+  async commitResourceFrom(
+    pod: string, path: string, source: string,
+    options: { expectedRevision: string | null; bodyDigest: string; size: number; contentType: string },
+  ): Promise<NativeResourceCommitResult | { status: 'source-mismatch' }> {
+    return this.store.commitResourceFrom({ pod, resource: path, source, ...options });
+  }
+
   private prepareResource(bytes: Uint8Array, contentType: string, opts: IngestOptions, meta?: string): {
     nodes: StoredNode[]; record: ResourceRecord;
   } {
