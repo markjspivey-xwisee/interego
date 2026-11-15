@@ -10,7 +10,7 @@
  */
 import { afterEach, describe, expect, it, vi } from 'vitest';
 import { deriveEncryptionKeyPair, type IRI } from '@interego/core';
-import { FOXXI_SNAPSHOT_TYPES, flushSnapshot, loadLatestSnapshot, registerSnapshot } from '../src/pod-snapshot-publisher.js';
+import { FOXXI_SNAPSHOT_TYPES, SEALED_SNAPSHOT_MAX_BYTES, flushSnapshot, loadLatestSnapshot, registerSnapshot } from '../src/pod-snapshot-publisher.js';
 
 const POD = 'https://pod.example/tenant/';
 const SOURCE = 'did:web:tenant.example' as IRI;
@@ -159,10 +159,66 @@ describe('the plain graph an earlier bridge left', () => {
     expect(await s.load(OTHER_KEY)).toBeNull();
   });
 
-  it('is still read by a bridge with no key', async () => {
+  it('is still read by a bridge with no key, where nothing sealed exists', async () => {
     const pod = new Pod();
     const s = surfaceOn(pod, undefined);
     pod.files.set(s.plain, LEGACY({ launches: [] }));
     expect(await s.load()).toEqual({ launches: [] });
   });
+
+  it('is not read by a bridge that lost its key once a sealed snapshot exists', async () => {
+    const pod = new Pod();
+    const s = surfaceOn(pod, KEY);
+    pod.files.set(s.plain, LEGACY({ launches: [['0ld00000-0000-4000-8000-000000000000', { learner: { id: LEARNER }, registration: '0ld00000-0000-4000-8000-000000000000', satisfied: true }]] }));
+    s.launch(REGISTRATION);
+    await flushSnapshot(s.surface);
+    const said = vi.spyOn(process.stderr, 'write').mockImplementation(() => true);
+    // Started again with no key: the old plain state is not brought back as if it were current.
+    expect(await loadLatestSnapshot(s.surface, { podUrl: POD, authoritativeSource: SOURCE, fetch: pod.fetch })).toBeNull();
+    expect(said.mock.calls.join(' ')).toContain('this bridge has no key to open it');
+  });
+});
+
+describe('a write the pod does not take', () => {
+  /** A pod that answers one status to every PUT of the sealed graph, and is a pod for everything else. */
+  const refusing = (pod: Pod, sealed: string, status: number): typeof globalThis.fetch => async (input, init) =>
+    (String(input) === sealed && (init?.method ?? 'GET').toUpperCase() === 'PUT' ? new Response('', { status }) : pod.fetch(input, init));
+
+  it('leaves the last readable snapshot and its descriptor, for a 412 as for any other refusal', async () => {
+    for (const status of [412, 403, 507]) {
+      const pod = new Pod();
+      const s = surfaceOn(pod, KEY);
+      s.launch(REGISTRATION);
+      await flushSnapshot(s.surface);
+      const descriptor = `${POD}foxxi/snapshots/${s.surface}-snapshot.ttl`;
+      const before = { graph: pod.files.get(s.sealed), descriptor: pod.files.get(descriptor) };
+      expect(before.descriptor).toBeDefined();
+
+      const failed = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+      registerSnapshot({ surface: s.surface, typeIri: FOXXI_SNAPSHOT_TYPES.Cmi5Launches, collect: () => s.state, debounceMs: 1,
+        config: { ...s.config, fetch: refusing(pod, s.sealed, status) } });
+      s.launch('5ea1ed00-0000-4000-8000-0000000000ff');
+      await flushSnapshot(s.surface);
+      expect(failed.mock.calls.join(' '), `status ${status}`).toContain('publish failed');
+      // Neither the graph nor the descriptor moved: no descriptor was written over a graph that was not replaced.
+      expect({ graph: pod.files.get(s.sealed), descriptor: pod.files.get(descriptor) }).toEqual(before);
+      expect((await s.load())?.launches.map(l => l[0])).toEqual([REGISTRATION]);
+      vi.restoreAllMocks();
+    }
+  }, 240_000);
+
+  it('is not sent when it is larger than a reader would take', async () => {
+    const pod = new Pod();
+    const s = surfaceOn(pod, KEY);
+    s.launch(REGISTRATION);
+    await flushSnapshot(s.surface);
+    const before = pod.files.get(s.sealed);
+    const failed = vi.spyOn(console, 'error').mockImplementation(() => undefined);
+    (s.state as unknown as { padding: string }).padding = 'x'.repeat(SEALED_SNAPSHOT_MAX_BYTES);
+    await flushSnapshot(s.surface);
+    expect(failed.mock.calls.join(' ')).toContain('publish failed');
+    expect(pod.puts.filter(p => p.url === s.sealed)).toHaveLength(1);
+    expect(pod.files.get(s.sealed)).toBe(before);
+    expect((await s.load())?.launches.map(l => l[0])).toEqual([REGISTRATION]);
+  }, 240_000);
 });

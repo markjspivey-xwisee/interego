@@ -21,6 +21,9 @@ A snapshot is now sealed to the bridge's own key, derived from
 (`src/pod-snapshot-publisher.ts`). A bridge with no key writes no snapshot. On
 read the sealed graph is taken when there is one and this bridge sealed it. The
 plain graph an earlier bridge left is read only where no sealed one exists yet.
+A bridge that has lost its key does not go back to the plain graph once a sealed
+one exists. A write the pod refuses, a 412 included, or one larger than is read
+back, fails as a whole and leaves the previous snapshot in place.
 
 Not changed: the plain graphs already on a pod are left where they are; removing
 them is the operator's. The LTI Platform gradebook was already sealed and

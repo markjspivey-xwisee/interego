@@ -47,6 +47,18 @@
  * graph is taken when there is one, and only when this bridge sealed it. The plain graph an
  * earlier bridge left is read only where no sealed one exists yet, so the first start after this
  * change restores what the last one did. Nothing here removes that plain graph.
+ *
+ * What an operator should know:
+ *  - The descriptor beside a sealed graph is public and says where the graph is. That is
+ *    discoverability. It grants nothing: the graph opens only with the bridge's key.
+ *  - Legacy fallback happens once per surface, on the starts before that surface is first written
+ *    sealed. After that the plain graph is never read, by a bridge with a key or without one.
+ *  - Changing `FOXXI_BRIDGE_PRIVATE_KEY`, or starting without it, leaves the sealed snapshots
+ *    unreadable. The bridge starts with those surfaces empty and says why on stderr; a bridge with
+ *    a new key then replaces them at its next write.
+ *  - A snapshot is as fresh as its last write: two seconds after the last change, and not at
+ *    shutdown. A write the pod refuses, or one larger than is read back, leaves the previous
+ *    snapshot in place and is reported as a failed publish.
  */
 
 import {
@@ -146,16 +158,30 @@ function sealedGraphUrl(config: { podUrl: string }, surface: string): string {
   return `${config.podUrl}foxxi/snapshots/${surface}-snapshot-graph.envelope.jose.json`;
 }
 
+/** The largest sealed snapshot graph that is written, and the largest that is read. */
+export const SEALED_SNAPSHOT_MAX_BYTES = 12 * 1024 * 1024;
+
 /**
- * The pod's fetch, with one difference: a PUT of this snapshot's graph replaces what is there.
- * `publish()` sends that PUT with `If-None-Match: *`, for graphs that never change.
+ * The pod's fetch, with three differences for the PUT of this snapshot's graph, and none for
+ * anything else. `publish()` sends that PUT with `If-None-Match: *` and takes a 412 as done, for
+ * graphs that never change; a snapshot's graph is replaced every time.
+ *
+ *  - the precondition is dropped, so the PUT replaces what is there;
+ *  - a body larger than a reader would take is not sent: what is on the pod stays readable;
+ *  - a 412 is not success. Nothing here asks for one, so a pod that answers it did not take the
+ *    write, and `publish()` must not go on to write a descriptor over a graph it did not replace.
  */
 function overwritingGraph(fetchFn: typeof globalThis.fetch, graphUrl: string): typeof globalThis.fetch {
   return async (input, init) => {
     if (String(input) !== graphUrl || (init?.method ?? 'GET').toUpperCase() !== 'PUT') return fetchFn(input, init);
+    const body = typeof init?.body === 'string' ? init.body : '';
+    if (Buffer.byteLength(body, 'utf8') > SEALED_SNAPSHOT_MAX_BYTES) {
+      return new Response('', { status: 413, statusText: 'the sealed snapshot is larger than is read back' });
+    }
     const headers = new Headers(init?.headers);
     headers.delete('if-none-match');
-    return fetchFn(input, { ...init, headers });
+    const answered = await fetchFn(input, { ...init, headers });
+    return answered.status === 412 ? new Response('', { status: 409, statusText: 'the pod did not replace the snapshot graph' }) : answered;
   };
 }
 
@@ -164,7 +190,7 @@ const unsealedWarned = new Set<string>();
 /** The snapshot inside a sealed graph, when this key sealed it for itself; null for anything else. */
 function openSealedBundle<T>(body: string, key: EncryptionKeyPair): T | null {
   try {
-    if (Buffer.byteLength(body, 'utf8') > 12 * 1024 * 1024) return null;
+    if (Buffer.byteLength(body, 'utf8') > SEALED_SNAPSHOT_MAX_BYTES) return null;
     const envelope = envelopeFromJson(body);
     const wrappedKeys = envelope.wrappedKeys.filter(w => w.senderPublicKey === key.publicKey && w.recipientPublicKey === key.publicKey);
     const plain = wrappedKeys.length === 1 ? openEncryptedEnvelope({ ...envelope, wrappedKeys }, key) : null;
@@ -282,8 +308,7 @@ async function doPublish(reg: SnapshotRegistration): Promise<void> {
   if (!sealKey) {
     if (!unsealedWarned.has(reg.surface)) {
       unsealedWarned.add(reg.surface);
-      process.stderr.write(`[pod-snapshot/${reg.surface}] not written: this bridge has no key to seal it with, so its state will not survive a restart
-`);
+      process.stderr.write(`[pod-snapshot/${reg.surface}] not written: this bridge has no key to seal it with, so its state will not survive a restart\n`);
     }
     return;
   }
@@ -429,16 +454,18 @@ export async function loadLatestSnapshot<T>(surface: string, config: {
     return r.text();
   });
   try {
-    if (config.sealKey) {
-      const sealed = await read(sealedGraphUrl(config, surface), 'application/jose+json, application/json');
-      if (sealed !== null) {
-        // A sealed graph is the snapshot. One this bridge cannot open is not replaced by the plain
-        // graph of an earlier bridge: that one stopped being written, and would restore old state.
-        const opened = openSealedBundle<T>(sealed, config.sealKey);
-        if (opened === null) process.stderr.write(`[pod-snapshot/${surface}] hydrate failed: the sealed snapshot was not sealed by this bridge's key
-`);
-        return opened;
+    // A sealed graph is the snapshot, whether or not this bridge can open it. One it cannot open,
+    // for want of a key or for having another, is not replaced by the plain graph of an earlier
+    // bridge: that one stopped being written, and would restore old state as if it were current.
+    const sealed = await read(sealedGraphUrl(config, surface), 'application/jose+json, application/json');
+    if (sealed !== null) {
+      if (!config.sealKey) {
+        process.stderr.write(`[pod-snapshot/${surface}] hydrate failed: a sealed snapshot is on the pod and this bridge has no key to open it\n`);
+        return null;
       }
+      const opened = openSealedBundle<T>(sealed, config.sealKey);
+      if (opened === null) process.stderr.write(`[pod-snapshot/${surface}] hydrate failed: the sealed snapshot was not sealed by this bridge's key\n`);
+      return opened;
     }
     const ttl = await read(graphUrl, 'application/trig, text/turtle');
     if (ttl === null) return null;
