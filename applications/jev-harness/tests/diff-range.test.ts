@@ -20,7 +20,7 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { createApp } from '../bridge/server.js';
+import { Harness } from '../src/service.js';
 import { changedFiles, describeDiffRange, diffRange, unifiedDiff } from '../src/repo.js';
 import { HarnessStore } from '../src/store.js';
 import { scripted } from './helpers.js';
@@ -116,7 +116,7 @@ describe('a checkout that comes after the pull request merged', () => {
   });
 
   it('★ the gate records a verdict from the event SHAs, and refuses the moving base by naming what it compared', async () => {
-    const { harness } = createApp({ jev: lowRisk(), repoRoot: root, base: 'http://localhost:1', store: new HarnessStore(scratch) });
+    const harness = new Harness({ jev: lowRisk(), repoRoot: root, base: 'http://localhost:1', store: new HarnessStore(scratch) });
     const gated = await harness.reviewGate({ baseRef: eventBase, headRef: eventHead, title: 'Round the total to cents', description: 'total() now rounds its sum to cents with toCents.' });
     expect(gated.judgment.kind).toBe('review-verdict');
     expect([...gated.judgment.changedFiles].sort()).toEqual(CHANGED);
@@ -128,7 +128,7 @@ describe('a checkout that comes after the pull request merged', () => {
   });
 
   it('★ the selection reads the changed files from the event SHAs, not "no changed files were given"', async () => {
-    const { harness } = createApp({ jev: scripted({}), repoRoot: root, base: 'http://localhost:1', store: new HarnessStore(scratch) });
+    const harness = new Harness({ jev: scripted({}), repoRoot: root, base: 'http://localhost:1', store: new HarnessStore(scratch) });
     const selected = await harness.selectTests({ changedFiles: [], baseRef: eventBase, headRef: eventHead });
     expect([...selected.judgment.changedFiles].sort()).toEqual(CHANGED);
     expect(selected.judgment.tests.map((t) => t.path)).toContain('tests/ledger.test.ts');
