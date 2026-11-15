@@ -127,7 +127,7 @@ the guest's fixed deadline and never lasts more than an hour. A returning guest 
 its stored attestation and a fresh proof, without spending a new grant.
 
 A guest is a learner and nothing else. `auth.resolve()` refuses a guest session unless the route
-opts in, so a route nobody decided about is closed to guests. What is open:
+opts in, so a route nobody decided about is closed to guests. What is open on the learning routes:
 
 | Open to a guest | Closed to a guest (`403 learning_guest_refused`) |
 |---|---|
@@ -135,7 +135,18 @@ opts in, so a route nobody decided about is closed to guests. What is open:
 | `courses`, `progress`, `course-readiness`, `quiz-review` | progress notifications (a subscription would outlive the guest) |
 | `/i2idlx/api/learning/launch` | `/i2idlx/api/learning/context` (needs a paired agent, which a guest cannot register) |
 
-An administrator still decides whether a guest is a learner at all: a link is `pending-admin` until
+The course player opts in too. Its `/learn` routes take the same guest session, so a guest can
+launch and play a published or hosted course there with no connection and no administrator
+(`COURSE-PLAYER.md` says what it records and what a guest may do with it). That page can also ask
+identity for a fresh identity token for the key the browser keeps, to hand to identity's own claim
+flow; the workbench's sign-in never reads that token.
+
+Every guest counts against this application's lifetime admission cap, whichever page created it:
+the `maxPods` of the workbench's entry in identity's `PROVISIONAL_PLAY_CLIENTS`, inside the
+deployment's `PROVISIONAL_PLAY_MAX_PODS`. The cap is never refunded, so a public course player can
+use it up; after that a new browser is refused a guest and an existing one still resumes.
+
+On the learning routes an administrator still decides whether a guest is a learner at all: a link is `pending-admin` until
 the connection's owner matches it to an actual registration, and the owner sees the requesting
 account's `u-try-play-` WebID when doing so. A link belongs to the guest's owner DID, so a guest
 that later adds a passkey or wallet to the same owner keeps its links and signs in the normal way.
