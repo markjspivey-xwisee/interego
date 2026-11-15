@@ -45,11 +45,22 @@ Point your editor's ACP agent command at the witness, and pass the real agent af
 }
 ```
 
-Or try it from a terminal against the SDK's example agent:
+Or try it from a terminal against the agent installed at the repo root (a root dev
+dependency; it needs Node 22 or later and a signed-in Claude Code):
 
 ```sh
-npx tsx src/cli.ts -- node node_modules/@agentclientprotocol/sdk/dist/examples/agent.js
+npx tsx src/cli.ts -- node <repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 ```
+
+(This used to name the ACP SDK's example agent, which its 2.x releases no longer ship.)
+
+**Keep the session on ACP v1.** The witness forwards the editor's `initialize` and reads
+v1 frames. `@agentclientprotocol/claude-agent-acp` serves the draft ACP v2 to an editor that
+asks for protocol version 2 or later, and v2 has no `current_mode_update` and puts a
+permission request's tool call under `subject`, so modes and tool kinds would go unseen.
+Set `CLAUDE_AGENT_ACP_PROTOCOL=v1` in the agent's environment (an `env` entry beside
+`command` in most editors' agent settings) to have it negotiate such an editor down to v1.
+The probe's `launch.mjs` does this for you.
 
 `--json <path>` also writes the tally to a file. Still local.
 

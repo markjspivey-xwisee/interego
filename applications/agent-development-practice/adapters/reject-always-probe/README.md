@@ -8,7 +8,8 @@ Puts the missing button on the menu, so we can find out whether anyone presses i
 ## Why this exists
 
 Increment 0 measured a real question and got an answer nobody expected: **`reject_always` is
-never offered.** The production ACP agent (`@zed-industries/claude-code-acp`) builds its
+never offered.** The production ACP agent (`@zed-industries/claude-code-acp`, and its
+renamed successor `@agentclientprotocol/claude-agent-acp`, read from its dist) builds its
 permission menu as `allow_always` / `allow_once` / `reject_once` and never constructs
 `reject_always` at all. So the standing-deny thesis has no supply — but for *structural*
 reasons, not behavioural ones. Nobody declines a button that is never rendered.
@@ -58,10 +59,17 @@ Chain the witness in front of the probe, and give each the next program after `-
     "--json", "<repo>/witness.json", "--",
     "npx", "tsx", "<repo>/applications/agent-development-practice/adapters/reject-always-probe/src/inject.ts",
     "--json", "<repo>/probe.json", "--",
-    "npx", "@zed-industries/claude-code-acp"
-  ]
+    "npx", "@agentclientprotocol/claude-agent-acp"
+  ],
+  "env": { "CLAUDE_AGENT_ACP_PROTOCOL": "v1" }
 }
 ```
+
+The `env` line keeps the session on ACP v1, which is what the witness and the probe read.
+The agent serves the draft ACP v2 to an editor that asks for version 2 or later; there a
+permission request carries its tool call under `subject`, so the probe would key every
+standing rule on one "unknown" tool, and there is no `current_mode_update` for the witness
+to read. `launch.mjs` sets it itself. The agent needs Node 22 or later.
 
 On Windows with Node 22, `npx` fails here (`spawn npx ENOENT`, and `npx.cmd` gives `EINVAL`
 because Node 22 will not spawn a `.cmd` without a shell). Call `tsx` directly instead:
@@ -69,7 +77,7 @@ because Node 22 will not spawn a `.cmd` without a shell). Call `tsx` directly in
 ```sh
 node node_modules/tsx/dist/cli.mjs <repo>/.../editor-witness/src/cli.ts -- \
 node node_modules/tsx/dist/cli.mjs <repo>/.../reject-always-probe/src/inject.ts -- \
-node node_modules/@zed-industries/claude-code-acp/dist/index.js
+node node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
 ```
 
 Then **do a real session of your own work.** The number is only worth anything if the

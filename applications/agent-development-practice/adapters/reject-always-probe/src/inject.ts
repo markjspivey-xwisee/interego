@@ -73,7 +73,7 @@ const { jsonOut, cmd } = parseArgv(process.argv.slice(2));
 if (cmd.length === 0) {
   process.stderr.write(
     'reject-always-probe: give the agent command after `--`.\n'
-    + '  e.g. tsx src/inject.ts -- node <sdk>/dist/examples/agent.js\n');
+    + '  e.g. tsx src/inject.ts -- node <repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js\n');
   process.exit(2);
 }
 

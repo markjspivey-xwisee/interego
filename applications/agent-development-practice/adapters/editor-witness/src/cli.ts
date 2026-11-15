@@ -17,8 +17,11 @@
  *   args:    ["tsx", "<repo>/applications/agent-development-practice/adapters/editor-witness/src/cli.ts",
  *             "--", "npx", "@agentclientprotocol/claude-agent-acp"]
  *
- * Or from a terminal, against the SDK's example agent, to see it work:
- *   npx tsx src/cli.ts -- node node_modules/@agentclientprotocol/sdk/dist/examples/agent.js
+ * Or from a terminal, against the agent installed at the repo root (Node 22 or later):
+ *   npx tsx src/cli.ts -- node <repo>/node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js
+ *
+ * Keep the agent on ACP v1 (CLAUDE_AGENT_ACP_PROTOCOL=v1 in its environment): this reads
+ * v1 frames, and that agent serves the draft v2 to an editor asking for version 2 or later.
  *
  * --json <path>  also write the tally as JSON (still local; nothing leaves the machine)
  */

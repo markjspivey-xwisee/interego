@@ -80,7 +80,7 @@ When `claude --mcp-config <this>.json -p "<prompt>"` runs, it spawns the shim as
 
 - Node 20+
 - Claude Code CLI on PATH: `claude --version` must work. (The agents are real `claude` subprocesses.)
-- `ethers` + `@modelcontextprotocol/sdk` available — already in the repo's deps if you've installed.
+- `ethers` and the MCP SDK v2 server package `@modelcontextprotocol/server` (which brings `@modelcontextprotocol/core`) available — both are root dependencies, so `npm install` at the repo root provides them. The shim does not use the v1 `@modelcontextprotocol/sdk`.
 
 ### Start
 
