@@ -376,6 +376,55 @@ export class PgslStore {
   }
 
   /**
+   * Commit a native head that holds the SAME representation an existing native head already
+   * holds, without the bytes being sent again: the new head takes the source head's canonical
+   * nodes. One transaction. The caller states the digest, size and media type it believes the
+   * source holds, and the commit happens only if the source is a native-managed head holding
+   * exactly that; otherwise `source-mismatch`, and nothing is written. The target's
+   * compare-and-set is the one commitResource makes, with the same conflict answer.
+   *
+   * No node is read or rewritten: the source head was committed with its nodes checked against
+   * its digest, nodes are immutable, and the source head is read in this transaction.
+   */
+  async commitResourceFrom(options: {
+    pod: string; resource: string; source: string; expectedRevision: string | null;
+    bodyDigest: string; size: number; contentType: string;
+  }): Promise<NativeResourceCommitResult | { status: 'source-mismatch' }> {
+    assertExpectedResourceRevision(options.expectedRevision);
+    const { pod, resource: path, source } = options;
+    if (source === path) throw new Error('a native head cannot be committed from itself');
+    const key = cpKey(resourceCollection(pod), path), sourceKey = cpKey(resourceCollection(pod), source);
+    try {
+      return await this.fdb.transact(async (txn) => {
+        const [previous, held, oldTop] = await getMany(txn, [key, sourceKey, ovKey(pod, path)]);
+        const from = held === undefined ? undefined : decodeJson<NativeResourceRecord>(held);
+        if (!from?.nativeManaged || from.bodyDigest !== options.bodyDigest || from.size !== options.size
+          || from.contentType !== options.contentType) return { status: 'source-mismatch' as const };
+        const observed = previous === undefined ? null : resourceRevision(pod, path, previous);
+        if (observed !== options.expectedRevision) return { status: 'conflict' as const, revision: observed };
+        const record: NativeResourceRecord = {
+          contentType: from.contentType, updatedAt: Date.now(), size: from.size, bodyDigest: from.bodyDigest,
+          topUri: from.topUri, opaqueUri: from.opaqueUri, ...(from.chunkUris?.length ? { chunkUris: from.chunkUris } : {}),
+          commitNonce: randomUUID(), nativeManaged: true,
+        };
+        const bytes = encodeJson(record);
+        if (!await txn.compareAndSet(key, previous ?? null, bytes)) throw new ResourceWriteRace();
+        if (oldTop !== undefined && dec.decode(oldTop) !== record.topUri) {
+          txn.clear(ovrKey(nodeAddrFromUrn(dec.decode(oldTop)).hash, pod, path));
+        }
+        txn.set(ovKey(pod, path), enc.encode(record.topUri));
+        txn.set(ovrKey(nodeAddrFromUrn(record.topUri).hash, pod, path), EMPTY);
+        return { status: 'committed' as const, pod, path, revision: resourceRevision(pod, path, bytes),
+          topUri: record.topUri, opaqueUri: record.opaqueUri, bodyDigest: record.bodyDigest!,
+          contentType: record.contentType, updatedAt: record.updatedAt, size: record.size };
+      });
+    } catch (error) {
+      if (!(error instanceof ResourceWriteRace)) throw error;
+      return { status: 'conflict', revision: (await this.resourceHead(pod, path))?.revision ?? null };
+    }
+  }
+
+  /**
    * Atomically commit the native head, canonical nodes, structural indexes and
    * both overlay directions. The receipt describes this write, never a later
    * HEAD request. Uses only the existing native transaction and keyspace.
