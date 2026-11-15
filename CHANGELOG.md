@@ -1,5 +1,25 @@
 # Changelog
 
+## 2026-11-15 — Native store: read only what a named writer sealed
+
+The native commit store checked whom a stored artifact was addressed to and not
+who sealed it. A wrapped key is opened with the sender key the envelope itself
+names, and the store never compared that with a key it trusts. The recipients'
+public keys are in every envelope it writes, and a pod is readable by anyone. So
+whoever could write the pod could seal an artifact of their own to those
+recipients, and the store read it as its own. For Foxxi's LRS that is a
+statement under any authority, the LMS's included.
+
+`NativeCommitStore` takes `trustedSenderPublicKeys`. Given, an artifact is read
+only when every wrapped key names one of those keys as its sender. A wrapped key
+is a NaCl box, so naming a trusted sender cannot be faked without that sender's
+private key. Foxxi's LRS now passes the bridge's key and the store owner's.
+
+Without the option nothing changes. It does not keep out a recipient who turns
+writer: a recipient holds the content key and can reuse a genuine wrapped key.
+It does not stop whoever can write the pod from removing artifacts or putting
+the head back to an earlier one.
+
 ## 2026-11-15 — jev-harness: the gate and the selection diff the event's own SHAs
 
 Three pull requests on 2026-11-14 got no review verdict: #899, #901 and #905.

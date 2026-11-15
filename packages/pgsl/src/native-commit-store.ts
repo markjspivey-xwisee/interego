@@ -197,6 +197,23 @@ export interface NativeCommitStoreOptions {
   /** Explicit, verified owner binding; not a key discovered from an unsigned arbitrary URL. */
   readonly ownerPublicKey: string;
   readonly recipientPublicKeys: readonly string[];
+  /**
+   * The public keys whose sealing this store accepts on what it reads. Given, an artifact is read
+   * only when every one of its wrapped keys names one of these as its sender; it must include this
+   * client's own key, or the client could not read what it wrote.
+   *
+   * Without it the store checks whom an artifact is addressed to and not who sealed it. The
+   * recipients' public keys are in every stored envelope, so whoever can write the pod can seal an
+   * artifact of their own to those recipients and have it read as the store's. A wrapped key is a
+   * NaCl box, which opens only under the sender key it names, so naming a trusted sender cannot be
+   * faked without that sender's private key.
+   *
+   * What it does not cover. A recipient holds the content key of every artifact it can read, and can
+   * seal other content under a wrapped key copied from a genuine artifact: this keeps out whoever is
+   * not a recipient, not a recipient who turns writer. And it says nothing about an artifact being
+   * removed, or a head being put back to an earlier one, by whoever can write the pod.
+   */
+  readonly trustedSenderPublicKeys?: readonly string[];
   /** CSS's native storage domain is "css"; this is not the logical owner pod URL. */
   readonly storageDomain?: string;
   readonly maxArtifactBytes?: number;
@@ -372,6 +389,7 @@ export function readNativeByteArtifact(input: NativeArtifact): { owner: IRI; con
 export class NativeCommitStore implements NativeCommitClient {
   private readonly scope: NativeCommitScope;
   private readonly recipients: readonly string[];
+  private readonly trustedSenders: ReadonlySet<string> | undefined;
   private readonly limit: number;
   private readonly artifactCacheNamespace = {};
   private readonly indexReadConcurrency: number;
@@ -404,6 +422,11 @@ export class NativeCommitStore implements NativeCommitClient {
     this.recipients = [...new Set(options.recipientPublicKeys)].sort();
     if (!publicKey(options.ownerPublicKey) || this.recipients.some(k => !publicKey(k)) || !this.recipients.includes(options.ownerPublicKey)
       || !this.recipients.includes(options.senderKeyPair.publicKey)) fail('Native storage requires explicit owner and stable reader recipients.', 400);
+    if (options.trustedSenderPublicKeys !== undefined) {
+      const trusted = new Set(options.trustedSenderPublicKeys);
+      if (trusted.size === 0 || [...trusted].some(k => !publicKey(k)) || !trusted.has(options.senderKeyPair.publicKey)) fail('Trusted native writers must be public keys and include this client\'s own.', 400);
+      this.trustedSenders = trusted;
+    }
     this.limit = options.maxArtifactBytes ?? DEFAULT_LIMIT;
     if (!Number.isSafeInteger(this.limit) || this.limit < 1024 || this.limit > DEFAULT_LIMIT) fail('Invalid native capacity.', 400);
   }
@@ -467,6 +490,11 @@ export class NativeCommitStore implements NativeCommitClient {
     try { envelope = JSON.parse(Buffer.from(bytes).toString('utf8')) as EncryptedEnvelope; } catch { return fail('Native ciphertext is malformed.'); }
     const keys = Array.isArray(envelope?.wrappedKeys) ? envelope.wrappedKeys.map(k => k.recipientPublicKey).sort() : [];
     if (envelope.version !== 1 || envelope.algorithm !== 'X25519-XSalsa20-Poly1305' || canonical(keys) !== canonical(this.recipients)) fail('Native ciphertext recipient binding changed.');
+    // Addressed to the right readers is not the same as written by the right writer. Checked on
+    // every wrapped key, not only the one this client opens: the others are what the owner reads by.
+    if (this.trustedSenders && !envelope.wrappedKeys.every(k => typeof k.senderPublicKey === 'string' && this.trustedSenders!.has(k.senderPublicKey))) {
+      fail('Native ciphertext was not sealed by a trusted writer.');
+    }
     let plaintext: string | null;
     try { plaintext = openEncryptedEnvelope(envelope, this.options.senderKeyPair); } catch { return fail('Native ciphertext cannot be decrypted.'); }
     if (!plaintext) return fail('Native ciphertext cannot be decrypted; no empty-state fallback.');

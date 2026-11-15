@@ -1,6 +1,6 @@
 import { createHash } from 'node:crypto';
 import { beforeAll, describe, expect, it, vi } from 'vitest';
-import { deriveEncryptionKeyPair, mintNodeId, type IRI } from '@interego/core';
+import { createEncryptedEnvelope, deriveEncryptionKeyPair, mintNodeId, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair, type IRI } from '@interego/core';
 import {
   NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, NATIVE_STAGE_MEDIA_TYPE,
   createNativeByteArtifact, readNativeByteArtifact, validateNativeArtifact,
@@ -1456,5 +1456,68 @@ describe('numeric commit diagnostics', () => {
       expect(receipt.replayed).toBe(false);
     }
     expect((await transport.client().readHead()).records.size).toBe(3);
+  });
+
+  describe('who sealed what it reads', () => {
+    const readers = [owner.publicKey, bridge.publicKey];
+    /** The head as the store holds it, sealed again by `sealer` to the same two readers: same content, another writer. */
+    const resealHead = (transport: NativeTransport, sealer: EncryptionKeyPair): void => {
+      const row = transport.rows.get(scope.headUrl)!;
+      const plaintext = openEncryptedEnvelope(JSON.parse(Buffer.from(row.bytes).toString('utf8')) as EncryptedEnvelope, owner);
+      expect(typeof plaintext).toBe('string');
+      const bytes = Buffer.from(JSON.stringify(createEncryptedEnvelope(plaintext as string, readers, sealer)));
+      plant(transport, bytes);
+    };
+    /** Puts `bytes` where a writer of the pod would: the head, and the commit object the head stands for, named by its digest. */
+    const plant = (transport: NativeTransport, bytes: Buffer): void => {
+      transport.rows.set(scope.headUrl, { bytes, revision: sha('planted-head:' + sha(bytes)) });
+      transport.rows.set(scope.artifactContainer + 'commit-' + sha(bytes).slice(7) + '.json', { bytes, revision: sha('planted-commit:' + sha(bytes)) });
+    };
+    const trusting = (transport: NativeTransport, keys: readonly string[]) => transport.client({ trustedSenderPublicKeys: keys });
+
+    it('reads a record anyone sealed to its readers, unless it is told whose sealing to accept', async () => {
+      const transport = new NativeTransport(); await put(transport, 'kept');
+      // Somebody who can write the pod puts a head of their own there, addressed to the store's two
+      // readers. Their public keys are in every envelope the store has written.
+      resealHead(transport, other);
+      // Addressed correctly, it decrypts: a store that checks only whom a record is for takes it as its own.
+      expect((await transport.client().readHead()).records.size).toBe(1);
+      // Told to accept only what this client sealed, it does not.
+      await expect(trusting(transport, [bridge.publicKey]).readHead()).rejects.toThrow('not sealed by a trusted writer');
+      await expect(trusting(transport, readers).readHead()).rejects.toThrow('not sealed by a trusted writer');
+    });
+
+    it('still reads what it sealed itself, and what a writer it names sealed', async () => {
+      const transport = new NativeTransport(); await put(transport, 'kept');
+      const strict = trusting(transport, [bridge.publicKey]);
+      const head = await strict.readHead();
+      expect(head.records.size).toBe(1);
+      expect(await textAt(transport, head, 'statement:kept')).toBe('kept');
+      // It goes on writing and reading under the same rule.
+      await strict.commit({ operationId: 'second', expected: head, changes: [{ key: 'statement:second', artifact: artifact('second') }] });
+      expect((await trusting(transport, [bridge.publicKey]).readHead()).records.size).toBe(2);
+      // The owner sealed the head: read where the owner is named, refused where only this client is.
+      resealHead(transport, owner);
+      expect((await trusting(transport, readers).readHead()).records.size).toBe(2);
+      await expect(trusting(transport, [bridge.publicKey]).readHead()).rejects.toThrow('not sealed by a trusted writer');
+    });
+
+    it('holds every wrapped key to it, not only the one it opens', async () => {
+      const transport = new NativeTransport(); await put(transport, 'kept');
+      // The key this client opens keeps its own sender; the owner's copy names a stranger.
+      const row = transport.rows.get(scope.headUrl)!;
+      const envelope = JSON.parse(Buffer.from(row.bytes).toString('utf8')) as EncryptedEnvelope;
+      const mixed = { ...envelope, wrappedKeys: envelope.wrappedKeys.map(k => k.recipientPublicKey === owner.publicKey ? { ...k, senderPublicKey: other.publicKey } : k) };
+      plant(transport, Buffer.from(JSON.stringify(mixed)));
+      expect((await transport.client().readHead()).records.size).toBe(1);
+      await expect(trusting(transport, [bridge.publicKey]).readHead()).rejects.toThrow('not sealed by a trusted writer');
+    });
+
+    it('is not built with a trusted set that leaves out its own key, is empty, or holds something that is no key', () => {
+      const transport = new NativeTransport();
+      for (const keys of [[], [owner.publicKey], [bridge.publicKey, 'not-a-key']]) {
+        expect(() => trusting(transport, keys)).toThrow('Trusted native writers');
+      }
+    });
   });
 });
