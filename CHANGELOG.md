@@ -1,5 +1,61 @@
 # Changelog
 
+## 2026-11-15 — Images: the prune reaches workspace copies and deletes only platform packages
+
+`tools/prune-image-dev-tools.mjs` walked only the root node_modules. When a
+workspace needs one of the pruned packages at a version that conflicts with the
+root's, npm nests a copy under that workspace, for example
+`applications/<x>/bridge/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64`,
+and that copy, a native binary of several hundred MB, would have stayed in the
+image with every test green. The lockfile already nests sixteen packages under
+workspace and application directories, and Foxxi's own package already asks for
+agent SDK 0.3 while the root has 0.2.44, so this was a plausible next change. The
+script now also walks the node_modules of every package directory the lockfile
+beside it records, and then checks that no location the lockfile records for a
+pruned package is still on disk. If one is, for instance behind a symbolic link
+it does not follow, the run fails and names it. It also refuses a directory not
+named node_modules, so `node tools/prune-image-dev-tools.mjs /tmp` fails instead
+of reporting success, and a lockfile it cannot read. A .bin link counts as
+pointing into a pruned package at any node_modules level, so a workspace's link
+up into the root's copy goes too.
+
+The platform packages were matched by `[a-z0-9][a-z0-9-]*` after the name, so
+a name such as `@anthropic-ai/claude-code-sdk`, or any future
+`@anthropic-ai/claude-code-<x>`, would have been deleted from every image. These
+images run some root devDependencies, so a runtime library of such a name added
+as one would have vanished. The suffix is now a platform and nothing else: an
+os and a cpu as Node names them, optionally `-musl`. The list writes it as
+`<platform>`. The test checks that every platform package the lockfile lets npm
+install for the CLI and the SDK is still covered.
+
+The safety argument is now stated in the right order, in the script, the test
+and the entry below: what proves no service needs these packages is the import
+closure of what each image runs and the scan of every shipped file. That npm
+marks them dev-only proves nothing in images that install devDependencies on
+purpose and import some of them (express, n3, jose and tsx) at run time. The lockfile
+check is a guard on the list, and it is now as strict as the entry below says:
+a workspace's devDependency on a pruned package fails it too, where before only
+production fields counted.
+
+The entry below also gave sizes that were low. With npm 10.9, which reads the
+lockfile's `libc` field, today's images hold about 330 MB of these packages, not
+312: the agent SDK carries both the glibc and the musl builds of sharp (113.1 MB
+installed, not 96.3). The pending switch would add about 470 MB per image, not
+204, because the new SDK's lockfile entries record no `libc` and npm installs
+both its 293.6 MB glibc and 287.3 MB musl binaries. Run on a hard-linked copy of
+this machine's install, where an older lockfile without `libc` put both CLI
+builds in place, the script removed 595.3 MB and kept `@anthropic-ai/sdk`,
+`@agentclientprotocol/sdk` and tsx. The note on the test-module floor now says
+what forced the move from 690: the reporter does not fire at 35 modules of
+slack, but `tests/vitest-run-integrity.test.ts` requires fewer and fails at 690.
+
+Not covered: no image was built, so the sizes are still the registry's unpacked
+sizes plus a local measurement, not a layer diff; the base image's npm version
+is assumed from Node 22, not read from the image. A pruned package nested under
+a package directory outside the build tree (a `file:` dependency on `../x`) is
+not walked; the check after the walk fails the build on it instead of deleting
+it.
+
 ## 2026-11-15 — Images: the prune check reads every way of copying the lockfile and running npm
 
 The test that keeps the Claude developer tools out of the images,
@@ -54,46 +110,56 @@ CLI and the ACP agent `@zed-industries/claude-code-acp` with the Claude Agent
 SDK it depends on. No service runs any of them.
 
 `tools/prune-image-dev-tools.mjs` now deletes them in the same RUN as the
-`npm ci`: `@anthropic-ai/claude-code` and its `@anthropic-ai/claude-code-*`
-platform packages, `@anthropic-ai/claude-agent-sdk` and its
-`@anthropic-ai/claude-agent-sdk-*` platform packages, and the ACP agents
+`npm ci`: `@anthropic-ai/claude-code` and its `@anthropic-ai/claude-code-<platform>`
+packages, `@anthropic-ai/claude-agent-sdk` and its
+`@anthropic-ai/claude-agent-sdk-<platform>` packages, and the ACP agents
 `@zed-industries/claude-code-acp` and `@agentclientprotocol/claude-agent-acp`,
 with their `node_modules/.bin` links. It deletes nothing else
 (`@anthropic-ai/sdk` stays), skips a package that is not there, and prints each
 removal and the bytes it held. The same RUN matters: a delete in a later RUN
 only hides the files behind whiteouts in a layer the image still ships.
 
-Why it is safe: npm marks every one of these packages dev-only in the lockfile,
-and nothing but another of them or a root devDependency depends on them.
-Nothing the nine images run imports them or starts their executables.
-`integrations/tests/images-ship-no-claude-dev-tools.test.ts` follows the static
-imports from each image's CMD and from every script a RUN step executes, and
-scans every file any image copies. Four files that do refer to them ship only because their
-directory is copied whole, and none is reachable from what the image runs:
-Foxxi's two emergent-collective developer drivers, the shared-workspace desktop
-app's lookup of a local Claude Code install, and `demos/agent-lib.ts`. The same
+Why it is safe: nothing the nine images run imports them or starts their
+executables. `integrations/tests/images-ship-no-claude-dev-tools.test.ts`
+follows the static imports from each image's CMD and from every script a RUN
+step executes, and scans every file any image copies. Four files that do refer
+to them ship only because their directory is copied whole, and none is
+reachable from what the image runs: Foxxi's two emergent-collective developer
+drivers, the shared-workspace desktop app's lookup of a local Claude Code
+install, and `demos/agent-lib.ts`. That npm marks the packages dev-only is no
+evidence here, because these images install devDependencies on purpose and
+import some at run time (express, n3, jose and tsx are root devDependencies).
+The test reads the lockfile for a narrower guarantee: each pruned package is
+dev-only and only the root's devDependencies or another of them asks for one,
+so the list cannot delete something a production dependency needs. The same
 test pins which Dockerfiles must prune, and checks that the three which install
 the root lockfile only in a build stage (dashboard, pgsl-browser, relay) never
 ship that node_modules.
 
-Size, an estimate from `npm view <package>@<locked version> dist.unpackedSize`
-for the linux-x64 glibc packages the lockfile pins: about 312 MB per image. The
-CLI's native binary is 214.3 MB, the agent SDK 0.2.44 is 79.8 MB with 16.5 MB
-of sharp binaries nested under it, and the CLI wrapper and the ACP agent are
-under 1 MB each. If npm also installs the musl build, or the CLI's postinstall
-copies its binary instead of hard-linking it, the saving is larger; the script
-removes those too.
+Size, from the registry's unpacked sizes and a local install: about 330 MB per
+image. The CLI's glibc binary is 214.3 MB. The lockfile records `libc` for the
+CLI's platform packages, and npm 10.9, which Node 22 bundles, reads it from the
+lockfile entry, so the 208.3 MB musl build is skipped on these Debian images.
+The agent SDK 0.2.44 measures 113.1 MB installed: 79.8 MB of its own and both
+the glibc and the musl builds of sharp nested under it, whose lockfile entries
+record no `libc`. The CLI wrapper and the ACP agent are under 1 MB each. A tree
+installed from a lockfile without `libc` holds both CLI builds: on this
+machine's install (CLI 2.1.161) the script removed 595.3 MB.
 
 The pending switch to `@agentclientprotocol/claude-agent-acp` (0.99.1 in its
 lockfile) brings `@anthropic-ai/claude-agent-sdk` 0.3.312, whose linux-x64
-platform package is a 293.6 MB native binary: about 204 MB more per image than
-today if nothing pruned it. All of those packages are on the list, so the switch
-adds none of that to these images.
+platform packages are native binaries of 293.6 MB (glibc) and 287.3 MB (musl).
+That lockfile records no `libc` for them, so npm installs both: about 470 MB
+more per image than today if nothing pruned them, net of the 113 MB SDK 0.2.44
+it replaces. All of those packages are on the list, so the switch adds none of
+that to these images.
 
 `integrations/tests/hosted-docker-build-inputs.test.ts` split a Dockerfile after
 the text `RUN npm ci` to inject a stage; it now injects after the whole line.
-The new test module used the last of the slack above the test-module floor,
-which moves from 690 to 715.
+With the new test module the tree holds 725 modules, 35 above the floor of 690:
+all of the 35 the reporter allows, so the reporter does not fire, but
+`tests/vitest-run-integrity.test.ts` requires fewer than that and fails at 690.
+The floor moves to 715.
 
 Not covered: no image was built here, so the saving stays an estimate until CI
 builds them. The switch still adds the larger ACP protocol library

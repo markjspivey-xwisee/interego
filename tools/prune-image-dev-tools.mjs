@@ -7,26 +7,47 @@
  * `npm ci` against the ROOT lockfile and must keep its devDependencies, because they run their
  * service with `npx tsx` and tsx is a root devDependency. Every other root devDependency comes
  * along, and the largest are developer tools no service runs: the Claude Code CLI, whose platform
- * package is a native binary of about 214 MB, and the ACP agent with the agent SDK it pulls in.
- * The ACP agent's successor brings an agent SDK whose own platform package is another native
- * binary of about 294 MB.
+ * package is a native binary of about 214 MB, and the ACP agent with the agent SDK it pulls in,
+ * about 113 MB with the two builds of sharp npm nests under it. The ACP agent's successor brings
+ * an agent SDK whose platform packages are native binaries of about 290 MB each, and on linux x64
+ * npm installs two of them, glibc and musl, because its lockfile entries record no libc.
  *
  * ── WHAT IT DELETES ──────────────────────────────────────────────────────────────────────────
  *
- * Exactly the packages named in PRUNE_PATTERNS, wherever npm put them in the tree (a copy nested
- * under another package is the same package), and the node_modules/.bin links that point into
- * them, including links left dangling by an earlier run. `*` matches one platform suffix, so
- * `@anthropic-ai/claude-code-*` is `@anthropic-ai/claude-code-linux-x64` and never
- * `@anthropic-ai/sdk` or `@anthropic-ai/claude-codex`. Symbolic links to directories (workspace
- * packages) are not followed: what lies behind them is not this tree's to delete.
+ * Exactly the packages named in PRUNE_PATTERNS, wherever npm put them: anywhere under the
+ * node_modules it is given (a copy nested under another package is the same package), and under
+ * the node_modules of every package directory the lockfile beside it records outside
+ * node_modules. Those are the workspaces, where npm nests a copy whose version conflicts with the
+ * root's. It also deletes the node_modules/.bin links that point into them, including links left
+ * dangling by an earlier run.
+ *
+ * `<platform>` is a platform suffix and nothing else: an os and a cpu as Node names them
+ * (process.platform, process.arch), optionally `-musl`, such as `linux-x64` or `linux-x64-musl`.
+ * So `@anthropic-ai/claude-code-<platform>` never matches `@anthropic-ai/claude-code-sdk`,
+ * `@anthropic-ai/sdk` or `@anthropic-ai/claude-codex`. That matters here more than usual: these
+ * images run some root devDependencies, so a runtime library with such a name, added as a
+ * devDependency, must not be deleted.
+ *
+ * Symbolic links to directories are not followed. A workspace is reached at its own path through
+ * the lockfile, not through its link in node_modules.
+ *
+ * Then it checks that no location the lockfile records for a pruned package is still on disk,
+ * and fails if one is, naming it: a copy the walk could not reach would otherwise ship unseen.
  *
  * ── WHY IT IS SAFE ───────────────────────────────────────────────────────────────────────────
  *
- * npm marks every one of these packages `dev: true` in the lockfile, nothing but another of them
- * or a root devDependency depends on them, and nothing any of those images runs imports them or
- * spawns their executables. `integrations/tests/images-ship-no-claude-dev-tools.test.ts` checks
- * all three, and that every image installing the root lockfile with devDependencies either runs
- * this script in the same RUN as its `npm ci` or never ships that node_modules.
+ * Because nothing those images run uses them. `integrations/tests/images-ship-no-claude-dev-tools.test.ts`
+ * follows the static imports from each image's CMD and from every script a RUN step executes, and
+ * scans every file any image copies: none reaches these packages or starts their executables.
+ *
+ * That npm marks them dev-only is not the reason. These images install devDependencies on purpose
+ * and import some at run time (express, n3, jose and tsx are root devDependencies), so being
+ * dev-only says nothing about whether a service needs a package. The same test checks the
+ * lockfile for a narrower thing: every one of these packages is dev-only, and only the root's
+ * devDependencies or another of them asks for one, so this list cannot delete something a
+ * production dependency needs. It also checks that every image installing the root lockfile with
+ * devDependencies runs this script in the same RUN as its `npm ci`, or never ships that
+ * node_modules.
  *
  * ── WHY THE SAME RUN ─────────────────────────────────────────────────────────────────────────
  *
@@ -34,33 +55,38 @@
  * single-stage image ships every layer. Only a delete in the layer that installed them saves the
  * bytes.
  *
- * Idempotent: a package that is not there is simply not removed. It fails only when the
- * node_modules directory it was given does not exist, which means it was pointed at the wrong
- * place and would otherwise report success having pruned nothing.
+ * Idempotent: a package that is not there is simply not removed. It fails when the directory it
+ * was given does not exist or is not named node_modules (it was pointed at the wrong place, and
+ * would otherwise report success having pruned nothing), when the lockfile beside it cannot be
+ * read, and when a recorded copy survives.
  *
  *   node tools/prune-image-dev-tools.mjs [node_modules-dir ...]   (default: ./node_modules)
  *   node tools/prune-image-dev-tools.mjs --list                    (the patterns, as JSON)
  */
 
-import { lstatSync, readdirSync, readlinkSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
-import { join, relative, resolve, sep } from 'node:path';
+import { existsSync, lstatSync, readdirSync, readFileSync, readlinkSync, rmdirSync, rmSync, unlinkSync } from 'node:fs';
+import { basename, dirname, join, relative, resolve, sep } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** The packages to delete. `*` stands for one platform suffix such as `linux-x64-musl`. */
+/** The packages to delete. `<platform>` stands for a platform suffix (see PLATFORM). */
 export const PRUNE_PATTERNS = Object.freeze([
   // The Claude Code CLI, and its per-platform native binaries.
   '@anthropic-ai/claude-code',
-  '@anthropic-ai/claude-code-*',
+  '@anthropic-ai/claude-code-<platform>',
   // The Claude Agent SDK, and (from 0.3) its per-platform native binaries.
   '@anthropic-ai/claude-agent-sdk',
-  '@anthropic-ai/claude-agent-sdk-*',
+  '@anthropic-ai/claude-agent-sdk-<platform>',
   // The ACP agents that wrap them: the deprecated name, and the one it was renamed to.
   '@zed-industries/claude-code-acp',
   '@agentclientprotocol/claude-agent-acp',
 ]);
 
+/** A platform suffix: an os and a cpu as Node's process.platform and process.arch name them, optionally `-musl`. */
+export const PLATFORM = '(?:aix|android|darwin|freebsd|linux|netbsd|openbsd|sunos|win32)'
+  + '-(?:arm|arm64|ia32|loong64|mips|mipsel|ppc|ppc64|riscv64|s390|s390x|x64)(?:-musl)?';
+
 const escape = (s) => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-const PRUNED = new RegExp(`^(?:${PRUNE_PATTERNS.map((p) => p.split('*').map(escape).join('[a-z0-9][a-z0-9-]*')).join('|')})$`);
+const PRUNED = new RegExp(`^(?:${PRUNE_PATTERNS.map((p) => p.split('<platform>').map(escape).join(PLATFORM)).join('|')})$`);
 
 /** Is this package name one to delete? */
 export function isPruned(name) {
@@ -82,16 +108,59 @@ function bytesUnder(path, inodes) {
   return total;
 }
 
-/** The package a path inside `nodeModules` belongs to, or null when it lies outside it. */
-function packageOf(nodeModules, path) {
-  const rel = relative(nodeModules, path).split(sep);
-  if (!rel[0] || rel[0] === '..' || rel[0] === '.bin') return null;
-  return rel[0].startsWith('@') ? (rel[1] ? `${rel[0]}/${rel[1]}` : null) : rel[0];
+/** The first pruned package a path lies inside, at any node_modules level, or null. */
+function prunedOwner(path) {
+  const parts = path.split(sep);
+  for (let i = 0; i < parts.length - 1; i++) {
+    if (parts[i] !== 'node_modules') continue;
+    const name = parts[i + 1].startsWith('@') ? (parts[i + 2] ? `${parts[i + 1]}/${parts[i + 2]}` : null) : parts[i + 1];
+    if (name && isPruned(name)) return name;
+  }
+  return null;
+}
+
+/** Is there anything at `path`? A link counts, dangling or not; links on the way to it are followed. */
+function present(path) {
+  try {
+    lstatSync(path);
+    return true;
+  } catch {
+    return false;
+  }
+}
+
+/** A directory and not a link to one. */
+function realDirectory(path) {
+  try {
+    return lstatSync(path).isDirectory();
+  } catch {
+    return false;
+  }
 }
 
 /**
- * Delete every pruned package under `nodeModules` and every .bin link into one.
- * Returns what went, with the bytes each package held.
+ * What the lockfile beside `nodeModules` records, or null when there is none: the package
+ * directories outside node_modules (workspaces, and any `file:` package inside the tree), and
+ * every location of a pruned package. Throws when it is there but unreadable.
+ */
+export function lockfileBeside(nodeModules) {
+  const root = dirname(nodeModules);
+  const path = join(root, 'package-lock.json');
+  if (!existsSync(path)) return null;
+  const packages = JSON.parse(readFileSync(path, 'utf8')).packages;
+  if (!packages || typeof packages !== 'object') throw new Error(`${path} has no "packages" map (lockfileVersion 2 or later is needed)`);
+  const locations = Object.keys(packages);
+  return {
+    root,
+    packageDirs: locations.filter((l) => l !== '' && !l.split('/').includes('node_modules') && !l.startsWith('../') && !l.startsWith('/')),
+    pruned: locations.filter((l) => l.includes('node_modules/') && isPruned(l.slice(l.lastIndexOf('node_modules/') + 'node_modules/'.length))),
+  };
+}
+
+/**
+ * Delete every pruned package under `nodeModules`, and under each workspace's node_modules the
+ * lockfile beside it records, and every .bin link into one. Returns what went, with the bytes
+ * each package held, the directories it walked, and any recorded copy still on disk.
  */
 export function prune(nodeModules) {
   const packages = [];
@@ -145,16 +214,24 @@ export function prune(nodeModules) {
       if (!link.isSymbolicLink()) continue;
       const path = join(binDir, link.name);
       const target = readlinkSync(path);
-      const owner = packageOf(dir, resolve(binDir, target));
-      if (owner && isPruned(owner)) {
+      if (prunedOwner(resolve(binDir, target))) {
         unlinkSync(path);
         bins.push({ path, target });
       }
     }
   };
 
+  const lock = lockfileBeside(nodeModules);
+  const walked = [nodeModules];
   walk(nodeModules);
-  return { packages, bins, bytes: packages.reduce((sum, p) => sum + p.bytes, 0) };
+  for (const dir of lock?.packageDirs ?? []) {
+    const nm = join(lock.root, dir, 'node_modules');
+    if (!realDirectory(nm)) continue;
+    walk(nm);
+    walked.push(nm);
+  }
+  const survivors = (lock?.pruned ?? []).filter((loc) => present(join(lock.root, loc)));
+  return { packages, bins, bytes: packages.reduce((sum, p) => sum + p.bytes, 0), walked, survivors };
 }
 
 const human = (bytes) => (bytes >= 1e6 ? `${(bytes / 1e6).toFixed(1)} MB` : `${(bytes / 1e3).toFixed(1)} kB`);
@@ -169,22 +246,29 @@ function main(argv) {
   let status = 0;
   for (const dir of dirs) {
     const nodeModules = resolve(dir);
-    let isDir = false;
-    try {
-      isDir = lstatSync(nodeModules).isDirectory();
-    } catch {
-      isDir = false;
-    }
-    if (!isDir) {
-      process.stderr.write(`prune-image-dev-tools: ${dir} is not a directory; nothing was pruned\n`);
+    if (!realDirectory(nodeModules) || basename(nodeModules) !== 'node_modules') {
+      process.stderr.write(`prune-image-dev-tools: ${dir} is not a node_modules directory; nothing was pruned\n`);
       status = 2;
       continue;
     }
-    const result = prune(nodeModules);
+    let result;
+    try {
+      result = prune(nodeModules);
+    } catch (error) {
+      process.stderr.write(`prune-image-dev-tools: ${dir}: ${error instanceof Error ? error.message : error}\n`);
+      status = 2;
+      continue;
+    }
     for (const p of result.packages) process.stdout.write(`  removed ${shown(p.path)} (${p.bytes} bytes)\n`);
     for (const b of result.bins) process.stdout.write(`  removed ${shown(b.path)} -> ${b.target}\n`);
     process.stdout.write(`prune-image-dev-tools: ${shown(nodeModules)}: removed ${result.packages.length} package(s) and `
-      + `${result.bins.length} .bin link(s), ${result.bytes} bytes (${human(result.bytes)})\n`);
+      + `${result.bins.length} .bin link(s), ${result.bytes} bytes (${human(result.bytes)}), `
+      + `from ${result.walked.length} node_modules director${result.walked.length === 1 ? 'y' : 'ies'}\n`);
+    for (const loc of result.survivors) {
+      process.stderr.write(`prune-image-dev-tools: ${loc} is recorded in the lockfile and still on disk, where this walk `
+        + 'does not reach (behind a link?); delete it or teach the script where it is\n');
+      status = 3;
+    }
   }
   return status;
 }

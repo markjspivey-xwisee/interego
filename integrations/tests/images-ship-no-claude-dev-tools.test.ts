@@ -8,10 +8,11 @@
  * devDependencies: the services run through `npx tsx`, and tsx is a root devDependency. So every
  * other root devDependency rode along, including `@anthropic-ai/claude-code`, whose platform
  * package carries a native `claude` binary of about 214 MB, and `@zed-industries/claude-code-acp`,
- * which brings `@anthropic-ai/claude-agent-sdk` (about 96 MB with the sharp binaries npm nests
- * under it). They are developer tools; no service runs them. The pending switch to
- * `@agentclientprotocol/claude-agent-acp` brings an agent SDK with its own platform package and a
- * native binary of about 294 MB: about 200 MB more per image than today, unless it is pruned too.
+ * which brings `@anthropic-ai/claude-agent-sdk` (about 113 MB with the two builds of sharp npm
+ * nests under it). They are developer tools; no service runs them. The pending switch to
+ * `@agentclientprotocol/claude-agent-acp` brings an agent SDK whose platform packages are native
+ * binaries of about 290 MB each, two of them on linux x64 (glibc and musl, as its lockfile entries
+ * record no libc): about 470 MB more per image than today, unless they are pruned too.
  *
  * `tools/prune-image-dev-tools.mjs` deletes exactly those packages right after `npm ci`, in the
  * SAME `RUN`. The same RUN matters: a later `RUN` that deletes them only adds whiteouts on top of
@@ -26,13 +27,20 @@
  *     Docker and npm accept (globs, `.`, JSON form, `--from` a stage, `VAR=x npm ci`, npm's
  *     aliases, `--prefix`), and an npm install it cannot attribute to a manifest it saw copied,
  *     or to packages the command names, fails the test instead of passing unseen.
- * (b) Nothing deployed needs the packages: npm marks every one of them dev-only and nothing else
- *     depends on them; no file an image ships references them except four named developer tools
- *     that are copied along with their directories; and the static import closure of everything
- *     a pruned image runs (its CMD and every script a RUN step executes) reaches none of them and
- *     none of those four.
- * (c) The script removes exactly the listed packages and their .bin links from a fake tree, and
- *     leaves everything else byte-for-byte intact, including `@anthropic-ai/sdk`.
+ * (b) Nothing deployed needs the packages. The proof is what the images run: no file an image
+ *     ships references them except four named developer tools that are copied along with their
+ *     directories, and the static import closure of everything a pruned image runs (its CMD and
+ *     every script a RUN step executes) reaches none of them and none of those four. That npm
+ *     marks them dev-only is NOT that proof, because these images install devDependencies on
+ *     purpose and import some at run time (express, n3, jose, tsx). The lockfile leg is a guard
+ *     on the list instead: each pruned package is dev-only and only the root's devDependencies or
+ *     another of them asks for one, so the list cannot delete what a production dependency needs;
+ *     every platform package npm may install for them is on it; and every place npm may nest a
+ *     copy is one the script walks.
+ * (c) The script removes exactly the listed packages and their .bin links from a fake tree, the
+ *     copies npm nested under workspaces included, and leaves everything else byte-for-byte
+ *     intact, including `@anthropic-ai/sdk` and `@anthropic-ai/claude-code-sdk`. A copy the
+ *     lockfile records where its walk cannot reach fails the run.
  * (d) Running it again is a no-op that still succeeds.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
@@ -56,19 +64,27 @@ const SCRIPT = join(ROOT, SCRIPT_PATH);
  */
 const PRUNE_PATTERNS = [
   '@anthropic-ai/claude-code',
-  '@anthropic-ai/claude-code-*',
+  '@anthropic-ai/claude-code-<platform>',
   '@anthropic-ai/claude-agent-sdk',
-  '@anthropic-ai/claude-agent-sdk-*',
+  '@anthropic-ai/claude-agent-sdk-<platform>',
   '@zed-industries/claude-code-acp',
   '@agentclientprotocol/claude-agent-acp',
 ] as const;
+
+/**
+ * `<platform>` is a platform suffix and nothing else: an os and a cpu as Node's process.platform
+ * and process.arch name them, optionally `-musl`. Not any suffix: these images run some root
+ * devDependencies, so a runtime library named `@anthropic-ai/claude-code-<anything>` must survive.
+ */
+const PLATFORM = '(?:aix|android|darwin|freebsd|linux|netbsd|openbsd|sunos|win32)'
+  + '-(?:arm|arm64|ia32|loong64|mips|mipsel|ppc|ppc64|riscv64|s390|s390x|x64)(?:-musl)?';
 
 /** The executables those packages put in node_modules/.bin. */
 const BIN_NAMES = ['claude', 'claude-code-acp', 'claude-agent-acp'] as const;
 
 const escape = (s: string): string => s.replace(/[.*+?^${}()|[\]\\/]/g, '\\$&');
-/** One pattern as a regex body: `*` stands for one platform suffix such as `linux-x64-musl`. */
-const patternBody = (p: string): string => p.split('*').map(escape).join('[a-z0-9][a-z0-9-]*');
+/** One pattern as a regex body. */
+const patternBody = (p: string): string => p.split('<platform>').map(escape).join(PLATFORM);
 const NAME = `(?:${PRUNE_PATTERNS.map(patternBody).join('|')})`;
 const isPrunedName = (name: string): boolean => new RegExp(`^${NAME}$`).test(name);
 
@@ -725,28 +741,56 @@ function entriesOf(dockerfile: string): string[] {
   return [...out].sort();
 }
 
+/**
+ * The root lockfile. Read in (b) as a guard on the LIST, not as the safety argument: these images
+ * install devDependencies on purpose and import some at run time (express, n3, jose and tsx are
+ * root devDependencies), so dev-only says nothing about whether a service runs a package. What
+ * says that is the shipped-file scan and the import closures below.
+ */
+type LockEntry = { dev?: boolean; dependencies?: Record<string, string>; devDependencies?: Record<string, string>;
+  optionalDependencies?: Record<string, string>; peerDependencies?: Record<string, string> };
+const LOCK = (JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8')) as { packages: Record<string, LockEntry> }).packages;
+const nameOf = (loc: string): string => loc.replace(/^.*node_modules\//, '');
+
 describe('(b) nothing deployed needs the pruned packages', () => {
-  it('npm marks every one of them dev-only, and nothing but another of them or a devDependency asks for one', () => {
-    const lock = JSON.parse(readFileSync(join(ROOT, 'package-lock.json'), 'utf8')) as {
-      packages: Record<string, { dev?: boolean; dependencies?: Record<string, string>;
-        optionalDependencies?: Record<string, string>; peerDependencies?: Record<string, string> }>;
-    };
-    const nameOf = (loc: string): string => loc.replace(/^.*node_modules\//, '');
+  it('the list cannot delete a production dependency: each is dev-only, and only the root devDependencies or each other ask for one', () => {
     const underPruned = (loc: string): boolean =>
       loc.split('node_modules/').slice(1).map(p => p.replace(/\/$/, '')).slice(0, -1).some(isPrunedName);
     const isPrunedLoc = (loc: string): boolean => loc.includes('node_modules/') && (isPrunedName(nameOf(loc)) || underPruned(loc));
     // The lockfile has them today; if it ever did not, the rest of this leg would check nothing.
-    expect(Object.keys(lock.packages).filter(loc => loc.includes('node_modules/') && isPrunedName(nameOf(loc))).length).toBeGreaterThan(5);
-    const notDev = Object.entries(lock.packages).filter(([loc, p]) => isPrunedLoc(loc) && p.dev !== true).map(([loc]) => loc);
+    expect(Object.keys(LOCK).filter(loc => loc.includes('node_modules/') && isPrunedName(nameOf(loc))).length).toBeGreaterThan(5);
+    const notDev = Object.entries(LOCK).filter(([loc, p]) => isPrunedLoc(loc) && p.dev !== true).map(([loc]) => loc);
     expect(notDev, 'locked without dev:true, so npm says something in production needs it').toEqual([]);
+    // A workspace's devDependency counts too: npm installs it in these images, and may nest its
+    // own copy under that workspace.
     const askers: string[] = [];
-    for (const [loc, p] of Object.entries(lock.packages)) {
+    for (const [loc, p] of Object.entries(LOCK)) {
       if (isPrunedLoc(loc)) continue;
-      for (const field of ['dependencies', 'optionalDependencies', 'peerDependencies'] as const) {
+      for (const field of ['dependencies', 'devDependencies', 'optionalDependencies', 'peerDependencies'] as const) {
+        if (loc === '' && field === 'devDependencies') continue;
         for (const dep of Object.keys(p[field] ?? {})) if (isPrunedName(dep)) askers.push(`${loc || '(root)'} ${field} ${dep}`);
       }
     }
     expect(askers).toEqual([]);
+  });
+
+  it('every platform package npm may install for them is on the list, and every copy npm may place is one the script walks', () => {
+    // The suffix is narrow on purpose, so a platform npm adds must be one it covers.
+    const platforms: string[] = [];
+    for (const [loc, p] of Object.entries(LOCK)) {
+      const name = nameOf(loc);
+      if (!loc.includes('node_modules/') || !isPrunedName(name)) continue;
+      for (const dep of Object.keys(p.optionalDependencies ?? {})) if (dep.startsWith(`${name}-`)) platforms.push(dep);
+    }
+    expect(platforms.length, 'the CLI lists its platform packages; if it stopped, this checks nothing').toBeGreaterThanOrEqual(8);
+    expect(platforms.filter(d => !isPrunedName(d))).toEqual([]);
+    // npm nests a copy under a workspace (a lockfile location outside node_modules) when its version
+    // conflicts with the root's. The script walks the root node_modules and each of those.
+    const packageDirs = Object.keys(LOCK).filter(l => l !== '' && !l.split('/').includes('node_modules'));
+    expect(packageDirs).toContain('applications/foxxi-content-intelligence/bridge');
+    const unwalked = Object.keys(LOCK).filter(l => l.includes('node_modules/') && isPrunedName(nameOf(l)))
+      .filter(l => !l.startsWith('node_modules/') && !packageDirs.some(d => l.startsWith(`${d}/node_modules/`)));
+    expect(unwalked).toEqual([]);
   });
 
   it('no file an image ships references them, except the named developer tools', () => {
@@ -797,6 +841,12 @@ describe('(b) nothing deployed needs the pruned packages', () => {
     expect(offences(`const bin = 'node_modules/.bin/claude';`)).not.toEqual([]);
     expect(offences(`execSync('npx @agentclientprotocol/claude-agent-acp')`)).not.toEqual([]);
     expect(offences(`import Anthropic from '@anthropic-ai/sdk';`)).toEqual([]);
+    // The platform suffix is a platform and nothing else.
+    expect(['@anthropic-ai/claude-code-linux-x64', '@anthropic-ai/claude-code-linux-arm64-musl', '@anthropic-ai/claude-code-win32-x64',
+      '@anthropic-ai/claude-agent-sdk-darwin-arm64', '@anthropic-ai/claude-agent-sdk-linux-x64-musl'].filter(n => !isPrunedName(n))).toEqual([]);
+    expect(['@anthropic-ai/claude-code-sdk', '@anthropic-ai/claude-code-router', '@anthropic-ai/claude-code-linux',
+      '@anthropic-ai/claude-agent-sdk-tools', '@anthropic-ai/claude-agent-sdk-linux-x64-extra'].filter(isPrunedName)).toEqual([]);
+    expect(offences(`import { query } from '@anthropic-ai/claude-code-sdk';`)).toEqual([]);
     expect(offences(`const surface = 'claude-code-vscode';`)).toEqual([]);
     expect(offences(`execSync('npx claude-code-vscode-helper')`)).toEqual([]);
     // The closure follows imports into the files that matter, and stops short of the demo runner.
@@ -862,15 +912,20 @@ describe('(c) the script removes exactly the listed packages, and (d) running it
     'node_modules/@zed-industries/claude-code-acp',
     'node_modules/@agentclientprotocol/claude-agent-acp',
     'node_modules/some-tool/node_modules/@anthropic-ai/claude-agent-sdk-darwin-arm64',
+    // Copies npm nested under workspaces, which the lockfile records and the script reaches through it.
+    'packages/core/node_modules/@anthropic-ai/claude-code',
+    'applications/demo/bridge/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64',
   ];
   const removedBins = [
     'node_modules/.bin/claude', 'node_modules/.bin/claude-code-acp', 'node_modules/.bin/claude-agent-acp',
     'node_modules/.bin/claude-stale', 'node_modules/some-tool/node_modules/.bin/claude',
+    'packages/core/node_modules/.bin/claude', 'applications/demo/bridge/node_modules/.bin/claude-code-acp',
   ];
-  /** What disappears, outermost path only: the nested copy took its emptied scope with it. */
+  /** What disappears, outermost path only: a nested copy that was alone in its scope took the scope with it. */
   const gone = [
-    ...removedPackages.filter(p => !p.startsWith('node_modules/some-tool/')),
+    ...removedPackages.filter(p => !p.startsWith('node_modules/some-tool/') && !p.startsWith('packages/core/')),
     'node_modules/some-tool/node_modules/@anthropic-ai',
+    'packages/core/node_modules/@anthropic-ai',
     ...removedBins,
   ];
   let expectedBytes = 0;
@@ -905,11 +960,36 @@ describe('(c) the script removes exactly the listed packages, and (d) running it
     pkg(work, 'node_modules/claude-code', 'claude-code', { 'index.js': 'unscoped namesake' });
     pkg(work, 'node_modules/@other/claude-code', '@other/claude-code', { 'index.js': 'other scope' });
     pkg(work, 'node_modules/tsx', 'tsx', { 'dist/cli.mjs': 'tsx' });
+    // Not a platform suffix, so not on the list: names a runtime library could plausibly have.
+    pkg(work, 'node_modules/@anthropic-ai/claude-code-sdk', '@anthropic-ai/claude-code-sdk', { 'index.js': 'a library' });
+    pkg(work, 'node_modules/@anthropic-ai/claude-agent-sdk-tools', '@anthropic-ai/claude-agent-sdk-tools', { 'index.js': 'tools' });
     put(work, 'node_modules/.package-lock.json', '{"lockfileVersion":3}');
-    // A workspace link is not followed, so a copy behind it is not this tree's to delete.
+    // Workspaces, each with a copy npm nested under it; the links to them are not followed, the
+    // lockfile names them. A kept package shares the bridge's scope.
     pkg(work, 'packages/core', '@interego/core', { 'index.js': 'core' });
-    pkg(work, 'packages/core/node_modules/@anthropic-ai/claude-code', '@anthropic-ai/claude-code', { 'cli.js': 'behind a link' });
+    pkg(work, 'packages/core/node_modules/@anthropic-ai/claude-code', '@anthropic-ai/claude-code', { 'cli.js': 'nested in a workspace' });
     link(work, 'node_modules/@interego/core', '../../packages/core');
+    pkg(work, 'applications/demo/bridge', '@interego/demo-bridge', { 'server.js': 'bridge' });
+    pkg(work, 'applications/demo/bridge/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64', '@anthropic-ai/claude-agent-sdk-linux-x64', { claude: 20_000 });
+    pkg(work, 'applications/demo/bridge/node_modules/@anthropic-ai/sdk', '@anthropic-ai/sdk', { 'index.js': 'kept' });
+    pkg(work, 'applications/demo/bridge/node_modules/express', 'express', { 'index.js': 'kept' });
+    link(work, 'node_modules/@interego/demo-bridge', '../../applications/demo/bridge');
+    // A linked package the lockfile does not know: what lies behind it is not this tree's to delete.
+    pkg(work, 'vendor/linked-tool', 'linked-tool', { 'index.js': 'linked' });
+    pkg(work, 'vendor/linked-tool/node_modules/@anthropic-ai/claude-code', '@anthropic-ai/claude-code', { 'cli.js': 'behind a link' });
+    link(work, 'node_modules/linked-tool', '../vendor/linked-tool');
+    put(work, 'package-lock.json', JSON.stringify({ lockfileVersion: 3, packages: {
+      '': { name: 'fake-root', workspaces: ['packages/*', 'applications/*/bridge'] },
+      'packages/core': { name: '@interego/core' },
+      'applications/demo/bridge': { name: '@interego/demo-bridge' },
+      'node_modules/@interego/core': { resolved: 'packages/core', link: true },
+      'node_modules/@interego/demo-bridge': { resolved: 'applications/demo/bridge', link: true },
+      'node_modules/@anthropic-ai/claude-code': { dev: true },
+      'node_modules/@anthropic-ai/claude-code-linux-x64': { dev: true, optional: true },
+      'node_modules/@anthropic-ai/claude-code-linux-arm64': { dev: true, optional: true },
+      'packages/core/node_modules/@anthropic-ai/claude-code': { dev: true },
+      'applications/demo/bridge/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64': { dev: true, optional: true },
+    } }, null, 2));
 
     link(work, 'node_modules/.bin/claude', '../@anthropic-ai/claude-code/bin/claude.exe');
     link(work, 'node_modules/.bin/claude-code-acp', '../@zed-industries/claude-code-acp/dist/index.js');
@@ -920,6 +1000,9 @@ describe('(c) the script removes exactly the listed packages, and (d) running it
     link(work, 'node_modules/.bin/anthropic-ai-sdk', '../@anthropic-ai/sdk/bin/cli');
     link(work, 'node_modules/.bin/core', '../@interego/core/index.js');
     link(work, 'node_modules/some-tool/node_modules/.bin/claude', '../@anthropic-ai/claude-agent-sdk-darwin-arm64/claude');
+    link(work, 'packages/core/node_modules/.bin/claude', '../@anthropic-ai/claude-code/cli.js');
+    // A workspace's link up into the root's copy.
+    link(work, 'applications/demo/bridge/node_modules/.bin/claude-code-acp', '../../../../../node_modules/@zed-industries/claude-code-acp/dist/index.js');
 
     before = snapshot(work);
     // Bytes of the regular files under the removed packages, a hard-linked file counted once.
@@ -951,7 +1034,8 @@ describe('(c) the script removes exactly the listed packages, and (d) running it
     // The report names each removal and the bytes they held.
     for (const p of [...removedPackages, ...removedBins]) expect(r.out).toContain(p);
     expect(r.out).toContain(`removed ${removedPackages.length} package(s) and ${removedBins.length} .bin link(s), ${expectedBytes} bytes`);
-    expect(expectedBytes).toBeGreaterThan(140_000);
+    expect(r.out).toContain('from 3 node_modules directories');
+    expect(expectedBytes).toBeGreaterThan(160_000);
   });
 
   it('(d) a second run removes nothing, changes nothing and still succeeds', () => {
@@ -965,18 +1049,43 @@ describe('(c) the script removes exactly the listed packages, and (d) running it
   it('takes the node_modules directory as an argument, and a scope it empties goes too', () => {
     const other = mkdtempSync(join(tmpdir(), 'prune-image-dev-tools-'));
     try {
-      pkg(other, 'deps/@zed-industries/claude-code-acp', '@zed-industries/claude-code-acp', { 'dist/index.js': 10 });
-      pkg(other, 'deps/left-pad', 'left-pad', { 'index.js': 'pad' });
-      const r = run([join(other, 'deps')], work);
+      pkg(other, 'deps/node_modules/@zed-industries/claude-code-acp', '@zed-industries/claude-code-acp', { 'dist/index.js': 10 });
+      pkg(other, 'deps/node_modules/left-pad', 'left-pad', { 'index.js': 'pad' });
+      const r = run([join(other, 'deps/node_modules')], work);
       expect(r.status, r.out).toBe(0);
-      expect(existsSync(join(other, 'deps/@zed-industries'))).toBe(false);
-      expect(readFileSync(join(other, 'deps/left-pad/index.js'), 'utf8')).toBe('pad');
+      expect(existsSync(join(other, 'deps/node_modules/@zed-industries'))).toBe(false);
+      expect(readFileSync(join(other, 'deps/node_modules/left-pad/index.js'), 'utf8')).toBe('pad');
+      expect(r.out).toContain('from 1 node_modules directory');
     } finally { rmSync(other, { recursive: true, force: true }); }
   });
 
-  it('a node_modules that is not there is an error, not a silent no-op', () => {
-    const r = run([join(work, 'no-such-node-modules')], work);
-    expect(r.status).not.toBe(0);
-    expect(r.out).toContain('no-such-node-modules');
+  it('a node_modules that is not there, or a directory that is not one, is an error, not a silent no-op', () => {
+    const missing = run([join(work, 'no-such-node-modules')], work);
+    expect(missing.status).not.toBe(0);
+    expect(missing.out).toContain('no-such-node-modules');
+    // `node tools/prune-image-dev-tools.mjs /tmp` exits 0 having pruned nothing of the image's.
+    const elsewhere = run([join(work, 'packages')], work);
+    expect(elsewhere.status).not.toBe(0);
+    expect(elsewhere.out).toContain('not a node_modules directory');
+  });
+
+  it('fails, naming it, when a copy the lockfile records is still on disk where the walk does not reach', () => {
+    const other = mkdtempSync(join(tmpdir(), 'prune-image-dev-tools-'));
+    try {
+      pkg(other, 'vendor/linked/node_modules/@anthropic-ai/claude-code', '@anthropic-ai/claude-code', { 'cli.js': 'behind a link' });
+      link(other, 'node_modules/linked', '../vendor/linked');
+      put(other, 'package-lock.json', JSON.stringify({ lockfileVersion: 3, packages: {
+        '': { name: 'r' }, 'node_modules/linked/node_modules/@anthropic-ai/claude-code': { dev: true } } }));
+      const r = run([], other);
+      expect(r.status).toBe(3);
+      expect(r.out).toContain('node_modules/linked/node_modules/@anthropic-ai/claude-code is recorded in the lockfile and still on disk');
+      // Not followed, so not deleted: the run fails instead of reaching through the link.
+      expect(existsSync(join(other, 'vendor/linked/node_modules/@anthropic-ai/claude-code/cli.js'))).toBe(true);
+      // A lockfile it cannot read is an error too.
+      put(other, 'package-lock.json', '{"lockfileVersion":1,"dependencies":{}}');
+      const old = run([], other);
+      expect(old.status).toBe(2);
+      expect(old.out).toContain('no "packages" map');
+    } finally { rmSync(other, { recursive: true, force: true }); }
   });
 });
