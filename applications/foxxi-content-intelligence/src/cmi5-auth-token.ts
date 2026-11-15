@@ -18,6 +18,10 @@
  * It proves only that this bridge minted it for that session. Whether the launch still exists,
  * whose it is, and whether the session is still open are read from the launch record every time,
  * exactly as before: a token whose launch has been forgotten is good for nothing.
+ *
+ * What still ends a session at a restart: a bridge started with no secret (the key is then random
+ * for the life of the process); a secret changed between the two processes, which ends every token
+ * minted under the old one; and a launch that had not reached the pod when the process stopped.
  */
 import { createHmac, timingSafeEqual } from 'node:crypto';
 

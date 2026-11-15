@@ -21,7 +21,7 @@ URL made before a restart and opened after it must be made again. A launch
 recorded in the two seconds before a restart may not have reached the pod, and
 its token then names a launch the new process does not hold. With no
 `FOXXI_ISSUER_KEY_SEED` the key is random per process and tokens end with it,
-as before.
+as before. Changing that secret ends every token minted under the old one.
 
 ## 2026-11-15 — A profile version is published only once its durable write is acknowledged
 
