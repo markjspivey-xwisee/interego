@@ -23,6 +23,22 @@ its token then names a launch the new process does not hold. With no
 `FOXXI_ISSUER_KEY_SEED` the key is random per process and tokens end with it,
 as before. Changing that secret ends every token minted under the old one.
 
+## 2026-11-15 — Practice Evidence: a launched learner named by WebID is the signer
+
+Found on the first run against the deployed Foxxi LMS. Foxxi launches a learner
+under their WebID, `https://<identity host>/users/<id>/profile#me`. Practice
+Evidence compared the launched actor with the DID the learner signs as,
+`did:web:<identity host>:users:<id>`, as two strings. So every import of a
+registration Foxxi launched for a signed-in person was refused with
+`not-your-registration`, after the registration had read as one whole
+conversation against the scenario.
+
+`launchedActorIsSigner` takes the WebID only when it is exactly the one built
+from the signer's own DID on the identity host the bridge is set up with. The
+host serves both for the one account. Another account, another host, another
+path, a key-held signer and a bridge with no identity host all still match by
+DID only.
+
 ## 2026-11-15 — A profile version is published only once its durable write is acknowledged
 
 Two defects in the profile authoring service that merged the same day
