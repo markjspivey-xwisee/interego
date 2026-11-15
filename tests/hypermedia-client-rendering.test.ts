@@ -130,8 +130,32 @@ const hyperMarkdown = [
   `fields: [{"name": 5, "path": "${HOST}/p"}, {"name": "${X.dq.replace(/"/g, '\\"')}", "defaultValue": {"a": "${X.img.replace(/"/g, '\\"')}"}}]`,
   ':::', '',
   ':::control hm-js',
-  'title: js target', 'method: GET', 'target: javascript:pwn()', ':::',
+  'title: js target', 'method: GET', 'target: javascript:pwn()', ':::', '',
+  // A key named __proto__ is a key like any other: it does not supply a method the block left out.
+  ':::control hm-proto',
+  'title: proto key', `target: ${HOST}/body/plain`, '__proto__: {"method": "POST", "destructiveHint": true}', ':::',
 ].join('\n');
+
+// Two writes side by side. The second one's JSON Schema names types that are Object.prototype
+// members; a lookup that reached the prototype used to make its detail view throw, which left
+// the first control's form, and its ticked confirmation, on screen for the second control.
+const PROTO_TYPES = ['toString', 'constructor', 'valueOf', '__proto__', 'hasOwnProperty'];
+const pair = {
+  '@context': { hydra: 'http://www.w3.org/ns/hydra/core#', iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#' },
+  '@id': `${HOST}/pair`,
+  'iep:affordance': [
+    { '@id': `${HOST}/pair#a`, '@type': 'iep:Affordance', 'iep:action': 'urn:a', 'hydra:method': 'POST',
+      'hydra:title': 'A write', 'hydra:target': `${HOST}/write-a`,
+      'hydra:expects': { type: 'object', properties: { note: { type: 'string', default: 'a' } } } },
+    { '@id': `${HOST}/pair#b`, '@type': 'iep:Affordance', 'iep:action': 'urn:b', 'hydra:method': 'DELETE',
+      'hydra:title': 'B delete', 'hydra:target': `${HOST}/delete-b`,
+      'hydra:expects': { type: 'object', properties: Object.fromEntries(PROTO_TYPES.map(t => [`f_${t}`, { type: t }])) } },
+  ],
+};
+// Documents served at exact paths on HOST, in addition to /desc, /hm and /body/<kind>.
+const DOCS: Record<string, { type: string; text: string }> = {
+  '/pair': { type: 'application/ld+json', text: JSON.stringify(pair) },
+};
 
 function respond(text: string, type: string, status = 200): Response {
   return new Response(text, { status, headers: { 'content-type': type } });
@@ -152,6 +176,8 @@ function load(query: string, extra: Record<string, { type: string; text: string 
         if (u.origin !== HOST) return respond('not here', 'text/plain', 404);
         if (u.pathname === '/desc') return respond(JSON.stringify(descriptor), 'application/ld+json');
         if (u.pathname === '/hm') return respond(hyperMarkdown, 'text/markdown');
+        const doc = Object.prototype.hasOwnProperty.call(DOCS, u.pathname) ? DOCS[u.pathname] : undefined;
+        if (doc) return respond(doc.text, doc.type);
         const kind = u.pathname.replace('/body/', '');
         const body = extra[kind] || bodies[kind];
         return body ? respond(body.text, body.type) : respond('missing', 'text/plain', 404);
@@ -290,9 +316,10 @@ describe('hypermedia client: hostile remote data stays inert', () => {
       assertInert(t, 'hypermarkdown list');
       expect(document.querySelector('#meta strong')!.textContent).toBe(`HM ${X.img}`);
       const count = document.querySelectorAll('.card').length;
-      expect(count).toBe(2);
+      expect(count).toBe(3);
       for (let i = 0; i < count; i++) { click(t, document.querySelectorAll('.card')[i]!); assertInert(t, 'hypermarkdown detail'); }
       expect(document.getElementById('list')!.textContent).toContain(X.script);
+      expect(card(document, 'proto key')!.querySelector('.badge')!.className).toBe('badge get');
       expect(t.errors).toEqual([]);
     } finally { t.dom.window.close(); }
   });
@@ -333,6 +360,63 @@ describe('hypermedia client: requests', () => {
       await vi.waitFor(() => expect(document.documentElement.dataset['ready']).toBe('error'));
       expect(document.getElementById('status')!.textContent).toMatch(/https/);
       expect(t.calls).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: a confirmation belongs to one control', () => {
+  /** Load /pair, open A, tick its confirmation; returns the loaded page. */
+  async function confirmA(): Promise<Loaded> {
+    const t = load(`?url=${encodeURIComponent(HOST + '/pair')}&autoload=1`);
+    const { document } = t;
+    await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+    click(t, card(document, 'A write')!);
+    const box = document.getElementById('confirmUnsafe') as HTMLInputElement;
+    box.checked = true;
+    box.dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
+    expect(button(document, 'live').disabled).toBe(false);
+    return t;
+  }
+  /** Click every Invoke button on the page and let any request it starts go out. */
+  async function pressInvoke(t: Loaded) {
+    for (const b of [...t.document.querySelectorAll<HTMLButtonElement>('button[data-mode="live"]')]) click(t, b);
+    await new Promise(r => setTimeout(r, 50));
+  }
+
+  it('renders a JSON Schema whose type names an Object.prototype member, with a fresh, unticked form', async () => {
+    const t = await confirmA();
+    try {
+      const { document } = t;
+      click(t, card(document, 'B delete')!);
+      expect(document.querySelector('#detail h2')!.textContent).toBe('B delete');
+      const fields = [...document.querySelectorAll<HTMLElement>('#invokeForm [data-field]')].map(f => f.dataset['field']);
+      expect(fields).toEqual(PROTO_TYPES.map(p => `f_${p}`));
+      // An unknown type is a string field, and its hint says so.
+      for (const hint of document.querySelectorAll('#invokeForm .hint')) expect(hint.textContent).toBe('string');
+      expect((document.getElementById('confirmUnsafe') as HTMLInputElement).checked).toBe(false);
+      expect(button(document, 'live').disabled).toBe(true);
+      await pressInvoke(t);
+      expect(t.calls.filter(c => c.url.includes('/delete-b'))).toEqual([]);
+      expect(t.errors).toEqual([]);
+      assertInert(t, 'B detail');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('shows a warning and no form when a control cannot be rendered, so A\'s confirmation cannot send B', async () => {
+    const t = await confirmA();
+    try {
+      const { document } = t;
+      // Any failure while building B's form. The page's function declarations are globals,
+      // so the test can make one throw.
+      (t.dom.window as unknown as { fieldControl: () => never }).fieldControl = () => { throw new Error('render fault'); };
+      click(t, card(document, 'B delete')!);
+      expect(document.getElementById('invokeForm')).toBeNull();
+      expect(document.getElementById('confirmUnsafe')).toBeNull();
+      expect(document.querySelector('#detail .warn')!.textContent).toContain('render fault');
+      expect(document.querySelector('.card.active h3')!.textContent).toBe('B delete');
+      await pressInvoke(t);
+      expect(t.calls.filter(c => c.url.includes('/delete-b') || c.url.includes('/write-a'))).toEqual([]);
+      expect(t.errors).toEqual([]);
     } finally { t.dom.window.close(); }
   });
 });

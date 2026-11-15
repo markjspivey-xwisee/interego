@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-lluXWkgh2tZVIofs0UKRLeqliblAgDNuXum7X9jBdYU='; style-src 'sha256-2fMl6VtdGFOYNdDnFQCRvmDOQzQTGlnITAJO8XiFELY='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-dr9En4XfN/iLYtIR3z0SqkpOwlbcYYP2oJ3HzVy6omM='; style-src 'sha256-2fMl6VtdGFOYNdDnFQCRvmDOQzQTGlnITAJO8XiFELY='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -352,9 +352,10 @@ function schemaJsonKind(types) {
   if (structured.includes("object") && structured.includes("array")) return "json";
   return structured[0];
 }
+// A Map, so a remote type such as "toString" or "__proto__" is only an unknown name.
+const SCHEMA_DATATYPES = new Map([["string", XSD + "string"], ["integer", XSD + "integer"], ["number", XSD + "decimal"], ["boolean", XSD + "boolean"]]);
 function schemaDatatype(types) {
-  const typeMap = { string: XSD + "string", integer: XSD + "integer", number: XSD + "decimal", boolean: XSD + "boolean" };
-  return types.length === 1 ? (typeMap[types[0]] || null) : null;
+  return types.length === 1 ? (SCHEMA_DATATYPES.get(types[0]) || null) : null;
 }
 function shaclJsonKind(index, node, datatype, maxCount) {
   const dt = datatype || "";
@@ -563,7 +564,7 @@ function parseMarkdown(text, url, contentType) {
   let m;
   while ((m = re.exec(text))) {
     const ident = m[1].trim();
-    const data = {};
+    const data = Object.create(null);
     for (const line of m[2].split("\n")) {
       const idx = line.indexOf(":");
       if (idx < 0) continue;
@@ -926,7 +927,8 @@ function resolvePlan(control, values, descriptorUrl) {
   return { control, transport, method, url, headers, body, bodyText, fields: values, mcp, notes, unsafe: control.unsafe };
 }
 
-const state = { descriptor: null, selected: null, history: [], lastResponse: null };
+// formFor is the control the form on screen was built for, and null while there is none.
+const state = { descriptor: null, selected: null, formFor: null, history: [], lastResponse: null };
 
 function setStatus(msg) { document.getElementById("status").textContent = msg; }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c])); }
@@ -1090,11 +1092,33 @@ function fieldControl(field) {
   return `<div class="field"><label>${esc(field.name)} ${req ? '<span class="req">*</span>' : ""}</label>${input}
     <div class="hint">${esc([field.jsonKind ? ("JSON " + field.jsonKind) : (field.datatype && localName(field.datatype)), field.pattern, field.description].filter(Boolean).join(" · "))}</div></div>`;
 }
+// The previous control's form, and its confirmation, go before anything else
+// happens, and a control that cannot be shown leaves a warning, never a form.
 function renderDetail() {
   const el = document.getElementById("detail");
+  el.innerHTML = "";
+  state.formFor = null;
   const desc = state.descriptor;
   const c = state.selected;
   if (!c || !desc) { el.innerHTML = `<div class="empty">Select a control.</div>`; return; }
+  try {
+    el.innerHTML = detailHtml(c, desc);
+  } catch (err) {
+    el.innerHTML = `<div class="warn">This control could not be shown, so it cannot be invoked: ${esc(err && err.message || err)}</div>`;
+    return;
+  }
+  const form = document.getElementById("invokeForm");
+  const box = document.getElementById("confirmUnsafe");
+  const liveBtn = document.getElementById("liveBtn");
+  if (box && liveBtn) box.addEventListener("change", () => { liveBtn.disabled = !box.checked; });
+  form.addEventListener("submit", (ev) => {
+    ev.preventDefault();
+    const mode = ev.submitter && ev.submitter.dataset.mode ? ev.submitter.dataset.mode : "dry";
+    runInvoke(mode === "dry", c);
+  });
+  state.formFor = c;
+}
+function detailHtml(c, desc) {
   const transport = classifyTransport(c, desc.url);
   const target = c.template || c.target || "(none)";
   let html = `<div class="crumbs">${esc(shortRel(c.rel))}</div>
@@ -1116,16 +1140,7 @@ function renderDetail() {
     </div>
   </form>
   <div id="result"></div>`;
-  el.innerHTML = html;
-  const form = document.getElementById("invokeForm");
-  const box = document.getElementById("confirmUnsafe");
-  const liveBtn = document.getElementById("liveBtn");
-  if (box && liveBtn) box.addEventListener("change", () => { liveBtn.disabled = !box.checked; });
-  form.addEventListener("submit", (ev) => {
-    ev.preventDefault();
-    const mode = ev.submitter && ev.submitter.dataset.mode ? ev.submitter.dataset.mode : "dry";
-    runInvoke(mode === "dry");
-  });
+  return html;
 }
 function readForm() {
   const supplied = Object.create(null);
@@ -1136,10 +1151,16 @@ function showResult(html) {
   const box = document.getElementById("result");
   if (box) box.innerHTML = html;
 }
-async function runInvoke(forceDry) {
+// A form invokes only the control it was built for, and only while it is the
+// one selected; the confirmation it carries is read from that same form.
+async function runInvoke(forceDry, formControl) {
   const desc = state.descriptor;
   const control = state.selected;
   if (!desc || !control) return;
+  if (state.formFor !== control || (formControl && formControl !== control)) {
+    setStatus("Nothing was sent: the form on screen is not the selected control's.");
+    return;
+  }
   const { values, errors } = validateFields(control, readForm());
   if (errors.length) {
     showResult(`<div class="warn">Validation failed:<ul>${errors.map(e => "<li>" + esc(e) + "</li>").join("")}</ul></div>`);
@@ -1193,8 +1214,8 @@ async function loadDescriptorUrl(url, push = true) {
   document.getElementById("url").value = descriptor.url;
   document.getElementById("backBtn").disabled = state.history.length === 0;
   document.title = "Hypermedia Client — " + descriptor.title;
-  renderList();
   renderDetail();
+  renderList();
   setStatus(`Loaded ${descriptor.controls.length} controls from ${descriptor.title} (${fetched.kind}).`);
   document.documentElement.dataset.ready = state.selected ? "0" : "list";
   return descriptor;
@@ -1203,8 +1224,8 @@ function selectRel(rel, values) {
   const control = findControl(state.descriptor, rel);
   if (!control) return;
   state.selected = control;
-  renderList();
   renderDetail();
+  renderList();
   if (values) {
     for (const el of document.querySelectorAll("#invokeForm [data-field]")) {
       if (Object.prototype.hasOwnProperty.call(values, el.dataset.field)) el.value = values[el.dataset.field];

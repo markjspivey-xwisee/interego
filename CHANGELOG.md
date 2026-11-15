@@ -57,6 +57,18 @@ document can make the browser navigate. A badge's class is a method the
 stylesheet knows or `other`. Maps keyed by remote names have no prototype, and
 non-string values are shown as their JSON. Requests go over `https` only.
 
+**A confirmation belongs to one control.** A JSON Schema property whose `type`
+was the name of an `Object.prototype` member (`toString`, `constructor`, ...)
+was looked up through the prototype and made the detail view throw. The view
+was then left showing the previous control's form, confirmation and all, while
+the page had already selected the new control, so **Invoke** sent the new
+control's request under the old one's confirmation. Now the type is looked up
+among four known names only; the detail view is cleared before a control is
+drawn, and one that cannot be drawn shows a warning and no form; and a form
+invokes only the control it was built for, while that control is the one
+selected. The HyperMarkdown parser's key map has no prototype either, so a
+`__proto__:` line is an ordinary key.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and
@@ -80,7 +92,10 @@ as text verbatim, and that nothing ran. It also checks that a `proxy` parameter
 in the page address is ignored, that a non-`https` URL is refused before any
 request, that an unsafe control sends nothing on a dry run, and that the
 policy's two hashes match the inline script and style exactly. Every case failed
-before the change.
+before the change. Two later cases select a confirmed write and then a second
+write whose schema names prototype members, or whose form fails to draw, and
+check that the second gets a fresh form or a warning and that nothing is sent;
+both failed before the fix.
 
 Not covered: jsdom does not enforce CSP and does not expose form controls as
 form properties, so the test checks both structurally. They were checked once
