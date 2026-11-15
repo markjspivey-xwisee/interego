@@ -8,7 +8,7 @@
 import { randomUUID } from 'node:crypto';
 import { validateAgainstSuppliedProfile } from '../../foxxi-content-intelligence/src/xapi-profile-supplied.js';
 import { GATE_VERBS, verbId, type Symptom, type WorldPack } from './pack.js';
-import { buildProfile, missionActivityType, symptomActivityType, type ProfileDocument } from './profile.js';
+import { buildProfile, missionActivityType, profileVersion, symptomActivityType, type ProfileDocument } from './profile.js';
 import { WorldError } from './errors.js';
 
 export interface XapiStatement {
@@ -42,8 +42,9 @@ function actor(homePage: string, name: string): XapiStatement['actor'] {
   return { objectType: 'Agent', account: { homePage, name } };
 }
 
+/** The profile VERSION, which is what the templates belong to and what each of them requires here. */
 function category(pack: WorldPack): XapiStatement['context']['contextActivities']['category'] {
-  return [{ id: pack.profileId, definition: { type: ADL_PROFILE } }];
+  return [{ id: profileVersion(pack), definition: { type: ADL_PROFILE } }];
 }
 
 function assertNotAGateVerb(id: string): void {

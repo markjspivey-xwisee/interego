@@ -41,7 +41,7 @@ import {
   AGP_NS, AGP_ONTOLOGY_IRI,
   readOntologyTurtle, readShapesTurtle, renderOntologyJsonLd, renderTermJsonLd,
 } from '../src/ontology.js';
-import { buildAgpProfileDoc, AGP_PROFILE_ID } from '../src/xapi-profile.js';
+import { buildAgpProfileDoc, AGP_PROFILE_ID, AGP_PROFILE_GENERATED_AT } from '../src/xapi-profile.js';
 import { EXTEND_STANDARDS_GUIDANCE } from '../src/standards-extension.js';
 // The REAL engine runs IN this bridge (its canonical home); legacy Foxxi routes
 // import it rather than owning a copy (arrow: foxxi → agp). The handlers live in
@@ -105,7 +105,7 @@ const app = createVerticalBridge({
     });
     a.get('/xapi/profile', (_req, res) => {
       res.setHeader('Access-Control-Allow-Origin', '*');
-      res.type('application/ld+json').json(buildAgpProfileDoc({ generatedAt: new Date().toISOString() }));
+      res.type('application/ld+json').json(buildAgpProfileDoc({ generatedAt: AGP_PROFILE_GENERATED_AT }));
     });
     // Performance support in the flow: the capability catalog + per-tool guidance.
     attachGuidanceServing(a, '/guidance', GUIDANCE, { base, affordances: agpAffordances });
