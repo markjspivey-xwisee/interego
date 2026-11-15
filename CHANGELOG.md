@@ -1,5 +1,37 @@
 # Changelog
 
+## 2026-11-15 — Native commits: the head is not read back, and reads open no transaction
+
+After the staging change of 2026-11-13 a live single-statement write is about
+0.64 s at the edge, with the commit itself about 365 ms: staging 137 ms,
+writing the head 75 ms, reading it back 40 ms. Two changes aimed at the last
+two. With the database 2 ms away in each direction (a delaying proxy in front
+of a local Postgres), a `PUT /xapi/statements` goes from a median of 503 ms to
+356 ms over 12 writes, and from four requests to the pod server to three. The
+live effect is not measured yet.
+
+- `packages/pgsl`: `NativeCommitStore` option `acceptHeadReceipt`. The head
+  write is answered with a receipt that the client already refuses unless it is
+  bound to the bytes it sent: their digest and size, the expected revision, and
+  the revision and ETag of the write. With the option on, that receipt is the
+  confirmation and the head is not fetched a second time. This is the
+  confirmation batched staging already accepts for immutable representations.
+  Off by default; without it the head is read back and compared as before. The
+  head compare-and-set, conflict and replay handling are unchanged.
+- `applications/foxxi-content-intelligence`: the LRS turns it on.
+- `packages/pgsl-store`: the Postgres adapter sends `BEGIN` with the first
+  statement that writes or locks, not before the first read. Under READ
+  COMMITTED every statement takes its own snapshot inside a transaction or out
+  of one, so a read before the first write returns the same rows either way.
+  A callback that only reads now costs one round trip per read instead of that
+  plus `BEGIN` and `COMMIT`, which applies to every read of a pod resource.
+  Atomic writes and held locks start where the first of them is issued, as
+  before. A callback that swallows a failed read is still never acknowledged.
+
+Not addressed: the head write repeats a 120 KB upload of bytes the commit
+object already staged, and the server reads that stored node back to compare
+it. Removing either needs a new server operation.
+
 ## 2026-11-15 — Foxxi: a cmi5 launch's credential survives a restart
 
 Every deploy of the Foxxi bridge ended every practice in progress. A launch is

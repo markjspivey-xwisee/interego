@@ -164,6 +164,14 @@ export interface NativeCommitStoreOptions {
    * conflict or replay outcome, not before staging. Any other `expected` value, and the
    * default, read and compare the current head first. */
   readonly commitFromExpectedSnapshot?: boolean;
+  /**
+   * Take the head write's own receipt as the confirmation that the head is stored, and do not read
+   * the head back afterwards. The receipt is bound to the submitted bytes (digest and size), to
+   * the expected revision and to the revision and ETag of the write, and is refused otherwise.
+   * This is the confirmation batched staging already accepts for every immutable representation.
+   * Off by default: without it the head is read back and compared, as before.
+   */
+  readonly acceptHeadReceipt?: boolean;
   /** Opt-in: write index nodes in the compact form. An index node holds up to sixteen
    * references. As one wide PGSL tuple, each of those and every contiguous run of them is a
    * node of its own, so sixteen references (about 5 KB) become several hundred nodes and
@@ -1136,11 +1144,17 @@ export class NativeCommitStore implements NativeCommitClient {
       if (meter) { meter.outcome = 1; meter.resultAt = performance.now(); }
       return this.result(recovered, true, null, selectedRecordKeys);
     }
-    const committed = this.decodeHead(bytes, receipt.revision, topUri), actual = await this.readRepresentation(this.scope.headUrl);
-    if (meter) meter.headReadMs = performance.now() - reading;
-    if (!actual || actual.revision !== receipt.revision || !Buffer.from(actual.bytes).equals(Buffer.from(bytes))) {
-      const ancestor = await this.operation(request.operationId, await this.current());
-      if (!ancestor || ancestor.reference?.revision !== receipt.revision || ancestor.reference.topUri !== topUri || ancestor.logicalDigest !== logicalDigest) return fail('Native committed head could not be verified unchanged.');
+    const committed = this.decodeHead(bytes, receipt.revision, topUri);
+    // The receipt was already checked against these bytes in put(): their digest, their size, the
+    // revision the write produced and the ETag it was answered with. Reading the head back says
+    // the same thing a second time, unless a later writer has moved it, which is not an error.
+    if (this.options.acceptHeadReceipt !== true) {
+      const actual = await this.readRepresentation(this.scope.headUrl);
+      if (meter) meter.headReadMs = performance.now() - reading;
+      if (!actual || actual.revision !== receipt.revision || !Buffer.from(actual.bytes).equals(Buffer.from(bytes))) {
+        const ancestor = await this.operation(request.operationId, await this.current());
+        if (!ancestor || ancestor.reference?.revision !== receipt.revision || ancestor.reference.topUri !== topUri || ancestor.logicalDigest !== logicalDigest) return fail('Native committed head could not be verified unchanged.');
+      }
     }
     this.decrypt(bytes, topUri);
     if (meter) { meter.outcome = 0; meter.resultAt = performance.now(); }

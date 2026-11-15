@@ -1438,6 +1438,32 @@ describe('numeric commit diagnostics', () => {
     }
   });
 
+  it('accepts the head receipt in place of the read-back only when asked, and still only a receipt bound to the bytes', async () => {
+    const headReads = (transport: NativeTransport, from: number): number => transport.methods.slice(from).filter(m => m === 'GET ' + scope.headUrl).length;
+    for (const accept of [false, true]) {
+      const transport = new NativeTransport(), events: NativeCommitDiagnostic[] = [];
+      const client = transport.client({ onCommit: event => { events.push(event); }, commitFromExpectedSnapshot: true, ...(accept ? { acceptHeadReceipt: true } : {}) });
+      const expected = await client.readHead(), from = transport.methods.length;
+      const receipt = await client.commit({ operationId: 'one', expected, changes: [{ key: 'k', artifact: artifact('v') }] });
+      expect(receipt.replayed).toBe(false);
+      // The commit starts from the caller's snapshot; the one head read left is the read-back.
+      expect(headReads(transport, from)).toBe(accept ? 0 : 1);
+      expect(events[0]!.outcome).toBe(0);
+      if (accept) expect(events[0]!.headReadMs).toBe(0);
+      // What the commit returned is the head a fresh reader now finds.
+      const fresh = await transport.client().readHead();
+      expect(fresh.revision).toBe(receipt.head.revision);
+      expect([...fresh.records.keys()]).toEqual(['k']);
+      // A receipt that does not describe the submitted bytes is refused either way.
+      for (const tamper of [(r: Record<string, unknown>) => { r.bodyDigest = 'sha256:' + '0'.repeat(64); }, (r: Record<string, unknown>) => { r.size = (r.size as number) + 1; }]) {
+        transport.receiptTransform = receipt => { if (receipt.resource === scope.headUrl) tamper(receipt); };
+        await expect(client.commit({ operationId: 'bad-' + events.length, expected: await client.readHead(), changes: [{ key: 'x', artifact: artifact('x') }] }))
+          .rejects.toThrow(/not bound to the submitted resource/);
+        transport.receiptTransform = undefined;
+      }
+    }
+  });
+
   it('reports replays, conflicts and errors, and an observer that throws or rejects changes nothing', async () => {
     const transport = new NativeTransport(), events: NativeCommitDiagnostic[] = [];
     let mode: 'record' | 'throw' | 'reject' = 'record';
