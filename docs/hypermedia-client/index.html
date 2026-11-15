@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-dr9En4XfN/iLYtIR3z0SqkpOwlbcYYP2oJ3HzVy6omM='; style-src 'sha256-2fMl6VtdGFOYNdDnFQCRvmDOQzQTGlnITAJO8XiFELY='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Jcl7ez5voVhT+VEMquiEWL4Cz1rXdNPUZuyFrIGlI+M='; style-src 'sha256-2fMl6VtdGFOYNdDnFQCRvmDOQzQTGlnITAJO8XiFELY='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -335,11 +335,16 @@ class NodeIndex {
   }
 }
 
+// "rest-param-<x>-<name>" becomes "<name>": the text after the last "-" that
+// has at least one character on each side of it. Found by a scan, not a
+// pattern, so a long crafted name costs linear time.
+const REST_PARAM = "rest-param-";
 function fieldName(name, path, variable) {
   if (variable) return asText(variable);
   const raw = asText(name) || localName(path) || "value";
-  const m = raw.match(/^(?:rest-param-.+-)?(.+)$/);
-  return m ? m[1] : raw;
+  if (!raw.startsWith(REST_PARAM) || /[\n\r\u2028\u2029]/.test(raw)) return raw;
+  const cut = raw.lastIndexOf("-", raw.length - 2);
+  return cut > REST_PARAM.length ? raw.slice(cut + 1) : raw;
 }
 
 function schemaTypes(prop) {
@@ -815,6 +820,9 @@ function coerceValue(field, value) {
   }
   return value;
 }
+// A field's pattern is shown in its hint and never run: a remote regular
+// expression can take time exponential in the input, and the server that
+// receives the value is the one that enforces it.
 function validateFields(control, supplied) {
   const errors = []; const values = Object.create(null);
   for (const field of control.fields) {
@@ -829,7 +837,6 @@ function validateFields(control, supplied) {
     const text = structured ? (typeof found === "string" ? found : JSON.stringify(typed)) : (typed == null ? "" : String(typed));
     if (!structured && field.minLength != null && text.length < field.minLength) errors.push(field.name + ": shorter than minLength " + field.minLength);
     if (!structured && field.maxLength != null && text.length > field.maxLength) errors.push(field.name + ": longer than maxLength " + field.maxLength);
-    if (!structured && field.pattern) { try { if (!new RegExp(field.pattern).test(text)) errors.push(field.name + ": does not match pattern " + field.pattern); } catch (err) { errors.push(field.name + ": invalid pattern"); } }
     if (!structured && field.enum && field.enum.length && !field.enum.map(String).includes(text)) errors.push(field.name + ": must be one of " + field.enum.join(", "));
     if (!structured && field.minInclusive != null && Number(typed) < Number(field.minInclusive)) errors.push(field.name + ": below minInclusive");
     if (!structured && field.maxInclusive != null && Number(typed) > Number(field.maxInclusive)) errors.push(field.name + ": above maxInclusive");
@@ -951,6 +958,13 @@ function iriSpan(iri, label) {
   const shown = esc(asText(label == null ? iri : label));
   return href ? `<span class="iri" data-iri="${esc(href)}">${shown}</span>` : shown;
 }
+// Trailing ".", "," and ";" are prose, not URL. Trimmed by a scan: the pattern
+// /[.,;]+$/ retries at every position of a run and is quadratic in its length.
+function trimTrailingPunctuation(s) {
+  let end = s.length;
+  while (end > 0 && ".,;".includes(s[end - 1])) end--;
+  return s.slice(0, end);
+}
 function linkify(src) {
   src = asText(src);
   const re = /https?:\/\/[^\s<>"'`)\]},]+/g;
@@ -958,7 +972,7 @@ function linkify(src) {
   let last = 0;
   for (const match of src.matchAll(re)) {
     const raw = match[0];
-    const clean = raw.replace(/[.,;]+$/, "");
+    const clean = trimTrailingPunctuation(raw);
     html += esc(src.slice(last, match.index)) + iriSpan(clean, clean) + esc(raw.slice(clean.length));
     last = match.index + raw.length;
   }
@@ -1087,7 +1101,7 @@ function fieldControl(field) {
     input = `<textarea data-field="${key}" ${req ? "required" : ""}>${val}</textarea>`;
   } else {
     const type = (field.datatype || "").endsWith("#integer") ? "number" : "text";
-    input = `<input data-field="${key}" type="${type}" value="${val}" ${req ? "required" : ""} ${field.pattern ? `pattern="${esc(field.pattern)}"` : ""}>`;
+    input = `<input data-field="${key}" type="${type}" value="${val}" ${req ? "required" : ""}>`;
   }
   return `<div class="field"><label>${esc(field.name)} ${req ? '<span class="req">*</span>' : ""}</label>${input}
     <div class="hint">${esc([field.jsonKind ? ("JSON " + field.jsonKind) : (field.datatype && localName(field.datatype)), field.pattern, field.description].filter(Boolean).join(" · "))}</div></div>`;

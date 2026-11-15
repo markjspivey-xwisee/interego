@@ -731,7 +731,8 @@ const BASELINE = {};
 // 2026-11-14: packages/abac/portable/ (the dependency-free decision and its types) and
 // tests/abac-portable.test.ts bring it to 712; the gate named 678.
 // 2026-11-15: tools/coached-world-guest-provision.mjs, its declarations and its test bring it to 715; the gate named 681.
-export const MIN_FILES = 681;
+// 2026-11-15: tests/hypermedia-client-rendering.test.ts and tests/hypermedia-client-cli.test.ts bring it to 717; the gate named 682.
+export const MIN_FILES = 682;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

@@ -69,6 +69,20 @@ invokes only the control it was built for, while that control is the one
 selected. The HyperMarkdown parser's key map has no prototype either, so a
 `__proto__:` line is an ordinary key.
 
+**Remote text costs linear time.** A field's `pattern` came from the remote
+document and was run as a regular expression, by the page's own check and by the
+browser's validation of the `pattern` attribute, and by `hmc.py`. A crafted
+pattern and default doubled the work with each character, and a page link that
+names a control to invoke ran it on opening. Neither client runs a remote
+pattern now: it is shown in the field's hint (and by `hmc.py describe`) and the
+server that receives the value enforces it. Two smaller patterns were quadratic
+in their input: the one that shortens `rest-param-...` field names, in both
+clients, and the page's trim of trailing punctuation from a URL in a response.
+Both are now scans that give the same results. Tests run each case with a 3 s
+budget: through an invoke link in the page, and as a `python3 -I hmc.py`
+process (`tests/hypermedia-client-cli.test.ts`, which needs `python3`); each
+took 8 s or more before.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and
@@ -102,9 +116,7 @@ form properties, so the test checks both structurally. They were checked once
 by hand in Chromium (the page loads and invokes under its policy with no
 violation; the old page's **Dry run** reloaded it), and that check is not in CI.
 GitHub Pages cannot send response headers, and a `<meta>` policy cannot set
-`frame-ancestors`, so framing the page is not restricted. A descriptor's
-`pattern` is compiled as a regular expression and run against what the person
-types, so a pathological one can stall the tab. `hmc.py` prints remote text to a
+`frame-ancestors`, so framing the page is not restricted. `hmc.py` prints remote text to a
 terminal as it is and was not reviewed for terminal control sequences.
 
 ## 2026-11-15 — Foxxi: guest-learner docs caught up with the course player

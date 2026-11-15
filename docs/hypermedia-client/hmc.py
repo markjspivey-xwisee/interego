@@ -499,12 +499,37 @@ def _looks_like_operation(index: NodeIndex, node: dict[str, Any]) -> bool:
     return False
 
 
-def _field_name(name: str | None, path: str | None, variable: str | None) -> str:
+def _text(value: Any) -> str:
+    """Remote text as a string; a JSON value that is not a string as its JSON."""
+    if value is None:
+        return ""
+    if isinstance(value, str):
+        return value
+    if isinstance(value, (dict, list, bool)):
+        return json.dumps(value, ensure_ascii=False)
+    return str(value)
+
+
+_REST_PARAM = "rest-param-"
+
+
+def _field_name(name: Any, path: str | None, variable: str | None) -> str:
+    """Turns "rest-param-<x>-<name>" into "<name>": the text after the last "-"
+    that has at least one character on each side of it. Found by a scan, not a
+    pattern, so a long crafted name costs linear time. A name with a line break
+    in it is kept whole, and a single final newline is dropped, as the pattern
+    this replaces did."""
     if variable:
-        return variable
-    raw = name or local_name(path) or "value"
-    match = re.match(r"(?:rest-param-.+-)?(.+)$", raw)
-    return match.group(1) if match else raw
+        return str(variable)
+    raw = _text(name) or local_name(path) or "value"
+    body = raw[:-1] if raw.endswith("\n") else raw
+    if not body or "\n" in body:
+        return raw
+    if body.startswith(_REST_PARAM):
+        cut = body.rfind("-", 0, len(body) - 1)
+        if cut > len(_REST_PARAM):
+            return body[cut + 1:]
+    return body
 
 
 def _schema_types(prop: dict[str, Any]) -> list[str]:
@@ -1126,12 +1151,9 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
             errors.append(f"{fld.name}: shorter than minLength {fld.min_length}")
         if not structured and fld.max_length is not None and len(text) > fld.max_length:
             errors.append(f"{fld.name}: longer than maxLength {fld.max_length}")
-        if not structured and fld.pattern:
-            try:
-                if not re.search(fld.pattern, text):
-                    errors.append(f"{fld.name}: does not match pattern {fld.pattern}")
-            except re.error as exc:
-                errors.append(f"{fld.name}: invalid pattern ({exc})")
+        # A field's pattern is reported by `describe` and never run: a remote
+        # regular expression can take time exponential in the input, and the
+        # server that receives the value is the one that enforces it.
         if not structured and fld.enum and text not in {str(x) for x in fld.enum}:
             errors.append(f"{fld.name}: must be one of {sorted(str(x) for x in fld.enum)}")
         if not structured:

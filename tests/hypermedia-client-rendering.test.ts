@@ -152,9 +152,34 @@ const pair = {
       'hydra:expects': { type: 'object', properties: Object.fromEntries(PROTO_TYPES.map(t => [`f_${t}`, { type: t }])) } },
   ],
 };
+// Remote text the page must not spend super-linear time on. A pattern with overlapping
+// alternatives takes about twice as long for each extra character when run against a string it
+// does not match, so the page must not run a remote pattern at all. 28 characters took well over
+// the 3 s budget before; any more and a regression would hang the run rather than fail it.
+const SLOW_PATTERN = '^(a|a)*$';
+const SLOW_DEFAULT = 'a'.repeat(28) + 'b';
+// A field name and a URL each crafted so that a backtracking pattern retries at every position.
+const LONG_NAME = 'rest-param-' + '-'.repeat(150_000) + '\n';
+const DOTTED_URL = 'https://hostile.example/a' + '.'.repeat(150_000) + 'x';
+const CTX = { hydra: 'http://www.w3.org/ns/hydra/core#', iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+  sh: 'http://www.w3.org/ns/shacl#' };
+const slowPattern = {
+  '@context': CTX, '@id': `${HOST}/slow-pattern`,
+  'iep:affordance': [{ '@id': `${HOST}/slow-pattern#r`, '@type': 'iep:Affordance', 'iep:action': 'urn:r', 'hydra:method': 'GET',
+    'hydra:title': 'Slow pattern', 'hydra:target': `${HOST}/body/plain`,
+    'hydra:expects': { type: 'object', properties: { q: { type: 'string', pattern: SLOW_PATTERN, default: SLOW_DEFAULT } } } }],
+};
+const longName = {
+  '@context': CTX, '@id': `${HOST}/long-name`,
+  'iep:affordance': [{ '@id': `${HOST}/long-name#n`, '@type': 'iep:Affordance', 'iep:action': 'urn:n', 'hydra:method': 'GET',
+    'hydra:title': 'Long name', 'hydra:target': `${HOST}/body/plain`, 'hydra:expects': { '@id': `${HOST}/long-name#S` } }],
+  '@graph': [{ '@id': `${HOST}/long-name#S`, '@type': 'sh:NodeShape', 'sh:property': [{ 'sh:path': `${HOST}/p`, 'sh:name': LONG_NAME }] }],
+};
 // Documents served at exact paths on HOST, in addition to /desc, /hm and /body/<kind>.
 const DOCS: Record<string, { type: string; text: string }> = {
   '/pair': { type: 'application/ld+json', text: JSON.stringify(pair) },
+  '/slow-pattern': { type: 'application/ld+json', text: JSON.stringify(slowPattern) },
+  '/long-name': { type: 'application/ld+json', text: JSON.stringify(longName) },
 };
 
 function respond(text: string, type: string, status = 200): Response {
@@ -194,7 +219,8 @@ const PAGE_IDS = new Set(['url', 'loadBtn', 'backBtn', 'proxy', 'status', 'meta'
 const TAGS = new Set(['header', 'main', 'aside', 'section', 'h1', 'h2', 'h3', 'p', 'div', 'span', 'strong', 'code', 'br',
   'ul', 'li', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'article', 'details', 'summary', 'form', 'label',
   'input', 'textarea', 'select', 'option', 'button', 'script']);
-const ATTRS = new Set(['class', 'id', 'type', 'placeholder', 'spellcheck', 'disabled', 'required', 'pattern', 'value',
+// No `pattern`: the browser would run a remote pattern as a regular expression in its own validation.
+const ATTRS = new Set(['class', 'id', 'type', 'placeholder', 'spellcheck', 'disabled', 'required', 'value',
   'selected', 'open', 'data-iri', 'data-rel', 'data-field', 'data-mode', 'aria-label']);
 
 /** Everything a hostile document can try to put in the DOM, checked at once. */
@@ -360,6 +386,53 @@ describe('hypermedia client: requests', () => {
       await vi.waitFor(() => expect(document.documentElement.dataset['ready']).toBe('error'));
       expect(document.getElementById('status')!.textContent).toMatch(/https/);
       expect(t.calls).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: remote text costs linear time', () => {
+  it('does not run a remote pattern, even from an ?invoke= link', async () => {
+    const started = Date.now();
+    const t = load(`?url=${encodeURIComponent(HOST + '/slow-pattern')}&invoke=urn:r`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'), { timeout: 60_000 });
+      expect(Date.now() - started, 'link to done').toBeLessThan(3_000);
+      // The pattern is shown as text; the server that receives the value is the one that checks it.
+      expect(document.querySelector('#invokeForm .hint')!.textContent).toContain(SLOW_PATTERN);
+      expect(document.querySelector('[pattern]')).toBeNull();
+      expect(t.calls.map(c => c.url)).toContain(`${HOST}/body/plain?q=${SLOW_DEFAULT}`);
+      assertInert(t, 'slow pattern');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('reads a long crafted field name in linear time', async () => {
+    const started = Date.now();
+    const t = load(`?url=${encodeURIComponent(HOST + '/long-name')}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'), { timeout: 60_000 });
+      click(t, card(document, 'Long name')!);
+      expect(Date.now() - started, 'load and render').toBeLessThan(3_000);
+      // A name with a line break in it is kept whole, as before.
+      expect(document.querySelector<HTMLElement>('#invokeForm [data-field]')!.dataset['field']).toBe(LONG_NAME);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('trims trailing punctuation from a long URL in linear time', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/desc')}&autoload=1`, { plain: { type: 'text/plain', text: `see ${DOTTED_URL}.` } });
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready']).toBe('list'));
+      click(t, card(document, 'Read plain ')!);
+      const started = Date.now();
+      click(t, button(document, 'live'));
+      await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toMatch(/Response HTTP 200/), { timeout: 60_000 });
+      expect(Date.now() - started, 'rendering time').toBeLessThan(3_000);
+      // The URL ends in "x", so it is followable whole, and the final "." stays text after it.
+      const body = document.querySelector('#result .resp-title + pre')!;
+      expect([...body.querySelectorAll('[data-iri]')].map(e => e.getAttribute('data-iri'))).toEqual([DOTTED_URL]);
+      expect(body.textContent).toBe(`see ${DOTTED_URL}.`);
     } finally { t.dom.window.close(); }
   });
 });
