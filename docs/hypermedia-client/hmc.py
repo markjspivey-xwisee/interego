@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import json
+import math
 import re
 import sys
 import textwrap
@@ -472,6 +473,19 @@ class NodeIndex:
             current = literal(self.get(node, P_REST))
         return out
 
+    def list_values(self, raw: Any) -> list[Any]:
+        """The members of a list value such as sh:in's: a JSON-LD list object
+        ({"@list": [...]}, alone or in a one-element array), an RDF list of
+        rdf:first / rdf:rest nodes, or a plain array. A member is unwrapped as
+        any literal is, so {"@value": v} is v and {"@id": i} is i."""
+        items = as_list(raw)
+        if len(items) == 1 and isinstance(items[0], dict) and "@list" in items[0]:
+            return literals(items[0]["@list"])
+        head = literal(raw)
+        if isinstance(head, str) and (head.startswith("_:") or self.node(head)):
+            return self.rdf_list(head)
+        return literals(raw)
+
 
 
 def _inty(value: Any) -> int | None:
@@ -617,13 +631,7 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
         path = str(literal(index.get(node, P_SH_PATH)) or "")
         name = literal(index.get(node, P_SH_NAME))
         enum_raw = index.get(node, P_SH_IN)
-        enum: list[Any] = []
-        if enum_raw is not None:
-            head = literal(enum_raw)
-            if isinstance(head, str) and (str(head).startswith("_:") or index.node(head)):
-                enum = index.rdf_list(head)
-            else:
-                enum = literals(enum_raw)
+        enum: list[Any] = [] if enum_raw is None else index.list_values(enum_raw)
         min_count = _inty(literal(index.get(node, P_SH_MIN)))
         max_count = _inty(literal(index.get(node, P_SH_MAX)))
         datatype = str(literal(index.get(node, P_SH_DT)) or "") or None
@@ -1131,6 +1139,68 @@ def expand_uri_template(template: str, values: dict[str, Any]) -> str:
     return re.sub(r"\{([^{}]+)\}", lambda match: _expand_expr(match.group(1), values), template)
 
 
+# XSD datatypes whose values are numbers, by the name after "#". A bound a type
+# implies, such as unsignedByte's 0 to 255, is left to the server, as xsd:int's was.
+_XSD_INTEGERS = frozenset({
+    "integer", "int", "long", "short", "byte", "nonNegativeInteger", "positiveInteger",
+    "negativeInteger", "nonPositiveInteger", "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte",
+})
+_XSD_DECIMALS = frozenset({"decimal", "double", "float"})
+# A number as JSON can carry one: a sign, digits with an optional fraction and an
+# optional exponent. NaN, inf, hex, digit separators ("1_000", which int() and
+# float() accept) and trailing text are not numbers here. Each pattern matches an
+# input in one way only, so a long remote default costs linear time.
+_DECIMAL_LEXICAL = re.compile(r"[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?")
+_INTEGER_LEXICAL = re.compile(r"[+-]?[0-9]+")
+
+
+def _numeric_kind(fld: Field) -> str | None:
+    if fld.json_kind:
+        return None
+    dt = _text(fld.datatype)
+    if "#" not in dt:
+        return None
+    local = dt.rsplit("#", 1)[-1]
+    if local in _XSD_INTEGERS:
+        return "integer"
+    if local in _XSD_DECIMALS:
+        return "decimal"
+    return None
+
+
+def _lexical_number(value: Any) -> int | float | None:
+    """The finite number a value or a remote bound writes, or None when it writes none."""
+    if isinstance(value, bool):
+        return None
+    if isinstance(value, int):
+        return value
+    if isinstance(value, float):
+        return value if math.isfinite(value) else None
+    if not isinstance(value, str) or not _DECIMAL_LEXICAL.fullmatch(value.strip()):
+        return None
+    number = float(value.strip())
+    return number if math.isfinite(number) else None
+
+
+def _coerce_number(kind: str, value: Any) -> int | float:
+    """A number field's value is the number its text writes, or a ValueError:
+    never NaN, inf, a cut-off fraction or a number other than the one written."""
+    text = str(value).strip()
+    if kind == "integer":
+        if not _INTEGER_LEXICAL.fullmatch(text):
+            raise ValueError("not an integer")
+        try:
+            return int(text)
+        except ValueError as exc:  # more digits than int() reads (sys.get_int_max_str_digits)
+            raise ValueError("integer too long") from exc
+    if not _DECIMAL_LEXICAL.fullmatch(text):
+        raise ValueError("not a number")
+    number = float(text)
+    if not math.isfinite(number):
+        raise ValueError("not a finite number")
+    return number
+
+
 def coerce_value(fld: Field, value: Any) -> Any:
     if value is None or value == "":
         return None
@@ -1146,11 +1216,10 @@ def coerce_value(fld: Field, value: Any) -> Any:
         if fld.json_kind == "array" and not isinstance(parsed, list):
             raise ValueError(f"{fld.name} must be a JSON array")
         return parsed
+    numeric = _numeric_kind(fld)
+    if numeric:
+        return _coerce_number(numeric, value)
     dt = fld.datatype or ""
-    if dt.endswith("#integer") or dt.endswith("#int"):
-        return int(str(value))
-    if dt.endswith(("#decimal", "#double", "#float")):
-        return float(str(value))
     if dt.endswith("#boolean"):
         text = str(value).strip().lower()
         if text in {"true", "1", "yes"}:
@@ -1175,8 +1244,12 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
                 found = incoming[alias]
                 used = alias
                 break
+        # Spaces around a number are not part of it, so a number field holding only spaces is empty.
+        numeric = _numeric_kind(fld) is not None
+        if numeric and isinstance(found, str):
+            found = found.strip()
         if (found is None or found == "") and fld.default is not None:
-            found = fld.default
+            found = fld.default.strip() if numeric and isinstance(fld.default, str) else fld.default
         required = fld.required or (fld.min_count or 0) >= 1
         if found is None or found == "":
             if required:
@@ -1198,14 +1271,20 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
         # server that receives the value is the one that enforces it.
         if not structured and fld.enum and text not in {str(x) for x in fld.enum}:
             errors.append(f"{fld.name}: must be one of {sorted(str(x) for x in fld.enum)}")
-        if not structured:
-            try:
-                if fld.min_inclusive is not None and float(typed) < float(fld.min_inclusive):
+        # A numeric bound needs a number to compare: a value that is none is an
+        # error, not a pass. A bound that is not a number, such as a date, is
+        # the server's to check.
+        low = None if structured else _lexical_number(fld.min_inclusive)
+        high = None if structured else _lexical_number(fld.max_inclusive)
+        if low is not None or high is not None:
+            number = _lexical_number(typed)
+            if number is None:
+                errors.append(f"{fld.name}: not a number")
+            else:
+                if low is not None and number < low:
                     errors.append(f"{fld.name}: below minInclusive {fld.min_inclusive}")
-                if fld.max_inclusive is not None and float(typed) > float(fld.max_inclusive):
+                if high is not None and number > high:
                     errors.append(f"{fld.name}: above maxInclusive {fld.max_inclusive}")
-            except (TypeError, ValueError):
-                pass
         values[fld.name] = typed
         if used:
             incoming.pop(used, None)

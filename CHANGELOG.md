@@ -126,6 +126,25 @@ escape. Each of these has a test that failed before. The README's example of
 a dry run failed the catalog's current shape (`graph_content` needs 40
 characters); the new example was dry-run against the live catalog.
 
+**Lists and numbers in a form.** A SHACL `sh:in` written as a JSON-LD list
+object, `{"@list": ["draft", "published"]}` alone or in a one-element array, was
+read as a single entry, the list's own JSON, so both clients refused `draft`.
+Both now take the list's members, unwrapping `@value` and `@id` as they do any
+literal, and still read RDF `rdf:first` / `rdf:rest` lists and plain arrays; an
+empty list object restricts nothing, as an empty enum does. A decimal, double or
+float field turned text that was not a number into `NaN`, which the page sent as
+`null` and `hmc.py` as `NaN` (it also took `nan` and `1_000`), and the range
+checks let it through; the page cut `1.5` in an integer field to `1`. A number
+field now takes only a sign, digits, a fraction and an exponent, with spaces
+around them ignored, and otherwise reports `<name>: not a number` or
+`<name>: not an integer`, so **Dry run**, **Invoke** and `hmc.py invoke` refuse
+and send nothing. A value that is not a number fails a numeric `minInclusive`
+or `maxInclusive` instead of passing it. `long`, `short`, `byte` and the other
+XSD integer types are read as integers too; the bounds those types imply are
+left to the server, as `int`'s were. The page refuses an integer past 2^53
+rather than round it; `hmc.py` sends one of any size exactly. Each case has a
+page and a command-line test that failed before.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

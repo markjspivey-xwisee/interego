@@ -34,6 +34,7 @@ const ESC = '\x1b]0;PWNED-TITLE\x07\x1b[31mRED\x1b[0m\x1b]52;c;cHduZWQ=\x07\r\x9
 const CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/;
 // A local file a descriptor must not be able to make hmc.py read.
 const SECRET = 'HMC-LOCAL-FILE-SECRET';
+const XSD = 'http://www.w3.org/2001/XMLSchema#';
 let dir = '';
 let secretUrl = '';
 
@@ -74,6 +75,35 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
     '/escaped-body': () => ({ type: 'text/plain; x=\x9b2J', body: `body${ESC}` }),
     '/to-file': () => ({ status: 302, headers: { location: secretUrl } }),
     '/to-ftp': () => ({ status: 302, headers: { location: 'ftp://127.0.0.1:9/x' } }),
+    // sh:in as a JSON-LD list object, the same in a one-element array with @value and @id members,
+    // an RDF list of rdf:first / rdf:rest nodes, a plain array, and an empty list object.
+    '/list-enum': json(descriptor('list-enum', [{ '@id': `${base}/list-enum#r`, '@type': 'iep:Affordance',
+      'iep:action': 'urn:list-enum', 'hydra:method': 'GET', 'hydra:title': 'List enum read', 'hydra:target': `${base}/list-ok`,
+      'hydra:expects': { '@id': `${base}/list-enum#S` } }], [
+      { '@id': `${base}/list-enum#S`, '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': 'urn:p:status', 'sh:name': 'status', 'sh:in': { '@list': ['draft', 'published'] } },
+        { 'sh:path': 'urn:p:wrapped', 'sh:name': 'wrapped', 'sh:in': [{ '@list': [{ '@value': 'low' }, { '@id': `${base}/high` }] }] },
+        { 'sh:path': 'urn:p:nodes', 'sh:name': 'nodes', 'sh:in': { '@id': '_:l1' } },
+        { 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:in': ['red', 'blue'] },
+        { 'sh:path': 'urn:p:empty', 'sh:name': 'empty', 'sh:in': { '@list': [] } },
+      ] },
+      { '@id': '_:l1', 'rdf:first': 'one', 'rdf:rest': { '@id': '_:l2' } },
+      { '@id': '_:l2', 'rdf:first': { '@value': 'two' }, 'rdf:rest': { '@id': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil' } },
+    ])),
+    '/list-ok': () => ({ type: 'text/plain', body: 'fine' }),
+    // A write whose fields are numbers: a required decimal bounded 1 to 10, two integer types, and
+    // a field with a numeric range but no datatype.
+    '/numbers': json(descriptor('numbers', [{ '@id': `${base}/numbers#w`, '@type': 'iep:Affordance',
+      'iep:action': 'urn:numbers', 'hydra:method': 'POST', 'hydra:title': 'Numeric write', 'hydra:target': `${base}/num-target`,
+      'hydra:expects': { '@id': `${base}/numbers#S` } }], [
+      { '@id': `${base}/numbers#S`, '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': 'urn:p:amount', 'sh:name': 'amount', 'sh:datatype': `${XSD}decimal`, 'sh:minCount': 1, 'sh:minInclusive': 1, 'sh:maxInclusive': 10 },
+        { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer` },
+        { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long` },
+        { 'sh:path': 'urn:p:level', 'sh:name': 'level', 'sh:minInclusive': 1, 'sh:maxInclusive': 5 },
+      ] },
+    ])),
+    '/num-target': () => ({ type: 'application/json', body: '{"ok":true}' }),
   };
 }
 
@@ -166,6 +196,57 @@ describe('hmc.py: http and https only', () => {
     expect(r.code).not.toBe(0);
     expect(r.stdout + r.stderr).not.toContain(SECRET);
     expect(r.stderr).toMatch(REFUSED);
+  });
+});
+
+describe('hmc.py: SHACL sh:in lists', () => {
+  it('reads the members of a JSON-LD list, an RDF list and a plain array, and accepts them', async () => {
+    const d = await hmc(['describe', `${base}/list-enum`, 'urn:list-enum']);
+    expect(d.code, d.stderr).toBe(0);
+    const fields = (JSON.parse(d.stdout) as { fields: Array<{ name: string; in: unknown[] }> }).fields;
+    expect(Object.fromEntries(fields.map(f => [f.name, f.in]))).toEqual({
+      status: ['draft', 'published'], wrapped: ['low', `${base}/high`], nodes: ['one', 'two'], plain: ['red', 'blue'], empty: [],
+    });
+    const r = await hmc(['invoke', `${base}/list-enum`, 'urn:list-enum', '--field', 'status=draft', '--field', 'wrapped=low',
+      '--field', 'nodes=two', '--field', 'plain=blue', '--field', 'empty=anything']);
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen).toContain('GET /list-ok?status=draft&wrapped=low&nodes=two&plain=blue&empty=anything');
+  });
+});
+
+describe('hmc.py: numeric fields', () => {
+  const sent = () => seen.filter(s => s.startsWith('POST /num-target')).length;
+  it.each([
+    ...['abc', 'NaN', 'Infinity', 'nan', 'inf', '0x10', '12abc', '1_000', '1,5'].map(v => ['amount', v, 'amount: not a number']),
+    ['amount', '1e999', 'amount: not a finite number'],
+    ['amount', '   ', "missing required field 'amount'"],
+    ['count', '1.5', 'count: not an integer'],
+    ['count', '12abc', 'count: not an integer'],
+    ['count', '1e3', 'count: not an integer'],
+    ['count', '1_000', 'count: not an integer'],
+    ['size', '1.5', 'size: not an integer'],
+    ['level', 'abc', 'level: not a number'],
+  ])('refuses %s=%j with a confirmed write, and sends nothing', async (name, value, message) => {
+    const before = sent();
+    const r = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount=2', '--field', `${name}=${value}`, '--confirm']);
+    expect(r.code, r.stdout + r.stderr).toBe(2);
+    expect(r.stderr).toContain('Validation failed');
+    expect(r.stderr).toContain(message);
+    expect(sent()).toBe(before);
+  });
+
+  it('sends numbers written as numbers as numbers, an integer of any size exactly', async () => {
+    const dry = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount= 2.5 ', '--field', 'count=-3',
+      '--field', 'size=+12345678901234567890', '--field', 'level=3', '--dry-run', '--json']);
+    expect(dry.code, dry.stderr).toBe(0);
+    // JSON.parse would round the long integer, so its text is checked as printed.
+    expect(dry.stdout).toContain('"size": 12345678901234567890');
+    const body = (JSON.parse(dry.stdout) as { request: { body: Record<string, unknown> } }).request.body;
+    expect({ ...body, size: null }).toEqual({ amount: 2.5, count: -3, size: null, level: '3' });
+    const before = sent();
+    const live = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount=2.5', '--confirm']);
+    expect(live.code, live.stderr).toBe(0);
+    expect(sent()).toBe(before + 1);
   });
 });
 

@@ -206,6 +206,36 @@ const enumDoc = { '@context': CTX, '@id': `${HOST}/enum`,
   'iep:affordance': [{ '@id': `${HOST}/enum#e`, '@type': 'iep:Affordance', 'iep:action': 'urn:enum', 'hydra:method': 'GET',
     'hydra:title': 'Enum read', 'hydra:target': `${HOST}/body/plain`,
     'hydra:expects': { type: 'object', properties: { b: { enum: [{ x: 1 }, 'plain', null], default: { x: 1 } } } } }] };
+const XSD = 'http://www.w3.org/2001/XMLSchema#';
+const RDF_NIL = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil';
+// sh:in written each way JSON-LD allows: a list object, the same in a one-element array with
+// @value and @id members, an RDF list of rdf:first / rdf:rest nodes, and a plain array. An empty
+// list object restricts nothing, as an empty enum does.
+const listEnum = { '@context': CTX, '@id': `${HOST}/list-enum`,
+  'iep:affordance': [{ '@id': `${HOST}/list-enum#r`, '@type': 'iep:Affordance', 'iep:action': 'urn:list-enum', 'hydra:method': 'GET',
+    'hydra:title': 'List enum read', 'hydra:target': `${HOST}/body/plain`, 'hydra:expects': { '@id': `${HOST}/list-enum#S` } }],
+  '@graph': [
+    { '@id': `${HOST}/list-enum#S`, '@type': 'sh:NodeShape', 'sh:property': [
+      { 'sh:path': 'urn:p:status', 'sh:name': 'status', 'sh:in': { '@list': ['draft', 'published'] } },
+      { 'sh:path': 'urn:p:wrapped', 'sh:name': 'wrapped', 'sh:in': [{ '@list': [{ '@value': 'low' }, { '@id': `${HOST}/high` }] }] },
+      { 'sh:path': 'urn:p:nodes', 'sh:name': 'nodes', 'sh:in': { '@id': '_:l1' } },
+      { 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:in': ['red', 'blue'] },
+      { 'sh:path': 'urn:p:empty', 'sh:name': 'empty', 'sh:in': { '@list': [] } },
+    ] },
+    { '@id': '_:l1', 'rdf:first': 'one', 'rdf:rest': { '@id': '_:l2' } },
+    { '@id': '_:l2', 'rdf:first': { '@value': 'two' }, 'rdf:rest': { '@id': RDF_NIL } },
+  ] };
+// A write whose fields are numbers: a required decimal bounded 1 to 10, two integer types, and a
+// field with a numeric range but no datatype.
+const numbers = { '@context': CTX, '@id': `${HOST}/numbers`,
+  'iep:affordance': [{ '@id': `${HOST}/numbers#w`, '@type': 'iep:Affordance', 'iep:action': 'urn:numbers', 'hydra:method': 'POST',
+    'hydra:title': 'Numeric write', 'hydra:target': `${HOST}/num-target`, 'hydra:expects': { '@id': `${HOST}/numbers#S` } }],
+  '@graph': [{ '@id': `${HOST}/numbers#S`, '@type': 'sh:NodeShape', 'sh:property': [
+    { 'sh:path': 'urn:p:amount', 'sh:name': 'amount', 'sh:datatype': `${XSD}decimal`, 'sh:minCount': 1, 'sh:minInclusive': 1, 'sh:maxInclusive': 10 },
+    { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer` },
+    { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long` },
+    { 'sh:path': 'urn:p:level', 'sh:name': 'level', 'sh:minInclusive': 1, 'sh:maxInclusive': 5 },
+  ] }] };
 // Documents served at exact paths on HOST, in addition to /desc, /hm and /body/<kind>.
 const DOCS: Record<string, { type: string; text: string }> = {
   '/pair': { type: 'application/ld+json', text: JSON.stringify(pair) },
@@ -213,6 +243,9 @@ const DOCS: Record<string, { type: string; text: string }> = {
   '/long-name': { type: 'application/ld+json', text: JSON.stringify(longName) },
   '/scope': { type: 'application/ld+json', text: JSON.stringify(scope) },
   '/enum': { type: 'application/ld+json', text: JSON.stringify(enumDoc) },
+  '/list-enum': { type: 'application/ld+json', text: JSON.stringify(listEnum) },
+  '/numbers': { type: 'application/ld+json', text: JSON.stringify(numbers) },
+  '/num-target': { type: 'application/json', text: '{"ok":true}' },
 };
 
 function respond(text: string, type: string, status = 200): Response {
@@ -647,6 +680,109 @@ describe('hypermedia client: rendering details', () => {
       await new Promise(r => setTimeout(r, 50));
       expect(calls).toEqual([]);
     } finally { outer.window.close(); }
+  });
+});
+
+describe('hypermedia client: SHACL sh:in lists', () => {
+  it('offers the members of a JSON-LD list, an RDF list and a plain array, and accepts them', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/list-enum')}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+      click(t, card(document, 'List enum read')!);
+      const options = (name: string) => {
+        const select = document.querySelector<HTMLSelectElement>(`#invokeForm select[data-field="${name}"]`);
+        return select ? [...select.options].map(o => o.value) : null;
+      };
+      expect(options('status')).toEqual(['', 'draft', 'published']);
+      expect(options('wrapped')).toEqual(['', 'low', `${HOST}/high`]);
+      expect(options('nodes')).toEqual(['', 'one', 'two']);
+      expect(options('plain')).toEqual(['', 'red', 'blue']);
+      // An empty list offers nothing to choose from, so the field is free text.
+      expect(options('empty')).toBeNull();
+      expect(document.querySelector('#invokeForm input[data-field="empty"]')).not.toBeNull();
+      const chosen: Record<string, string> = { status: 'draft', wrapped: 'low', nodes: 'two', plain: 'blue', empty: 'anything' };
+      for (const el of document.querySelectorAll<HTMLInputElement>('#invokeForm [data-field]')) el.value = chosen[el.dataset['field']!]!;
+      click(t, button(document, 'dry'));
+      await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toContain('Dry run'));
+      const shown = document.getElementById('result')!.textContent!;
+      expect(shown).not.toContain('Validation failed');
+      expect(shown).toContain(`${HOST}/body/plain?status=draft&wrapped=low&nodes=two&plain=blue&empty=anything`);
+      assertInert(t, 'list enum');
+    } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: numeric fields', () => {
+  // [field, input, the error the page reports]. `count` is an <input type="number">: it drops text
+  // that is not a floating-point number before the page reads it, and its default step of 1 stops
+  // the form submitting a fraction, so a fraction there is tried through an ?invoke= link below.
+  const BAD: Array<[string, string, string]> = [
+    ...['abc', 'NaN', 'Infinity', '0x10', '12abc', '1,5'].map(v => ['amount', v, 'amount: not a number'] as [string, string, string]),
+    ['amount', '1e999', 'amount: not a finite number'],
+    ['amount', '   ', "missing required field 'amount'"],
+    ['amount', '0.5', 'amount: below minInclusive'],
+    ['count', '1e3', 'count: not an integer'],
+    ['size', '1.5', 'size: not an integer'],
+    ['size', '12abc', 'size: not an integer'],
+    ['size', '1e3', 'size: not an integer'],
+    // A JSON number cannot carry this integer exactly, so the page does not round it.
+    ['size', '9007199254740993', 'size: integer too large to send exactly'],
+    ['level', 'abc', 'level: not a number'],
+    ['level', '7', 'level: above maxInclusive'],
+  ];
+
+  it('refuses input that is not a number of the field\'s type, on Dry run and on a confirmed Invoke, and sends nothing', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/numbers')}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+      click(t, card(document, 'Numeric write')!);
+      const box = document.getElementById('confirmUnsafe') as HTMLInputElement;
+      box.checked = true;
+      box.dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
+      const result = document.getElementById('result')!;
+      const fill = (values: Record<string, string>) => {
+        for (const el of document.querySelectorAll<HTMLInputElement>('#invokeForm [data-field]')) el.value = values[el.dataset['field']!] ?? '';
+      };
+      for (const [name, value, message] of BAD) {
+        fill({ amount: '2', [name]: value });
+        for (const mode of ['dry', 'live']) {
+          result.innerHTML = '';
+          click(t, button(document, mode));
+          await vi.waitFor(() => expect(result.textContent, `${name}=${JSON.stringify(value)} (${mode})`).toContain('Validation failed'));
+          expect(result.textContent, `${name}=${JSON.stringify(value)} (${mode})`).toContain(message);
+        }
+      }
+      await new Promise(r => setTimeout(r, 50));
+      expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+
+      // Numbers written as numbers are sent as numbers; surrounding spaces are not part of one.
+      fill({ amount: ' 2.5 ', count: '-3', size: '+7', level: '3' });
+      result.innerHTML = '';
+      click(t, button(document, 'dry'));
+      await vi.waitFor(() => expect(result.textContent).toContain('Dry run — nothing was sent.'));
+      const planned = JSON.parse(result.querySelector('pre')!.textContent!) as { body: unknown };
+      expect(planned.body).toEqual({ amount: 2.5, count: -3, size: 7, level: '3' });
+      click(t, button(document, 'live'));
+      await vi.waitFor(() => expect(result.textContent).toMatch(/Response HTTP 200/));
+      expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([{ url: `${HOST}/num-target`, method: 'POST' }]);
+      assertInert(t, 'numeric write');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('refuses the same from an ?invoke= link, which fills the form without submitting it', async () => {
+    const link = `?url=${encodeURIComponent(HOST + '/numbers')}&invoke=urn:numbers&field.amount=abc&field.count=1.5`;
+    const t = load(link);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'));
+      const shown = document.getElementById('result')!.textContent!;
+      expect(shown).toContain('Validation failed');
+      expect(shown).toContain('amount: not a number');
+      expect(shown).toContain('count: not an integer');
+      expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+    } finally { t.dom.window.close(); }
   });
 });
 

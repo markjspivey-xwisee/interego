@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-CISFTAqnhjKrTyx2WxjWEBjBuiO6pvbq34QZgS1cTZc='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-y8eBnfFjJwLHQpIRJZbByJbxZuQyinJw+3mVhu/Xqxg='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -334,6 +334,19 @@ class NodeIndex {
     }
     return out;
   }
+  // The members of a list value such as sh:in's: a JSON-LD list object
+  // ({"@list": [...]}, alone or in a one-element array), an RDF list of
+  // rdf:first / rdf:rest nodes, or a plain array. A member is unwrapped as any
+  // literal is, so {"@value": v} is v and {"@id": i} is i.
+  listValues(raw) {
+    const items = asList(raw);
+    const only = items.length === 1 ? items[0] : null;
+    if (only && typeof only === "object" && !Array.isArray(only) && Object.prototype.hasOwnProperty.call(only, "@list")) {
+      return literals(only["@list"]);
+    }
+    const head = literal(raw);
+    return (typeof head === "string" && (head.startsWith("_:") || this.node(head))) ? this.rdfList(head) : literals(raw);
+  }
 }
 
 // "rest-param-<x>-<name>" becomes "<name>": the text after the last "-" that
@@ -414,12 +427,8 @@ function shapeFields(index, shapeRef) {
     if (!node) continue;
     const path = String(literal(index.get(node, P.shPath)) || "");
     const name = literal(index.get(node, P.shName));
-    let enumVals = [];
     const enumRaw = index.get(node, P.shIn);
-    if (enumRaw != null) {
-      const head = literal(enumRaw);
-      enumVals = (typeof head === "string" && (head.startsWith("_:") || index.node(head))) ? index.rdfList(head) : literals(enumRaw);
-    }
+    const enumVals = enumRaw == null ? [] : index.listValues(enumRaw);
     const minCount = inty(literal(index.get(node, P.shMin)));
     const maxCount = inty(literal(index.get(node, P.shMax)));
     const datatype = String(literal(index.get(node, P.shDt)) || "") || null;
@@ -815,6 +824,48 @@ function templatePathValue(spec, value, op, encOp) {
   if (spec.explode && op === ".") return encoded.join(".");
   return encoded.join(",");
 }
+// XSD datatypes whose values are numbers, by the name after "#". A bound a type
+// implies, such as unsignedByte's 0 to 255, is left to the server, as xsd:int's was.
+const XSD_INTEGERS = new Set(["integer", "int", "long", "short", "byte", "nonNegativeInteger", "positiveInteger",
+  "negativeInteger", "nonPositiveInteger", "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte"]);
+const XSD_DECIMALS = new Set(["decimal", "double", "float"]);
+function numericKind(field) {
+  if (field.jsonKind) return null;
+  const dt = asText(field.datatype);
+  const hash = dt.lastIndexOf("#");
+  if (hash < 0) return null;
+  const local = dt.slice(hash + 1);
+  return XSD_INTEGERS.has(local) ? "integer" : (XSD_DECIMALS.has(local) ? "decimal" : null);
+}
+// A number as JSON can carry one: a sign, digits with an optional fraction and
+// an optional exponent. NaN, Infinity, hex, digit separators and trailing text
+// are not numbers here. Each pattern matches an input in one way only, so a
+// long remote default costs linear time.
+const DECIMAL_LEXICAL = /^[+-]?(?:[0-9]+(?:\.[0-9]*)?|\.[0-9]+)(?:[eE][+-]?[0-9]+)?$/;
+const INTEGER_LEXICAL = /^[+-]?[0-9]+$/;
+// The finite number a value or a remote bound writes, or null when it writes none.
+function lexicalNumber(v) {
+  if (typeof v === "number") return Number.isFinite(v) ? v : null;
+  if (typeof v !== "string" || !DECIMAL_LEXICAL.test(v.trim())) return null;
+  const n = Number(v.trim());
+  return Number.isFinite(n) ? n : null;
+}
+// A number field's value is the number its text writes, or a validation error
+// naming the field: never NaN, Infinity, a rounded integer or a cut-off fraction.
+function coerceNumber(field, kind, value) {
+  const t = String(value).trim();
+  if (kind === "integer") {
+    if (!INTEGER_LEXICAL.test(t)) throw new Error(field.name + ": not an integer");
+    const n = Number(t);
+    // Past 2^53 a JSON number is rounded, so the page refuses rather than send another one.
+    if (!Number.isSafeInteger(n)) throw new Error(field.name + ": integer too large to send exactly");
+    return n;
+  }
+  if (!DECIMAL_LEXICAL.test(t)) throw new Error(field.name + ": not a number");
+  const n = Number(t);
+  if (!Number.isFinite(n)) throw new Error(field.name + ": not a finite number");
+  return n;
+}
 function coerceValue(field, value) {
   if (value == null || value === "") return null;
   const kind = field.jsonKind || null;
@@ -830,9 +881,9 @@ function coerceValue(field, value) {
     if (kind === "array" && !Array.isArray(parsed)) throw new Error(field.name + " must be a JSON array");
     return parsed;
   }
+  const numeric = numericKind(field);
+  if (numeric) return coerceNumber(field, numeric, value);
   const dt = field.datatype || "";
-  if (dt.endsWith("#integer") || dt.endsWith("#int")) return parseInt(String(value), 10);
-  if (dt.endsWith("#decimal") || dt.endsWith("#double") || dt.endsWith("#float")) return Number(value);
   if (dt.endsWith("#boolean")) {
     const t = String(value).toLowerCase();
     if (["true", "1", "yes"].includes(t)) return true;
@@ -853,8 +904,11 @@ function validateFields(control, supplied) {
   const errors = []; const values = Object.create(null);
   for (const field of control.fields) {
     const aliases = [field.name, field.variable, field.path && localName(field.path)].filter(Boolean);
-    let found = aliases.map(a => supplied[a]).find(v => v != null && v !== "");
-    if ((found == null || found === "") && field.defaultValue != null) found = field.defaultValue;
+    // Spaces around a number are not part of it, so a number field holding only spaces is empty.
+    const numeric = numericKind(field) != null;
+    const trim = (v) => (numeric && typeof v === "string" ? v.trim() : v);
+    let found = aliases.map(a => trim(supplied[a])).find(v => v != null && v !== "");
+    if ((found == null || found === "") && field.defaultValue != null) found = trim(field.defaultValue);
     const required = field.required || (field.minCount || 0) >= 1;
     if (found == null || found === "") { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
     let typed;
@@ -865,8 +919,19 @@ function validateFields(control, supplied) {
     if (!structured && field.maxLength != null && text.length > field.maxLength) errors.push(field.name + ": longer than maxLength " + field.maxLength);
     const allowed = enumOptions(field);
     if (!structured && allowed.length && !allowed.includes(text)) errors.push(field.name + ": must be one of " + allowed.join(", "));
-    if (!structured && field.minInclusive != null && Number(typed) < Number(field.minInclusive)) errors.push(field.name + ": below minInclusive");
-    if (!structured && field.maxInclusive != null && Number(typed) > Number(field.maxInclusive)) errors.push(field.name + ": above maxInclusive");
+    // A numeric bound needs a number to compare: a value that is none is an
+    // error, not a pass. A bound that is not a number, such as a date, is the
+    // server's to check.
+    const low = structured ? null : lexicalNumber(field.minInclusive);
+    const high = structured ? null : lexicalNumber(field.maxInclusive);
+    if (low != null || high != null) {
+      const n = lexicalNumber(typed);
+      if (n == null) errors.push(field.name + ": not a number");
+      else {
+        if (low != null && n < low) errors.push(field.name + ": below minInclusive");
+        if (high != null && n > high) errors.push(field.name + ": above maxInclusive");
+      }
+    }
     values[field.name] = typed;
   }
   return { values, errors };

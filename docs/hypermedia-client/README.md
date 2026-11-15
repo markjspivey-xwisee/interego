@@ -44,7 +44,7 @@ python3 hmc.py invoke URL act-rest-listConcepts --field limit=2
 python3 hmc.py invoke URL act-propose-mapping --field graph_iri=x --field graph_content='@prefix : <urn:x:> . :subject :predicate :object .'
 ```
 
-The last command is a dry run: unsafe operations never send unless you pass `--confirm`. Its values have to satisfy the shape the catalog publishes: on 2026-11-15 that asked for a `graph_content` of at least 40 characters. Both clients check a shape's required fields, lengths, ranges and enumerations before they plan a request, and leave patterns to the server.
+The last command is a dry run: unsafe operations never send unless you pass `--confirm`. Its values have to satisfy the shape the catalog publishes: on 2026-11-15 that asked for a `graph_content` of at least 40 characters. Both clients check a shape's required fields, lengths, ranges and enumerations, and that a number field holds a number of its type, before they plan a request, and leave patterns to the server.
 
 Web app: use the hosted page, open `index.html` directly as a file, or point any static server at this directory. There is no build step and nothing to install.
 
@@ -84,7 +84,7 @@ The client therefore:
 
 The Interego `act` kernel verb was verified against `act-get-scheme`: given the catalog URL and that action IRI, it re-resolved `hydra:target` to `https://id.i2idl.org/scheme.ttl` and returned the same Turtle as a direct HTTP GET.
 
-SHACL `NodeShape` property constraints (name, datatype, minCount/maxCount, pattern, defaultValue, maxLength/minLength, description, `sh:in`, min/maxInclusive) become form fields. A `pattern` is shown next to its field and left to the server to enforce: neither client runs a regular expression from a remote document, because a crafted one can take time exponential in the input. If `hydra:expects` is an inline JSON Schema object (as on the Foxxi affordance manifest), those properties are used instead. Hydra template variables are merged onto the same fields.
+SHACL `NodeShape` property constraints (name, datatype, minCount/maxCount, pattern, defaultValue, maxLength/minLength, description, `sh:in` as a plain array, an RDF list or a JSON-LD `@list`, min/maxInclusive) become form fields. A `pattern` is shown next to its field and left to the server to enforce: neither client runs a regular expression from a remote document, because a crafted one can take time exponential in the input. If `hydra:expects` is an inline JSON Schema object (as on the Foxxi affordance manifest), those properties are used instead. Hydra template variables are merged onto the same fields.
 
 JSON Schema `object` and `array` properties, SHACL properties with `sh:node` or `sh:nodeKind sh:BlankNode`, and `rdf:JSON` datatypes are parsed as JSON. A field such as Foxxi's `document` or `concept_ids` is sent as a real object or array in a JSON body, and a list is expanded as an RFC 6570 list when it fills a URI template. Other fields stay strings.
 
