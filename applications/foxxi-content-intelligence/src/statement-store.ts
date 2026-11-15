@@ -663,7 +663,13 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
         peakIndexReads: event.peakIndexReads, indexReadConcurrency: event.indexReadConcurrency,
       }));
     },
-    ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
+    ownerPublicKey: config.ownerPublicKey, recipientPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])],
+    // Only what this bridge or the store's owner sealed is read as the store's. The pod is written
+    // with a capability other services may hold too, and the recipients' public keys are public, so
+    // without this anyone who can write the pod could seal a record of their own and have it read
+    // here: a statement under any authority, the LMS's included. The owner is named because the
+    // owner is a recipient and may have sealed what is already there.
+    trustedSenderPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
   return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
     scopeIdentity: JSON.stringify(config.scope),
     cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner),
