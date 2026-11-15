@@ -304,7 +304,10 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // over 672. 680 leaves eight modules of headroom. Nothing was removed, excluded or skipped.
 // 2026-11-14: the tracked tree reached 714 with the voice, general-guest and ABAC tests, the whole
 // 34 of slack over 680. 690 leaves ten modules of headroom. Nothing was removed, excluded or skipped.
-export const MIN_TEST_MODULES = 690;
+// 2026-11-15: the tracked tree reached 725 with the hypermedia client's two test modules (the page
+// in jsdom, hmc.py as a process), the whole 35 of slack over 690, so tests/vitest-run-integrity.test.ts
+// failed. 700 leaves nine modules of headroom. Nothing was removed, excluded or skipped.
+export const MIN_TEST_MODULES = 700;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a

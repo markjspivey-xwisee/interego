@@ -81,7 +81,9 @@ clients, and the page's trim of trailing punctuation from a URL in a response.
 Both are now scans that give the same results. Tests run each case with a 3 s
 budget: through an invoke link in the page, and as a `python3 -I hmc.py`
 process (`tests/hypermedia-client-cli.test.ts`, which needs `python3`); each
-took 8 s or more before.
+took 8 s or more before. That new module raises the lint gate's `MIN_FILES` to
+682, the number the gate named, and `MIN_TEST_MODULES` to 700, because the tree's
+725 modules had used the whole 35 of slack over 690.
 
 **Requests go only where they should.** With the proxy field empty, the page
 refused any target that was not `https`; with it filled in, it checked only
