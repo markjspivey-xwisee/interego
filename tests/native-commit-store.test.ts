@@ -30,6 +30,10 @@ class NativeTransport {
   /** Batched staging is modelled only when a test turns it on; every other test sees a server without it. */
   stageAvailable = false;
   failBatch = false;
+  /** A server that commits a head from a document it already holds, when a test turns it on. */
+  sourceAvailable = false;
+  refuseSource = false;
+  readonly sourceCommits: string[] = [];
   batchTransform: ((receipts: Record<string, unknown>[]) => unknown) | undefined;
   readonly batches: string[][] = [];
   failStage = false;
@@ -47,7 +51,8 @@ class NativeTransport {
     const method = init?.method ?? 'GET';
     this.methods.push(method + ' ' + url);
     if (method === 'OPTIONS') return new Response(null, { status: 204, headers: this.optionsAvailable
-      ? { 'Accept-Put': NATIVE_COMMIT_MEDIA_TYPE, 'Interego-Native-Commit': '1', ...(this.stageAvailable ? { 'Interego-Native-Stage': '1' } : {}) } : {} });
+      ? { 'Accept-Put': NATIVE_COMMIT_MEDIA_TYPE, 'Interego-Native-Commit': '1', ...(this.stageAvailable ? { 'Interego-Native-Stage': '1' } : {}),
+        ...(this.sourceAvailable ? { 'Interego-Native-Commit-Source': '1' } : {}) } : {} });
     if (method === 'POST') return this.stageBatch(url, init);
     if (method === 'GET') {
       const row = this.rows.get(url); if (!row) return new Response(null, { status: 404 });
@@ -63,11 +68,22 @@ class NativeTransport {
     const headers = new Headers(init?.headers);
     expect(headers.get('Content-Type')).toBe(NATIVE_COMMIT_MEDIA_TYPE);
     const command = JSON.parse(String(init?.body)) as {
-      version: number; expectedRevision: string | null; contentType: string; bodyBase64: string;
+      version: number; expectedRevision: string | null; contentType: string; bodyBase64?: string;
+      source?: { path: string; bodyDigest: string; size: number };
     };
     expect(command.version).toBe(1); expect(command.contentType).toBe('application/json');
-    const bytes = Buffer.from(command.bodyBase64, 'base64');
-    expect(bytes.toString('base64')).toBe(command.bodyBase64);
+    expect(command.bodyBase64 === undefined).not.toBe(command.source === undefined);
+    let bytes: Buffer;
+    if (command.source) {
+      expect(Object.keys(command.source).sort()).toEqual(['bodyDigest', 'path', 'size']);
+      if (!this.sourceAvailable || this.refuseSource) return new Response(null, { status: 400 });
+      const held = this.rows.get(new URL(command.source.path, url).href);
+      if (!held || sha(held.bytes) !== command.source.bodyDigest || held.bytes.length !== command.source.size) return new Response(null, { status: 409 });
+      bytes = Buffer.from(held.bytes); this.sourceCommits.push(command.source.path);
+    } else {
+      bytes = Buffer.from(command.bodyBase64!, 'base64');
+      expect(bytes.toString('base64')).toBe(command.bodyBase64);
+    }
     if (command.expectedRevision === null) {
       expect(headers.get('If-None-Match')).toBe('*'); expect(headers.get('If-Match')).toBeNull();
     } else {
@@ -1436,6 +1452,71 @@ describe('numeric commit diagnostics', () => {
       await unobserved.commit({ operationId: 'second', expected: await unobserved.readHead(), changes: [{ key: 'b', artifact: artifact('b') }, { key: 'c', artifact: artifact('c') }] });
       expect(plain.methods.map(m => m.replace(/-[a-f0-9]{64}/, ''))).toEqual(transport.methods.map(m => m.replace(/-[a-f0-9]{64}/, '')));
     }
+  });
+
+  it('accepts the head receipt in place of the read-back only when asked, and still only a receipt bound to the bytes', async () => {
+    const headReads = (transport: NativeTransport, from: number): number => transport.methods.slice(from).filter(m => m === 'GET ' + scope.headUrl).length;
+    for (const accept of [false, true]) {
+      const transport = new NativeTransport(), events: NativeCommitDiagnostic[] = [];
+      const client = transport.client({ onCommit: event => { events.push(event); }, commitFromExpectedSnapshot: true, ...(accept ? { acceptHeadReceipt: true } : {}) });
+      const expected = await client.readHead(), from = transport.methods.length;
+      const receipt = await client.commit({ operationId: 'one', expected, changes: [{ key: 'k', artifact: artifact('v') }] });
+      expect(receipt.replayed).toBe(false);
+      // The commit starts from the caller's snapshot; the one head read left is the read-back.
+      expect(headReads(transport, from)).toBe(accept ? 0 : 1);
+      expect(events[0]!.outcome).toBe(0);
+      if (accept) expect(events[0]!.headReadMs).toBe(0);
+      // What the commit returned is the head a fresh reader now finds.
+      const fresh = await transport.client().readHead();
+      expect(fresh.revision).toBe(receipt.head.revision);
+      expect([...fresh.records.keys()]).toEqual(['k']);
+      // A receipt that does not describe the submitted bytes is refused either way.
+      for (const tamper of [(r: Record<string, unknown>) => { r.bodyDigest = 'sha256:' + '0'.repeat(64); }, (r: Record<string, unknown>) => { r.size = (r.size as number) + 1; }]) {
+        transport.receiptTransform = receipt => { if (receipt.resource === scope.headUrl) tamper(receipt); };
+        await expect(client.commit({ operationId: 'bad-' + events.length, expected: await client.readHead(), changes: [{ key: 'x', artifact: artifact('x') }] }))
+          .rejects.toThrow(/not bound to the submitted resource/);
+        transport.receiptTransform = undefined;
+      }
+    }
+  });
+
+  it('publishes the head by naming the staged commit object only when asked and offered, and falls back to the bytes', async () => {
+    const headBodies = (transport: NativeTransport, fetches: string[]): string[] => fetches;
+    for (const mode of ['off', 'unoffered', 'used', 'refused', 'mismatch'] as const) {
+      const transport = new NativeTransport(), sent: string[] = [];
+      transport.stageAvailable = true; transport.sourceAvailable = mode !== 'unoffered'; transport.refuseSource = mode === 'refused';
+      const client = transport.client({ commitFromExpectedSnapshot: true, acceptHeadReceipt: true, ...(mode === 'off' ? {} : { commitHeadFromStaged: true }),
+        fetch: async (url, init) => {
+          if (String(url) === scope.headUrl && init?.method === 'PUT') {
+            sent.push(Object.hasOwn(JSON.parse(String(init.body)) as object, 'source') ? 'source' : 'bytes');
+            // The staged commit object changes under the client: the server no longer holds what the head names.
+            if (mode === 'mismatch' && sent.length === 1) for (const [key, row] of transport.rows) if (key.includes('/commit-')) transport.rows.set(key, { ...row, bytes: Buffer.from('{}') });
+          }
+          return transport.fetch(url, init);
+        } });
+      const receipt = await client.commit({ operationId: 'one', expected: await client.readHead(), changes: [{ key: 'k', artifact: artifact('v') }] });
+      expect(receipt.replayed).toBe(false);
+      expect(headBodies(transport, sent)).toEqual({ off: ['bytes'], unoffered: ['bytes'], used: ['source'], refused: ['source', 'bytes'], mismatch: ['source', 'bytes'] }[mode]);
+      expect(transport.sourceCommits).toHaveLength(mode === 'used' ? 1 : 0);
+      if (mode === 'used') expect(transport.sourceCommits[0]).toMatch(/\/commit-[a-f0-9]{64}/);
+      // Either way the head holds the commit this client built, and one head write landed.
+      expect(transport.headWrites()).toBe(1);
+      if (mode !== 'mismatch') {
+        const fresh = await transport.client().readHead();
+        expect(fresh.revision).toBe(receipt.head.revision); expect([...fresh.records.keys()]).toEqual(['k']);
+      }
+    }
+    // The receipt for a head committed from a source is held to the bytes like any other.
+    const transport = new NativeTransport(); transport.stageAvailable = true; transport.sourceAvailable = true;
+    const client = transport.client({ commitFromExpectedSnapshot: true, acceptHeadReceipt: true, commitHeadFromStaged: true });
+    transport.receiptTransform = receipt => { receipt.bodyDigest = 'sha256:' + '0'.repeat(64); };
+    await expect(client.commit({ operationId: 'bad', expected: await client.readHead(), changes: [{ key: 'x', artifact: artifact('x') }] }))
+      .rejects.toThrow(/not bound to the submitted resource/);
+    // A head that moved is the same conflict, not a fallback.
+    transport.receiptTransform = undefined;
+    const stale = await client.readHead();
+    await client.commit({ operationId: 'first', expected: stale, changes: [{ key: 'a', artifact: artifact('a') }] });
+    await expect(client.commit({ operationId: 'second', expected: stale, changes: [{ key: 'b', artifact: artifact('b') }] })).rejects.toBeInstanceOf(NativeCommitConflictError);
   });
 
   it('reports replays, conflicts and errors, and an observer that throws or rejects changes nothing', async () => {
