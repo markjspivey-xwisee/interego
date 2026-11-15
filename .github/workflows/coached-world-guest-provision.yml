@@ -1,0 +1,55 @@
+name: Provision the coached world's guest door
+# Sets up the coached world's guests at identity, and the general guest beside them, inside this
+# runner (tools/coached-world-guest-provision.mjs): the service key (generated here when absent,
+# never overwritten), the service's identity account and its agent's registration with the relay,
+# the coached world's settings, then this origin's entry merged into identity's
+# PROVISIONAL_PLAY_CLIENTS and the general guest switch. No value is printed and nothing is
+# deployed: the run ends by naming the services to redeploy. Unticked `apply` is a dry run.
+# Dispatch only, from master, one run at a time.
+on:
+  workflow_dispatch:
+    inputs:
+      apply:
+        description: 'Create and write (unticked = dry run that lists what it would do)'
+        type: boolean
+        default: false
+      accept_terms_version:
+        description: 'The hosted terms version you have read and accept for the service account (a run without it prints the version identity asks for)'
+        type: string
+        required: false
+        default: ''
+      max_pods:
+        description: 'The most guest pods the coached world may ever admit (1 to 1000)'
+        type: number
+        default: 25
+      door_origin:
+        description: 'The general guest door: an https origin with no path, not identity itself'
+        type: string
+        default: 'https://door.interego.xwisee.com'
+permissions:
+  contents: read
+concurrency:
+  group: coached-world-guest-provision
+  cancel-in-progress: false
+jobs:
+  provision:
+    if: github.repository == 'markjspivey-xwisee/interego' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Install (the tool signs with ethers)
+        run: npm ci --ignore-scripts
+      - name: Verify the provisioning helper
+        run: node --test tests/coached-world-guest-provision.test.mjs
+      - name: Provision (values never printed)
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          APPLY: ${{ inputs.apply }}
+          ACCEPT_TERMS_VERSION: ${{ inputs.accept_terms_version }}
+          MAX_PODS: ${{ inputs.max_pods }}
+          DOOR_ORIGIN: ${{ inputs.door_origin }}
+        run: node tools/coached-world-guest-provision.mjs
