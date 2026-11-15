@@ -70,6 +70,9 @@ export async function setupPlayService({ privateKey, options, fetch: request, lo
   if (audience !== undefined && audience !== options.audience.replace(/\/+$/, '')) throw new Error('--audience must be an origin, with no path');
   const wallet = new Wallet(privateKey);
   const changed = [];
+  // What the account and the agent's registration are called. Another application's caller
+  // (tools/coached-world-guest-provision.mjs) names its own; nothing checks this label.
+  const serviceName = text(options.serviceName) ?? 'Foxxi play service';
 
   const post = async (url, body, bearer) => {
     const response = await request(url, { method: 'POST', body: JSON.stringify(body),
@@ -89,7 +92,7 @@ export async function setupPlayService({ privateKey, options, fetch: request, lo
     const message = `${new URL(identityUrl).host} wants you to sign in with your Ethereum account:\n${text(challenge.body.address) ?? wallet.address}`
       + `\n\n${statement}\n\nURI: ${identityUrl}\nVersion: 1\nChain ID: 1\nNonce: ${nonce}\nIssued At: ${new Date(now()).toISOString()}`;
     return post(`${identityUrl}/auth/siwe`, { message, signature: await wallet.signMessage(message), nonce,
-      ...(create ? { name: 'Foxxi play service' } : { existingOnly: true }) });
+      ...(create ? { name: serviceName } : { existingOnly: true }) });
   };
 
   log(`Service wallet: ${wallet.address}`);
@@ -143,7 +146,7 @@ export async function setupPlayService({ privateKey, options, fetch: request, lo
     }
     // No agent_id: over REST the relay defaults it to the session's own canonical DID, which is the
     // one this must register. No pod is named either: it defaults to the caller's own.
-    const registered = await post(`${relayUrl}/tool/register_agent`, { scope: 'ReadWrite', label: 'Foxxi play service' }, token);
+    const registered = await post(`${relayUrl}/tool/register_agent`, { scope: 'ReadWrite', label: serviceName }, token);
     if (!registered.ok || text(registered.body.error)) {
       log(`The relay refused the registration (${registered.status}${text(registered.body.error) ? `: ${registered.body.error}` : ''}).`);
       return { exitCode: 1, ready: false, changed, service: { userId, agentDid } };

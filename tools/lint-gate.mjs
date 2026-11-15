@@ -728,7 +728,8 @@ const BASELINE = {};
 // 2026-11-13: packages/pgsl/src/lattice-codec.ts and its test bring it to 709; the gate named 675.
 // 2026-11-14: packages/abac/portable/ (the dependency-free decision and its types) and
 // tests/abac-portable.test.ts bring it to 712; the gate named 678.
-export const MIN_FILES = 678;
+// 2026-11-15: tools/coached-world-guest-provision.mjs, its declarations and its test bring it to 715; the gate named 681.
+export const MIN_FILES = 681;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

@@ -7,6 +7,8 @@ export interface SetupOptions {
   audience?: string;
   identityUrl?: string;
   relayUrl?: string;
+  /** The account's name and the agent's label. Not an argument of the command line; defaults to Foxxi's. */
+  serviceName?: string;
 }
 export interface SetupOutcome {
   /** 0 ready; 1 a request failed or was refused; 2 a flag is needed to go further; 3 terms must be accepted first. */

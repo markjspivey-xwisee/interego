@@ -93,7 +93,7 @@ The Coach tab has a small voice card, built on the shared module `applications/_
 
 **The Railway service.** `coached-world-bridge` in the fleet project, created on 2026-11-14 from this image, at `https://coached-world-bridge-production.up.railway.app`. It has a row in `tools/railway-services.mjs`, so a merge that changes it is built and deployed by the pipeline, and the fleet audit checks what that row declares: one replica set explicitly, `overlapSeconds` 0, `drainingSeconds` unset. The row was added after the service existed, because that table is compared with the live project and a row for a service Railway does not have fails the audit.
 
-From that merge on, auto-deploy ships it whenever a file its image copies changes, and verifies `/health`. For real guests, also add this origin to identity's `PROVISIONAL_PLAY_CLIENTS` (see "Decisions for Georgio" below).
+From that merge on, auto-deploy ships it whenever a file its image copies changes, and verifies `/health`. Real guests are provisioned by a workflow ("Provisioning the real door" below).
 
 ## What maps to what
 
@@ -130,6 +130,21 @@ The engine files (`src/settle.ts`, `src/statements.ts`, `src/profile.ts`, `src/w
 - **PGSL** is not on the write path. Descriptors are the record, which matches the live descriptor-primary path. A lattice projection can sit beside it later without changing settlement.
 - **I2IDL-X** already has its own guest door (`i2idlx/app/src/learning-guest.js`). This page does not go through the learner workbench. Same proofs, different application audience.
 
+## Provisioning the real door
+
+The real door and the general guest are set up by one workflow, **Provision the coached world's guest door** (`.github/workflows/coached-world-guest-provision.yml`, `tools/coached-world-guest-provision.mjs`). It is dispatched by hand from master; nothing else runs it. No key, token or other application's entry is printed, and nothing is deployed.
+
+Inputs: `apply` (unticked is a dry run), `accept_terms_version` (the hosted terms version accepted for the service account; a run without it prints the version identity asks for and stops), `max_pods` (this application's lifetime cap, default 25), `door_origin` (default `https://door.interego.xwisee.com`).
+
+In this order, each step skipped when it is already done:
+
+1. **The service key.** `CPW_PLAY_SERVICE_PRIVATE_KEY` on `coached-world-bridge`. One already set is used and never overwritten. Otherwise one is generated in the runner and written at once, so a run that stops later is resumed with the same key. Back it up from Railway afterwards.
+2. **The service's identity account and its agent's registration with the relay**, through Foxxi's `tools/setup-play-service.mjs` (`applications/foxxi-content-intelligence/DURABLE-GUEST.md`, steps 3 and 4).
+3. **On `coached-world-bridge`:** `CPW_IDENTITY_URL`, `CPW_GENERAL_GUEST=1`, `CPW_GENERAL_GUEST_DOOR_ORIGIN`. `CPW_PLAY_AUDIENCE` and `CPW_RELAY_URL` stay unset, and a value in either that points elsewhere is refused.
+4. **On `identity`, last:** this origin's entry merged into `PROVISIONAL_PLAY_CLIENTS` (the agent and pod the relay actually signs the service as, namespace `coached-world`, `maxPods`, `generalGuest`, return path `/play/general/return`), then `GENERAL_GUEST_DOOR_ORIGIN`, then `PROVISIONAL_GENERAL_GUEST=1`. Every other application's entry is carried over as it was. A list identity could not start with, whether the one already there or the merged one, is refused before anything is written.
+
+Every write skips the deploy. The run ends with the service wallet's address, the agent DID, the pod, the origins in the client list, and the services to redeploy: `identity` first, then `coached-world-bridge`, so the world never asks identity for a guest identity does not know. The door's host name has to be routed to the identity service separately; the workflow adds no domain.
+
 ## Decisions for Georgio
 
 Georgio (`did:web:identity.interego.xwisee.com:agents:claude-u-pk-33d42e6b33dc`) owns practice-evidence and the Foxxi profile server. This change does not edit `applications/practice-evidence`.
@@ -137,4 +152,4 @@ Georgio (`did:web:identity.interego.xwisee.com:agents:claude-u-pk-33d42e6b33dc`)
 1. **Do not register this service as `lms`.** It does not call `pev.launched_statements`. The course's AU, through Foxxi `GET /cmi5/reviewed` (PR #883) and the LMS role (PR #881), is the only caller that should receive reviewed statements. This world only reads `passed` and `completed` after the AU has sent them.
 2. **Course IRIs** in `packs/mandate.json` are placeholders. Which published cmi5 course is the squad gate, the company gate and the command gate is his (or the operator's) to name in the pack. No code change.
 3. **Profile server.** `GET /profile` is the xAPI profile document for whatever pack is loaded. Registering it on the profile server is optional; Foxxi can already check a statement against a profile sent with it, which is what `src/statements.ts` does in process. If he would rather the profile live as a version on the profile server, the document is the one `buildProfile` returns — it should be stored, not rewritten.
-4. **`PROVISIONAL_PLAY_CLIENTS`** needs an entry for this application's origin before production grants work: its own service agent and pod, namespace `coached-world`. Nothing in identity's code has to change for that.
+4. **`PROVISIONAL_PLAY_CLIENTS`** gets its entry for this application's origin (its own service agent and pod, namespace `coached-world`) from the workflow in "Provisioning the real door" above. Nothing in identity's code has to change for that.
