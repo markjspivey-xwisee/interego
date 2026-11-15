@@ -217,9 +217,15 @@ export function statementWithoutDecorations(statement: Json): Json {
   return out;
 }
 
-const asksForADecoration = (template: Json): boolean =>
-  JSON.stringify([template.rules ?? [], template.contextCategoryActivityType ?? [], template.objectActivityType ?? []]).includes(IEP_NS)
-  || JSON.stringify(template).includes(XAPIX_NS);
+/**
+ * Whether following the template depends on a decoration: a rule or a determining property names
+ * one. A property that asks nothing of a statement, such as `xapix:offers`, does not count.
+ */
+const DECIDES_A_MATCH = ['rules', 'verb', 'objectActivityType', 'contextGroupingActivityType', 'contextParentActivityType', 'contextOtherActivityType', 'contextCategoryActivityType', 'attachmentUsageType'];
+const asksForADecoration = (template: Json): boolean => {
+  const read = JSON.stringify(DECIDES_A_MATCH.map(k => template[k] ?? null));
+  return read.includes(IEP_NS) || read.includes(XAPIX_NS);
+};
 
 /** X9 and X10 over a profile and the examples kept beside it. */
 export function lintXapixProfile(doc: Json, examples: ProfileExamples = { statements: [], sequences: [] }, options: XapixProfileOptions = {}): LintFinding[] {

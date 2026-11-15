@@ -15,9 +15,9 @@ import { mountProfileHosting } from '../src/xapi-profile-server/authoring-http.j
 import { builtInProfiles } from '../src/xapi-profile-server/built-in.js';
 import { lintProfile } from '../src/xapi-profile-server/lint.js';
 import { lintXapixProfile, lintXapixStatements } from '../src/xapix/lint.js';
-import type { Json } from '../src/xapi-profile-server/processor.js';
+import { validates, type Json } from '../src/xapi-profile-server/processor.js';
 import { FOXXI_PROFILE_ID } from '../src/xapi-profile.js';
-import { buildXapixProfileDoc, XAPIX_PROFILE_VERSION_ID, XAPIX_PROJECTION_TEMPLATE_ID } from '../src/xapix/profile.js';
+import { buildXapixProfileDoc, buildXapixProfileDocV1, XAPIX_PROFILE_V1_ID, XAPIX_PROFILE_VERSION_ID, XAPIX_PROJECTION_TEMPLATE_ID, XAPIX_V1_TEMPLATE_ID } from '../src/xapix/profile.js';
 import { IEP_DECORATIONS, XAPIX_PROFILE_ID, xapix } from '../src/xapix/namespace.js';
 
 const BASE = 'https://bridge.example/xapi/profiles';
@@ -59,8 +59,8 @@ afterAll(async () => { await new Promise(resolve => http.close(resolve)); });
 
 describe('the xapi-x profile on the profile server', () => {
   it('is built in beside Foxxi\'s own, as the document its source builds', () => {
-    expect(builtInProfiles().map(p => (p as { id: string }).id)).toEqual([FOXXI_PROFILE_ID, XAPIX_PROFILE_ID]);
-    expect(builtInProfiles()[1]).toEqual(buildXapixProfileDoc());
+    expect(builtInProfiles().map(p => (p as { id: string }).id)).toEqual([FOXXI_PROFILE_ID, XAPIX_PROFILE_ID, XAPIX_PROFILE_ID]);
+    expect(builtInProfiles().slice(1)).toEqual([buildXapixProfileDocV1(), buildXapixProfileDoc()]);
     expect(server.isBuiltIn(XAPIX_PROFILE_ID)).toBe(true);
     expect(server.dataset.get(XAPIX_PROFILE_ID)?.version).toBe(XAPIX_PROFILE_VERSION_ID);
   });
@@ -78,7 +78,8 @@ describe('the xapi-x profile on the profile server', () => {
   it('is listed by the server as built in, with nobody named as having added it', async () => {
     const index = await (await get('/xapi/profiles')).json() as { profiles: Array<{ id: string; version: string; builtIn: boolean; addedBy?: string }> };
     const listed = index.profiles.filter(p => p.id === XAPIX_PROFILE_ID);
-    expect(listed).toMatchObject([{ id: XAPIX_PROFILE_ID, version: XAPIX_PROFILE_VERSION_ID, builtIn: true }]);
+    expect(listed).toMatchObject([{ id: XAPIX_PROFILE_ID, version: XAPIX_PROFILE_V1_ID, builtIn: true }, { id: XAPIX_PROFILE_ID, version: XAPIX_PROFILE_VERSION_ID, builtIn: true }]);
+    expect((listed as unknown as Array<{ current: boolean }>).map(p => p.current)).toEqual([false, true]);
     expect(listed[0]!.addedBy).toBeUndefined();
   });
 
@@ -105,6 +106,17 @@ describe('the xapi-x profile on the profile server', () => {
     const refused = await validate(withoutSource(), XAPIX_PROFILE_ID);
     expect(refused.status).toBe(400);
     expect(JSON.stringify(await refused.json())).toContain(IEP_DECORATIONS.sourceDescriptor);
+  });
+
+  it('still holds version 1: its IRI resolves, and a statement written before the category existed validates against it', async () => {
+    expect(server.dataset.get(XAPIX_PROFILE_V1_ID)?.doc).toEqual(buildXapixProfileDocV1());
+    expect(server.dataset.get(XAPIX_PROFILE_ID)?.version).toBe(XAPIX_PROFILE_VERSION_ID);
+    expect((await resource(XAPIX_PROFILE_V1_ID)).status).toBe(200);
+    const { context: _none, ...before } = projected();
+    expect((await validate(before, XAPIX_PROFILE_V1_ID)).status).toBe(204);
+    // Against the current version it is not a projection at all, so nothing in it is judged.
+    expect(validates(before, (buildXapixProfileDoc().templates as Json[]).filter(t => t.deprecated !== true)).outcome).toBe('unmatched');
+    expect(validates(before, buildXapixProfileDocV1().templates as Json[])).toMatchObject({ outcome: 'success', templates: [XAPIX_V1_TEMPLATE_ID] });
   });
 
   it('is not replaced and not taken down, by an agent or by the operator', async () => {

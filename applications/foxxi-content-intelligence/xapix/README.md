@@ -310,7 +310,7 @@ xAPI's own signed statements (a JWS attachment) attest one statement's content. 
 
 **Version 1's template has no determining property**, because nothing in a statement the lrs-adapter wrote then marked it as a projection except the keys themselves. Asked of version 1, every statement is held to it: a statement without the keys is *invalid*, not *unmatched*. That is the right answer to "is this a well-formed projection?" and the wrong template to copy into a domain profile.
 
-**Version 2 selects on `contextCategoryActivityType: [xapix:Projection]`**, now that emitters write the category. A statement that does not claim to be a projection is unmatched. A projection must also say whether it is lossy and must not link to controls. Version 2 declares the six `xapix:` context extensions and the activity type. Version 1's template is kept in it, deprecated, and statements written before 2026-11-16 are judged against version 1. **Version 2 is in the repository and on the profile server; the pod still serves version 1** until version 2 is published there.
+**Version 2 selects on `contextCategoryActivityType: [xapix:Projection]`**, now that emitters write the category. A statement that does not claim to be a projection is unmatched. A projection must also say whether it is lossy and must not link to controls. Version 2 declares the six `xapix:` context extensions and the activity type. Version 1's template is kept in it, deprecated, and statements written before 2026-11-16 are judged against version 1. The profile server holds both versions, so `…/v/1` still resolves and still validates. **Version 2 is in the repository and on the profile server; the pod still serves version 1** until version 2 is published there.
 
 ### Lint rules
 

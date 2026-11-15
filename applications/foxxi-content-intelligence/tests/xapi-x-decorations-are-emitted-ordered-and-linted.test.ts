@@ -177,5 +177,8 @@ describe('the xapi-x rules over a profile', () => {
     // A template that depends on a decoration without saying so in a way the rule can see: it hides the key behind a wildcard.
     const hidden = profile({}, { rules: [{ location: '$.result.extensions.*', presence: 'included' }] });
     expect(codes(lintXapixProfile(hidden, examples(decorated)))).toEqual(['xapix-not-a-superset']);
+    // An offer asks nothing of a statement, so a template that carries one is still checked.
+    const offering = profile({}, { rules: [{ location: '$.result.extensions.*', presence: 'included' }], [xapix('offers')]: [{ '@id': offer }] });
+    expect(codes(lintXapixProfile(offering, examples(decorated)))).toEqual(['xapix-not-a-superset']);
   });
 });
