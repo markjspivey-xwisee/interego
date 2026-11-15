@@ -80,6 +80,13 @@ export interface Tally {
    * happened — and the first live run hit exactly that case.
    */
   offeredKinds: Record<string, number>;
+  /**
+   * Permission requests about a TOOL (any kind but switch_mode) whose menu offered
+   * reject_always. This, not offeredKinds.reject_always, is the supply the verdict reads: a
+   * standing refusal of a mode switch denies no tool and is kept out of the deny set, so an
+   * offer of it is no chance to deny a tool either.
+   */
+  rejectAlwaysOfferedForTools: number;
   /** Outcomes by the option KIND the human's chosen optionId resolved to. */
   outcomeByKind: Record<string, number>;
   /** Requests that were answered `cancelled` rather than `selected`. */
@@ -256,6 +263,7 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
     protocolVersion: null,
     permissionRequests: 0,
     offeredKinds: {},
+    rejectAlwaysOfferedForTools: 0,
     outcomeByKind: {},
     cancelled: 0,
     unanswered: 0,
@@ -361,6 +369,9 @@ export function createTally(): { tally: Tally; observer: Observer; finish(): Tal
       // chosen by anyone, and a zero that means "impossible" must not be read as a
       // zero that means "declined".
       if (typeof opt?.kind === 'string') bump(tally.offeredKinds, opt.kind);
+    }
+    if (toolKind !== SWITCH_MODE_KIND && [...kinds.values()].includes('reject_always')) {
+      tally.rejectAlwaysOfferedForTools++;
     }
     if (id !== null) pending.set(id, { kinds, toolKind, sessionId: sid });
   };
@@ -569,7 +580,9 @@ export function summarise(t: Tally): string {
   const always = Object.entries(t.outcomeByKind)
     .filter(([k]) => k.endsWith('always'))
     .reduce((n, [, v]) => n + v, 0);
-  const offeredRejectAlways = (t.offeredKinds['reject_always'] ?? 0) > 0;
+  // The supply is reject_always on a TOOL's menu: an offer on a mode switch is not one.
+  const offeredRejectAlways = t.rejectAlwaysOfferedForTools > 0;
+  const offeredOnlyOnModeSwitch = !offeredRejectAlways && (t.offeredKinds['reject_always'] ?? 0) > 0;
   const offeredAllowAlways = (t.offeredKinds['allow_always'] ?? 0) > 0;
   const lines = [
     ...header,
@@ -597,8 +610,11 @@ export function summarise(t: Tally): string {
       '  approval for this work, or the editor auto-approves. Not yet informative —',
       '  re-run on work that touches files.');
   } else if (!offeredRejectAlways) {
-    lines.push('  VERDICT: UNTESTED — not unsupported. `reject_always` was never OFFERED in',
-      `  ${t.permissionRequests} permission request(s), so no human could have chosen it. The`,
+    lines.push(offeredOnlyOnModeSwitch
+      ? '  VERDICT: UNTESTED — not unsupported. `reject_always` was offered only on a mode switch,\n'
+        + `  never on a tool, in ${t.permissionRequests} permission request(s), so no human could have denied a tool. The`
+      : '  VERDICT: UNTESTED — not unsupported. `reject_always` was never OFFERED in\n'
+        + `  ${t.permissionRequests} permission request(s), so no human could have chosen it. The`,
       '  standing-constraint thesis has no supply here, but the reason is the AGENT’s menu,',
       '  not the developer’s behaviour — a different finding with a different remedy.',
       offeredAllowAlways
@@ -607,7 +623,7 @@ export function summarise(t: Tally): string {
         : '  Neither always-scoped kind was offered; every decision here was per-event.');
   } else if (t.deniedAlwaysKinds.length === 0) {
     lines.push('  VERDICT: `reject_always` WAS offered'
-      + ` (${t.offeredKinds['reject_always']} time(s)) and never chosen for a tool. On this`,
+      + ` (${t.rejectAlwaysOfferedForTools} time(s)) on a tool and never chosen for one. On this`,
       '  evidence the standing-constraint thesis is genuinely unsupported: the deny set would',
       '  be empty, so there is nothing for a vertical to subtract and no downward causation.');
   } else {

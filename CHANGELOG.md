@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-15 — Editor witness: reject-always offered only on a mode switch leaves the thesis untested
+
+The witness keeps a standing refusal of a mode switch out of the deny set,
+because it denies no tool. But its verdict still read reject-always as offered
+whenever any menu carried it, plan approvals included. So a session whose only
+reject-always offers were on mode-switch menus read "genuinely unsupported",
+though no tool request had ever offered a standing denial. A Codex review of
+this branch found it. The tally now counts `rejectAlwaysOfferedForTools`: the
+permission requests about a tool, of any kind but `switch_mode`, whose menu
+offered reject_always. The verdict reads that count. When reject-always was
+offered only on a mode switch, the verdict is UNTESTED and says so.
+
+Tests: a session that offered reject-always only on the plan approval reads
+UNTESTED, not unsupported. One that also offered it on an edit request, and
+had it declined there, still reads unsupported and gives the tool count. Both
+fail on the earlier rule.
+
+Not covered: the `options OFFERED` line still counts every menu, mode switches
+included. That is a count of what was on screen, not of chances to deny a
+tool.
+
 ## 2026-11-15 — Dependencies: the agent SDK's Linux builds name their libc, the root takes `@anthropic-ai/sdk` 0.99.0, and the v1 MCP SDK is declared
 
 A review of the claude-agent-acp change (the "Dependencies: claude-code-acp

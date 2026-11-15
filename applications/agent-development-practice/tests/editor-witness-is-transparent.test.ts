@@ -736,6 +736,40 @@ describe('consent is counted by correlating the answer back to the request', () 
     expect(out).toMatch(/refused a MODE SWITCH for good/);
   });
 
+  it('reports UNTESTED when reject_always was offered only on a mode switch, never on a tool', async () => {
+    // A standing refusal of a mode switch is kept out of the deny set, so an offer of it is
+    // no chance to deny a tool either. Counted as one, the verdict read "genuinely
+    // unsupported" for a run in which no tool request ever offered a standing denial.
+    const withProbe = [...SUCCESSOR_EXIT_PLAN, { optionId: 'iep_reject_always', kind: 'reject_always', name: 'Reject always (Approve)' }];
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  successorExitPlanReq(1, withProbe) + '\n'],
+      ['editor', ans(1, 'iep_reject_always') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.rejectAlwaysOfferedForTools).toBe(0);
+    const out = summarise(t);
+    expect(out).toMatch(/VERDICT: UNTESTED/);
+    expect(out).not.toMatch(/genuinely unsupported/);
+    expect(out).toMatch(/only on a mode switch/);
+  });
+
+  it('still reads unsupported when a tool request offered reject_always and it was not chosen', async () => {
+    const withProbe = [...SUCCESSOR_EXIT_PLAN, { optionId: 'iep_reject_always', kind: 'reject_always', name: 'Reject always (Approve)' }];
+    const { observer, finish } = createTally();
+    await runScript([
+      ['agent',  successorExitPlanReq(1, withProbe) + '\n'],
+      ['editor', ans(1, 'iep_reject_always') + '\n'],
+      ['agent',  req(2, 'edit') + '\n'],
+      ['editor', ans(2, 'a1') + '\n'],
+    ], [observer]);
+    const t = finish();
+    expect(t.rejectAlwaysOfferedForTools).toBe(1);
+    const out = summarise(t);
+    expect(out).toMatch(/genuinely unsupported/);
+    expect(out).toMatch(/offered \(1 time\(s\)\) on a tool/);
+  });
+
   /**
    * ★ THE MODE A SESSION STARTS IN IS IN THE AGENT'S RESULT, AND NOWHERE ELSE.
    *
