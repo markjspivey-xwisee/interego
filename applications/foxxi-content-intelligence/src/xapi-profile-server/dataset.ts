@@ -49,15 +49,22 @@ export class ProfileDataset {
   private readonly graphs = new Map<string, TripleStore>();
   private defaultGraph: TripleStore | undefined;
 
-  /** Hold a profile document. A version already held is replaced by the same version given again. */
-  add(doc: Json): HeldProfile {
+  /** What a profile document would be held as, without holding it: nothing here answers for it yet. */
+  prepare(doc: Json): HeldProfile {
     const { versions, current } = versionsOf(doc);
     const id = (doc as { id: string }).id;
-    const held: HeldProfile = {
+    return {
       id, version: current.id, versions, doc,
       ...(current.generatedAtTime ? { generatedAtTime: current.generatedAtTime } : {}),
       stated: profileTriples(doc, current.id),
     };
+  }
+
+  /** Hold a profile document. A version already held is replaced by the same version given again. */
+  add(doc: Json): HeldProfile { return this.put(this.prepare(doc)); }
+
+  /** Hold what `prepare` made. From here on the version answers. */
+  put(held: HeldProfile): HeldProfile {
     this.byVersion.set(held.version, held);
     this.graphs.delete(held.version);
     this.defaultGraph = undefined;

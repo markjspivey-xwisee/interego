@@ -15,7 +15,7 @@ import type { Express, Request, Response, RequestHandler } from 'express';
 import { rateLimit, type Options as RateLimitOptions } from 'express-rate-limit';
 import { LintRefused, type DraftView, type ProfileAuthoring } from './authoring.js';
 import { emptyExamples, type ExternalTerm, type ProfileExamples } from './lint.js';
-import { ProfileServerError, type ProfileServer, type Resolved } from './service.js';
+import { ProfileServerError, PublicationNotKept, type ProfileServer, type Resolved } from './service.js';
 
 type Body = Record<string, unknown>;
 const isObj = (v: unknown): v is Body => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -50,6 +50,7 @@ function draftPayload(view: DraftView, base: string): Body {
     ok: true, profile: d.profile, version: d.version, ...(d.revises ? { revises: d.revises } : {}), updatedAt: d.updatedAt,
     document: d.document, examples: d.examples, external: d.external,
     findings: view.findings, publishable: view.publishable,
+    examplesWhenPublished: `Public. The examples are published with the version and served to anyone at ${base}/examples?iri=<version IRI>. Keep real people out of them.`,
     counts: { concepts: count(d.document.concepts), templates: count(d.document.templates), patterns: count(d.document.patterns),
       exampleStatements: d.examples.statements.length, exampleSequences: d.examples.sequences.length },
     lint: `${base.replace(/\/xapi\/profiles$/, '')}/agent/xapi-profiles/lint`,
@@ -68,6 +69,12 @@ export function mountProfileAuthoring(app: Express, authoring: ProfileAuthoring,
       send(req, res, await run(auth.payload, auth.callerDid), title);
     } catch (e) {
       if (e instanceof LintRefused) { res.status(e.status).json({ error: e.message, publishable: false, findings: e.findings }); return; }
+      // Not ok, not published, not immutable: the durable write did not land, and the draft is as it was.
+      if (e instanceof PublicationNotKept) {
+        res.status(e.status).json({ ok: false, published: false, persisted: false, error: e.message, profile: e.profile, version: e.version,
+          draftKept: true, retry: `${o.base.replace(/\/xapi\/profiles$/, '')}/agent/xapi-profiles/publish` });
+        return;
+      }
       if (e instanceof ProfileServerError) { res.status(e.status).json({ error: e.message }); return; }
       res.status(500).json({ error: 'The profile server could not answer.' });
     }
@@ -100,6 +107,8 @@ export function mountProfileAuthoring(app: Express, authoring: ProfileAuthoring,
       triples: r.held.stated.length, publishedBy: by,
       document: resourceUrl(o.base, r.held.version), resolve: `${o.base}/resource`,
       validateTemplates: `${o.base}/validate_templates`, validatePatterns: `${o.base}/validate_patterns`, sparql: `${o.base}/sparql`,
+      // Public from now on: what the draft's examples were is served to anyone here.
+      examples: `${o.base}/examples?iri=${encodeURIComponent(r.held.version)}`,
       holonUri: r.holonUri ?? null, persisted: r.persisted,
     };
   }));
@@ -146,7 +155,8 @@ export function mountProfileHosting(app: Express, server: ProfileServer, o: Host
   };
 
   app.get('/xapi/profiles/resource', serve(req => typeof req.query.iri === 'string' && req.query.iri !== '' ? req.query.iri : undefined));
-  // The examples a version was published with: what its writer showed the lint.
+  // The examples a version was published with: what its writer showed the lint. Public, like the
+  // version itself: no signature is asked for. The writer is told so when drafting and publishing.
   app.get('/xapi/profiles/examples', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     try {

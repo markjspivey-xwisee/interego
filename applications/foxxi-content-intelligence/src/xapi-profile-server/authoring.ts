@@ -15,6 +15,12 @@
  * published versions live in is append-only and public: keeping every keystroke of a draft there
  * would fill it with documents nobody published. Every answer about a draft carries the whole
  * draft, so a writer who keeps the answer can send it back as `document` and `examples`.
+ *
+ * ★ EXAMPLES BECOME PUBLIC AT PUBLICATION. While a draft is open its examples are its writer's.
+ * Once the version is published they are kept in the public lattice with it and served to anyone
+ * at `GET /xapi/profiles/examples?iri=<version>` (./authoring-http.ts). The draft and publish
+ * affordances and every draft answer say so, because an example statement is easily copied from a
+ * real one, actor and all.
  */
 import { lintProfile, emptyExamples, type ExampleSequence, type ExampleStatement, type ExternalTerm, type LintFinding, type ProfileExamples } from './lint.js';
 import { MAX_PROFILE_BYTES, ProfileServerError, whyNotAddable, type ProfileServer } from './service.js';
@@ -319,8 +325,14 @@ export class ProfileAuthoring {
     return [...this.drafts.values()].filter(d => d.by === by).map(d => ({ profile: d.profile, version: d.version, updatedAt: d.updatedAt }));
   }
 
-  /** Publish a draft as a version. Refused, with the findings, unless the lint has none. */
-  async publish(profile: unknown, by: string): Promise<{ held: HeldProfile; generatedAtTime: string; revises?: string; deprecated: string[]; holonUri?: string; persisted: boolean }> {
+  /**
+   * Publish a draft as a version. Refused, with the findings, unless the lint has none.
+   *
+   * The draft is closed only after the server has kept the version durably. When that write does
+   * not land, `server.publish` throws PublicationNotKept before anything below it runs: the draft
+   * stays in the map and in the store exactly as it was, and publishing it again is the retry.
+   */
+  async publish(profile: unknown, by: string): Promise<{ held: HeldProfile; generatedAtTime: string; revises?: string; deprecated: string[]; holonUri?: string; persisted: true }> {
     await this.ready();
     const draft = this.mine(profile, by, true)!;
     const at = this.now();
@@ -328,8 +340,12 @@ export class ProfileAuthoring {
     const findings = this.lintDocument(doc, draft.examples, draft.external, draft.version, draft.profile);
     if (findings.length > 0) throw new LintRefused(findings);
     const r = await this.server.publish(doc, copy(draft.examples), copy(draft.external), by, at);
+    // Kept durably: a publication that was not kept threw above, and `r.persisted` is `true` by its type.
     this.drafts.delete(draft.profile);
-    await this.options.store?.drop(draft.profile);
+    // The version is published whether or not the stored draft could be dropped. A draft left in the
+    // store is read back at the next start as a draft of a version already held, which cannot be
+    // published twice; failing the request here would tell the writer a kept publication had failed.
+    try { await this.options.store?.drop(draft.profile); } catch { /* see above */ }
     const deprecated = PARTS.flatMap(key => (Array.isArray(doc[key]) ? doc[key] as Json[] : []).filter((p): p is Obj => isObj(p) && p.deprecated === true).map(p => String(p.id)));
     return { held: r.held, generatedAtTime: at, ...(previous ? { revises: previous.version } : {}), deprecated, ...(r.holonUri ? { holonUri: r.holonUri } : {}), persisted: r.persisted };
   }

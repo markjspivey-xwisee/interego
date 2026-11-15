@@ -53,6 +53,16 @@ export interface ProfileServerOptions {
 
 export class ProfileServerError extends Error { constructor(readonly status: number, message: string) { super(message); } }
 
+/**
+ * A publication whose durable write was not acknowledged. Nothing was published: the version is
+ * not held and answers nowhere, and publishing the same version again is allowed.
+ */
+export class PublicationNotKept extends ProfileServerError {
+  constructor(readonly profile: string, readonly version: string, why: string) {
+    super(503, `${version} was not published: ${why} Nothing changed: the version is not held here and answers nowhere. Publishing the same version again is allowed.`);
+  }
+}
+
 export class ProfileServer {
   readonly dataset = new ProfileDataset();
   /** profile IRI → the agent that first added it. */
@@ -60,6 +70,8 @@ export class ProfileServer {
   private readonly builtInIds = new Set<string>();
   /** version IRI → what it was published with. A version here is immutable. */
   private readonly publishedVersions = new Map<string, { examples: ProfileExamples; external: ExternalTerm[]; at: string }>();
+  /** version IRI → a publication waiting on its durable write. The version is not held until that lands. */
+  private readonly publishing = new Map<string, { id: string; by: string }>();
   private hydrated: Promise<void> | undefined;
   private keptBytes = 0;
 
@@ -86,6 +98,14 @@ export class ProfileServer {
   }
 
   private hold(doc: Json, by: string): HeldProfile {
+    const held = this.admit(doc, by);
+    this.dataset.put(held);
+    this.owners.set(held.id, by);
+    return held;
+  }
+
+  /** Whether a document may be held for an agent, and what it would be held as. Holds nothing. */
+  private admit(doc: Json, by: string): HeldProfile {
     const why = whyNotAddable(doc);
     if (why) throw new ProfileServerError(400, why);
     const id = (doc as Obj).id as string;
@@ -100,12 +120,15 @@ export class ProfileServer {
     const taken = this.dataset.all().find(h => h.version === version || h.id === version);
     if (taken && taken.id !== id) throw new ProfileServerError(409, `${version} is already held as a version of ${taken.id}.`);
     if (this.dataset.all().some(h => h.version === id)) throw new ProfileServerError(409, `${id} is held here as a version, not as a profile.`);
-    const held = this.dataset.add(doc);
-    if (held.stated.length > MAX_PROFILE_TRIPLES) {
-      this.dataset.remove(held.version);
+    // A publication waiting on its durable write has the version, and the profile for its writer.
+    if (this.publishing.has(version)) throw new ProfileServerError(409, `${version} is being published now.`);
+    if ([...this.publishing.values()].some(p => p.id === id && p.by !== by)) throw new ProfileServerError(409, `${id} is being published by another agent now.`);
+    // The two checks above on what is held, made on what is about to be: an IRI is a profile or a version, not both.
+    if (this.publishing.has(id)) throw new ProfileServerError(409, `${id} is being published now as a version, and cannot also be a profile.`);
+    if ([...this.publishing.values()].some(p => p.id === version)) throw new ProfileServerError(409, `${version} is being published now as a profile, and cannot also be a version.`);
+    const held = this.dataset.prepare(doc);
+    if (held.stated.length > MAX_PROFILE_TRIPLES)
       throw new ProfileServerError(413, `The profile states ${held.stated.length} triples; this server holds profiles of up to ${MAX_PROFILE_TRIPLES}.`);
-    }
-    this.owners.set(id, by);
     return held;
   }
 
@@ -152,8 +175,14 @@ export class ProfileServer {
   /**
    * Publish a version: held like an added one, and from then on immutable. The caller (./authoring.ts)
    * has linted the document and fixed its `generatedAtTime`; this refuses a version already held.
+   *
+   * ★ THE DURABLE WRITE COMES FIRST. A published version is a promise that its IRIs keep answering,
+   * and one that lives only in this process breaks it at the next restart. So the version is held,
+   * and answers, only once `persist` has said `persisted: true`. Until then nothing here serves it;
+   * when the write fails or is not acknowledged this throws PublicationNotKept, leaves no trace,
+   * and the same version can be published again. A server given no `persist` publishes nothing.
    */
-  async publish(doc: Json, examples: ProfileExamples, external: ExternalTerm[], by: string, at: string): Promise<{ held: HeldProfile; holonUri?: string; persisted: boolean }> {
+  async publish(doc: Json, examples: ProfileExamples, external: ExternalTerm[], by: string, at: string): Promise<{ held: HeldProfile; holonUri?: string; persisted: true }> {
     await this.ready();
     const why = whyNotAddable(doc);
     if (why) throw new ProfileServerError(400, why);
@@ -161,15 +190,27 @@ export class ProfileServer {
     if (this.dataset.all().some(h => h.version === version)) throw new ProfileServerError(409, `${version} is already held here. A published version is not changed: give the draft a new version IRI.`);
     const size = sizeOf(doc) + sizeOf(examples);
     if (this.options.persist && this.keptBytes + size > MAX_KEPT_BYTES) throw new ProfileServerError(507, 'This server has kept as many profile documents as it holds; an operator has to make room.');
-    const held = this.hold(doc, by);
+    const held = this.admit(doc, by);
+    if (!this.options.persist) throw new PublicationNotKept(held.id, version, 'this server has no durable store to keep a published version in.');
+    this.publishing.set(version, { id: held.id, by });
+    // Its bytes are counted from here, so what is on its way to the pod is inside the ceiling that
+    // `add` and other publications are measured against. They are given back if it is not kept.
     this.keptBytes += size;
-    this.publishedVersions.set(held.version, { examples, external, at });
-    let kept: { holonUri?: string; persisted?: boolean } = {};
-    if (this.options.persist) {
+    let landed = false;
+    try {
+      let kept: { holonUri?: string; persisted?: boolean };
       try { kept = await this.options.persist({ kind: 'published', doc, examples, external, by, at }, held); }
-      catch { kept = { persisted: false }; }
+      catch { throw new PublicationNotKept(held.id, version, 'the durable write failed.'); }
+      if (kept.persisted !== true) throw new PublicationNotKept(held.id, version, 'the durable write was not acknowledged.');
+      this.dataset.put(held);
+      this.owners.set(held.id, by);
+      this.publishedVersions.set(held.version, { examples, external, at });
+      landed = true;
+      return { held, ...(kept.holonUri ? { holonUri: kept.holonUri } : {}), persisted: true };
+    } finally {
+      this.publishing.delete(version);
+      if (!landed) this.keptBytes -= size;
     }
-    return { held, ...(kept.holonUri ? { holonUri: kept.holonUri } : {}), persisted: kept.persisted === true };
   }
 
   /** What a version was published with, when it was published from a draft here. */
