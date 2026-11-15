@@ -14,7 +14,7 @@ The descriptor field is already set to the i2idlx catalog (`https://relay.intere
 
 <https://markjspivey-xwisee.github.io/interego/hypermedia-client/?autoload=1>
 
-`relay.interego.xwisee.com`, `id.i2idl.org`, and `foxxi-bridge.interego.xwisee.com` send `Access-Control-Allow-Origin: *`, so the browser calls them directly. Leave the CORS proxy field empty on the hosted page. The proxy only matters for some other descriptor host that does not send those headers, and `proxy.py` is a local process — it is not part of the Pages site.
+`relay.interego.xwisee.com`, `id.i2idl.org`, and `foxxi-bridge.interego.xwisee.com` sent `Access-Control-Allow-Origin: *` when they were checked on 2026-11-09, so the browser calls them directly. Leave the CORS proxy field empty on the hosted page. It only matters for some other descriptor host that does not send those headers, and then it takes a proxy you run yourself (see [The proxy field](#the-proxy-field)).
 
 Unsafe operations stay a dry run until you check **I confirm this write**. The same `?url=` deep links work on the hosted page, for example:
 
@@ -30,7 +30,6 @@ That link runs a safe SPARQL GET. Do not add a write control to `invoke` without
 | --- | --- |
 | `index.html` | Self-contained web app (HTML + JS, no build step) |
 | `hmc.py` | Python library + CLI |
-| `proxy.py` | Optional local static server and CORS proxy |
 
 ## How to run
 
@@ -47,26 +46,25 @@ python3 hmc.py invoke URL act-propose-mapping --field graph_iri=x --field graph_
 
 The last command is a dry run: unsafe operations never send unless you pass `--confirm`.
 
-Web app:
+Web app: use the hosted page, open `index.html` directly as a file, or point any static server at this directory. There is no build step and nothing to install.
 
-```bash
-python3 proxy.py --port 8765
-# then open http://127.0.0.1:8765/
-```
-
-`proxy.py` listens on `127.0.0.1` unless you pass `--bind`. It serves `index.html` and forwards `GET`, `HEAD`, `POST`, `PUT`, `PATCH`, `DELETE`, and explicit `OPTIONS` for `/proxy?url=...`, adding `Access-Control-Allow-Origin: *`. A browser CORS preflight (`OPTIONS` with `Access-Control-Request-Method`) is answered locally and is not forwarded.
-
-You do not need the proxy for the i2idlx catalog, `id.i2idl.org`, or `foxxi-bridge.interego.xwisee.com` — those hosts already send `Access-Control-Allow-Origin: *`. Use the proxy field in the UI (set it to `/proxy`) when some other descriptor host blocks the browser. Descriptor loads through the proxy ask for `?as=jsonld`, and the proxy also converts Turtle when `Accept` prefers JSON-LD, so a Turtle-only host loads when `rdflib` is installed next to `proxy.py`.
-
-The proxy forwards only `http` and `https`. After DNS resolution it refuses loopback, private, link-local, and metadata addresses (for example `127.0.0.1`, `10.0.0.0/8`, `169.254.169.254`, `metadata.google.internal`). Pass `--allow-private` only when you mean to proxy those. `--allow-host example.org` (repeatable) limits forwarding to the named hosts; a name on that list still has to pass the private-address check unless `--allow-private` is set. Redirects are checked again on each hop.
-
-You can also open `index.html` directly as a file, or point any static server at this directory.
+The web app reads JSON-LD and HyperMarkdown. A host that serves only Turtle needs `?format=jsonld`, or use `hmc.py`, which reads Turtle when `rdflib` is installed.
 
 Deep link example:
 
 ```
 index.html?url=https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx-catalog&invoke=act-query-glossary&query=SELECT%20(COUNT(%3Fc)%20AS%20%3Fn)%20WHERE%20%7B%20%3Fc%20a%20%3Chttp://www.w3.org/2004/02/skos/core%23Concept%3E%20%7D
 ```
+
+### The proxy field
+
+The proxy field is optional, and it is empty unless you type into it. The page never fills it from its own address, so a link cannot route your requests through someone else's server.
+
+It takes the absolute `https://` URL of a CORS proxy you run yourself. The page sends each request to that URL with the target appended as a `url` query parameter (`<proxy>?url=<encoded target>`, or `&url=` when the proxy URL already has a query). Use it only for a descriptor host that does not send `Access-Control-Allow-Origin`.
+
+A proxy sees every request sent through it, including the body of any write you confirm. Use one you control.
+
+This directory used to ship a local forwarding proxy, `proxy.py`. It was removed: a server that fetches whatever URL it is handed has to defend every address it can reach, and the hosted page does not need one for the hosts it was written against.
 
 ## How target resolution works
 
@@ -95,20 +93,25 @@ URI templates use RFC 6570 percent-encoding of UTF-8 (`encodeURIComponent` seman
 - GET / HEAD / OPTIONS are treated as safe and may be sent.
 - POST, PUT, PATCH, DELETE, anything with `iep:destructiveHint true`, or `iep:readOnlyHint false` is unsafe.
 - Unsafe operations default to a dry run that prints the exact URL, headers, body, and MCP call. The web UI requires an explicit checkbox before Invoke is enabled. The CLI requires `--confirm`.
+- The web app shows everything a remote document or response contains as text. An HTML response is shown as source, not rendered. Only an `http(s)` URL becomes followable, and following one fetches it as a descriptor; nothing a remote document sends becomes a link the browser navigates, a script, a style, an event handler, or a form field's `name`.
+- The page sends requests over `https` only.
+- The page carries a Content-Security-Policy: no source by default, its own inline script and stylesheet allowed by SHA-256 hash only, no inline event handlers, `connect-src https:`, and `object-src`, `base-uri` and `form-action` set to `'none'`. Editing the inline script or `<style>` changes its hash, so the policy has to be updated with it; `tests/hypermedia-client-rendering.test.ts` fails and prints the expected hash when they disagree. That test also loads the page with hostile documents and responses and checks what reaches the DOM.
 - Do not live-invoke write controls such as `act-propose-mapping`, `act-ratify`, `act-publish-classified`, `act-align-course-concept`, `write-xapi-statements-signed`, `act-request-upstream-review` (it opens a GitHub issue form), or `coverage-query`.
 
 ## CORS
 
-Checked against live responses:
+Checked against live responses on 2026-11-09:
 
 - `https://relay.interego.xwisee.com/ns/...` (catalog and related graphs): `access-control-allow-origin: *` on GET.
 - `https://id.i2idl.org/scheme.ttl`, `/sparql`, `/api/v1/concepts`: `access-control-allow-origin: *`.
 - `https://foxxi-bridge.interego.xwisee.com/affordances`: `access-control-allow-origin: *`.
 - `https://relay.interego.xwisee.com/tool/publish_context`: not a public HTTP resource (GET 404); CORS allow-origin is `https://relay.interego.xwisee.com` only.
 
-So the browser can load the tested catalogs and follow their public HTTP reads without the proxy. The proxy is there for hosts that do not send those headers, and as a one-command way to serve the app.
+So the browser can load the tested catalogs and follow their public HTTP reads without a proxy. A host that does not send those headers needs a CORS proxy you run yourself (see [The proxy field](#the-proxy-field)).
 
 ## What was verified live
+
+These results are from 2026-11-09, when the client was written. The catalog and the Foxxi manifest have changed since, so the counts below are a record of that day, not of today; `python3 hmc.py list URL` gives the current numbers.
 
 Against `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx-catalog` (authority JSON-LD):
 
@@ -118,7 +121,7 @@ Against `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx-catalog` 
 - **act-rest-listConcepts** `--field limit=2` → expanded `https://id.i2idl.org/api/v1/concepts{?q,field,type,source,collection,limit,offset}` to `https://id.i2idl.org/api/v1/concepts?limit=2&offset=0` → HTTP 200, `total: 420`, first items `a-b-testing` and `about-resource`.
 - **act-propose-mapping** was only dry-run. Transport: MCP. Declared target `https://relay.interego.xwisee.com/tool/publish_context`. Defaults filled `modal_status=Hypothetical`, `visibility=shared`, `conforms_to_shapes=.../i2idlx-shapes`. Nothing was sent.
 
-Against the catalog's `rdfs:seeAlso` link `https://foxxi-bridge.interego.xwisee.com/affordances` (a compacted JSON-LD manifest, 166 affordances):
+Against the catalog's `rdfs:seeAlso` link `https://foxxi-bridge.interego.xwisee.com/affordances` (a compacted JSON-LD manifest, 166 affordances on that date):
 
 - **list** found 16 GET and 150 POST controls from embedded `affordances` and JSON Schema `expects` objects.
 - **urn:iep:action:foxxi:discover-lrs** → `GET https://foxxi-bridge.interego.xwisee.com/xapi/about` → HTTP 200, xAPI versions `2.0.0` through `1.0.0`.

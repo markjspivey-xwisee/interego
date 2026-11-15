@@ -2,6 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-lluXWkgh2tZVIofs0UKRLeqliblAgDNuXum7X9jBdYU='; style-src 'sha256-2fMl6VtdGFOYNdDnFQCRvmDOQzQTGlnITAJO8XiFELY='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -60,10 +61,10 @@
     .card.active { outline: 2px solid var(--accent); }
     .card .row { display: flex; gap: 8px; align-items: baseline; }
     .badge { font: 700 10px var(--mono); padding: 2px 6px; border-radius: 999px; letter-spacing: .04em; }
-    .badge.get { background: var(--safe-bg); color: var(--safe); }
-    .badge.post, .badge.put, .badge.patch, .badge.delete { background: var(--unsafe-bg); color: var(--unsafe); }
+    .badge.get, .badge.head, .badge.options { background: var(--safe-bg); color: var(--safe); }
+    .badge.post, .badge.put, .badge.patch, .badge.delete, .badge.other { background: var(--unsafe-bg); color: var(--unsafe); }
     .badge.http { background: #e7eef8; color: var(--accent); }
-    .badge.mcp { background: #f3e7d4; color: #7a4a10; }
+    .badge.mcp, .badge.junction, .badge.unknown { background: #f3e7d4; color: #7a4a10; }
     .card h3 { margin: 4px 0 2px; font: 650 14px/1.3 var(--serif); }
     .card code { font: 11px var(--mono); color: var(--muted); word-break: break-all; }
     .field { margin: 0 0 12px; }
@@ -86,7 +87,12 @@
     .see { font-size: 12px; }
     .see button { font: 12px var(--mono); background: transparent; color: var(--accent);
       border: 0; padding: 0 6px 0 0; text-decoration: underline; }
-    md-block h1, md-block h2, md-block h3 { font-family: var(--serif); }
+    .md h1, .md h2, .md h3, .detail-title, .resp-title { font-family: var(--serif); }
+    .detail-title { margin: 0 0 8px; }
+    .desc-note { margin-top: 6px; }
+    .code-sm { font-size: 12px; }
+    .confirm { font-size: 13px; }
+    details > summary { cursor: pointer; font-weight: 650; margin: 8px 0; }
     .crumbs { font: 12px var(--mono); color: var(--muted); margin: 0 0 8px; }
     .empty { color: var(--muted); font-style: italic; padding: 12px 4px; }
   </style>
@@ -99,7 +105,7 @@
       <input id="url" type="url" spellcheck="false" placeholder="https://example.org/descriptor">
       <button id="loadBtn" type="button">Load</button>
       <button id="backBtn" class="secondary" type="button" disabled>Back</button>
-      <input id="proxy" type="text" spellcheck="false" placeholder="CORS proxy (optional)">
+      <input id="proxy" type="text" spellcheck="false" placeholder="Your own CORS proxy, https (optional)" aria-label="CORS proxy you run yourself, optional">
     </div>
     <div id="status" class="status">Idle.</div>
   </header>
@@ -188,15 +194,27 @@ function truthy(v) {
 }
 function inty(v) { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
 
+// Remote text as a string. A JSON value that is not a string is shown as its JSON.
+function asText(v) {
+  if (v == null) return "";
+  if (typeof v === "string") return v;
+  if (typeof v === "object") { try { return JSON.stringify(v); } catch { return ""; } }
+  return String(v);
+}
+function asTextOrNull(v) { const t = asText(v); return t ? t : null; }
+// Maps keyed by remote names have no prototype, so a key such as "constructor"
+// or "toString" is just a key.
+function bare(obj) { return Object.assign(Object.create(null), obj || {}); }
+
 class Ctx {
-  constructor() { this.prefixes = { ...PREFIXES0 }; this.terms = { ...TERMS0 }; }
+  constructor() { this.prefixes = bare(PREFIXES0); this.terms = bare(TERMS0); }
   absorb(ctx) {
     for (const item of asList(ctx)) {
       if (!item || typeof item !== "object") continue;
       for (const [key, val] of Object.entries(item)) {
         if (key.startsWith("@")) continue;
         const iri = typeof val === "string" ? val : (val && val["@id"]);
-        if (!iri) continue;
+        if (!iri || typeof iri !== "string") continue;
         const exp = this.expand(iri);
         this.terms[key] = exp;
         if (exp.endsWith("#") || exp.endsWith("/")) this.prefixes[key] = exp;
@@ -318,8 +336,8 @@ class NodeIndex {
 }
 
 function fieldName(name, path, variable) {
-  if (variable) return variable;
-  const raw = name || localName(path) || "value";
+  if (variable) return asText(variable);
+  const raw = asText(name) || localName(path) || "value";
   const m = raw.match(/^(?:rest-param-.+-)?(.+)$/);
   return m ? m[1] : raw;
 }
@@ -359,9 +377,9 @@ function shapeFields(index, shapeRef) {
       const jsonKind = schemaJsonKind(types);
       fields.push({
         name, path: name, datatype: jsonKind ? null : (schemaDatatype(types) || XSD + "string"),
-        jsonKind, minCount: required.has(name) ? 1 : 0, maxCount: 1, pattern: prop.pattern || null,
+        jsonKind, minCount: required.has(name) ? 1 : 0, maxCount: 1, pattern: asTextOrNull(prop.pattern),
         defaultValue: prop.default, maxLength: inty(prop.maxLength), minLength: inty(prop.minLength),
-        description: prop.description || "", enum: asList(prop.enum || []),
+        description: asText(prop.description), enum: asList(prop.enum || []),
         minInclusive: prop.minimum, maxInclusive: prop.maximum, required: required.has(name), rawBody: false
       });
     }
@@ -422,8 +440,8 @@ function templateOf(index, node) {
       const mn = index.node(item) || (item && typeof item === "object" ? item : null);
       if (!mn) continue;
       mappings.push({
-        variable: literal(index.get(mn, P.variable)),
-        property: literal(index.get(mn, P.property)),
+        variable: asTextOrNull(literal(index.get(mn, P.variable))),
+        property: asTextOrNull(literal(index.get(mn, P.property))),
         required: truthy(literal(index.get(mn, P.required)))
       });
     }
@@ -489,11 +507,11 @@ function controlFromNode(index, node, source) {
   let fields = [];
   const inline = node.fields;
   if (Array.isArray(inline) && inline[0] && (inline[0].name || inline[0].path || inline[0].datatype)) {
-    fields = inline.map(item => ({
-      name: fieldName(item.name, item.path, null), path: item.path, datatype: item.datatype,
-      minCount: inty(item.minCount), maxCount: inty(item.maxCount), pattern: item.pattern || null,
+    fields = inline.filter(item => item && typeof item === "object").map(item => ({
+      name: fieldName(item.name, item.path, null), path: asTextOrNull(item.path), datatype: asTextOrNull(item.datatype),
+      minCount: inty(item.minCount), maxCount: inty(item.maxCount), pattern: asTextOrNull(item.pattern),
       defaultValue: item.defaultValue, maxLength: inty(item.maxLength), minLength: inty(item.minLength),
-      description: item.description || "", required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false
+      description: asText(item.description), required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false
     }));
   } else if (expectsRaw != null) {
     fields = shapeFields(index, Array.isArray(expectsRaw) ? expectsRaw[0] : expectsRaw);
@@ -503,9 +521,9 @@ function controlFromNode(index, node, source) {
     id: String(node["@id"] || rel), rel: String(rel), method,
     title: String(literal(index.get(node, P.title)) || literal(index.get(node, P.dcTitle)) || literal(index.get(node, P.label)) || shortRel(rel)),
     description: String(literal(index.get(node, P.desc)) || literal(index.get(node, P.dcDesc)) || literal(index.get(node, P.comment)) || ""),
-    mediaType: literal(index.get(node, P.returnsCT)) || literal(index.get(node, P.media)) || null,
-    expects: expects ? String(expects) : null, returns: literal(index.get(node, P.returns)),
-    target: literal(index.get(node, P.target)) || literal(index.get(node, P.hmdTarget)) || null,
+    mediaType: asTextOrNull(literal(index.get(node, P.returnsCT)) || literal(index.get(node, P.media))),
+    expects: expects ? asText(expects) : null, returns: asTextOrNull(literal(index.get(node, P.returns))),
+    target: asTextOrNull(literal(index.get(node, P.target)) || literal(index.get(node, P.hmdTarget))),
     template, fields,
     readOnly: truthy(literal(index.get(node, P.readOnly))),
     idempotent: truthy(literal(index.get(node, P.idempotent))),
@@ -557,18 +575,18 @@ function parseMarkdown(text, url, contentType) {
       }
       data[key] = val.replace(/^"|"$/g, "");
     }
-    const rel = String(data.rel || ident);
-    const fields = (Array.isArray(data.fields) ? data.fields : []).map(item => ({
-      name: fieldName(item.name, item.path, null), path: item.path, datatype: item.datatype,
-      minCount: inty(item.minCount), maxCount: inty(item.maxCount), pattern: item.pattern || null,
+    const rel = asText(data.rel) || ident;
+    const fields = (Array.isArray(data.fields) ? data.fields : []).filter(item => item && typeof item === "object").map(item => ({
+      name: fieldName(item.name, item.path, null), path: asTextOrNull(item.path), datatype: asTextOrNull(item.datatype),
+      minCount: inty(item.minCount), maxCount: inty(item.maxCount), pattern: asTextOrNull(item.pattern),
       defaultValue: item.defaultValue, maxLength: inty(item.maxLength), minLength: inty(item.minLength),
-      description: item.description || "", required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false
+      description: asText(item.description), required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false
     }));
     const control = {
       id: ident.startsWith("http") ? ident : `${url}#${ident}`, rel,
-      method: String(data.method || "GET").toUpperCase(), title: data.title || shortRel(rel),
-      description: data.description || data.whenToUse || "", mediaType: data.mediaType || null,
-      expects: data.expects || null, returns: data.returns || null, target: data.target || null,
+      method: (asText(data.method) || "GET").toUpperCase(), title: asText(data.title) || shortRel(rel),
+      description: asText(data.description) || asText(data.whenToUse), mediaType: asTextOrNull(data.mediaType),
+      expects: asTextOrNull(data.expects), returns: asTextOrNull(data.returns), target: asTextOrNull(data.target),
       template: null, fields, types: [], source: url
     };
     control.unsafe = isUnsafe(control);
@@ -597,23 +615,29 @@ function withFormat(url, fmt) {
   return u.toString();
 }
 function stripFrag(url) { const u = new URL(url); u.hash = ""; return u.toString(); }
+// The proxy field is only what the person typed into it. The page never fills
+// it from its own address, so a link cannot route requests through a third party.
 function proxyBase() {
-  const raw = document.getElementById("proxy").value.trim();
-  return raw;
+  return document.getElementById("proxy").value.trim();
 }
-function viaProxy(url, extra) {
+// Every request leaves over https: an absolute https proxy URL with the target
+// as its `url` query parameter, or the https target itself. The page's
+// Content-Security-Policy (connect-src https:) refuses anything else anyway;
+// this says so before the request instead of after.
+function viaProxy(url) {
   const proxy = proxyBase();
-  if (!proxy) return url;
-  const join = proxy.includes("?") ? "&" : "?";
-  let out = proxy + join + "url=" + encodeURIComponent(url);
-  if (extra && extra.as) out += "&as=" + encodeURIComponent(extra.as);
-  return out;
+  const out = proxy ? proxy + (proxy.includes("?") ? "&" : "?") + "url=" + encodeURIComponent(url) : String(url);
+  let parsed = null;
+  try { parsed = new URL(out); } catch {}
+  if (!parsed || parsed.protocol !== "https:") {
+    throw new Error(proxy
+      ? "The proxy field needs an absolute https:// URL; nothing was sent."
+      : "This page sends requests over https only; nothing was sent to " + out);
+  }
+  return parsed.toString();
 }
 async function fetchText(url, accept) {
-  // Descriptor loads ask for JSON-LD. When a proxy is in use, also ask it
-  // to convert a Turtle-only response (proxy.py ?as=jsonld, needs rdflib).
-  const extra = (proxyBase() && accept && accept.includes("ld+json")) ? { as: "jsonld" } : null;
-  const res = await fetch(viaProxy(url, extra), { headers: { Accept: accept || "*/*" } });
+  const res = await fetch(viaProxy(url), { headers: { Accept: accept || "*/*" } });
   const text = await res.text();
   const ct = res.headers.get("content-type") || "";
   return { ok: res.ok, status: res.status, contentType: ct, text, url };
@@ -671,7 +695,7 @@ function parseDescriptor(text, contentType, url) {
     return { url, title, types, description, contentType, seeAlso, controls: extractControls(index, url) };
   }
   if (kind === "markdown") return parseMarkdown(text, url, contentType);
-  if (kind === "turtle") throw new Error("This host served Turtle. Request ?format=jsonld, or set the proxy field to proxy.py — it converts Turtle when the request asks for JSON-LD and rdflib is installed.");
+  if (kind === "turtle") throw new Error("This host served Turtle, which this page does not parse. Ask the host for ?format=jsonld, or use hmc.py, which reads Turtle when rdflib is installed.");
   throw new Error("Unrecognized descriptor representation (" + contentType + ")");
 }
 function findControl(descriptor, rel) {
@@ -791,7 +815,7 @@ function coerceValue(field, value) {
   return value;
 }
 function validateFields(control, supplied) {
-  const errors = []; const values = {};
+  const errors = []; const values = Object.create(null);
   for (const field of control.fields) {
     const aliases = [field.name, field.variable, field.path && localName(field.path)].filter(Boolean);
     let found = aliases.map(a => supplied[a]).find(v => v != null && v !== "");
@@ -906,48 +930,92 @@ const state = { descriptor: null, selected: null, history: [], lastResponse: nul
 
 function setStatus(msg) { document.getElementById("status").textContent = msg; }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c])); }
-function linkify(text) {
-  const src = String(text);
+// Markup built from remote data goes through esc(), iriSpan() and the
+// renderers below, and nowhere else. Every remote string is escaped as text.
+// The only attribute a remote value can fill is data-iri, and it holds an
+// http(s) URL as the URL parser normalised it, so it carries no quote, space
+// or angle bracket. The click handler follows a data-iri with fetch(); the page
+// has no link a remote document can make the browser navigate.
+function followable(iri) {
+  const raw = asText(iri).trim();
+  if (!/^https?:\/\//i.test(raw)) return null;
+  try {
+    const u = new URL(raw);
+    return (u.protocol === "https:" || u.protocol === "http:") ? u.href : null;
+  } catch { return null; }
+}
+function iriSpan(iri, label) {
+  const href = followable(iri);
+  const shown = esc(asText(label == null ? iri : label));
+  return href ? `<span class="iri" data-iri="${esc(href)}">${shown}</span>` : shown;
+}
+function linkify(src) {
+  src = asText(src);
   const re = /https?:\/\/[^\s<>"'`)\]},]+/g;
   let html = "";
   let last = 0;
   for (const match of src.matchAll(re)) {
     const raw = match[0];
     const clean = raw.replace(/[.,;]+$/, "");
-    html += esc(src.slice(last, match.index));
-    html += `<span class="iri" data-iri="${esc(clean)}">${esc(clean)}</span>`;
-    html += esc(raw.slice(clean.length));
+    html += esc(src.slice(last, match.index)) + iriSpan(clean, clean) + esc(raw.slice(clean.length));
     last = match.index + raw.length;
   }
   return html + esc(src.slice(last));
 }
+// A small Markdown subset: fenced code, # to ### headings, - and * list items,
+// **bold**, [label](http(s) URL), bare URLs and paragraphs. Text is escaped
+// piece by piece as it is placed, markup that has been built is never scanned
+// again, and every pattern is bounded, so the work stays linear in the input.
+function inlineMarkdown(line) {
+  const re = /\[([^\[\]\n]{1,300})\]\((https?:\/\/[^\s()<>"'`]{1,2000})\)|\*\*([^*\n]{1,2000})\*\*/g;
+  let html = "";
+  let last = 0;
+  for (const m of line.matchAll(re)) {
+    html += linkify(line.slice(last, m.index));
+    html += m[2] != null ? iriSpan(m[2], m[1]) : "<strong>" + linkify(m[3]) + "</strong>";
+    last = m.index + m[0].length;
+  }
+  return html + linkify(line.slice(last));
+}
 function renderMarkdown(src) {
-  const parts = String(src).split(/```/);
+  const parts = asText(src).split("```");
   let html = "";
   parts.forEach((part, i) => {
-    if (i % 2 === 1) { html += "<pre>" + linkify(part.replace(/^\w+\n/, "")) + "</pre>"; return; }
-    let block = esc(part);
-    block = block.replace(/^### (.+)$/gm, "<h3>$1</h3>").replace(/^## (.+)$/gm, "<h2>$1</h2>").replace(/^# (.+)$/gm, "<h1>$1</h1>");
-    block = block.replace(/\[([^\]]+)\]\((https?:[^)]+)\)/g, '<span class="iri" data-iri="$2">$1</span>');
-    block = block.replace(/https?:\/\/[^\s<]+/g, (url) => `<span class="iri" data-iri="${url}">${url}</span>`);
-    block = block.replace(/\*\*([^*]+)\*\*/g, "<strong>$1</strong>");
-    block = block.replace(/^(?:- |\* )(.+)$/gm, "<li>$1</li>").replace(/(<li>.*<\/li>\n?)+/g, "<ul>$&</ul>");
-    block = block.replace(/\n\n+/g, "</p><p>").replace(/\n/g, "<br>");
-    html += "<p>" + block + "</p>";
+    if (i % 2 === 1) { html += "<pre>" + linkify(part.replace(/^[\w+-]*\n/, "")) + "</pre>"; return; }
+    for (const para of part.split(/\n[ \t]*\n/)) {
+      let lines = [];
+      let items = [];
+      const flush = () => {
+        if (lines.length) html += "<p>" + lines.join("<br>") + "</p>";
+        if (items.length) html += "<ul>" + items.map(x => "<li>" + x + "</li>").join("") + "</ul>";
+        lines = []; items = [];
+      };
+      for (const line of para.split("\n")) {
+        const heading = /^(#{1,3}) (.+)$/.exec(line);
+        const item = /^[-*] (.+)$/.exec(line);
+        if (heading) { flush(); const n = heading[1].length; html += `<h${n}>${inlineMarkdown(heading[2])}</h${n}>`; }
+        else if (item) { if (lines.length) flush(); items.push(inlineMarkdown(item[1])); }
+        else if (line.trim()) { if (items.length) flush(); lines.push(inlineMarkdown(line)); }
+      }
+      flush();
+    }
   });
   return html;
 }
-function renderBody(contentType, text, parsed) {
+const HTML_SOURCE_MAX = 20000;
+function renderBody(contentType, body, parsed) {
   const ct = (contentType || "").toLowerCase();
+  body = asText(body);
   if (parsed && parsed.head && parsed.results && Array.isArray(parsed.results.bindings)) {
-    const vars = parsed.head.vars || Object.keys(parsed.results.bindings[0] || {});
-    let html = `<div class="ok">SPARQL result: ${parsed.results.bindings.length} row(s)</div><table class="sparql"><thead><tr>`;
+    const bindings = parsed.results.bindings.filter(row => row && typeof row === "object");
+    const vars = (Array.isArray(parsed.head.vars) ? parsed.head.vars : Object.keys(bindings[0] || {})).map(asText);
+    let html = `<div class="ok">SPARQL result: ${bindings.length} row(s)</div><table class="sparql"><thead><tr>`;
     html += vars.map(v => "<th>" + esc(v) + "</th>").join("") + "</tr></thead><tbody>";
-    for (const row of parsed.results.bindings) {
+    for (const row of bindings) {
       html += "<tr>" + vars.map(v => {
-        const cell = row[v];
-        const val = cell ? (cell.value || "") : "";
-        return "<td>" + (String(val).startsWith("http") ? `<span class="iri" data-iri="${esc(val)}">${esc(val)}</span>` : esc(val)) + "</td>";
+        const cell = Object.prototype.hasOwnProperty.call(row, v) ? row[v] : null;
+        const val = asText(cell && typeof cell === "object" ? cell.value : cell);
+        return "<td>" + iriSpan(val, val) + "</td>";
       }).join("") + "</tr>";
     }
     return html + "</tbody></table>";
@@ -956,26 +1024,40 @@ function renderBody(contentType, text, parsed) {
     return "<pre>" + linkify(JSON.stringify(parsed, null, 2)) + "</pre>";
   }
   if (ct.includes("html")) {
-    return `<div class="ok">HTML response. <span class="iri" data-iri="${esc(state.lastResponse && state.lastResponse.url)}">${esc(state.lastResponse && state.lastResponse.url)}</span></div><iframe sandbox srcdoc="${esc(text).slice(0, 20000)}" style="width:100%;min-height:280px;border:1px solid var(--rule);border-radius:8px;background:#fff"></iframe>`;
+    // Shown as source. The page does not render a remote HTML document, in a frame or otherwise.
+    const url = state.lastResponse && state.lastResponse.url;
+    const cut = body.length > HTML_SOURCE_MAX ? ", first " + HTML_SOURCE_MAX + " characters" : "";
+    return `<div class="ok">HTML response, shown as source${cut}. ${iriSpan(url, url)}</div><pre>${esc(body.slice(0, HTML_SOURCE_MAX))}</pre>`;
   }
-  if (ct.includes("markdown") || /^\s*# /m.test(text || "")) return `<div class="md">${renderMarkdown(text)}</div>`;
-  return "<pre>" + linkify(text || "") + "</pre>";
+  if (ct.includes("markdown") || /^[ \t]*# /m.test(body)) return `<div class="md">${renderMarkdown(body)}</div>`;
+  return "<pre>" + linkify(body) + "</pre>";
+}
+const METHOD_CLASSES = new Set(["get", "head", "options", "post", "put", "patch", "delete"]);
+// A badge's class names a method the stylesheet knows, or "other"; a remote
+// method string never becomes a class of its own.
+function methodClass(method) {
+  const m = asText(method).toLowerCase();
+  return METHOD_CLASSES.has(m) ? m : "other";
 }
 function renderList() {
   const desc = state.descriptor;
   const meta = document.getElementById("meta");
   const list = document.getElementById("list");
   if (!desc) { meta.innerHTML = ""; list.innerHTML = `<div class="empty">Load a descriptor to see its controls.</div>`; return; }
+  const seeAlso = (desc.seeAlso || []).map(u => {
+    const href = followable(u);
+    return href ? `<button type="button" data-iri="${esc(href)}">${esc(localName(u) || u)}</button>` : `<code>${esc(u)}</code>`;
+  });
   meta.innerHTML = `<strong>${esc(desc.title)}</strong><br>${esc(desc.url)}<br>types: ${esc((desc.types || []).map(localName).join(", "))}<br>${esc((desc.controls || []).length)} controls · ${esc((desc.contentType || "").split(";")[0])}` +
-    (desc.seeAlso && desc.seeAlso.length ? `<div class="see">seeAlso: ${desc.seeAlso.map(u => `<button type="button" data-iri="${esc(u)}">${esc(localName(u) || u)}</button>`).join(" ")}</div>` : "") +
-    (desc.description ? `<div style="margin-top:6px">${esc(desc.description)}</div>` : "");
+    (seeAlso.length ? `<div class="see">seeAlso: ${seeAlso.join(" ")}</div>` : "") +
+    (desc.description ? `<div class="desc-note">${esc(desc.description)}</div>` : "");
   const safe = desc.controls.filter(c => !c.unsafe);
   const unsafe = desc.controls.filter(c => c.unsafe);
   const card = (c) => {
     const transport = classifyTransport(c, desc.url);
     const active = state.selected && state.selected.rel === c.rel ? " active" : "";
     return `<article class="card${active}" data-rel="${esc(c.rel)}">
-      <div class="row"><span class="badge ${esc(c.method.toLowerCase())}">${esc(c.method)}</span>
+      <div class="row"><span class="badge ${methodClass(c.method)}">${esc(c.method)}</span>
       <span class="badge ${transport}">${transport}</span></div>
       <h3>${esc(c.title)}</h3>
       <code>${esc(shortRel(c.rel))}</code>
@@ -988,17 +1070,22 @@ function fieldDefaultText(field) {
   if (field.defaultValue == null) return "";
   return typeof field.defaultValue === "object" ? JSON.stringify(field.defaultValue) : String(field.defaultValue);
 }
+// Inputs carry the remote field name in data-field, never in name or id. In a
+// browser a form exposes its controls' names as its own properties, so a field
+// named "addEventListener" would otherwise replace the form's method of that name.
 function fieldControl(field) {
   const req = field.required || (field.minCount || 0) >= 1;
+  const key = esc(field.name);
   const val = esc(fieldDefaultText(field));
   let input;
   if (field.enum && field.enum.length && !field.jsonKind) {
-    input = `<select name="${esc(field.name)}"><option value=""></option>${field.enum.map(v => `<option ${String(v) === String(field.defaultValue) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
+    const chosen = asText(field.defaultValue);
+    input = `<select data-field="${key}"><option value=""></option>${field.enum.map(v => `<option value="${esc(asText(v))}" ${asText(v) === chosen ? "selected" : ""}>${esc(asText(v))}</option>`).join("")}</select>`;
   } else if (field.rawBody || field.jsonKind || (field.maxLength && field.maxLength > 200) || /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
-    input = `<textarea name="${esc(field.name)}" ${req ? "required" : ""}>${val}</textarea>`;
+    input = `<textarea data-field="${key}" ${req ? "required" : ""}>${val}</textarea>`;
   } else {
     const type = (field.datatype || "").endsWith("#integer") ? "number" : "text";
-    input = `<input name="${esc(field.name)}" type="${type}" value="${val}" ${req ? "required" : ""} ${field.pattern ? `pattern="${esc(field.pattern)}"` : ""}>`;
+    input = `<input data-field="${key}" type="${type}" value="${val}" ${req ? "required" : ""} ${field.pattern ? `pattern="${esc(field.pattern)}"` : ""}>`;
   }
   return `<div class="field"><label>${esc(field.name)} ${req ? '<span class="req">*</span>' : ""}</label>${input}
     <div class="hint">${esc([field.jsonKind ? ("JSON " + field.jsonKind) : (field.datatype && localName(field.datatype)), field.pattern, field.description].filter(Boolean).join(" · "))}</div></div>`;
@@ -1011,19 +1098,19 @@ function renderDetail() {
   const transport = classifyTransport(c, desc.url);
   const target = c.template || c.target || "(none)";
   let html = `<div class="crumbs">${esc(shortRel(c.rel))}</div>
-    <h2 style="font-family:var(--serif);margin:0 0 8px">${esc(c.title)}</h2>
+    <h2 class="detail-title">${esc(c.title)}</h2>
     <div class="meta">${esc(c.description)}</div>
-    <div class="meta"><span class="badge ${esc(c.method.toLowerCase())}">${esc(c.method)}</span>
+    <div class="meta"><span class="badge ${methodClass(c.method)}">${esc(c.method)}</span>
       <span class="badge ${transport}">${transport}</span>
       ${c.mediaType ? " · " + esc(c.mediaType) : ""}<br>
-      <code style="font-size:12px">${esc(c.rel)}</code><br>
-      target: <span class="iri" data-iri="${esc(/^https?:/.test(String(c.target||"")) ? c.target : "")}">${esc(target)}</span>
+      <code class="code-sm">${esc(c.rel)}</code><br>
+      target: ${iriSpan(c.target, target)}
     </div>`;
   if (c.unsafe) html += `<div class="warn">Unsafe operation. The default is a dry run that shows the exact request. Confirm before anything is sent.</div>`;
   html += `<form id="invokeForm">${c.fields.map(fieldControl).join("") || '<div class="empty">No input fields.</div>'}
     <div class="actions">
       ${c.unsafe ? `<button type="submit" class="secondary" data-mode="dry">Dry run</button>
-        <label style="font-size:13px"><input type="checkbox" id="confirmUnsafe"> I confirm this write</label>
+        <label class="confirm"><input type="checkbox" id="confirmUnsafe"> I confirm this write</label>
         <button type="submit" class="danger" data-mode="live" disabled id="liveBtn">Invoke</button>`
         : `<button type="submit" data-mode="live">Invoke</button><button type="submit" class="secondary" data-mode="dry">Dry run</button>`}
     </div>
@@ -1041,13 +1128,8 @@ function renderDetail() {
   });
 }
 function readForm() {
-  const form = document.getElementById("invokeForm");
-  const supplied = {};
-  if (!form) return supplied;
-  for (const el of form.querySelectorAll("input, textarea, select")) {
-    if (!el.name || el.type === "checkbox") continue;
-    supplied[el.name] = el.value;
-  }
+  const supplied = Object.create(null);
+  for (const el of document.querySelectorAll("#invokeForm [data-field]")) supplied[el.dataset.field] = el.value;
   return supplied;
 }
 function showResult(html) {
@@ -1065,7 +1147,7 @@ async function runInvoke(forceDry) {
   }
   const plan = resolvePlan(control, values, desc.url);
   const dry = forceDry || (control.unsafe && !(document.getElementById("confirmUnsafe") && document.getElementById("confirmUnsafe").checked));
-  let html = `<details ${dry ? "open" : ""}><summary style="cursor:pointer;font-weight:650;margin:8px 0">Request (${esc(plan.method)} ${esc(plan.transport)})</summary><pre>${linkify(JSON.stringify({
+  let html = `<details ${dry ? "open" : ""}><summary>Request (${esc(plan.method)} ${esc(plan.transport)})</summary><pre>${linkify(JSON.stringify({
     method: plan.method, transport: plan.transport, url: plan.url, headers: plan.headers,
     body: plan.body, notes: plan.notes, mcp: plan.mcp, dryRun: dry
   }, null, 2))}</pre></details>`;
@@ -1086,15 +1168,15 @@ async function runInvoke(forceDry) {
     let parsed = null;
     try { parsed = JSON.parse(text); } catch {}
     state.lastResponse = { status: res.status, contentType: res.headers.get("content-type") || "", text, parsed, url: plan.url };
-    html += `<h3 style="font-family:var(--serif)">Response HTTP ${res.status} · ${esc(state.lastResponse.contentType)}</h3>` + renderBody(state.lastResponse.contentType, text, parsed);
+    html += `<h3 class="resp-title">Response HTTP ${esc(res.status)} · ${esc(state.lastResponse.contentType)}</h3>` + renderBody(state.lastResponse.contentType, text, parsed);
     showResult(html);
     setStatus("HTTP " + res.status + " from " + plan.url);
     document.title = "Hypermedia Client — " + desc.title;
     document.documentElement.dataset.ready = "1";
   } catch (err) {
     const msg = String(err && err.message || err);
-    const hint = /Failed to fetch|NetworkError|CORS/i.test(msg) ? " Browser CORS blocked this host. Run <code>python3 proxy.py</code> and set the proxy field to <code>/proxy</code>." : "";
-    showResult(html + `<div class="warn">${esc(msg)}${hint}</div>`);
+    const hint = /Failed to fetch|NetworkError|CORS/i.test(msg) ? " The browser refused this request. The host may not allow cross-origin calls; a CORS proxy you run yourself can go in the proxy field." : "";
+    showResult(html + `<div class="warn">${esc(msg + hint)}</div>`);
     setStatus("Invoke failed: " + msg);
   }
 }
@@ -1102,9 +1184,7 @@ async function loadDescriptorUrl(url, push = true) {
   setStatus("Fetching authority document…");
   document.documentElement.dataset.ready = "0";
   const fetched = await fetchAuthority(url);
-  if (fetched.kind === "turtle") throw new Error(proxyBase()
-    ? "Descriptor arrived as Turtle. The proxy could not convert it — install rdflib next to proxy.py, or ask the host for ?format=jsonld."
-    : "Descriptor arrived as Turtle. Ask for ?format=jsonld, or set the proxy field so proxy.py can convert it.");
+  if (fetched.kind === "turtle") throw new Error("Descriptor arrived as Turtle, which this page does not parse. Ask the host for ?format=jsonld, or use hmc.py, which reads Turtle when rdflib is installed.");
   const descriptor = parseDescriptor(fetched.text, fetched.contentType, stripFrag(url));
   if (push && state.descriptor) state.history.push(state.descriptor.url);
   state.descriptor = descriptor;
@@ -1126,12 +1206,8 @@ function selectRel(rel, values) {
   renderList();
   renderDetail();
   if (values) {
-    const form = document.getElementById("invokeForm");
-    if (form) {
-      for (const [k, v] of Object.entries(values)) {
-        const el = form.querySelector(`[name="${CSS.escape(k)}"]`);
-        if (el) el.value = v;
-      }
+    for (const el of document.querySelectorAll("#invokeForm [data-field]")) {
+      if (Object.prototype.hasOwnProperty.call(values, el.dataset.field)) el.value = values[el.dataset.field];
     }
   }
 }
@@ -1163,20 +1239,16 @@ document.body.addEventListener("click", async (ev) => {
     try { await loadDescriptorUrl(iri); } catch (err) { setStatus("Follow failed: " + (err.message || err)); }
   }
 });
-if (location.origin.startsWith("http") && !document.getElementById("proxy").value) {
-  document.getElementById("proxy").placeholder = "/proxy  (used automatically only if you type it)";
-}
 (async function boot() {
   const params = new URLSearchParams(location.search);
   if (!document.getElementById("url").value) {
     document.getElementById("url").value = params.get("url") || "https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/i2idlx-catalog";
   }
-  if (params.get("proxy")) document.getElementById("proxy").value = params.get("proxy");
   if (params.get("url") || params.get("autoload") === "1") {
     try {
       await loadDescriptorUrl(document.getElementById("url").value);
       if (params.get("invoke")) {
-        const fields = {};
+        const fields = Object.create(null);
         if (params.get("query")) fields.query = params.get("query");
         for (const [k, v] of params.entries()) if (k.startsWith("field.")) fields[k.slice(6)] = v;
         selectRel(params.get("invoke"), fields);

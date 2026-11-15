@@ -1,5 +1,97 @@
 # Changelog
 
+## 2026-11-15 — The generic hypermedia client is on the docs site
+
+A client that follows Interego, HyperMarkdown and Hydra descriptors by what they
+say, not by a catalog built into it. Give it an authority URL and it lists the
+document's controls, builds a form from each one's SHACL shape, JSON Schema or
+IRI template, resolves the live `hydra:target`, and shows the response. It is in
+`docs/hypermedia-client/`: `index.html`, a self-contained web page, and `hmc.py`,
+the same client as a Python library and command line. GitHub Pages serves the
+page at <https://markjspivey-xwisee.github.io/interego/hypermedia-client/>.
+
+Non-normative, Layer 3. It reads the protocol and adds nothing to it: no
+package, ontology or conformance change.
+
+POST, PUT, PATCH and DELETE, and anything marked `iep:destructiveHint true` or
+`iep:readOnlyHint false`, are unsafe. An unsafe operation is a dry run that shows
+the exact request until it is confirmed: a checkbox on the page, `--confirm` in
+the command line. The page never confirms a write from its own address.
+
+**`proxy.py` was dropped.** The branch shipped an optional local forwarding
+proxy. Code scanning raised a server-side request forgery alert on it that its
+own hardening did not clear, and the page does not need it: the hosts it was
+written against send `Access-Control-Allow-Origin: *`. The proxy field stays.
+It is optional, takes the absolute `https://` URL of a CORS proxy the person runs
+themselves, and is empty unless they type into it; the page no longer reads a
+`proxy` parameter from its own address, so a link cannot route someone's
+requests, and the writes they confirm, through another server. The README dates
+its live counts to 2026-11-09 instead of stating them as current.
+
+**Remote data stays text.** The page shares the `markjspivey-xwisee.github.io`
+origin with `docs/client-sign.html`, and it renders whatever the hosts a person
+types in send back, so markup from a remote document must not reach the DOM as
+markup. Before this change:
+
+- The Markdown renderer ran its bare-URL pass over the link markup it had just
+  built, so a remote link could split one of the page's own attributes. Its
+  patterns also restarted at every `[`, which took about 8 s on a 230,000
+  character response.
+- An HTML response was put in a sandboxed `srcdoc` frame. It is now shown as
+  source.
+- Remote field names were written as the form controls' `name`. In a browser a
+  form exposes those names as its own properties, so a field named like one of
+  the form's methods replaced it: in Chromium the submit handler was never
+  attached, and **Dry run** submitted the form natively, reloading the page with
+  the descriptor's field defaults as its address parameters. Names now go in
+  `data-field`.
+- A `seeAlso`, target or SPARQL value that was not an `http(s)` URL was still
+  written into a followable attribute; a method string became a CSS class; a
+  `@context` term named like an `Object.prototype` member, or a HyperMarkdown
+  value that was not a string, stopped the document loading.
+
+Now every remote string is escaped as it is placed and built markup is never
+scanned again. Only an `http(s)` URL becomes followable, written as the URL
+parser normalises it, and following it fetches it; the page has no link a remote
+document can make the browser navigate. A badge's class is a method the
+stylesheet knows or `other`. Maps keyed by remote names have no prototype, and
+non-string values are shown as their JSON. Requests go over `https` only.
+
+The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
+its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
+no inline event handlers or style attributes), `connect-src https:`, and
+`object-src`, `base-uri` and `form-action` set to `'none'`. Editing the inline
+script or `<style>` means updating its hash.
+
+`tests/hypermedia-client-rendering.test.ts` loads the real page in jsdom, as the
+signing-page tests do, and answers its fetches with hostile documents: script and
+style tags, event-handler attributes, `javascript:`, `data:` and `vbscript:`
+links, Markdown with embedded HTML, quotes that would close an attribute in IRIs,
+labels and field names, `@context` keys named like prototype members,
+HyperMarkdown values that are not strings, and a 230,000 character Markdown body
+with a 3 s budget. For the descriptor list, every control's detail view, a dry
+run, and Markdown, HTML, JSON, SPARQL and plain-text responses, it checks that
+only element and attribute kinds the page itself writes appear, that no element
+has an event handler, a style attribute, a `name`, or an id the page did not
+choose, that every
+`href`/`src` is `http(s)` or a fragment and every followable IRI is `http(s)`,
+that every class is one the stylesheet defines, that the hostile strings show up
+as text verbatim, and that nothing ran. It also checks that a `proxy` parameter
+in the page address is ignored, that a non-`https` URL is refused before any
+request, that an unsafe control sends nothing on a dry run, and that the
+policy's two hashes match the inline script and style exactly. Every case failed
+before the change.
+
+Not covered: jsdom does not enforce CSP and does not expose form controls as
+form properties, so the test checks both structurally. They were checked once
+by hand in Chromium (the page loads and invokes under its policy with no
+violation; the old page's **Dry run** reloaded it), and that check is not in CI.
+GitHub Pages cannot send response headers, and a `<meta>` policy cannot set
+`frame-ancestors`, so framing the page is not restricted. A descriptor's
+`pattern` is compiled as a regular expression and run against what the person
+types, so a pathological one can stall the tab. `hmc.py` prints remote text to a
+terminal as it is and was not reviewed for terminal control sequences.
+
 ## 2026-11-15 — Foxxi: a cmi5 launch's credential survives a restart
 
 Every deploy of the Foxxi bridge ended every practice in progress. A launch is
