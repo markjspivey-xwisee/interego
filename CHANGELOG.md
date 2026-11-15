@@ -1,5 +1,57 @@
 # Changelog
 
+## 2026-11-15 — Dependencies: hono 4.13.18, Foxxi's @hono/node-server 2.1.8, and Relay Tests on lockfile changes
+
+The `@hono/node-server` 2.1.8 change left three things for a change of their
+own. This is that change.
+
+- **Root lockfile: `hono` 4.13.14 to 4.13.18.** One entry changes, and no
+  package is added or removed. Three packages ask for it, and 4.13.18 satisfies
+  all three:
+  - `@modelcontextprotocol/node`, the relay's MCP transport (`^4.11.4`);
+  - the dev-only v1 `@modelcontextprotocol/sdk` (`^4.11.4`);
+  - `@hono/node-server`, as a peer (`^4`).
+
+  `npm audit` lists five advisories for 4.13.14, all fixed in 4.13.16:
+  - `mount()` forwarding a path that skips middleware scoped inside the mount
+    prefix;
+  - `RegExpRouter` skipping wildcard middleware for some route sets;
+  - `csrf()` not checking hyperlink-auditing requests;
+  - `validator('form')` skipping validation for some multipart requests;
+  - the `css` helper not escaping a split closing tag (low).
+
+  None of the five is in a part of `hono` this repository uses. No source
+  here imports `hono`, and `@modelcontextprotocol/node` imports only
+  `@hono/node-server`, whose request listener calls the MCP transport
+  directly: no Hono app, router or middleware is built. The relay image
+  resolves its own tree whenever its install step is rebuilt, which resolves
+  4.13.18 today. So this moves the copy that tests and the bridge images use
+  (`npm ci` from the root lockfile) to what a relay build gets.
+- **Foxxi's lockfile: `@hono/node-server` 2.1.5 to 2.1.8, and `hono` 4.13.14
+  to 4.13.18.** Both are dev-only there. They come in through the agent SDK's
+  peer, the v1 MCP SDK. 2.1.5 is inside the range of the two 2.x advisories
+  the `@hono/node-server` entry describes. The Foxxi microsite image installs
+  from this lockfile in its build stage only. Its final image is nginx with
+  the built files, so neither package ships in it.
+- **Relay Tests run when the root lockfile changes.** The job installs with
+  `npm ci` from the root lockfile, so a lockfile change alone changes what it
+  tests. Its paths filter did not list the file, so the relay's own suite
+  never ran on a dependency-only change, including the `@hono/node-server`
+  2.x change. `relay-tests.yml` now lists `package-lock.json` for both push
+  and pull request.
+
+The three lockfile entries were edited by hand: the version, the registry
+tarball URL, and that tarball's published integrity. Neither package has
+dependencies of its own, and their engines and peer ranges are unchanged.
+`npm install --package-lock-only` then reported both lockfiles up to date.
+
+Not covered: nothing on this machine ran against 4.13.18, because the local
+`node_modules` still holds 4.13.14. CI's root suite and the Relay Tests now
+installed from this lockfile are what run it. The other moderate findings
+(the Solid server, eslint and electron-builder chains) are unchanged.
+claude-code-acp, which this entry named when it was first written, is no
+longer in the tree: this change is built on the claude-agent-acp change.
+
 ## 2026-11-15 — Editor witness: reject-always offered only on a mode switch leaves the thesis untested
 
 The witness keeps a standing refusal of a mode switch out of the deny set,
