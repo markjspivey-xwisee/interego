@@ -19,10 +19,12 @@ the same request can be sent again. A server with no durable store adds and
 removes nothing.
 
 While a write is on its way the version and its profile are reserved, as they
-already were for a publication, and a profile is changed by one removal or by
-additions at a time, not both: records are replayed in the order of their
-times, so the two together could leave the running server and a restarted one
-holding different things. The second request gets 409.
+already were for a publication, and a profile is changed by one write at a
+time: one addition, one publication or one removal. Records are replayed in
+the order of their times, so two writes under one profile acknowledged out of
+that order could leave the running server and a restarted one holding
+different things, or resolving the profile to different versions. The second
+request gets 409.
 
 Callers that read `persisted: false` on a 200 from
 `/agent/xapi-profiles/add` or `/remove` will not see it again: that case is

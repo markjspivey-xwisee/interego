@@ -199,6 +199,21 @@ describe('while a write is on its way to the pod', () => {
     expect((await resource(V1)).status).toBe(200);
   });
 
+  it('a second version of the same profile waits its turn, so a restart resolves the profile as this server does', async () => {
+    // Neither version says when it was generated or what it revises, so which is current is the order they were held in.
+    const { atThePod, release } = stopAtThePod();
+    const first = server.add(tideTable(V1), CLERK);
+    await atThePod;
+    await expect(server.add(tideTable(V2), CLERK)).rejects.toMatchObject({ status: 409 });
+    release();
+    await first;
+    await server.add(tideTable(V2), CLERK);
+    const again = makeServer();
+    await again.ready();
+    expect(again.dataset.get(P)?.version).toBe(server.dataset.get(P)?.version);
+    expect(again.dataset.all().map(h => h.version)).toEqual(versionsHeld());
+  });
+
   it('a profile being taken down still answers, and is not added to or taken down twice', async () => {
     await server.add(tideTable(V1), CLERK);
     const { atThePod, release } = stopAtThePod();

@@ -154,9 +154,13 @@ export class ProfileServer {
     const taken = this.dataset.all().find(h => h.version === version || h.id === version);
     if (taken && taken.id !== id) throw new ProfileServerError(409, `${version} is already held as a version of ${taken.id}.`);
     if (this.dataset.all().some(h => h.version === id)) throw new ProfileServerError(409, `${id} is held here as a version, not as a profile.`);
-    // A write waiting on its pod has the version, and the profile for its writer.
+    // A write waiting on its pod has the version, and the profile: one version of a profile is
+    // written at a time, its own writer's included. Which version is current can turn on the order
+    // versions were held in, and a restart holds them in the order of their records' times. Two
+    // writes under one profile acknowledged out of that order would leave a restarted server
+    // resolving the profile to a different version than this one does.
     if (this.writing.has(version)) throw new ProfileServerError(409, `${version} is being written now.`);
-    if ([...this.writing.values()].some(p => p.id === id && p.by !== by)) throw new ProfileServerError(409, `${id} is being written by another agent now.`);
+    if ([...this.writing.values()].some(p => p.id === id)) throw new ProfileServerError(409, `A version of ${id} is being written now. Send this one once that has finished.`);
     // The two checks above on what is held, made on what is about to be: an IRI is a profile or a version, not both.
     if (this.writing.has(id)) throw new ProfileServerError(409, `${id} is being written now as a version, and cannot also be a profile.`);
     if ([...this.writing.values()].some(p => p.id === version)) throw new ProfileServerError(409, `${version} is being written now as a profile, and cannot also be a version.`);
