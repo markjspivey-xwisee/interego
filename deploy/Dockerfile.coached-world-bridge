@@ -63,7 +63,13 @@ COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bri
 COPY applications/jev-harness/bridge/package.json ./applications/jev-harness/bridge/
 COPY applications/shared-workspace/desktop/package.json ./applications/shared-workspace/desktop/
 COPY applications/shared-workspace/discord/package.json ./applications/shared-workspace/discord/
-RUN npm ci
+# The Claude developer tools leave in the same RUN that installed them: the CLI, the agent SDK and
+# the ACP agents are root devDependencies no service runs, and their native binaries are hundreds
+# of MB. A delete in a later RUN would only hide them behind whiteouts in a layer the image still
+# ships. See tools/prune-image-dev-tools.mjs and
+# integrations/tests/images-ship-no-claude-dev-tools.test.ts.
+COPY tools/prune-image-dev-tools.mjs ./tools/prune-image-dev-tools.mjs
+RUN npm ci && node tools/prune-image-dev-tools.mjs
 
 # Only what this bridge imports, file by file where it reaches outside its own directory, so a
 # change elsewhere in Foxxi or in identity is not a reason to redeploy the world:

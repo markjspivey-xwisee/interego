@@ -255,7 +255,10 @@ describe('partial hosted images have the workspaces their actual build commands 
   });
 
   it('cannot reuse dependency installation from an unrelated stage', () => {
-    const mutated = bridge().replace('RUN npm ci', 'RUN npm ci\nFROM node:22-slim AS unrelated\nWORKDIR /app\nCOPY package.json package-lock.json tsconfig.base.json tsconfig.json ./');
+    // The whole install line, which also prunes (tools/prune-image-dev-tools.mjs): splitting it
+    // after `npm ci` would hang the rest of the RUN off the injected COPY.
+    const mutated = bridge().replace(/^RUN npm ci\b[^\r\n]*/m, '$&\nFROM node:22-slim AS unrelated\nWORKDIR /app\nCOPY package.json package-lock.json tsconfig.base.json tsconfig.json ./');
+    expect(mutated).not.toBe(bridge());
     expect(errors(mutated)).toContain('packages/local-node/package.json was not copied before the workspace dependency install');
   });
 });

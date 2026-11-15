@@ -1,5 +1,69 @@
 # Changelog
 
+## 2026-11-15 — Images: the Claude developer tools no longer ship in nine images
+
+Nine images install the root lockfile with a plain `npm ci` and keep its
+devDependencies, because their services run through `npx tsx` and tsx is a root
+devDependency: the seven vertical bridges (agp, coached-world, foxxi,
+jev-harness, pev, wrd, wsp), the substrate demo bridge and the Discord bot.
+Every other root devDependency came along with tsx, among them the Claude Code
+CLI and the ACP agent `@zed-industries/claude-code-acp` with the Claude Agent
+SDK it depends on. No service runs any of them.
+
+`tools/prune-image-dev-tools.mjs` now deletes them in the same RUN as the
+`npm ci`: `@anthropic-ai/claude-code` and its `@anthropic-ai/claude-code-*`
+platform packages, `@anthropic-ai/claude-agent-sdk` and its
+`@anthropic-ai/claude-agent-sdk-*` platform packages, and the ACP agents
+`@zed-industries/claude-code-acp` and `@agentclientprotocol/claude-agent-acp`,
+with their `node_modules/.bin` links. It deletes nothing else
+(`@anthropic-ai/sdk` stays), skips a package that is not there, and prints each
+removal and the bytes it held. The same RUN matters: a delete in a later RUN
+only hides the files behind whiteouts in a layer the image still ships.
+
+Why it is safe: npm marks every one of these packages dev-only in the lockfile,
+and nothing but another of them or a root devDependency depends on them.
+Nothing the nine images run imports them or starts their executables.
+`integrations/tests/images-ship-no-claude-dev-tools.test.ts` follows the static
+imports from each image's CMD and from every script a RUN step executes, and
+scans every file any image copies. Four files that do refer to them ship only because their
+directory is copied whole, and none is reachable from what the image runs:
+Foxxi's two emergent-collective developer drivers, the shared-workspace desktop
+app's lookup of a local Claude Code install, and `demos/agent-lib.ts`. The same
+test pins which Dockerfiles must prune, and checks that the three which install
+the root lockfile only in a build stage (dashboard, pgsl-browser, relay) never
+ship that node_modules.
+
+Size, an estimate from `npm view <package>@<locked version> dist.unpackedSize`
+for the linux-x64 glibc packages the lockfile pins: about 312 MB per image. The
+CLI's native binary is 214.3 MB, the agent SDK 0.2.44 is 79.8 MB with 16.5 MB
+of sharp binaries nested under it, and the CLI wrapper and the ACP agent are
+under 1 MB each. If npm also installs the musl build, or the CLI's postinstall
+copies its binary instead of hard-linking it, the saving is larger; the script
+removes those too.
+
+The pending switch to `@agentclientprotocol/claude-agent-acp` (0.99.1 in its
+lockfile) brings `@anthropic-ai/claude-agent-sdk` 0.3.312, whose linux-x64
+platform package is a 293.6 MB native binary: about 204 MB more per image than
+today if nothing pruned it. All of those packages are on the list, so the switch
+adds none of that to these images.
+
+`integrations/tests/hosted-docker-build-inputs.test.ts` split a Dockerfile after
+the text `RUN npm ci` to inject a stage; it now injects after the whole line.
+The new test module used the last of the slack above the test-module floor,
+which moves from 690 to 715.
+
+Not covered: no image was built here, so the saving stays an estimate until CI
+builds them. The switch still adds the larger ACP protocol library
+(`@agentclientprotocol/sdk` 0.14.1 to 2.1.0, about 7.5 MB more) and three small
+packages, which are not on the list. The images still carry the other root
+devDependencies (vitest, eslint, typescript and the rest). The script is copied
+in before `npm ci`, so changing it rebuilds the install layer of all nine
+images. The foxxi-dashboard and foxxi-microsite build stages install Foxxi's own
+devDependency on the agent SDK, binary included; those images serve built files
+from nginx, so it does not ship, and it is not pruned. npm's hidden lockfile
+still lists the removed packages; npm sees the tree no longer matches and reads
+the tree instead, and `npx tsx` does not consult it.
+
 ## 2026-11-15 — Foxxi: a hosted cmi5 package keeps its own moveOn
 
 Found on the first run against the deployed bridge. A package uploaded and
