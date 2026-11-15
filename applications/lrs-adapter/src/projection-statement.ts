@@ -30,6 +30,15 @@ export interface ProjectionStatementArgs {
 export const keepsSeveralNarratives = (args: Pick<ProjectionStatementArgs, 'coherentNarratives'>): boolean =>
   args.coherentNarratives !== undefined && args.coherentNarratives.length > 1;
 
+/**
+ * True when the statement says less than the descriptor it is projected from: the source was not
+ * asserted, which an xAPI statement cannot say outside an extension, or it held several
+ * narratives and `result.response` carries one. The audit row on the pod has always used this
+ * test; the statement now states the same answer.
+ */
+export const projectionIsLossy = (args: Pick<ProjectionStatementArgs, 'coherentNarratives' | 'modalStatus'>): boolean =>
+  (args.modalStatus !== undefined && args.modalStatus !== 'Asserted') || keepsSeveralNarratives(args);
+
 /** Build the statement. `id` and `timestamp` are the caller's, so the result is a function of its arguments. */
 export function buildProjectionStatement(args: ProjectionStatementArgs, id: string, timestamp: string): Record<string, unknown> {
   // xAPI extension KEYS are dereferenceable predicate IRIs under the published iep:
@@ -37,11 +46,12 @@ export function buildProjectionStatement(args: ProjectionStatementArgs, id: stri
   const extensions: Record<string, unknown> = {
     [`${IEP_NS}sourceDescriptor`]: args.descriptorIri,
     [`${IEP_NS}modalStatus`]: args.modalStatus ?? 'Asserted',
+    // Always stated, `false` included. It used to be written only alongside several narratives,
+    // so a Hypothetical projection the audit row called lossy said nothing here, and a reader
+    // could not tell "faithful" from "not stated".
+    [`${IEP_NS}projectionLossy`]: projectionIsLossy(args),
   };
-  if (keepsSeveralNarratives(args)) {
-    extensions[`${IEP_NS}coherentNarratives`] = args.coherentNarratives;
-    extensions[`${IEP_NS}projectionLossy`] = true;
-  }
+  if (keepsSeveralNarratives(args)) extensions[`${IEP_NS}coherentNarratives`] = args.coherentNarratives;
   return {
     id,
     actor: args.actor,

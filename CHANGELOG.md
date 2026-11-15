@@ -1,5 +1,39 @@
 # Changelog
 
+## 2026-11-15 — xapi-x is published, and its eleven open questions are decided
+
+The xapi-x design ended with eleven questions for the owner, who answered:
+publish it, and decide them. Both are done.
+
+**Published.** The `xapix:` ontology and the first xapi-x profile are on the
+owner's pod as public graphs with relay-signed authorship, at
+`https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix` and
+`…/xapix-profile`. Both resolve as Turtle and JSON-LD, the profile's version and
+template IRIs resolve to the profile graph, and each graph was fetched back and
+compared triple for triple with the repository (58 and 51 triples).
+`src/xapix/publication.ts` returns the profile as the triples that were sent,
+using the function the profile server reads a profile with. A public graph cannot
+be unpublished; a change is a new publish that supersedes this one.
+
+**Decided**, with the reason for each, in
+`applications/foxxi-content-intelligence/xapix/README.md`. Three change code:
+
+- The lrs-adapter states `projectionLossy` on every projection, `false`
+  included. It used to write it only alongside several narratives, so a
+  Hypothetical projection that its own audit row called lossy said nothing, and
+  an absent flag could not be read as false. The statement and the audit row now
+  share one test (`projectionIsLossy`). **This changes what the adapter sends**:
+  one more key on every projected statement.
+- A statement may state the modal status `Quoted`. `Retracted` is never a stored
+  status: a retraction is xAPI's own voiding statement.
+- The ontology says what a digest is taken over (RFC 8785 canonical JSON) and
+  that anyone may sign an order attestation, the signer being named with the
+  conclusion.
+
+**Not done.** No emitter writes an `xapix:` term yet. Foxxi's projector does not
+yet write the `iep#` keys, and the profile is not served by the Foxxi profile
+server: both touch files the profile-authoring branch is changing.
+
 ## 2026-11-15 — xapi-x: a design for a superset of xAPI made by decoration, and a first profile
 
 The owner asked for "our own xapi-x with our relevant decorations to make it a

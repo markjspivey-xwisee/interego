@@ -8,11 +8,13 @@
  * one `projectDescriptorToLrs` posts, so a change to what the adapter writes is seen here.
  */
 import { describe, it, expect } from 'vitest';
+import { Parser } from 'n3';
 import { buildProjectionStatement, type ProjectionStatementArgs } from '../../lrs-adapter/src/projection-statement.js';
 import { validates, type Json } from '../src/xapi-profile-server/processor.js';
 import { whyNotAddable } from '../src/xapi-profile-server/service.js';
 import { buildXapixProfileDoc, XAPIX_PROFILE_VERSION_ID, XAPIX_PROJECTION_TEMPLATE_ID } from '../src/xapix/profile.js';
 import { IEP_DECORATIONS, XAPIX_NS, XAPIX_PROFILE_ID } from '../src/xapix/namespace.js';
+import { XAPIX_GRAPHS, xapixProfileTurtle } from '../src/xapix/publication.js';
 
 const doc = buildXapixProfileDoc() as { id: string; conformsTo: string; versions: Json[]; concepts: Json[]; templates: Json[]; patterns: Json[] };
 const projected = (over: Partial<ProjectionStatementArgs> = {}): Json => buildProjectionStatement({
@@ -70,6 +72,13 @@ describe('a statement the lrs-adapter projects', () => {
     expect(extensionsOf(several)[IEP_DECORATIONS.projectionLossy]).toBe(true);
   });
 
+  it('always says whether it is lossy: false for one asserted reading, true when the source was not asserted', () => {
+    expect(extensionsOf(projected())[IEP_DECORATIONS.projectionLossy]).toBe(false);
+    expect(extensionsOf(projected({ modalStatus: 'Hypothetical' }))[IEP_DECORATIONS.projectionLossy]).toBe(true);
+    expect(extensionsOf(projected({ coherentNarratives: narratives }))[IEP_DECORATIONS.projectionLossy]).toBe(true);
+    expect(extensionsOf(projected({ coherentNarratives: narratives.slice(0, 1) }))[IEP_DECORATIONS.projectionLossy]).toBe(false);
+  });
+
   it('carries nothing under result.extensions that the profile does not declare', () => {
     const declared = new Set(doc.concepts.map(c => c.id));
     for (const statement of [projected(), projected({ modalStatus: 'Hypothetical', coherentNarratives: narratives })]) {
@@ -101,6 +110,11 @@ describe('a statement that is not a well-formed projection', () => {
     expect(result.findings[0]!.location).toContain(IEP_DECORATIONS.modalStatus);
   });
 
+  it('may be quoted, and may not call itself retracted: a retraction is a voiding statement', () => {
+    expect(validates(withExtension(projected(), IEP_DECORATIONS.modalStatus, 'Quoted'), doc.templates).outcome).toBe('success');
+    expect(validates(withExtension(projected(), IEP_DECORATIONS.modalStatus, 'Retracted'), doc.templates).outcome).toBe('invalid');
+  });
+
   it('is invalid when it says whether it is lossy with something that is not a boolean', () => {
     expect(validates(withExtension(projected(), IEP_DECORATIONS.projectionLossy, false), doc.templates).outcome).toBe('success');
     expect(validates(withExtension(projected(), IEP_DECORATIONS.projectionLossy, 'yes'), doc.templates).outcome).toBe('invalid');
@@ -109,5 +123,28 @@ describe('a statement that is not a well-formed projection', () => {
   it('is invalid when it carries no decoration at all: within this profile every statement is asked', () => {
     const plain = { actor: { mbox: 'mailto:fictional-learner@example.org' }, verb: { id: 'https://example.org/verbs/made-up-verb' }, object: { id: 'https://example.org/activities/made-up-activity' } };
     expect(validates(plain, doc.templates).outcome).toBe('invalid');
+  });
+});
+
+describe('the profile as it is published on the pod', () => {
+  const RDF_TYPE = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#type';
+  const PROFILE = 'https://w3id.org/xapi/profiles/ontology#';
+  const quads = new Parser().parse(xapixProfileTurtle());
+  const typed = (type: string): string[] => quads.filter(q => q.predicate.value === RDF_TYPE && q.object.value === type).map(q => q.subject.value).sort();
+
+  it('is published at its own IRI, beside the ontology', () => {
+    expect(XAPIX_GRAPHS.profile).toBe(doc.id);
+    expect(XAPIX_GRAPHS.ontology).toBe(XAPIX_NS.replace(/#$/, ''));
+  });
+
+  it('states the profile, its version, the four result extensions and the template the JSON-LD states', () => {
+    expect(typed(`${PROFILE}Profile`)).toEqual([doc.id]);
+    expect(typed('https://w3id.org/xapi/ontology#ResultExtension')).toEqual(Object.values(IEP_DECORATIONS).sort());
+    expect(typed(`${PROFILE}StatementTemplate`)).toEqual([XAPIX_PROJECTION_TEMPLATE_ID]);
+    expect(quads.some(q => q.subject.value === XAPIX_PROFILE_VERSION_ID)).toBe(true);
+  });
+
+  it('gives the same bytes each time', () => {
+    expect(xapixProfileTurtle()).toBe(xapixProfileTurtle());
   });
 });

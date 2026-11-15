@@ -33,12 +33,16 @@ export const IEP_DECORATIONS = {
   projectionLossy: `${IEP_NS}projectionLossy`,
 } as const;
 
-/** The modal statuses a projected statement may state. */
-export const MODAL_STATUSES = ['Asserted', 'Hypothetical', 'Counterfactual'] as const;
+/**
+ * The modal statuses a projected statement may state. `iep:` has a fifth, Retracted, and it is
+ * left out on purpose: a retraction is said with xAPI's own voiding statement, not with a stored
+ * statement that calls itself retracted.
+ */
+export const MODAL_STATUSES = ['Asserted', 'Hypothetical', 'Counterfactual', 'Quoted'] as const;
 
 /**
- * Every term xapi-x adds, by local name. Only the namespace and the ontology exist so far: no
- * emitter writes any of these yet, and the first profile declares none of them.
+ * Every term xapi-x adds, by local name. The ontology is published at XAPIX_NS. No emitter
+ * writes any of these yet, and the first profile declares none of them.
  */
 export const XAPIX_TERM_NAMES = [
   // What a term is.
