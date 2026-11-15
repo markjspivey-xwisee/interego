@@ -148,6 +148,28 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     expect(judged.templates.length).toBeGreaterThan(0);
   });
 
+  it.each([
+    // A verb the source supplies is kept when it can say the descriptor's modal status...
+    [`${FOXXI_NS}performed`, 'Asserted', `${FOXXI_NS}performed`],
+    [`${FOXXI_NS}performed`, 'Quoted', `${FOXXI_NS}performed`],
+    ['intended', 'Hypothetical', `${FOXXI_NS}verbs/intended`],
+    ['considered', 'Counterfactual', `${FOXXI_NS}verbs/considered`],
+    // ...and gives way to the structural verb for that status when it cannot.
+    ['intended', undefined, 'http://adlnet.gov/expapi/verbs/completed'],
+    ['considered', 'Asserted', 'http://adlnet.gov/expapi/verbs/completed'],
+    [`${FOXXI_NS}performed`, 'Hypothetical', `${FOXXI_NS}verbs/intended`],
+    [`${FOXXI_NS}performed`, 'Counterfactual', `${FOXXI_NS}verbs/considered`],
+    ['intended', 'Counterfactual', `${FOXXI_NS}verbs/considered`],
+  ] as const)('a source that says %s of a %s descriptor is projected as %s, and the statement follows both profiles', async (verb, modalStatus, projectedAs) => {
+    const statement = project({ verb, ...(modalStatus ? { modalStatus } : {}) });
+    expect((statement.verb as Json).id).toBe(projectedAs);
+    expect(decorations(statement)[IEP_DECORATIONS.modalStatus]).toBe(modalStatus ?? 'Asserted');
+    expect(validates(statement, xapix).outcome).toBe('success');
+    const judged = await followsFoxxi(statement);
+    expect(judged.comments).toEqual([]);
+    expect(judged.templates.length).toBeGreaterThan(0);
+  });
+
   it('states no outcome the envelope did not carry, and keeps the one it did', () => {
     expect(Object.keys(project().result as Json)).toEqual(['extensions']);
     expect(project({ success: false, scoreScaled: 0.2 }).result).toMatchObject({ success: false, score: { scaled: 0.2 } });

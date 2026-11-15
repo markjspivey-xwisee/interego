@@ -600,6 +600,20 @@ export function verbIsDeclared(verbIri: string): boolean {
   return verbs.some(v => v.id === verbIri);
 }
 
+/**
+ * The modal statuses a statement with this verb may state under `iep:modalStatus`, when the
+ * profile's templates for the verb say: `intended` says Hypothetical and nothing else. Undefined
+ * when no template for the verb holds the status to anything. Read from the templates' own
+ * rules, so it cannot disagree with what the profile then checks.
+ */
+export function modalStatusesVerbCanSay(verbIri: string): string[] | undefined {
+  const said = templates.filter(t => (t as { verb?: string }).verb === verbIri)
+    .flatMap(t => ((t as { rules?: Array<{ location: string; any?: unknown[] }> }).rules ?? []))
+    .filter(r => r.location.includes(IEP_DECORATIONS.modalStatus) && Array.isArray(r.any))
+    .flatMap(r => r.any as string[]);
+  return said.length > 0 ? [...new Set(said)] : undefined;
+}
+
 // ── Patterns ────────────────────────────────────────────────────────
 // Pattern operators (xAPI Profile §6.3):
 //   sequence   — ordered list, each member fires in order
