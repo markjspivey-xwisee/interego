@@ -1,6 +1,6 @@
 # xapi-x
 
-A superset of xAPI made by decoration, the way [I2IDL-X](../i2idlx/README.md) is a superset of the I2IDL glossary. This is a design for the owner to accept or change. A first slice is in code; the rest is proposed, and the questions that need a decision are at the end.
+A superset of xAPI made by decoration, the way [I2IDL-X](../i2idlx/README.md) is a superset of the I2IDL glossary. The design, a first slice in code, and the decisions taken on it. The ontology and the first profile are published; sections 3 to 6 are designed and not yet emitted by anything.
 
 > **Status: part of the Foxxi vertical. Non-normative, not part of the Interego protocol.** xapi-x adds no term to `iep:` or to any other Interego namespace, and it uses no other publisher's verbs, extensions or IRIs. Its own terms are in `xapix:`, declared in [xapix.ttl](xapix.ttl).
 
@@ -21,7 +21,14 @@ A decoration never changes what a standard member means. `verb`, `object`, `resu
 ## Where it lives, and why
 
 - **Layer: vertical (application over L3), under Foxxi**, at `applications/foxxi-content-intelligence/xapix/` with code in `src/xapix/`. The transplant test in `spec/LAYERS.md` settles the layer: every claim here names xAPI, so none of it survives being moved to another stack, and none of it is L1 or L2. It sits under Foxxi because i2idl-x does, because the profile processor it is checked with is Foxxi's (`src/xapi-profile-server/processor.ts`), and because section 4 links profiles to i2idl-x concepts. Other verticals (lrs-adapter, coached-world, llm-telemetry, agp) use it the way coached-world's tests already use Foxxi's processor: by import, with no protocol change.
-- **Namespace: `xapix:` = `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix#`.** The same root as `i2x:`, so it is published the same way: a signed graph on the owner's pod, dereferenced by the relay. It is outside every protocol namespace. **It does not dereference yet**: nothing has been published to the pod, and that is the owner's step (question 2).
+- **Namespace: `xapix:` = `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix#`.** The same root as `i2x:`, so it is published the same way: a signed graph on the owner's pod, dereferenced by the relay. It is outside every protocol namespace. **It is published** (2026-11-15, public, authorship signed by the relay) and resolves as Turtle and JSON-LD:
+
+  | Graph | IRI | Triples |
+  |---|---|---|
+  | Ontology | `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix` | 58 |
+  | Profile | `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix-profile` | 51 |
+
+  The profile's version (`…/xapix-profile/v/1`) and its template (`…/xapix-profile/templates/descriptor-projection`) are subjects in the profile graph and resolve to it. Both graphs were fetched back and compared triple for triple with `xapix.ttl` and with what `src/xapix/publication.ts` returns. A public graph cannot be unpublished; a change is a new publish that supersedes this one.
 - **Ontology: [xapix.ttl](xapix.ttl)**, 15 terms, every one with a label and a comment. `src/xapix/namespace.ts` lists the same 15 and a test fails when the two differ. The repository's ontology lint does not check a vertical's own prefix, so that test is the only thing that would notice an undeclared `xapix:` term.
 
 ### What is in code now
@@ -31,11 +38,12 @@ A decoration never changes what a standard member means. `verb`, `object`, `resu
 | `src/xapix/namespace.ts` | The namespace, the profile's IRI, the four `iep:` keys, the 15 term names. |
 | `xapix/xapix.ttl` | The ontology. |
 | `src/xapix/profile.ts` | The first xapi-x profile: four result extensions and one statement template. |
+| `src/xapix/publication.ts` | The profile as the triples that are published, from the same function the profile server reads a profile with. |
 | `applications/lrs-adapter/src/projection-statement.ts` | The statement the adapter posts, as a function of its own. It was the middle of `projectDescriptorToLrs`; behaviour is unchanged. |
 | `tests/an-lrs-adapter-statement-follows-the-xapi-x-profile.test.ts` | Runs the adapter's own builder through the specification's `validates` against the profile. |
 | `tests/the-xapi-x-namespace-is-declared.test.ts` | Namespace file and ontology agree; the four keys are declared in `docs/ns/iep.ttl`. |
 
-No emitter writes anything new. Sections 3 to 6 are design only.
+No emitter writes an `xapix:` term. Sections 3 to 6 are design only.
 
 In the examples below, `IEP#` stands for `https://markjspivey-xwisee.github.io/interego/ns/iep#` and `XAPIX#` for the `xapix:` namespace. A real statement writes the full IRI. Every name, address and identifier is made up.
 
@@ -46,9 +54,9 @@ In the examples below, `IEP#` stands for `https://markjspivey-xwisee.github.io/i
 | Key | Value | Written when |
 |---|---|---|
 | `IEP#sourceDescriptor` | IRI of the signed descriptor | always |
-| `IEP#modalStatus` | `"Asserted"`, `"Hypothetical"` or `"Counterfactual"` | always (defaults to `"Asserted"`) |
+| `IEP#modalStatus` | `"Asserted"`, `"Hypothetical"`, `"Counterfactual"` or `"Quoted"` | always (defaults to `"Asserted"`) |
 | `IEP#coherentNarratives` | array of strings | the source holds more than one reading |
-| `IEP#projectionLossy` | `true` | the source holds more than one reading |
+| `IEP#projectionLossy` | `true` or `false` | always, since 2026-11-15; before that, only `true` and only with several readings |
 
 **Decision: keep them exactly as they are.** Same IRIs, same place. Statements carrying them are already in other people's stores (the adapter's tests round-trip them through two real LRS products), and a key that is renamed is a key those statements no longer have. xapi-x mints no second name; the profile declares the existing IRIs as `ResultExtension` concepts. The specification allows a concept whose IRI is outside the profile's own.
 
@@ -84,11 +92,11 @@ In the examples below, `IEP#` stands for `https://markjspivey-xwisee.github.io/i
 
 A plain LRS shows one reading in `result.response` and stores the rest. That is the loss, and `projectionLossy` says so.
 
-**Lossy means the statement says less than the descriptor.** Absent means *not stated*, not *false*: see finding 2.
+**Lossy means the statement says less than the descriptor**: the source was not asserted, or it held several readings. The adapter now states it on every projection. On a statement written before 2026-11-15 an absent flag means *not stated*, not *false*.
 
 ## 2. Modal status
 
-A descriptor's claim is Asserted, Hypothetical or Counterfactual. xAPI has no such notion: a stored statement reads as something that happened. So the statement states its modal status in `IEP#modalStatus`, and xapi-x fixes what follows from it.
+A descriptor's claim is Asserted, Hypothetical, Counterfactual or Quoted (someone else's claim, repeated without endorsing it). `iep:` has a fifth status, Retracted, and a statement never states it: a retraction is a voiding statement (section 3). xAPI has no such notion: a stored statement reads as something that happened. So the statement states its modal status in `IEP#modalStatus`, and xapi-x fixes what follows from it.
 
 **A consumer must not conclude, from a statement that is not Asserted:**
 
@@ -104,7 +112,7 @@ It may conclude that someone proposed the claim (Hypothetical) or reasoned about
 
 - A non-asserted statement carries no `result.success`, `result.completion` or `result.score`.
 - It does not use a verb its profile marks as an outcome. Foxxi's projector already does this: a Hypothetical descriptor is projected with Foxxi's `intended` verb and a Counterfactual with `considered`.
-- Projecting a non-asserted descriptor is off by default and the caller opts in. The lrs-adapter already skips Hypothetical unless asked and always skips Counterfactual.
+- An emitter that takes its verb from a caller cannot know the verb is not an outcome, so for it projecting a non-asserted descriptor is off unless the caller opts in. The lrs-adapter does this for Hypothetical and never projects a Counterfactual, which is stricter and allowed. An emitter that chooses the verb itself, as Foxxi's projector does, may project every status.
 
 ```json
 {
@@ -290,7 +298,7 @@ xAPI's own signed statements (a JWS attachment) attest one statement's content. 
 
 ### Lint rules
 
-Each is checkable by code. X1, X2 (in part), X3 and X5 hold for the lrs-adapter today and are in the slice's tests or its template. The rest are proposed.
+Each is checkable by code. X1, X2 (in part), X3, X5 and X6 hold for the lrs-adapter and are in the tests or the template. The rest are proposed.
 
 | | Rule | Today |
 |---|---|---|
@@ -299,31 +307,41 @@ Each is checkable by code. X1, X2 (in part), X3 and X5 hold for the lrs-adapter 
 | X3 | A statement that names a source descriptor states a modal status, and the reverse. | template |
 | X4 | A statement that is not Asserted carries no `result.success`, `completion` or `score`, and no verb its profile marks as an outcome. | proposed |
 | X5 | More than one narrative means `projectionLossy` is `true`. | tested |
-| X6 | A projection that loses anything states `projectionLossy: true`; one that loses nothing states `false`. Never absent. | **fails today** (finding 2) |
+| X6 | A projection that loses anything states `projectionLossy: true`; one that loses nothing states `false`. Never absent. | tested, for statements written from 2026-11-15 |
 | X7 | `supersedesStatement` never names the statement itself, and a correction comes with a voiding statement. | proposed |
 | X8 | No extension claims a place in a sequence with a bare number. | proposed |
 | X9 | The target of every `xapix:evidences` exists in the pinned I2IDL release or in `i2x:`; the target of every `xapix:offers` dereferences to an affordance. | proposed |
 | X10 | With every decoration removed, the profile is still a valid profile and each statement still follows every template that asks for no decoration. | proposed |
 | X11 | No two templates of a profile share their determining properties. | holds for Foxxi since pull request 910 |
 
-## Found while writing this, not changed
+## Found while writing this
 
 1. **Only the lrs-adapter writes the four keys.** The brief named learner-performer-companion as a second emitter. A search of its source finds no statement that carries them.
-2. **`projectionLossy` is absent when a Hypothetical descriptor is projected with one narrative.** The audit row the adapter writes to the pod says `lrs:projectionLossy true` for that case; the statement says nothing. So absent cannot be read as false. The profile's definition says so. The fix is one line in `projection-statement.ts` and it changes what the adapter sends, so it is left for a decision (question 3).
+2. **`projectionLossy` was absent when a Hypothetical descriptor was projected with one narrative**, while the audit row the adapter writes to the pod called that projection lossy. Fixed with decision 3: the statement and the audit row now use one test (`projectionIsLossy`).
 3. **Foxxi's projector says the same things under other names.** `mesh-event-projector.ts` writes the descriptor as `foxxi:substrateDescriptorIri` and the superseded one as `foxxi:supersededDescriptor`, both in `context.extensions`, and states modal status only through the verb. Two emitters, two vocabularies for one idea (question 6).
 4. **`docs/ns/iep.ttl` names xAPI.** The comment on `iep:sourceDescriptor` says it is "used as an xAPI result.extensions key by the LRS projection". That is a Layer 1 vocabulary describing itself by one technology. It is a comment, not a MUST, and the term itself is neutral; noted, not touched.
 5. **The adapter's README lists the keys as surviving two LRS products.** That evidence is the reason section 1 keeps the IRIs.
 
-## Questions for the owner
+## Decisions
 
-1. **Home.** Under Foxxi, beside i2idl-x (as built), or a vertical of its own, since four verticals will use it? Recommended: Foxxi now; move only if a second vertical needs to change it rather than use it.
-2. **Publishing.** `xapix:` and the profile's IRI are under the relay root `i2x:` uses, on your pod, and neither resolves until the graphs are published. Publish them as i2idl-x's are? And should the profile also be added to the Foxxi profile server so `/xapi/profiles` serves and validates against it? Nothing was published by this change.
-3. **The four keys.** Keep them as `iep#` IRIs in `result.extensions` (recommended, section 1)? And may the adapter start writing `projectionLossy` on every projection, `false` included, so X6 holds? Provenance and modal status describe the statement, not its result, so `context` would be the better place if no statements were already stored; they are.
-4. **Modal status values.** `iep:` has five (Asserted, Hypothetical, Counterfactual, Quoted, Retracted). The adapter writes three and the profile's schema allows three. Foxxi's projector handles all five (Retracted voids; Quoted is unendorsed). Add Quoted, and treat Retracted as voiding only?
-5. **Non-asserted statements.** Is "off unless the caller opts in" the rule for every emitter? The adapter never projects a Counterfactual; Foxxi does, as `considered`. One rule or two?
-6. **One vocabulary or two.** Should Foxxi's projector also write the `iep#` keys (and keep its own for stored statements), or should xapi-x declare the Foxxi keys equivalent? Recommended: write both for one profile version, then drop Foxxi's.
-7. **The marker.** A new `xapix:Projection` activity type, or Foxxi's existing `activities/descriptor-projection` reused as it stands? Recommended: `xapix:Projection`, since the marker should not belong to one application.
-8. **Supersession.** Is "revise without voiding, void only a correction" right, or should every superseded statement be voided so a plain LRS never double-counts?
-9. **Digests and signers.** Which canonical form is hashed (proposed: RFC 8785 JSON of the statement as sent, without `stored`, `authority` and `version`)? Who may sign an order attestation: only the emitter, or also an LRS operator or a third party?
-10. **Evidence links.** Target I2IDL's canonical concept IRIs, or only `i2x:` and authored concepts? Are they Hypothetical until ratified, as I2IDL-X's own proposed links are?
-11. **Where the lint runs.** A function beside the processor that a profile's tests call, an affordance on the profile server, or both?
+The owner was asked eleven questions and answered: decide them, "you know what my thoughts are" (2026-11-15). These are the decisions, each with its reason, so any of them can be reversed by someone who disagrees with the reason.
+
+1. **Home: the Foxxi vertical, beside i2idl-x.** It moves only if a second vertical needs to change xapi-x rather than use it.
+2. **Published.** The ontology and the profile are on the pod at the IRIs above. Serving the profile from the Foxxi profile server as well is right and is not done here: that server's code is being changed in another branch (profile authoring and hosting), and the profile can be added through the publish route that branch builds.
+3. **The four keys stay `iep#` IRIs in `result.extensions`.** Stored statements carry them. The adapter now writes `projectionLossy` on every projection, `false` included, so a reader can tell a faithful projection from one that did not say.
+4. **Four modal statuses in a statement: Asserted, Hypothetical, Counterfactual, Quoted.** Quoted is added because repeating a claim is not making it, and a consumer must not count it either. Retracted is never a stored status: voiding is how xAPI says it, and saying it twice invites the two to disagree.
+5. **One rule for non-asserted statements: no outcome members and no outcome verb (X4).** Whether projection is on by default follows from it: off where the caller supplies the verb, allowed where the emitter chooses it.
+6. **One vocabulary.** Foxxi's projector is to write the `iep#` keys as well as its own `foxxi:` keys for one profile version, then stop writing its own. Not done here: it changes Foxxi's profile and emitter, which the profile-authoring branch is also editing.
+7. **The marker is `xapix:Projection`.** A marker that says "this is a projection of a descriptor" should not belong to one application. Foxxi's `activities/descriptor-projection` stays on stored statements.
+8. **A revision does not void; a correction does.** Voiding a statement that was a fair record when it was written would say it never should have counted, which is false. A plain LRS showing both is the stated loss.
+9. **Digests are SHA-256 over RFC 8785 canonical JSON** of the statement as its emitter sent it, without `stored`, `authority` and `version`. **Anyone may sign an order attestation.** There is no authority to appoint: the signer is named with the conclusion and the reader decides whether to trust them.
+10. **Evidence links target I2IDL's own concept IRIs, or `i2x:` authored concepts where I2IDL has none.** Each is a proposal (Hypothetical) until reviewed, as every link I2IDL-X proposes is.
+11. **The lint is a function first**, beside the processor, that a profile's tests call; an affordance on the profile server follows. The profile-authoring branch adds `xapi-profile-server/lint.ts`; X1 to X11 belong there as a rule set, not in a second linter.
+
+## Left to do
+
+- Emit the `xapix:` terms: the `xapix:Projection` category and `descriptorDigest` first (sections 1 and 7), then supersession, controls and ordering.
+- Foxxi's projector writes the `iep#` keys (decision 6), and Foxxi's profile takes the decoration rules into its own templates.
+- X4 and X7 to X10 as code (decision 11), once `lint.ts` is on master.
+- The profile served by the Foxxi profile server (decision 2).
+- Version 2 of the profile, selecting on `xapix:Projection`, once an emitter writes the category.

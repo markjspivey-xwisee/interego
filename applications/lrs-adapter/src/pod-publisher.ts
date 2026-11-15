@@ -20,7 +20,7 @@ import {
   publish,
 } from '@interego/solid';
 import { LrsClient, type LrsClientConfig, type XapiStatement } from './lrs-client.js';
-import { buildProjectionStatement, keepsSeveralNarratives, IEP_NS } from './projection-statement.js';
+import { buildProjectionStatement, keepsSeveralNarratives, projectionIsLossy, IEP_NS } from './projection-statement.js';
 import { createHash } from 'node:crypto';
 import type {
   IRI,
@@ -217,7 +217,7 @@ export async function projectDescriptorToLrs(
 
   // Construct Statement
   const lossNotes: string[] = [];
-  const lossy = args.modalStatus === 'Hypothetical' || (args.coherentNarratives !== undefined && args.coherentNarratives.length > 1);
+  const lossy = projectionIsLossy(args);
 
   if (args.modalStatus === 'Hypothetical') {
     lossNotes.push('Source descriptor was Hypothetical; projected per caller request; xAPI consumers may treat as committed unless they read extensions');
