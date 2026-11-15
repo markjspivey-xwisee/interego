@@ -327,7 +327,7 @@ Each is checkable by code. X1, X2 (in part), X3, X5 and X6 hold for the lrs-adap
 The owner was asked eleven questions and answered: decide them, "you know what my thoughts are" (2026-11-15). These are the decisions, each with its reason, so any of them can be reversed by someone who disagrees with the reason.
 
 1. **Home: the Foxxi vertical, beside i2idl-x.** It moves only if a second vertical needs to change xapi-x rather than use it.
-2. **Published.** The ontology and the profile are on the pod at the IRIs above. Serving the profile from the Foxxi profile server as well is right and is not done here: that server's code is being changed in another branch (profile authoring and hosting), and the profile can be added through the publish route that branch builds.
+2. **Published.** The ontology and the profile are on the pod at the IRIs above. The Foxxi profile server serves the profile as well, as one of the deployment's built-in profiles (`src/xapi-profile-server/built-in.ts`): the pod serves its triples, and the server answers SPARQL, validates a statement against it and resolves each of its IRIs. It is built in, not published through the authoring routes, so that it is the document `src/xapix/profile.ts` builds and nothing else.
 3. **The four keys stay `iep#` IRIs in `result.extensions`.** Stored statements carry them. The adapter now writes `projectionLossy` on every projection, `false` included, so a reader can tell a faithful projection from one that did not say.
 4. **Four modal statuses in a statement: Asserted, Hypothetical, Counterfactual, Quoted.** Quoted is added because repeating a claim is not making it, and a consumer must not count it either. Retracted is never a stored status: voiding is how xAPI says it, and saying it twice invites the two to disagree.
 5. **One rule for non-asserted statements: no outcome members and no outcome verb (X4).** Whether projection is on by default follows from it: off where the caller supplies the verb, allowed where the emitter chooses it.
@@ -343,5 +343,4 @@ The owner was asked eleven questions and answered: decide them, "you know what m
 - Emit the `xapix:` terms: the `xapix:Projection` category and `descriptorDigest` first (sections 1 and 7), then supersession, controls and ordering.
 - Foxxi's projector writes the `iep#` keys (decision 6), and Foxxi's profile takes the decoration rules into its own templates.
 - X4 and X7 to X10 as code (decision 11), once `lint.ts` is on master.
-- The profile served by the Foxxi profile server (decision 2).
 - Version 2 of the profile, selecting on `xapix:Projection`, once an emitter writes the category.

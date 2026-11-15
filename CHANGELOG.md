@@ -47,6 +47,27 @@ A refused publication still counts against the signer's hourly allowance.
 
 Test: `tests/a-profile-version-is-published-only-once-it-is-kept.test.ts`, with a
 made-up pod that throws, declines, or stays silent on command.
+## 2026-11-15 — The Foxxi profile server serves the xapi-x profile
+
+The xapi-x profile was on the pod, which serves its triples and judges nothing.
+The Foxxi profile server now holds it too, as one of the deployment's built-in
+profiles beside Foxxi's own (`src/xapi-profile-server/built-in.ts`). So the
+server lists it, answers SPARQL over it, validates a statement against it, and
+resolves the profile, its version, its template and each of the four `iep#` keys
+it declares, with content negotiation.
+
+It is built in, not published through the authoring routes: the server holds
+the document `src/xapix/profile.ts` builds, the same one the pod's graph is made
+from, and no agent, the operator included, can replace it or take it down.
+
+The profile passes the lint a published profile has to pass, with a statement
+the lrs-adapter's own builder makes as its example
+(`tests/the-xapi-x-profile-is-served-by-the-profile-server.test.ts`).
+
+**Not built.** A built-in profile has no stored examples, so
+`/xapi/profiles/examples` answers nothing for it; its example is in the test.
+The profile's IRIs are on the relay's origin and still dereference to the pod,
+not to this server: the server answers for them through its resolver.
 
 ## 2026-11-15 — Foxxi's xAPI profile server writes, lints, publishes and hosts profiles
 

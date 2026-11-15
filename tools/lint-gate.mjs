@@ -307,10 +307,9 @@ const UNLINTED_FRONTIER = {
   //    applications/foxxi-content-intelligence/tests/a-unit-asks-the-lms-for-its-reviewed-statements.test.ts`:
   //    0 problems).
   //    Master then re-pinned to 1205 on its own; with these 2 the measured count is 1207.
-  //    2026-11-15: master had drifted to 1268, the last file the slack allowed, and the test that a
-  //    profile version is published only once it is kept made it 1269. Re-pinned to that measured
-  //    count; the test lints clean and the error ceiling is unchanged.
-  applications: { errors: 1452, files: 1269 },
+  //    1207 -> 1270, errors unchanged: the root grew past its slack as the xAPI profile and xapi-x
+  //    work landed; the last 2 are src/xapi-profile-server/built-in.ts and its test, both lint-clean.
+  applications: { errors: 1452, files: 1270 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },
