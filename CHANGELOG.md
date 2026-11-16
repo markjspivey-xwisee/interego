@@ -335,8 +335,11 @@ packages, and neither the successor, the witness nor the probe was run. CI
 installs from the lockfile.
 
 Not covered: no editor session was run through the witness or the probe against the
-successor. The image growth above is not measured, and dropping dev dependencies
-from those images is a separate change. On Node 20, which most CI jobs use, `npm ci`
+successor. The image growth above is not measured. It does not reach the nine
+bridge images: they now delete the Claude developer tools, the successor and the
+agent SDK with its platform packages right after `npm ci`
+(`tools/prune-image-dev-tools.mjs`, from the image-prune change that landed first),
+and that change's guard test passes against this lockfile. On Node 20, which most CI jobs use, `npm ci`
 warns that the successor wants Node 22 and installs it anyway; running it needs
 Node 22. The `@anthropic-ai/sdk` 1.8.0 this change put under the successor was five days
 old, chosen by npm because the agent SDK's peer range has no upper bound; the "Linux
