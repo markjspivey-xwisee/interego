@@ -1,5 +1,202 @@
 # Changelog
 
+## 2026-11-15 — CI: the hosted cold builds run when a file their images copy changes
+
+`hosted-image-builds.yml` cold-builds six images on a pull request, but only
+when the pull request touches one of the paths it lists. The interego-bridge
+and Discord images now copy `tools/prune-image-dev-tools.mjs` and run it inside
+their `npm ci` layer, and the list did not name it, so a pull request changing
+only the script built no image before merge; the other seven bridges that run
+it are built only after merge. The relay's reference stage had the same gap
+for the compositions it compiles in: `integrations/application-runtime/`,
+`integrations/affordance-surface/` and two `applications/llm-telemetry/` files.
+All five are on the list now.
+
+`integrations/tests/hosted-docker-build-inputs.test.ts` reads the workflow's
+paths and its matrix, and checks that every tracked file each of those
+Dockerfiles copies from the context matches a path, so the next COPY added
+without a path fails there. Before the fix it listed the prune script for both
+images and twenty files of the relay's.
+
+Not covered: no build was dispatched for the seven bridges that only build
+after merge, so the RUN that prunes has not yet run in a real image; the first
+`build-ghcr` dispatch for one of them (for example `-f image=interego-wsp-bridge`)
+will show it and give a measured layer size. The path filter is read with a
+small pattern matcher of the test's own, which does not read negated patterns
+and fails if one appears.
+
+## 2026-11-15 — Images: the prune reaches workspace copies and deletes only platform packages
+
+`tools/prune-image-dev-tools.mjs` walked only the root node_modules. When a
+workspace needs one of the pruned packages at a version that conflicts with the
+root's, npm nests a copy under that workspace, for example
+`applications/<x>/bridge/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64`,
+and that copy, a native binary of several hundred MB, would have stayed in the
+image with every test green. The lockfile already nests sixteen packages under
+workspace and application directories, and Foxxi's own package already asks for
+agent SDK 0.3 while the root has 0.2.44, so this was a plausible next change. The
+script now also walks the node_modules of every package directory the lockfile
+beside it records, and then checks that no location the lockfile records for a
+pruned package is still on disk. If one is, for instance behind a symbolic link
+it does not follow, the run fails and names it. It also refuses a directory not
+named node_modules, so `node tools/prune-image-dev-tools.mjs /tmp` fails instead
+of reporting success, and a lockfile it cannot read. A .bin link counts as
+pointing into a pruned package at any node_modules level, so a workspace's link
+up into the root's copy goes too.
+
+The platform packages were matched by `[a-z0-9][a-z0-9-]*` after the name, so
+a name such as `@anthropic-ai/claude-code-sdk`, or any future
+`@anthropic-ai/claude-code-<x>`, would have been deleted from every image. These
+images run some root devDependencies, so a runtime library of such a name added
+as one would have vanished. The suffix is now a platform and nothing else: an
+os and a cpu as Node names them, optionally `-musl`. The list writes it as
+`<platform>`. The test checks that every platform package the lockfile lets npm
+install for the CLI and the SDK is still covered.
+
+The safety argument is now stated in the right order, in the script, the test
+and the entry below: what proves no service needs these packages is the import
+closure of what each image runs and the scan of every shipped file. That npm
+marks them dev-only proves nothing in images that install devDependencies on
+purpose and import some of them (express, n3, jose and tsx) at run time. The lockfile
+check is a guard on the list, and it is now as strict as the entry below says:
+a workspace's devDependency on a pruned package fails it too, where before only
+production fields counted.
+
+The entry below also gave sizes that were low. With npm 10.9, which reads the
+lockfile's `libc` field, today's images hold about 330 MB of these packages, not
+312: the agent SDK carries both the glibc and the musl builds of sharp (113.1 MB
+installed, not 96.3). The pending switch would add about 470 MB per image, not
+204, because the new SDK's lockfile entries record no `libc` and npm installs
+both its 293.6 MB glibc and 287.3 MB musl binaries. Run on a hard-linked copy of
+this machine's install, where an older lockfile without `libc` put both CLI
+builds in place, the script removed 595.3 MB and kept `@anthropic-ai/sdk`,
+`@agentclientprotocol/sdk` and tsx. The note on the test-module floor now says
+what forced the move from 690: the reporter does not fire at 35 modules of
+slack, but `tests/vitest-run-integrity.test.ts` requires fewer and fails at 690.
+
+Not covered: no image was built, so the sizes are still the registry's unpacked
+sizes plus a local measurement, not a layer diff; the base image's npm version
+is assumed from Node 22, not read from the image. A pruned package nested under
+a package directory outside the build tree (a `file:` dependency on `../x`) is
+not walked; the check after the walk fails the build on it instead of deleting
+it.
+
+## 2026-11-15 — Images: the prune check reads every way of copying the lockfile and running npm
+
+The test that keeps the Claude developer tools out of the images,
+`integrations/tests/images-ship-no-claude-dev-tools.test.ts`, recognised the
+root lockfile only when a COPY named `package-lock.json` literally, and an
+install only when a command began `npm ci`, `npm install` or `npm i`. A new
+Dockerfile written any other way installed the root devDependencies, the
+Claude Code CLI among them, and passed every check: `COPY package*.json ./`,
+`COPY ./package-lock.json`, `COPY . .`, a JSON-form COPY,
+`NODE_OPTIONS=... npm ci`, `npm clean-install`, `npm --loglevel=warn ci`,
+`(npm ci)` and `npm ci --prefix /app` each found no install at all. It also
+counted an install as pruned whenever the script ran after it, so
+`node tools/prune-image-dev-tools.mjs /tmp` passed while pruning nothing in
+/app, and so did a prune after `||`, which runs only when `npm ci` fails.
+
+The test now follows where every COPY and ADD puts the repository's
+package.json and lockfiles, and the prune script, in any form Docker accepts: a
+literal or `./` path, a glob, a directory, `.`, JSON form, or `--from` an earlier
+stage. It splits a RUN into commands outside quotes, reads past `VAR=value`
+assignments, `env`-style wrappers and npm's options before the verb, accepts
+every alias npm 10 has for `ci` and `install`, and follows `--prefix`. A prune
+counts only when it runs after the install in the same RUN, joined by `&&` or
+`;`, on that install's own node_modules. And it fails closed: an npm install it
+cannot attribute to a manifest it saw copied, or to packages the command names,
+fails the test, as does one that names a pruned package. Every Dockerfile in
+`deploy/images.json` must be one the test reads, and `x.Dockerfile` and
+`Containerfile` names are read too. The shipped-file scan uses the same reading,
+so a `COPY . .` puts the whole tree in its scope.
+
+The test carries twenty-one rewritten COPY, npm and prune lines that must each
+be caught, four that must each count as pruned, and three installs it must
+refuse to place. Of the first twenty written, seventeen passed unnoticed under
+the old reading. The thirty npm installs in today's Dockerfiles all place:
+twelve install the root manifests (the nine pruned images and the three build
+stages), thirteen another manifest, one is global and four name their packages.
+
+Not covered: installs by yarn, pnpm or bun are not read (the one bun install,
+in `deploy/Dockerfile.pgsl-sweep`, writes its own manifest); `RUN` heredocs,
+shell variables in paths, and a `cd` inside a subshell (taken to last after it)
+are read naively; a RUN that writes its own package.json is classified by the
+packages it names; and `.dockerignore` is not applied, which can only make the
+test see more copied than Docker does.
+
+## 2026-11-15 — Images: the Claude developer tools no longer ship in nine images
+
+Nine images install the root lockfile with a plain `npm ci` and keep its
+devDependencies, because their services run through `npx tsx` and tsx is a root
+devDependency: the seven vertical bridges (agp, coached-world, foxxi,
+jev-harness, pev, wrd, wsp), the substrate demo bridge and the Discord bot.
+Every other root devDependency came along with tsx, among them the Claude Code
+CLI and the ACP agent `@zed-industries/claude-code-acp` with the Claude Agent
+SDK it depends on. No service runs any of them.
+
+`tools/prune-image-dev-tools.mjs` now deletes them in the same RUN as the
+`npm ci`: `@anthropic-ai/claude-code` and its `@anthropic-ai/claude-code-<platform>`
+packages, `@anthropic-ai/claude-agent-sdk` and its
+`@anthropic-ai/claude-agent-sdk-<platform>` packages, and the ACP agents
+`@zed-industries/claude-code-acp` and `@agentclientprotocol/claude-agent-acp`,
+with their `node_modules/.bin` links. It deletes nothing else
+(`@anthropic-ai/sdk` stays), skips a package that is not there, and prints each
+removal and the bytes it held. The same RUN matters: a delete in a later RUN
+only hides the files behind whiteouts in a layer the image still ships.
+
+Why it is safe: nothing the nine images run imports them or starts their
+executables. `integrations/tests/images-ship-no-claude-dev-tools.test.ts`
+follows the static imports from each image's CMD and from every script a RUN
+step executes, and scans every file any image copies. Four files that do refer
+to them ship only because their directory is copied whole, and none is
+reachable from what the image runs: Foxxi's two emergent-collective developer
+drivers, the shared-workspace desktop app's lookup of a local Claude Code
+install, and `demos/agent-lib.ts`. That npm marks the packages dev-only is no
+evidence here, because these images install devDependencies on purpose and
+import some at run time (express, n3, jose and tsx are root devDependencies).
+The test reads the lockfile for a narrower guarantee: each pruned package is
+dev-only and only the root's devDependencies or another of them asks for one,
+so the list cannot delete something a production dependency needs. The same
+test pins which Dockerfiles must prune, and checks that the three which install
+the root lockfile only in a build stage (dashboard, pgsl-browser, relay) never
+ship that node_modules.
+
+Size, from the registry's unpacked sizes and a local install: about 330 MB per
+image. The CLI's glibc binary is 214.3 MB. The lockfile records `libc` for the
+CLI's platform packages, and npm 10.9, which Node 22 bundles, reads it from the
+lockfile entry, so the 208.3 MB musl build is skipped on these Debian images.
+The agent SDK 0.2.44 measures 113.1 MB installed: 79.8 MB of its own and both
+the glibc and the musl builds of sharp nested under it, whose lockfile entries
+record no `libc`. The CLI wrapper and the ACP agent are under 1 MB each. A tree
+installed from a lockfile without `libc` holds both CLI builds: on this
+machine's install (CLI 2.1.161) the script removed 595.3 MB.
+
+The pending switch to `@agentclientprotocol/claude-agent-acp` (0.99.1 in its
+lockfile) brings `@anthropic-ai/claude-agent-sdk` 0.3.312, whose linux-x64
+platform packages are native binaries of 293.6 MB (glibc) and 287.3 MB (musl).
+That lockfile records no `libc` for them, so npm installs both: about 470 MB
+more per image than today if nothing pruned them, net of the 113 MB SDK 0.2.44
+it replaces. All of those packages are on the list, so the switch adds none of
+that to these images.
+
+`integrations/tests/hosted-docker-build-inputs.test.ts` split a Dockerfile after
+the text `RUN npm ci` to inject a stage; it now injects after the whole line.
+The new test module used the last of the test-module floor's headroom over 690.
+Master has since raised the floor to 700 for a module of its own, which leaves
+this one headroom, so `MIN_TEST_MODULES` is not changed here.
+
+Not covered: no image was built here, so the saving stays an estimate until CI
+builds them. The switch still adds the larger ACP protocol library
+(`@agentclientprotocol/sdk` 0.14.1 to 2.1.0, about 7.5 MB more) and three small
+packages, which are not on the list. The images still carry the other root
+devDependencies (vitest, eslint, typescript and the rest). The script is copied
+in before `npm ci`, so changing it rebuilds the install layer of all nine
+images. The foxxi-dashboard and foxxi-microsite build stages install Foxxi's own
+devDependency on the agent SDK, binary included; those images serve built files
+from nginx, so it does not ship, and it is not pruned. npm's hidden lockfile
+still lists the removed packages; npm sees the tree no longer matches and reads
+the tree instead, and `npx tsx` does not consult it.
+
 ## 2026-11-15 — Foxxi's profile declares only its own terms, and its projector writes the xapi-x keys
 
 Three things left open when the Foxxi profile server began serving the xapi-x

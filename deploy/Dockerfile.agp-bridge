@@ -75,7 +75,13 @@ COPY applications/agent-collective/bridge/package.json ./applications/agent-coll
 COPY applications/agent-development-practice/bridge/package.json ./applications/agent-development-practice/bridge/
 COPY applications/organizational-working-memory/bridge/package.json ./applications/organizational-working-memory/bridge/
 COPY applications/lrs-adapter/bridge/package.json ./applications/lrs-adapter/bridge/
-RUN npm ci
+# The Claude developer tools leave in the same RUN that installed them: the CLI, the agent SDK and
+# the ACP agents are root devDependencies no service runs, and their native binaries are hundreds
+# of MB. A delete in a later RUN would only hide them behind whiteouts in a layer the image still
+# ships. See tools/prune-image-dev-tools.mjs and
+# integrations/tests/images-ship-no-claude-dev-tools.test.ts.
+COPY tools/prune-image-dev-tools.mjs ./tools/prune-image-dev-tools.mjs
+RUN npm ci && node tools/prune-image-dev-tools.mjs
 
 # tsx is a root devDependency now (pinned in package.json), so npm ci above installs it and no
 # layer below the cached install changes node_modules: the separate install that sat here re-ran
