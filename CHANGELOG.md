@@ -369,6 +369,28 @@ controls share and a link with two `invoke` values. Titles and descriptions
 still show their first value. The new tests failed before, but for four that
 pin what already worked. The CSP script hash is updated.
 
+The rule behind this work: the clients read the JSON-LD forms they model and
+fail closed on the rest. Where a property that decides safety, method, target,
+datatype or cardinality has more than one distinct value, or a document uses a
+structure they do not model, the control is listed as unsafe and refused with a
+named problem, or the document is, and refusing is preferred to reading more
+of JSON-LD. A further review found where that did not yet hold, each now fixed
+in both clients. Every node object is indexed wherever it is written and one
+`@id` is one node, so a hint, method or target on an object with a control's
+`@id` under any property is the control's; a node with no `@id` stays its own
+node instead of taking its action as one; and two nodes that name one action
+are refused, whatever each sends. Refused too: a template node with no template
+read (its own IRI was sent to), a value of a term typed `@json`, a complex
+`sh:path`, a JSON Schema `required` or `enum` that is not a list, `@import`, a
+`@graph` container where no members go, and in HyperMarkdown `fields` that are
+not JSON and a rel or target written as JSON. A HyperMarkdown line ends at CR
+LF, CR or LF in both clients, an empty array is no value and `{}` is one in
+both, a name with a line break is never shortened, and the page matches a
+form's inputs to their fields by position, since HTML rewrites a CR in an
+attribute. Most new shared cases failed before in one client or both. Of 1,500
+random documents the clients read 382 differently at the PR head; of 12,000
+they now read none differently. The CSP script hash is updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

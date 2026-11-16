@@ -15,8 +15,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, jsonldPlans, jsonldRefusals, sharedDescriptors,
-  sharedMarkdown } from './hypermedia-client-fixtures.js';
+import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals, LISTED,
+  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -712,6 +712,39 @@ describe('hmc.py: every value read, or the control or document refused', () => {
     expect(r.code, r.stderr).toBe(0);
     expect(r.stdout).toContain('Dry run');
     expect(seen.filter(s => s.startsWith('GET /purge'))).toEqual([]);
+  });
+
+  it('lists every control a document gives, nested, blank or typed as something else too, and no others', async () => {
+    for (const [path, titles] of LISTED) {
+      expect((await listed(path)).controls.map(c => c.title).sort(), path).toEqual([...titles]);
+    }
+  });
+
+  it('lists a control the document marks unsafe, wherever it says so, and sends nothing unconfirmed', async () => {
+    for (const [path, rel, title, method] of UNSAFE_CONTROLS) {
+      const control = (await listed(path)).controls.find(c => c.title === title);
+      expect(control, title).toBeDefined();
+      expect([control!.method, control!.unsafe, control!.problem], title).toEqual([method, true, null]);
+      if (!rel) continue;
+      const before = seen.length;
+      const r = await hmc(['invoke', `${base}${path}`, rel]);
+      expect(r.code, `${title}: ${r.stderr}`).toBe(0);
+      expect(r.stdout, title).toContain('Dry run');
+      expect(seen.slice(before).filter(line => !line.startsWith(`GET ${path}`)), title).toEqual([]);
+    }
+  });
+
+  it('plans the same request, or stops at the same error, as the page', async () => {
+    for (const [path, rel, fields, outcome] of dryRuns(base)) {
+      const { r, request } = await dry(path, rel, fields);
+      if ('error' in outcome) {
+        expect(r.code, `${rel}: ${r.stdout}`).toBe(2);
+        expect(r.stderr, rel).toContain(outcome.error);
+      } else {
+        expect(r.code, `${rel}: ${r.stderr}`).toBe(0);
+        expect([request!.url, request!.body], rel).toEqual([outcome.url, outcome.body]);
+      }
+    }
   });
 
   it('keeps every repeated query parameter when it asks again for JSON-LD', async () => {

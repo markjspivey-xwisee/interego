@@ -379,7 +379,7 @@ export function sharedDescriptors(base: string): Record<string, string> {
     ] },
     // A map's keys read in one order in both clients, as jsonld.js sorts them ("2" before
     // "current"): two operations with one action, a GET and a DELETE, are refused, whether they are
-    // two nodes or, with no "@id", one; and one operation with two methods is refused too.
+    // two named nodes or two blank ones; and one operation with two methods is refused too.
     '/index-order': { '@context': { ...CTX, versions: { '@id': 'hydra:operation', '@container': '@index' } }, '@id': `${base}/index-order`,
       versions: {
         current: { '@id': '#current', '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:order:item' }, 'hydra:method': 'GET', 'hydra:title': 'Read item', ...target('/item') },
@@ -486,6 +486,117 @@ export function sharedDescriptors(base: string): Record<string, string> {
     ], '@graph': [{ '@id': '#S', 'sh:property': { 'sh:path': { '@id': `${base}/query` }, 'sh:name': 'q', 'sh:maxCount': 1 } }] },
     '/nest-id': { '@context': { ...CTX, meta: '@nest' }, '@id': `${base}/nest-id`, 'iep:affordance': [
       { ...op('a', 'urn:collide:nest', 'GET', 'Nested id', target('/api')), meta: { '@id': '#b' } }] },
+    // Two operations that name one action are refused, whatever each sends: the second is marked
+    // destructive, and the first, a plain read of the same address, was the one a link invoked.
+    '/same-action': { '@context': CTX, '@id': `${base}/same-action`, 'iep:affordance': [
+      op('a', 'urn:same:action', 'GET', 'Same-action read', target('/purge')),
+      op('b', 'urn:same:action', 'GET', 'Same-action purge', { ...target('/purge'), 'iep:destructiveHint': true })] },
+    // One node described in more than one place: a hint, a method and a target written on an object
+    // with the control's "@id" under a property the clients read nothing else from, or inside another
+    // @graph node, and a template and a shape written in place with an "@id" the @graph describes
+    // too. Each description is the node's, as JSON-LD merges them.
+    '/described-twice': { '@context': CTX, '@id': `${base}/described-twice`,
+      'iep:affordance': [
+        op('h', 'urn:twice:hint', 'GET', 'Hint elsewhere', target('/purge')),
+        op('m', 'urn:twice:method', 'GET', 'Method elsewhere', target('/thing')),
+        op('g', 'urn:twice:graph', 'GET', 'Target elsewhere', target('/thing')),
+        op('t', 'urn:twice:template', 'GET', 'Template in place', {
+          'hydra:target': { '@id': '#t', '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/a{?q}` } }),
+        op('s', 'urn:twice:shape', 'POST', 'Shape in place', { ...target('/api'), 'hydra:expects': { '@id': '#S',
+          'sh:property': { 'sh:path': { '@id': 'urn:p:a' }, 'sh:name': 'a', 'sh:minCount': 1, 'sh:maxCount': 1 } } }),
+      ],
+      'rdfs:seeAlso': { '@id': '#h', 'iep:destructiveHint': true },
+      'dct:hasPart': { '@id': '#m', 'hydra:method': 'DELETE' },
+      '@graph': [
+        { '@id': '#other', 'dct:relation': { '@id': '#g', 'iep:readOnlyHint': false, 'hydra:target': { '@id': '/purge' } } },
+        { '@id': '#t', 'hydra:template': `${base}/b{?q}` },
+        { '@id': '#S', 'sh:property': { 'sh:path': { '@id': 'urn:p:b' }, 'sh:name': 'b', 'sh:maxCount': 1 } },
+      ] },
+    // A term whose values are graphs holds a node of another graph, which the clients do not read.
+    '/graph-container': { '@context': { ...CTX, parts: { '@id': 'dct:hasPart', '@container': '@graph' } }, '@id': `${base}/graph-container`,
+      'iep:affordance': [op('a', 'urn:gc:read', 'GET', 'Graph container read', target('/api'))], parts: { '@id': '#a', 'hydra:method': 'DELETE' } },
+    // Operations written with no "@id" are blank nodes, each its own: none takes its action, or a
+    // label the clients give it, as an "@id" and with it another node's method. The first two name
+    // no method, so each is a POST.
+    '/blank-ids': { '@context': CTX, '@id': `${base}/blank-ids`,
+      'iep:affordance': [
+        { '@type': 'iep:Affordance', 'iep:action': { '@id': 'urn:blank:purge' }, 'hydra:title': 'Blank purge', ...target('/purge') },
+        { '@type': 'hydra:Operation', 'hydra:title': 'Blank no action', ...target('/purge') },
+        { '@type': 'iep:Affordance', 'iep:action': { '@id': 'urn:blank:two' }, 'hydra:title': 'Blank no method', ...target('/purge') },
+        { '@type': 'iep:Affordance', 'iep:action': { '@id': 'urn:blank:two' }, 'hydra:method': 'GET', 'hydra:title': 'Blank read', ...target('/purge') },
+      ],
+      '@graph': [{ '@id': 'urn:blank:purge', 'rdfs:label': 'The purge action', 'hydra:method': 'GET' }, { '@id': '_:n3', 'hydra:method': 'GET' }] },
+    // A template the clients cannot read, as a target or a search, is a problem; its node's own IRI
+    // is not an address to send to, and the control's other target is not a fallback.
+    '/template-nodes': { '@context': CTX, '@id': `${base}/template-nodes`, 'iep:affordance': [
+      op('l', 'urn:tn:listed', 'GET', 'Listed template', { 'hydra:target': { '@id': 'https://other.example/tm' } }),
+      op('n', 'urn:tn:none', 'GET', 'No template', { 'hydra:target': { '@id': 'https://other.example/tn', '@type': 'hydra:IriTemplate' } }),
+      op('s', 'urn:tn:search', 'GET', 'Unread search', { ...target('/items'),
+        'hydra:search': { '@type': 'hydra:IriTemplate', 'hydra:template': { '@list': [`${base}/search{?q}`] } } }),
+      op('e', 'urn:tn:empty-search', 'GET', 'Empty search', { ...target('/items'), 'hydra:search': { '@type': 'hydra:IriTemplate' } }),
+    ], '@graph': [{ '@id': 'https://other.example/tm', '@type': 'hydra:IriTemplate', 'hydra:template': { '@list': [`${base}/s{?q}`] } }] },
+    // Values of terms typed "@json" are JSON literals, not an address or a method; a hint in one is
+    // still read, so the GET that carries it is unsafe.
+    '/json-terms': { '@context': { ...CTX, tgt: { '@id': 'hydra:target', '@type': '@json' }, verb: { '@id': 'hydra:method', '@type': '@json' },
+      notes: { '@id': 'urn:x:notes', '@type': '@json' } }, '@id': `${base}/json-terms`, 'iep:affordance': [
+      op('t', 'urn:json:target', 'GET', 'JSON term target', { tgt: `${base}/api` }),
+      op('m', 'urn:json:method', null, 'JSON term method', { verb: 'GET', ...target('/api') }),
+      op('h', 'urn:json:hint', 'GET', 'JSON annotations', { ...target('/purge'), notes: { destructiveHint: true } }),
+    ] },
+    // SHACL paths that are not one property: an inverse path on a blank node, and alternatives on a
+    // named one. Neither names a field.
+    '/complex-path': { '@context': CTX, '@id': `${base}/complex-path`, 'iep:affordance': [
+      op('i', 'urn:path:inverse', 'POST', 'Inverse path', { ...target('/api'), 'hydra:expects': { '@id': '#I' } }),
+      op('a', 'urn:path:alternative', 'POST', 'Alternative path', { ...target('/api'), 'hydra:expects': { '@id': '#A' } }),
+    ], '@graph': [
+      { '@id': '#I', 'sh:property': { 'sh:path': { '@id': '_:p' }, 'sh:minCount': 1, 'sh:maxCount': 1 } },
+      { '@id': '_:p', 'sh:inversePath': { '@id': 'urn:p:parent' } },
+      { '@id': '#A', 'sh:property': { 'sh:path': { '@id': '#pp' }, 'sh:name': 'pp', 'sh:maxCount': 1 } },
+      { '@id': '#pp', 'sh:alternativePath': { '@list': [{ '@id': 'urn:p:a' }, { '@id': 'urn:p:b' }] } },
+    ] },
+    // Operations written in place, inside another written in place with compact keys only, and nodes
+    // that name a method and a target whatever else they are typed as: each is listed.
+    '/nested-ops': { '@context': CTX, '@id': `${base}/nested-ops`, 'iep:affordance': [
+      { 'iep:action': { '@id': 'urn:nest:outer' }, 'hydra:method': 'GET', 'hydra:title': 'Outer read', ...target('/api'),
+        'iep:affordance': [{ 'iep:action': { '@id': 'urn:nest:inner' }, 'hydra:method': 'DELETE', 'hydra:title': 'Inner delete', ...target('/thing') }] },
+    ], '@graph': [
+      { '@id': '#both', '@type': ['hydra:Operation', 'hydra:IriTemplate'], 'iep:action': { '@id': 'urn:nest:both' }, 'hydra:method': 'DELETE',
+        'hydra:title': 'Operation and template', ...target('/thing') },
+      { '@id': '#tm', '@type': 'hydra:IriTemplate', 'iep:action': { '@id': 'urn:nest:template' }, 'hydra:method': 'DELETE',
+        'hydra:title': 'Template with a method', 'hydra:template': `${base}/thing` },
+    ] },
+    // Values that JSON and JavaScript take differently as true or false: an empty array is no value,
+    // an empty object is a value in a form the clients do not read, and a JSON Schema is an object
+    // whose "properties" is an object and whose "required" and "enum" are lists.
+    '/truthiness': { '@context': CTX, '@id': `${base}/truthiness`, 'iep:affordance': [
+      op('p', 'urn:truth:props', 'POST', 'Empty property list', { ...target('/api'), 'hydra:expects': { '@id': '#P' } }),
+      op('d', 'urn:truth:datatype', 'POST', 'Empty datatype', { ...target('/api'), 'hydra:expects': { '@id': '#D' } }),
+      op('n', 'urn:truth:null-properties', 'GET', 'Null properties', { ...target('/api'), 'hydra:expects': { '@id': '#Q', properties: null } }),
+      op('e', 'urn:truth:enum', 'GET', 'Object enum', { ...target('/api'),
+        'hydra:expects': { type: 'object', properties: { q: { type: 'string', enum: {} } } } }),
+      op('r', 'urn:truth:required', 'GET', 'Nested required', { ...target('/api'),
+        'hydra:expects': { type: 'object', required: [['q']], properties: { q: { type: 'string' } } } }),
+    ], '@graph': [
+      { '@id': '#none', 'hydra:method': [], 'hydra:title': 'Empty method', 'hydra:template': `${base}/x{?q}` },
+      { '@id': '#obj', 'hydra:method': {}, 'hydra:title': 'Object method', 'hydra:template': `${base}/x{?q}` },
+      { '@id': '#P', 'sh:property': [], 'hydra:supportedProperty': [{ 'hydra:property': { '@id': 'urn:p:name' }, 'hydra:required': true }] },
+      { '@id': '#D', 'sh:datatype': [] },
+      { '@id': '#Q', 'sh:property': { 'sh:path': { '@id': 'urn:p:q' }, 'sh:name': 'q', 'sh:minCount': 1, 'sh:maxCount': 1 } },
+    ] },
+    // Field names with a line break in them are kept whole, however the break is written.
+    '/line-names': { '@context': CTX, '@id': `${base}/line-names`, 'iep:affordance': [
+      op('w', 'urn:lines:write', 'POST', 'Names with line breaks', { ...target('/api'), 'hydra:expects': { '@id': '#S' } })],
+      '@graph': [{ '@id': '#S', 'sh:property': [
+      { 'sh:path': { '@id': 'urn:p:a' }, 'sh:name': 'abc\n', 'sh:maxCount': 1 },
+      { 'sh:path': { '@id': 'urn:p:b' }, 'sh:name': 'rest-param-q-limit\n', 'sh:maxCount': 1 },
+      { 'sh:path': { '@id': 'urn:p:c' }, 'sh:name': 'rest-param-q-li\rmit', 'sh:maxCount': 1 },
+      { 'sh:path': { '@id': 'urn:p:d' }, 'sh:name': 'rest-param-q-offset', 'sh:maxCount': 1 }] }] },
+    // A context that imports another, which a JSON-LD processor fetches and these clients do not.
+    '/import-context': { '@context': [CTX, { '@import': 'https://evil.example/ctx.jsonld' }], '@id': `${base}/import-context`,
+      'iep:affordance': [op('a', 'urn:import:read', 'GET', 'Imported context read', target('/api'))] },
+    // A @set object with a @context of its own, which JSON-LD reads as what it holds.
+    '/set-context': { '@context': CTX, '@id': `${base}/set-context`, 'iep:affordance': [op('a', 'urn:setctx:read', null, 'Set with a context',
+      { 'hydra:method': { '@context': { s: '@set' }, s: ['GET'] }, ...target('/api') })] },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
   const out = Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')]));
@@ -508,6 +619,23 @@ export function sharedMarkdown(base: string): Record<string, string> {
       ':::control hm-two-methods', 'title: Repeated method', 'method: DELETE', 'method: GET', `target: ${base}/thing`, ':::', '',
       ':::control hm-two-titles', 'title: First title', 'title: Second title', 'method: GET', `target: ${base}/api`, ':::', '',
       ':::control hm-destructive', 'title: Destructive read', 'method: GET', 'destructiveHint: true', `target: ${base}/purge`, ':::', ''].join('\n'),
+    // Line endings as CommonMark has them: CR LF, a lone CR or LF, and nothing else. A form feed is
+    // part of its line, and U+FEFF is part of a value, not a space around it.
+    '/hm-lines': ['# Line endings', '',
+      ':::control hm-cr', 'title: CR hint\rdestructiveHint: true', 'method: GET', `target: ${base}/purge`, ':::', '',
+      ':::control hm-cr-method', 'title: CR method\rmethod: DELETE', 'method: GET', `target: ${base}/thing`, ':::', '',
+      ':::control hm-ff', 'title: Form feed read', 'whenToUse: a\fdestructiveHint: true', 'method: GET', `target: ${base}/api`, ':::', '',
+      ':::control hm-bom', 'title: BOM method', 'method: GET\ufeff', `target: ${base}/purge`, ':::', ''].join('\n') +
+      [':::control hm-cr-only', 'title: CR-only read', 'method: GET', `target: ${base}/api`, ':::', ''].join('\r'),
+    // JSON values in a block are read as a document's are: NaN and a repeated key are not JSON, a
+    // target or a rel is text, and two fields of one name are refused.
+    '/hm-json': ['# JSON values', '',
+      ':::control hm-nan', 'title: NaN fields', 'method: POST', `target: ${base}/api`, 'fields: [{"name": "a", "defaultValue": NaN}]', ':::', '',
+      ':::control hm-repeat-key', 'title: Repeated key fields', 'method: POST', `target: ${base}/api`, 'fields: [{"name": "a", "name": "b"}]', ':::', '',
+      ':::control hm-target-list', 'title: Target list', 'method: GET', `target: ["${base}/a", "${base}/b"]`, ':::', '',
+      ':::control hm-rel-list', 'title: Rel list', 'rel: ["urn:hm:x"]', 'method: GET', `target: ${base}/api`, ':::', '',
+      ':::control hm-two-fields', 'title: Two fields of one name', 'method: POST', `target: ${base}/api`,
+      'fields: [{"name": "a"}, {"name": "a", "minCount": 1, "defaultValue": "x"}]', ':::', ''].join('\n'),
   };
 }
 
@@ -520,7 +648,48 @@ export const DOCUMENT_REFUSALS: ReadonlyArray<readonly [path: string, problem: s
   ['/colliding', 'This document gives one node @id twice, which JSON-LD does not allow, so it is not read.'],
   ['/nest-id', 'This document gives one node @id twice, which JSON-LD does not allow, so it is not read.'],
   ['/repeated-key', 'This document repeats the key "hydra:method" in one object, so which value it means is not known, and it is not read.'],
+  ['/graph-container', 'This document holds a @graph inside a node, which this client does not read, so it is not read.'],
+  ['/import-context', "This document's @context uses @import, which this client does not fetch, so it is not read."],
+  ['/set-context', 'This document has a @set object inside a @list or with a @context of its own, which this client does not read, so it is not read.'],
 ];
+
+/** The titles of every control each client lists for a document, sorted: no more and no fewer. */
+export const LISTED: ReadonlyArray<readonly [path: string, titles: readonly string[]]> = [
+  ['/nested-ops', ['Inner delete', 'Operation and template', 'Outer read', 'Template with a method']],
+  ['/truthiness', ['Empty datatype', 'Empty property list', 'Nested required', 'Null properties', 'Object enum', 'Object method']],
+  ['/blank-ids', ['Blank no action', 'Blank no method', 'Blank purge']],
+];
+
+/**
+ * Controls each client lists as unsafe with no problem, as [path, the name that invokes it, or null
+ * for one the document gives no name, title, the method shown]: invoked unconfirmed, each is a dry
+ * run that sends nothing.
+ */
+export const UNSAFE_CONTROLS: ReadonlyArray<readonly [path: string, rel: string | null, title: string, method: string]> = [
+  ['/described-twice', 'urn:twice:hint', 'Hint elsewhere', 'GET'],
+  ['/blank-ids', 'urn:blank:purge', 'Blank purge', 'POST'],
+  ['/blank-ids', null, 'Blank no action', 'POST'],
+  ['/json-terms', 'urn:json:hint', 'JSON annotations', 'GET'],
+  ['/hm-lines', 'hm-cr', 'CR hint', 'GET'],
+  ['/hm-lines', 'hm-bom', 'BOM method', 'GET\ufeff'],
+];
+
+/**
+ * Dry runs each client plans alike, as [path, action, fields, the address and body planned, or the
+ * validation error that stops it].
+ */
+export function dryRuns(base: string): ReadonlyArray<readonly [path: string, rel: string, fields: Record<string, string>,
+  outcome: { readonly url: string; readonly body: unknown } | { readonly error: string }]> {
+  return [
+    ['/described-twice', 'urn:twice:shape', { b: '1' }, { error: "missing required field 'a'" }],
+    ['/described-twice', 'urn:twice:shape', { a: 'x', b: '1' }, { url: `${base}/api`, body: { a: 'x', b: '1' } }],
+    ['/truthiness', 'urn:truth:props', {}, { error: "missing required field 'name'" }],
+    ['/truthiness', 'urn:truth:datatype', {}, { url: `${base}/api`, body: {} }],
+    ['/truthiness', 'urn:truth:null-properties', {}, { error: "missing required field 'q'" }],
+    ['/line-names', 'urn:lines:write', { 'abc\n': '1', 'rest-param-q-limit\n': '2', 'rest-param-q-li\rmit': '3', offset: '4' },
+      { url: `${base}/api`, body: { 'abc\n': '1', 'rest-param-q-limit\n': '2', 'rest-param-q-li\rmit': '3', offset: '4' } }],
+  ];
+}
 
 /**
  * The GETs to /api that /containers holds, as [the IRI that names it, title]: every one is a
@@ -631,6 +800,12 @@ export function jsonldPlans(base: string): ReadonlyArray<readonly [path: string,
     ['/set-values', 'urn:set:method', 'Set method read', 'GET', `${base}/api`],
     ['/set-values', 'urn:set:tagged', 'Tagged method read', 'GET', `${base}/api`],
     ['/set-values', 'urn:set:shape', 'Set shape read', 'GET', `${base}/api`],
+    ['/nested-ops', 'urn:nest:outer', 'Outer read', 'GET', `${base}/api`],
+    ['/nested-ops', 'urn:nest:inner', 'Inner delete', 'DELETE', `${base}/thing`],
+    ['/nested-ops', 'urn:nest:both', 'Operation and template', 'DELETE', `${base}/thing`],
+    ['/nested-ops', 'urn:nest:template', 'Template with a method', 'DELETE', `${base}/thing`],
+    ['/hm-lines', 'hm-ff', 'Form feed read', 'GET', `${base}/api`],
+    ['/hm-lines', 'hm-cr-only', 'CR-only read', 'GET', `${base}/api`],
   ];
 }
 
@@ -641,9 +816,9 @@ export function jsonldPlans(base: string): ReadonlyArray<readonly [path: string,
 export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: string, rel: string, title: string, method: string, problem: string]> {
   return [
     ['/index-order', 'urn:order:item', 'Delete item', 'DELETE',
-      'two controls are both named urn:order:item but send different requests, so which one is meant is not known; this control is not invoked'],
+      'two controls are both named urn:order:item, so which one is meant is not known; this control is not invoked'],
     ['/index-order-inline', 'urn:order:inline', 'Delete inline item', 'DELETE',
-      'this control names more than one hydra:method (DELETE, GET), so what it does is not known; it is not invoked'],
+      'two controls are both named urn:order:inline, so which one is meant is not known; this control is not invoked'],
     ['/two-methods', 'urn:methods:keyed', 'Keyed delete', 'DELETE',
       'this control names more than one hydra:method (GET, DELETE), so what it does is not known; it is not invoked'],
     ['/two-methods', 'urn:methods:listed', 'Listed delete', 'DELETE',
@@ -687,5 +862,49 @@ export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: stri
       'the input "n" names more than one sh:defaultValue (a, b), so what it takes is not known; this control is not invoked'],
     ['/hm-repeat', 'hm-two-methods', 'Repeated method', 'DELETE',
       'this control block gives method more than once (DELETE, GET), so what it does is not known; it is not invoked'],
+    ['/same-action', 'urn:same:action', 'Same-action read', 'GET',
+      'two controls are both named urn:same:action, so which one is meant is not known; this control is not invoked'],
+    ['/described-twice', 'urn:twice:method', 'Method elsewhere', 'DELETE',
+      'this control names more than one hydra:method (DELETE, GET), so what it does is not known; it is not invoked'],
+    ['/described-twice', 'urn:twice:graph', 'Target elsewhere', 'GET',
+      `this control names more than one hydra:target (${base}/purge, ${base}/thing), so where it sends is not known; it is not invoked`],
+    ['/described-twice', 'urn:twice:template', 'Template in place', 'GET',
+      `this control names more than one hydra:template (${base}/b{?q}, ${base}/a{?q}), so where it sends is not known; it is not invoked`],
+    ['/blank-ids', 'urn:blank:two', 'Blank no method', 'POST',
+      'two controls are both named urn:blank:two, so which one is meant is not known; this control is not invoked'],
+    ['/template-nodes', 'urn:tn:listed', 'Listed template', 'GET',
+      'this control writes hydra:template as a JSON-LD @list, which this client does not read, so where it sends is not known; it is not invoked'],
+    ['/template-nodes', 'urn:tn:none', 'No template', 'GET',
+      'this control names a hydra:IriTemplate as its hydra:target with no hydra:template, so where it sends is not known; it is not invoked'],
+    ['/template-nodes', 'urn:tn:search', 'Unread search', 'GET',
+      'this control writes hydra:template as a JSON-LD @list, which this client does not read, so where it sends is not known; it is not invoked'],
+    ['/template-nodes', 'urn:tn:empty-search', 'Empty search', 'GET',
+      'this control names a hydra:IriTemplate as its hydra:search with no hydra:template, so where it sends is not known; it is not invoked'],
+    ['/json-terms', 'urn:json:target', 'JSON term target', 'GET',
+      'this control writes hydra:target as a JSON literal (@json), which this client does not read, so where it sends is not known; it is not invoked'],
+    ['/json-terms', 'urn:json:method', 'JSON term method', 'POST',
+      'this control writes hydra:method as a JSON literal (@json), which this client does not read, so what it does is not known; it is not invoked'],
+    ['/complex-path', 'urn:path:inverse', 'Inverse path', 'POST',
+      'the input "p" writes sh:path as a complex SHACL path, which this client does not read, so what it takes is not known; this control is not invoked'],
+    ['/complex-path', 'urn:path:alternative', 'Alternative path', 'POST',
+      'the input "pp" writes sh:path as a complex SHACL path, which this client does not read, so what it takes is not known; this control is not invoked'],
+    ['/truthiness', `${base}/truthiness#obj`, 'Object method', 'POST',
+      'this control writes hydra:method as a node written in place with no @id, which this client does not read, so what it does is not known; it is not invoked'],
+    ['/truthiness', 'urn:truth:enum', 'Object enum', 'GET',
+      'the input "q" writes enum as something other than a list, which this client does not read, so what it takes is not known; this control is not invoked'],
+    ['/truthiness', 'urn:truth:required', 'Nested required', 'GET',
+      'the JSON Schema writes required as something other than a list of names, which this client does not read, so which inputs it needs is not known; this control is not invoked'],
+    ['/hm-lines', 'hm-cr-method', 'CR method', 'DELETE',
+      'this control block gives method more than once (DELETE, GET), so what it does is not known; it is not invoked'],
+    ['/hm-json', 'hm-nan', 'NaN fields', 'POST',
+      'this control block writes fields as text that is not JSON, so what it sends is not known; it is not invoked'],
+    ['/hm-json', 'hm-repeat-key', 'Repeated key fields', 'POST',
+      'this control block writes fields as text that is not JSON, so what it sends is not known; it is not invoked'],
+    ['/hm-json', 'hm-target-list', 'Target list', 'GET',
+      'this control block writes target as a JSON array, which this client does not read there, so where it sends is not known; it is not invoked'],
+    ['/hm-json', '["urn:hm:x"]', 'Rel list', 'GET',
+      'this control block writes rel as a JSON array, which this client does not read there, so which affordance it names is not known; it is not invoked'],
+    ['/hm-json', 'hm-two-fields', 'Two fields of one name', 'POST',
+      "two input fields are both named 'a', so their values could not be told apart; this control is not invoked"],
   ];
 }

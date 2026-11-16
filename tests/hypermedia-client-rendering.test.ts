@@ -24,8 +24,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, jsonldPlans, jsonldRefusals, sharedDescriptors,
-  sharedMarkdown } from './hypermedia-client-fixtures.js';
+import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals, LISTED,
+  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -1326,6 +1326,44 @@ describe('hypermedia client: every value read, or the control or document refuse
       expect(shown).toContain('Dry run — nothing was sent.');
       expect(linked.calls.filter(c => c.url.includes('/purge'))).toEqual([]);
     } finally { linked.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: one reading of each document, as hmc.py reads it', () => {
+  it.each(LISTED)('lists every control %s gives, nested, blank or typed as something else too, and no others', async (path, titles) => {
+    const t = await loaded(path);
+    try {
+      expect([...t.document.querySelectorAll('.card h3')].map(h => h.textContent!).sort()).toEqual([...titles]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it.each(UNSAFE_CONTROLS)('lists %s %s as unsafe, and a link sends nothing', async (path, rel, title, method) => {
+    const t = await loaded(path);
+    try {
+      const c = card(t.document, title)!;
+      expect(c, title).toBeDefined();
+      expect(c.querySelector('.badge')!.textContent).toBe(method);
+      expect(groupTitles(t.document, 1)).toContain(title);
+    } finally { t.dom.window.close(); }
+    if (!rel) return;
+    const { t: linked, shown } = await linkPlan(path, rel, {}, false);
+    try {
+      expect(shown, rel).toContain('Dry run — nothing was sent.');
+      expect(linked.calls.filter(call => !call.url.startsWith(`${HOST}${path}`)), rel).toEqual([]);
+    } finally { linked.dom.window.close(); }
+  });
+
+  it.each(dryRuns(HOST))('dry-runs %s %s to the same request, or stops at the same error, as hmc.py', async (path, rel, fields, outcome) => {
+    const { t, plan, shown } = await linkPlan(path, rel, fields);
+    try {
+      if ('error' in outcome) {
+        expect(plan, shown).toBeNull();
+        expect(shown).toContain(outcome.error);
+      } else {
+        expect(plan, shown).not.toBeNull();
+        expect([plan!.url, plan!.body]).toEqual([outcome.url, outcome.body]);
+      }
+    } finally { t.dom.window.close(); }
   });
 });
 
