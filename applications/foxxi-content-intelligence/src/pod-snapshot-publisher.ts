@@ -88,9 +88,9 @@ import type {
   PGSLInstance,
 } from '@interego/pgsl';
 import { createHash, createHmac, randomUUID } from 'node:crypto';
-import { parseTrig, readIriValue, readStringValue, canonicalJson, deriveEncryptionKeyPair, envelopeFromJson, openEncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
+import { parseTrig, readIriValue, readStringValue, canonicalJson, envelopeFromJson, openEncryptedEnvelope, type EncryptionKeyPair } from '@interego/core';
 import { verifyMessage } from 'ethers';
-import { bridgeDid, signAsBridge, withPublishLock } from './bridge-signer.js';
+import { bridgeDid, bridgeSealKey, signAsBridge, withPublishLock } from './bridge-signer.js';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { decodePodBundle } from './pod-kv-store.js';
 
@@ -144,12 +144,12 @@ function podConfig(): SnapshotPodConfig | null {
   const authoritativeSource = process.env.FOXXI_AUTHORITATIVE_SOURCE;
   if (!podUrl || !authoritativeSource) return null;
   const pod = podUrl.endsWith('/') ? podUrl : `${podUrl}/`;
-  const secret = process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '';
+  const sealKey = bridgeSealKey(`urn:foxxi:tenant-snapshot:v1:${pod}`);
   return {
     podUrl: pod,
     authoritativeSource: authoritativeSource as unknown as IRI,
     fetch: globalThis.fetch.bind(globalThis),
-    ...(/^(?:0x)?[a-f0-9]{64}$/i.test(secret) ? { sealKey: deriveEncryptionKeyPair(secret, `urn:foxxi:tenant-snapshot:v1:${pod}`) } : {}),
+    ...(sealKey ? { sealKey } : {}),
   };
 }
 
