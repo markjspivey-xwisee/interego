@@ -133,5 +133,16 @@
     "tweetnacl": "^1.0.3",
     "tweetnacl-util": "^0.15.1",
     "ws": "^8.20.0"
+  },
+  "overrides": {
+    "@electron/universal": {
+      "minimatch@>=7.0.0 <11.0.1": "11.0.8"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch@>=7.0.0 <11.0.1": "11.0.8"
+    },
+    "app-builder-lib": {
+      "minimatch@>=7.0.0 <11.0.1": "11.0.8"
+    }
   }
 }
