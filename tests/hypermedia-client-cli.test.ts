@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { COST_CASES, costDescriptors, sharedDescriptors } from './hypermedia-client-fixtures.js';
+import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, sharedDescriptors } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -598,6 +598,24 @@ describe('hmc.py: JSON-LD read as jsonld.js reads it', () => {
     expect(doc.controls.map(c => [c.title, c.method])).toEqual([['Create event', 'POST']]);
     expect(doc.controls[0]!.warning).toContain('hydra:expects names https://vocab.example/Event, which this document does not describe');
   });
+
+  it('reads a node object under @set, @list or @graph as that node, and unpacks only @index, @id and @type maps', async () => {
+    const doc = await listed('/containers');
+    expect(Object.fromEntries(doc.controls.map(c => [c.title, [c.method, c.target]])))
+      .toEqual(Object.fromEntries(CONTAINER_READS.map(([, title]) => [title, ['GET', `${base}/api`]])));
+    for (const [rel, title] of CONTAINER_READS) {
+      const control = doc.controls.find(c => c.title === title)!;
+      // Under @graph an @id map's key is the graph's IRI, and @none is no IRI, so neither names a node.
+      if (!rel) {
+        expect(control.rel, title).toMatch(/^_:/);
+        continue;
+      }
+      expect(control.rel, title).toBe(rel);
+      const { r, request } = await dry('/containers', rel);
+      expect(r.code, `${rel}: ${r.stderr}`).toBe(0);
+      expect([request!.transport, request!.url], rel).toEqual(['http', `${base}/api`]);
+    }
+  });
 });
 
 describe('hmc.py: templates and transport', () => {
@@ -685,6 +703,33 @@ describe('hmc.py: forms', () => {
       expect(ok.r.code, ok.r.stderr).toBe(0);
       expect(ok.request!.body).toEqual({ graph_iri: g, conforms_to_shapes: [`${base}/shapes`], tags: ['a', 'b'], levels: [1, 3] });
     }
+  });
+
+  it('checks a JSON array\'s count against sh:minCount and sh:maxCount or minItems and maxItems, on a dry run and a confirmed write', async () => {
+    const sent = () => seen.filter(s => s.startsWith('POST /num-target')).length;
+    const before = sent();
+    for (const [path, rel, , fields, message] of countCases(base)) {
+      const args = Object.entries(fields).flatMap(([k, v]) => ['--field', `${k}=${v}`]);
+      for (const mode of ['--dry-run', '--confirm']) {
+        const r = await hmc(['invoke', `${base}${path}`, rel, ...args, mode]);
+        expect(r.code, `${rel} ${JSON.stringify(fields)} ${mode}: ${r.stdout}${r.stderr}`).toBe(2);
+        expect(r.stderr, `${rel} ${JSON.stringify(fields)} ${mode}`).toContain('Validation failed');
+        expect(r.stderr, `${rel} ${JSON.stringify(fields)} ${mode}`).toContain(message);
+      }
+    }
+    expect(sent()).toBe(before);
+    // Within its bounds each array is sent as written, and a field that takes one object takes one.
+    const nodes = { members: '[{},{"a":1}]', notes: '[{}]', owner: '{"name":"o"}' };
+    const ok = await dry('/counts', 'urn:count-nodes', nodes);
+    expect(ok.r.code, ok.r.stderr).toBe(0);
+    expect(ok.request!.body).toEqual({ members: [{}, { a: 1 }], notes: [{}], owner: { name: 'o' } });
+    const live = await hmc(['invoke', `${base}/counts`, 'urn:count-nodes',
+      ...Object.entries(nodes).flatMap(([k, v]) => ['--field', `${k}=${v}`]), '--confirm']);
+    expect(live.code, live.stderr).toBe(0);
+    expect(sent()).toBe(before + 1);
+    const items = await dry('/counts', 'urn:count-items', { tags: '["a","b","c"]', extra: '{"a":[1,2]}' });
+    expect(items.r.code, items.r.stderr).toBe(0);
+    expect(items.request!.body).toEqual({ tags: ['a', 'b', 'c'], extra: { a: [1, 2] } });
   });
 
   it('builds fields from hydra:supportedProperty, by property IRI and by an inline property\'s label', async () => {

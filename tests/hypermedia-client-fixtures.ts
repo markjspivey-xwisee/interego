@@ -21,6 +21,9 @@ function op(id: string, action: string, method: string | null, title: string, ex
     ...(method ? { 'hydra:method': method } : {}), 'hydra:title': title, ...extra };
 }
 const target = (path: string) => ({ 'hydra:target': { '@id': path } });
+/** A GET to /api written in place with no "@id", as a container term's single value. */
+const inline = (action: string, title: string) => ({ '@type': 'hydra:Operation', 'iep:action': { '@id': action }, 'hydra:method': 'GET',
+  'hydra:title': title, ...target('/api') });
 
 /** Each path's document as the text served. */
 export function sharedDescriptors(base: string): Record<string, string> {
@@ -246,9 +249,88 @@ export function sharedDescriptors(base: string): Record<string, string> {
         'hydra:template': `${base}/s{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': `${base}/p#text` } },
           { 'hydra:variable': 'q' }] } }),
     ], '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': `${base}/p#text` }, 'sh:maxCount': 1 } }] },
+    // One inline operation with no "@id" under each kind of container, as jsonld.js reads them. Under
+    // @set, @list, @graph with @set, and @set written as an array, the value is the one node object
+    // written there, keys that look like a language tag or an IRI included. Only @index, @id and
+    // @type containers (alone, with @set or with @graph) hold a map, and there every object is a map,
+    // even one keyed by "@id". An @id map's key names the graph, not the node, when the container
+    // has @graph too, a key aliased to @none names nothing, and a node's own "@id" or "@type" holds
+    // when an alias writes it. An "@index" property takes each key as its value: a method, and an
+    // action that the term types as an IRI.
+    '/containers': {
+      '@context': { ...CTX, none: '@none', id: '@id', type: '@type', en: 'https://vocab.example/en',
+        Verbed: { '@id': 'urn:c:Verbed', '@context': { verb: 'hydra:method' } }, act: { '@id': 'iep:action', '@type': '@id' },
+        methodOps: { '@id': 'hydra:operation', '@container': '@index', '@index': 'hydra:method' },
+        actionOps: { '@id': 'hydra:operation', '@container': ['@index', '@set'], '@index': 'act' },
+        setOp: { '@id': 'hydra:operation', '@container': '@set' }, listOp: { '@id': 'hydra:operation', '@container': '@list' },
+        graphOp: { '@id': 'hydra:operation', '@container': ['@graph', '@set'] }, arrayOp: { '@id': 'hydra:operation', '@container': ['@set'] },
+        indexOps: { '@id': 'hydra:operation', '@container': ['@set', '@index'] }, typeOps: { '@id': 'hydra:operation', '@container': '@type' },
+        graphIndexOps: { '@id': 'hydra:operation', '@container': ['@graph', '@index'] },
+        graphIdOps: { '@id': 'hydra:operation', '@container': ['@graph', '@id'] }, idOps: { '@id': 'hydra:operation', '@container': '@id' } },
+      '@id': `${base}/containers`,
+      setOp: inline('urn:c:set', 'Set read'),
+      listOp: inline('urn:c:list', 'List read'),
+      graphOp: inline('urn:c:graph', 'Graph set read'),
+      arrayOp: { ...inline('urn:c:keys', 'Keyed read'), en: 'English', [`${base}/id`]: { '@id': '#x' } },
+      indexOps: { '@id': inline('urn:c:index-id', 'Index read'), en: inline('urn:c:index-en', 'Index en read') },
+      typeOps: { 'hydra:Operation': { 'iep:action': { '@id': 'urn:c:type' }, 'hydra:method': 'GET', 'hydra:title': 'Type read', ...target('/api') },
+        'urn:c:Kind': { type: 'Verbed', verb: 'GET', 'iep:action': { '@id': 'urn:c:typed' }, 'hydra:title': 'Own type read', ...target('/api') } },
+      graphIndexOps: { g: inline('urn:c:graph-index', 'Graph index read') },
+      graphIdOps: { '#g1': { '@type': 'hydra:Operation', 'hydra:method': 'GET', 'hydra:title': 'Graph id read', ...target('/api') } },
+      idOps: { none: { '@type': 'hydra:Operation', 'hydra:method': 'GET', 'hydra:title': 'No id read', ...target('/api') },
+        '#k': inline('urn:c:id', 'Id read'),
+        '#a': { id: 'urn:c:own', '@type': 'hydra:Operation', 'hydra:method': 'GET', 'hydra:title': 'Own id read', ...target('/api') } },
+      methodOps: { GET: { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:c:method' }, 'hydra:title': 'Method index read', ...target('/api') } },
+      actionOps: { 'iep:indexed': { '@type': 'hydra:Operation', 'hydra:method': 'GET', 'hydra:title': 'Action index read', ...target('/api') } },
+    },
+    // Writes whose fields each take a JSON array with a count to keep: SHACL properties with
+    // sh:node and with sh:nodeKind sh:BlankNode, one sh:node property that takes a single object,
+    // and JSON Schema arrays with minItems and maxItems, one of which may also be an object.
+    '/counts': { '@context': CTX, '@id': `${base}/counts`, 'iep:affordance': [
+      op('n', 'urn:count-nodes', 'POST', 'Node counts', { ...target('/num-target'), 'hydra:expects': { '@id': '#S' } }),
+      op('j', 'urn:count-items', 'POST', 'Item counts', { ...target('/num-target'), 'hydra:expects': { type: 'object', required: ['tags'],
+        properties: { tags: { type: 'array', minItems: 2, maxItems: 3 }, extra: { type: ['array', 'object'], maxItems: 1 } } } }),
+    ], '@graph': [
+      { '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': '#members' }, 'sh:name': 'members', 'sh:node': { '@id': '#M' }, 'sh:minCount': 2, 'sh:maxCount': 3 },
+        { 'sh:path': { '@id': '#notes' }, 'sh:name': 'notes', 'sh:nodeKind': { '@id': 'sh:BlankNode' }, 'sh:maxCount': 2 },
+        { 'sh:path': { '@id': '#owner' }, 'sh:name': 'owner', 'sh:node': { '@id': '#M' }, 'sh:minCount': 1, 'sh:maxCount': 1 },
+      ] },
+      { '@id': '#M', '@type': 'sh:NodeShape' },
+    ] },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
   return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')]));
+}
+
+/**
+ * The GETs to /api that /containers holds, as [the IRI that names it, title]: every one is a
+ * control, with its method and target. Each is named by its action, or with none by its node's own
+ * IRI; the two that have neither (null) are named by no IRI the document gives them.
+ */
+export const CONTAINER_READS: ReadonlyArray<readonly [rel: string | null, title: string]> = [
+  ['urn:c:set', 'Set read'], ['urn:c:list', 'List read'], ['urn:c:graph', 'Graph set read'], ['urn:c:keys', 'Keyed read'],
+  ['urn:c:index-id', 'Index read'], ['urn:c:index-en', 'Index en read'], ['urn:c:type', 'Type read'], ['urn:c:typed', 'Own type read'],
+  ['urn:c:graph-index', 'Graph index read'], [null, 'Graph id read'], [null, 'No id read'], ['urn:c:id', 'Id read'],
+  ['urn:c:own', 'Own id read'], ['urn:c:method', 'Method index read'], [`${IEP}indexed`, 'Action index read'],
+];
+
+/**
+ * Writes each client refuses, on a dry run and on a confirmed invoke alike, as [path, action,
+ * title, fields, the error it names]: a JSON array with too few or too many values for its
+ * sh:minCount and sh:maxCount or its minItems and maxItems, and a list of text values with too many
+ * for its sh:maxCount.
+ */
+export function countCases(base: string): ReadonlyArray<readonly [path: string, action: string, title: string, fields: Record<string, string>, error: string]> {
+  return [
+    ['/counts', 'urn:count-nodes', 'Node counts', { members: '[]', owner: '{}' }, 'members: needs at least 2 values, got 0'],
+    ['/counts', 'urn:count-nodes', 'Node counts', { members: '[{},{},{},{}]', owner: '{}' }, 'members: takes at most 3 values, got 4'],
+    ['/counts', 'urn:count-nodes', 'Node counts', { members: '[{},{}]', notes: '[{},{},{}]', owner: '{}' }, 'notes: takes at most 2 values, got 3'],
+    ['/counts', 'urn:count-items', 'Item counts', { tags: '["a"]' }, 'tags: needs at least 2 values, got 1'],
+    ['/counts', 'urn:count-items', 'Item counts', { tags: '["a","b","c","d"]' }, 'tags: takes at most 3 values, got 4'],
+    ['/counts', 'urn:count-items', 'Item counts', { tags: '["a","b"]', extra: '[1,2]' }, 'extra: takes at most 1 values, got 2'],
+    ['/multi', 'urn:act-publish', 'Publish classified', { graph_iri: `${base}/g`, tags: '["a","b","c","d","e","f"]' }, 'tags: takes at most 5 values, got 6'],
+  ];
 }
 
 /**

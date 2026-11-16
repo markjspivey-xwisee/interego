@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-LQNUqqERrtUXuSuSqrmaKGSHtbPYq9E4TK5kBNnRGbI='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-+Md0+qYiF9tuFq7gVsygdRZ0/yoGiEKvgfVINThXFA0='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -424,8 +424,9 @@ function mergeValue(item, key, value) {
 const sizeOf = (map) => Object.keys(map).length;
 
 // The active context: prefixes, terms, which terms hold IRIs (typed "@id" or
-// "@vocab" in the context; "@json" ones hold JSON), containers, scoped
-// contexts, keyword aliases, terms set to null, @vocab, and the base a relative
+// "@vocab" in the context; "@json" ones hold JSON), containers, the property
+// whose values an @index map's keys are, scoped contexts, keyword aliases,
+// terms set to null, @vocab, and the base a relative
 // IRI resolves against: @base when the context gives one, else the address the
 // document came from. `terms` holds only what documents defined; the reader's
 // own names for the properties it reads (TERMS0) apply to keys only, never to a
@@ -433,7 +434,7 @@ const sizeOf = (map) => Object.keys(map).length;
 class Ctx {
   constructor(base, budget) {
     this.prefixes = bare(PREFIXES0); this.terms = bare({}); this.coerce = bare({});
-    this.containers = bare({}); this.scoped = bare({}); this.aliases = bare({}); this.nulled = bare({});
+    this.containers = bare({}); this.indexes = bare({}); this.scoped = bare({}); this.aliases = bare({}); this.nulled = bare({});
     this.vocab = null; this.base = base || null; this.documentBase = this.base;
     this.budget = budget || { left: CONTEXT_BUDGET };
     this.children = bare({});
@@ -442,10 +443,10 @@ class Ctx {
   // scoped one a term or type carries.
   child(local) {
     spend(this.budget, sizeOf(this.prefixes) + sizeOf(this.terms) + sizeOf(this.coerce) + sizeOf(this.containers) +
-      sizeOf(this.scoped) + sizeOf(this.aliases) + sizeOf(this.nulled) + 1);
+      sizeOf(this.indexes) + sizeOf(this.scoped) + sizeOf(this.aliases) + sizeOf(this.nulled) + 1);
     const out = new Ctx(this.base, this.budget);
     out.prefixes = bare(this.prefixes); out.terms = bare(this.terms); out.coerce = bare(this.coerce);
-    out.containers = bare(this.containers); out.scoped = bare(this.scoped); out.aliases = bare(this.aliases);
+    out.containers = bare(this.containers); out.indexes = bare(this.indexes); out.scoped = bare(this.scoped); out.aliases = bare(this.aliases);
     out.nulled = bare(this.nulled); out.vocab = this.vocab; out.documentBase = this.documentBase;
     out.absorb(local);
     return out;
@@ -460,7 +461,7 @@ class Ctx {
       if (item === null) {
         // A null context empties the active context; the document's own base stays.
         this.prefixes = bare(PREFIXES0); this.terms = bare({}); this.coerce = bare({});
-        this.containers = bare({}); this.scoped = bare({}); this.aliases = bare({}); this.nulled = bare({});
+        this.containers = bare({}); this.indexes = bare({}); this.scoped = bare({}); this.aliases = bare({}); this.nulled = bare({});
         this.vocab = null; this.base = this.documentBase; this.children = bare({});
         continue;
       }
@@ -509,7 +510,7 @@ class Ctx {
     return prefix === "_" || suffix.startsWith("//") ? null : prefix;
   }
   define(key, value) {
-    for (const table of [this.terms, this.prefixes, this.coerce, this.containers, this.scoped, this.aliases, this.nulled]) delete table[key];
+    for (const table of [this.terms, this.prefixes, this.coerce, this.containers, this.indexes, this.scoped, this.aliases, this.nulled]) delete table[key];
     if (value === null) { this.nulled[key] = true; return; }
     if (typeof value === "string") {
       if (value.startsWith("@")) { if (ALIASABLE.has(value)) this.aliases[key] = value; return; }
@@ -543,6 +544,9 @@ class Ctx {
     if (kind === "@id" || kind === "@vocab" || kind === "@json") this.coerce[key] = kind;
     const names = asList(own(value, "@container") ? value["@container"] : null).filter(c => typeof c === "string");
     if (names.length) this.containers[key] = new Set(names);
+    // An @index map whose keys are values of a property ("@index": "schema:name"), not bare index strings.
+    const indexBy = own(value, "@index") ? value["@index"] : null;
+    if (names.includes("@index") && typeof indexBy === "string" && indexBy && !indexBy.startsWith("@")) this.indexes[key] = indexBy;
     if (own(value, "@context")) this.scoped[key] = value["@context"];
   }
   // The property IRI a key names, or "" for a term the context set to null.
@@ -601,30 +605,54 @@ class Ctx {
       }
     }
   }
-  // A map a container term holds (@index, @id, @type or @language), as the list
-  // of values it maps to: an @id map's key becomes its node's "@id", a @type
-  // map's key is added to its node's types, and a language map's key becomes
-  // each string's "@language".
-  unmap(value, containers) {
-    if (!value || typeof value !== "object" || Array.isArray(value) || own(value, "@value") || own(value, "@id") || own(value, "@list")) return value;
+  // A container term's value as the values it holds, as JSON-LD 1.1 expands it.
+  // Only an @language, @index, @id or @type container holds a map (alone, with
+  // @set, or, for @index and @id, with @graph), and there every object is a
+  // map, whatever its keys. A language map's key becomes each string's
+  // "@language"; an @index map's key is dropped, or is a value of the property
+  // the term's "@index" names, put before the node's own; an @id map's key
+  // becomes its node's "@id" unless the node has one, or @graph makes the key
+  // the IRI of the graph that holds the node; and a @type map's key is put
+  // before its node's types. Keys are read in `valueCtx`, the context the
+  // term's values are read in, as jsonld.js reads them. `keyed` holds the
+  // "@id" or type for normalize to give a node once its keyword aliases are
+  // keywords, so a node's own "id": "@id" alias is its own "@id". A key that
+  // is @none, or a term aliased to it, adds nothing. Under any other
+  // container (@set, @list, @graph alone or with @set) a value is what it is,
+  // so one node object stays one node, never a list of its properties.
+  // hmc.py's _unmap is the same.
+  unmap(term, value, keyed, valueCtx) {
+    const containers = this.containers[term];
+    if (!value || typeof value !== "object" || Array.isArray(value)) return value;
+    const language = containers.has("@language"), index = containers.has("@index");
+    const ids = containers.has("@id"), types = containers.has("@type");
+    if (!language && !index && !ids && !types) return value;
+    const graph = containers.has("@graph");
+    const indexBy = index && own(this.indexes, term) ? this.indexes[term] : null;
     const out = [];
     for (const [key, member] of Object.entries(value)) {
+      const none = key === "@none" || (own(valueCtx.aliases, key) && valueCtx.aliases[key] === "@none");
       for (let entry of asList(member)) {
-        if (containers.has("@language")) {
-          if (typeof entry === "string" && key !== "@none") out.push({ "@value": entry, "@language": key });
+        if (language) {
+          if (typeof entry === "string" && !none) out.push({ "@value": entry, "@language": key });
           else if (entry != null) out.push(entry);
-        } else if (containers.has("@id")) {
-          if (entry && typeof entry === "object" && !Array.isArray(entry)) {
-            if (key !== "@none" && !own(entry, "@id")) entry["@id"] = key;
-            out.push(entry);
+          continue;
+        }
+        if (types && typeof entry === "string") entry = { "@id": entry };
+        const node = !!entry && typeof entry === "object" && !Array.isArray(entry);
+        if (index) {
+          if (node && indexBy && !none && !own(entry, "@value")) {
+            // The key is the property's value as a value of that term is read: an IRI where the term holds IRIs.
+            const kind = own(valueCtx.coerce, indexBy) ? valueCtx.coerce[indexBy] : null;
+            const indexed = kind === "@id" || kind === "@vocab" ? valueCtx.expandIri(key, { vocab: kind === "@vocab", base: true }) : key;
+            const name = this.expandKey(indexBy) || indexBy;
+            putOwn(entry, name, [indexed].concat(own(entry, name) ? asList(entry[name]) : []));
           }
-        } else if (containers.has("@type")) {
-          if (typeof entry === "string") entry = { "@id": entry };
-          if (entry && typeof entry === "object" && !Array.isArray(entry)) {
-            if (key !== "@none") entry["@type"] = asList(own(entry, "@type") ? entry["@type"] : null).concat([key]);
-            out.push(entry);
-          }
-        } else out.push(entry);
+          if (entry != null) out.push(entry);
+        } else if (node) {
+          if (!none && (types || !graph)) keyed.set(entry, ids ? { id: valueCtx.expandIri(key, { base: true }) } : { type: key });
+          out.push(entry);
+        }
       }
     }
     return out;
@@ -643,16 +671,23 @@ class Ctx {
   // time and no call stack. hmc.py's normalize is the same.
   normalize(document) {
     const root = this;
+    const keyed = new Map();
     const isArray = Array.isArray(document);
     const stack = (isArray ? document : [document]).map(item => [item, this, !isArray]);
     while (stack.length) {
       let [item, ctx, top] = stack.pop();
       if (Array.isArray(item)) { for (const x of item) if (x && typeof x === "object") stack.push([x, ctx, false]); continue; }
-      if (!item || typeof item !== "object" || jsonSchemaLike(item)) continue;
+      // A map's value is a node, whatever keys it has.
+      if (!item || typeof item !== "object" || (!keyed.has(item) && jsonSchemaLike(item))) continue;
       if (own(item, "@context")) {
         if (top) ctx.absorb(item["@context"]); else ctx = ctx.child(item["@context"]);
       }
       ctx.renameAliases(item);
+      const fromMap = keyed.get(item);
+      if (fromMap) {
+        if (fromMap.id != null && !own(item, "@id")) item["@id"] = fromMap.id;
+        if (fromMap.type != null) item["@type"] = [fromMap.type].concat(own(item, "@type") ? asList(item["@type"]) : []);
+      }
       if (own(item, "@value")) continue;
       ctx.liftNests(item);
       const scopedTypes = asList(own(item, "@type") ? item["@type"] : null).filter(t => typeof t === "string" && own(ctx.scoped, t)).sort();
@@ -664,10 +699,9 @@ class Ctx {
         if (key.startsWith("@")) { if (item[key] && typeof item[key] === "object") stack.push([item[key], ctx, false]); continue; }
         if (own(ctx.nulled, key)) { delete item[key]; continue; }
         const kind = own(ctx.coerce, key) ? ctx.coerce[key] : null;
-        const containers = own(ctx.containers, key) ? ctx.containers[key] : null;
         const valueCtx = own(ctx.scoped, key) ? ctx.scopedChild(key) : ctx;
         let value = item[key];
-        if (containers) value = ctx.unmap(value, containers);
+        if (own(ctx.containers, key)) value = ctx.unmap(key, value, keyed, valueCtx);
         if (kind === "@id" || kind === "@vocab") value = valueCtx.expandTyped(value, kind === "@vocab");
         let name = key;
         if (ctx !== root) {
@@ -982,9 +1016,12 @@ function shapeFields(index, shapeRef) {
       const prop = (prop0 && typeof prop0 === "object") ? prop0 : {};
       const types = schemaTypes(prop);
       const jsonKind = schemaJsonKind(types);
+      // An array's length is bounded by minItems and maxItems, whichever other types the property allows.
+      const items = jsonKind === "array" || jsonKind === "json";
       fields.push({
         name, path: name, datatype: jsonKind ? null : (schemaDatatype(types) || XSD + "string"),
         jsonKind, minCount: required.has(name) ? 1 : 0, maxCount: 1, pattern: asTextOrNull(prop.pattern),
+        minItems: items ? inty(prop.minItems) : null, maxItems: items ? inty(prop.maxItems) : null,
         defaultValue: prop.default, maxLength: inty(prop.maxLength), minLength: inty(prop.minLength),
         description: asText(prop.description), enum: asList(prop.enum || []),
         minInclusive: prop.minimum, maxInclusive: prop.maximum, required: required.has(name), rawBody: false, multi: false
@@ -1024,9 +1061,12 @@ function shapeFields(index, shapeRef) {
     const datatype = String(literal(index.get(node, P.shDt)) || "") || null;
     const jsonKind = shaclJsonKind(index, node, datatype, maxCount);
     const multi = isMulti(jsonKind, minCount, maxCount, true);
+    // Node values go in one JSON array (or, for one at most, one object), so its length is their count.
+    const counted = jsonKind === "array" || jsonKind === "object";
     fields.push({
       name: fieldName(name ? String(name) : null, path, null), path: path || null,
       datatype, jsonKind, minCount, maxCount,
+      minItems: counted ? minCount : null, maxItems: counted ? maxCount : null,
       pattern: String(literal(index.get(node, P.shPat)) || "") || null,
       defaultValue: fieldDefaults(index, node, multi),
       maxLength: inty(literal(index.get(node, P.shMaxLen))), minLength: inty(literal(index.get(node, P.shMinLen))),
@@ -1732,6 +1772,11 @@ function checkValue(field, found, numeric, errors) {
   let typed;
   try { typed = coerceValue(field, found); } catch (err) { report(String(err.message || err)); return null; }
   const structured = typed != null && typeof typed === "object";
+  // A JSON array holds as many values as it has items, and a field that takes
+  // one object holds one; a field's minItems and maxItems bound that count.
+  const count = Array.isArray(typed) ? typed.length : (structured && field.jsonKind === "object" ? 1 : null);
+  if (count != null && field.minItems != null && count < field.minItems) report(field.name + ": needs at least " + field.minItems + " values, got " + count);
+  if (count != null && field.maxItems != null && count > field.maxItems) report(field.name + ": takes at most " + field.maxItems + " values, got " + count);
   const text = typeof typed === "string" ? typed : (typed == null ? "" : String(typed));
   if (!structured && field.minLength != null && text.length < field.minLength) report(field.name + ": shorter than minLength " + field.minLength);
   if (!structured && field.maxLength != null && text.length > field.maxLength) report(field.name + ": longer than maxLength " + field.maxLength);
@@ -1759,7 +1804,9 @@ function checkValue(field, found, numeric, errors) {
 // The values to send, each typed by its field, and every problem with them. A
 // name that is no field's is a problem, not something silently dropped; a list
 // field takes several values (a multiple select, a JSON array, or one per line)
-// and is checked against its sh:minCount and sh:maxCount. A field's pattern is
+// and is checked against its sh:minCount and sh:maxCount, as a JSON array is
+// against the shape's counts or the schema's minItems and maxItems once it
+// parses, on a dry run and an invoke alike. A field's pattern is
 // shown in its hint and never run: a remote regular expression can take time
 // exponential in the input, and the server that receives the value is the one
 // that enforces it. hmc.py's validate_fields is the same.

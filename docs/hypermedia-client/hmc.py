@@ -495,8 +495,9 @@ def _merge_value(item: dict[str, Any], key: str, value: Any) -> None:
 
 class Context:
     """The active context: prefixes, terms, which terms hold IRIs (typed "@id"
-    or "@vocab" in the context; "@json" ones hold JSON), containers, scoped
-    contexts, keyword aliases, terms set to null, @vocab, and the base a relative
+    or "@vocab" in the context; "@json" ones hold JSON), containers, the property
+    whose values an @index map's keys are, scoped contexts, keyword aliases,
+    terms set to null, @vocab, and the base a relative
     IRI resolves against: @base when the context gives one, else the address the
     document came from. `terms` holds only what documents defined; the reader's
     own names for the properties it reads (TERM_FALLBACKS) apply to keys only,
@@ -507,6 +508,7 @@ class Context:
         self.terms: dict[str, str] = {}
         self.coerce: dict[str, str] = {}
         self.containers: dict[str, frozenset[str]] = {}
+        self.indexes: dict[str, str] = {}
         self.scoped: dict[str, Any] = {}
         self.aliases: dict[str, str] = {}
         self.nulled: set[str] = set()
@@ -520,10 +522,11 @@ class Context:
         """A copy of this context with `local` absorbed: a node's own @context,
         or the scoped one a term or type carries."""
         self.budget.spend(len(self.prefixes) + len(self.terms) + len(self.coerce) + len(self.containers)
-                          + len(self.scoped) + len(self.aliases) + len(self.nulled) + 1)
+                          + len(self.indexes) + len(self.scoped) + len(self.aliases) + len(self.nulled) + 1)
         out = Context(self.base, self.budget)
         out.prefixes, out.terms, out.coerce = dict(self.prefixes), dict(self.terms), dict(self.coerce)
-        out.containers, out.scoped, out.aliases = dict(self.containers), dict(self.scoped), dict(self.aliases)
+        out.containers, out.indexes = dict(self.containers), dict(self.indexes)
+        out.scoped, out.aliases = dict(self.scoped), dict(self.aliases)
         out.nulled, out.vocab, out.document_base = set(self.nulled), self.vocab, self.document_base
         out.absorb(local)
         return out
@@ -540,7 +543,7 @@ class Context:
             if item is None:
                 # A null context empties the active context; the document's own base stays.
                 self.prefixes, self.terms, self.coerce = dict(WELL_KNOWN_PREFIXES), {}, {}
-                self.containers, self.scoped, self.aliases, self.nulled = {}, {}, {}, set()
+                self.containers, self.indexes, self.scoped, self.aliases, self.nulled = {}, {}, {}, {}, set()
                 self.vocab, self.base = None, self.document_base
                 self._children = {}
                 continue
@@ -599,7 +602,7 @@ class Context:
         return None if prefix == "_" or suffix.startswith("//") else prefix
 
     def _define(self, key: str, value: Any) -> None:
-        for table in (self.terms, self.prefixes, self.coerce, self.containers, self.scoped, self.aliases):
+        for table in (self.terms, self.prefixes, self.coerce, self.containers, self.indexes, self.scoped, self.aliases):
             table.pop(key, None)
         self.nulled.discard(key)
         if value is None:
@@ -654,6 +657,10 @@ class Context:
         names = frozenset(c for c in as_list(container) if isinstance(c, str))
         if names:
             self.containers[key] = names
+        # An @index map whose keys are values of a property ("@index": "schema:name"), not bare index strings.
+        index_by = value.get("@index")
+        if "@index" in names and isinstance(index_by, str) and index_by and not index_by.startswith("@"):
+            self.indexes[key] = index_by
         if "@context" in value:
             self.scoped[key] = value["@context"]
 
@@ -726,34 +733,58 @@ class Context:
                         work.append(inner)
                     _merge_value(item, inner, value)
 
-    def _unmap(self, value: Any, containers: frozenset[str]) -> Any:
-        """A map a container term holds (@index, @id, @type or @language), as
-        the list of values it maps to: an @id map's key becomes its node's
-        "@id", a @type map's key is added to its node's types, and a language
-        map's key becomes each string's "@language"."""
-        if not isinstance(value, dict) or "@value" in value or "@id" in value or "@list" in value:
+    def _unmap(self, term: str, value: Any, keyed: dict[int, tuple[Any, dict[str, str]]], value_ctx: "Context") -> Any:
+        """A container term's value as the values it holds, as JSON-LD 1.1
+        expands it. Only an @language, @index, @id or @type container holds a
+        map (alone, with @set, or, for @index and @id, with @graph), and there
+        every object is a map, whatever its keys. A language map's key becomes
+        each string's "@language"; an @index map's key is dropped, or is a value
+        of the property the term's "@index" names, put before the node's own;
+        an @id map's key becomes its node's "@id" unless the node has one, or
+        @graph makes the key the IRI of the graph that holds the node; and a
+        @type map's key is put before its node's types. Keys are read in
+        `value_ctx`, the context the term's values are read in, as jsonld.js
+        reads them. `keyed` holds the "@id" or type for normalize to give a
+        node once its keyword aliases are keywords, so a node's own
+        "id": "@id" alias is its own "@id". A key that is @none, or a term
+        aliased to it, adds nothing. Under any other container (@set, @list,
+        @graph alone or with @set) a value is what it is, so one node object
+        stays one node, never a list of its properties. The page's unmap is the
+        same."""
+        containers = self.containers[term]
+        if not isinstance(value, dict):
             return value
+        language, index = "@language" in containers, "@index" in containers
+        ids, types = "@id" in containers, "@type" in containers
+        if not (language or index or ids or types):
+            return value
+        graph = "@graph" in containers
+        index_by = self.indexes.get(term) if index else None
         out: list[Any] = []
         for key, member in value.items():
+            none = key == "@none" or value_ctx.aliases.get(key) == "@none"
             for entry in as_list(member):
-                if "@language" in containers:
-                    if isinstance(entry, str) and key != "@none":
+                if language:
+                    if isinstance(entry, str) and not none:
                         out.append({"@value": entry, "@language": key})
                     elif entry is not None:
                         out.append(entry)
-                elif "@id" in containers:
-                    if isinstance(entry, dict):
-                        if key != "@none" and "@id" not in entry:
-                            entry["@id"] = key
+                    continue
+                if types and isinstance(entry, str):
+                    entry = {"@id": entry}
+                if index:
+                    if isinstance(entry, dict) and index_by and not none and "@value" not in entry:
+                        # The key is the property's value as a value of that term is read: an IRI where the term holds IRIs.
+                        kind = value_ctx.coerce.get(index_by)
+                        indexed = (value_ctx.expand_iri(key, vocab=kind == "@vocab", document_relative=True)
+                                   if kind in ("@id", "@vocab") else key)
+                        name = self.expand_key(index_by) or index_by
+                        entry[name] = [indexed] + (as_list(entry[name]) if name in entry else [])
+                    if entry is not None:
                         out.append(entry)
-                elif "@type" in containers:
-                    if isinstance(entry, str):
-                        entry = {"@id": entry}
-                    if isinstance(entry, dict):
-                        if key != "@none":
-                            entry["@type"] = as_list(entry.get("@type")) + [key]
-                        out.append(entry)
-                else:
+                elif isinstance(entry, dict):
+                    if not none and (types or not graph):
+                        keyed[id(entry)] = (entry, {"id": value_ctx.expand_iri(key, document_relative=True)} if ids else {"type": key})
                     out.append(entry)
         return out
 
@@ -773,12 +804,14 @@ class Context:
         recursion limit. The page's normalize is the same."""
         top_items = document if isinstance(document, list) else [document]
         stack: list[tuple[Any, Context, bool]] = [(item, self, not isinstance(document, list)) for item in top_items]
+        keyed: dict[int, tuple[Any, dict[str, str]]] = {}
         while stack:
             item, ctx, top = stack.pop()
             if isinstance(item, list):
                 stack.extend((x, ctx, False) for x in item if isinstance(x, (dict, list)))
                 continue
-            if not isinstance(item, dict) or _json_schema_like(item):
+            # A map's value is a node, whatever keys it has.
+            if not isinstance(item, dict) or (id(item) not in keyed and _json_schema_like(item)):
                 continue
             if "@context" in item:
                 if top:
@@ -786,6 +819,12 @@ class Context:
                 else:
                     ctx = ctx.child(item["@context"])
             ctx._rename_aliases(item)
+            from_map = keyed.get(id(item))
+            if from_map is not None and from_map[0] is item:
+                if "id" in from_map[1] and "@id" not in item:
+                    item["@id"] = from_map[1]["id"]
+                if "type" in from_map[1]:
+                    item["@type"] = [from_map[1]["type"]] + as_list(item.get("@type"))
             if "@value" in item:
                 continue
             ctx._lift_nests(item)
@@ -808,11 +847,10 @@ class Context:
                     del item[key]
                     continue
                 kind = ctx.coerce.get(key)
-                containers = ctx.containers.get(key)
                 value_ctx = ctx.scoped_child(key) if key in ctx.scoped else ctx
                 value = item[key]
-                if containers:
-                    value = ctx._unmap(value, containers)
+                if key in ctx.containers:
+                    value = ctx._unmap(key, value, keyed, value_ctx)
                 if kind in ("@id", "@vocab"):
                     value = value_ctx._expand_typed(value, kind == "@vocab")
                 name = key
@@ -891,6 +929,10 @@ class Field:
     json_kind: str | None = None
     # Takes a list of values: a SHACL property with no sh:maxCount, or one above 1.
     multi: bool = False
+    # The bounds on how many values a JSON field holds: a node-valued SHACL
+    # property's sh:minCount and sh:maxCount, or a JSON Schema's minItems and maxItems.
+    min_items: int | None = None
+    max_items: int | None = None
 
     def to_public(self) -> dict[str, Any]:
         return {
@@ -903,6 +945,7 @@ class Field:
             "minInclusive": self.min_inclusive, "maxInclusive": self.max_inclusive,
             "required": self.required or (self.min_count or 0) >= 1,
             "rawBody": self.raw_body, "variable": self.variable,
+            "minItems": self.min_items, "maxItems": self.max_items,
         }
 
 
@@ -1456,11 +1499,15 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
             prop = prop if isinstance(prop, dict) else {}
             types = _schema_types(prop)
             json_kind = _schema_json_kind(types)
+            # An array's length is bounded by minItems and maxItems, whichever other types the property allows.
+            items = json_kind in ("array", "json")
             fields.append(Field(
                 name=str(name), path=str(name),
                 datatype=None if json_kind else (_schema_datatype(types) or XSD + "string"),
                 json_kind=json_kind,
                 min_count=1 if name in required else 0, max_count=1,
+                min_items=_inty(prop.get("minItems")) if items else None,
+                max_items=_inty(prop.get("maxItems")) if items else None,
                 pattern=prop.get("pattern"), default=prop.get("default"),
                 max_length=_inty(prop.get("maxLength")), min_length=_inty(prop.get("minLength")),
                 description=prop.get("description"), enum=list(as_list(prop.get("enum") or [])),
@@ -1503,12 +1550,15 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
         datatype = str(literal(index.get(node, P_SH_DT)) or "") or None
         json_kind = _shacl_json_kind(index, node, datatype, max_count)
         multi = _is_multi(json_kind, min_count, max_count, True)
+        # Node values go in one JSON array (or, for one at most, one object), so its length is their count.
+        counted = json_kind in ("array", "object")
         fields.append(Field(
             name=_field_name(str(name) if name else None, path, None),
             path=path or None,
             datatype=datatype,
             json_kind=json_kind,
             min_count=min_count, max_count=max_count,
+            min_items=min_count if counted else None, max_items=max_count if counted else None,
             pattern=str(literal(index.get(node, P_SH_PAT)) or "") or None,
             default=_defaults(index, node, multi),
             max_length=_inty(literal(index.get(node, P_SH_MAXLEN))),
@@ -2443,6 +2493,13 @@ def _check_value(fld: Field, found: Any, numeric: str | None, errors: list[str])
         report(f"{fld.name}: {exc}")
         return None
     structured = isinstance(typed, (dict, list))
+    # A JSON array holds as many values as it has items, and a field that takes
+    # one object holds one; a field's min_items and max_items bound that count.
+    count = len(typed) if isinstance(typed, list) else (1 if isinstance(typed, dict) and fld.json_kind == "object" else None)
+    if count is not None and fld.min_items is not None and count < fld.min_items:
+        report(f"{fld.name}: needs at least {fld.min_items} values, got {count}")
+    if count is not None and fld.max_items is not None and count > fld.max_items:
+        report(f"{fld.name}: takes at most {fld.max_items} values, got {count}")
     text = typed if isinstance(typed, str) else _scalar_text(typed)
     if not structured and fld.min_length is not None and len(text) < fld.min_length:
         report(f"{fld.name}: shorter than minLength {fld.min_length}")
@@ -2483,8 +2540,10 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
     them. A name that is no field's is a problem, not something silently
     dropped; a list field takes several values (a repeated --field, a JSON
     array, or one per line) and is checked against its sh:minCount and
-    sh:maxCount, and a field that takes one value takes the last given. The
-    page's validateFields is the same."""
+    sh:maxCount, as a JSON array is against the shape's counts or the schema's
+    minItems and maxItems once it parses, dry run or not; and a field that
+    takes one value takes the last given. The page's validateFields is the
+    same."""
     if control.problem:
         return {}, [control.problem]
     errors: list[str] = []

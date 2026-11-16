@@ -299,6 +299,30 @@ page's half passed before and pins what it already did, and `hmc.py`'s failed.
 Every other new test in both files failed before. The CSP script hash is
 updated.
 
+**Container values, and how many values a JSON field holds.** A review found two
+more places where both clients read a document otherwise than it says. First,
+they read any object under a container term as a map, so a single inline
+operation with no `@id` under a `@set` or `@list` term became a list of its
+property values, and an advertised GET became a POST with no target. Now only
+an `@language`, `@index`, `@id` or `@type` container holds a map (alone or with
+`@set`, and `@index` or `@id` also with `@graph`), and there every object is
+one, even one keyed by `@id`, as jsonld.js reads it; under any other container
+one node object stays one node. An `@id` map's key under `@graph` names the
+graph, not the node; a key aliased to `@none` names nothing; a node's own `@id`
+or `@type` written through an alias is kept; and a term whose `@index` names a
+property gives each node its key as that property's value, so
+`"@index": "hydra:method"` keeps the method. Second, a SHACL property with
+`sh:node` or `sh:nodeKind sh:BlankNode` takes a JSON array, and that array
+skipped the only check of `sh:minCount` and `sh:maxCount`, so `[]` and four
+objects both went through where two to three were asked for; a JSON Schema
+array's `minItems` and `maxItems` were not read at all. Both clients now count
+a JSON array's items once it parses, and a single object as one, against those
+bounds, on a dry run and a confirmed write alike, and refuse with a named error
+such as `members: needs at least 2 values, got 0`; `hmc.py describe` shows the
+bounds as `minItems` and `maxItems`. The documents are in the shared fixtures,
+and the four new tests, one per finding in each file, failed before. The CSP
+script hash is updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

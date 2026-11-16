@@ -24,7 +24,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { COST_CASES, costDescriptors, sharedDescriptors } from './hypermedia-client-fixtures.js';
+import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, sharedDescriptors } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -1175,6 +1175,25 @@ describe('hypermedia client: JSON-LD read as jsonld.js reads it', () => {
       assertInert(t, 'events');
     } finally { t.dom.window.close(); }
   });
+
+  it('reads a node object under @set, @list or @graph as that node, and unpacks only @index, @id and @type maps', async () => {
+    const t = await loaded('/containers');
+    try {
+      const { document } = t;
+      expect(badges(document)).toEqual(Object.fromEntries(CONTAINER_READS.map(([, title]) => [title, 'GET/http'])));
+      for (const [rel, title] of CONTAINER_READS) {
+        click(t, card(document, title)!);
+        // Under @graph an @id map's key is the graph's IRI, and @none is no IRI, so neither names a node.
+        const named = document.querySelector('#detail code.code-sm')!.textContent!;
+        if (rel) expect(named, title).toBe(rel); else expect(named, title).toMatch(/^_:/);
+        const result = document.getElementById('result')!;
+        click(t, button(document, 'dry'));
+        await vi.waitFor(() => expect(result.textContent, title).toContain('Dry run'));
+        expect(JSON.parse(result.querySelector('pre')!.textContent!).url, title).toBe(`${HOST}/api`);
+      }
+      assertInert(t, 'containers');
+    } finally { t.dom.window.close(); }
+  });
 });
 
 describe('hypermedia client: templates and transport', () => {
@@ -1316,6 +1335,60 @@ describe('hypermedia client: forms', () => {
     try {
       expect((linked.plan!.body as Record<string, unknown>)).toEqual({ graph_iri: `${HOST}/g`, conforms_to_shapes: [`${HOST}/shapes`], tags: ['x', 'y'], levels: [2, 3] });
     } finally { linked.t.dom.window.close(); }
+  });
+
+  it('checks a JSON array\'s count against sh:minCount and sh:maxCount or minItems and maxItems, on Dry run and on a confirmed Invoke', async () => {
+    const pages = new Map<string, Loaded>();
+    try {
+      const open = async (path: string, title: string) => {
+        if (!pages.has(path)) pages.set(path, await loaded(path));
+        const t = pages.get(path)!;
+        click(t, card(t.document, title)!);
+        const box = t.document.getElementById('confirmUnsafe') as HTMLInputElement;
+        box.checked = true;
+        box.dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
+        return t;
+      };
+      // Opening a control draws its form afresh, so a field not named keeps its default.
+      const fill = (t: Loaded, values: Record<string, string>) => {
+        for (const [name, value] of Object.entries(values)) {
+          t.document.querySelector<HTMLTextAreaElement>(`#invokeForm [data-field="${name}"]`)!.value = value;
+        }
+      };
+      const press = async (t: Loaded, mode: string) => {
+        const result = t.document.getElementById('result')!;
+        result.innerHTML = '';
+        click(t, button(t.document, mode));
+        await vi.waitFor(() => expect(result.textContent).toMatch(/Dry run — nothing was sent\.|Validation failed|Response HTTP/));
+        return result.textContent!;
+      };
+      for (const [path, , title, values, message] of countCases(HOST)) {
+        const t = await open(path, title);
+        fill(t, values);
+        for (const mode of ['dry', 'live']) {
+          const shown = await press(t, mode);
+          expect(shown, `${title} ${JSON.stringify(values)} (${mode})`).toContain('Validation failed');
+          expect(shown, `${title} ${JSON.stringify(values)} (${mode})`).toContain(message);
+        }
+      }
+      await new Promise(r => setTimeout(r, 50));
+      for (const t of pages.values()) expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+
+      // Within its bounds each array is sent as written, and a field that takes one object takes one.
+      const t = await open('/counts', 'Node counts');
+      fill(t, { members: '[{},{"a":1}]', notes: '[{}]', owner: '{"name":"o"}' });
+      expect(await press(t, 'dry')).toContain('Dry run — nothing was sent.');
+      expect((JSON.parse(t.document.querySelector('#result pre')!.textContent!) as { body: unknown }).body)
+        .toEqual({ members: [{}, { a: 1 }], notes: [{}], owner: { name: 'o' } });
+      expect(await press(t, 'live')).toMatch(/Response HTTP 200/);
+      expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([{ url: `${HOST}/num-target`, method: 'POST' }]);
+      await open('/counts', 'Item counts');
+      fill(t, { tags: '["a","b","c"]', extra: '{"a":[1,2]}' });
+      expect(await press(t, 'dry')).toContain('Dry run — nothing was sent.');
+      expect((JSON.parse(t.document.querySelector('#result pre')!.textContent!) as { body: unknown }).body)
+        .toEqual({ tags: ['a', 'b', 'c'], extra: { a: [1, 2] } });
+      assertInert(t, 'counts');
+    } finally { for (const t of pages.values()) t.dom.window.close(); }
   });
 
   it('builds fields from hydra:supportedProperty, by property IRI and by an inline property\'s label', async () => {
