@@ -46,6 +46,37 @@ whose id it already holds, so a descriptor projected before today keeps the
 statement it has. No lint rule refuses a profile that declares another publisher's term;
 this is fixed for Foxxi's profile and tested there.
 
+## 2026-11-15 — Foxxi: a snapshot is written every time, and sealed
+
+Found when a restart of the deployed bridge lost every cmi5 launch. Foxxi keeps
+its launches, LTI line items, rosters, SCORM sessions and xAPI documents on the
+pod as snapshots and reads them back at startup. Two things were wrong.
+
+They were written once. `publish()` sends a graph with `If-None-Match: *` and
+takes a 412 as done, because a published graph never changes. A snapshot has one
+name and is rewritten, so its first write was its only write. The descriptor
+beside it kept being rewritten. On the deployed pod the cmi5 graph was from
+2026-09-26 and the LTI and xAPI-document graphs from July; every restart since
+restored those.
+
+They were plain text on a pod anyone can read: each launch's learner, their pod,
+the course and the registration.
+
+A snapshot is now sealed to the bridge's own key, derived from
+`FOXXI_BRIDGE_PRIVATE_KEY` for the pod, and its graph is replaced on every write
+(`src/pod-snapshot-publisher.ts`). A bridge with no key writes no snapshot. On
+read the sealed graph is taken when there is one and this bridge sealed it. The
+plain graph an earlier bridge left is read only where no sealed one exists yet.
+A bridge that has lost its key does not go back to the plain graph once a sealed
+one exists. A write the pod refuses, a 412 included, or one larger than is read
+back, fails as a whole and leaves the previous snapshot in place.
+
+Not changed: the plain graphs already on a pod are left where they are; removing
+them is the operator's. The LTI Platform gradebook was already sealed and
+written under its own rules. A snapshot still waits two seconds before it is
+written and is not written at shutdown, so state changed in the two seconds
+before a restart is lost.
+
 ## 2026-11-15 — jev-harness: a selection whose base yields no changed files is refused
 
 `select-tests` given a `base_ref` that yields no changed files answered
