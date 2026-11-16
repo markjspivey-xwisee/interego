@@ -129,6 +129,13 @@ export class Harness {
       const changed = input.changedFiles.length > 0
         ? input.changedFiles
         : input.baseRef ? changedFiles(root, input.baseRef, input.headRef) : [];
+      // A base_ref that yields no changed files is refused, as the gate refuses an empty diff. It
+      // used to answer mode=full ("no changed files were given"), which reads as a selection made
+      // and hid a range that named nothing (#899, #901, #905). A call with neither changed_files
+      // nor base_ref asked for no narrowing, and still gets the whole suite.
+      if (changed.length === 0 && input.baseRef) {
+        throw new HarnessError(400, `select-tests needs changed_files or a base_ref that yields some: ${describeDiffRange(diffRange(root, input.baseRef, input.headRef))}`);
+      }
       const j = await selectTests(this.jev, this.inventory(undefined, root), { changedFiles: changed, ...(input.task ? { task: input.task } : {}) });
       return { changed, j };
     });
