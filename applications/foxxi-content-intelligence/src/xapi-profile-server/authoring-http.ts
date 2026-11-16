@@ -157,14 +157,15 @@ export function mountProfileHosting(app: Express, server: ProfileServer, o: Host
   app.get('/xapi/profiles/resource', serve(req => typeof req.query.iri === 'string' && req.query.iri !== '' ? req.query.iri : undefined));
   // The examples a version was published with: what its writer showed the lint. Public, like the
   // version itself: no signature is asked for. The writer is told so when drafting and publishing.
+  // A built-in profile answers with the examples the deployment keeps with it, and no publishedAt.
   app.get('/xapi/profiles/examples', async (req, res) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     try {
       await server.ready();
       const held = typeof req.query.iri === 'string' ? server.dataset.get(req.query.iri) : undefined;
-      const published = held ? server.published(held.version) : undefined;
-      if (!held || !published) { res.status(404).json({ error: 'No version with that iri was published from a draft here, so none has examples kept with it.' }); return; }
-      res.json({ profile: held.id, version: held.version, publishedAt: published.at, examples: published.examples, external: published.external });
+      const kept = held ? server.keptWith(held.version) : undefined;
+      if (!held || !kept) { res.status(404).json({ error: 'No version with that iri was published from a draft here, so none has examples kept with it.' }); return; }
+      res.json({ profile: held.id, version: held.version, ...(kept.at ? { publishedAt: kept.at } : {}), builtIn: server.isBuiltIn(held.id), examples: kept.examples, external: kept.external });
     } catch { res.status(500).json({ error: 'The profile server could not answer.' }); }
   });
   // A profile written here has its IRI under <base>/p/, so the IRI is this address.
