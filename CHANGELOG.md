@@ -198,6 +198,53 @@ from nginx, so it does not ship, and it is not pruned. npm's hidden lockfile
 still lists the removed packages; npm sees the tree no longer matches and reads
 the tree instead, and `npx tsx` does not consult it.
 
+## 2026-11-15 — Native commits: the head is not read back or uploaded twice, and reads open no transaction
+
+After the staging change of 2026-11-13 a live single-statement write is about
+0.64 s at the edge, with the commit itself about 365 ms: staging 137 ms,
+writing the head 75 ms, reading it back 40 ms. Three changes aimed at the last
+two. With the database 2 ms away in each direction (a delaying proxy in front
+of a local Postgres), a `PUT /xapi/statements` goes from a median of 503 ms to
+235 ms over 12 writes, from four requests to the pod server to three, and the
+head write from about 185 ms to 50 ms with a 403-byte body in place of 122 KB.
+With no delay it is 80 ms to 73 ms. The live effect is not measured yet.
+
+- `packages/pgsl`: `NativeCommitStore` option `acceptHeadReceipt`. The head
+  write is answered with a receipt that the client already refuses unless it is
+  bound to the bytes it sent: their digest and size, the expected revision, and
+  the revision and ETag of the write. With the option on, that receipt is the
+  confirmation and the head is not fetched a second time. This is the
+  confirmation batched staging already accepts for immutable representations.
+  Off by default; without it the head is read back and compared as before. The
+  head compare-and-set, conflict and replay handling are unchanged.
+- `applications/foxxi-content-intelligence`: the LRS turns it on.
+- `packages/pgsl-store`: the Postgres adapter sends `BEGIN` with the first
+  statement that writes or locks, not before the first read. Under READ
+  COMMITTED every statement takes its own snapshot inside a transaction or out
+  of one, so a read before the first write returns the same rows either way.
+  A callback that only reads now costs one round trip per read instead of that
+  plus `BEGIN` and `COMMIT`, which applies to every read of a pod resource.
+  Atomic writes and held locks start where the first of them is issued, as
+  before. A callback that swallows a failed read is still never acknowledged.
+
+- `integrations/pgsl-css-accessor`: a native commit may name a `source` in
+  place of `bodyBase64`: the path of a native document that already holds the
+  representation, with its digest and size. The server commits the target from
+  that document's stored content in one small transaction, with the same
+  compare-and-set and the same receipt, and only if the source is a
+  native-managed document holding exactly the stated digest, size and media
+  type (409 otherwise, nothing written). The source is named by path alone and
+  must lie under the target's own top-level container, so it is always in the
+  pod the caller is already writing; containers, auxiliary resources, the
+  target itself and anything in another pod are refused (400). Advertised on
+  OPTIONS as `Interego-Native-Commit-Source: 1`.
+- `packages/pgsl-store`: `LdpStore.commitResourceFrom`, the engine side of it.
+- `packages/pgsl`: `NativeCommitStore` option `commitHeadFromStaged`. The
+  head's bytes are those of the commit object the same commit has just
+  confirmed staged, so the head write names that object and does not send them
+  again. Used only when the server advertises it; a server that refuses is
+  sent the ordinary commit under the same expected revision. The receipt is
+  checked against the bytes as always. Off by default; the LRS turns it on.
 ## 2026-11-15 — Foxxi: a hosted cmi5 package keeps its own moveOn
 
 Found on the first run against the deployed bridge. A package uploaded and

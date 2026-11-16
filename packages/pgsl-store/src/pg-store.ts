@@ -167,6 +167,32 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
         let admission: Promise<number> | undefined;
         let mutationLock: Promise<void> | undefined;
         let refusal: PgWritePressureError | undefined;
+        /**
+         * BEGIN is sent with the first statement that writes or locks, not before the first read.
+         *
+         * Under READ COMMITTED every statement takes its own snapshot, inside a transaction or
+         * out of one, so a plain SELECT issued before the first write returns the same rows
+         * either way and holds nothing afterwards. What BEGIN..COMMIT gives is atomic writes and
+         * locks held to the end, and both still start exactly where the first of them is issued.
+         * A transaction that only reads therefore costs one round trip per read instead of that
+         * plus BEGIN and COMMIT, which is most of what a GET of a resource was spending.
+         *
+         * One thing an open transaction did for reads is kept by hand: a read that failed left
+         * the transaction aborted, so a callback that swallowed the error could not go on to
+         * commit. `failedRead` refuses the same thing.
+         */
+        let begun: Promise<unknown> | undefined;
+        let failedRead: unknown;
+        const begin = (): Promise<unknown> => {
+          if (failedRead !== undefined) return Promise.reject(failedRead);
+          begun ??= client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
+          return begun;
+        };
+        const read = async <R extends object>(text: string, values: unknown[]): Promise<{ rows: R[] }> => {
+          if (begun) { await begun; return client.query<R>(text, values); }
+          try { return await client.query<R>(text, values); }
+          catch (error) { failedRead ??= error; throw error; }
+        };
         const planPositive = (key: Key, value: Value): void => {
           if (!pressure) return;
           if (refusal) throw refusal;
@@ -203,9 +229,9 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           if (!pressure) return Promise.resolve();
           // Lock-only CAS may precede a positive write in the same transaction.
           // Preserve lock ordering without applying a physical growth check.
-          mutationLock ??= client.query(
+          mutationLock ??= begin().then(() => client.query(
             'SELECT pg_advisory_xact_lock(1346851660, hashtext(current_database()))',
-          ).then(() => undefined);
+          )).then(() => undefined);
           return mutationLock;
         };
         const admit = async (): Promise<void> => {
@@ -276,6 +302,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
         const flush = (): Promise<void> => {
           const operations = pending.splice(0);
           flushing = flushing.then(async () => {
+            if (operations.length > 0) await begin();
             await admit();
             for (let index = 0; index < operations.length;) {
               const operation = operations[index]!;
@@ -296,12 +323,11 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           return flushing;
         };
         try {
-          await client.query('BEGIN ISOLATION LEVEL READ COMMITTED');
           const txn: FdbTxn = {
             get: async (key: Key) => {
               const capturedKey = Buffer.from(key);
               await flush();
-              const r = await client.query<{ v: Buffer }>(
+              const r = await read<{ v: Buffer }>(
                 `SELECT v FROM ${table} WHERE k = $1`, [capturedKey]);
               return r.rows[0] ? new Uint8Array(r.rows[0].v) : undefined;
             },
@@ -334,6 +360,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
             compareAndSet: async (key: Key, expected: Value | null, value: Value): Promise<boolean> => {
               const capturedKey = Buffer.from(key), capturedValue = Buffer.from(value);
               const capturedExpected = expected === null ? null : Buffer.from(expected);
+              await begin();
               if (capturedExpected !== null && capturedExpected.equals(capturedValue)) {
                 await lockMutation();
                 await flush();
@@ -361,7 +388,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
               const captured = keys.map(key => Buffer.from(key));
               await flush();
               if (captured.length === 0) return [];
-              const r = await client.query<{ k: Buffer; v: Buffer }>(
+              const r = await read<{ k: Buffer; v: Buffer }>(
                 `SELECT k, v FROM ${table} WHERE k = ANY($1::bytea[])`, [captured]);
               const found = new Map(r.rows.map(row => [row.k.toString('hex'), row.v]));
               return captured.map((key) => { const v = found.get(key.toString('hex')); return v ? new Uint8Array(v) : undefined; });
@@ -370,7 +397,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
               const begins = ranges.map(range => Buffer.from(range.begin)), ends = ranges.map(range => Buffer.from(range.end));
               await flush();
               if (ranges.length === 0) return [];
-              const r = await client.query<{ i: string }>(
+              const r = await read<{ i: string }>(
                 `SELECT r.i::text AS i FROM unnest($1::bytea[], $2::bytea[]) WITH ORDINALITY AS r(b, e, i)
                  WHERE EXISTS (SELECT 1 FROM ${table} t WHERE t.k >= r.b AND t.k < r.e)`, [begins, ends]);
               const hit = new Set(r.rows.map(row => Number(row.i) - 1));
@@ -389,6 +416,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
               for (const [key, value] of captured) planPositive(key, value);
               await flush();
               if (captured.length === 0) return [];
+              await begin();
               await admit();
               const r = await client.query<{ k: Buffer }>(
                 `INSERT INTO ${table}(k, v) SELECT * FROM unnest($1::bytea[], $2::bytea[]) ORDER BY 1
@@ -413,7 +441,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
               // memory are all still linear in the range, which is most of what makes an unbounded
               // read expensive at this layer.
               const bounded = typeof lim === 'number' && Number.isFinite(lim) && lim > 0;
-              const r = await client.query<{ k: Buffer; v: Buffer }>(
+              const r = await read<{ k: Buffer; v: Buffer }>(
                 `SELECT k, v FROM ${table} WHERE k >= $1 AND k < $2 ORDER BY k${bounded ? ' LIMIT $3' : ''}`,
                 bounded ? [capturedBegin, capturedEnd, Math.floor(lim)] : [capturedBegin, capturedEnd],
               );
@@ -440,7 +468,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
               if (!Number.isInteger(separator) || separator < 0 || separator > 0xfe) throw new RangeError('pgsl-store: firstPerSegment separator must be a byte below 0xff');
               const capturedStart = Buffer.from(start), capturedEnd = Buffer.from(end);
               await flush();
-              const r = await client.query<{ k: Buffer; v: Buffer | null }>(
+              const r = await read<{ k: Buffer; v: Buffer | null }>(
                 `WITH RECURSIVE walk(k, v, n) AS (
                   (SELECT k, v, 1 FROM ${table} WHERE k >= $1::bytea AND k < $2::bytea ORDER BY k LIMIT 1)
                   UNION ALL
@@ -467,6 +495,9 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           };
           const result = await fn(txn);
           await flush();
+          // A callback that swallowed a failed read is not acknowledged, written or not.
+          if (failedRead !== undefined) throw failedRead;
+          if (!begun) return result; // nothing was written or locked: there is nothing to commit
           if (pressure && positiveOperations > 0) checkPressure(await databaseBytes());
           const committed = await client.query('COMMIT');
           // A callback can catch a SQL error while PostgreSQL leaves BEGIN aborted.
@@ -474,7 +505,7 @@ export async function openPgStore(opts: PgStoreOptions = {}): Promise<FdbLike> {
           if (committed.command !== 'COMMIT') throw new Error('pgsl-store: transaction did not commit');
           return result;
         } catch (err) {
-          try { await client.query('ROLLBACK'); } catch { /* ignore */ }
+          if (begun) { try { await begun.catch(() => undefined); await client.query('ROLLBACK'); } catch { /* ignore */ } }
           const code = (err as { code?: string }).code;
           if (code && RETRYABLE.has(code) && attempt < maxAttempts) {
             continue; // serialization conflict — retry the whole transaction
