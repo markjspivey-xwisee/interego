@@ -20,7 +20,7 @@ import { xapiProfileServerAffordances } from '../src/xapi-profile-server/afforda
 import type { Json as PJson } from '../src/xapi-profile-server/processor.js';
 import type { Json } from '../src/xapi-profile-server/rdf.js';
 import { buildFoxxiProfileDoc, FOXXI_EXTERNAL_TERMS } from '../src/xapi-profile.js';
-import { foxxiProfileExamples } from '../src/xapi-profile-server/built-in-examples.js';
+import { foxxiProfileExamples } from '../src/built-in-profile-examples.js';
 import { IEP_DECORATIONS } from '../src/xapix/namespace.js';
 import { loadPackFile } from '../../coached-world/src/pack.js';
 import { buildProfile as buildWorldProfile } from '../../coached-world/src/profile.js';
@@ -424,7 +424,7 @@ const example = (id: string, follows: string[], statement: unknown): ExampleStat
 describe('Foxxi\'s own profile goes through author, lint, publish and host with no findings', () => {
   const doc = buildFoxxiProfileDoc({ generatedAt: '2026-07-22T00:00:00.000Z' }) as Obj & { templates: Obj[]; patterns: Obj[]; concepts: Obj[] };
   const T = (name: string) => `${doc.id as string}/templates/${name}`;
-  // The examples the deployment keeps with the profile (src/xapi-profile-server/built-in-examples.ts).
+  // The examples the deployment keeps with the profile (src/built-in-profile-examples.ts).
   const { statements, sequences } = foxxiProfileExamples();
 
   it('has an example for each of its templates and primary patterns, and the lint finds nothing', async () => {

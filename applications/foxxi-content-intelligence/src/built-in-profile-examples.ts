@@ -13,14 +13,18 @@
  * for the statements no single function emits.
  *
  * Every actor, address and identifier is made up.
+ *
+ * This file is in src/ and not beside the profile server because it imports the lrs-adapter's
+ * builder: the bridge image's own check (tests/a-bridge-image-carries-what-it-imports.test.ts)
+ * reads an import of another vertical as two directories up.
  */
-import { FOXXI_NS, FOXXI_PROFILE_ID } from '../xapi-profile.js';
-import { projectMeshEntry, type MeshDiscoverEntry } from '../mesh-event-projector.js';
-import { ingestExternalRun } from '../agent-run-ingest.js';
-import { XAPIX_PROJECTION_TEMPLATE_ID } from '../xapix/profile.js';
-import { buildProjectionStatement } from '../../../lrs-adapter/src/projection-statement.js';
-import type { ExampleSequence, ExampleStatement, ProfileExamples } from './lint.js';
-import type { Json } from './processor.js';
+import { FOXXI_NS, FOXXI_PROFILE_ID } from './xapi-profile.js';
+import { projectMeshEntry, type MeshDiscoverEntry } from './mesh-event-projector.js';
+import { ingestExternalRun } from './agent-run-ingest.js';
+import { XAPIX_PROJECTION_TEMPLATE_ID } from './xapix/profile.js';
+import { buildProjectionStatement } from '../../lrs-adapter/src/projection-statement.js';
+import type { ExampleSequence, ExampleStatement, ProfileExamples } from './xapi-profile-server/lint.js';
+import type { Json } from './xapi-profile-server/processor.js';
 
 const ADL = 'http://adlnet.gov/expapi', W3 = 'https://w3id.org/xapi/adl/verbs';
 const json = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json;

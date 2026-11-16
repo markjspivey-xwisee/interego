@@ -20,7 +20,7 @@ import { buildFoxxiProfileDoc, FOXXI_EXTERNAL_TERMS, FOXXI_PROFILE_ID } from '..
 import { PROFILE_GENERATED_AT } from '../xapi-lrs.js';
 import { buildXapixProfileDoc } from '../xapix/profile.js';
 import { XAPIX_PROFILE_ID } from '../xapix/namespace.js';
-import { foxxiProfileExamples, xapixProfileExamples } from './built-in-examples.js';
+import { foxxiProfileExamples, xapixProfileExamples } from '../built-in-profile-examples.js';
 import type { ExternalTerm, ProfileExamples } from './lint.js';
 import type { Json } from './rdf.js';
 
