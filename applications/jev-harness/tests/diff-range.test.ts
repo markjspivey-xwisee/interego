@@ -79,7 +79,7 @@ beforeAll(() => {
   mergedMaster = git('rev-parse', 'HEAD');
   git('update-ref', 'refs/remotes/origin/master', mergedMaster);
   git('checkout', '-q', '--detach', mergeRef);
-});
+}, 120_000); // some thirty git processes: seconds alone, past the default hook timeout beside the whole suite
 
 afterAll(() => { rmSync(scratch, { recursive: true, force: true }); });
 
@@ -134,8 +134,25 @@ describe('a checkout that comes after the pull request merged', () => {
     expect(selected.judgment.tests.map((t) => t.path)).toContain('tests/ledger.test.ts');
     expect(selected.judgment.reasons.join(' ')).not.toContain('no changed files were given');
 
-    const moving = await harness.selectTests({ changedFiles: [], baseRef: 'origin/master', headRef: 'HEAD' });
-    expect(moving.judgment.changedFiles).toEqual([]);
+  });
+
+  it('★ the selection refuses a base that yields no changed files, naming what it compared, and records nothing', async () => {
+    const store = new HarnessStore(join(scratch, 'refused'));
+    const harness = new Harness({ jev: scripted({}), repoRoot: root, base: 'http://localhost:1', store });
+    const refused = harness.selectTests({ changedFiles: [], baseRef: 'origin/master', headRef: 'HEAD' });
+    await expect(refused).rejects.toMatchObject({ status: 400 });
+    await expect(refused).rejects.toThrow('select-tests needs changed_files or a base_ref that yields some');
+    await expect(refused).rejects.toThrow(`base ${mergedMaster} (origin/master)`);
+    await expect(refused).rejects.toThrow(`head ${mergeRef} (HEAD)`);
+    await expect(refused).rejects.toThrow('the diff between them is empty');
+    expect(store.index(), 'a refusal is not a selection').toEqual([]);
+
+    // Files the caller names win over the range, and a call that names neither still gets the suite.
+    const named = await harness.selectTests({ changedFiles: ['src/ledger.ts'], baseRef: 'origin/master', headRef: 'HEAD' });
+    expect(named.judgment.changedFiles).toEqual(['src/ledger.ts']);
+    const neither = await harness.selectTests({ changedFiles: [] });
+    expect(neither.judgment.mode).toBe('full');
+    expect(neither.judgment.reasons.join(' ')).toContain('no changed files were given');
   });
 
   it('describes a ref that does not resolve, and a working-tree comparison', () => {
