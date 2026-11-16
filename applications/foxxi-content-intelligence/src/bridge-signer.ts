@@ -31,6 +31,7 @@ import {
   type AgentWallet,
   loadAgentKeypair,
 } from '@interego/passport';
+import { deriveEncryptionKeyPair, type EncryptionKeyPair } from '@interego/core';
 
 // Cache the resolved keypair so the bridge has a single identity for
 // the lifetime of the process. The first caller mints (or loads) it
@@ -61,6 +62,18 @@ export function bridgeWallet(): AgentWallet {
 
 export function bridgeDid(): string {
   return ensureKeypair().did;
+}
+
+/**
+ * A key the bridge seals its own state to, derived from its configured key for one named purpose.
+ * Undefined when the bridge runs on a key minted for this process: nothing sealed to that could be
+ * opened after a restart, so nothing should be. The bridge's key is read in one place, here.
+ */
+export function bridgeSealKey(purpose: string): EncryptionKeyPair | undefined {
+  const held = ensureKeypair();
+  const secret = (held.wallet as { privateKey?: unknown }).privateKey;
+  if (held.source !== 'env' || typeof secret !== 'string' || !/^(?:0x)?[a-f0-9]{64}$/i.test(secret)) return undefined;
+  return deriveEncryptionKeyPair(secret, purpose);
 }
 
 export function bridgeAuthor(): { id: string; kind: 'agent'; role: string } {
