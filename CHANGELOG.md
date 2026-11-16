@@ -1,5 +1,416 @@
 # Changelog
 
+## 2026-11-15 — Editor witness: reject-always offered only on a mode switch leaves the thesis untested
+
+The witness keeps a standing refusal of a mode switch out of the deny set,
+because it denies no tool. But its verdict still read reject-always as offered
+whenever any menu carried it, plan approvals included. So a session whose only
+reject-always offers were on mode-switch menus read "genuinely unsupported",
+though no tool request had ever offered a standing denial. A Codex review of
+this branch found it. The tally now counts `rejectAlwaysOfferedForTools`: the
+permission requests about a tool, of any kind but `switch_mode`, whose menu
+offered reject_always. The verdict reads that count. When reject-always was
+offered only on a mode switch, the verdict is UNTESTED and says so.
+
+Tests: a session that offered reject-always only on the plan approval reads
+UNTESTED, not unsupported. One that also offered it on an edit request, and
+had it declined there, still reads unsupported and gives the tool count. Both
+fail on the earlier rule.
+
+Not covered: the `options OFFERED` line still counts every menu, mode switches
+included. That is a count of what was on screen, not of chances to deny a
+tool.
+
+## 2026-11-15 — Dependencies: the agent SDK's Linux builds name their libc, the root takes `@anthropic-ai/sdk` 0.99.0, and the v1 MCP SDK is declared
+
+A review of the claude-agent-acp change (the "Dependencies: claude-code-acp
+replaced" entry below) found three things in its lockfile and manifest. This
+entry fixes them and corrects that entry's size estimate and its reason for
+leaving `@anthropic-ai/sdk` alone.
+
+The libc field. npm 10.9.4 wrote the four Linux packages of
+`@anthropic-ai/claude-agent-sdk` 0.3.312 without the `libc` field their published
+manifests declare: glibc for linux-x64 and linux-arm64, musl for the two -musl
+builds. `npm ci` checks an optional package's platform against the lockfile, so on
+a glibc host it installed both the glibc and the musl build of the Claude binary:
+in every Ubuntu CI job, in the nightly-emergent `node_modules` cache, and in the
+images that keep the root dev dependencies. Checked with npm's own Arborist and the
+platform check `npm ci` applies (npm-install-checks), under npm 10.9.4 and 10.8.2
+on a glibc x64 host: the previous lockfile selects both claude-agent-sdk-linux-x64
+and claude-agent-sdk-linux-x64-musl, and this one only the first. The four entries
+now carry `libc`, as the four claude-code-linux entries already did, by the same
+kind of hand edit that keeps those. From the published unpacked sizes, the root
+install on linux x64 is now about 196 MB larger than master's (315 MB added, 119 MB
+removed), where the previous lockfile made it about 500 MB larger. No image was
+built.
+
+`@anthropic-ai/sdk`. The root asked for `^0.91.1`, below the agent SDK's peer
+`>=0.93.0`, so npm nested the agent SDK under the successor with its own
+`@anthropic-ai/sdk` 1.8.0, published 2026-11-10: five days old, against the
+two-week rule that kept the successor at 0.99.1. That also took the agent SDK off
+the root, where master had 0.2.44, so the examples that import it
+(`examples/tic-tac-toe-*.mjs`, `examples/tic-tac-toe-tournament/agents/*.mjs` and
+`examples/rev195-self-improving/`) no longer resolved it, and their documented
+install, `npm i --no-save @anthropic-ai/claude-agent-sdk zod` from the repo root,
+failed with ERESOLVE against the root's 0.91.1. The reason given for not moving the
+root, that a move meant the new 1.x major, missed 0.99.0 (2026-05-27), the last 0.x
+release, which satisfies the peer. The root now asks for `^0.99.0`. Its changelog
+from 0.91.1 to 0.99.0 records no breaking change, `messages.create` keeps its three
+signatures, it has no install script, and the fifteen benchmark scripts that import
+it call only `new Anthropic({ apiKey })` and `messages.create`. They are in no
+tsconfig program and were not run.
+
+Placement. `npm install --package-lock-only` keeps placements it already has, so
+regenerating left the agent SDK, `@agentclientprotocol/sdk` 2.1.0, diff 9.0.0 and
+the 1.8.0 copy nested under the successor, where the earlier regeneration had put
+them while claude-code-acp's copies still sat at the root. Those four entries were
+deleted from the lockfile and the same command placed the first three at the root;
+1.8.0 is gone, since the root's 0.99.0 satisfies the peer. `@opentelemetry/api`
+1.10.0, which only 1.8.0 required and master's lockfile did not have, stayed behind
+as an optional peer of vitest; it was deleted the same way, and npm did not bring it
+back. Against the previous lockfile, then: the agent SDK 0.3.312,
+`@agentclientprotocol/sdk` 2.1.0 and diff 9.0.0 move to the root; `@anthropic-ai/sdk`
+1.8.0 and `@opentelemetry/api` 1.10.0 are removed; the root's `@anthropic-ai/sdk`
+goes from 0.91.1 to 0.99.0; standardwebhooks, `@stablelib/base64` and fast-sha256,
+now required by 0.99.0, lose the `peer` flag; and the libc fields above are added.
+No other entry changes. With the agent SDK back at the root the examples resolve it,
+at 0.3.312 rather than master's 0.2.44 (they were not run), and their documented
+install resolves, checked with Arborist's ideal-tree build, which writes nothing.
+
+The v1 MCP SDK. `tools/probe-sse-mcp-handshake-live.ts` imports
+`@modelcontextprotocol/sdk` (v1) and is in `tsconfig.check.json`, but no manifest
+declared it: it was at the root only because npm placed the agent SDK's peer there.
+The root now declares it as a dev dependency, `^1.32.2`, the version already locked,
+so the typechecked probe's import belongs to the repository. It and its
+dependencies ajv-formats, json-schema-typed and zod-to-json-schema lose the `peer`
+flag. The probe's header and the holodeck shim's comment
+(`examples/holodeck/lib/mcp-shim.mjs`) say why it is declared.
+
+Two lines in the dependency entry below that ran to 117 and 96 characters are
+rewrapped with their paragraphs. The editor examples that ran
+`npx @agentclientprotocol/claude-agent-acp` unpinned, which outside the repo
+fetches the newest release (0.107.x, with previews several times a day) rather than
+the 0.99.1 the witness was checked against, were changed with the witness fix (the
+"session's mode is read where the agent states it" entry) to run the installed
+agent.
+
+Checks: loaded with Arborist, the new lockfile has no invalid edge and no missing
+required one; every peer of the agent SDK resolves at the root. `npm audit` on the
+lockfile reports 23 moderate and no high, the same packages as before this entry.
+The `tsconfig.check.json` typecheck, the agent-development-practice tests, the
+holodeck shim boot test, the relay's `no-frozen-dependency.test.ts`, the lint gate,
+changelog-lint and ontology-lint pass. The local `node_modules` still holds the
+packages from before the migration, so none of these ran against the new ones.
+
+Not covered: no image was built, and the size figures are from published unpacked
+sizes. The benchmarks and the examples that import the agent SDK were not run. The
+lockfiles of `demos/interego-bridge` and the four `examples/` apps named in the
+entry below still list `@anthropic-ai/sdk` `^0.80.0` and were not regenerated.
+
+## 2026-11-15 — Editor witness: a session's mode is read where the agent states it, and a mode switch counts when it is given
+
+A review of the witness rule from the "mode switch is read from the tool call it
+answered" entry below found it wrong for `@agentclientprotocol/claude-agent-acp` in
+three ways, and found a fourth fault while the fix was being written. All are in
+`applications/agent-development-practice/adapters/editor-witness/src/measure.ts`.
+
+The mode a session starts in. The witness counted every request under `default`
+until a `current_mode_update` said otherwise. That held for claude-code-acp, which
+started every session in default. The successor starts a session in the user's
+`permissions.defaultMode`, a resumed or loaded one in the mode it was last in, and
+from 0.107.0 one with no defaultMode in auto. It says so only in its result for
+`session/new`, `load`, `resume` or `fork`, which the witness did not read, and
+announces nothing. A developer whose settings say acceptEdits or auto would have had
+every request counted under default, and the "not consent data" warning would never
+have been printed. The witness now reads the start mode from those results
+(`modes.currentModeId`, else the `mode` config option), the mode in each
+`config_option_update`, and the mode the editor sets with `session/set_mode` or
+`session/set_config_option`, from the agent's result (neither agent announces a
+set_mode, and the successor answers set_config_option with its config options).
+Modes are kept per session. A request from a session whose mode was never stated is
+counted as "unannounced", with its own warning, instead of being taken for default.
+
+The claim that waited for an announcement. An ExitPlanMode answer was held in one
+slot shared by every session, emptied by any permission request and replaced by any
+answer, until a `current_mode_update` reclassified it. The successor awaits other
+work between the answer and its announcement. A request from a background subagent
+or another thread, or the answer to an earlier pending request, arriving in between
+left exit-plan-auto, exit-plan-bypass or exit-plan-accept-edits counted as a standing
+allow_always grant on `switch_mode`, with no warning. So did a clear-context answer
+whose restart failed, since that path publishes no mode, and a mode update from one
+session could claim another session's answer. Now an answer that is not a rejection,
+to a request about a tool call of ACP kind `switch_mode`, is a mode switch when it is
+given: allowing such a call switches the mode whatever comes next. The agent's later
+`current_mode_update` in the same session only confirms it, and the summary counts
+the switches never confirmed instead of turning them back into grants. The old
+agent's route, an optionId naming the mode for a call whose kind is not switch_mode,
+is kept, held per session and matched against that session's next announcement of
+the mode. A mode the editor set confirms and reclassifies nothing.
+
+The protocol version. The only guard against a session on the draft ACP v2 was the
+variable `launch.mjs` sets. v2 has no `current_mode_update` and puts the tool call
+under `subject`, so every plan approval would have read as a grant on "unknown" and
+the summary would not have said it measured nothing. The witness now reads
+`protocolVersion` from the agent's answer to `initialize`; at 2 or more the summary
+prints a NOT MEASURED verdict and no counts. The witness README's first
+editor-settings example and the usage text in `src/cli.ts` now carry
+`"env": { "CLAUDE_AGENT_ACP_PROTOCOL": "v1" }`, as the probe README's already did.
+
+The fourth fault predates the migration. A permission answer was joined to its
+request on the JSON-RPC id alone. Both peers number their own requests from small
+integers, so the agent's result for an editor request with the same id as a pending
+permission request (a finished `session/prompt`, say) was taken for the answer: the
+request left the pending set, and the person's real answer was then ignored. The
+join is now per direction.
+
+A reject_always answer on a switch_mode call was counted as a standing denial of the
+tool kind switch_mode, so the verdict said a non-empty deny set existed. The
+reject-always probe could put that option on the plan approval ("Reject always
+(Approve)"), and choosing it means staying in plan mode. Such answers are now
+reported on their own line, outside the deny set and the verdict. The probe
+(`adapters/reject-always-probe/src/inject.ts`) no longer adds the option to a
+switch_mode menu: its standing rule, keyed on "Approve", would have answered every
+later plan approval "No, keep planning", so the session could never leave plan mode.
+Like the witness, the probe now takes a request's tool kind from the announced tool
+call when the request leaves it out.
+
+The menu comment in `measure.ts` now gives the other orders the successor sends
+ExitPlanMode in (bypass first after a session in bypassPermissions; the reject first
+when Claude Code asks to open on the decline option), and says the optionId route
+applies to a call whose kind is not switch_mode. The test fixtures carry the plan in
+the tool call's content, where each agent puts it.
+
+Tallies are not comparable across these changes. For sessions with claude-code-acp,
+`standingGrantsByTool`, `asksAfterStandingGrant` and the "rule did not stick" warning
+from before the entry below are not comparable field for field with later ones:
+requests were counted under the tool kind "unknown" and are now counted under the
+kind announced for the call, and a "plan" rejection followed by a "plan" update was a
+mode switch and is now a rejection. `modeRequests` from before this entry is not
+comparable either, since a session whose mode was never stated was counted as
+default. EnterPlanMode is classified differently by the two agents: the successor
+gives it kind switch_mode, so approving it counts as a mode switch, while
+claude-code-acp gave it kind "other", so there it stays an allow. Tallies made with
+different agents therefore differ for reasons that are not about the developer. No
+tally is recorded in the repository.
+
+Tests (`applications/agent-development-practice/tests/editor-witness-is-transparent.test.ts`):
+seventeen are new, two of them replacing the tests that asserted the
+misclassification (that an answer's claim does not outlive a new request, and that a
+switch undoes only its own grant, now on the old agent's menu, where grants are still
+undone). Fifteen fail against the previous rule, run with the typecheck setup left
+out because they read the new tally fields; the other two pass there and guard what
+must not change: a session opened in default is not warned about, and a switch on the
+old menu undoes only its own grant. Two existing tests now open their session first.
+The module has 49 tests. The probe change was checked by driving `inject.ts` with a
+stand-in agent: the plan approval, its kind known only from the announced tool call,
+was forwarded unchanged, and a Bash request still got the option.
+
+The dependency entry below said moving to 0.107.0 would need no witness change. That
+was wrong: there a session with no defaultMode starts in auto, which only the start
+mode reading in this entry would see. It is corrected there.
+
+Not covered: no editor session was run through the witness or the probe against
+either agent. An editor that advertises the ACP subagents capability gets a child
+session per subagent, with no session/new result, so the child's requests count as
+unannounced unless the agent sends a config option update for it. After a switch the
+agent never confirmed, the witness does not know the new mode, and that session's
+later requests stay under the mode it last saw; the summary says how many such
+switches there were.
+
+## 2026-11-15 — Dependencies: claude-code-acp replaced by its renamed successor, claude-agent-acp 0.99.1
+
+`@zed-industries/claude-code-acp` 0.16.2, a root dev dependency, is deprecated.
+Its npm notice says it was renamed `@agentclientprotocol/claude-agent-acp`. It is
+the same project: both name Zed Industries as author, and the successor's three
+maintainers are all among the old package's eight. The root `package.json` now
+asks for `@agentclientprotocol/claude-agent-acp` `^0.99.1` in its place. The
+newest release, 0.107.0, came out on 2026-11-13, two days before this change,
+with previews already after it, so this takes the newest release that has been
+out two weeks: 0.99.1, from 2026-10-29. Its permission menu files
+(`dist/permissions/options/*`, `effects.js`, `response.js`) are byte-identical to
+0.107.0's. It maps the bin `claude-agent-acp` to `dist/index.js`, has `main`
+`dist/lib.js`, needs Node 22 or later, and has no install scripts. Its
+dependencies are exact: `@agentclientprotocol/sdk` 2.1.0,
+`@anthropic-ai/claude-agent-sdk` 0.3.312, diff 9.0.0 and zod 4.6.7.
+
+The successor renamed the permission option ids, which the
+agent-development-practice editor witness had used to tell a mode switch from a
+standing grant. The entry below this one changes the witness to read a mode
+switch from the tool call it answered, so that this change could go in.
+
+The `overrides` block from the 2026-11-11 entry is removed. It set the MCP SDK and
+minimatch for claude-code-acp only, and claude-code-acp has left the tree. There
+were no other overrides.
+
+**Lockfile.** Regenerated with `npm install --package-lock-only --ignore-scripts`
+(npm 10.9.4). No entry changed version. Added, all dev: the successor 0.99.1; under
+it, `@agentclientprotocol/sdk` 2.1.0, `@anthropic-ai/claude-agent-sdk` 0.3.312,
+`@anthropic-ai/sdk` 1.8.0 and diff 9.0.0; the agent SDK's eight optional
+per-platform packages, 0.3.312 (darwin arm64 and x64, linux arm64, x64 and their
+musl builds, win32 arm64 and x64); and, at the root, `@opentelemetry/api` 1.10.0,
+standardwebhooks 1.1.1, `@stablelib/base64` 1.0.1 and fast-sha256 1.3.0, which that
+`@anthropic-ai/sdk` depends on, directly or through standardwebhooks. Removed:
+claude-code-acp 0.16.2 with the balanced-match 4.0.4, brace-expansion 5.0.12 and
+minimatch 10.2.6 nested under it; `@agentclientprotocol/sdk` 0.14.1;
+`@anthropic-ai/claude-agent-sdk` 0.2.44 with its fifteen optional `@img/sharp`
+packages; and diff 8.0.3. `@modelcontextprotocol/sdk` 1.32.2 and three of its
+dependencies (ajv-formats, json-schema-typed, zod-to-json-schema) only gain the
+`peer` flag. The v1 MCP SDK stays at the root at 1.32.2, now as the agent SDK's peer
+(`^1.29.0`), so `tools/probe-sse-mcp-handshake-live.ts`, which imports it and is in
+`tsconfig.check.json`, still resolves it in CI, at the same version as before. npm
+10.9.4 also dropped the `libc` fields of the four Linux packages of the Claude Code
+CLI and the flags of the `applications/foxxi-content-intelligence` entry; those
+lines are kept as they are on master, as in the 2026-11-11 entry. Loaded with npm's
+own Arborist, the new lockfile has no invalid edge and no missing required one
+anywhere in the tree.
+
+**`@anthropic-ai/sdk`.** The agent SDK declares three peers that are not
+optional: `@anthropic-ai/sdk` `>=0.93.0`, `@modelcontextprotocol/sdk` `^1.29.0`
+and zod `^4.0.0`. The root asks for `@anthropic-ai/sdk` `^0.91.1` and has 0.91.1.
+npm did not report a conflict: it placed the agent SDK under the successor's own
+`node_modules` with a copy of `@anthropic-ai/sdk` beside it, the newest release
+the open range allows, 1.8.0 (published 2026-11-10). The root keeps 0.91.1, and
+the root range is not changed. The repository imports `@anthropic-ai/sdk` only in
+fifteen scripts under `benchmarks/`, which are run by hand, are in no tsconfig
+program, and are not run by any deployed service. Neither the successor nor the
+agent SDK imports it at run time: their compiled JavaScript contains no import of
+it, and only their type declarations name it. A root bump to 0.93 or later would
+change the benchmarks' SDK for nothing this change needs, and the current line is
+a new major, 1.x, that nobody has run the benchmarks against. That reasoning was
+wrong on two counts, and the "agent SDK's Linux builds name their libc" entry
+corrects it: 0.99.0, the last 0.x release, satisfies the peer, and leaving the root
+at 0.91.1 cost something, since it pushed the agent SDK off the root, where the
+examples that import it had found it.
+
+**Deployed images.** The images that run a plain `npm ci` against the root
+lockfile and keep its dev dependencies (listed in the 2026-11-11 entry) will carry
+the successor and the agent SDK 0.3.312 instead of claude-code-acp and agent SDK
+0.2.44. Nothing in them imports either. The size changes, though: 0.2.44's main
+package was 80 MB unpacked, and 0.3.312 ships Claude Code as a native binary in a
+per-platform package, 294 MB unpacked for linux x64 (287 MB for the musl build).
+npm 10.9.4 writes no `libc` field for those packages, and the estimate first
+written here, roughly 230 MB with roughly 520 MB only if both builds were
+installed, was wrong: without the field, `npm ci` installs both builds on a glibc
+host, which comes to about 500 MB over master from the published unpacked sizes.
+The "agent SDK's Linux builds name their libc" entry adds the field, and with it
+the growth over master is about 196 MB on linux x64. No image was built here.
+Auto-deploy rebuilds every image that installs from the root manifests
+(`tools/deploy-bundle-scope.ts`).
+
+**The witness and the probe.** `adapters/reject-always-probe/launch.mjs` now
+defaults to `node_modules/@agentclientprotocol/claude-agent-acp/dist/index.js`,
+its install hint says the agent is a root dev dependency, and it stops with a
+fix when the default agent would run on a Node older than 22. The editor witness's
+README and `src/cli.ts` usage text pointed a terminal try-out at the ACP SDK's
+example agent, `dist/examples/agent.js`, which the SDK's 2.x releases no longer
+ship; they now name the successor's `dist/index.js`. The probe's README, its
+usage line in `src/inject.ts`, and its example editor settings name the successor.
+
+Neither instrument negotiates a protocol version: both forward the editor's
+`initialize`. The successor serves the draft ACP v2 to a client that asks for
+version 2 or later, where claude-code-acp only spoke v1. In v2 a permission
+request carries its tool call under `subject`, so the probe would key every
+standing rule on the same "unknown" tool and one reject-always would deny every
+tool after it, and v2 has no `current_mode_update`, so the witness would count
+every plan-mode switch as a grant. `launch.mjs` therefore sets
+`CLAUDE_AGENT_ACP_PROTOCOL=v1` for the agent, which makes it negotiate such a
+client down to v1, and says so if it overrode another value. Both READMEs tell
+anyone assembling the chain by hand to set it.
+
+The holodeck shim's comment (`examples/holodeck/lib/mcp-shim.mjs`) now says that
+no workspace declares the v1 MCP SDK and that it is installed at the root only as
+the agent SDK's peer, and that CI boots the shim. Its README listed
+`@modelcontextprotocol/sdk` as a prerequisite; it now names
+`@modelcontextprotocol/server`, the v2 package the shim imports.
+
+**Audit.** `npm audit` on the root lockfile, before: 24 vulnerable packages, all
+moderate. After: 23, all moderate. claude-code-acp, flagged through its nested
+minimatch, is gone, and so is that minimatch copy. No advisory is new.
+
+Checks: the `tsconfig.check.json` typecheck, the agent-development-practice tests,
+the holodeck shim boot test, the relay's `no-frozen-dependency.test.ts`, the lint
+gate, changelog-lint and ontology-lint pass. The local `node_modules` still holds
+claude-code-acp and the old agent SDK, so none of these ran against the new
+packages, and neither the successor, the witness nor the probe was run. CI
+installs from the lockfile.
+
+Not covered: no editor session was run through the witness or the probe against the
+successor. The image growth above is not measured. It does not reach the nine
+bridge images: they now delete the Claude developer tools, the successor and the
+agent SDK with its platform packages right after `npm ci`
+(`tools/prune-image-dev-tools.mjs`, from the image-prune change that landed first),
+and that change's guard test passes against this lockfile. On Node 20, which most CI jobs use, `npm ci`
+warns that the successor wants Node 22 and installs it anyway; running it needs
+Node 22. The `@anthropic-ai/sdk` 1.8.0 this change put under the successor was five days
+old, chosen by npm because the agent SDK's peer range has no upper bound; the "Linux
+builds name their libc" entry removes it. The lockfiles of `demos/interego-bridge`
+and of `examples/dashboard`, `multi-agent`, `personal-bridge` and `pgsl-browser`
+still list claude-code-acp in their copy of the root manifest. They were already
+behind it (they list `@anthropic-ai/sdk` `^0.80.0`) and were not regenerated. The
+probe still takes a tool's name from the request's title; the successor also offers
+it as `toolCall.name`, which the probe does not read. 0.107.0's menu files are
+identical, but moving to it is not free for the witness: there a session with no
+`permissions.defaultMode` starts in auto, announced only in the session/new result,
+which the witness reads since the "session's mode is read where the agent states it"
+entry. It should wait until 0.107.0 has been out two weeks. minimatch keeps its
+moderate advisory, fixed only in 11.0.1, on the eslint and electron-builder chains.
+
+## 2026-11-15 — Editor witness: a mode switch is read from the tool call it answered, not from the option's id
+
+The agent-development-practice editor witness
+(`applications/agent-development-practice/adapters/editor-witness/src/measure.ts`)
+counts consent decisions on an ACP stream. An allow on ExitPlanMode changes the
+session's mode and grants nothing about a tool, so the witness takes those answers
+out of its grant counts. It recognised one only when the `current_mode_update`
+that followed named the same mode as the chosen option's id. That held for
+`@zed-industries/claude-code-acp`, whose ExitPlanMode ids were mode names
+(acceptEdits, default, plan). Its renamed successor,
+`@agentclientprotocol/claude-agent-acp`, which the next change installs, uses
+exit-plan-auto, exit-plan-bypass, exit-plan-accept-edits, exit-plan-default and
+three exit-plan-clear ids, and reject for "No, keep planning". No id is a mode
+name, and "use auto mode" lands in acceptEdits on a model without auto mode. So
+every auto, bypass or auto-accept answer on ExitPlanMode would have been counted
+as a standing allow_always grant, and every default answer as an allow_once, with
+no warning.
+
+The rule now: an answer that is not a rejection, to a request about a tool call of
+ACP tool kind `switch_mode`, is a mode switch when the agent announces a
+`current_mode_update` before it asks anything else. Both agents give ExitPlanMode
+that kind, and the successor gives it to EnterPlanMode too. An answer whose id
+names the announced mode still counts, which keeps the old agent's menu working
+when the tool kind was not seen. A rejection is never reclassified, and a mode
+update that arrives after a new request no longer reaches back to an earlier
+answer. Reclassifying an answer removes only the standing grant that answer added.
+A request that leaves the tool kind out takes the kind the agent announced for the
+same tool call: the old agent's requests never carried one, and the successor's
+leave it out for a JetBrains AIR client. With the old agent every request had
+therefore been counted under the tool kind "unknown". The summary now says how
+many of the switches were labelled allow_always instead of calling them all that.
+
+The tests (`applications/agent-development-practice/tests/editor-witness-is-transparent.test.ts`)
+quote the successor's menu verbatim from its dist (`permissions/options/tools.js`,
+`options/shared.js`, `effects.js`), which is byte-identical in 0.99.1 and 0.107.0.
+Its auto, bypass, auto-accept and default answers, the auto-mode fallback, and the
+clear-context answer whose mode is announced after a restart are read as mode
+switches. "No, keep planning" stays a rejection when a mode update follows it, and
+allow-with-updates on Bash stays a standing grant when one follows it. The old
+agent's menu, verbatim from its 0.16.2 dist, is still read as a switch, and the
+existing test of it is unchanged. Eight of the eleven tests written first failed
+against the old rule. The other three passed against it, and each fails against a
+rule that reads any following mode update as a switch, which was checked by
+changing the rule. A twelfth, that a switch undoes only its own grant, was added
+with the change and fails without that limit. The comments that quoted the
+production menu and its mode descriptions, in `measure.ts`, in that test and in
+the reject-always probe (`adapters/reject-always-probe/src/inject.ts`), now quote
+both agents. The probe's logic is unchanged: it finds the reject option by kind,
+and the successor offers reject on every menu.
+
+Not covered: the witness still sees only the modes the agent announces. Neither
+agent announces a mode the editor sets with `session/set_mode`, and an Edit
+permission's allow-with-updates that carries a switch to acceptEdits changes the
+mode without a `current_mode_update`. No session was run through the witness
+against either agent for this change.
+
 ## 2026-11-15 — CI: the hosted cold builds run when a file their images copy changes
 
 `hosted-image-builds.yml` cold-builds six images on a pull request, but only
