@@ -393,16 +393,27 @@ they now read none differently. The CSP script hash is updated.
 
 A review then found two more. `hmc.py` read a field's JSON with plain
 `json.loads`, which takes `NaN` and `Infinity`, and `json.dumps` wrote them back,
-so a confirmed write sent a body that is not JSON. Every JSON value that may go
-into a request (a JSON or rdf:JSON field, a whole JSON body, a default, a
-HyperMarkdown value) is now read as a document is, in both clients, refusing
-those and a repeated key; a number no double holds, such as `1e400`, which the
-page sent as `null`, is refused in both; and `hmc.py` writes request JSON with
-`allow_nan=False`, while its `--json` output stays JSON. The page counted
-`minLength` and `maxLength` in UTF-16 code units, so an emoji failed
-`maxLength: 1`; it now counts code points, as `hmc.py` does. 27 of the new
-shared-fixture tests failed before; the rest pin what already held. The CSP
-script hash is updated.
+so a confirmed write sent a body that is not JSON. A JSON or rdf:JSON field and
+a whole JSON body are now read as a document is, in both clients, refusing those
+and a repeated key (defaults and HyperMarkdown values already were); a number no
+double holds, such as `1e400`, which the page sent as `null`, is refused in both;
+and `hmc.py` refuses to write NaN or an infinity into request JSON, while its
+`--json` output stays JSON. The page counted `minLength` and `maxLength` in
+UTF-16 code units, so an emoji failed `maxLength: 1`; it now counts code points,
+as `hmc.py` does. 27 of the new shared-fixture tests failed before; the rest pin
+what already held. The CSP script hash is updated.
+
+A second review found more. A value holding an unpaired surrogate, such as
+`\ud800` in a JSON field, a list or a default, made `hmc.py` fail to encode the
+request while the page sent it; both now refuse it. `hmc.py` read a JSON integer
+past 2^53 exactly where the page's `JSON.parse` reads the nearest double, so
+lengths, list items, addresses and bounds differed; it now reads one as the page
+does (an integer field's own text is still exact), and writes request JSON as
+`JSON.stringify` does: `1.0` as `1`, `1e-07` as `1e-7`, and an object's index keys
+first. A default is what the page's form holds, so a text field's default of `5`
+is sent as `"5"`. A boolean field and `hydra:required` are trimmed of space, tab,
+CR and LF only, and `hmc.py` no longer names a field twice in one message. 42 new
+or tightened tests failed before; the CSP script hash is updated.
 
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so

@@ -24,8 +24,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals, LISTED,
-  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
+import { BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals,
+  LISTED, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -346,10 +346,11 @@ function respond(text: string, type: string, status = 200): Response {
   return new Response(text, { status, headers: { 'content-type': type } });
 }
 
-interface Loaded { dom: JSDOM; document: Document; calls: Array<{ url: string; method: string }>; pwned: string[]; errors: string[] }
+interface Loaded { dom: JSDOM; document: Document; calls: Array<{ url: string; method: string }>; sent: Array<{ url: string; body: string }>;
+  pwned: string[]; errors: string[] }
 
 function load(query: string, extra: Record<string, { type: string; text: string }> = {}): Loaded {
-  const calls: Loaded['calls'] = []; const pwned: string[] = []; const errors: string[] = [];
+  const calls: Loaded['calls'] = []; const sent: Loaded['sent'] = []; const pwned: string[] = []; const errors: string[] = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', e => errors.push(String(e && (e.stack || e.message) || e)));
   const dom = new JSDOM(HTML, { url: PAGE + query, runScripts: 'dangerously', virtualConsole, beforeParse(window) {
@@ -357,6 +358,7 @@ function load(query: string, extra: Record<string, { type: string; text: string 
       pwn: (...args: unknown[]) => { pwned.push(JSON.stringify(args)); },
       fetch: async (input: string, init: RequestInit = {}) => {
         const url = String(input); calls.push({ url, method: String(init.method || 'GET') });
+        if (init.body != null) sent.push({ url, body: String(init.body) });
         const asked = new URL(url);
         const u = asked.origin === PROXY ? new URL(asked.searchParams.get('url') || 'about:blank') : asked;
         if (u.origin !== HOST) return respond('not here', 'text/plain', 404);
@@ -379,7 +381,7 @@ function load(query: string, extra: Record<string, { type: string; text: string 
       },
     });
   } });
-  return { dom, document: dom.window.document, calls, pwned, errors };
+  return { dom, document: dom.window.document, calls, sent, pwned, errors };
 }
 
 const STYLE = (/<style>([\s\S]*?)<\/style>/.exec(HTML) || [])[1] || '';
@@ -429,6 +431,8 @@ const button = (document: Document, mode: string) =>
 function click(t: Loaded, el: Element) {
   el.dispatchEvent(new t.dom.window.MouseEvent('click', { bubbles: true, cancelable: true }));
 }
+/** Each problem a refused invoke lists, whole. */
+const listed = (document: Document) => [...document.querySelectorAll('#result li')].map(li => li.textContent);
 
 describe('hypermedia client: hostile remote data stays inert', () => {
   it('renders a hostile JSON-LD descriptor as text in the list and in every control', async () => {
@@ -1358,7 +1362,7 @@ describe('hypermedia client: one reading of each document, as hmc.py reads it', 
     try {
       if ('error' in outcome) {
         expect(plan, shown).toBeNull();
-        expect(shown).toContain(outcome.error);
+        expect(listed(t.document), shown).toContain(outcome.error);
       } else {
         expect(plan, shown).not.toBeNull();
         expect([plan!.url, plan!.body]).toEqual([outcome.url, outcome.body]);
@@ -1618,6 +1622,21 @@ describe('hypermedia client: forms', () => {
 });
 
 describe('hypermedia client: values a request can carry, and lengths in code points', () => {
+  /** The form of `title` in the document at `path`, with its confirmation checked and `fields` typed in. */
+  async function filledForm(path: string, title: string, fields: Record<string, string>) {
+    const t = await loaded(path);
+    click(t, card(t.document, title)!);
+    const box = t.document.getElementById('confirmUnsafe') as HTMLInputElement | null;
+    if (box) {
+      box.checked = true;
+      box.dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
+    }
+    for (const [name, value] of Object.entries(fields)) {
+      t.document.querySelector<HTMLTextAreaElement>(`#invokeForm [data-field="${name}"]`)!.value = value;
+    }
+    return t;
+  }
+
   it.each(VALUE_CASES)('reads %s %s (%s) as hmc.py does, by a link and by the form: case %#', async (path, rel, title, fields, outcome) => {
     const link = await linkPlan(path, rel, fields);
     try {
@@ -1626,19 +1645,12 @@ describe('hypermedia client: values a request can carry, and lengths in code poi
         expect(link.plan!.body).toEqual(outcome.body);
       } else {
         expect(link.plan, link.shown).toBeNull();
-        expect(link.shown).toContain(outcome.error);
+        expect(listed(link.t.document), link.shown).toContain(outcome.error);
       }
     } finally { link.t.dom.window.close(); }
     // The form shows the planned body on Dry run, or refuses on Dry run and a confirmed Invoke alike.
-    const t = await loaded(path);
+    const t = await filledForm(path, title, fields);
     try {
-      click(t, card(t.document, title)!);
-      const box = t.document.getElementById('confirmUnsafe') as HTMLInputElement;
-      box.checked = true;
-      box.dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
-      for (const [name, value] of Object.entries(fields)) {
-        t.document.querySelector<HTMLTextAreaElement>(`#invokeForm [data-field="${name}"]`)!.value = value;
-      }
       const result = t.document.getElementById('result')!;
       for (const mode of 'body' in outcome ? ['dry'] : ['dry', 'live']) {
         result.innerHTML = '';
@@ -1648,11 +1660,21 @@ describe('hypermedia client: values a request can carry, and lengths in code poi
           expect((JSON.parse(t.document.querySelector('#result pre')!.textContent!) as { body: unknown }).body, mode).toEqual(outcome.body);
         } else {
           expect(result.textContent, mode).toContain('Validation failed');
-          expect(result.textContent, mode).toContain(outcome.error);
+          expect(listed(t.document), mode).toContain(outcome.error);
         }
       }
       await new Promise(r => setTimeout(r, 50));
       expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it.each(BODY_TEXTS)('sends %s %s (%s) as the body hmc.py sends, byte for byte: case %#', async (path, _rel, title, fields, body) => {
+    const t = await filledForm(path, title, fields);
+    try {
+      click(t, button(t.document, 'live'));
+      // The page has shown the response, so nothing of the invoke is still running when the window closes.
+      await vi.waitFor(() => expect(t.document.getElementById('result')!.textContent).toContain('Response HTTP'));
+      expect(t.sent.filter(s => s.url === `${HOST}/num-target`).map(s => s.body)).toEqual([body]);
     } finally { t.dom.window.close(); }
   });
 });

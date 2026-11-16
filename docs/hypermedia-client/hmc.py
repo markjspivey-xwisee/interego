@@ -167,15 +167,18 @@ def _not_json(constant: str) -> Any:
 
 
 def _json_int(digits: str) -> int | float:
-    """json.loads' parse_int: the integer, or, past the digits int() reads
-    (sys.get_int_max_str_digits, 4,300 by default), the float its digits
-    give, an infinity, which is what the page's JSON.parse reads, where
-    json.loads would raise instead. A value that holds it is not sent; see
-    _past_double."""
-    try:
-        return int(digits)
-    except ValueError:
-        return float(digits)
+    """json.loads' parse_int: a JSON integer as the page's JSON.parse reads it.
+    One a double holds exactly as an integer, at most 2^53 - 1 in size, is
+    that int; any other is the double nearest it, as JSON.parse gives, and an
+    infinity past the largest double (one that holds it is not sent; see
+    _past_double). So both clients see one number, with one text, one length
+    and one order: 2^53 + 1 is 2^53, and 31 digits are 1e+30. An integer
+    field's own text is not JSON, and is read exactly; see _coerce_number."""
+    if len(digits) <= 17:
+        number = int(digits)
+        if abs(number) <= _MAX_SAFE_INTEGER:
+            return number
+    return float(digits)
 
 
 def _page_json(text: str) -> Any:
@@ -187,10 +190,10 @@ def _page_json(text: str) -> Any:
 
 def _past_double(value: Any, *, integers: bool = True) -> bool:
     """Whether a value holds a number no double holds: NaN, an infinity (JSON's
-    1e400 reads as one in both clients) or, with `integers`, an integer past
-    the largest double, which the page's JSON.parse reads as Infinity. A walk
-    with a stack, so a deep value costs no recursion. The page's tooLarge is
-    the same."""
+    1e400, or an integer past the largest double, reads as one in both
+    clients) or, with `integers`, a Python int past the largest double, which
+    only a library caller can give. A walk with a stack, so a deep value costs
+    no recursion. The page's tooLarge is the same."""
     stack = [value]
     while stack:
         item = stack.pop()
@@ -217,14 +220,14 @@ class UnsendableValue(ValueError):
     cmd_invoke reports it as a validation failure, and nothing is sent."""
 
 
-def _request_json(value: Any, **options: Any) -> str:
-    """JSON text that goes into a request, as its body or in its address.
-    allow_nan=False, so a non-finite number raises UnsendableValue instead
-    of being written as text that is not JSON."""
-    try:
-        return json.dumps(value, allow_nan=False, **options)
-    except ValueError as exc:
-        raise UnsendableValue("a value holds NaN or an infinity, which is not JSON, so nothing is sent") from exc
+def _request_json(value: Any, indent: int | None = None) -> str:
+    """JSON text that goes into a request, as its body or in its address,
+    written as the page's JSON.stringify writes it (see _js_json), byte for
+    byte. A non-finite number raises UnsendableValue instead of being written
+    as null, or as text that is not JSON."""
+    if _past_double(value, integers=False):
+        raise UnsendableValue("a value holds NaN or an infinity, which is not JSON, so nothing is sent")
+    return _js_json(value, indent)
 
 
 def _finite_copy(value: Any) -> Any:
@@ -431,18 +434,76 @@ def _hint_value(item: Any) -> tuple[str, Any]:
     return "unread", None
 
 
-def _js_json(value: Any) -> str:
-    """JSON text as the page's JSON.stringify writes it: no spaces, and each
-    number as JavaScript writes it, so a JSON 1.0 is 1 in both clients."""
-    if value is None or isinstance(value, (bool, str, int)):
-        return json.dumps(value, ensure_ascii=False)
-    if isinstance(value, float):
-        return _js_number_text(value) if math.isfinite(value) else "null"
-    if isinstance(value, list):
-        return "[" + ",".join(_js_json(item) for item in value) + "]"
-    if isinstance(value, dict):
-        return "{" + ",".join(json.dumps(str(k), ensure_ascii=False) + ":" + _js_json(v) for k, v in value.items()) + "}"
-    return json.dumps(str(value), ensure_ascii=False)
+# A key JavaScript keeps as an array index: a whole number written without a
+# sign or a leading zero, below 2^32 - 1.
+_ARRAY_INDEX = re.compile(r"0|[1-9][0-9]{0,9}")
+_SURROGATE = re.compile("[\ud800-\udfff]")
+
+
+def _js_keys(value: dict[Any, Any]) -> list[Any]:
+    """An object's keys in the order JavaScript keeps them, which is the
+    order JSON.stringify writes and Object.keys gives: each array index first,
+    in numeric order, then the rest in the order written."""
+    index = [key for key in value if isinstance(key, str) and _ARRAY_INDEX.fullmatch(key) and int(key) < 2 ** 32 - 1]
+    if not index:
+        return list(value)
+    first = set(index)
+    return sorted(index, key=int) + [key for key in value if key not in first]
+
+
+def _js_string(text: str) -> str:
+    """A string as JSON.stringify writes it: as json.dumps does, and each
+    unpaired surrogate as a \\u escape (a Python string holds a surrogate only
+    unpaired)."""
+    out = json.dumps(text, ensure_ascii=False)
+    return _SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), out) if _SURROGATE.search(out) else out
+
+
+def _js_json(value: Any, indent: int | None = None) -> str:
+    """JSON text as the page's JSON.stringify(value, null, indent) writes it:
+    each number as JavaScript writes it (a JSON 1.0 is 1, 1e-7 is 1e-7, -0 is
+    0) and NaN or an infinity as null; an object's keys in the order
+    JavaScript keeps them (see _js_keys); and with `indent`, each member on a
+    line of its own, as json.dumps(indent=) lays it out too. Built with a
+    stack, so a value as deep as json.loads reads costs no recursion."""
+    pad = " " * indent if indent else ""
+    parts: list[str] = []
+    # Each entry is (True, text written as it is) or (False, a value, its depth).
+    stack: list[tuple[bool, Any, int]] = [(False, value, 0)]
+    while stack:
+        written, item, depth = stack.pop()
+        if written:
+            parts.append(item)
+        elif item is None:
+            parts.append("null")
+        elif isinstance(item, bool):
+            parts.append("true" if item else "false")
+        elif isinstance(item, str):
+            parts.append(_js_string(item))
+        elif isinstance(item, int):
+            parts.append(str(item))
+        elif isinstance(item, float):
+            parts.append(_js_number_text(item) if math.isfinite(item) else "null")
+        elif isinstance(item, (dict, list, tuple)):
+            if isinstance(item, dict):
+                members = [(_js_string(str(key)) + (": " if pad else ":"), item[key]) for key in _js_keys(item)]
+                opening, closing = "{", "}"
+            else:
+                members = [("", one) for one in item]
+                opening, closing = "[", "]"
+            if not members:
+                parts.append(opening + closing)
+                continue
+            inner = "\n" + pad * (depth + 1) if pad else ""
+            stack.append((True, ("\n" + pad * depth if pad else "") + closing, depth))
+            for at in range(len(members) - 1, -1, -1):
+                name, one = members[at]
+                stack.append((False, one, depth + 1))
+                stack.append((True, ("," if at else "") + inner + name, depth))
+            stack.append((True, opening, depth))
+        else:
+            parts.append(_js_string(str(item)))
+    return "".join(parts)
 
 
 _SCHEME_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -1487,11 +1548,13 @@ class Context:
 
 
 def truthy(value: Any) -> bool | None:
+    """A JSON value read as a boolean, or None, as the page's truthy reads it:
+    its text (2.0 as 2) trimmed of space, tab, CR and LF, and of nothing else."""
     if value is None:
         return None
     if isinstance(value, bool):
         return value
-    text = str(value).strip().lower()
+    text = (value if isinstance(value, str) else _scalar_text(value)).strip(_SPACES).lower()
     if text in {"true", "1", "yes"}:
         return True
     if text in {"false", "0", "no"}:
@@ -3293,7 +3356,7 @@ def _template_scalar(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (dict, list)):
-        return _request_json(value, ensure_ascii=False, separators=(",", ":"))
+        return _request_json(value)
     if isinstance(value, float):
         return _js_number_text(value)
     return str(value)
@@ -3480,14 +3543,20 @@ def _decimal_key(text: str) -> str:
 
 def _coerce_number(kind: str, value: Any) -> int | float:
     """A number field's value is the number its text writes, or a ValueError,
-    never NaN or inf. An integer is sent exactly, at any length int() reads. A
-    decimal is sent as a float, so one whose float's shortest text, which is
-    what json.dumps sends, writes another decimal is refused. A double or float
-    is the double nearest its text, which is the value XSD gives that text."""
-    text = str(value).strip(_SPACES)
+    never NaN or inf. Text is read as written, and an integer written as text
+    is sent exactly, at any length int() reads. A JSON number (a default, or an
+    enum entry) is the double the page reads, as JavaScript writes it, so 2.0
+    is 2; past 2^53 the integer it wrote is not known, so it cannot be sent
+    exactly in an integer field. A decimal is sent as a float, so one whose
+    float's shortest text, which is what is sent, writes another decimal is
+    refused. A double or float is the double nearest its text, which is the
+    value XSD gives that text."""
+    text = (value if isinstance(value, str) else _scalar_text(value)).strip(_SPACES)
     if kind == "integer":
         if not _INTEGER_LEXICAL.fullmatch(text):
             raise ValueError("not an integer")
+        if isinstance(value, float) and abs(value) > _MAX_SAFE_INTEGER:
+            raise ValueError("integer too large to send exactly")
         try:
             return int(text)
         except ValueError as exc:  # more digits than int() reads (sys.get_int_max_str_digits)
@@ -3512,12 +3581,8 @@ def _enum_has_number(fld: Field, kind: str, number: int | float) -> bool:
         if isinstance(entry, bool) or not isinstance(entry, (int, float, str)):
             continue
         try:
-            if isinstance(entry, float) and entry.is_integer() and abs(entry) < 1e21:
-                # The page reads JSON 2.0 as the number 2 and writes it "2", so it is an integer there too.
-                text = str(int(entry))
-            else:
-                text = entry if isinstance(entry, str) else str(entry)
-            if _coerce_number(kind, text) == number:
+            # A JSON 2.0 is 2 here as on the page; a JSON integer past 2^53 is no integer's entry.
+            if _coerce_number(kind, entry) == number:
                 return True
         except ValueError:
             continue
@@ -3525,6 +3590,10 @@ def _enum_has_number(fld: Field, kind: str, number: int | float) -> bool:
 
 
 def coerce_value(fld: Field, value: Any) -> Any:
+    """A field's value typed by the field, or a ValueError whose message is
+    the problem, the field named in it, as the page's coerceValue words it. A
+    value that is not text is read as its text, as the page's String() writes
+    it (a JSON true as true, 2.0 as 2)."""
     if value is None or value == "":
         return None
     if fld.json_kind:
@@ -3533,7 +3602,7 @@ def coerce_value(fld: Field, value: Any) -> Any:
             # Read as a document is: NaN, Infinity and a repeated key are
             # refused, as the page refuses them, and never reach a request.
             try:
-                parsed = _strict_json(str(value))
+                parsed = _strict_json(value if isinstance(value, str) else _scalar_text(value))
             except _RepeatedKey as exc:
                 raise ValueError(f'{fld.name} repeats the key "{exc.key}" in one object, so which value it means is not '
                                  "known") from exc
@@ -3546,9 +3615,13 @@ def coerce_value(fld: Field, value: Any) -> Any:
         return parsed
     numeric = _numeric_kind(fld)
     if numeric:
-        return _coerce_number(numeric, value)
+        try:
+            return _coerce_number(numeric, value)
+        except ValueError as exc:
+            raise ValueError(f"{fld.name}: {exc}") from exc
     if _xsd_name(fld.datatype) == "boolean":
-        text = str(value).strip().lower()
+        # Trimmed of space, tab, CR and LF, as a number is, and of nothing else.
+        text = (value if isinstance(value, str) else _scalar_text(value)).strip(_SPACES).lower()
         if text in {"true", "1", "yes"}:
             return True
         if text in {"false", "0", "no"}:
@@ -3564,6 +3637,58 @@ def _scalar_text(value: Any) -> str:
     if isinstance(value, float):
         return _js_number_text(value)
     return "" if value is None else str(value)
+
+
+def _unpaired_surrogate(value: Any) -> bool:
+    """Whether a value holds an unpaired UTF-16 surrogate, in a string or in an
+    object's key. That is not Unicode text: UTF-8 cannot carry it (encoding
+    the request would fail), I-JSON (RFC 7493) forbids it, and the page's
+    URLSearchParams would write U+FFFD in its place, so a value that holds one
+    is not sent. A Python string holds a surrogate only unpaired: json.loads
+    joins an escaped pair into one character. A walk with a stack. The page's
+    unpaired is the same."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            if _SURROGATE.search(item):
+                return True
+        elif isinstance(item, dict):
+            for key, one in item.items():
+                if isinstance(key, str) and _SURROGATE.search(key):
+                    return True
+                stack.append(one)
+        elif isinstance(item, list):
+            stack.extend(item)
+    return False
+
+
+def _form_default(fld: Field) -> Any:
+    """What the page's form holds for a field when nothing is given, which is
+    what the page reads: the default's text (a string as it is, a JSON value
+    as its JSON, a number or a boolean as JavaScript writes it); for a list,
+    its values' texts one per line, or the options a multiple choice selects,
+    in the options' order; or None where the form is left empty. It is left
+    empty for a default that holds a number no double holds, and for a choice
+    whose default is none of its options; the page then reads the default
+    itself, and so does validate_fields. A number field that is not a choice
+    reads its default itself too: _coerce_number writes a JSON number as the
+    form does, and refuses one past 2^53 in an integer field, as the page
+    refuses the text its form then holds."""
+    options = [] if fld.json_kind else [_text(x) for x in fld.enum if x is not None]
+    if options and fld.multi:
+        chosen = {_text(x) for x in as_list(fld.default)}
+        return [option for option in options if option in chosen] or None
+    if options:
+        text = _text(fld.default)
+        return text if text in options else None
+    if _numeric_kind(fld):
+        return None
+    if fld.multi and isinstance(fld.default, list):
+        return "\n".join(_text(x) for x in fld.default)
+    if _past_double(fld.default):
+        return None
+    return _text(fld.default)
 
 
 def _multi_items(value: Any) -> list[Any]:
@@ -3601,7 +3726,7 @@ def _check_value(fld: Field, found: Any, numeric: str | None, errors: list[str])
     try:
         typed = coerce_value(fld, found)
     except (TypeError, ValueError) as exc:
-        report(f"{fld.name}: {exc}")
+        report(str(exc))
         return None
     # A number no double holds (JSON's 1e400, a descriptor's default of it, or
     # an integer past the largest double) cannot be sent: json.dumps would
@@ -3610,6 +3735,9 @@ def _check_value(fld: Field, found: Any, numeric: str | None, errors: list[str])
     # there is sent exactly.
     if not numeric and _past_double(typed):
         report(f"{fld.name}: holds a number too large to send")
+        return None
+    if _unpaired_surrogate(typed):
+        report(f"{fld.name}: holds an unpaired surrogate, which is not Unicode text")
         return None
     structured = isinstance(typed, (dict, list))
     # A JSON array holds as many values as it has items, and a field that takes
@@ -3683,6 +3811,8 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
         numeric = _numeric_kind(fld)
         required = fld.required or (fld.min_count or 0) >= 1
         if fld.multi:
+            if found is None and fld.default is not None:
+                found = _form_default(fld)
             items = _multi_items(found) if found is not None else []
             if not items and fld.default is not None:
                 items = _multi_items(fld.default if isinstance(fld.default, list) else [fld.default])
@@ -3701,7 +3831,8 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
                     if message not in errors:
                         errors.append(message)
                     continue
-                typed_items.append(_check_value(fld, item if isinstance(item, str) else _scalar_text(item), numeric, errors))
+                # A JSON number stays one in a number field, so one past 2^53 is not read as the text of its double.
+                typed_items.append(_check_value(fld, item if isinstance(item, str) or numeric else _scalar_text(item), numeric, errors))
             values[fld.name] = typed_items
             continue
         if isinstance(found, list):
@@ -3710,6 +3841,9 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
         # Spaces around a number are not part of it, so a number field holding only spaces is empty.
         if numeric and isinstance(found, str):
             found = found.strip(_SPACES)
+        if (found is None or found == "") and fld.default is not None and not numeric:
+            # What the page's form holds: a text field's default of 5 is the text "5".
+            found = _form_default(fld)
         if (found is None or found == "") and fld.default is not None:
             found = fld.default.strip(_SPACES) if numeric and isinstance(fld.default, str) else fld.default
         if found is None or found == "":
@@ -3787,7 +3921,8 @@ def add_query_params(url: str, params: dict[str, Any]) -> str:
     under a field's name is replaced, not added to, and the query is written
     as the page's addQuery has URLSearchParams write it, byte for byte. A URL
     with no field to add is returned as it is."""
-    keys = [key for key, val in params.items() if val is not None and val != ""]
+    # In the order the page's Object.keys gives them: array indexes first.
+    keys = [key for key in _js_keys(params) if params[key] is not None and params[key] != ""]
     if not keys:
         return url
     parts = urllib.parse.urlsplit(url)
@@ -3800,7 +3935,7 @@ def add_query_params(url: str, params: dict[str, Any]) -> str:
                 if item is not None and item != "":
                     keep.append((key, _template_scalar(item)))
         elif isinstance(val, dict):
-            keep.append((key, _request_json(val, ensure_ascii=False, separators=(",", ":"))))
+            keep.append((key, _request_json(val)))
         else:
             keep.append((key, _template_scalar(val)))
     query = urllib.parse.urlencode(keep, quote_via=_form_quote)
@@ -3819,11 +3954,14 @@ def _raw_content_type(fld: Field) -> str:
 
 def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) -> RequestPlan:
     """The request a control's values make. A value holding NaN or an
-    infinity, which no JSON or address carries, raises UnsendableValue naming
-    its field; validate_fields refuses one first."""
+    infinity, which no JSON or address carries, or an unpaired surrogate,
+    which UTF-8 cannot carry, raises UnsendableValue naming its field;
+    validate_fields refuses one first."""
     for name, value in values.items():
         if _past_double(value, integers=False):
             raise UnsendableValue(f"{name}: holds NaN or an infinity, which is not JSON, so nothing is sent")
+        if _unpaired_surrogate(value):
+            raise UnsendableValue(f"{name}: holds an unpaired surrogate, which is not Unicode text, so nothing is sent")
     notes: list[str] = []
     transport = classify_transport(control, descriptor_url)
     method = control.method or "POST"
@@ -3836,7 +3974,7 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
     raw_text: str | None = None
     if raw_body_field and values.get(raw_body_field.name) is not None:
         raw_value = values[raw_body_field.name]
-        raw_text = raw_value if isinstance(raw_value, str) else _request_json(raw_value, ensure_ascii=False, separators=(",", ":"))
+        raw_text = raw_value if isinstance(raw_value, str) else _request_json(raw_value)
     # A safe method sends no body: every field goes in the address, a field
     # that is the whole body as a parameter named after it, as SPARQL's
     # protocol sends ?query=.
@@ -3867,7 +4005,7 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
             notes.append("Appended fields as query parameters on hydra:target")
         elif not safe and not raw_body_field:
             body = values
-            body_text = _request_json(values, indent=2, ensure_ascii=False)
+            body_text = _request_json(values, indent=2)
             headers["Content-Type"] = "application/json"
     elif transport == "mcp":
         notes.append("hydra:target is an Interego tool junction (or missing). Plain HTTP will not reach it; use the Interego relay MCP.")
@@ -3891,7 +4029,7 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
                 headers["Content-Type"] = _raw_content_type(raw_body_field)
         elif body is None and values:
             body = values
-            body_text = _request_json(values, indent=2, ensure_ascii=False)
+            body_text = _request_json(values, indent=2)
             headers.setdefault("Content-Type", "application/json")
     # An address that is sent is shown exactly as it is sent; one that is not
     # (a template that does not give http or https) in its URI form.

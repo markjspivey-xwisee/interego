@@ -123,6 +123,13 @@ export function sharedDescriptors(base: string): Record<string, string> {
       op('p', 'iep:prefixShard', 'GET', 'Prefix shard', { 'hydra:template': 'shard/{id:2}/{id}',
         'hydra:mapping': [{ 'hydra:variable': 'id', 'hydra:required': true }] }),
     ] },
+    // hydra:required read as a boolean field's value is: trimmed of space, tab, CR and LF and of
+    // nothing else, and a JSON 1.0 (put in the text below) as 1.
+    '/required-text': { '@context': CTX, '@id': `${base}/required-text`, 'iep:affordance': [
+      ...([['spaced', ' true\t'], ['whole', 'REQUIRED-ONE'], ['nbsp', '\u00a0true']] as const).map(([name, required]) =>
+        op(name, `urn:required:${name}`, 'GET', `Required ${name}`, { 'hydra:template': '/api{?q}',
+          'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:required': required }] })),
+    ] },
     '/tmpl-base': { '@context': [CTX, { '@base': 'https://api.example/v1/' }], '@id': `${base}/tmpl-base`, 'iep:affordance': [
       op('t', 'iep:baseItems', 'GET', 'Based items', { 'hydra:template': 'items{?q}', 'hydra:mapping': [{ 'hydra:variable': 'q' }] })] },
     // A flattened document, as jsonld.js writes one from RDF: a blank property shape sorts first.
@@ -599,10 +606,32 @@ export function sharedDescriptors(base: string): Record<string, string> {
       { 'hydra:method': { '@context': { s: '@set' }, s: ['GET'] }, ...target('/api') })] },
     // Writes that take JSON, as a JSON Schema object, an rdf:JSON property and a whole rdf:JSON
     // body, one whose default holds a number past a double (1e400, put in the text below), and
-    // string fields with JSON Schema and SHACL length facets. VALUE_CASES are their values.
+    // string fields with JSON Schema and SHACL length facets. VALUE_CASES are their values. Then a
+    // read that takes an object and one that takes lists (into the address), text fields whose
+    // defaults are a 31-digit integer and other values that are not strings, a default holding an
+    // unpaired surrogate, integer fields bounded below by a 400-digit integer and with defaults of
+    // 2.0 and 2^53 + 1, and a boolean field; the numbers JSON.stringify cannot write are put in the
+    // text below.
     '/values': { '@context': CTX, '@id': `${base}/values`, 'iep:affordance': [
       op('o', 'urn:values:object', 'POST', 'Object value', { ...target('/num-target'), 'hydra:expects': { type: 'object',
         properties: { document: { type: 'object' } } } }),
+      op('q', 'urn:values:query', 'GET', 'Object query', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { filter: { type: 'object' } } } }),
+      op('t', 'urn:values:list', 'GET', 'List values', { ...target('/num-target'), 'hydra:expects': { '@id': '#T' } }),
+      op('x', 'urn:values:text-default', 'POST', 'Text defaults', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { big: { type: 'string', maxLength: 10, default: 'BIG-TEXT-DEFAULT' }, small: { type: 'string', default: 5 },
+          flag: { type: 'string', default: true }, object: { type: 'string', default: { a: [1] } } } } }),
+      op('u', 'urn:values:surrogate-default', 'POST', 'Surrogate default', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { a: { type: 'string', default: '\ud800' } } } }),
+      op('n', 'urn:values:bound', 'POST', 'Large bound', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { amount: { type: 'integer', minimum: 'LARGE-BOUND' } } } }),
+      op('i', 'urn:values:whole-default', 'POST', 'Whole default', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { n: { type: 'integer', default: 'TWO-POINT-ZERO' } } } }),
+      op('k', 'urn:values:unsafe-default', 'POST', 'Past 2^53 default', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { n: { type: 'integer', default: 'PAST-SAFE' } } } }),
+      op('f', 'urn:values:flag', 'POST', 'Flag value', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { flag: { type: 'boolean' } } } }),
+      op('ld', 'urn:values:list-default', 'POST', 'List defaults', { ...target('/num-target'), 'hydra:expects': { '@id': '#D' } }),
       op('j', 'urn:values:json', 'POST', 'JSON value', { ...target('/num-target'), 'hydra:expects': { '@id': '#J' } }),
       op('b', 'urn:values:body', 'POST', 'JSON body', { ...target('/num-target'), 'hydra:expects': { '@id': '#B' } }),
       op('d', 'urn:values:default', 'POST', 'Large default', { ...target('/num-target'), 'hydra:expects': { type: 'object',
@@ -617,13 +646,23 @@ export function sharedDescriptors(base: string): Record<string, string> {
       { '@id': '#L', '@type': 'sh:NodeShape', 'sh:property': [
         { 'sh:path': { '@id': 'urn:p:one' }, 'sh:name': 'one', 'sh:maxLength': 1, 'sh:maxCount': 1 },
         { 'sh:path': { '@id': 'urn:p:two' }, 'sh:name': 'two', 'sh:minLength': 2, 'sh:maxCount': 1 }] },
+      { '@id': '#T', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:tags' }, 'sh:name': 'tags' },
+        { 'sh:path': { '@id': 'urn:p:short' }, 'sh:name': 'short', 'sh:maxLength': 10 },
+        { 'sh:path': { '@id': 'urn:p:nums' }, 'sh:name': 'nums', 'sh:datatype': { '@id': 'xsd:double' } },
+        { 'sh:path': { '@id': 'urn:p:counts' }, 'sh:name': 'counts', 'sh:datatype': { '@id': 'xsd:integer' } }] },
+      { '@id': '#D', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:lines' }, 'sh:name': 'lines', 'sh:defaultValue': ['a\nb', 'c'] },
+        { 'sh:path': { '@id': 'urn:p:picks' }, 'sh:name': 'picks', 'sh:in': ['x', 'y', 'z'], 'sh:defaultValue': ['z', 'w', 'x'] }] },
     ] },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
-  const out = Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')]));
+  const out = Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')
+    .replace('"REQUIRED-ONE"', '1.0')]));
   // JSON.stringify writes no number past a double, so the 1e400 is put in the text by hand. JSON's
   // grammar allows it, and both clients read it as an infinity.
-  out['/values'] = out['/values']!.replace('"LARGE-SCORE"', '1e400');
+  out['/values'] = out['/values']!.replace('"LARGE-SCORE"', '1e400').replace('"BIG-TEXT-DEFAULT"', `1${'0'.repeat(30)}`)
+    .replace('"LARGE-BOUND"', `1${'0'.repeat(399)}`).replace('"TWO-POINT-ZERO"', '2.0').replace('"PAST-SAFE"', '9007199254740993');
   // JSON.stringify writes each key once, so a repeated key is put in the text by hand: JSON leaves
   // its meaning open, and a reader that takes the last "hydra:method" takes GET.
   out['/repeated-key'] = JSON.stringify({ '@context': CTX, '@id': `${base}/repeated-key`, 'iep:affordance': [
@@ -660,6 +699,13 @@ export function sharedMarkdown(base: string): Record<string, string> {
       ':::control hm-rel-list', 'title: Rel list', 'rel: ["urn:hm:x"]', 'method: GET', `target: ${base}/api`, ':::', '',
       ':::control hm-two-fields', 'title: Two fields of one name', 'method: POST', `target: ${base}/api`,
       'fields: [{"name": "a"}, {"name": "a", "minCount": 1, "defaultValue": "x"}]', ':::', ''].join('\n'),
+    // Defaults read as a document's JSON is: a 31-digit integer in a text field of maxLength 10,
+    // and a string holding an unpaired surrogate, which JSON writes as an escape.
+    '/values-md': ['# Default values', '',
+      ':::control hm-big-default', 'title: Big text default', 'method: POST', `target: ${base}/num-target`,
+      `fields: [{"name": "a", "maxLength": 10, "defaultValue": 1${'0'.repeat(30)}}]`, ':::', '',
+      ':::control hm-surrogate-default', 'title: Surrogate text default', 'method: POST', `target: ${base}/num-target`,
+      'fields: [{"name": "a", "defaultValue": "\\ud800"}]', ':::', ''].join('\n'),
   };
 }
 
@@ -714,6 +760,21 @@ export function dryRuns(base: string): ReadonlyArray<readonly [path: string, rel
       { url: `${base}/api`, body: { 'abc\n': '1', 'rest-param-q-limit\n': '2', 'rest-param-q-li\rmit': '3', offset: '4' } }],
     // NaN is not JSON, so this list is one line of text, not three values.
     ['/multi', 'urn:act-publish', { graph_iri: `${base}/g`, tags: '["a","b",NaN]' }, { error: 'tags: needs at least 2 values, got 1' }],
+    // JSON in the address is written as JSON.stringify writes it: 1.0 as 1, 1e-7 as it is, -0 as 0,
+    // and an object's array-index keys first, in numeric order, as JavaScript keeps them.
+    ['/values', 'urn:values:query', { filter: '{"b":1.0,"a":1e-7,"c":-0.0,"2":[1E2],"1":true}' },
+      { url: `${base}/num-target?${new URLSearchParams({ filter: '{"1":true,"2":[100],"b":1,"a":1e-7,"c":0}' })}`, body: null }],
+    // A JSON integer past 2^53 is the double nearest it, as JSON.parse reads it, in an object and in
+    // a list alike; the double is written as JavaScript writes it.
+    ['/values', 'urn:values:query', { filter: '{"c":12345678901234567890}' },
+      { url: `${base}/num-target?${new URLSearchParams({ filter: '{"c":12345678901234567000}' })}`, body: null }],
+    ['/values', 'urn:values:list', { tags: '[1000000000000000000000000000000, 9007199254740993]' },
+      { url: `${base}/num-target?tags=1e%2B30&tags=9007199254740992`, body: null }],
+    ['/values', 'urn:values:list', { short: `[1${'0'.repeat(30)}]` }, { url: `${base}/num-target?short=1e%2B30`, body: null }],
+    ['/values', 'urn:values:list', { counts: '[1.0, 2]' }, { url: `${base}/num-target?counts=1&counts=2`, body: null }],
+    ['/required-text', 'urn:required:spaced', {}, { error: "missing required field 'q'" }],
+    ['/required-text', 'urn:required:whole', {}, { error: "missing required field 'q'" }],
+    ['/required-text', 'urn:required:nbsp', {}, { url: `${base}/api`, body: null }],
   ];
 }
 
@@ -749,6 +810,8 @@ export function countCases(base: string): ReadonlyArray<readonly [path: string, 
 
 /** U+1F600, one code point that JavaScript's .length counts as two UTF-16 code units. */
 const SMILE = '\u{1F600}';
+/** What each client reports for a value holding an unpaired surrogate, after the field's name. */
+const UNPAIRED = 'holds an unpaired surrogate, which is not Unicode text';
 /** "e" and U+0301, a combining acute accent: two code points, shown as one letter. */
 const COMBINED = 'e\u0301';
 /**
@@ -761,7 +824,15 @@ const COMBINED = 'e\u0301';
  *     descriptor's default of 1e400) cannot be sent: JSON.parse reads it as Infinity, which
  *     JSON.stringify sends as null;
  *   - a length facet counts Unicode code points, as Python's len() does, and not JavaScript's
- *     UTF-16 code units: U+1F600 is one character, and "e" followed by a combining acute accent two.
+ *     UTF-16 code units: U+1F600 is one character, and "e" followed by a combining acute accent two;
+ *   - an unpaired surrogate is not Unicode text: UTF-8 cannot carry it and I-JSON forbids it, so it
+ *     is refused wherever it is, where Python could not encode it and URLSearchParams wrote U+FFFD;
+ *   - a JSON integer is the number JSON.parse reads, the double nearest it past 2^53, so a text
+ *     field's default, a list item, a bound and an integer field's default read alike;
+ *   - a default is what the page's form holds: a text field's default of 5 is "5", and a list's
+ *     defaults are one per line, or the options a multiple choice selects;
+ *   - a boolean is trimmed of space, tab, CR and LF only, as a number is.
+ * Each error is the whole message, as the page lists it and hmc.py prints it.
  */
 export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, title: string, fields: Record<string, string>,
   outcome: { readonly body: unknown } | { readonly error: string }]> = [
@@ -782,6 +853,36 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
   ['/values', 'urn:values:body', 'JSON body', { body: '[1e400]' }, { error: 'body: holds a number too large to send' }],
   ['/values', 'urn:values:body', 'JSON body', { body: '{"score": 1.5}' }, { body: '{"score": 1.5}' }],
   ['/values', 'urn:values:default', 'Large default', {}, { error: 'report: holds a number too large to send' }],
+  // An unpaired surrogate, in a string or a key, wherever a value goes: a body, an address, a list, a
+  // whole JSON body, a default. A pair is one character.
+  ['/values', 'urn:values:object', 'Object value', { document: '{"a":"\\ud800"}' }, { error: `document: ${UNPAIRED}` }],
+  ['/values', 'urn:values:object', 'Object value', { document: '{"a":"x\\udc00"}' }, { error: `document: ${UNPAIRED}` }],
+  ['/values', 'urn:values:object', 'Object value', { document: '{"a":"\\udc00\\ud800"}' }, { error: `document: ${UNPAIRED}` }],
+  ['/values', 'urn:values:object', 'Object value', { document: '{"\\ud800":1}' }, { error: `document: ${UNPAIRED}` }],
+  ['/values', 'urn:values:object', 'Object value', { document: '{"a":"\\ud83d\\ude00"}' }, { body: { document: { a: SMILE } } }],
+  ['/values', 'urn:values:query', 'Object query', { filter: '{"a":"\\ud800"}' }, { error: `filter: ${UNPAIRED}` }],
+  ['/values', 'urn:values:list', 'List values', { tags: '["a","\\ud800"]' }, { error: `tags: ${UNPAIRED}` }],
+  ['/values', 'urn:values:json', 'JSON value', { data: '"\\ud800"' }, { error: `data: ${UNPAIRED}` }],
+  ['/values', 'urn:values:body', 'JSON body', { body: '["\\udfff"]' }, { error: `body: ${UNPAIRED}` }],
+  ['/values', 'urn:values:surrogate-default', 'Surrogate default', {}, { error: `a: ${UNPAIRED}` }],
+  ['/values-md', 'hm-surrogate-default', 'Surrogate text default', {}, { error: `a: ${UNPAIRED}` }],
+  // A text field's default that is not a string is its text, as the form holds it; a JSON integer
+  // past 2^53 is the double nearest it; an integer field's default of 2.0 is 2, and one past 2^53
+  // cannot be sent exactly; a bound no double holds is none, and a list's number past a double is
+  // not a number.
+  ['/values', 'urn:values:text-default', 'Text defaults', {}, { body: { big: '1e+30', small: '5', flag: 'true', object: '{"a":[1]}' } }],
+  ['/values-md', 'hm-big-default', 'Big text default', {}, { body: { a: '1e+30' } }],
+  ['/values', 'urn:values:whole-default', 'Whole default', {}, { body: { n: 2 } }],
+  ['/values', 'urn:values:unsafe-default', 'Past 2^53 default', {}, { error: 'n: integer too large to send exactly' }],
+  ['/values', 'urn:values:bound', 'Large bound', { amount: '5' }, { body: { amount: 5 } }],
+  ['/values', 'urn:values:list', 'List values', { nums: `[1${'0'.repeat(400)}]` }, { error: 'nums: not a number' }],
+  ['/values', 'urn:values:list', 'List values', { counts: '[1, 9007199254740993]' }, { error: 'counts: integer too large to send exactly' }],
+  // A list's defaults are what the form holds: one per line, or the options a multiple choice
+  // selects, in the options' order.
+  ['/values', 'urn:values:list-default', 'List defaults', {}, { body: { lines: ['a', 'b', 'c'], picks: ['x', 'z'] } }],
+  // A boolean is trimmed of the spaces a number is, space, tab, CR and LF, and of nothing else.
+  ['/values', 'urn:values:flag', 'Flag value', { flag: ' true\t' }, { body: { flag: true } }],
+  ['/values', 'urn:values:flag', 'Flag value', { flag: '\u00a0true' }, { error: 'flag must be a boolean' }],
   ...(['Schema lengths', 'Shape lengths'] as const).flatMap(title => {
     const rel = title === 'Schema lengths' ? 'urn:values:length' : 'urn:values:shacl-length';
     return [
@@ -792,6 +893,20 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
       ['/values', rel, title, { two: COMBINED }, { body: { two: COMBINED } }],
     ] as const;
   }),
+];
+
+/**
+ * Confirmed writes whose body each client sends as the page's JSON.stringify(values, null, 2) writes
+ * it, byte for byte, as [path, action, title, fields, the body sent]: each number as JavaScript
+ * writes it (1.0 as 1, 1e-7 and 0.000001 as they are, -0 as 0, 2^53 + 1 and a 20-digit integer as
+ * the double nearest each) and an object's array-index keys first, in numeric order.
+ */
+export const BODY_TEXTS: ReadonlyArray<readonly [path: string, action: string, title: string, fields: Record<string, string>, body: string]> = [
+  ['/values', 'urn:values:object', 'Object value', { document: '{"b":1.0,"a":1e-7,"c":-0.0,"2":[1E2,{}],"1":12345678901234567890,"d":[]}' },
+    '{\n  "document": {\n    "1": 12345678901234567000,\n    "2": [\n      100,\n      {}\n    ],\n    "b": 1,\n    "a": 1e-7,\n' +
+    '    "c": 0,\n    "d": []\n  }\n}'],
+  ['/values', 'urn:values:json', 'JSON value', { data: '[0.000001,1e21,-1e-7,9007199254740993]' },
+    '{\n  "data": [\n    0.000001,\n    1e+21,\n    -1e-7,\n    9007199254740992\n  ]\n}'],
 ];
 
 /**

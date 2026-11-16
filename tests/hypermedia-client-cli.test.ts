@@ -16,7 +16,7 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals, LISTED,
-  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
+  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, BODY_TEXTS } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -214,6 +214,9 @@ function hmc(args: string[], timeoutMs = 30_000): Promise<Run> {
     child.on('close', code => { clearTimeout(timer); resolve({ code, stdout, stderr, ms: Date.now() - started, timedOut }); });
   });
 }
+
+/** Each problem a refused invoke prints, whole. */
+const problems = (stderr: string) => stderr.split('\n').filter(line => line.startsWith('  - ')).map(line => line.slice(4));
 
 beforeAll(async () => {
   const probe = spawnSync(PYTHON, ['--version'], { encoding: 'utf8' });
@@ -419,8 +422,8 @@ describe('hmc.py: compact datatype IRIs', () => {
     });
     const bad = await plan('urn:compact-types', { count: '1.5', flag: 'maybe', data: 'nope', size: '1.5', ratio: 'abc', plain: '1.5' });
     expect(bad.r.code, bad.r.stdout + bad.r.stderr).toBe(2);
-    for (const message of ['count: not an integer', 'flag: flag must be a boolean', 'data: data must be JSON', 'size: not an integer',
-      'ratio: not a number', 'plain: not an integer']) expect(bad.r.stderr, message).toContain(message);
+    for (const message of ['count: not an integer', 'flag must be a boolean', 'data must be JSON', 'size: not an integer',
+      'ratio: not a number', 'plain: not an integer']) expect(problems(bad.r.stderr), message).toContain(message);
     const good = await plan('urn:compact-types', { count: '12', flag: 'yes', data: '{"a":[1,2]}', size: '+7', ratio: '0.5', plain: '3' });
     expect(good.r.code, good.r.stderr).toBe(0);
     expect(good.request!.body).toEqual({ count: 12, flag: true, data: { a: [1, 2] }, size: 7, ratio: 0.5, plain: 3 });
@@ -745,7 +748,7 @@ describe('hmc.py: every value read, or the control or document refused', () => {
       const { r, request } = await dry(path, rel, fields);
       if ('error' in outcome) {
         expect(r.code, `${rel}: ${r.stdout}`).toBe(2);
-        expect(r.stderr, rel).toContain(outcome.error);
+        expect(problems(r.stderr), rel).toContain(outcome.error);
       } else {
         expect(r.code, `${rel}: ${r.stderr}`).toBe(0);
         expect([request!.url, request!.body], rel).toEqual([outcome.url, outcome.body]);
@@ -951,7 +954,7 @@ describe('hmc.py: the address sent is the address printed', () => {
 });
 
 describe('hmc.py: values a request can carry, and lengths in code points', () => {
-  const sentTo = () => seen.filter(s => s.startsWith('POST /num-target')).length;
+  const sentTo = () => seen.filter(s => / \/num-target(\?|$)/.test(s)).length;
 
   it.each(VALUE_CASES)('reads %s %s (%s) as the page does: case %#', async (path, rel, _title, fields, outcome) => {
     if ('body' in outcome) {
@@ -966,9 +969,18 @@ describe('hmc.py: values a request can carry, and lengths in code points', () =>
       const r = await hmc(['invoke', `${base}${path}`, rel, ...args, mode]);
       expect(r.code, `${mode}: ${r.stdout}${r.stderr}`).toBe(2);
       expect(r.stderr, mode).toContain('Validation failed');
-      expect(r.stderr, mode).toContain(outcome.error);
+      expect(problems(r.stderr), mode).toContain(outcome.error);
     }
     expect(sentTo()).toBe(before);
+  });
+
+  it.each(BODY_TEXTS)('sends %s %s (%s) as the body the page sends, byte for byte: case %#', async (path, rel, _title, fields, body) => {
+    const args = Object.entries(fields).flatMap(([k, v]) => ['--field', `${k}=${v}`]);
+    const before = received.length;
+    const r = await hmc(['invoke', `${base}${path}`, rel, ...args, '--confirm']);
+    expect(r.code, r.stderr).toBe(0);
+    const posted = received.slice(before).filter(one => one.line === 'POST /num-target');
+    expect(posted.map(one => one.body)).toEqual([body]);
   });
 
   it('refuses NaN or an infinity handed to resolve_plan or invoke_plan unchecked, and sends nothing', async () => {

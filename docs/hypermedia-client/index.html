@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-hX4LXk05qNCFQa/AjheK5au1cEufAO6MeeXUKK2pyv4='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-lJ/HqFwLxU5PGQ5DeB1LvYhnQTXFhOu9RpcNhEC/z30='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -309,7 +309,8 @@ function shortRel(iri) { return localName(iri) || iri || ""; }
 function truthy(v) {
   if (v == null) return null;
   if (typeof v === "boolean") return v;
-  const t = String(v).toLowerCase();
+  // Trimmed of space, tab, CR and LF, as a number is, and of nothing else.
+  const t = trimSpaces(String(v)).toLowerCase();
   if (["true", "1", "yes"].includes(t)) return true;
   if (["false", "0", "no"].includes(t)) return false;
   return null;
@@ -2496,7 +2497,8 @@ function coerceValue(field, value) {
   const numeric = numericKind(field);
   if (numeric) return coerceNumber(field, numeric, value);
   if (xsdName(field.datatype) === "boolean") {
-    const t = String(value).toLowerCase();
+    // Trimmed of space, tab, CR and LF, as a number is, and of nothing else.
+    const t = trimSpaces(String(value)).toLowerCase();
     if (["true", "1", "yes"].includes(t)) return true;
     if (["false", "0", "no"].includes(t)) return false;
     throw new Error(field.name + " must be a boolean");
@@ -2536,6 +2538,24 @@ function tooLarge(value) {
   }
   return false;
 }
+// Whether a value holds an unpaired UTF-16 surrogate, in a string or in an
+// object's key. That is not Unicode text: UTF-8 cannot carry it, I-JSON (RFC
+// 7493) forbids it, and URLSearchParams would write U+FFFD in its place, so a
+// value that holds one is not sent. With the u flag a pair is one code point,
+// outside the range, so only an unpaired surrogate matches. A walk with a
+// stack. hmc.py's _unpaired_surrogate is the same.
+const UNPAIRED = /[\uD800-\uDFFF]/u;
+function unpaired(value) {
+  const stack = [value];
+  while (stack.length) {
+    const item = stack.pop();
+    if (typeof item === "string") { if (UNPAIRED.test(item)) return true; }
+    else if (item != null && typeof item === "object") {
+      for (const key of Object.keys(item)) { if (UNPAIRED.test(key)) return true; stack.push(item[key]); }
+    }
+  }
+  return false;
+}
 // A string's length as a length facet counts it: in Unicode code points, as
 // JSON Schema's maxLength and SHACL's sh:maxLength do and as hmc.py's len()
 // does, so U+1F600 is one character, not the two UTF-16 code units .length
@@ -2555,6 +2575,7 @@ function checkValue(field, found, numeric, errors) {
   // A number no double holds cannot be sent. A number field's value is checked
   // by its type instead.
   if (!numeric && tooLarge(typed)) { report(field.name + ": holds a number too large to send"); return null; }
+  if (unpaired(typed)) { report(field.name + ": holds an unpaired surrogate, which is not Unicode text"); return null; }
   const structured = typed != null && typeof typed === "object";
   // A JSON array holds as many values as it has items, and a field that takes
   // one object holds one; a field's minItems and maxItems bound that count.
