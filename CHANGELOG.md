@@ -390,6 +390,72 @@ page's stored token out of reach rests on this file's escaping and policy. Only
 hosting the client on an origin of its own would not; that is the owner's
 decision, and it is not made here.
 
+## 2026-11-16 — xapi-x: the adapter writes the decorations, the profile is at version 2, and the rules are a lint
+
+The xapi-x design listed what was left after its first slice. This does the part
+that is code in the Foxxi vertical and the lrs-adapter.
+
+**The lrs-adapter writes the decorations.** It adds the category
+`xapix:Projection` to every statement it projects, and `xapix:descriptorDigest`,
+`xapix:supersedesStatement` and `context.statement` when its caller states them
+(`descriptorDigest`, `supersedesStatements`). **This changes what the adapter
+sends**: every projected statement now has a `context`.
+
+**The profile is at version 2** (`src/xapix/profile.ts`). Its template selects on
+the category, so a statement that does not claim to be a projection is unmatched
+instead of invalid. It declares the six `xapix:` context extensions and the
+activity type. Version 1's template is kept, deprecated, and
+`buildXapixProfileDocV1` still builds version 1 as it was published. **The pod
+still serves version 1**: publishing version 2 there has not been done.
+
+**Order has a basis in code** (`src/xapix/statement.ts`): RFC 8785 canonical
+JSON, a statement's digest without what an LRS sets, `chained`, and `orderBasis`,
+which returns the strongest of provider-claimed, store-assigned, chained and
+attested that holds for a whole run. It is told whether the reader verified an
+attestation and verifies none itself.
+
+**The rules are a lint** (`src/xapix/lint.ts`): X1 to X8 over statements, X9 and
+X10 over a profile, with the profile lint's finding shape. The README's table
+says what each can and cannot see.
+
+**Not done.** No emitter chains its statements, nothing writes or verifies an
+order attestation, nothing serves a controls document, no profile states an
+evidence link or an offer, and the lint is not yet an affordance. Foxxi's
+projector writing the `iep#` keys is in another branch; it does not yet write
+the category or what a statement supersedes, and it projects a Quoted descriptor
+with an outcome verb, which rule X4 finds.
+
+## 2026-11-15 — Foxxi: a snapshot is written every time, and sealed
+
+Found when a restart of the deployed bridge lost every cmi5 launch. Foxxi keeps
+its launches, LTI line items, rosters, SCORM sessions and xAPI documents on the
+pod as snapshots and reads them back at startup. Two things were wrong.
+
+They were written once. `publish()` sends a graph with `If-None-Match: *` and
+takes a 412 as done, because a published graph never changes. A snapshot has one
+name and is rewritten, so its first write was its only write. The descriptor
+beside it kept being rewritten. On the deployed pod the cmi5 graph was from
+2026-09-26 and the LTI and xAPI-document graphs from July; every restart since
+restored those.
+
+They were plain text on a pod anyone can read: each launch's learner, their pod,
+the course and the registration.
+
+A snapshot is now sealed to the bridge's own key, derived from
+`FOXXI_BRIDGE_PRIVATE_KEY` for the pod, and its graph is replaced on every write
+(`src/pod-snapshot-publisher.ts`). A bridge with no key writes no snapshot. On
+read the sealed graph is taken when there is one and this bridge sealed it. The
+plain graph an earlier bridge left is read only where no sealed one exists yet.
+A bridge that has lost its key does not go back to the plain graph once a sealed
+one exists. A write the pod refuses, a 412 included, or one larger than is read
+back, fails as a whole and leaves the previous snapshot in place.
+
+Not changed: the plain graphs already on a pod are left where they are; removing
+them is the operator's. The LTI Platform gradebook was already sealed and
+written under its own rules. A snapshot still waits two seconds before it is
+written and is not written at shutdown, so state changed in the two seconds
+before a restart is lost.
+
 ## 2026-11-15 — jev-harness: a selection whose base yields no changed files is refused
 
 `select-tests` given a `base_ref` that yields no changed files answered
