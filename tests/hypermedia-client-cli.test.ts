@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { sharedDescriptors } from './hypermedia-client-fixtures.js';
+import { COST_CASES, costDescriptors, sharedDescriptors } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -40,6 +40,8 @@ const SECRET = 'HMC-LOCAL-FILE-SECRET';
 const XSD = 'http://www.w3.org/2001/XMLSchema#';
 let dir = '';
 let secretUrl = '';
+// Large documents whose shape once cost a product of two of their sizes, built once base is known.
+let cost: Record<string, string> = {};
 
 function descriptor(id: string, affordances: object[], graph: object[] = []) {
   return {
@@ -165,8 +167,9 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
     '/api': () => ({ type: 'text/plain', body: 'fine' }),
     // The documents the page's test reads too, and the addresses their controls reach.
     ...Object.fromEntries(Object.entries(sharedDescriptors(base)).map(([path, text]) => [path, () => ({ type: 'application/ld+json', body: text })])),
+    ...Object.fromEntries(Object.entries(cost).map(([path, text]) => [path, () => ({ type: 'application/ld+json', body: text })])),
     ...Object.fromEntries(['/purge', '/sparql', '/notes/1', '/publish', '/wiki/Caf%C3%A9', '/items', '/lrs/about', '/search', '/tmpl/items/7',
-      '/tmpl/shard/ab/abcdef', '/rates/2', '/find', '/dir/items'].map(path => [path, () => ({ type: 'text/plain', body: 'fine' })])),
+      '/tmpl/shard/ab/abcdef', '/rates/2', '/find', '/dir/items', '/admin', '/q', '/s'].map(path => [path, () => ({ type: 'text/plain', body: 'fine' })])),
     // /dir answers with the usual trailing-slash redirect; /see-other with a 303, after which JSON-LD
     // keeps the address that answered it as the base.
     '/dir': () => ({ status: 301, headers: { location: '/dir/' } }),
@@ -224,6 +227,7 @@ beforeAll(async () => {
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
+  cost = costDescriptors(base);
 });
 afterAll(async () => {
   await new Promise<void>(resolve => server ? server.close(() => resolve()) : resolve());
@@ -716,4 +720,76 @@ describe('hmc.py: forms', () => {
     expect((await dry('/mincount', 'urn:mincount', { a: 'toolong' })).r.stderr).toContain('a: longer than maxLength 3');
     expect((await dry('/mincount', 'urn:mincount')).r.stderr).toContain("missing required field 'a'");
   });
+});
+
+describe('hmc.py: the address sent is the address printed', () => {
+  it('prints the exact address it sends to, as the page\'s URL parser writes it, and sends it there', async () => {
+    // "%2e%2e" is "..", so this goes to /admin, and the dry run says so.
+    expect((await dry('/sent', 'urn:sent-dots')).request!.url).toBe(`${base}/admin`);
+    const dots = await hmc(['invoke', `${base}/sent`, 'urn:sent-dots']);
+    expect(dots.code, dots.stderr).toBe(0);
+    expect(dots.stdout).toContain(`GET ${base}/admin\n`);
+    expect(seen).toContain('GET /admin');
+    // An upper-case scheme is http(s) too; the host is lower-cased, the default port, the dot
+    // segments and the fragment dropped, and the quotes encoded, as the page writes it.
+    const canon = (await dry('/sent', 'urn:sent-canon')).request!;
+    expect([canon.transport, canon.url]).toEqual(['http', 'https://good.example/A/c?x=%22y%22&z=%27w%27']);
+    // The query is written as the page's URLSearchParams writes it: "~" encoded, "*" not.
+    expect((await dry('/sent', 'urn:sent-query', { a: '~*x y' })).request!.url).toBe(`${base}/q?keep=a+b&a=%7E*x+y`);
+    const query = await hmc(['invoke', `${base}/sent`, 'urn:sent-query', '--field', 'a=~*x y']);
+    expect(query.code, query.stderr).toBe(0);
+    expect(seen).toContain('GET /q?keep=a+b&a=%7E*x+y');
+    // An address it does not send is printed in its URI form, as the page shows it, port and all.
+    const v6 = (await dry('/sent', 'urn:sent-v6')).request!;
+    expect([v6.transport, v6.url]).toEqual(['unknown', 'ftp://%C3%BCser@[::1]:8443/x']);
+  });
+
+  it.each([
+    ['urn:sent-backslash', { q: 'secret' }, 'the address holds a backslash, a space or a control character'],
+    ['urn:sent-plus', { u: '@evil.example/x' }, 'the address does not name its host after "//"'],
+    ['urn:sent-user', {}, 'the address carries user information before its host'],
+    ['urn:sent-number', {}, "the address's host is a number written other than as four decimal parts"],
+    ['urn:sent-tab', {}, 'the address holds a backslash, a space or a control character'],
+    // IDNA 2003 maps "ß" to "ss", so this would go to strasse.example, where the page goes to
+    // xn--strae-oqa.example; hmc.py refuses it rather than send to another domain.
+    ['urn:sent-sharp-s', {}, 'hmc.py does not send to a host with ß, ς, ZWJ or ZWNJ'],
+  ])('refuses %s, an address it cannot send as written, before anything is sent', async (rel, fields, message) => {
+    const before = seen.length;
+    const { r } = await dry('/sent', rel, fields);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain(message);
+    expect(seen.slice(before).filter(line => line !== 'GET /sent')).toEqual([]);
+  });
+});
+
+describe('hmc.py: template mappings', () => {
+  it('makes one field of two mappings of one variable, and of a renaming mapping and a bare one, as the page does', async () => {
+    for (const rel of ['urn:twin-variable', 'urn:twin-renamed']) {
+      const { r, request } = await dry('/twin-mappings', rel, { q: 'v' });
+      expect(r.code, `${rel}: ${r.stderr}`).toBe(0);
+      expect(request!.url, rel).toBe(`${base}/s?q=v`);
+    }
+    expect(fieldsOf(await listed('/twin-mappings'), 'Renamed then bare')).toEqual([['q', false, false]]);
+  });
+});
+
+describe('hmc.py: a document\'s size, not its shape, sets the cost', () => {
+  it.each(COST_CASES)('describes %s\'s control %s within the budget', async (path, rel, _controls, fields) => {
+    const r = await hmc(['describe', `${base}${path}`, rel]);
+    expect(r.timedOut, 'killed after 30 s').toBe(false);
+    expect(r.ms, 'run time').toBeLessThan(3_000);
+    expect(r.code, r.stderr).toBe(0);
+    expect((JSON.parse(r.stdout) as { fields: unknown[] }).fields).toHaveLength(fields);
+  }, 60_000);
+
+  it('lists every control of a document whose controls share one shape within the budget', async () => {
+    const r = await hmc(['list', `${base}/cost/shape`]);
+    expect(r.timedOut, 'killed after 30 s').toBe(false);
+    expect(r.ms, 'run time').toBeLessThan(3_000);
+    expect(r.code, r.stderr).toBe(0);
+    const lines = r.stdout.split('\n').filter(line => line.trim().startsWith('fields: '));
+    expect(lines).toHaveLength(400);
+    expect(new Set(lines).size).toBe(1);
+    expect(lines[0]).toContain('fields: p0, p1, p2');
+  }, 60_000);
 });

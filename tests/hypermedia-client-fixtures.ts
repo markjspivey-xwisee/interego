@@ -215,7 +215,85 @@ export function sharedDescriptors(base: string): Record<string, string> {
       'iep:affordance': [op('m', 'urn:mincount', 'POST', 'Count facets', { ...target('/num-target'), 'hydra:expects': { '@id': '#S' } })],
       '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': '#a' }, 'sh:datatype': { '@id': 'xsd:string' },
         'sh:minCount': 'ONE-POINT-ZERO', 'sh:maxCount': 1, 'sh:maxLength': 3 } }] },
+    // Addresses a URL parser reads differently from their text, each refused before anything is
+    // sent: a backslash before the host (one backslash in the template), "https:" with no "//",
+    // user information, a host written as a hexadecimal number, and a tab. Then addresses each
+    // client sends as the parser writes them, which is also what its dry run shows: "%2e%2e"
+    // segments removed, an upper-case scheme and host with a default port, a dot segment, quotes
+    // and a fragment, and a query parameter whose value needs encoding. Last, a template that is
+    // not http(s) with non-ASCII user information and an IPv6 host with a port, shown not sent,
+    // and a host with a sharp s, which IDNA 2003 and a browser map to two different domains.
+    '/sent': { '@context': CTX, '@id': `${base}/sent`, 'iep:affordance': [
+      op('bs', 'urn:sent-backslash', 'GET', 'Backslash host', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': 'https://evil.example\\@good.example{?q}', 'hydra:mapping': [{ 'hydra:variable': 'q' }] } }),
+      op('plus', 'urn:sent-plus', 'GET', 'No slashes', { 'hydra:template': 'https:{+u}', 'hydra:mapping': [{ 'hydra:variable': 'u' }] }),
+      op('user', 'urn:sent-user', 'GET', 'User information', { 'hydra:target': { '@id': 'https://user@good.example/x' } }),
+      op('num', 'urn:sent-number', 'GET', 'Number host', { 'hydra:target': { '@id': 'https://0x7f.1/x' } }),
+      op('tab', 'urn:sent-tab', 'GET', 'Tab in path', { 'hydra:target': { '@id': `${base}/a\tb` } }),
+      op('dots', 'urn:sent-dots', 'GET', 'Encoded dots', { 'hydra:target': { '@id': `${base}/notes/%2e%2e/%2E%2e/admin` } }),
+      op('canon', 'urn:sent-canon', 'GET', 'Upper-case scheme', { 'hydra:target': { '@id': 'HTTPS://Good.Example:443/A/./b/../c?x="y"&z=\'w\'#frag' } }),
+      op('query', 'urn:sent-query', 'GET', 'Query bytes', { 'hydra:target': { '@id': `${base}/q?keep=a%20b` },
+        'hydra:expects': { type: 'object', properties: { a: { type: 'string' } } } }),
+      op('v6', 'urn:sent-v6', 'GET', 'IPv6 port', { 'hydra:template': 'ftp://üser@[::1]:8443/x{?q}' }),
+      op('sz', 'urn:sent-sharp-s', 'GET', 'Sharp s host', { 'hydra:target': { '@id': 'https://straße.example/x' } }),
+    ] },
+    // Two mappings of one variable, and a mapping that renames a shape's field followed by a bare
+    // mapping of the name it gave: one field each, as the page always read them.
+    '/twin-mappings': { '@context': CTX, '@id': `${base}/twin-mappings`, 'iep:affordance': [
+      op('a', 'urn:twin-variable', 'GET', 'Twin variable', { 'hydra:search': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/s{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q' }, { 'hydra:variable': 'q' }] } }),
+      op('b', 'urn:twin-renamed', 'GET', 'Renamed then bare', { 'hydra:expects': { '@id': '#S' }, 'hydra:search': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/s{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': `${base}/p#text` } },
+          { 'hydra:variable': 'q' }] } }),
+    ], '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': `${base}/p#text` }, 'sh:maxCount': 1 } }] },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
   return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')]));
+}
+
+/**
+ * Documents of a few hundred kilobytes whose shape once made both clients' work grow as the product
+ * of two of their sizes, with the control each test opens. Before, each took the page 7 to 15 s and
+ * hmc.py 5 to 7 s or more; each now takes a small part of the tests' 3 s budget. Each case names
+ * the number of controls the document lists and of fields its control has.
+ *   - harvest: 1,500 nodes that each name one node holding 1,500 operations, which every naming node
+ *     walked again (the named node is listed too, since each node names it as an affordance);
+ *   - shape: 400 controls whose hydra:expects all name one 400-property shape, whose fields every
+ *     control built;
+ *   - template: 400 controls sharing one IRI template of 400 mappings, which every control read and
+ *     joined to its fields, each mapping searching all the fields before it;
+ *   - mappings: one control whose template has 8,000 mappings, each searching the fields before it;
+ *   - class: 1,500 nodes that each name one hydra:Class with 1,500 operations, which every naming
+ *     node listed again.
+ */
+export const COST_CASES: ReadonlyArray<readonly [path: string, rel: string, controls: number, fields: number]> = [
+  ['/cost/harvest', 'urn:op5', 1501, 0], ['/cost/shape', 'urn:c399', 400, 400], ['/cost/template', 'urn:c399', 400, 400],
+  ['/cost/mappings', 'urn:c', 1, 8000], ['/cost/class', 'urn:op5', 1500, 0],
+];
+
+/** Each COST_CASES path's document as the text served; build it once per test file. */
+export function costDescriptors(base: string): Record<string, string> {
+  const get = (rel: string, title: string, extra: Record<string, unknown> = {}) =>
+    ({ 'iep:action': { '@id': rel }, 'hydra:method': 'GET', 'hydra:title': title, 'hydra:target': { '@id': `${base}/api` }, ...extra });
+  const range = (n: number) => Array.from({ length: n }, (_, i) => i);
+  const props = (n: number) => range(n).map(j => ({ 'sh:path': { '@id': `urn:p${j}` }, 'sh:name': `p${j}`, 'sh:maxCount': 1 }));
+  const docs: Record<string, unknown> = {
+    '/cost/harvest': { '@context': CTX, '@id': `${base}/cost/harvest`, '@graph': [
+      { '@id': 'urn:x', 'iep:affordance': range(1500).map(i => ({ '@id': `urn:o${i}`, ...get(`urn:op${i}`, `Op ${i}`) })) },
+      ...range(1500).map(i => ({ '@id': `urn:n${i}`, 'iep:affordance': { '@id': 'urn:x' } }))] },
+    '/cost/shape': { '@context': CTX, '@id': `${base}/cost/shape`,
+      'iep:affordance': range(400).map(i => ({ '@id': `#c${i}`, '@type': 'iep:Affordance', ...get(`urn:c${i}`, `C${i}`), 'hydra:expects': { '@id': '#S' } })),
+      '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': props(400) }] },
+    '/cost/template': { '@context': CTX, '@id': `${base}/cost/template`,
+      'iep:affordance': range(400).map(i => ({ '@id': `#c${i}`, '@type': 'iep:Affordance', ...get(`urn:c${i}`, `C${i}`), 'hydra:target': { '@id': '#T' } })),
+      '@graph': [{ '@id': '#T', '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/api{?v0}`,
+        'hydra:mapping': range(400).map(j => ({ 'hydra:variable': `v${j}`, 'hydra:property': { '@id': `urn:p${j}` } })) }] },
+    '/cost/mappings': { '@context': CTX, '@id': `${base}/cost/mappings`, 'iep:affordance': [{ '@id': '#c', '@type': 'iep:Affordance',
+      ...get('urn:c', 'C'), 'hydra:target': { '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/api{?v0}`,
+        'hydra:mapping': range(8000).map(j => ({ 'hydra:variable': `v${j}`, 'hydra:property': { '@id': `urn:p${j}` } })) } }] },
+    '/cost/class': { '@context': CTX, '@id': `${base}/cost/class`, '@graph': [
+      { '@id': 'urn:C', 'hydra:supportedOperation': range(1500).map(j => ({ '@id': `urn:o${j}`, ...get(`urn:op${j}`, `Op ${j}`) })) },
+      ...range(1500).map(i => ({ '@id': `urn:n${i}`, 'hydra:supportedClass': { '@id': 'urn:C' } }))] },
+  };
+  return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc)]));
 }

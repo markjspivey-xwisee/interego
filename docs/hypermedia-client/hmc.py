@@ -12,6 +12,9 @@ Nothing here is specific to a particular glossary or catalog.
 from __future__ import annotations
 
 import argparse
+import copy
+import heapq
+import ipaddress
 import json
 import math
 import re
@@ -257,12 +260,33 @@ def _resolve_iri(ref: str, base: str | None) -> str:
     return _join_iri(b_scheme, b_auth, _remove_dot_segments(path), query, fragment)
 
 
+# The four characters IDNA 2003, which Python's "idna" codec implements, maps
+# to other letters (ß to "ss", ς to σ) or drops (ZWJ, ZWNJ), where a browser's
+# IDNA 2008 / UTS 46 keeps them: "straße.example" is another domain there.
+_IDNA_DEVIATIONS = frozenset("\u00df\u03c2\u200c\u200d")
+
+
+def _host_and_port(hostport: str) -> tuple[str, str | None]:
+    """An authority's host and port, without user information: a bracketed
+    IPv6 host keeps its brackets, and its port is what follows "]:". The port
+    is None when there is none. The page's hostAndPort is the same."""
+    if hostport.startswith("["):
+        close = hostport.find("]")
+        if close >= 0 and hostport[close + 1:close + 2] == ":":
+            return hostport[:close + 1], hostport[close + 2:]
+        return hostport, None
+    host, colon, port = hostport.partition(":")
+    return host, (port if colon else None)
+
+
 def _iri_to_uri(iri: str) -> str:
     """An IRI as the URI a request carries (RFC 3987, section 3.1): each
     non-ASCII character in the path, query and fragment as the percent-encoded
-    bytes of its UTF-8, and a non-ASCII host in IDNA form, as a browser's fetch
-    sends it. Anything already ASCII is left as it is. The page's iriToUri is
-    the same."""
+    bytes of its UTF-8, and a non-ASCII host in IDNA form. Anything already
+    ASCII is left as it is. The page's iriToUri is the same, but for the IDNA
+    form: Python's codec is IDNA 2003 where a browser's fetch uses UTS 46, and
+    the two differ only for a host with ß, ς, ZWJ or ZWNJ, which hmc.py refuses
+    rather than send to another domain."""
     if iri.isascii():
         return iri
     scheme, auth, path, query, fragment = _split_iri(iri)
@@ -274,13 +298,154 @@ def _iri_to_uri(iri: str) -> str:
 
     if auth is not None and not auth.isascii():
         userinfo, at, hostport = auth.rpartition("@")
-        host, colon, port = hostport.partition(":") if not hostport.startswith("[") else (hostport, "", "")
+        host, port = _host_and_port(hostport)
+        if _IDNA_DEVIATIONS.intersection(host):
+            raise ValueError(f"hmc.py does not send to a host with ß, ς, ZWJ or ZWNJ: Python's IDNA 2003 would "
+                             f"send it to another domain than a browser does; nothing was sent to {iri}")
         try:
             host = host.encode("idna").decode("ascii")
         except UnicodeError:
             host = enc(host) or ""
-        auth = (enc(userinfo) + "@" if at else "") + host + (":" + port if colon else "")
+        auth = (enc(userinfo) + "@" if at else "") + host + ("" if port is None else ":" + port)
     return _join_iri(scheme, auth, enc(path) or "", enc(query), enc(fragment))
+
+
+_IPV4_CANONICAL = re.compile(r"(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}")
+_HOST_NAME = re.compile(r"[A-Za-z0-9._-]+")
+_IPV6_TEXT = re.compile(r"\[[0-9A-Fa-f:.]+\]")
+_DIGITS = re.compile(r"[0-9]*")
+_HEX_NUMBER = re.compile(r"0[xX][0-9A-Fa-f]*")
+_DEFAULT_PORTS = {"http": 80, "https": 443}
+# What the URL Standard's parser percent-encodes in an http(s) path and query
+# that _request_url_problem lets through: the rest of its path and special-
+# query percent-encode sets are spaces, controls and non-ASCII, which are
+# refused or already encoded, and "#" and "?", which end a path or query.
+_PATH_ENCODE = {ord(c): "%%%02X" % ord(c) for c in '"<>`{}^'}
+_QUERY_ENCODE = {ord(c): "%%%02X" % ord(c) for c in "\"<>'"}
+
+
+def _port_number(port: str) -> int:
+    """A port of digits as a number; one past five digits, leading zeros
+    aside, as 65536, so a long one is not converted."""
+    digits = port.lstrip("0") or "0"
+    return 65536 if len(digits) > 5 else int(digits)
+
+
+def _ends_in_number(host: str) -> bool:
+    labels = host.split(".")
+    if len(labels) > 1 and labels[-1] == "":
+        labels.pop()
+    last = labels[-1]
+    return bool(_DIGITS.fullmatch(last) and last) or bool(_HEX_NUMBER.fullmatch(last))
+
+
+def _request_url_problem(uri: str) -> str | None:
+    """Why an http(s) address in URI form cannot be sent as a person reads it,
+    or None. A URL parser reads some addresses differently from the text: it
+    takes a backslash for a slash, so "https://a\\@b" goes to a; drops a tab or
+    line break and encodes a space; finds a host in "https:@a" or "https:/a",
+    which have no "//"; and reads a host written as a number in any form other
+    than four decimal parts ("0x7f.1", "2130706433") as an IPv4 address. User
+    information before an "@" is refused too: urllib would send it as part of
+    the Host header. The page's requestUrlProblem is the same."""
+    if any(ord(ch) <= 0x20 or ch in "\x7f\\" for ch in uri):
+        return "the address holds a backslash, a space or a control character, which URL parsers read in different ways"
+    scheme, auth, _path, _query, _fragment = _split_iri(uri)
+    if scheme is None or scheme.lower() not in WEB_SCHEMES:
+        return "the address is not http or https"
+    if auth is None:
+        return 'the address does not name its host after "//"'
+    if "@" in auth:
+        return "the address carries user information before its host"
+    host, port = _host_and_port(auth)
+    if not host:
+        return "the address names no host"
+    if port is not None and not _DIGITS.fullmatch(port):
+        return "the address's port is not a number"
+    if port and _port_number(port) > 65535:
+        return "the address's port is above 65535"
+    if host.startswith("["):
+        if not _IPV6_TEXT.fullmatch(host):
+            return "the address's IPv6 host is not an IPv6 address"
+    else:
+        if not _HOST_NAME.fullmatch(host):
+            return "the address's host is not a name of letters, digits, '.', '-' and '_'"
+        if _ends_in_number(host) and not _IPV4_CANONICAL.fullmatch(host):
+            return "the address's host is a number written other than as four decimal parts"
+    return None
+
+
+def _ipv6_text(inner: str) -> str:
+    """An IPv6 address as a URL parser writes it: lower-case hex pieces with no
+    leading zeros, the first longest run of two or more zero pieces as "::",
+    and no dotted IPv4 tail."""
+    value = int(ipaddress.IPv6Address(inner))
+    pieces = [(value >> (16 * (7 - i))) & 0xFFFF for i in range(8)]
+    best_start, best_len, i = -1, 1, 0
+    while i < 8:
+        if pieces[i] == 0:
+            j = i
+            while j < 8 and pieces[j] == 0:
+                j += 1
+            if j - i > best_len:
+                best_start, best_len = i, j - i
+            i = j
+        else:
+            i += 1
+    if best_start < 0:
+        return ":".join("%x" % p for p in pieces)
+    head = ":".join("%x" % p for p in pieces[:best_start])
+    tail = ":".join("%x" % p for p in pieces[best_start + best_len:])
+    return head + "::" + tail
+
+
+def _request_path(path: str) -> str:
+    """A path as a URL parser writes it: dot segments removed, "%2e" and
+    "%2e%2e" (in any case and mix) counted as dots, and empty as "/"."""
+    out: list[str] = []
+    segments = path[1:].split("/") if path.startswith("/") else [path]
+    for i, segment in enumerate(segments):
+        last = i == len(segments) - 1
+        low = segment.lower()
+        if low in ("..", ".%2e", "%2e.", "%2e%2e"):
+            if out:
+                out.pop()
+            if last:
+                out.append("")
+        elif low in (".", "%2e"):
+            if last:
+                out.append("")
+        else:
+            out.append(segment.translate(_PATH_ENCODE))
+    return "/" + "/".join(out)
+
+
+def _request_url(iri: str) -> str:
+    """The exact address a request to an http(s) IRI goes to: its URI form, as
+    a URL parser writes it, with no fragment, which is never sent. The scheme
+    and host are lower-cased, a default port is dropped, dot segments ("..",
+    and "%2e%2e" too) are removed and the characters a parser percent-encodes
+    are encoded. A dry run prints this string and urllib sends it. An address
+    a parser would read differently from its text is refused
+    (_request_url_problem). The page's requestUrl is the same; it has the
+    browser's URL parser write the string."""
+    uri = _iri_to_uri(str(iri))
+    problem = _request_url_problem(uri)
+    if problem:
+        raise ValueError(f"{problem}; nothing is sent to {uri}")
+    scheme, auth, path, query, _fragment = _split_iri(uri)
+    scheme = (scheme or "").lower()
+    host, port = _host_and_port(auth or "")
+    if host.startswith("["):
+        try:
+            host = "[" + _ipv6_text(host[1:-1]) + "]"
+        except ValueError:
+            raise ValueError(f"the address is not a URL; nothing is sent to {uri}") from None
+    else:
+        host = host.lower()
+    port_text = "" if not port or _port_number(port) == _DEFAULT_PORTS[scheme] else ":" + str(_port_number(port))
+    out = f"{scheme}://{host}{port_text}{_request_path(path)}"
+    return out if query is None else out + "?" + query.translate(_QUERY_ENCODE)
 
 
 # Keywords a context may alias with a term ("id": "@id"), and the characters
@@ -791,6 +956,33 @@ class Control:
         }
 
 
+# A control read from a JSON-LD node builds its fields, and the problem and
+# warning they give, the first time one of the three is read: describe and
+# invoke read one control's, so many controls that share one large shape cost
+# the shape's size once, not once per control. A builder waits in the control's
+# "_build" until then; an assignment to one of the three runs it first, so it
+# never overwrites the value assigned. The page's controlFromNode is the same.
+_BUILT_ON_READ = ("fields", "problem", "warning")
+
+
+def _built_on_read(name: str) -> property:
+    def read(self: Control) -> Any:
+        build = self.__dict__.pop("_build", None)
+        if build is not None:
+            for key, value in zip(_BUILT_ON_READ, build()):
+                self.__dict__["_built_" + key] = value
+        return self.__dict__.get("_built_" + name)
+
+    def write(self: Control, value: Any) -> None:
+        read(self)
+        self.__dict__["_built_" + name] = value
+    return property(read, write)
+
+
+for _name in _BUILT_ON_READ:
+    setattr(Control, _name, _built_on_read(_name))
+
+
 @dataclass
 class Descriptor:
     url: str
@@ -865,6 +1057,11 @@ class NodeIndex:
         self.nodes: dict[str, dict[str, Any]] = {}
         self.order: list[dict[str, Any]] = []
         self.root: dict[str, Any] | None = None
+        # Each template node's (template, mappings), read once (_template_of),
+        # and each shape's fields, built once (_shared_shape_fields); keyed by
+        # the node's id(), with the node kept so the id stays its own.
+        self.templates: dict[int, tuple[Any, tuple[str | None, list[dict[str, Any]]]]] = {}
+        self.shapes: dict[int, tuple[Any, list[Field], str | None, Any]] = {}
         self._ingest_document(document, fetched_from)
 
     def _ingest_document(self, document: Any, fetched_from: str | None) -> None:
@@ -909,10 +1106,11 @@ class NodeIndex:
                 break
         else:
             self.root = top or first_named or first_any
-        for node in list(self.order):
-            self._harvest_embedded(node)
+        self._harvest_embedded()
 
-    def _add(self, node: dict[str, Any]) -> dict[str, Any]:
+    def _add(self, node: dict[str, Any], added: list[str] | None = None) -> dict[str, Any]:
+        """Adds a node, or merges its keys into the node already indexed at its
+        @id; `added`, when given, collects the keys a merge added."""
         node_id = node.get("@id")
         if not node_id or not isinstance(node_id, str):
             # A node with no @id gets one in place, so the object a document
@@ -929,29 +1127,42 @@ class NodeIndex:
         for key, val in node.items():
             if key not in existing:
                 existing[key] = val
+                if added is not None:
+                    added.append(key)
         return existing
 
-    def _harvest_embedded(self, node: dict[str, Any]) -> None:
+    def _harvest_embedded(self) -> None:
         """Indexes the nodes written inside a node under an affordance-like
-        key, and the ones inside those. A stack and a set of the nodes already
-        walked, so a node that lists itself ends the walk instead of repeating it."""
-        pending = [node]
+        key, and the ones inside those, starting from every node indexed so
+        far, in order. One stack and one set of walked nodes serve the whole
+        document, so each node's keys are walked once however many nodes name
+        it, and a node that lists itself ends the walk. A node already walked
+        that gains keys from another object with its @id has just those keys
+        walked. The work is linear in the document. The page's _harvest is the
+        same."""
         walked: set[int] = set()
+        pending: list[tuple[dict[str, Any], list[str] | None]] = [(node, None) for node in reversed(self.order)]
         while pending:
-            current = pending.pop()
-            if id(current) in walked:
-                continue
-            walked.add(id(current))
-            for key, val in list(current.items()):
+            current, keys = pending.pop()
+            if keys is None:
+                if id(current) in walked:
+                    continue
+                walked.add(id(current))
+            for key in keys if keys is not None else list(current):
                 pred = self.ctx.expand_key(key)
                 lname = local_name(pred)
                 if pred not in HARVESTED and lname not in HARVESTED_NAMES:
                     continue
-                for item in as_list(val):
+                for item in as_list(current[key]):
                     if isinstance(item, dict) and (
                         "@id" in item or "action" in item or "method" in item or "@type" in item
                     ):
-                        pending.append(self._add(item))
+                        added: list[str] = []
+                        node = self._add(item, added)
+                        if id(node) not in walked:
+                            pending.append((node, None))
+                        elif added:
+                            pending.append((node, added))
 
     def get(self, node: dict[str, Any] | None, predicate: str) -> Any:
         if not node:
@@ -1315,10 +1526,18 @@ def _template_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, li
     """The control's IRI template and its mappings, and whether the template is
     the control's hydra:target: a hydra:IriTemplate written as the target, as
     Interego's decoration catalogs write one, or reached through hydra:search
-    or a key named for a template."""
-    def read_template_node(tmpl: dict[str, Any] | None) -> tuple[str | None, list[dict[str, Any]]]:
+    or a key named for a template. A template node many controls share is read
+    once (index.templates), so its mappings cost their size once, not once per
+    control. The page's templateOf is the same."""
+    def read_template_node(tmpl: Any) -> tuple[str | None, list[dict[str, Any]]]:
         if not tmpl:
             return None, []
+        hit = index.templates.get(id(tmpl))
+        if hit is None or hit[0] is not tmpl:
+            hit = index.templates[id(tmpl)] = (tmpl, read_template(tmpl))
+        return hit[1]
+
+    def read_template(tmpl: Any) -> tuple[str | None, list[dict[str, Any]]]:
         template = literal(index.get(tmpl, P_TEMPLATE))
         found = []
         for item in as_list(index.get(tmpl, P_MAPPING)):
@@ -1328,8 +1547,8 @@ def _template_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, li
             # Hydra's context types hydra:property as @vocab, so a plain "schema:query" names an IRI.
             prop = literal(index.get(mn, P_PROPERTY))
             found.append({
-                "variable": literal(index.get(mn, P_VARIABLE)),
-                "property": index.ctx.expand_iri(prop, vocab=True, document_relative=True) if isinstance(prop, str) else prop,
+                "variable": _text(literal(index.get(mn, P_VARIABLE))) or None,
+                "property": _text(index.ctx.expand_iri(prop, vocab=True, document_relative=True) if isinstance(prop, str) else prop) or None,
                 "required": truthy(literal(index.get(mn, P_REQUIRED))),
             })
         return (str(template) if template else None), found
@@ -1364,35 +1583,92 @@ def _template_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, li
     return (str(direct) if direct else None), [], False
 
 
-def _merge_mapping_fields(fields: list[Field], mappings: list[dict[str, Any]]) -> list[Field]:
-    by_path = {f.path: f for f in fields if f.path}
-    by_name = {f.name: f for f in fields}
+class _FieldIndex:
+    """Where each path, and each path's local name, first appears in a list of
+    fields, and every position of each name, in order. Built once for a list
+    that several controls share, and read by _merge_mapping_fields."""
+
+    def __init__(self, fields: list[Field]) -> None:
+        self.by_path: dict[str, int] = {}
+        self.by_local: dict[str, int] = {}
+        self.by_name: dict[str, list[int]] = {}
+        for i, fld in enumerate(fields):
+            if fld.path:
+                self.by_path.setdefault(fld.path, i)
+                self.by_local.setdefault(local_name(fld.path), i)
+            self.by_name.setdefault(fld.name, []).append(i)
+
+
+def _merge_mapping_fields(fields: list[Field], mappings: list[dict[str, Any]],
+                          base: _FieldIndex | None = None) -> list[Field]:
+    """Joins a template's mappings to the fields. Each mapping, in order,
+    renames the first field, in field order, whose path is its hydra:property,
+    or else the first field now named as its variable, or else the first whose
+    path ends in its variable; a mapping that matches none adds a field. The
+    fields given are not changed: a matched field is copied, so fields a shape
+    gives several controls stay as they are. Positions are looked up in maps
+    (`base`, the given fields' _FieldIndex, when it is at hand), and the first
+    field of a name, which renames change, in a heap per name, so the work is
+    linear in the mappings beyond copying the list. The page's mergeMappings
+    is the same."""
+    if not mappings:
+        return fields
+    base = base or _FieldIndex(fields)
+    fields = list(fields)
+    more_path: dict[str, int] = {}
+    more_local: dict[str, int] = {}
+    renamed: dict[str, list[int]] = {}
+    start: dict[str, int] = {}
+
+    def first_named(name: str) -> int | None:
+        listed = base.by_name.get(name, [])
+        at = start.get(name, 0)
+        while at < len(listed) and fields[listed[at]].name != name:
+            at += 1
+        start[name] = at
+        heap = renamed.get(name)
+        while heap and fields[heap[0]].name != name:
+            heapq.heappop(heap)
+        found = listed[at] if at < len(listed) else None
+        if heap and (found is None or heap[0] < found):
+            found = heap[0]
+        return found
+
     for mapping in mappings:
         variable = mapping.get("variable")
         prop = mapping.get("property")
         required = mapping.get("required")
         if not variable:
             continue
-        match = None
-        if prop and prop in by_path:
-            match = by_path[prop]
-        elif variable in by_name:
-            match = by_name[variable]
-        else:
-            match = next((item for item in fields if item.path and local_name(item.path) == variable), None)
-        if match:
-            match.variable = str(variable)
-            match.name = str(variable)
+        # A mapping with no hydra:property matches by its variable's name only.
+        at = base.by_path.get(prop, more_path.get(prop)) if prop else None
+        if at is None:
+            at = first_named(variable)
+        if at is None:
+            at = base.by_local.get(variable, more_local.get(variable))
+        if at is not None:
+            match = copy.copy(fields[at])
+            match.variable = variable
+            match.name = variable
             if required:
                 match.required = True
                 if not match.min_count:
                     match.min_count = 1
+            if fields[at].name != variable:
+                heapq.heappush(renamed.setdefault(variable, []), at)
+            fields[at] = match
         else:
-            fields.append(Field(
-                name=str(variable), path=str(prop) if prop else None,
-                variable=str(variable), required=bool(required),
+            added = Field(
+                name=variable, path=prop or None,
+                variable=variable, required=bool(required),
                 min_count=1 if required else 0, max_count=1,
-            ))
+            )
+            fields.append(added)
+            at = len(fields) - 1
+            if added.path:
+                more_path.setdefault(added.path, at)
+                more_local.setdefault(local_name(added.path), at)
+            heapq.heappush(renamed.setdefault(added.name, []), at)
     return fields
 
 
@@ -1456,9 +1732,58 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
     returns = literal(index.get(node, P_RETURNS))
     template, mappings, template_is_target = _template_of(index, node)
     target = None if template_is_target else (literal(index.get(node, P_TARGET)) or literal(index.get(node, P_HMDTARGET)))
+    destructive_flag, writes_flag = _hint_flags(index, node)
+    read_only = truthy(literal(index.get(node, P_READONLY)))
+    destructive = truthy(literal(index.get(node, P_DESTRUCTIVE)))
+    control = Control(
+        id=str(node.get("@id") or rel), rel=str(rel), method=method,
+        title=str(title or ""), description=str(description or ""),
+        media_type=str(media) if media else None,
+        expects=_text(expects) if expects else None,
+        returns=str(returns) if returns else None,
+        target=str(target) if target else None, template=template,
+        read_only=False if writes_flag else read_only,
+        idempotent=truthy(literal(index.get(node, P_IDEMPOTENT))),
+        destructive=True if destructive_flag else destructive,
+        types=index.types_of(node), source=source, base=index.ctx.base,
+    )
+    control.__dict__["_build"] = lambda: _control_inputs(index, node, expects_raw, expects, mappings)
+    return control
+
+
+def _duplicate_problem(fields: list[Field]) -> str | None:
+    duplicate = _duplicate_name(fields)
+    return (f"two input fields are both named {duplicate!r}, so their values could not be told apart; "
+            "this control is not invoked") if duplicate else None
+
+
+def _shared_shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], str | None, _FieldIndex | None]:
+    """The fields a SHACL shape or a hydra:Class gives, built once per shape
+    node however many controls name it, with the problem they give and their
+    _FieldIndex; a JSON Schema written in a control is its own. The list is
+    shared, so it is never changed: _merge_mapping_fields copies."""
+    shape = None if _is_json_schema(_json_value(shape_ref)) else index.node(_json_value(shape_ref))
+    if shape is None:
+        fields = _shape_fields(index, shape_ref)
+        return fields, _duplicate_problem(fields), None
+    hit = index.shapes.get(id(shape))
+    if hit is None or hit[0] is not shape:
+        fields = _shape_fields(index, shape_ref)
+        hit = index.shapes[id(shape)] = (shape, fields, _duplicate_problem(fields), _FieldIndex(fields))
+    return hit[1], hit[2], hit[3]
+
+
+def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, expects: Any,
+                    mappings: list[dict[str, Any]]) -> tuple[list[Field], str | None, str | None]:
+    """A control's input fields, from its inline fields or the shape
+    hydra:expects names, joined to its template's mappings; the problem that
+    keeps it from being invoked, if any; and a warning to show with it. The
+    page's controlInputs is the same."""
     fields: list[Field] = []
     inline = node.get("fields")
     warning = None
+    problem = None
+    base: _FieldIndex | None = None
     if isinstance(inline, list) and inline and isinstance(inline[0], dict) and (
         "name" in inline[0] or "path" in inline[0] or "datatype" in inline[0]
     ):
@@ -1474,32 +1799,17 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
                 description=item.get("description"),
                 required=(_inty(item.get("minCount")) or 0) >= 1,
             ))
+        problem = _duplicate_problem(fields)
     elif expects_raw is not None:
         shape_ref = expects_raw[0] if isinstance(expects_raw, list) and expects_raw else expects_raw
-        fields = _shape_fields(index, shape_ref)
+        fields, problem, base = _shared_shape_fields(index, shape_ref)
         if not fields and not _is_json_schema(shape_ref):
             warning = (f"hydra:expects names {_text(expects) or 'a shape'}, which this document does not describe, so no "
                        "input fields were built: what the server expects is not known here.")
-    fields = _merge_mapping_fields(fields, mappings)
-    duplicate = _duplicate_name(fields)
-    destructive_flag, writes_flag = _hint_flags(index, node)
-    read_only = truthy(literal(index.get(node, P_READONLY)))
-    destructive = truthy(literal(index.get(node, P_DESTRUCTIVE)))
-    return Control(
-        id=str(node.get("@id") or rel), rel=str(rel), method=method,
-        title=str(title or ""), description=str(description or ""),
-        media_type=str(media) if media else None,
-        expects=_text(expects) if expects else None,
-        returns=str(returns) if returns else None,
-        target=str(target) if target else None, template=template, fields=fields,
-        read_only=False if writes_flag else read_only,
-        idempotent=truthy(literal(index.get(node, P_IDEMPOTENT))),
-        destructive=True if destructive_flag else destructive,
-        types=index.types_of(node), source=source, base=index.ctx.base,
-        problem=(f"two input fields are both named {duplicate!r}, so their values could not be told apart; "
-                 "this control is not invoked") if duplicate else None,
-        warning=warning,
-    )
+    if mappings:
+        fields = _merge_mapping_fields(fields, mappings, base)
+        problem = _duplicate_problem(fields)
+    return fields, problem, warning
 
 
 def extract_controls(index: NodeIndex, source: str) -> list[Control]:
@@ -1512,15 +1822,19 @@ def extract_controls(index: NodeIndex, source: str) -> list[Control]:
             seen.add(id(node))
             candidates.append(node)
 
+    # A class many nodes name is read once, so its operations cost their number once.
+    classes: set[int] = set()
     for node in index.order:
         for pred in (P_AFFORDANCE, P_CONTROL, P_SUPOP, P_OPERATION):
             for item in as_list(index.get(node, pred)):
                 add_candidate(index.node(item) or (item if isinstance(item, dict) else None))
         for item in as_list(index.get(node, P_SUPCLASS)):
             cls = index.node(item)
-            if cls:
-                for op in as_list(index.get(cls, P_SUPOP)):
-                    add_candidate(index.node(op) or (op if isinstance(op, dict) else None))
+            if not cls or id(cls) in classes:
+                continue
+            classes.add(id(cls))
+            for op in as_list(index.get(cls, P_SUPOP)):
+                add_candidate(index.node(op) or (op if isinstance(op, dict) else None))
         if _looks_like_operation(index, node):
             add_candidate(node)
     for node in candidates:
@@ -1606,7 +1920,10 @@ WEB_SCHEMES = ("http", "https")
 
 
 def is_web_url(url: str | None) -> bool:
-    return bool(url) and urllib.parse.urlsplit(str(url)).scheme.lower() in WEB_SCHEMES
+    """Whether a URL's scheme, read as RFC 3986 reads it (and the page's
+    isWebUrl does), is http or https, in any case."""
+    scheme = _split_iri(url)[0] if isinstance(url, str) else None
+    return scheme is not None and scheme.lower() in WEB_SCHEMES
 
 
 def _require_web_url(url: str, refused: str = "nothing was sent to") -> None:
@@ -1652,9 +1969,9 @@ def http_request(url: str, method: str = "GET", headers: dict[str, str] | None =
     """The status, headers and body of a request, and the address the answer
     is the document at: the URL after any redirects, as JSON-LD takes a
     document's base from, except that a 303 See Other leaves it at the URL that
-    answered 303. The URL is sent as its URI form (_iri_to_uri)."""
-    url = _iri_to_uri(url)
+    answered 303. The URL is sent exactly as _request_url writes it."""
     _require_web_url(url)
+    url = _request_url(url)
     req_headers = {"User-Agent": USER_AGENT}
     if headers:
         req_headers.update(headers)
@@ -2269,23 +2586,34 @@ def classify_transport(control: Control, descriptor_url: str) -> str:
         return "mcp"
     if is_junction_target(control.target, descriptor_url, control.id, control.base):
         return "junction"
-    if control.target and control.target.startswith(("http://", "https://")):
+    if is_web_url(control.target):
         return "http"
     if control.rel:
         return "mcp"
     return "unknown"
 
 
+def _form_quote(text: str, safe: str = "", encoding: str | None = None, errors: str | None = None) -> str:
+    """A query name or value as a browser's URLSearchParams writes it
+    (application/x-www-form-urlencoded): letters, digits and "*-._" as they
+    are, a space as "+", and every other byte of its UTF-8 percent-encoded,
+    "~" included."""
+    return urllib.parse.quote_plus(text, safe="*", encoding=encoding, errors=errors).replace("~", "%7E")
+
+
 def add_query_params(url: str, params: dict[str, Any]) -> str:
+    """Fields as query parameters. A parameter the address already carries
+    under a field's name is replaced, not added to, and the query is written
+    as the page's addQuery has URLSearchParams write it, byte for byte. A URL
+    with no field to add is returned as it is."""
+    keys = [key for key, val in params.items() if val is not None and val != ""]
+    if not keys:
+        return url
     parts = urllib.parse.urlsplit(url)
     pairs = urllib.parse.parse_qsl(parts.query, keep_blank_values=True)
-    keep = []
-    for key, val in pairs:
-        if key not in params:
-            keep.append((key, val))
-    for key, val in params.items():
-        if val is None or val == "":
-            continue
+    keep = [(key, val) for key, val in pairs if key not in keys]
+    for key in keys:
+        val = params[key]
         if isinstance(val, list):
             for item in val:
                 if item is not None and item != "":
@@ -2294,7 +2622,8 @@ def add_query_params(url: str, params: dict[str, Any]) -> str:
             keep.append((key, json.dumps(val, ensure_ascii=False, separators=(",", ":"))))
         else:
             keep.append((key, _template_scalar(val)))
-    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(keep), parts.fragment))
+    query = urllib.parse.urlencode(keep, quote_via=_form_quote)
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
 def _raw_content_type(fld: Field) -> str:
@@ -2336,12 +2665,16 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
         notes.append(f"Expanded hydra:IriTemplate {control.template}")
         if transport != "http":
             notes.append("The template does not expand to an http or https URL; hmc.py does not fetch it.")
+        else:
+            # Checked and written as it will be sent before parameters are added, so
+            # adding them cannot turn an address that would be refused into one that is not.
+            url = _request_url(url)
         used = _template_variables(control.template)
         leftover = {k: v for k, v in params.items() if k not in used}
         if leftover and safe and transport == "http":
             url = add_query_params(url, leftover)
     elif transport == "http" and control.target:
-        url = control.target
+        url = _request_url(control.target)
         if safe and params:
             url = add_query_params(url, params)
             notes.append("Appended fields as query parameters on hydra:target")
@@ -2373,8 +2706,10 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
             body = values
             body_text = json.dumps(values, indent=2, ensure_ascii=False)
             headers.setdefault("Content-Type", "application/json")
+    # An address that is sent is shown exactly as it is sent; one that is not
+    # (a template that does not give http or https) in its URI form.
     if url:
-        url = _iri_to_uri(url)
+        url = _request_url(url) if is_web_url(url) else _iri_to_uri(url)
     return RequestPlan(control=control, transport=transport, method=method, url=url,
                        headers=headers, body=body, body_text=body_text, fields=values,
                        mcp=mcp, notes=notes)
@@ -2444,6 +2779,8 @@ def print_control_table(descriptor: Descriptor) -> None:
     say()
     safe = [c for c in descriptor.controls if not c.unsafe]
     unsafe = [c for c in descriptor.controls if c.unsafe]
+    # The names of a field list several controls share are written once.
+    names_of: dict[int, tuple[list[Field], str]] = {}
     for label, group in (("Safe (GET / read)", safe), ("Unsafe (writes and non-GET)", unsafe)):
         say(f"== {label} ({len(group)}) ==")
         if not group:
@@ -2458,11 +2795,14 @@ def print_control_table(descriptor: Descriptor) -> None:
                 say(f"         target: {target}")
             if control.media_type:
                 say(f"         media: {control.media_type}")
-            if control.fields:
+            fields = control.fields
+            if fields:
                 # * marks a required field, [] one that takes a list of values.
-                names = ", ".join(("*" if f.required or (f.min_count or 0) >= 1 else "") + f.name + ("[]" if f.multi else "")
-                                  for f in control.fields)
-                say(f"         fields: {names}")
+                hit = names_of.get(id(fields))
+                if hit is None or hit[0] is not fields:
+                    hit = names_of[id(fields)] = (fields, ", ".join(
+                        ("*" if f.required or (f.min_count or 0) >= 1 else "") + f.name + ("[]" if f.multi else "") for f in fields))
+                say(f"         fields: {hit[1]}")
             for note in (control.problem, control.warning):
                 if note:
                     say(f"         note: {note}")

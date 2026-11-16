@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-tTKagxNGhi5Ez1iO56lN4l6c8h2gK6bHQMzQG16kIL4='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-LQNUqqERrtUXuSuSqrmaKGSHtbPYq9E4TK5kBNnRGbI='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -311,17 +311,81 @@ function iriToUri(iri) {
   if (authority != null && !ASCII_ONLY.test(authority)) {
     const at = authority.lastIndexOf("@");
     const userinfo = at >= 0 ? authority.slice(0, at) : null;
-    const hostport = authority.slice(at + 1);
-    const colon = hostport.startsWith("[") ? -1 : hostport.indexOf(":");
-    let host = colon >= 0 ? hostport.slice(0, colon) : hostport;
+    const { host: rawHost, port } = hostAndPort(authority.slice(at + 1));
+    let host = rawHost;
     try { host = new URL("https://" + host + "/").hostname; } catch { host = enc(host); }
-    authority = (userinfo == null ? "" : enc(userinfo) + "@") + host + (colon >= 0 ? hostport.slice(colon) : "");
+    authority = (userinfo == null ? "" : enc(userinfo) + "@") + host + (port == null ? "" : ":" + port);
   }
   return joinIri({ scheme: p.scheme, authority, path: enc(p.path), query: enc(p.query), fragment: enc(p.fragment) });
+}
+// An authority's host and port, without user information: a bracketed IPv6
+// host keeps its brackets, and its port is what follows "]:". The port is null
+// when there is none. hmc.py's _host_and_port is the same.
+function hostAndPort(hostport) {
+  if (hostport.startsWith("[")) {
+    const close = hostport.indexOf("]");
+    if (close >= 0 && hostport[close + 1] === ":") return { host: hostport.slice(0, close + 1), port: hostport.slice(close + 2) };
+    return { host: hostport, port: null };
+  }
+  const colon = hostport.indexOf(":");
+  return colon >= 0 ? { host: hostport.slice(0, colon), port: hostport.slice(colon + 1) } : { host: hostport, port: null };
 }
 function isWebUrl(url) {
   const scheme = typeof url === "string" ? splitIri(url).scheme : null;
   return scheme != null && ["http", "https"].includes(scheme.toLowerCase());
+}
+// Why an http(s) address in URI form cannot be sent as a person reads it, or
+// null. A URL parser reads some addresses differently from the text: it takes a
+// backslash for a slash, so "https://a\@b" goes to a; drops a tab or line break
+// and encodes a space; finds a host in "https:@a" or "https:/a", which have no
+// "//"; and reads a host written as a number in any form other than four
+// decimal parts ("0x7f.1", "2130706433") as an IPv4 address. User information
+// before an "@" is refused too: fetch will not send it. hmc.py's
+// _request_url_problem is the same.
+const IPV4_CANONICAL = /^(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])(\.(25[0-5]|2[0-4][0-9]|1[0-9][0-9]|[1-9]?[0-9])){3}$/;
+function endsInNumber(host) {
+  const labels = host.split(".");
+  if (labels.length > 1 && labels[labels.length - 1] === "") labels.pop();
+  const last = labels[labels.length - 1];
+  return /^[0-9]+$/.test(last) || /^0[xX][0-9A-Fa-f]*$/.test(last);
+}
+function requestUrlProblem(uri) {
+  for (let i = 0; i < uri.length; i++) {
+    const c = uri.charCodeAt(i);
+    if (c <= 0x20 || c === 0x7f || c === 0x5c) return "the address holds a backslash, a space or a control character, which URL parsers read in different ways";
+  }
+  const p = splitIri(uri);
+  if (p.scheme == null || !["http", "https"].includes(p.scheme.toLowerCase())) return "the address is not http or https";
+  if (p.authority == null) return "the address does not name its host after \"//\"";
+  if (p.authority.includes("@")) return "the address carries user information before its host";
+  const { host, port } = hostAndPort(p.authority);
+  if (!host) return "the address names no host";
+  if (port != null && !/^[0-9]*$/.test(port)) return "the address's port is not a number";
+  if (port && Number(port) > 65535) return "the address's port is above 65535";
+  if (host.startsWith("[")) {
+    if (!/^\[[0-9A-Fa-f:.]+\]$/.test(host)) return "the address's IPv6 host is not an IPv6 address";
+  } else {
+    if (!/^[A-Za-z0-9._-]+$/.test(host)) return "the address's host is not a name of letters, digits, '.', '-' and '_'";
+    if (endsInNumber(host) && !IPV4_CANONICAL.test(host)) return "the address's host is a number written other than as four decimal parts";
+  }
+  return null;
+}
+// The exact address a request to an http(s) IRI goes to: its URI form, as the
+// URL parser writes it, with no fragment, which is never sent. The parser
+// lower-cases the scheme and host, drops a default port, removes dot segments
+// ("..", and "%2e%2e" too) and percent-encodes the characters it encodes. The
+// dry run shows this string, the host check reads it, and fetch requests it.
+// An address the parser would read differently from its text is refused
+// (requestUrlProblem). hmc.py's _request_url is the same.
+function requestUrl(iri) {
+  const uri = iriToUri(String(iri));
+  const problem = requestUrlProblem(uri);
+  if (problem) throw new Error(problem + "; nothing is sent to " + uri);
+  let u = null;
+  try { u = new URL(uri); } catch {}
+  if (!u) throw new Error("the address is not a URL; nothing is sent to " + uri);
+  u.hash = "";
+  return u.href;
 }
 
 // Keywords a context may alias with a term ("id": "@id"), and the characters
@@ -648,6 +712,8 @@ class NodeIndex {
     this.nodes = new Map();
     this.order = [];
     this.root = null;
+    // Each template node's [template, mappings], read once (templateOf).
+    this.templates = new Map();
     this._ingest(document, fetchedFrom);
   }
   // Indexes every node object at the top of the document, in its @graph (and in
@@ -685,9 +751,11 @@ class NodeIndex {
     // to its top-level node or its first named node.
     const address = [this.base, fetchedFrom, this.ctx.base].find(a => a && this.nodes.has(a));
     this.root = address ? this.nodes.get(address) : (top || firstNamed || firstAny);
-    for (const node of [...this.order]) this._harvest(node);
+    this._harvest();
   }
-  _add(node) {
+  // Adds a node, or merges its keys into the node already indexed at its @id;
+  // `added`, when given, collects the keys a merge added.
+  _add(node, added) {
     let id = node["@id"];
     if (!id || typeof id !== "string") {
       // A node with no @id gets one in place, so the object a document wrote and
@@ -702,25 +770,37 @@ class NodeIndex {
       return node;
     }
     const existing = this.nodes.get(id);
-    for (const [k, v] of Object.entries(node)) if (!(k in existing)) existing[k] = v;
+    for (const [k, v] of Object.entries(node)) {
+      if (!(k in existing)) { existing[k] = v; if (added) added.push(k); }
+    }
     return existing;
   }
   // Indexes the nodes written inside a node under an affordance-like key, and
-  // the ones inside those. A stack and a set of the nodes already walked, so a
-  // node that lists itself ends the walk instead of repeating it.
-  _harvest(node) {
-    const pending = [node];
+  // the ones inside those, starting from every node indexed so far, in order.
+  // One stack and one set of walked nodes serve the whole document, so each
+  // node's keys are walked once however many nodes name it, and a node that
+  // lists itself ends the walk. A node already walked that gains keys from
+  // another object with its @id has just those keys walked. The work is linear
+  // in the document. hmc.py's _harvest_embedded is the same.
+  _harvest() {
     const walked = new Set();
+    const pending = [];
+    for (let i = this.order.length - 1; i >= 0; i--) pending.push([this.order[i], null]);
     while (pending.length) {
-      const current = pending.pop();
-      if (walked.has(current)) continue;
-      walked.add(current);
-      for (const [key, val] of Object.entries(current)) {
+      const [current, keys] = pending.pop();
+      if (keys == null) {
+        if (walked.has(current)) continue;
+        walked.add(current);
+      }
+      for (const key of keys || Object.keys(current)) {
         const pred = this.ctx.expandKey(key);
         if (!HARVESTED.has(pred) && !HARVESTED_NAMES.has(localName(pred))) continue;
-        for (const item of asList(val)) {
+        for (const item of asList(current[key])) {
           if (item && typeof item === "object" && !Array.isArray(item) && (item["@id"] || item.action || item.method || item["@type"])) {
-            pending.push(this._add(item));
+            const added = [];
+            const node = this._add(item, added);
+            if (!walked.has(node)) pending.push([node, null]);
+            else if (added.length) pending.push([node, added]);
           }
         }
       }
@@ -961,10 +1041,16 @@ function shapeFields(index, shapeRef) {
 // The control's IRI template and its mappings, and whether the template is the
 // control's hydra:target: a hydra:IriTemplate written as the target, as
 // Interego's decoration catalogs write one, or reached through hydra:search or
-// a key named for a template. hmc.py's _template_of is the same.
+// a key named for a template. A template node many controls share is read
+// once (index.templates), so its mappings cost their size once, not once per
+// control. hmc.py's _template_of is the same.
 function templateOf(index, node) {
   const readT = (tmpl) => {
     if (!tmpl) return [null, []];
+    if (!index.templates.has(tmpl)) index.templates.set(tmpl, readTemplate(tmpl));
+    return index.templates.get(tmpl);
+  };
+  const readTemplate = (tmpl) => {
     const template = literal(index.get(tmpl, P.template));
     const mappings = [];
     for (const item of asList(index.get(tmpl, P.mapping))) {
@@ -1007,19 +1093,69 @@ function templateOf(index, node) {
   return [direct ? String(direct) : null, [], false];
 }
 
+// A min-heap of field positions.
+function heapPush(heap, x) {
+  let i = heap.push(x) - 1;
+  while (i > 0) { const up = (i - 1) >> 1; if (heap[up] <= x) break; heap[i] = heap[up]; i = up; }
+  heap[i] = x;
+}
+function heapPop(heap) {
+  const last = heap.pop();
+  if (!heap.length) return;
+  let i = 0;
+  for (;;) {
+    let c = 2 * i + 1;
+    if (c >= heap.length) break;
+    if (c + 1 < heap.length && heap[c + 1] < heap[c]) c++;
+    if (heap[c] >= last) break;
+    heap[i] = heap[c]; i = c;
+  }
+  heap[i] = last;
+}
+// Joins a template's mappings to the fields. Each mapping, in order, renames
+// the first field, in field order, whose path is its hydra:property, or else
+// the first field now named as its variable, or else the first whose path ends
+// in its variable; a mapping that matches none adds a field. The fields given
+// are not changed: a matched field is copied, so fields a shape gives several
+// controls stay as they are. Positions are looked up in maps, and the first
+// field of a name, which renames change, in a heap per name, so the work is
+// linear in the fields and mappings. hmc.py's _merge_mapping_fields is the same.
 function mergeMappings(fields, mappings) {
+  if (!mappings.length) return fields;
+  fields = fields.slice();
+  const byPath = new Map(), byLocal = new Map(), byName = new Map();
+  const named = (name, i) => { if (!byName.has(name)) byName.set(name, []); heapPush(byName.get(name), i); };
+  const note = (f, i) => {
+    if (f.path) {
+      if (!byPath.has(f.path)) byPath.set(f.path, i);
+      const local = localName(f.path);
+      if (!byLocal.has(local)) byLocal.set(local, i);
+    }
+    named(f.name, i);
+  };
+  fields.forEach(note);
+  const firstNamed = (name) => {
+    const heap = byName.get(name);
+    while (heap && heap.length && fields[heap[0]].name !== name) heapPop(heap);
+    return heap && heap.length ? heap[0] : -1;
+  };
   for (const mapping of mappings) {
     const variable = mapping.variable;
     if (!variable) continue;
-    // A mapping with no hydra:property matches by its variable's name only, as in hmc.py.
-    const match = (mapping.property && fields.find(f => f.path === mapping.property)) || fields.find(f => f.name === variable) ||
-      fields.find(f => f.path && localName(f.path) === variable);
-    if (match) {
-      match.variable = variable; match.name = variable;
+    // A mapping with no hydra:property matches by its variable's name only.
+    let at = mapping.property && byPath.has(mapping.property) ? byPath.get(mapping.property) : -1;
+    if (at < 0) at = firstNamed(variable);
+    if (at < 0 && byLocal.has(variable)) at = byLocal.get(variable);
+    if (at >= 0) {
+      const match = { ...fields[at], variable, name: variable };
       if (mapping.required) { match.required = true; if (!match.minCount) match.minCount = 1; }
+      if (fields[at].name !== variable) named(variable, at);
+      fields[at] = match;
     } else {
-      fields.push({ name: variable, path: mapping.property || null, variable, required: !!mapping.required,
-        minCount: mapping.required ? 1 : 0, maxCount: 1, datatype: null, description: "", enum: [], rawBody: false, multi: false });
+      const added = { name: variable, path: mapping.property || null, variable, required: !!mapping.required,
+        minCount: mapping.required ? 1 : 0, maxCount: 1, datatype: null, description: "", enum: [], rawBody: false, multi: false };
+      fields.push(added);
+      note(added, fields.length - 1);
     }
   }
   return fields;
@@ -1081,6 +1217,34 @@ function controlFromNode(index, node, source) {
   else if (expectsRaw && typeof expectsRaw === "object" && !Array.isArray(expectsRaw) && expectsRaw["@id"]) expects = expectsRaw["@id"];
   else expects = literal(expectsRaw);
   const [template, mappings, templateIsTarget] = templateOf(index, node);
+  const hints = hintFlags(index, node);
+  const control = {
+    id: String(node["@id"] || rel), rel: String(rel), method,
+    title: String(literal(index.get(node, P.title)) || literal(index.get(node, P.dcTitle)) || literal(index.get(node, P.label)) || shortRel(rel)),
+    description: String(literal(index.get(node, P.desc)) || literal(index.get(node, P.dcDesc)) || literal(index.get(node, P.comment)) || ""),
+    mediaType: asTextOrNull(literal(index.get(node, P.returnsCT)) || literal(index.get(node, P.media))),
+    expects: expects ? asText(expects) : null, returns: asTextOrNull(literal(index.get(node, P.returns))),
+    target: templateIsTarget ? null : asTextOrNull(literal(index.get(node, P.target)) || literal(index.get(node, P.hmdTarget))),
+    template,
+    readOnly: hints.writes ? false : truthy(literal(index.get(node, P.readOnly))),
+    idempotent: truthy(literal(index.get(node, P.idempotent))),
+    destructive: hints.destructive ? true : truthy(literal(index.get(node, P.destructive))),
+    types: index.typesOf(node), source, base: index.ctx.base
+  };
+  control.unsafe = isUnsafe(control);
+  // The fields, and the problem and warning they give, are built when first
+  // read, which is when the control is selected or invoked: the list reads
+  // none, so many controls that share one large shape cost the shape's size
+  // once, not once per control.
+  let inputs = null;
+  const build = () => inputs || (inputs = controlInputs(index, node, expectsRaw, expects, mappings));
+  for (const key of ["fields", "problem", "warning"]) Object.defineProperty(control, key, { enumerable: true, get: () => build()[key] });
+  return control;
+}
+// A control's input fields, from its inline fields or the shape hydra:expects
+// names, joined to its template's mappings; the problem that keeps it from
+// being invoked, if any; and a warning to show with it.
+function controlInputs(index, node, expectsRaw, expects, mappings) {
   let fields = [];
   let warning = null;
   const inline = node.fields;
@@ -1101,24 +1265,10 @@ function controlFromNode(index, node, source) {
   }
   fields = mergeMappings(fields, mappings);
   const duplicate = duplicateName(fields);
-  const hints = hintFlags(index, node);
-  const control = {
-    id: String(node["@id"] || rel), rel: String(rel), method,
-    title: String(literal(index.get(node, P.title)) || literal(index.get(node, P.dcTitle)) || literal(index.get(node, P.label)) || shortRel(rel)),
-    description: String(literal(index.get(node, P.desc)) || literal(index.get(node, P.dcDesc)) || literal(index.get(node, P.comment)) || ""),
-    mediaType: asTextOrNull(literal(index.get(node, P.returnsCT)) || literal(index.get(node, P.media))),
-    expects: expects ? asText(expects) : null, returns: asTextOrNull(literal(index.get(node, P.returns))),
-    target: templateIsTarget ? null : asTextOrNull(literal(index.get(node, P.target)) || literal(index.get(node, P.hmdTarget))),
-    template, fields,
-    readOnly: hints.writes ? false : truthy(literal(index.get(node, P.readOnly))),
-    idempotent: truthy(literal(index.get(node, P.idempotent))),
-    destructive: hints.destructive ? true : truthy(literal(index.get(node, P.destructive))),
-    types: index.typesOf(node), source, base: index.ctx.base,
-    problem: duplicate == null ? null : "two input fields are both named '" + duplicate + "', so their values could not be told apart; this control is not invoked",
-    warning
+  return {
+    fields, warning,
+    problem: duplicate == null ? null : "two input fields are both named '" + duplicate + "', so their values could not be told apart; this control is not invoked"
   };
-  control.unsafe = isUnsafe(control);
-  return control;
 }
 
 function extractControls(index, source) {
@@ -1126,13 +1276,17 @@ function extractControls(index, source) {
   const candidates = [];
   const seen = new Set();
   const add = (node) => { if (node && !seen.has(node)) { seen.add(node); candidates.push(node); } };
+  // A class many nodes name is read once, so its operations cost their number once.
+  const classes = new Set();
   for (const node of index.order) {
     for (const pred of [P.affordance, P.control, P.supOp, P.operation]) {
       for (const item of asList(index.get(node, pred))) add(index.node(item) || (item && typeof item === "object" ? item : null));
     }
     for (const item of asList(index.get(node, P.supClass))) {
       const cls = index.node(item);
-      if (cls) for (const op of asList(index.get(cls, P.supOp))) add(index.node(op) || (op && typeof op === "object" ? op : null));
+      if (!cls || classes.has(cls)) continue;
+      classes.add(cls);
+      for (const op of asList(index.get(cls, P.supOp))) add(index.node(op) || (op && typeof op === "object" ? op : null));
     }
     if (looksLikeOp(index, node)) add(node);
   }
@@ -1689,7 +1843,7 @@ function classifyTransport(control, descriptorUrl) {
   }
   if (isMcpTool(control.target)) return "mcp";
   if (isJunction(control.target, descriptorUrl, control)) return "junction";
-  if (control.target && /^https?:\/\//.test(control.target)) return "http";
+  if (isWebUrl(control.target)) return "http";
   return control.rel ? "mcp" : "unknown";
 }
 // Fields as query parameters. A parameter the address already carries under a
@@ -1738,11 +1892,14 @@ function resolvePlan(control, values, descriptorUrl) {
     transport = isWebUrl(url) ? "http" : "unknown";
     notes.push("Expanded hydra:IriTemplate " + control.template);
     if (transport !== "http") notes.push("The template does not expand to an http or https URL; nothing is sent to it.");
+    // Checked and written as it will be sent before parameters are added, so
+    // adding them cannot turn an address that would be refused into one that is not.
+    else url = requestUrl(url);
     const used = templateVariables(control.template);
     const leftover = Object.fromEntries(Object.entries(params).filter(([k]) => !used.has(k)));
     if (Object.keys(leftover).length && safe && transport === "http") url = addQuery(url, leftover);
   } else if (transport === "http" && control.target) {
-    url = control.target;
+    url = requestUrl(control.target);
     if (safe && Object.keys(params).length) {
       url = addQuery(url, params);
       notes.push("Appended fields as query parameters on hydra:target");
@@ -1771,7 +1928,9 @@ function resolvePlan(control, values, descriptorUrl) {
       body = values; bodyText = JSON.stringify(values, null, 2); headers["Content-Type"] = headers["Content-Type"] || "application/json";
     }
   }
-  if (url) url = iriToUri(url);
+  // An address that is sent is shown exactly as it is sent; one that is not
+  // (a template that does not give http or https) in its URI form.
+  if (url) url = isWebUrl(url) ? requestUrl(url) : iriToUri(url);
   return { control, transport, method, url, headers, body, bodyText, fields: values, mcp, notes, unsafe: control.unsafe };
 }
 

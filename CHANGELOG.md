@@ -242,6 +242,62 @@ command-line test, mostly both, that failed before. That module raises the lint
 gate's `MIN_FILES` to 683, the number the gate named. The CSP script hash is
 updated.
 
+**The address shown is the address sent.** A review found that the page's dry
+run showed an address as RFC 3986 reads it while fetch requested the one the URL
+parser writes, and the two can name different hosts: a template
+`https://evil.example\@good.example{?q}` dry-ran as an address that reads as
+good.example and was fetched from evil.example, as was `https:{+u}` with `u` set
+to `@evil.example/x`, and a target ending `/notes/%2e%2e/%2e%2e/admin` dry-ran as
+written and fetched `/admin`. `hmc.py` sent what it printed, but failed on a
+space and on a host it could not resolve, so the clients also disagreed on what
+was sent. Both now refuse, before anything is sent, an address a parser reads
+differently from its text: one with a backslash, a space or a control
+character, `http(s):` with no `//`, user information, a host that is neither a
+plain name nor a bracketed IPv6 address, a port past 65535, or a host written as
+a number in a form other than four decimal parts. Every other address is shown
+and sent as the parser writes it, with no fragment: the page has the browser's
+parser write it, and `hmc.py` writes the same string. On some 10,000 generated
+addresses the two clients gave the same string or the same refusal, except for
+the hosts with ß that `hmc.py` refuses. Fields go into a query as
+`URLSearchParams` writes them in both, so `~` is `%7E` and `*` is left as it is,
+where `hmc.py` wrote the reverse, and `hmc.py` rewrites a query the address
+already carries only when a field is added, as the page does. A target with an
+upper-case scheme is an `http` control in both, not an MCP call. `hmc.py`
+refuses a host with ß, ς, ZWJ or ZWNJ, which Python's IDNA 2003 maps to another
+domain than a browser does, and its docstring no longer claims fetch's IDNA; the
+page keeps the port of a bracketed IPv6 host after non-ASCII user information
+in an address it shows but does not send. The README's Safety section says all
+of this.
+
+**Cost follows a document's size, not its shape.** The same review measured two
+ways a few hundred kilobytes made both clients' work grow as the product of two
+sizes: nodes that each named one node holding many operations walked those
+operations again for every naming node, and controls whose `hydra:expects`
+named one shape each built that shape's fields. Three more turned up while
+fixing them: controls sharing one IRI template each read all its mappings; each
+mapping searched every field before it, so 7,000 mappings in one control took
+the page 13 s; and nodes naming one `hydra:Class` each listed its operations
+again. Now one walk covers the whole document, and a node that gains keys from
+a later object with its `@id` has just those keys walked; a template node and a
+class are read once; a control's fields, and the problem and warning they give,
+are built when first read, so the page's list builds none and `hmc.py describe`
+builds one control's; `hmc.py` builds each shape's fields once, and its listing
+writes a shared list's names once; and mappings are matched through maps and a
+heap per name. The results are the ones the old code gave: the new matching
+agreed with the page's old search on 4,000 random cases, and the new walk with
+the old one on 1,500 random documents, in both clients. Five such documents, of
+80 to 510 kB, are in the shared fixtures, and a test in each file opens each one
+with a 3 s budget; before, they took the page 7 to 17 s and `hmc.py` 6 to 8 s.
+
+**One field per mapping name.** `hmc.py` looked mappings up in maps built once,
+before any mapping renamed a field, so two mappings of one variable, or a
+mapping that renamed a shape's field followed by a bare mapping of the name it
+gave, made two fields of one name, and the control was refused where the page
+made one field. `hmc.py` now matches as the page does. The test is shared: the
+page's half passed before and pins what it already did, and `hmc.py`'s failed.
+Every other new test in both files failed before. The CSP script hash is
+updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

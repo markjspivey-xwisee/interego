@@ -24,7 +24,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { sharedDescriptors } from './hypermedia-client-fixtures.js';
+import { COST_CASES, costDescriptors, sharedDescriptors } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -323,6 +323,8 @@ const DOCS: Record<string, { type: string; text: string }> = {
 };
 // The documents hmc.py's test reads too, served from HOST.
 const SHARED = sharedDescriptors(HOST);
+// Large documents whose shape once cost a product of two of their sizes, built once.
+const COST = costDescriptors(HOST);
 // Documents whose fetch lands somewhere else after redirects: fetch reports that address as the
 // response's url. /dir lands at /dir/, the usual trailing-slash redirect; /short at another host and
 // path, as a w3id or purl name does.
@@ -365,6 +367,7 @@ function load(query: string, extra: Record<string, { type: string; text: string 
         const doc = Object.prototype.hasOwnProperty.call(DOCS, u.pathname) ? DOCS[u.pathname] : undefined;
         if (doc) return respond(doc.text, doc.type);
         if (Object.prototype.hasOwnProperty.call(SHARED, u.pathname)) return respond(SHARED[u.pathname]!, 'application/ld+json');
+        if (Object.prototype.hasOwnProperty.call(COST, u.pathname)) return respond(COST[u.pathname]!, 'application/ld+json');
         const moved = Object.prototype.hasOwnProperty.call(LANDED, u.pathname) ? LANDED[u.pathname] : undefined;
         if (moved) return Object.defineProperty(respond(moved.text, 'application/ld+json'), 'url', { value: moved.landed });
         const kind = u.pathname.replace('/body/', '');
@@ -1368,6 +1371,81 @@ describe('hypermedia client: forms', () => {
     const empty = await linkPlan('/mincount', 'urn:mincount', {});
     try { expect(empty.shown).toContain("missing required field 'a'"); } finally { empty.t.dom.window.close(); }
   });
+});
+
+describe('hypermedia client: the address sent is the address shown', () => {
+  /** Dry-run `rel` with an ?invoke= link, then invoke it with another, and return both. */
+  async function shownAndSent(rel: string, fields: Record<string, string> = {}) {
+    const shown = await linkPlan('/sent', rel, fields);
+    shown.t.dom.window.close();
+    const sent = await linkPlan('/sent', rel, fields, false);
+    sent.t.dom.window.close();
+    return { plan: shown.plan, text: shown.shown, sentText: sent.shown, calls: sent.t.calls.filter(c => !c.url.startsWith(`${HOST}/sent`)) };
+  }
+
+  it('shows the exact address it sends to, as the URL parser writes it, and sends it there', async () => {
+    const cases: Array<[string, Record<string, string>, string]> = [
+      // "%2e%2e" is ".." to the URL parser, so this goes to /admin, and the dry run says so.
+      ['urn:sent-dots', {}, `${HOST}/admin`],
+      // An upper-case scheme is http(s) too; the host is lower-cased, the default port, the dot
+      // segments and the fragment dropped, and the quotes encoded.
+      ['urn:sent-canon', {}, 'https://good.example/A/c?x=%22y%22&z=%27w%27'],
+      // The query is written as URLSearchParams writes it, the same bytes hmc.py writes.
+      ['urn:sent-query', { a: '~*x y' }, `${HOST}/q?keep=a+b&a=%7E*x+y`],
+      // IDNA as the browser does it, which IDNA 2003 would map to strasse.example.
+      ['urn:sent-sharp-s', {}, 'https://xn--strae-oqa.example/x'],
+    ];
+    for (const [rel, fields, url] of cases) {
+      const { plan, calls } = await shownAndSent(rel, fields);
+      expect([plan!.transport, plan!.url], rel).toEqual(['http', url]);
+      expect(calls.map(c => c.url), rel).toEqual([url]);
+    }
+  });
+
+  it('shows an address it does not send in its URI form, port and all', async () => {
+    const { t, plan } = await linkPlan('/sent', 'urn:sent-v6', {});
+    try { expect([plan!.transport, plan!.url]).toEqual(['unknown', 'ftp://%C3%BCser@[::1]:8443/x']); } finally { t.dom.window.close(); }
+  });
+
+  it.each([
+    ['urn:sent-backslash', { q: 'secret' }, 'the address holds a backslash, a space or a control character'],
+    ['urn:sent-plus', { u: '@evil.example/x' }, 'the address does not name its host after "//"'],
+    ['urn:sent-user', {}, 'the address carries user information before its host'],
+    ['urn:sent-number', {}, "the address's host is a number written other than as four decimal parts"],
+    ['urn:sent-tab', {}, 'the address holds a backslash, a space or a control character'],
+  ])('refuses %s, an address a URL parser reads differently from its text, and sends nothing', async (rel, fields, message) => {
+    const { plan, text, sentText, calls } = await shownAndSent(rel, fields);
+    expect(plan).toBeNull();
+    for (const shown of [text, sentText]) expect(shown).toContain(`The request could not be built, so nothing was sent: ${message}`);
+    expect(calls).toEqual([]);
+  });
+});
+
+describe('hypermedia client: template mappings', () => {
+  it('makes one field of two mappings of one variable, and of a renaming mapping and a bare one', async () => {
+    for (const rel of ['urn:twin-variable', 'urn:twin-renamed']) {
+      const { t, plan } = await linkPlan('/twin-mappings', rel, { q: 'v' });
+      try {
+        expect(formFields(t.document), rel).toEqual(['q']);
+        expect(plan!.url, rel).toBe(`${HOST}/s?q=v`);
+      } finally { t.dom.window.close(); }
+    }
+  });
+});
+
+describe('hypermedia client: a document\'s size, not its shape, sets the cost', () => {
+  it.each(COST_CASES)('lists %s and dry-runs %s within the budget', async (path, rel, controls, fields) => {
+    const started = Date.now();
+    const t = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'), { timeout: 60_000 });
+      expect(Date.now() - started, 'link to dry run').toBeLessThan(3_000);
+      expect(document.querySelectorAll('.card').length).toBe(controls);
+      expect(formFields(document).length).toBe(fields);
+      expect(document.getElementById('result')!.textContent).toContain('Dry run — nothing was sent.');
+    } finally { t.dom.window.close(); }
+  }, 60_000);
 });
 
 describe('hypermedia client: Content-Security-Policy', () => {
