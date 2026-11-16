@@ -1,5 +1,51 @@
 # Changelog
 
+## 2026-11-15 — Foxxi's profile declares only its own terms, and its projector writes the xapi-x keys
+
+Three things left open when the Foxxi profile server began serving the xapi-x
+profile.
+
+**Foxxi's profile no longer declares other publishers' terms.** It listed 13
+ADL and cmi5 verbs and 4 ADL activity types as concepts of its own, each with a
+label and a definition Foxxi wrote and `inScheme` Foxxi's version. Those terms
+are their publishers'. The statements go on using them, because cmi5 and xAPI
+fix those IRIs (a cmi5 statement uses cmi5's verbs; voiding is xAPI's verb),
+and the templates go on naming them. They are now listed as external terms, by
+IRI and type (`FOXXI_EXTERNAL_TERMS`), with the two activity types the
+templates named and the profile never declared. `verbIsDeclared` still answers
+true for a verb the templates name, so nothing an emitter may store changed.
+One thing does change for a writer on the profile server: a draft whose
+templates name an ADL or cmi5 term used to lint clean because Foxxi's profile
+declared it. It now has to list that term as external, as it does any other
+term it does not define. Versions already published are not re-linted.
+
+**Foxxi's projector writes the `iep#` keys** (xapi-x decision 6, first half).
+A projected descriptor's statement now carries `sourceDescriptor`,
+`modalStatus` and `projectionLossy` under `result.extensions`, the keys the
+lrs-adapter writes and the xapi-x profile declares, beside its own `foxxi:`
+keys. Foxxi's three descriptor templates hold a statement that carries them to
+them. The rules are `recommended`: a projection stored before today has only
+the `foxxi:` keys and still follows the profile. A voiding statement carries
+none of them.
+
+**Built-in profiles are kept with examples.** A profile published from a draft
+is refused without an example for every template and primary pattern, and
+serves them. A built-in profile was never published and served none. Each is
+now kept with examples that pass that lint, built by the emitters where an
+emitter builds the statement, and `GET /xapi/profiles/examples?iri=` answers
+for them with `builtIn: true` and no `publishedAt`.
+
+Not built. Foxxi's profile is still version `v/1` and its document changed in
+place, as it has before: a built-in profile is served from code and has no
+second version. A reader that took its concept list earlier holds 17 concepts
+the document no longer has; their IRIs were never Foxxi's and still resolve at
+their publishers'. The second half of decision 6 is not done: the projector
+still writes `foxxi:substrateDescriptorIri` and the templates still require
+it. A statement already stored is not rewritten: the bridge skips a projection
+whose id it already holds, so a descriptor projected before today keeps the
+statement it has. No lint rule refuses a profile that declares another publisher's term;
+this is fixed for Foxxi's profile and tested there.
+
 ## 2026-11-16 — xapi-x: the adapter writes the decorations, the profile is at version 2, and the rules are a lint
 
 The xapi-x design listed what was left after its first slice. This does the part
