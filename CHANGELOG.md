@@ -34,6 +34,38 @@ evidence link or an offer, and the lint is not yet an affordance. Foxxi's
 projector writing the `iep#` keys is in another branch; it does not yet write
 the category or what a statement supersedes, and it projects a Quoted descriptor
 with an outcome verb, which rule X4 finds.
+
+## 2026-11-15 — Foxxi: a profile is added or taken down only once its durable write is acknowledged
+
+Follow-up to the publication fix below, for the two whole-document routes of
+the xAPI Profile Server that it left as they were.
+
+`ProfileServer.add` held a version first and wrote it to the pod second.
+`remove` dropped a profile first and recorded the removal second. When the
+write failed both still answered `ok: true` beside `persisted: false`. An added
+version answered until the next restart and then vanished. A version that had
+been replaced came back as the document it was before. A profile that had been
+taken down answered again after a restart.
+
+Both now write first. A version is held, and a profile stops answering, only
+when the pod says `persisted: true`. Otherwise the route answers 503 with
+`ok: false`, `persisted: false` and a `retry` address, nothing has changed, and
+the same request can be sent again. A server with no durable store adds and
+removes nothing.
+
+While a write is on its way the version and its profile are reserved, as they
+already were for a publication, and a profile is changed by one write at a
+time: one addition, one publication or one removal. Records are replayed in
+the order of their times, so two writes under one profile acknowledged out of
+that order could leave the running server and a restarted one holding
+different things, or resolving the profile to different versions. The second
+request gets 409.
+
+Callers that read `persisted: false` on a 200 from
+`/agent/xapi-profiles/add` or `/remove` will not see it again: that case is
+now a 503.
+
+
 ## 2026-11-15 — Native commits: the head is not read back or uploaded twice, and reads open no transaction
 
 After the staging change of 2026-11-13 a live single-statement write is about
