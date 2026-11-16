@@ -121,8 +121,52 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       ] },
     ])).replace('"COUNT-TWO"', '2.0') }),
     '/num-target': () => ({ type: 'application/json', body: '{"ok":true}' }),
+    // The page test's compacted descriptor: each sh:datatype a compact IRI in a node reference, a
+    // string under a term typed "@id" (dt) or "@vocab" (vdt), or a plain "xsd:integer" string; and
+    // three node-level shapes that each type a whole body.
+    '/compact-types': json({ '@context': [CTX, { xsd: XSD, rdf: RDF_NS, dt: { '@id': 'sh:datatype', '@type': '@id' } },
+      { '@vocab': XSD, vdt: { '@id': 'sh:datatype', '@type': '@vocab' } }],
+      '@id': `${base}/compact-types`,
+      'iep:affordance': [
+        { '@id': `${base}/compact-types#w`, '@type': 'iep:Affordance', 'iep:action': 'urn:compact-types', 'hydra:method': 'POST',
+          'hydra:title': 'Compact types write', 'hydra:target': `${base}/num-target`, 'hydra:expects': { '@id': `${base}/compact-types#S` } },
+        ...['integer', 'boolean', 'JSON'].map(kind => ({ '@id': `${base}/compact-types#${kind}`, '@type': 'iep:Affordance',
+          'iep:action': `urn:${kind}-body`, 'hydra:method': 'POST', 'hydra:title': `Compact ${kind} body`, 'hydra:target': `${base}/num-target`,
+          'hydra:expects': { '@id': `${base}/compact-types#${kind}-shape` } })),
+      ],
+      '@graph': [
+        { '@id': `${base}/compact-types#S`, '@type': 'sh:NodeShape', 'sh:property': [
+          { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': { '@id': 'xsd:integer' } },
+          { 'sh:path': 'urn:p:flag', 'sh:name': 'flag', 'sh:datatype': { '@id': 'xsd:boolean' } },
+          { 'sh:path': 'urn:p:data', 'sh:name': 'data', 'sh:datatype': { '@id': 'rdf:JSON' } },
+          { 'sh:path': 'urn:p:size', 'sh:name': 'size', dt: 'xsd:long' },
+          { 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', vdt: 'double' },
+          { 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:datatype': 'xsd:integer' },
+        ] },
+        ...[['integer', 'xsd:integer'], ['boolean', 'xsd:boolean'], ['JSON', 'rdf:JSON']].map(([kind, dt]) => ({
+          '@id': `${base}/compact-types#${kind}-shape`, '@type': 'sh:NodeShape', 'rdfs:label': `${kind} body`, 'sh:datatype': { '@id': dt } })),
+      ] }),
+    // The page test's relative targets, served at a known address, against an explicit @base, and
+    // against an @base that makes a relative target a local file.
+    '/rel/sub/desc': json({ '@context': REL_CTX, '@id': `${base}/rel/sub/desc`, 'iep:affordance': [
+      relOp('root', 'Root api', { '@id': '/api' }), relOp('sibling', 'Sibling api', { '@id': 'api' }), relOp('parent', 'Parent x', { '@id': '../x' }),
+      { '@id': '#coerced', '@type': 'iep:Affordance', action: 'iep:relCoerced', 'hydra:method': 'GET', 'hydra:title': 'Coerced target', target: 'coerced?a=1' },
+      relOp('bare', 'Bare fragment', { '@id': '#frag' }), relOp('doc', 'Document fragment', { '@id': `${base}/rel/sub/desc#frag2` }),
+    ] }),
+    '/rel-base': json({ '@context': [REL_CTX, { '@base': `${base}/other/dir/` }], '@id': `${base}/rel-base`,
+      'iep:affordance': [relOp('based', 'Based api', { '@id': 'api' }), relOp('based-frag', 'Based fragment', { '@id': '#frag' })] }),
+    '/rel-file': json({ '@context': [REL_CTX, { '@base': new URL('.', secretUrl).href }], '@id': `${base}/rel-file`,
+      'iep:affordance': [relOp('file', 'File target', { '@id': 'secret.txt' })] }),
+    '/api': () => ({ type: 'text/plain', body: 'fine' }),
   };
 }
+const CTX = { hydra: 'http://www.w3.org/ns/hydra/core#', iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
+  sh: 'http://www.w3.org/ns/shacl#' };
+const RDF_NS = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
+// A plain string under `target` or `action` is an IRI here, as the kernel's context makes it.
+const REL_CTX = { ...CTX, target: { '@id': 'hydra:target', '@type': '@id' }, action: { '@id': 'iep:action', '@type': '@id' } };
+const relOp = (id: string, title: string, target: unknown) => ({ '@id': `#${id}`, '@type': 'iep:Affordance',
+  'iep:action': `urn:rel-${id}`, 'hydra:method': 'GET', 'hydra:title': title, 'hydra:target': target });
 
 interface Run { code: number | null; stdout: string; stderr: string; ms: number; timedOut: boolean }
 /** Run hmc.py without blocking this process, which is also the server it talks to. */
@@ -316,6 +360,91 @@ describe('hmc.py: numbers in an enum', () => {
     const { r } = await plan([given]);
     expect(r.code, r.stdout + r.stderr).toBe(2);
     expect(r.stderr).toContain(message);
+  });
+});
+
+describe('hmc.py: compact datatype IRIs', () => {
+  type Plan = { request: { url: string | null; transport: string; body: unknown; bodyText: string | null; headers: Record<string, string> } };
+  const plan = async (rel: string, fields: Record<string, string>) => {
+    const r = await hmc(['invoke', `${base}/compact-types`, rel, ...Object.entries(fields).flatMap(([k, v]) => ['--field', `${k}=${v}`]), '--dry-run', '--json']);
+    return { r, request: r.code === 0 ? (JSON.parse(r.stdout) as Plan).request : null };
+  };
+
+  it('reads each datatype as its full IRI and types the field by it', async () => {
+    const d = await hmc(['describe', `${base}/compact-types`, 'urn:compact-types']);
+    expect(d.code, d.stderr).toBe(0);
+    const fields = (JSON.parse(d.stdout) as { fields: Array<{ name: string; datatype: string; jsonKind: string | null }> }).fields;
+    expect(Object.fromEntries(fields.map(f => [f.name, [f.datatype, f.jsonKind]]))).toEqual({
+      count: [`${XSD}integer`, null], flag: [`${XSD}boolean`, null], data: [`${RDF_NS}JSON`, 'json'], size: [`${XSD}long`, null],
+      ratio: [`${XSD}double`, null], plain: ['xsd:integer', null],
+    });
+    const bad = await plan('urn:compact-types', { count: '1.5', flag: 'maybe', data: 'nope', size: '1.5', ratio: 'abc', plain: '1.5' });
+    expect(bad.r.code, bad.r.stdout + bad.r.stderr).toBe(2);
+    for (const message of ['count: not an integer', 'flag: flag must be a boolean', 'data: data must be JSON', 'size: not an integer',
+      'ratio: not a number', 'plain: not an integer']) expect(bad.r.stderr, message).toContain(message);
+    const good = await plan('urn:compact-types', { count: '12', flag: 'yes', data: '{"a":[1,2]}', size: '+7', ratio: '0.5', plain: '3' });
+    expect(good.r.code, good.r.stderr).toBe(0);
+    expect(good.request!.body).toEqual({ count: 12, flag: true, data: { a: [1, 2] }, size: 7, ratio: 0.5, plain: 3 });
+  });
+
+  it.each([
+    ['integer', '1.5', 'body: not an integer', '12', '12'],
+    ['boolean', 'maybe', 'body must be a boolean', 'yes', 'true'],
+    ['JSON', 'nope', 'body must be JSON', '{"a": 1}', '{"a": 1}'],
+  ])('types a node-level shape\'s %s body by its compact datatype', async (kind, wrong, message, right, sent) => {
+    const bad = await plan(`urn:${kind}-body`, { body: wrong });
+    expect(bad.r.code, bad.r.stdout + bad.r.stderr).toBe(2);
+    expect(bad.r.stderr).toContain(message);
+    const good = await plan(`urn:${kind}-body`, { body: right });
+    expect(good.r.code, good.r.stderr).toBe(0);
+    expect(good.request!.bodyText).toBe(sent);
+    if (kind === 'JSON') expect(good.request!.headers['Content-Type']).toBe('application/json');
+  });
+});
+
+describe('hmc.py: relative targets', () => {
+  const describeIn = async (path: string, rel: string) => {
+    const r = await hmc(['describe', `${base}${path}`, rel]);
+    expect(r.code, r.stderr).toBe(0);
+    return JSON.parse(r.stdout) as { transport: string; target: string };
+  };
+  const dryRun = async (path: string, rel: string) => {
+    const r = await hmc(['invoke', `${base}${path}`, rel, '--dry-run', '--json']);
+    expect(r.code, r.stderr).toBe(0);
+    return (JSON.parse(r.stdout) as { request: { transport: string; url: string | null } }).request;
+  };
+
+  it('resolves a relative hydra:target against the descriptor address, and sends it there', async () => {
+    const cases: Array<[string, string]> = [['urn:rel-root', `${base}/api`], ['urn:rel-sibling', `${base}/rel/sub/api`],
+      ['urn:rel-parent', `${base}/rel/x`], ['iep:relCoerced', `${base}/rel/sub/coerced?a=1`]];
+    for (const [rel, url] of cases) {
+      const d = await describeIn('/rel/sub/desc', rel);
+      expect([d.transport, d.target], rel).toEqual(['http', url]);
+      const request = await dryRun('/rel/sub/desc', rel);
+      expect([request.transport, request.url], rel).toEqual(['http', url]);
+    }
+    // A fragment of this document, written "#frag" or in full, is an action junction, not an address.
+    for (const rel of ['urn:rel-bare', 'urn:rel-doc']) {
+      expect((await describeIn('/rel/sub/desc', rel)).transport, rel).toBe('junction');
+      expect((await dryRun('/rel/sub/desc', rel)).url, rel).toBeNull();
+    }
+    const live = await hmc(['invoke', `${base}/rel/sub/desc`, 'urn:rel-root']);
+    expect(live.code, live.stderr).toBe(0);
+    expect(seen).toContain('GET /api');
+  });
+
+  it('resolves against the context\'s @base when it gives one', async () => {
+    expect(await describeIn('/rel-base', 'urn:rel-based')).toMatchObject({ transport: 'http', target: `${base}/other/dir/api` });
+    expect((await describeIn('/rel-base', 'urn:rel-based-frag')).transport).toBe('junction');
+  });
+
+  it('still fetches nothing that is not http(s) once resolved', async () => {
+    const d = await describeIn('/rel-file', 'urn:rel-file');
+    expect(d.target).toBe(secretUrl);
+    expect(d.transport).not.toBe('http');
+    const r = await hmc(['invoke', `${base}/rel-file`, 'urn:rel-file']);
+    expect(r.code).not.toBe(0);
+    expect(r.stdout + r.stderr).not.toContain(SECRET);
   });
 });
 

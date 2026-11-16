@@ -76,17 +76,17 @@ The client therefore:
 
 1. Fetches the authority document, preferring JSON-LD (`Accept: application/ld+json`, then `?format=jsonld`), then Turtle (read by `hmc.py` when `rdflib` is installed; the page cannot parse it), then HyperMarkdown `:::control` blocks.
 2. Walks `iep:affordance` / `hmd:control` / `hydra:supportedOperation`, plus any node typed `hydra:Operation`, `iep:Affordance`, or `hmd:Control`.
-3. Reads the live `hydra:target`, `hydra:method`, `hydra:expects`, `hydra:returns`, `dcat:mediaType` / `hydra:returnsContentType`, and any linked `hydra:IriTemplate`.
+3. Reads the live `hydra:target`, `hydra:method`, `hydra:expects`, `hydra:returns`, `dcat:mediaType` / `hydra:returnsContentType`, and any linked `hydra:IriTemplate`. Every IRI in a JSON-LD document, each `@id` and each value of a term its context types as `@id` or `@vocab`, is expanded first, through the document's prefixes and `@vocab`, and a relative one is resolved against the context's `@base` or else the address the document was fetched from. So `{"@id": "/api"}` is an address on the descriptor's host, and `{"@id": "xsd:integer"}` is XSD's integer.
 4. Classifies transport:
    - **http** — `hydra:target` is a normal `http(s)` URL, or a `hydra:IriTemplate` expands to one. GET fields with no template are appended as query parameters (this is how SPARQL `?query=` works).
    - **mcp** — `hydra:target` is an Interego tool junction (`https://<interego-relay-host>/tool/...`). A GET of `https://relay.interego.xwisee.com/tool/publish_context` returns HTTP 404 and CORS there is origin-restricted to the relay itself. These writes go through the Interego relay MCP: `invoke_affordance({descriptor_url, action_iri, payload})` or `act({descriptor_url, action_iri, method, payload})`. The client shows that call and does not POST it over raw HTTP.
-   - **junction** — the target is still a fragment of the descriptor (markdown-style). The client tells you to use the authority document or MCP `invoke_affordance`.
+   - **junction** — the target is a fragment of the descriptor itself, whether written `#control-…` or in full; once resolved, the two are the same IRI. The client tells you to use the authority document or MCP `invoke_affordance`.
 
 The Interego `act` kernel verb was verified against `act-get-scheme`: given the catalog URL and that action IRI, it re-resolved `hydra:target` to `https://id.i2idl.org/scheme.ttl` and returned the same Turtle as a direct HTTP GET.
 
 SHACL `NodeShape` property constraints (name, datatype, minCount/maxCount, pattern, defaultValue, maxLength/minLength, description, `sh:in` as a plain array, an RDF list or a JSON-LD `@list`, min/maxInclusive) become form fields. A `pattern` is shown next to its field and left to the server to enforce: neither client runs a regular expression from a remote document, because a crafted one can take time exponential in the input. If `hydra:expects` is an inline JSON Schema object (as on the Foxxi affordance manifest), those properties are used instead. Hydra template variables are merged onto the same fields.
 
-JSON Schema `object` and `array` properties, SHACL properties with `sh:node` or `sh:nodeKind sh:BlankNode`, and `rdf:JSON` datatypes are parsed as JSON. A field such as Foxxi's `document` or `concept_ids` is sent as a real object or array in a JSON body, and a list is expanded as an RFC 6570 list when it fills a URI template. Other fields stay strings.
+JSON Schema `object` and `array` properties, SHACL properties with `sh:node` or `sh:nodeKind sh:BlankNode`, and `rdf:JSON` datatypes are parsed as JSON; a node shape whose own datatype is `rdf:JSON` takes a request body that must parse as JSON, and sends it as written. A field such as Foxxi's `document` or `concept_ids` is sent as a real object or array in a JSON body, and a list is expanded as an RFC 6570 list when it fills a URI template. Other fields stay strings.
 
 URI templates use RFC 6570 percent-encoding of UTF-8 (`encodeURIComponent` semantics). `café` becomes `caf%C3%A9`. A `+` operator still leaves ASCII reserved characters unescaped.
 

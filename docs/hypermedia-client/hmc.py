@@ -135,31 +135,81 @@ def literals(value: Any) -> list[Any]:
     return [raw_id(v) for v in as_list(value) if raw_id(v) is not None]
 
 
+_SCHEME_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
+_SCHEME_CHARS = _SCHEME_LETTERS + "0123456789+-."
+
+
+def _has_scheme(text: str) -> bool:
+    """Whether a value starts with a scheme as RFC 3986 writes one: a letter,
+    then letters, digits, "+", "-" or ".", then ":". A scan, so a long value
+    costs linear time. The page's hasScheme is the same."""
+    colon = text.find(":")
+    if colon < 1 or text[0] not in _SCHEME_LETTERS:
+        return False
+    return all(ch in _SCHEME_CHARS for ch in text[1:colon])
+
+
+def _resolve_iri(ref: str, base: str | None) -> str:
+    """A relative reference resolved against a base (RFC 3986, section 5), or
+    the reference as it is when there is no base or the base takes none."""
+    if base is None:
+        return ref
+    try:
+        return urllib.parse.urljoin(base, ref)
+    except ValueError:
+        return ref
+
+
 class Context:
-    def __init__(self) -> None:
+    """The active context: prefixes, terms, which terms hold IRIs (typed "@id"
+    or "@vocab" in the context; "@json" ones hold JSON), @vocab, and the base a
+    relative IRI resolves against: @base when the context gives one, else the
+    address the document was fetched from."""
+
+    def __init__(self, base: str | None = None) -> None:
         self.prefixes: dict[str, str] = dict(WELL_KNOWN_PREFIXES)
         self.terms: dict[str, str] = dict(TERM_FALLBACKS)
+        self.coerce: dict[str, str] = {}
+        self.vocab: str | None = None
+        self.base: str | None = base or None
 
     def absorb(self, ctx: Any) -> None:
         for item in as_list(ctx):
             if not isinstance(item, dict):
                 continue
+            if "@base" in item:
+                new_base = item["@base"]
+                if new_base is None:
+                    self.base = None
+                elif isinstance(new_base, str):
+                    self.base = _resolve_iri(new_base, self.base) if self.base else (new_base if _has_scheme(new_base) else None)
+            if "@vocab" in item:
+                vocab = item["@vocab"]
+                if vocab is None:
+                    self.vocab = None
+                elif isinstance(vocab, str):
+                    self.vocab = self.expand_iri(vocab, document_relative=True)
             for key, val in item.items():
-                if key.startswith("@"):
+                if key.startswith("@") or val is None:
                     continue
-                iri = None
-                if isinstance(val, str):
-                    iri = val
-                elif isinstance(val, dict) and "@id" in val:
-                    iri = val["@id"]
+                definition = val if isinstance(val, dict) else None
+                iri = val if isinstance(val, str) else None
+                if definition is not None and isinstance(definition.get("@id"), str):
+                    iri = definition["@id"]
+                # A definition with no "@id", keyed by a compact or absolute IRI, defines that IRI.
+                if iri is None and definition is not None and "@id" not in definition and ":" in key:
+                    iri = key
                 if not iri:
                     continue
                 expanded = self.expand(iri)
-                if expanded.endswith("#") or expanded.endswith("/"):
-                    self.prefixes[key] = expanded
                 self.terms[key] = expanded
                 if expanded.endswith("#") or expanded.endswith("/"):
                     self.prefixes[key] = expanded
+                kind = definition.get("@type") if definition is not None else None
+                if kind in ("@id", "@vocab", "@json"):
+                    self.coerce[key] = kind
+                else:
+                    self.coerce.pop(key, None)
 
     def expand(self, value: Any) -> str:
         if value is None:
@@ -173,7 +223,9 @@ class Context:
                 return self.prefixes[prefix] + local
         if text in self.terms:
             return self.terms[text]
-        return self.prefixes.get(text, text)
+        if text in self.prefixes:
+            return self.prefixes[text]
+        return self.vocab + text if self.vocab is not None and text and ":" not in text else text
 
     def expand_key(self, key: str) -> str:
         if key.startswith(("@", "http://", "https://")):
@@ -181,6 +233,72 @@ class Context:
         if key in self.terms:
             return self.terms[key]
         return self.expand(key)
+
+    def expand_iri(self, value: Any, *, vocab: bool = False, document_relative: bool = False) -> Any:
+        """JSON-LD's expansion of a value in an IRI position: a term where
+        `vocab` applies; a compact IRI; an absolute IRI or a blank node as it
+        is; then @vocab + the value where `vocab` applies, or the value
+        resolved against the base where `document_relative` applies. The
+        page's expandIri is the same."""
+        if not isinstance(value, str) or value.startswith("@"):
+            return value
+        if vocab and value in self.terms:
+            return self.terms[value]
+        if ":" in value:
+            prefix, suffix = value.split(":", 1)
+            if prefix == "_" or suffix.startswith("//"):
+                return value
+            if prefix in self.prefixes:
+                return self.prefixes[prefix] + suffix
+            if _has_scheme(value):
+                return value
+        if vocab and self.vocab is not None:
+            return self.vocab + value
+        if document_relative and self.base is not None:
+            return _resolve_iri(value, self.base)
+        return value
+
+    def expand_iris(self, document: Any) -> None:
+        """Every IRI in a document, expanded once, in place, before anything
+        reads it: each "@id", and each value of a term the context types as
+        "@id" or "@vocab", so {"@id": "xsd:integer"} is XSD's integer and
+        {"@id": "/api"} is an address on the document's host. The @context,
+        value objects and JSON literals are left as they are. A stack, not
+        recursion, so a deeply nested document costs linear time and stays
+        inside Python's recursion limit."""
+        stack: list[Any] = [document]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, list):
+                stack.extend(x for x in item if isinstance(x, (dict, list)))
+                continue
+            if not isinstance(item, dict) or "@value" in item:
+                continue
+            for key in list(item):
+                if key == "@context":
+                    continue
+                if key == "@id":
+                    item[key] = self.expand_iri(item[key], document_relative=True)
+                    continue
+                kind = None if key.startswith("@") else self.coerce.get(key)
+                if kind == "@json":
+                    continue
+                if kind:
+                    item[key] = self._expand_typed(item[key], kind == "@vocab")
+                if isinstance(item[key], (dict, list)):
+                    stack.append(item[key])
+
+    def _expand_typed(self, value: Any, vocab: bool) -> Any:
+        """A typed term's value: a string, or each string in an array or in a list or set object."""
+        def one(entry: Any) -> Any:
+            if isinstance(entry, str):
+                return self.expand_iri(entry, vocab=vocab, document_relative=True)
+            if isinstance(entry, dict):
+                for key in ("@list", "@set"):
+                    if isinstance(entry.get(key), list):
+                        entry[key] = [self.expand_iri(x, vocab=vocab, document_relative=True) for x in entry[key]]
+            return entry
+        return [one(entry) for entry in value] if isinstance(value, list) else one(value)
 
 
 def truthy(value: Any) -> bool | None:
@@ -264,6 +382,8 @@ class Control:
     destructive: bool | None = None
     types: list[str] = field(default_factory=list)
     source: str | None = None
+    # The base the descriptor's relative IRIs resolved against.
+    base: str | None = None
 
     @property
     def unsafe(self) -> bool:
@@ -300,12 +420,15 @@ class Descriptor:
     controls: list[Control]
     see_also: list[str] = field(default_factory=list)
     raw: Any = None
+    context: Context | None = None
 
     def find(self, rel: str) -> Control | None:
         rel = (rel or "").strip()
         if not rel:
             return None
-        exact = [c for c in self.controls if c.rel == rel or c.id == rel]
+        # A name expands as the document's own IRIs did, so "iep:x" finds an action written "iep:x".
+        full = self.context.expand_iri(rel, document_relative=True) if self.context else rel
+        exact = [c for c in self.controls if c.rel in (rel, full) or c.id in (rel, full)]
         if exact:
             return exact[0]
         lowered = rel.lower()
@@ -353,8 +476,10 @@ class RequestPlan:
 
 
 class NodeIndex:
-    def __init__(self, document: Any, base: str) -> None:
-        self.ctx = Context()
+    def __init__(self, document: Any, base: str, fetched_from: str | None = None) -> None:
+        # `base` is the descriptor's address; `fetched_from`, when it differs,
+        # is the address its text came from, which relative IRIs resolve against.
+        self.ctx = Context(fetched_from or base)
         self.base = base
         self.nodes: dict[str, dict[str, Any]] = {}
         self.order: list[dict[str, Any]] = []
@@ -366,11 +491,13 @@ class NodeIndex:
             for item in document:
                 if isinstance(item, dict):
                     self.ctx.absorb(item.get("@context"))
+                    self.ctx.expand_iris(item)
                     self._add(item)
             return
         if not isinstance(document, dict):
             return
         self.ctx.absorb(document.get("@context"))
+        self.ctx.expand_iris(document)
         graph = document.get("@graph")
         extras = {k: v for k, v in document.items() if k not in {"@context", "@graph"}}
         if extras:
@@ -447,6 +574,11 @@ class NodeIndex:
         found = self.nodes.get(str(iri))
         if found:
             return found
+        # A plain string naming a node as its "@id" was written before expansion, such as "#S".
+        if isinstance(ident, str):
+            full = self.ctx.expand_iri(ident, document_relative=True)
+            if full != ident and full in self.nodes:
+                return self.nodes[full]
         if isinstance(ident, dict) and any(k != "@id" for k in ident):
             return ident
         return None
@@ -572,9 +704,25 @@ def _schema_datatype(types: list[str]) -> str | None:
     return None
 
 
+def _xsd_name(datatype: Any) -> str | None:
+    """A datatype reaches a field in one of two forms: an IRI in full, which is
+    what every IRI in a JSON-LD document is once expanded, or a plain "xsd:" or
+    "rdf:" string where nothing expands it: a HyperMarkdown block, or a
+    sh:datatype written as a literal. This gives the name of an XSD datatype in
+    either form, or None. The page's xsdName and isRdfJson are the same."""
+    dt = _text(datatype)
+    if dt.startswith(XSD):
+        return dt[len(XSD):]
+    return dt[4:] if dt.startswith("xsd:") else None
+
+
+def _is_rdf_json(datatype: Any) -> bool:
+    return _text(datatype) in (RDF_JSON, "rdf:JSON")
+
+
 def _shacl_json_kind(index: NodeIndex, node: dict[str, Any], datatype: str | None, max_count: int | None) -> str | None:
     dt = datatype or ""
-    if dt == RDF_JSON or dt.endswith("#JSON"):
+    if _is_rdf_json(dt):
         return "json"
     if dt:
         return None
@@ -614,10 +762,11 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
         if index.get(shape, P_SH_DT) or index.get(shape, P_SH_MINLEN) or index.get(shape, P_SH_MAXLEN):
             label = str(literal(index.get(shape, P_LABEL)) or "")
             name = "query" if ("query" in label.lower() or "sparql" in label.lower()) else "body"
+            datatype = str(literal(index.get(shape, P_SH_DT)) or XSD + "string")
             fields.append(Field(
                 name=name,
                 path=shape.get("@id") if isinstance(shape, dict) else None,
-                datatype=str(literal(index.get(shape, P_SH_DT)) or XSD + "string"),
+                datatype=datatype, json_kind="json" if _is_rdf_json(datatype) else None,
                 min_count=1, max_count=1, required=True, raw_body=True,
                 min_length=_inty(literal(index.get(shape, P_SH_MINLEN))),
                 max_length=_inty(literal(index.get(shape, P_SH_MAXLEN))),
@@ -768,7 +917,7 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
         read_only=truthy(literal(index.get(node, P_READONLY))),
         idempotent=truthy(literal(index.get(node, P_IDEMPOTENT))),
         destructive=truthy(literal(index.get(node, P_DESTRUCTIVE))),
-        types=index.types_of(node), source=source,
+        types=index.types_of(node), source=source, base=index.ctx.base,
     )
 
 
@@ -1009,27 +1158,27 @@ def parse_turtle_via_rdflib(text: str, url: str) -> Any:
     return json.loads(graph.serialize(format="json-ld"))
 
 
-def parse_descriptor(text: str, content_type: str, url: str) -> Descriptor:
+def parse_descriptor(text: str, content_type: str, url: str, fetched_from: str | None = None) -> Descriptor:
     kind = classify_payload(text, content_type)
     if kind == "jsonld":
         document = json.loads(text)
-        index = NodeIndex(document, url)
+        index = NodeIndex(document, url, fetched_from)
         title, types, description, see_also = descriptor_meta(index, url, content_type)
         return Descriptor(
             url=url, title=title, types=types, description=description,
             content_type=content_type, controls=extract_controls(index, url),
-            see_also=see_also, raw=document,
+            see_also=see_also, raw=document, context=index.ctx,
         )
     if kind == "turtle":
-        return parse_descriptor(json.dumps(parse_turtle_via_rdflib(text, url)), "application/ld+json", url)
+        return parse_descriptor(json.dumps(parse_turtle_via_rdflib(text, fetched_from or url)), "application/ld+json", url, fetched_from)
     if kind == "markdown":
         return parse_markdown_descriptor(text, url, content_type)
     raise RuntimeError(f"Unrecognized descriptor representation ({content_type})")
 
 
 def load_descriptor(url: str) -> Descriptor:
-    _final, content_type, text = fetch_authority(url)
-    descriptor = parse_descriptor(text, content_type, _strip_fragment(url))
+    fetched_from, content_type, text = fetch_authority(url)
+    descriptor = parse_descriptor(text, content_type, _strip_fragment(url), fetched_from)
     descriptor.content_type = content_type
     return descriptor
 
@@ -1139,8 +1288,8 @@ def expand_uri_template(template: str, values: dict[str, Any]) -> str:
     return re.sub(r"\{([^{}]+)\}", lambda match: _expand_expr(match.group(1), values), template)
 
 
-# XSD datatypes whose values are numbers, by the name after "#". A bound a type
-# implies, such as unsignedByte's 0 to 255, is left to the server, as xsd:int's was.
+# XSD datatypes whose values are numbers, by their name in the XSD namespace. A bound
+# a type implies, such as unsignedByte's 0 to 255, is left to the server, as xsd:int's was.
 _XSD_INTEGERS = frozenset({
     "integer", "int", "long", "short", "byte", "nonNegativeInteger", "positiveInteger",
     "negativeInteger", "nonPositiveInteger", "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte",
@@ -1163,10 +1312,9 @@ def _numeric_kind(fld: Field) -> str | None:
     field that does not hold a number."""
     if fld.json_kind:
         return None
-    dt = _text(fld.datatype)
-    if "#" not in dt:
+    local = _xsd_name(fld.datatype)
+    if local is None:
         return None
-    local = dt.rsplit("#", 1)[-1]
     if local in _XSD_INTEGERS:
         return "integer"
     if local == "decimal":
@@ -1276,8 +1424,7 @@ def coerce_value(fld: Field, value: Any) -> Any:
     numeric = _numeric_kind(fld)
     if numeric:
         return _coerce_number(numeric, value)
-    dt = fld.datatype or ""
-    if dt.endswith("#boolean"):
+    if _xsd_name(fld.datatype) == "boolean":
         text = str(value).strip().lower()
         if text in {"true", "1", "yes"}:
             return True
@@ -1347,27 +1494,34 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
                     errors.append(f"{fld.name}: below minInclusive {fld.min_inclusive}")
                 if high is not None and number > high:
                     errors.append(f"{fld.name}: above maxInclusive {fld.max_inclusive}")
-        values[fld.name] = typed
+        # A JSON request body is sent as it was written, once it parses.
+        values[fld.name] = found if fld.raw_body and fld.json_kind and isinstance(found, str) else typed
         if used:
             incoming.pop(used, None)
     return values, errors
 
 
-def is_junction_target(target: str | None, descriptor_url: str, control_id: str) -> bool:
+def is_junction_target(target: str | None, descriptor_url: str, control_id: str, base: str | None = None) -> bool:
+    """An action junction names a control in the document, not an address to
+    send to: a bare "#fragment" (a HyperMarkdown block may write one), the
+    control's own IRI, or the document's own IRI with any fragment, such as
+    "<document>#control-search", which is how HyperMarkdown projects each
+    control. In JSON-LD a target "#fragment" is that IRI once resolved (RFC
+    3986, 4.4: a same-document reference), so the two are one junction. The
+    document is the one at the descriptor's address or at the base its IRIs
+    resolved against. A fragment is never sent, so a request to such a target
+    would only reach the descriptor again. The page's isJunction is the same."""
     if not target:
         return False
-    if target.startswith("#"):
+    if target.startswith("#") or target == control_id:
         return True
-    if target == control_id:
-        return True
-    base = _strip_fragment(descriptor_url)
-    if target.startswith(base + "#"):
-        frag = target[len(base) + 1:]
-        # HyperMarkdown projects each control as a fragment on the descriptor.
-        # Those fragments are action junctions, not HTTP endpoints.
-        if frag.startswith("control-") or target == control_id:
-            return True
-    return False
+    if "#" not in target:
+        return False
+    try:
+        doc = _strip_fragment(target)
+        return any(b and _strip_fragment(b) == doc for b in (descriptor_url, base))
+    except ValueError:
+        return False
 
 
 def is_mcp_tool_url(target: str | None) -> bool:
@@ -1385,7 +1539,7 @@ def classify_transport(control: Control, descriptor_url: str) -> str:
         return "http" if not head or is_web_url(head) else "unknown"
     if is_mcp_tool_url(control.target):
         return "mcp"
-    if is_junction_target(control.target, descriptor_url, control.id):
+    if is_junction_target(control.target, descriptor_url, control.id, control.base):
         return "junction"
     if control.target and control.target.startswith(("http://", "https://")):
         return "http"
@@ -1425,7 +1579,8 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
     url: str | None = None
     raw_body_field = next((f for f in control.fields if f.raw_body), None)
     if raw_body_field and raw_body_field.name in values:
-        body_text = str(values[raw_body_field.name])
+        raw_value = values[raw_body_field.name]
+        body_text = raw_value if isinstance(raw_value, str) else json.dumps(raw_value, ensure_ascii=False, separators=(",", ":"))
         body = body_text
 
     if control.template:
@@ -1471,7 +1626,7 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
         body_text = json.dumps(values, indent=2, ensure_ascii=False)
         headers.setdefault("Content-Type", "application/json")
     if raw_body_field and body_text is not None and url:
-        headers["Content-Type"] = control.media_type or "application/sparql-query"
+        headers["Content-Type"] = control.media_type or ("application/json" if raw_body_field.json_kind else "application/sparql-query")
     return RequestPlan(control=control, transport=transport, method=method, url=url,
                        headers=headers, body=body, body_text=body_text, fields=values,
                        mcp=mcp, notes=notes)

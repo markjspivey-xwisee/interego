@@ -253,6 +253,47 @@ const numEnum = { '@context': CTX, '@id': `${HOST}/num-enum`,
   ] }] };
 // JSON.stringify writes 2.0 as 2, so the 2.0 is put in the text by hand.
 const numEnumText = JSON.stringify(numEnum).replace('"COUNT-TWO"', '2.0');
+const RDF_NS = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#';
+// A compacted JSON-LD descriptor, as a JSON-LD processor writes one. Each sh:datatype is a node
+// reference holding a compact IRI ({"@id": "xsd:integer"}), or a string under a term the context
+// types as "@id" (dt) or "@vocab" (vdt, against an @vocab of XSD). One is a plain string, which
+// JSON-LD leaves as the literal "xsd:integer". The three node-level shapes each type a whole body.
+const compactTypes = { '@context': [CTX, { xsd: XSD, rdf: RDF_NS, dt: { '@id': 'sh:datatype', '@type': '@id' } },
+  { '@vocab': XSD, vdt: { '@id': 'sh:datatype', '@type': '@vocab' } }],
+  '@id': `${HOST}/compact-types`,
+  'iep:affordance': [
+    { '@id': `${HOST}/compact-types#w`, '@type': 'iep:Affordance', 'iep:action': 'urn:compact-types', 'hydra:method': 'POST',
+      'hydra:title': 'Compact types write', 'hydra:target': `${HOST}/num-target`, 'hydra:expects': { '@id': `${HOST}/compact-types#S` } },
+    ...['integer', 'boolean', 'JSON'].map(kind => ({ '@id': `${HOST}/compact-types#${kind}`, '@type': 'iep:Affordance',
+      'iep:action': `urn:${kind}-body`, 'hydra:method': 'POST', 'hydra:title': `Compact ${kind} body`, 'hydra:target': `${HOST}/num-target`,
+      'hydra:expects': { '@id': `${HOST}/compact-types#${kind}-shape` } })),
+  ],
+  '@graph': [
+    { '@id': `${HOST}/compact-types#S`, '@type': 'sh:NodeShape', 'sh:property': [
+      { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': { '@id': 'xsd:integer' } },
+      { 'sh:path': 'urn:p:flag', 'sh:name': 'flag', 'sh:datatype': { '@id': 'xsd:boolean' } },
+      { 'sh:path': 'urn:p:data', 'sh:name': 'data', 'sh:datatype': { '@id': 'rdf:JSON' } },
+      { 'sh:path': 'urn:p:size', 'sh:name': 'size', dt: 'xsd:long' },
+      { 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', vdt: 'double' },
+      { 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:datatype': 'xsd:integer' },
+    ] },
+    ...[['integer', 'xsd:integer'], ['boolean', 'xsd:boolean'], ['JSON', 'rdf:JSON']].map(([kind, dt]) => ({
+      '@id': `${HOST}/compact-types#${kind}-shape`, '@type': 'sh:NodeShape', 'rdfs:label': `${kind} body`, 'sh:datatype': { '@id': dt } })),
+  ] };
+// Relative IRIs in a descriptor at a known address: hydra:target as a node reference, and a plain
+// string under `target`, a term the kernel's context types as "@id", as it does `action`.
+const REL_CTX = { ...CTX, target: { '@id': 'hydra:target', '@type': '@id' }, action: { '@id': 'iep:action', '@type': '@id' } };
+const relOp = (id: string, title: string, target: unknown) => ({ '@id': `#${id}`, '@type': 'iep:Affordance',
+  'iep:action': `urn:rel-${id}`, 'hydra:method': 'GET', 'hydra:title': title, 'hydra:target': target });
+const relDoc = { '@context': REL_CTX, '@id': `${HOST}/rel/sub/desc`, 'iep:affordance': [
+  relOp('root', 'Root api', { '@id': '/api' }), relOp('sibling', 'Sibling api', { '@id': 'api' }), relOp('parent', 'Parent x', { '@id': '../x' }),
+  { '@id': '#coerced', '@type': 'iep:Affordance', action: 'iep:relCoerced', 'hydra:method': 'GET', 'hydra:title': 'Coerced target', target: 'coerced?a=1' },
+  relOp('bare', 'Bare fragment', { '@id': '#frag' }), relOp('doc', 'Document fragment', { '@id': `${HOST}/rel/sub/desc#frag2` }),
+] };
+const relBase = { '@context': [REL_CTX, { '@base': 'https://other.example/base/' }], '@id': `${HOST}/rel-base`,
+  'iep:affordance': [relOp('based', 'Based api', { '@id': 'api' }), relOp('based-frag', 'Based fragment', { '@id': '#frag' })] };
+const relHttp = { '@context': [REL_CTX, { '@base': 'http://plain.example/' }], '@id': `${HOST}/rel-http`,
+  'iep:affordance': [relOp('plain', 'Plain http', { '@id': '/api' })] };
 // Documents served at exact paths on HOST, in addition to /desc, /hm and /body/<kind>.
 const DOCS: Record<string, { type: string; text: string }> = {
   '/pair': { type: 'application/ld+json', text: JSON.stringify(pair) },
@@ -264,6 +305,11 @@ const DOCS: Record<string, { type: string; text: string }> = {
   '/numbers': { type: 'application/ld+json', text: JSON.stringify(numbers) },
   '/num-target': { type: 'application/json', text: '{"ok":true}' },
   '/num-enum': { type: 'application/ld+json', text: numEnumText },
+  '/compact-types': { type: 'application/ld+json', text: JSON.stringify(compactTypes) },
+  '/rel/sub/desc': { type: 'application/ld+json', text: JSON.stringify(relDoc) },
+  '/rel-base': { type: 'application/ld+json', text: JSON.stringify(relBase) },
+  '/rel-http': { type: 'application/ld+json', text: JSON.stringify(relHttp) },
+  '/api': { type: 'text/plain', text: 'fine' },
 };
 
 function respond(text: string, type: string, status = 200): Response {
@@ -842,6 +888,133 @@ describe('hypermedia client: numbers in an enum', () => {
       }
       expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
       assertInert(t, 'numeric enum');
+    } finally { t.dom.window.close(); }
+  });
+});
+
+/** Open `path` with an ?invoke= link that dry-runs `rel` with `fields`; returns the page and its plan. */
+async function linkPlan(path: string, rel: string, fields: Record<string, string>) {
+  const query = Object.entries(fields).map(([k, v]) => `&field.${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('');
+  const t = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1${query}`);
+  const { document } = t;
+  await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'));
+  const pre = document.querySelector('#result pre');
+  const plan = pre ? JSON.parse(pre.textContent!) as { transport: string; url: string | null; body: unknown; headers: Record<string, string>; notes: string[] } : null;
+  return { t, shown: document.getElementById('result')!.textContent!, plan };
+}
+
+describe('hypermedia client: compact datatype IRIs', () => {
+  it('types each field by its datatype when it is a compact IRI, a typed term or a plain xsd: string', async () => {
+    const bad = await linkPlan('/compact-types', 'urn:compact-types',
+      { count: '1.5', flag: 'maybe', data: 'nope', size: '1.5', ratio: 'abc', plain: '1.5' });
+    try {
+      expect(bad.shown).toContain('Validation failed');
+      for (const message of ['count: not an integer', 'flag must be a boolean', 'data must be JSON', 'size: not an integer',
+        'ratio: not a number', 'plain: not an integer']) expect(bad.shown, message).toContain(message);
+      assertInert(bad.t, 'compact types');
+    } finally { bad.t.dom.window.close(); }
+    const good = await linkPlan('/compact-types', 'urn:compact-types',
+      { count: '12', flag: 'yes', data: '{"a":[1,2]}', size: '+7', ratio: '0.5', plain: '3' });
+    try {
+      expect(good.shown).not.toContain('Validation failed');
+      expect(good.plan!.body).toEqual({ count: 12, flag: true, data: { a: [1, 2] }, size: 7, ratio: 0.5, plain: 3 });
+      expect(good.t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+    } finally { good.t.dom.window.close(); }
+  });
+
+  it.each([
+    ['integer', '1.5', 'body: not an integer', '12', '12'],
+    ['boolean', 'maybe', 'body must be a boolean', 'yes', 'true'],
+    ['JSON', 'nope', 'body must be JSON', '{"a": 1}', '{"a": 1}'],
+  ])('types a node-level shape\'s %s body by its compact datatype', async (kind, wrong, message, right, sent) => {
+    const bad = await linkPlan('/compact-types', `urn:${kind}-body`, { body: wrong });
+    try {
+      expect(bad.shown).toContain('Validation failed');
+      expect(bad.shown).toContain(message);
+    } finally { bad.t.dom.window.close(); }
+    const good = await linkPlan('/compact-types', `urn:${kind}-body`, { body: right });
+    try {
+      expect(good.shown).not.toContain('Validation failed');
+      expect(good.plan!.body).toBe(sent);
+      if (kind === 'JSON') expect(good.plan!.headers['Content-Type']).toBe('application/json');
+    } finally { good.t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: relative targets', () => {
+  const transports = (document: Document) => Object.fromEntries([...document.querySelectorAll('.card')].map(c =>
+    [c.querySelector('h3')!.textContent!, c.querySelectorAll('.badge')[1]!.textContent!]));
+  async function dryPlan(t: Loaded, title: string) {
+    const { document } = t;
+    click(t, card(document, title)!);
+    const result = document.getElementById('result')!;
+    click(t, button(document, 'dry'));
+    await vi.waitFor(() => expect(result.textContent, title).toContain('Dry run'));
+    return JSON.parse(result.querySelector('pre')!.textContent!) as { transport: string; url: string | null; notes: string[] };
+  }
+
+  it('resolves a relative hydra:target against the descriptor address, and sends it there', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/rel/sub/desc')}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+      expect(transports(document)).toEqual({ 'Root api': 'http', 'Sibling api': 'http', 'Parent x': 'http', 'Coerced target': 'http',
+        'Bare fragment': 'junction', 'Document fragment': 'junction' });
+      const expected: Array<[string, string]> = [['Root api', `${HOST}/api`], ['Sibling api', `${HOST}/rel/sub/api`],
+        ['Parent x', `${HOST}/rel/x`], ['Coerced target', `${HOST}/rel/sub/coerced?a=1`]];
+      for (const [title, url] of expected) {
+        const plan = await dryPlan(t, title);
+        expect(plan.transport, title).toBe('http');
+        expect(plan.url, title).toBe(url);
+        expect(document.querySelector('#invokeForm .dest')!.textContent, title).toBe('Sends to hostile.example');
+      }
+      // A fragment of this document, written "#frag" or in full, is an action junction, not an address.
+      for (const title of ['Bare fragment', 'Document fragment']) {
+        const plan = await dryPlan(t, title);
+        expect(plan.transport, title).toBe('mcp');
+        expect(plan.url, title).toBeNull();
+        expect(plan.notes.join(' '), title).toContain('action junction');
+      }
+      click(t, card(document, 'Root api')!);
+      click(t, button(document, 'live'));
+      await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toMatch(/Response HTTP 200/));
+      expect(t.calls.map(c => c.url)).toContain(`${HOST}/api`);
+      assertInert(t, 'relative targets');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('finds a control by the compact action name a typed term expanded', async () => {
+    const { t, plan } = await linkPlan('/rel/sub/desc', 'iep:relCoerced', {});
+    try {
+      expect(plan).not.toBeNull();
+      expect(plan!.transport).toBe('http');
+      expect(plan!.url).toBe(`${HOST}/rel/sub/coerced?a=1`);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('resolves against the context\'s @base when it gives one', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/rel-base')}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+      expect(transports(document)).toEqual({ 'Based api': 'http', 'Based fragment': 'junction' });
+      const plan = await dryPlan(t, 'Based api');
+      expect(plan.url).toBe('https://other.example/base/api');
+      expect(document.querySelector('#invokeForm .dest')!.textContent).toBe('Sends to other.example');
+      expect((await dryPlan(t, 'Based fragment')).transport).toBe('mcp');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('still sends nothing to a resolved address that is not https', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/rel-http')}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+      expect((await dryPlan(t, 'Plain http')).url).toBe('http://plain.example/api');
+      document.getElementById('result')!.innerHTML = '';
+      click(t, button(document, 'live'));
+      await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toMatch(/https only; nothing was sent/));
+      expect(t.calls.filter(c => !c.url.startsWith(`${HOST}/rel-http`))).toEqual([]);
     } finally { t.dom.window.close(); }
   });
 });

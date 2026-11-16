@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-XMhg28MOUlwei8Ec8K0m3Bqbq7LY8DmJNUn5K97CzUU='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-0bXiXdXSKPTPgNZlrIFWbR0K4OuBH7U7y7Z+2FX/Xko='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -154,7 +154,9 @@ const P = {
   shNode: SHACL + "node", shNodeKind: SHACL + "nodeKind",
   first: RDF + "first", rest: RDF + "rest", nil: RDF + "nil"
 };
-const PREFIXES0 = { hydra: HYDRA, sh: SHACL, iep: IEP, ieh: IEH, hmd: HMD, dct: DCT, rdfs: RDFS, rdf: RDF, dcat: DCAT, xsd: XSD, schema: "https://schema.org/" };
+// The same prefixes hmc.py knows (WELL_KNOWN_PREFIXES), so a compact IRI expands alike in both.
+const PREFIXES0 = { hydra: HYDRA, sh: SHACL, iep: IEP, ieh: IEH, hmd: HMD, dct: DCT, rdfs: RDFS, rdf: RDF, dcat: DCAT, xsd: XSD,
+  schema: "https://schema.org/", prov: "http://www.w3.org/ns/prov#", skos: "http://www.w3.org/2004/02/skos/core#" };
 const TERMS0 = {
   action: P.action, affordance: P.affordance, affordances: P.affordance,
   method: P.method, target: P.target, expects: P.expects, returns: P.returns,
@@ -206,19 +208,61 @@ function asTextOrNull(v) { const t = asText(v); return t ? t : null; }
 // Maps keyed by remote names have no prototype, so a key such as "constructor"
 // or "toString" is just a key.
 function bare(obj) { return Object.assign(Object.create(null), obj || {}); }
+function own(obj, key) { return Object.prototype.hasOwnProperty.call(obj, key); }
 
+// Whether a value starts with a scheme as RFC 3986 writes one: a letter, then
+// letters, digits, "+", "-" or ".", then ":". A scan, so a long value costs
+// linear time. hmc.py's _has_scheme is the same.
+const SCHEME_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ";
+const SCHEME_CHARS = SCHEME_LETTERS + "0123456789+-.";
+function hasScheme(text) {
+  const colon = text.indexOf(":");
+  if (colon < 1 || !SCHEME_LETTERS.includes(text[0])) return false;
+  for (let i = 1; i < colon; i++) if (!SCHEME_CHARS.includes(text[i])) return false;
+  return true;
+}
+// A relative reference resolved against a base (RFC 3986, section 5), or the
+// reference as it is when there is no base or the base takes none.
+function resolveIri(ref, base) {
+  if (base == null) return ref;
+  try { return new URL(ref, base).href; } catch { return ref; }
+}
+
+// The active context: prefixes, terms, which terms hold IRIs (typed "@id" or
+// "@vocab" in the context; "@json" ones hold JSON), @vocab, and the base a
+// relative IRI resolves against: @base when the context gives one, else the
+// address the document was fetched from.
 class Ctx {
-  constructor() { this.prefixes = bare(PREFIXES0); this.terms = bare(TERMS0); }
+  constructor(base) {
+    this.prefixes = bare(PREFIXES0); this.terms = bare(TERMS0); this.coerce = bare({});
+    this.vocab = null; this.base = base || null;
+  }
   absorb(ctx) {
     for (const item of asList(ctx)) {
-      if (!item || typeof item !== "object") continue;
+      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      if (own(item, "@base")) {
+        const b = item["@base"];
+        if (b === null) this.base = null;
+        else if (typeof b === "string") this.base = this.base ? resolveIri(b, this.base) : (hasScheme(b) ? b : null);
+      }
+      if (own(item, "@vocab")) {
+        const v = item["@vocab"];
+        if (v === null) this.vocab = null;
+        else if (typeof v === "string") this.vocab = this.expandIri(v, { base: true });
+      }
       for (const [key, val] of Object.entries(item)) {
-        if (key.startsWith("@")) continue;
-        const iri = typeof val === "string" ? val : (val && val["@id"]);
-        if (!iri || typeof iri !== "string") continue;
+        if (key.startsWith("@") || val == null) continue;
+        const def = typeof val === "object" && !Array.isArray(val) ? val : null;
+        let iri = typeof val === "string" ? val : (def && typeof def["@id"] === "string" ? def["@id"] : null);
+        // A definition with no "@id", keyed by a compact or absolute IRI, defines that IRI.
+        if (iri == null && def && !own(def, "@id") && key.includes(":")) iri = key;
+        if (!iri) continue;
         const exp = this.expand(iri);
         this.terms[key] = exp;
         if (exp.endsWith("#") || exp.endsWith("/")) this.prefixes[key] = exp;
+        const type = def ? def["@type"] : null;
+        if (type === "@id" || type === "@vocab" || type === "@json") this.coerce[key] = type;
+        else delete this.coerce[key];
       }
     }
   }
@@ -226,21 +270,84 @@ class Ctx {
     if (value == null) return "";
     const text = String(value);
     if (/^(_:|http:\/\/|https:\/\/|urn:|@)/.test(text)) return text;
-    if (text.includes(":") && !text.startsWith("{")) {
-      const [prefix, local] = text.split(":", 2);
+    const colon = text.indexOf(":");
+    if (colon >= 0 && !text.startsWith("{")) {
+      const prefix = text.slice(0, colon); const local = text.slice(colon + 1);
       if (this.prefixes[prefix] && !local.startsWith("//")) return this.prefixes[prefix] + local;
     }
-    return this.terms[text] || this.prefixes[text] || text;
+    if (this.terms[text]) return this.terms[text];
+    if (this.prefixes[text]) return this.prefixes[text];
+    return this.vocab != null && text && colon < 0 ? this.vocab + text : text;
   }
   expandKey(key) {
     if (key.startsWith("@") || key.startsWith("http://") || key.startsWith("https://")) return key;
     return this.terms[key] || this.expand(key);
   }
+  // JSON-LD's expansion of a value in an IRI position: a term where `vocab`
+  // applies; a compact IRI; an absolute IRI or a blank node as it is; then
+  // @vocab + the value where `vocab` applies, or the value resolved against
+  // the base where `base` applies. hmc.py's expand_iri is the same.
+  expandIri(value, { vocab = false, base = false } = {}) {
+    if (typeof value !== "string" || value.startsWith("@")) return value;
+    if (vocab && this.terms[value]) return this.terms[value];
+    const colon = value.indexOf(":");
+    if (colon >= 0) {
+      const prefix = value.slice(0, colon); const suffix = value.slice(colon + 1);
+      if (prefix === "_" || suffix.startsWith("//")) return value;
+      if (this.prefixes[prefix]) return this.prefixes[prefix] + suffix;
+      if (hasScheme(value)) return value;
+    }
+    if (vocab && this.vocab != null) return this.vocab + value;
+    if (base && this.base != null) return resolveIri(value, this.base);
+    return value;
+  }
+  // Every IRI in a document, expanded once, in place, before anything reads
+  // it: each "@id", and each value of a term the context types as "@id" or
+  // "@vocab", so {"@id": "xsd:integer"} is XSD's integer and {"@id": "/api"}
+  // is an address on the document's host. The @context, value objects and
+  // JSON literals are left as they are. A stack, not recursion, so a deeply
+  // nested document costs linear time and no call stack.
+  expandIris(document) {
+    const stack = [document];
+    while (stack.length) {
+      const item = stack.pop();
+      if (Array.isArray(item)) { for (const x of item) if (x && typeof x === "object") stack.push(x); continue; }
+      if (!item || typeof item !== "object" || own(item, "@value")) continue;
+      for (const key of Object.keys(item)) {
+        if (key === "@context") continue;
+        if (key === "@id") { item[key] = this.expandIri(item[key], { base: true }); continue; }
+        const type = key.startsWith("@") ? null : this.coerce[key];
+        if (type === "@json") continue;
+        if (type) item[key] = this.expandTyped(item[key], type === "@vocab");
+        const val = item[key];
+        if (val && typeof val === "object") stack.push(val);
+      }
+    }
+  }
+  // A typed term's value: a string, or each string in an array or in a list or set object.
+  expandTyped(val, vocab) {
+    const opts = { vocab, base: true };
+    const one = (v) => {
+      if (typeof v === "string") return this.expandIri(v, opts);
+      if (v && typeof v === "object" && !Array.isArray(v)) {
+        for (const k of ["@list", "@set"]) {
+          const list = own(v, k) ? v[k] : null;
+          if (Array.isArray(list)) for (let i = 0; i < list.length; i++) list[i] = this.expandIri(list[i], opts);
+        }
+      }
+      return v;
+    };
+    if (!Array.isArray(val)) return one(val);
+    for (let i = 0; i < val.length; i++) val[i] = one(val[i]);
+    return val;
+  }
 }
 
 class NodeIndex {
-  constructor(document, base) {
-    this.ctx = new Ctx();
+  // `base` is the descriptor's address; `fetchedFrom`, when it differs, is the
+  // address its text came from, which relative IRIs resolve against.
+  constructor(document, base, fetchedFrom) {
+    this.ctx = new Ctx(fetchedFrom || base);
     this.base = base;
     this.nodes = new Map();
     this.order = [];
@@ -249,11 +356,14 @@ class NodeIndex {
   }
   _ingest(document) {
     if (Array.isArray(document)) {
-      for (const item of document) if (item && typeof item === "object") { this.ctx.absorb(item["@context"]); this._add(item); }
+      for (const item of document) {
+        if (item && typeof item === "object") { this.ctx.absorb(item["@context"]); this.ctx.expandIris(item); this._add(item); }
+      }
       return;
     }
     if (!document || typeof document !== "object") return;
     this.ctx.absorb(document["@context"]);
+    this.ctx.expandIris(document);
     const extras = Object.fromEntries(Object.entries(document).filter(([k]) => k !== "@context" && k !== "@graph"));
     if (Object.keys(extras).length) {
       const root = { ...extras };
@@ -317,6 +427,11 @@ class NodeIndex {
     const iri = rawId(ident);
     if (iri == null) return null;
     if (this.nodes.has(String(iri))) return this.nodes.get(String(iri));
+    // A plain string naming a node as its "@id" was written before expansion, such as "#S".
+    if (typeof ident === "string") {
+      const full = this.ctx.expandIri(ident, { base: true });
+      if (full !== ident && this.nodes.has(full)) return this.nodes.get(full);
+    }
     if (ident && typeof ident === "object" && Object.keys(ident).some(k => k !== "@id")) return ident;
     return null;
   }
@@ -376,9 +491,23 @@ const SCHEMA_DATATYPES = new Map([["string", XSD + "string"], ["integer", XSD + 
 function schemaDatatype(types) {
   return types.length === 1 ? (SCHEMA_DATATYPES.get(types[0]) || null) : null;
 }
+// A datatype reaches a field in one of two forms: an IRI in full, which is
+// what every IRI in a JSON-LD document is once expanded, or a plain "xsd:" or
+// "rdf:" string where nothing expands it: a HyperMarkdown block, or a
+// sh:datatype written as a literal. xsdName gives the name of an XSD datatype
+// in either form, or null; hmc.py's _xsd_name and _is_rdf_json are the same.
+function xsdName(datatype) {
+  const dt = asText(datatype);
+  if (dt.startsWith(XSD)) return dt.slice(XSD.length);
+  return dt.startsWith("xsd:") ? dt.slice(4) : null;
+}
+function isRdfJson(datatype) {
+  const dt = asText(datatype);
+  return dt === RDF + "JSON" || dt === "rdf:JSON";
+}
 function shaclJsonKind(index, node, datatype, maxCount) {
   const dt = datatype || "";
-  if (dt === RDF + "JSON" || dt.endsWith("#JSON")) return "json";
+  if (isRdfJson(dt)) return "json";
   if (dt) return null;
   const nested = index.get(node, P.shNode);
   const nodeKind = String(literal(index.get(node, P.shNodeKind)) || "");
@@ -412,8 +541,9 @@ function shapeFields(index, shapeRef) {
     if (index.get(shape, P.shDt) || index.get(shape, P.shMinLen) || index.get(shape, P.shMaxLen)) {
       const label = String(literal(index.get(shape, P.label)) || "");
       const name = /query|sparql/i.test(label) ? "query" : "body";
+      const datatype = String(literal(index.get(shape, P.shDt)) || XSD + "string");
       fields.push({
-        name, path: shape["@id"] || null, datatype: String(literal(index.get(shape, P.shDt)) || XSD + "string"),
+        name, path: shape["@id"] || null, datatype, jsonKind: isRdfJson(datatype) ? "json" : null,
         minCount: 1, maxCount: 1, required: true, rawBody: true, pattern: null, defaultValue: null,
         minLength: inty(literal(index.get(shape, P.shMinLen))), maxLength: inty(literal(index.get(shape, P.shMaxLen))),
         description: String(literal(index.get(shape, P.comment)) || literal(index.get(shape, P.shDesc)) || ""),
@@ -544,7 +674,7 @@ function controlFromNode(index, node, source) {
     readOnly: truthy(literal(index.get(node, P.readOnly))),
     idempotent: truthy(literal(index.get(node, P.idempotent))),
     destructive: truthy(literal(index.get(node, P.destructive))),
-    types: index.typesOf(node), source
+    types: index.typesOf(node), source, base: index.ctx.base
   };
   control.unsafe = isUnsafe(control);
   return control;
@@ -718,17 +848,18 @@ async function fetchAuthority(url) {
   }
   throw new Error("Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from " + url);
 }
-function parseDescriptor(text, contentType, url) {
+function parseDescriptor(text, contentType, url, fetchedFrom) {
   const kind = classifyPayload(text, contentType);
   if (kind === "jsonld") {
     const document = JSON.parse(text);
-    const index = new NodeIndex(document, url);
+    const index = new NodeIndex(document, url, fetchedFrom);
     const root = index.root || index.nodes.get(url) || index.order[0];
     const title = String(literal(index.get(root, P.dcTitle)) || literal(index.get(root, P.title)) || literal(index.get(root, P.label)) || localName(url) || url);
     const types = root ? index.typesOf(root) : [];
     const description = String(literal(index.get(root, P.dcDesc)) || literal(index.get(root, P.desc)) || literal(index.get(root, P.comment)) || "");
     const seeAlso = root ? literals(index.get(root, P.seeAlso)).map(String) : [];
-    return { url, title, types, description, contentType, seeAlso, controls: extractControls(index, url) };
+    return { url, title, types, description, contentType, seeAlso, controls: extractControls(index, url),
+      expandIri: (iri) => index.ctx.expandIri(iri, { base: true }) };
   }
   if (kind === "markdown") return parseMarkdown(text, url, contentType);
   if (kind === "turtle") throw new Error("This host served Turtle, which this page does not parse. Ask the host for ?format=jsonld, or use hmc.py, which reads Turtle when rdflib is installed.");
@@ -736,7 +867,9 @@ function parseDescriptor(text, contentType, url) {
 }
 function findControl(descriptor, rel) {
   if (!rel) return null;
-  const exact = descriptor.controls.find(c => c.rel === rel || c.id === rel);
+  // A name expands as the document's own IRIs did, so "iep:x" finds an action written "iep:x".
+  const full = descriptor.expandIri ? descriptor.expandIri(rel) : rel;
+  const exact = descriptor.controls.find(c => c.rel === rel || c.id === rel || c.rel === full || c.id === full);
   if (exact) return exact;
   const lowered = rel.toLowerCase();
   return descriptor.controls.find(c => {
@@ -824,8 +957,8 @@ function templatePathValue(spec, value, op, encOp) {
   if (spec.explode && op === ".") return encoded.join(".");
   return encoded.join(",");
 }
-// XSD datatypes whose values are numbers, by the name after "#". A bound a type
-// implies, such as unsignedByte's 0 to 255, is left to the server, as xsd:int's was.
+// XSD datatypes whose values are numbers, by their name in the XSD namespace. A bound
+// a type implies, such as unsignedByte's 0 to 255, is left to the server, as xsd:int's was.
 const XSD_INTEGERS = new Set(["integer", "int", "long", "short", "byte", "nonNegativeInteger", "positiveInteger",
   "negativeInteger", "nonPositiveInteger", "unsignedLong", "unsignedInt", "unsignedShort", "unsignedByte"]);
 const XSD_DOUBLES = new Set(["double", "float"]);
@@ -833,10 +966,8 @@ const XSD_DOUBLES = new Set(["double", "float"]);
 // that does not hold a number.
 function numericKind(field) {
   if (field.jsonKind) return null;
-  const dt = asText(field.datatype);
-  const hash = dt.lastIndexOf("#");
-  if (hash < 0) return null;
-  const local = dt.slice(hash + 1);
+  const local = xsdName(field.datatype);
+  if (local == null) return null;
   if (XSD_INTEGERS.has(local)) return "integer";
   if (local === "decimal") return "decimal";
   return XSD_DOUBLES.has(local) ? "double" : null;
@@ -938,8 +1069,7 @@ function coerceValue(field, value) {
   }
   const numeric = numericKind(field);
   if (numeric) return coerceNumber(field, numeric, value);
-  const dt = field.datatype || "";
-  if (dt.endsWith("#boolean")) {
+  if (xsdName(field.datatype) === "boolean") {
     const t = String(value).toLowerCase();
     if (["true", "1", "yes"].includes(t)) return true;
     if (["false", "0", "no"].includes(t)) return false;
@@ -988,7 +1118,8 @@ function validateFields(control, supplied) {
         if (high != null && n > high) errors.push(field.name + ": above maxInclusive");
       }
     }
-    values[field.name] = typed;
+    // A JSON request body is sent as it was written, once it parses.
+    values[field.name] = field.rawBody && field.jsonKind && typeof found === "string" ? found : typed;
   }
   return { values, errors };
 }
@@ -999,22 +1130,28 @@ function isMcpTool(target) {
     return u.pathname.startsWith("/tool/") && u.hostname.includes("interego");
   } catch { return false; }
 }
-function isJunction(target, descriptorUrl, controlId) {
+// An action junction names a control in the document, not an address to send
+// to: a bare "#fragment" (a HyperMarkdown block may write one), the control's
+// own IRI, or the document's own IRI with any fragment, such as
+// "<document>#control-search". In JSON-LD a target "#fragment" is that IRI
+// once resolved (RFC 3986, 4.4: a same-document reference), so the two are
+// one junction. The document is the one at the descriptor's address or at the
+// base its IRIs resolved against. A fragment is never sent, so a request to
+// such a target would only reach the descriptor again.
+function isJunction(target, descriptorUrl, control) {
   if (!target) return false;
-  if (target.startsWith("#") || target === controlId) return true;
-  try {
-    const base = stripFrag(descriptorUrl);
-    if (target.startsWith(base + "#")) {
-      const frag = target.slice(base.length + 1);
-      return frag.startsWith("control-") || target === controlId;
-    }
-  } catch {}
-  return false;
+  if (target.startsWith("#") || target === control.id) return true;
+  if (!target.includes("#")) return false;
+  let doc = null;
+  try { doc = stripFrag(target); } catch { return false; }
+  return [descriptorUrl, control.base].some(b => {
+    try { return !!b && stripFrag(b) === doc; } catch { return false; }
+  });
 }
 function classifyTransport(control, descriptorUrl) {
   if (control.template) return "http";
   if (isMcpTool(control.target)) return "mcp";
-  if (isJunction(control.target, descriptorUrl, control.id)) return "junction";
+  if (isJunction(control.target, descriptorUrl, control)) return "junction";
   if (control.target && /^https?:\/\//.test(control.target)) return "http";
   return control.rel ? "mcp" : "unknown";
 }
@@ -1039,7 +1176,10 @@ function resolvePlan(control, values, descriptorUrl) {
   const headers = { Accept: control.mediaType || "*/*" };
   let body = null, bodyText = null, url = null;
   const raw = control.fields.find(f => f.rawBody);
-  if (raw && values[raw.name] != null) { bodyText = String(values[raw.name]); body = bodyText; }
+  if (raw && values[raw.name] != null) {
+    const v = values[raw.name];
+    bodyText = typeof v === "string" ? v : JSON.stringify(v); body = bodyText;
+  }
   if (control.template) {
     url = expandUriTemplate(control.template, values);
     transport = "http";
@@ -1078,7 +1218,7 @@ function resolvePlan(control, values, descriptorUrl) {
   if (url && !SAFE.has(method) && body == null && !raw && Object.keys(values).length) {
     body = values; bodyText = JSON.stringify(values, null, 2); headers["Content-Type"] = headers["Content-Type"] || "application/json";
   }
-  if (raw && bodyText != null && url) headers["Content-Type"] = control.mediaType || "application/sparql-query";
+  if (raw && bodyText != null && url) headers["Content-Type"] = control.mediaType || (raw.jsonKind ? "application/json" : "application/sparql-query");
   return { control, transport, method, url, headers, body, bodyText, fields: values, mcp, notes, unsafe: control.unsafe };
 }
 
@@ -1253,7 +1393,7 @@ function fieldControl(field) {
   } else if (field.rawBody || field.jsonKind || (field.maxLength && field.maxLength > 200) || /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
     input = `<textarea data-field="${key}" ${req ? "required" : ""}>${val}</textarea>`;
   } else {
-    const type = (field.datatype || "").endsWith("#integer") ? "number" : "text";
+    const type = xsdName(field.datatype) === "integer" ? "number" : "text";
     input = `<input data-field="${key}" type="${type}" value="${val}" ${req ? "required" : ""}>`;
   }
   return `<div class="field"><label>${esc(field.name)} ${req ? '<span class="req">*</span>' : ""}</label>${input}
@@ -1382,7 +1522,7 @@ async function loadDescriptorUrl(url, push = true) {
   document.documentElement.dataset.ready = "0";
   const fetched = await fetchAuthority(url);
   if (fetched.kind === "turtle") throw new Error("Descriptor arrived as Turtle, which this page does not parse. Ask the host for ?format=jsonld, or use hmc.py, which reads Turtle when rdflib is installed.");
-  const descriptor = parseDescriptor(fetched.text, fetched.contentType, stripFrag(url));
+  const descriptor = parseDescriptor(fetched.text, fetched.contentType, stripFrag(url), fetched.finalUrl);
   if (push && state.descriptor) state.history.push(state.descriptor.url);
   state.descriptor = descriptor;
   state.selected = null;

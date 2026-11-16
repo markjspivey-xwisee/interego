@@ -165,6 +165,40 @@ U+FEFF, and Python's `strip` took U+001C to U+001F and U+0085. Both now trim
 space, tab, CR and LF only. Each of the three changes has a page test and a
 command-line test that failed before. The CSP script hash is updated.
 
+**Compact and relative IRIs.** Both clients read a JSON-LD document's keys
+through its context but took its IRI values as they were written. A compacted
+descriptor's `"sh:datatype": {"@id": "xsd:integer"}` stayed `xsd:integer`, which
+the number, boolean and JSON checks did not recognise, so an integer field took
+`abc` and sent `12` as a string, and a boolean or `rdf:JSON` field was a string
+too. A relative target such as `"hydra:target": {"@id": "/api"}` stayed `/api`,
+which neither client took for an address, so it was offered as an MCP call. Now
+each client expands every IRI once, as it reads the document: each `@id`, and
+each value of a term the context types as `@id` or `@vocab` (as the kernel's
+context types `target` and `action`), through the context's prefixes and
+`@vocab`, with a relative IRI resolved against the context's `@base` or else
+the address the document was fetched from. A datatype is then matched by its
+full XSD or RDF IRI, or by a plain `xsd:` or `rdf:` string where nothing expands
+one (a HyperMarkdown block, or a `sh:datatype` written as a literal); a name
+after a `#` in another namespace no longer counts. A node shape typed
+`rdf:JSON` now takes a request body that must parse as JSON and sends it as
+written, as `application/json`, and `hmc.py` sends a boolean body as `true`
+rather than `True`. The https rule applies to the resolved address, so an
+`@base` of `http:` gives a target the page refuses, and one of `file:` gives
+`hmc.py` nothing to fetch. A target that is the document's own IRI with a
+fragment is an action junction whether it is written `#frag` or in full: once
+resolved they are the same IRI, and the full form used to be an `http` control
+that could only reach the descriptor again. A name given to `?invoke=` or to
+`hmc.py` is expanded the same way, so `iep:x` still finds an action the context
+expanded. The page also read a compact key with a second colon, `ex:a:b`, as
+`ex:a`, and it now knows the `prov:` and `skos:` prefixes `hmc.py` already
+did, so a compact IRI expands alike in both. Page and command-line tests cover compact `xsd:integer`, `xsd:boolean`
+and `rdf:JSON` datatypes in property shapes and node-level shapes, terms typed
+`@id` and `@vocab`, the targets `/api`, `api`, `../x`, `#frag` and a full
+fragment at a known address and under an explicit `@base`, and an `@base` of
+`http:` or `file:`. Each failed before; in the last two only the resolved
+address was new, and nothing was sent before either. The CSP script hash is
+updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and
