@@ -1,5 +1,178 @@
 # Changelog
 
+## 2026-11-16 — Dependencies: minimatch 11.0.8 under typescript-eslint and electron-builder
+
+`npm audit` lists one advisory against minimatch from 7.0.0 up to 11.0.1,
+GHSA-g3hv-75wg-m249 ("potential denial of service via globparts
+amplification", moderate). After the claude-agent-acp change, three copies in
+the root lockfile were inside that range, all dev only: 10.2.6 under
+`@typescript-eslint/typescript-estree`, the parser eslint loads through
+typescript-eslint; 10.2.6 under `app-builder-lib` and 9.0.9 under
+`@electron/universal`, both electron-builder's. The audit reported the one
+advisory twelve times, once for minimatch and once for each package above
+those copies. The fix is only in 11.x, a major none of the three asks for.
+
+It is not reachable here. The amplification is in the rewrite minimatch does
+at `optimizationLevel` 2 or higher, which turns a `**/..` in a pattern into a
+brace alternation and expands it. None of the three passes the option, so all
+run at the default, 1. And the patterns are this repository's own:
+typescript-estree matches only the `allowDefaultProject` globs of a
+project-service setup, which `eslint.config.js` does not use, so it loads
+minimatch and never calls it; app-builder-lib matches the file globs of the two
+desktop apps' electron-builder configs and its own default exclusions;
+`@electron/universal` matches the globs electron-builder hands it, and is
+loaded only to build a universal macOS app, which neither config asks for.
+This change clears the finding rather than explaining it again in every audit.
+
+**The overrides.** The root `package.json` has an `overrides` block again,
+with three keys: `@electron/universal`, `@typescript-eslint/typescript-estree`
+and `app-builder-lib`. Each sets `"minimatch@>=7.0.0 <11.0.1": "11.0.8"`. A
+range-keyed override applies to a minimatch dependency only when the range
+that dependency asks for intersects the key's range (npm's own matching,
+`semver.intersects`). The three copies ask for `^10.2.2`, `^10.2.5` and
+`^9.0.3`, and are overridden. The rest do not intersect, and are left alone:
+the root minimatch 3.1.5 that eslint, `@electron/asar`, glob 7 and dir-compare
+share, and the 5.1.9 under filelist (the Solid server's ejs and jake). An
+unranged key (`"minimatch": "11.0.8"` under `app-builder-lib` or
+`@electron/universal`) would have handed 11.x to every minimatch below it,
+asar, glob 7 and dir-compare included. asar and dir-compare call minimatch 3's
+default export, which 11.x does not have, so their first match would throw.
+
+What the three use is still there. 11.0.8 drops `makeRe` and the `AST` class
+from its exports; none of the three uses either. typescript-estree and
+`@electron/universal` call `minimatch()`, and app-builder-lib builds
+`Minimatch` objects and reads `negate`, `set` and `match(path, partial)`, from
+the CommonJS build, which 11.0.8 still ships. The options they pass, `dot` and
+`matchBase`, are unchanged. Two comparisons were run here against the published
+packages. app-builder-lib 26.18.0's own filter code, given the shared-workspace
+desktop's `files` globs and electron-builder's default exclusions, made the
+same decision for each of 24 paths under 10.2.6 and under 11.0.8. And
+`minimatch()` with `dot` or with `matchBase` gave the same answer under 9.0.9,
+10.2.6 and 11.0.8 for 96 pattern, path and option combinations.
+
+**Lockfile.** Against the base, minimatch changes in exactly these entries:
+- `@typescript-eslint/typescript-estree/node_modules/minimatch` 10.2.6 to
+  11.0.8;
+- `app-builder-lib/node_modules/minimatch` 10.2.6 to 11.0.8;
+- `@electron/universal/node_modules/minimatch` 9.0.9 to 11.0.8;
+- `@electron/universal/node_modules/brace-expansion` 2.1.7 to 5.0.13, since
+  11.0.8 asks for `^5.0.12`;
+- `@electron/universal/node_modules/balanced-match` 4.0.4, new, since 5.0.13
+  asks for `^4.0.2` and the root has 1.0.2;
+- `@isaacs/nonrecursive-glob-match` 1.1.0, new at the root, minimatch 11's
+  only other dependency, which has none of its own.
+
+The other two copies keep their nested brace-expansion 5.0.12 and
+balanced-match 4.0.4, which satisfy 11.0.8. No other entry changes. The
+versions, tarball URLs and integrities are the registry's. minimatch 11.0.8 and
+brace-expansion 5.x ask for Node 20 or 22 and later, and every CI job runs one
+of those; 10.2.6 also allowed 18. The universal copy's license moves from ISC
+(9.0.9) to BlueOak-1.0.0, which the other two copies already had.
+
+`npm install --package-lock-only --ignore-scripts --no-audit --no-fund` (npm
+10.9.4) moved only the typescript-estree copy. With a lockfile in place, npm
+looks for dependencies that no longer fit by walking down from the root, and
+that walk stops at a workspace link. `app-builder-lib` and `@electron/universal`
+are reached only through the two desktop workspaces, so npm left them at 10.2.6
+and 9.0.9, which `npm ls` then reported invalid. Deleting their entries did not
+help: npm pruned the brace-expansion and balanced-match copies that only they
+had used, and left the two minimatch dependencies resolving to the root's 3.1.5.
+So the entries for those two copies, and their brace-expansion and
+balanced-match, were written by hand: the minimatch entries as npm wrote the
+typescript-estree one, the rest from the registry's metadata. The same command
+then reported the lockfile up to date and changed nothing in it, and did so
+again on a second run. As in the 2026-11-11 entry, npm 10.9.4 also dropped the
+`libc` fields of the eight Linux packages of the Claude Code CLI and the agent
+SDK and rewrote the flags of the `applications/foxxi-content-intelligence` entry
+each time it ran; those lines are kept as they are on master.
+
+**Audit.** `npm audit` on the root lockfile, measured on 2026-11-16, before this
+branch: 22 vulnerable packages, all moderate. With the `hono` entry above: 21.
+After: 9, all moderate, all the Solid server's Comunica and uuid chain. No
+minimatch and no `hono` advisory is listed, and none is new.
+
+**What runs it.** ESLint (`lint.yml`, Node 20, on every push to master and
+every pull request against it) loads typescript-estree's copy every time eslint runs. Desktop
+Packaging (`desktop-package.yml`, on Windows, macOS and Linux) and Local Pod
+Windows Installer (`pod-desktop-windows.yml`) package the two desktop apps with
+electron-builder, which builds every `files` glob with app-builder-lib's copy;
+both list `package-lock.json` in their paths. No job runs
+`@electron/universal`'s copy, for the reason above. No
+service imports minimatch through these packages. The images that keep the
+root dev dependencies carry the three copies unused, and auto-deploy rebuilds
+them, since the root manifests are an input to every image that installs from
+them (`tools/deploy-bundle-scope.ts`).
+
+Checks: loaded with npm's own Arborist, the lockfile has no invalid edge and no
+missing required one; `npm ls minimatch --all --package-lock-only` exits 0
+and shows the three copies at 11.0.8 overridden and 3.1.5 and 5.1.9 where they
+were. The lint gate, changelog-lint, the `tsconfig.check.json` typecheck and
+the workflow-trigger and image-prune tests pass. The local `node_modules`
+still holds 10.2.6 and 9.0.9, so eslint ran here on the old minimatch, and
+nothing here packaged a desktop app. CI installs from the lockfile.
+
+Not covered: the overrides pin 11.0.8 exactly, so a later release reaches
+these copies only when someone edits the block. 11.0.8 and brace-expansion
+5.0.13 were published on 2026-11-11, five days before this change, which is
+shorter than the two weeks the claude-agent-acp entry waited. When
+typescript-eslint asks for minimatch 11, its key should be deleted: against
+`^11.0.1` or later it matches nothing, against `^11.0.0` it holds the copy at
+11.0.8, and npm warns about neither. The same goes for the other two keys when
+app-builder-lib and `@electron/universal` move to minimatch 11.
+
+## 2026-11-15 — Dependencies: hono 4.13.18, Foxxi's @hono/node-server 2.1.8, and Relay Tests on lockfile changes
+
+The `@hono/node-server` 2.1.8 change left three things for a change of their
+own. This is that change.
+
+- **Root lockfile: `hono` 4.13.14 to 4.13.18.** One entry changes, and no
+  package is added or removed. Three packages ask for it, and 4.13.18 satisfies
+  all three:
+  - `@modelcontextprotocol/node`, the relay's MCP transport (`^4.11.4`);
+  - the dev-only v1 `@modelcontextprotocol/sdk` (`^4.11.4`);
+  - `@hono/node-server`, as a peer (`^4 || ^5.0.0-0`).
+
+  `npm audit` lists five advisories for 4.13.14, all fixed in 4.13.16:
+  - `mount()` forwarding a path that skips middleware scoped inside the mount
+    prefix;
+  - `RegExpRouter` skipping wildcard middleware for some route sets;
+  - `csrf()` not checking hyperlink-auditing requests;
+  - `validator('form')` skipping validation for some multipart requests;
+  - the `css` helper not escaping a split closing tag (low).
+
+  None of the five is in a part of `hono` this repository uses. No source
+  here imports `hono`, and `@modelcontextprotocol/node` imports only
+  `@hono/node-server`, whose request listener calls the MCP transport
+  directly: no Hono app, router or middleware is built. The relay image
+  resolves its own tree whenever its install step is rebuilt, which resolves
+  4.13.18 today. So this moves the copy that tests and the bridge images use
+  (`npm ci` from the root lockfile) to what a relay build gets.
+- **Foxxi's lockfile: `@hono/node-server` 2.1.5 to 2.1.8, and `hono` 4.13.14
+  to 4.13.18.** Both are dev-only there. They come in through the agent SDK's
+  peer, the v1 MCP SDK. 2.1.5 is inside the range of the two 2.x advisories
+  the `@hono/node-server` entry describes. The Foxxi microsite image installs
+  from this lockfile in its build stage only. Its final image is nginx with
+  the built files, so neither package ships in it.
+- **Relay Tests run when the root lockfile changes.** The job installs with
+  `npm ci` from the root lockfile, so a lockfile change alone changes what it
+  tests. Its paths filter did not list the file, so the relay's own suite
+  never ran on a dependency-only change, including the `@hono/node-server`
+  2.x change. `relay-tests.yml` now lists `package-lock.json` for both push
+  and pull request.
+
+The three lockfile entries were edited by hand: the version, the registry
+tarball URL, and that tarball's published integrity. Neither package has
+dependencies of its own, and their engines and peer ranges are unchanged.
+`npm install --package-lock-only` then reported both lockfiles up to date.
+
+Not covered: nothing on this machine ran against 4.13.18, because the local
+`node_modules` still holds 4.13.14. CI's root suite and the Relay Tests now
+installed from this lockfile are what run it. Of the other moderate
+findings, the eslint and electron-builder chains are the minimatch entry
+above, and the Solid server chain is unchanged. claude-code-acp, which this
+entry named when it was first written, is no longer in the tree: this change
+is built on the claude-agent-acp change.
+
 ## 2026-11-15 — Editor witness: reject-always offered only on a mode switch leaves the thesis untested
 
 The witness keeps a standing refusal of a mode switch out of the deny set,

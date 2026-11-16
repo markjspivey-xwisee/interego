@@ -20,6 +20,9 @@ name: Relay Tests
 # to itself. No network, no secrets, no live pod. That is what makes it safe to
 # run on every pull request from anyone.
 
+# The root lockfile is in both filters because the job installs from it (`npm ci`
+# below): a lockfile change alone changes the dependency tree the suite runs on.
+
 on:
   push:
     branches: [master]
@@ -28,6 +31,7 @@ on:
       - 'integrations/application-runtime/**'
       - 'integrations/affordance-surface/**'
       - 'packages/**'
+      - 'package-lock.json'
       - '.github/workflows/relay-tests.yml'
   pull_request:
     branches: [master]
@@ -36,6 +40,7 @@ on:
       - 'integrations/application-runtime/**'
       - 'integrations/affordance-surface/**'
       - 'packages/**'
+      - 'package-lock.json'
       - '.github/workflows/relay-tests.yml'
 
 permissions:
