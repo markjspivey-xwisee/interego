@@ -91,8 +91,8 @@ branch: 22 vulnerable packages, all moderate. With the `hono` entry above: 21.
 After: 9, all moderate, all the Solid server's Comunica and uuid chain. No
 minimatch and no `hono` advisory is listed, and none is new.
 
-**What runs it.** ESLint (`lint.yml`, Node 20, on every push and pull
-request) loads typescript-estree's copy every time eslint runs. Desktop
+**What runs it.** ESLint (`lint.yml`, Node 20, on every push to master and
+every pull request against it) loads typescript-estree's copy every time eslint runs. Desktop
 Packaging (`desktop-package.yml`, on Windows, macOS and Linux) and Local Pod
 Windows Installer (`pod-desktop-windows.yml`) package the two desktop apps with
 electron-builder, which builds every `files` glob with app-builder-lib's copy;
@@ -130,7 +130,7 @@ own. This is that change.
   all three:
   - `@modelcontextprotocol/node`, the relay's MCP transport (`^4.11.4`);
   - the dev-only v1 `@modelcontextprotocol/sdk` (`^4.11.4`);
-  - `@hono/node-server`, as a peer (`^4`).
+  - `@hono/node-server`, as a peer (`^4 || ^5.0.0-0`).
 
   `npm audit` lists five advisories for 4.13.14, all fixed in 4.13.16:
   - `mount()` forwarding a path that skips middleware scoped inside the mount
