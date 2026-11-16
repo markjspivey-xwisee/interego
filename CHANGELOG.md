@@ -408,6 +408,555 @@ permission's allow-with-updates that carries a switch to acceptEdits changes the
 mode without a `current_mode_update`. No session was run through the witness
 against either agent for this change.
 
+## 2026-11-15 — CI: the hosted cold builds run when a file their images copy changes
+
+`hosted-image-builds.yml` cold-builds six images on a pull request, but only
+when the pull request touches one of the paths it lists. The interego-bridge
+and Discord images now copy `tools/prune-image-dev-tools.mjs` and run it inside
+their `npm ci` layer, and the list did not name it, so a pull request changing
+only the script built no image before merge; the other seven bridges that run
+it are built only after merge. The relay's reference stage had the same gap
+for the compositions it compiles in: `integrations/application-runtime/`,
+`integrations/affordance-surface/` and two `applications/llm-telemetry/` files.
+All five are on the list now.
+
+`integrations/tests/hosted-docker-build-inputs.test.ts` reads the workflow's
+paths and its matrix, and checks that every tracked file each of those
+Dockerfiles copies from the context matches a path, so the next COPY added
+without a path fails there. Before the fix it listed the prune script for both
+images and twenty files of the relay's.
+
+Not covered: no build was dispatched for the seven bridges that only build
+after merge, so the RUN that prunes has not yet run in a real image; the first
+`build-ghcr` dispatch for one of them (for example `-f image=interego-wsp-bridge`)
+will show it and give a measured layer size. The path filter is read with a
+small pattern matcher of the test's own, which does not read negated patterns
+and fails if one appears.
+
+## 2026-11-15 — Images: the prune reaches workspace copies and deletes only platform packages
+
+`tools/prune-image-dev-tools.mjs` walked only the root node_modules. When a
+workspace needs one of the pruned packages at a version that conflicts with the
+root's, npm nests a copy under that workspace, for example
+`applications/<x>/bridge/node_modules/@anthropic-ai/claude-agent-sdk-linux-x64`,
+and that copy, a native binary of several hundred MB, would have stayed in the
+image with every test green. The lockfile already nests sixteen packages under
+workspace and application directories, and Foxxi's own package already asks for
+agent SDK 0.3 while the root has 0.2.44, so this was a plausible next change. The
+script now also walks the node_modules of every package directory the lockfile
+beside it records, and then checks that no location the lockfile records for a
+pruned package is still on disk. If one is, for instance behind a symbolic link
+it does not follow, the run fails and names it. It also refuses a directory not
+named node_modules, so `node tools/prune-image-dev-tools.mjs /tmp` fails instead
+of reporting success, and a lockfile it cannot read. A .bin link counts as
+pointing into a pruned package at any node_modules level, so a workspace's link
+up into the root's copy goes too.
+
+The platform packages were matched by `[a-z0-9][a-z0-9-]*` after the name, so
+a name such as `@anthropic-ai/claude-code-sdk`, or any future
+`@anthropic-ai/claude-code-<x>`, would have been deleted from every image. These
+images run some root devDependencies, so a runtime library of such a name added
+as one would have vanished. The suffix is now a platform and nothing else: an
+os and a cpu as Node names them, optionally `-musl`. The list writes it as
+`<platform>`. The test checks that every platform package the lockfile lets npm
+install for the CLI and the SDK is still covered.
+
+The safety argument is now stated in the right order, in the script, the test
+and the entry below: what proves no service needs these packages is the import
+closure of what each image runs and the scan of every shipped file. That npm
+marks them dev-only proves nothing in images that install devDependencies on
+purpose and import some of them (express, n3, jose and tsx) at run time. The lockfile
+check is a guard on the list, and it is now as strict as the entry below says:
+a workspace's devDependency on a pruned package fails it too, where before only
+production fields counted.
+
+The entry below also gave sizes that were low. With npm 10.9, which reads the
+lockfile's `libc` field, today's images hold about 330 MB of these packages, not
+312: the agent SDK carries both the glibc and the musl builds of sharp (113.1 MB
+installed, not 96.3). The pending switch would add about 470 MB per image, not
+204, because the new SDK's lockfile entries record no `libc` and npm installs
+both its 293.6 MB glibc and 287.3 MB musl binaries. Run on a hard-linked copy of
+this machine's install, where an older lockfile without `libc` put both CLI
+builds in place, the script removed 595.3 MB and kept `@anthropic-ai/sdk`,
+`@agentclientprotocol/sdk` and tsx. The note on the test-module floor now says
+what forced the move from 690: the reporter does not fire at 35 modules of
+slack, but `tests/vitest-run-integrity.test.ts` requires fewer and fails at 690.
+
+Not covered: no image was built, so the sizes are still the registry's unpacked
+sizes plus a local measurement, not a layer diff; the base image's npm version
+is assumed from Node 22, not read from the image. A pruned package nested under
+a package directory outside the build tree (a `file:` dependency on `../x`) is
+not walked; the check after the walk fails the build on it instead of deleting
+it.
+
+## 2026-11-15 — Images: the prune check reads every way of copying the lockfile and running npm
+
+The test that keeps the Claude developer tools out of the images,
+`integrations/tests/images-ship-no-claude-dev-tools.test.ts`, recognised the
+root lockfile only when a COPY named `package-lock.json` literally, and an
+install only when a command began `npm ci`, `npm install` or `npm i`. A new
+Dockerfile written any other way installed the root devDependencies, the
+Claude Code CLI among them, and passed every check: `COPY package*.json ./`,
+`COPY ./package-lock.json`, `COPY . .`, a JSON-form COPY,
+`NODE_OPTIONS=... npm ci`, `npm clean-install`, `npm --loglevel=warn ci`,
+`(npm ci)` and `npm ci --prefix /app` each found no install at all. It also
+counted an install as pruned whenever the script ran after it, so
+`node tools/prune-image-dev-tools.mjs /tmp` passed while pruning nothing in
+/app, and so did a prune after `||`, which runs only when `npm ci` fails.
+
+The test now follows where every COPY and ADD puts the repository's
+package.json and lockfiles, and the prune script, in any form Docker accepts: a
+literal or `./` path, a glob, a directory, `.`, JSON form, or `--from` an earlier
+stage. It splits a RUN into commands outside quotes, reads past `VAR=value`
+assignments, `env`-style wrappers and npm's options before the verb, accepts
+every alias npm 10 has for `ci` and `install`, and follows `--prefix`. A prune
+counts only when it runs after the install in the same RUN, joined by `&&` or
+`;`, on that install's own node_modules. And it fails closed: an npm install it
+cannot attribute to a manifest it saw copied, or to packages the command names,
+fails the test, as does one that names a pruned package. Every Dockerfile in
+`deploy/images.json` must be one the test reads, and `x.Dockerfile` and
+`Containerfile` names are read too. The shipped-file scan uses the same reading,
+so a `COPY . .` puts the whole tree in its scope.
+
+The test carries twenty-one rewritten COPY, npm and prune lines that must each
+be caught, four that must each count as pruned, and three installs it must
+refuse to place. Of the first twenty written, seventeen passed unnoticed under
+the old reading. The thirty npm installs in today's Dockerfiles all place:
+twelve install the root manifests (the nine pruned images and the three build
+stages), thirteen another manifest, one is global and four name their packages.
+
+Not covered: installs by yarn, pnpm or bun are not read (the one bun install,
+in `deploy/Dockerfile.pgsl-sweep`, writes its own manifest); `RUN` heredocs,
+shell variables in paths, and a `cd` inside a subshell (taken to last after it)
+are read naively; a RUN that writes its own package.json is classified by the
+packages it names; and `.dockerignore` is not applied, which can only make the
+test see more copied than Docker does.
+
+## 2026-11-15 — Images: the Claude developer tools no longer ship in nine images
+
+Nine images install the root lockfile with a plain `npm ci` and keep its
+devDependencies, because their services run through `npx tsx` and tsx is a root
+devDependency: the seven vertical bridges (agp, coached-world, foxxi,
+jev-harness, pev, wrd, wsp), the substrate demo bridge and the Discord bot.
+Every other root devDependency came along with tsx, among them the Claude Code
+CLI and the ACP agent `@zed-industries/claude-code-acp` with the Claude Agent
+SDK it depends on. No service runs any of them.
+
+`tools/prune-image-dev-tools.mjs` now deletes them in the same RUN as the
+`npm ci`: `@anthropic-ai/claude-code` and its `@anthropic-ai/claude-code-<platform>`
+packages, `@anthropic-ai/claude-agent-sdk` and its
+`@anthropic-ai/claude-agent-sdk-<platform>` packages, and the ACP agents
+`@zed-industries/claude-code-acp` and `@agentclientprotocol/claude-agent-acp`,
+with their `node_modules/.bin` links. It deletes nothing else
+(`@anthropic-ai/sdk` stays), skips a package that is not there, and prints each
+removal and the bytes it held. The same RUN matters: a delete in a later RUN
+only hides the files behind whiteouts in a layer the image still ships.
+
+Why it is safe: nothing the nine images run imports them or starts their
+executables. `integrations/tests/images-ship-no-claude-dev-tools.test.ts`
+follows the static imports from each image's CMD and from every script a RUN
+step executes, and scans every file any image copies. Four files that do refer
+to them ship only because their directory is copied whole, and none is
+reachable from what the image runs: Foxxi's two emergent-collective developer
+drivers, the shared-workspace desktop app's lookup of a local Claude Code
+install, and `demos/agent-lib.ts`. That npm marks the packages dev-only is no
+evidence here, because these images install devDependencies on purpose and
+import some at run time (express, n3, jose and tsx are root devDependencies).
+The test reads the lockfile for a narrower guarantee: each pruned package is
+dev-only and only the root's devDependencies or another of them asks for one,
+so the list cannot delete something a production dependency needs. The same
+test pins which Dockerfiles must prune, and checks that the three which install
+the root lockfile only in a build stage (dashboard, pgsl-browser, relay) never
+ship that node_modules.
+
+Size, from the registry's unpacked sizes and a local install: about 330 MB per
+image. The CLI's glibc binary is 214.3 MB. The lockfile records `libc` for the
+CLI's platform packages, and npm 10.9, which Node 22 bundles, reads it from the
+lockfile entry, so the 208.3 MB musl build is skipped on these Debian images.
+The agent SDK 0.2.44 measures 113.1 MB installed: 79.8 MB of its own and both
+the glibc and the musl builds of sharp nested under it, whose lockfile entries
+record no `libc`. The CLI wrapper and the ACP agent are under 1 MB each. A tree
+installed from a lockfile without `libc` holds both CLI builds: on this
+machine's install (CLI 2.1.161) the script removed 595.3 MB.
+
+The pending switch to `@agentclientprotocol/claude-agent-acp` (0.99.1 in its
+lockfile) brings `@anthropic-ai/claude-agent-sdk` 0.3.312, whose linux-x64
+platform packages are native binaries of 293.6 MB (glibc) and 287.3 MB (musl).
+That lockfile records no `libc` for them, so npm installs both: about 470 MB
+more per image than today if nothing pruned them, net of the 113 MB SDK 0.2.44
+it replaces. All of those packages are on the list, so the switch adds none of
+that to these images.
+
+`integrations/tests/hosted-docker-build-inputs.test.ts` split a Dockerfile after
+the text `RUN npm ci` to inject a stage; it now injects after the whole line.
+The new test module used the last of the test-module floor's headroom over 690.
+Master has since raised the floor to 700 for a module of its own, which leaves
+this one headroom, so `MIN_TEST_MODULES` is not changed here.
+
+Not covered: no image was built here, so the saving stays an estimate until CI
+builds them. The switch still adds the larger ACP protocol library
+(`@agentclientprotocol/sdk` 0.14.1 to 2.1.0, about 7.5 MB more) and three small
+packages, which are not on the list. The images still carry the other root
+devDependencies (vitest, eslint, typescript and the rest). The script is copied
+in before `npm ci`, so changing it rebuilds the install layer of all nine
+images. The foxxi-dashboard and foxxi-microsite build stages install Foxxi's own
+devDependency on the agent SDK, binary included; those images serve built files
+from nginx, so it does not ship, and it is not pruned. npm's hidden lockfile
+still lists the removed packages; npm sees the tree no longer matches and reads
+the tree instead, and `npx tsx` does not consult it.
+
+## 2026-11-15 — Foxxi's profile declares only its own terms, and its projector writes the xapi-x keys
+
+Three things left open when the Foxxi profile server began serving the xapi-x
+profile.
+
+**Foxxi's profile no longer declares other publishers' terms.** It listed 13
+ADL and cmi5 verbs and 4 ADL activity types as concepts of its own, each with a
+label and a definition Foxxi wrote and `inScheme` Foxxi's version. Those terms
+are their publishers'. The statements go on using them, because cmi5 and xAPI
+fix those IRIs (a cmi5 statement uses cmi5's verbs; voiding is xAPI's verb),
+and the templates go on naming them. They are now listed as external terms, by
+IRI and type (`FOXXI_EXTERNAL_TERMS`), with the two activity types the
+templates named and the profile never declared. `verbIsDeclared` still answers
+true for a verb the templates name, so nothing an emitter may store changed.
+One thing does change for a writer on the profile server: a draft whose
+templates name an ADL or cmi5 term used to lint clean because Foxxi's profile
+declared it. It now has to list that term as external, as it does any other
+term it does not define. Versions already published are not re-linted.
+
+**Foxxi's projector writes the `iep#` keys** (xapi-x decision 6, first half).
+A projected descriptor's statement now carries `sourceDescriptor`,
+`modalStatus` and `projectionLossy` under `result.extensions`, the keys the
+lrs-adapter writes and the xapi-x profile declares, beside its own `foxxi:`
+keys. Foxxi's three descriptor templates hold a statement that carries them to
+them. The rules are `recommended`: a projection stored before today has only
+the `foxxi:` keys and still follows the profile. A voiding statement carries
+none of them.
+
+**Built-in profiles are kept with examples.** A profile published from a draft
+is refused without an example for every template and primary pattern, and
+serves them. A built-in profile was never published and served none. Each is
+now kept with examples that pass that lint, built by the emitters where an
+emitter builds the statement, and `GET /xapi/profiles/examples?iri=` answers
+for them with `builtIn: true` and no `publishedAt`.
+
+Not built. Foxxi's profile is still version `v/1` and its document changed in
+place, as it has before: a built-in profile is served from code and has no
+second version. A reader that took its concept list earlier holds 17 concepts
+the document no longer has; their IRIs were never Foxxi's and still resolve at
+their publishers'. The second half of decision 6 is not done: the projector
+still writes `foxxi:substrateDescriptorIri` and the templates still require
+it. A statement already stored is not rewritten: the bridge skips a projection
+whose id it already holds, so a descriptor projected before today keeps the
+statement it has. No lint rule refuses a profile that declares another publisher's term;
+this is fixed for Foxxi's profile and tested there.
+
+## 2026-11-16 — xapi-x: the adapter writes the decorations, the profile is at version 2, and the rules are a lint
+
+The xapi-x design listed what was left after its first slice. This does the part
+that is code in the Foxxi vertical and the lrs-adapter.
+
+**The lrs-adapter writes the decorations.** It adds the category
+`xapix:Projection` to every statement it projects, and `xapix:descriptorDigest`,
+`xapix:supersedesStatement` and `context.statement` when its caller states them
+(`descriptorDigest`, `supersedesStatements`). **This changes what the adapter
+sends**: every projected statement now has a `context`.
+
+**The profile is at version 2** (`src/xapix/profile.ts`). Its template selects on
+the category, so a statement that does not claim to be a projection is unmatched
+instead of invalid. It declares the six `xapix:` context extensions and the
+activity type. Version 1's template is kept, deprecated, and
+`buildXapixProfileDocV1` still builds version 1 as it was published. **The pod
+still serves version 1**: publishing version 2 there has not been done.
+
+**Order has a basis in code** (`src/xapix/statement.ts`): RFC 8785 canonical
+JSON, a statement's digest without what an LRS sets, `chained`, and `orderBasis`,
+which returns the strongest of provider-claimed, store-assigned, chained and
+attested that holds for a whole run. It is told whether the reader verified an
+attestation and verifies none itself.
+
+**The rules are a lint** (`src/xapix/lint.ts`): X1 to X8 over statements, X9 and
+X10 over a profile, with the profile lint's finding shape. The README's table
+says what each can and cannot see.
+
+**Not done.** No emitter chains its statements, nothing writes or verifies an
+order attestation, nothing serves a controls document, no profile states an
+evidence link or an offer, and the lint is not yet an affordance. Foxxi's
+projector writing the `iep#` keys is in another branch; it does not yet write
+the category or what a statement supersedes, and it projects a Quoted descriptor
+with an outcome verb, which rule X4 finds.
+
+## 2026-11-15 — Foxxi: a snapshot is written every time, and sealed
+
+Found when a restart of the deployed bridge lost every cmi5 launch. Foxxi keeps
+its launches, LTI line items, rosters, SCORM sessions and xAPI documents on the
+pod as snapshots and reads them back at startup. Two things were wrong.
+
+They were written once. `publish()` sends a graph with `If-None-Match: *` and
+takes a 412 as done, because a published graph never changes. A snapshot has one
+name and is rewritten, so its first write was its only write. The descriptor
+beside it kept being rewritten. On the deployed pod the cmi5 graph was from
+2026-09-26 and the LTI and xAPI-document graphs from July; every restart since
+restored those.
+
+They were plain text on a pod anyone can read: each launch's learner, their pod,
+the course and the registration.
+
+A snapshot is now sealed to the bridge's own key, derived from
+`FOXXI_BRIDGE_PRIVATE_KEY` for the pod, and its graph is replaced on every write
+(`src/pod-snapshot-publisher.ts`). A bridge with no key writes no snapshot. On
+read the sealed graph is taken when there is one and this bridge sealed it. The
+plain graph an earlier bridge left is read only where no sealed one exists yet.
+A bridge that has lost its key does not go back to the plain graph once a sealed
+one exists. A write the pod refuses, a 412 included, or one larger than is read
+back, fails as a whole and leaves the previous snapshot in place.
+
+Not changed: the plain graphs already on a pod are left where they are; removing
+them is the operator's. The LTI Platform gradebook was already sealed and
+written under its own rules. A snapshot still waits two seconds before it is
+written and is not written at shutdown, so state changed in the two seconds
+before a restart is lost.
+
+## 2026-11-15 — jev-harness: a selection whose base yields no changed files is refused
+
+`select-tests` given a `base_ref` that yields no changed files answered
+`mode=full` with "no changed files were given, so nothing narrows the suite".
+That reads as a selection made. On #899, #901 and #905 it hid a range that
+named nothing, and only the gate's 400 showed the fault.
+
+- `src/service.ts`: the selection now answers 400 for that case, as the gate
+  does for an empty diff, and names the commits it compared and their merge
+  base. No judgment is recorded.
+- Unchanged: `changed_files` given by the caller are used as they are, and a
+  call with neither `changed_files` nor `base_ref` still gets the whole suite.
+- In CI the selection step fails, so the merge decision reads the selection as
+  not green. A pull request whose diff really is empty will not merge by
+  itself.
+
+## 2026-11-15 — Dependencies: what merging @hono/node-server 2.1.8 ships to the relay
+
+A review of the entry below found that it understated what merging it does to
+the relay, and overstated what CI runs on it. That entry is corrected in place.
+This one says what the merge ships and what has checked it.
+
+- **Merging rebuilds and redeploys the relay, with a freshly resolved runtime
+  tree.** `deploy/Dockerfile.relay` copies the root `package.json` and
+  `package-lock.json` at the top of its build stage. Later in that same stage
+  it runs `npm install` in `/app` from `deploy/mcp-relay/package.json`, with
+  no lockfile. A change to the root lockfile therefore invalidates that
+  install step. `bundlePathsFor('relay')` in `tools/deploy-bundle-scope.ts`
+  agrees: it answers with confidence and puts `package-lock.json` in the
+  relay's scope. So `auto-deploy.yml` rebuilds the relay through
+  `build-ghcr.yml` and redeploys it. The rebuild resolves the relay's whole
+  runtime tree again, not just this package. Resolved today, that is
+  `@hono/node-server` 2.1.8 and `hono` 4.13.18, plus the newest match for
+  every other runtime dependency of the relay (the `@modelcontextprotocol/*`
+  packages, express, pg, ws and the rest).
+- **When a relay image picks new versions.** npm resolves the relay's tree
+  again only when that install step is rebuilt. `build-ghcr.yml`, the build
+  that ships, reuses cached layers (the registry `:buildcache` and the Actions
+  cache, at `mode=max`). So a relay image carries the versions resolved by the
+  last build that changed one of the inputs ahead of that step, or found no
+  cached copy of it. Those inputs are the root package files and
+  `tsconfig.base.json`, `scripts/`, `packages/`, the copied documents and
+  ontologies, and `deploy/mcp-relay/package.json`. A merge that changes only
+  the relay's `.ts` files reuses the earlier install. Only the pull-request
+  check in `hosted-image-builds.yml` builds with `--no-cache --pull`, and that
+  image is not shipped.
+- **What earlier relay builds resolved.** A relay install that ran between 23
+  October (`@modelcontextprotocol/node` 2.1.2) and 2 November resolved
+  `@hono/node-server` 2.1.5. Two moderate advisories cover every 2.x before
+  2.1.6. In one, a backslash in a request path is read as a path separator. In
+  the other, a socket reset during a WebSocket upgrade crashes the process.
+  Neither can be reached in the relay. A request reaches hono only after
+  Express has routed it to `/mcp`, and nothing after that decides anything by
+  its path. The relay also does not use hono's WebSocket upgrade. Which
+  version the deployed relay runs today was not checked. The redeploy that
+  this merge causes moves it to 2.1.8.
+- **Loaded at start, called for legacy sessions.** The relay loads
+  `@hono/node-server` every time it starts, because
+  `@modelcontextprotocol/node` imports it at the top of its module, and 2.x in
+  turn imports `hono/ws`. Both `hono` 4.13.14 (the root lockfile) and 4.13.18
+  (what the image resolves today) export what it needs. If loading failed, the
+  whole relay would stop, not just legacy sessions. The deploy waits for
+  `/health` to report the new build, so it would fail rather than finish.
+- **What checked 2.1.8.** #861's own CI ran on this same lockfile, so against
+  2.1.8, and passed. It ran the whole root suite, in four parts, in Bridge
+  Typecheck (`bridge-typecheck.yml`, which triggers on the lockfile). It ran
+  "Emergence with the verticals; the base without them", which includes 89 of
+  the relay's own test steps. And it ran a cold build of the relay image. The
+  root suite includes `tests/client-interaction-mcp.test.ts`, the one test
+  that sends requests through `@hono/node-server`. Its legacy URL elicitation
+  case opens a session through `createRelayMcpHandler` in
+  `deploy/mcp-relay/mcp-serving.ts`. It covers the `initialize` that opens the
+  session, the `notifications/initialized` POST, a 404 when another account
+  uses the session, and a `tools/call` event stream with a client POST in the
+  middle. It does not cover the standalone GET event stream or DELETE. None of
+  the relay's own tests sends a request through `@hono/node-server`.
+  `mcp-transport-wiring` uses the stateless handler. The tests that start
+  `server.ts` only load it. One of them, `tool-result-size`, connects with the
+  v2 client, which opens with the current protocol's `server/discover` probe,
+  not with `initialize`.
+- **After the deploy:** confirm that `/health` names the merge commit. Then
+  open one legacy session against the live relay: `initialize` with protocol
+  version 2025-11-25, a POST carrying the `mcp-session-id` it returns, then a
+  GET for the event stream. The client-signature check that starts after a
+  relay deploy does not do this. It calls `/mcp` without initializing, which
+  takes the stateless path and never reaches hono's request listener.
+
+Not covered: the live legacy session above has not been opened, and nothing
+automatic opens one. The Relay Tests workflow (`relay-tests.yml`) did not run on
+#861 and will not run on this branch. Its paths filter has no
+`package-lock.json`, so a change to the lockfile alone never starts it. Adding
+the lockfile to that filter belongs in its own pull request. The run without
+the verticals leaves out four relay steps that reach a vertical
+(`listen-loopback`, `notification-body-shape`, `authorship-content-binding` and
+`e2e-collection`), so those four did not run on #861 at all. Locally,
+`node_modules` still holds 1.19.17, so nothing on this machine ran against
+2.1.8.
+
+## 2026-11-15 — Dependencies: @hono/node-server 2.1.8, in place of Dependabot's #861
+
+This lands Dependabot's #861 with the changelog entry its checks needed.
+
+- **Root lockfile:** one entry changes. `@hono/node-server` moves from 1.19.17
+  to 2.1.8. No package is added or removed, and no other version moves. Two
+  packages depend on it, and 2.1.8 satisfies both, so they keep sharing one
+  copy: `@modelcontextprotocol/node` 2.1.2, the relay's MCP transport, which
+  asks for `^1.19.9 || ^2.1.3`, and the dev-only v1 `@modelcontextprotocol/sdk`
+  1.32.2 under claude-code-acp, which asks for `^1.19.9 || ^2.0.5`. The only
+  other tracked lockfile that has the package is Foxxi's
+  (`applications/foxxi-content-intelligence/package-lock.json`), at 2.1.5 and
+  dev only, through its own v1 SDK. 2.1.5 is inside the range of the two 2.x
+  advisories that the entry above describes, so that lockfile needs a bump of
+  its own. It is not changed here.
+- **Audit:** `npm audit` goes from 24 moderate findings to 23. Both advisories
+  it reported for 1.19.17 are gone. One is in the package's static file server
+  (`serveStatic`). The other is in how a backslash in a request path is read.
+  The advisory data `npm audit` uses lists the first as fixed only from 2.1.3,
+  so a newer 1.x would not have cleared it from the audit.
+- **What 2.x changes:** the 2.0.0 release notes list two breaking changes. It
+  needs Node 20 or later, and the Vercel adapter (`@hono/node-server/vercel`) is
+  removed; the notes say the rest of the public API stays the same. The two
+  published packages agree. 2.1.8's main entry exports what 1.19.17's did
+  (`serve`, `createAdaptorServer`, `getRequestListener`, `RequestError`) plus
+  `upgradeWebSocket`, and `getRequestListener` takes the same options. The
+  package is now ES modules first, with a CommonJS build beside it.
+- **What uses it:** the library code of both MCP packages imports one function,
+  `getRequestListener`, and calls it with `overrideGlobalObjects: false`, which
+  2.1.8 handles as 1.19.17 did. (The v1 SDK's bundled examples also import
+  `serve`; nothing here loads them.) The relay loads the package when it starts
+  and calls it only through `NodeStreamableHTTPServerTransport`, which
+  `deploy/mcp-relay/mcp-serving.ts` uses for clients that open a legacy MCP
+  session. `toNodeHandler` and `toWebRequest`, the relay's other imports from
+  that package, do not use it. The 2.x request listener does change inside. It
+  reads headers differently, checks the URL (a backslash in the path now gets a
+  400), normalises the method, and records aborts in its own way. None of this
+  reaches the relay: the transport is handed the body Express already parsed,
+  and it reads only the method and the request headers. No source file in this
+  repository imports `@hono/node-server` or `hono`, and nothing calls
+  `serveStatic` or the Vercel adapter.
+- **Node:** the repository already asks for Node 20 or later, the relay image
+  runs Node 22, and `@modelcontextprotocol/node` 2.1.2 itself asks for Node 20.
+- **The relay:** its image installs its runtime dependencies from
+  `deploy/mcp-relay/package.json` with no lockfile, so it does not take its
+  versions from this lockfile. But the root lockfile is an input to the relay's
+  build, so merging this rebuilds and redeploys the relay. The entry above says
+  what that ships and what has checked it. The copy in the root lockfile is the
+  one tests and local runs use, and the one the bridge images get from `npm ci`.
+  No bridge source imports `@modelcontextprotocol/node` or the v1 SDK.
+- **#861's own checks:** its test-selection job could not pass because a
+  Dependabot run gets no secrets. This branch runs it with the usual secrets.
+  Its other checks passed against 2.1.8; the entry above lists the ones that
+  matter here.
+
+Not covered: the local checkout's `node_modules` still holds 1.19.17, so nothing
+here ran against 2.1.8 locally. The entry above says what CI ran against it, and
+what it did not. `hono` itself, at 4.13.14 in the root lockfile, has five
+advisories in `npm audit` (four moderate, one low), fixed in 4.13.16. It is a
+separate entry, left for its own change. The relay's rebuild on merge resolves
+4.13.18. Foxxi's lockfile is left at 2.1.5. The other moderate findings, in the
+Solid server, eslint, electron-builder and claude-code-acp chains, are
+unchanged.
+
+## 2026-11-15 — Foxxi: a profile is added or taken down only once its durable write is acknowledged
+
+Follow-up to the publication fix below, for the two whole-document routes of
+the xAPI Profile Server that it left as they were.
+
+`ProfileServer.add` held a version first and wrote it to the pod second.
+`remove` dropped a profile first and recorded the removal second. When the
+write failed both still answered `ok: true` beside `persisted: false`. An added
+version answered until the next restart and then vanished. A version that had
+been replaced came back as the document it was before. A profile that had been
+taken down answered again after a restart.
+
+Both now write first. A version is held, and a profile stops answering, only
+when the pod says `persisted: true`. Otherwise the route answers 503 with
+`ok: false`, `persisted: false` and a `retry` address, nothing has changed, and
+the same request can be sent again. A server with no durable store adds and
+removes nothing.
+
+While a write is on its way the version and its profile are reserved, as they
+already were for a publication, and a profile is changed by one write at a
+time: one addition, one publication or one removal. Records are replayed in
+the order of their times, so two writes under one profile acknowledged out of
+that order could leave the running server and a restarted one holding
+different things, or resolving the profile to different versions. The second
+request gets 409.
+
+Callers that read `persisted: false` on a 200 from
+`/agent/xapi-profiles/add` or `/remove` will not see it again: that case is
+now a 503.
+
+## 2026-11-15 — Native commits: the head is not read back or uploaded twice, and reads open no transaction
+
+After the staging change of 2026-11-13 a live single-statement write is about
+0.64 s at the edge, with the commit itself about 365 ms: staging 137 ms,
+writing the head 75 ms, reading it back 40 ms. Three changes aimed at the last
+two. With the database 2 ms away in each direction (a delaying proxy in front
+of a local Postgres), a `PUT /xapi/statements` goes from a median of 503 ms to
+235 ms over 12 writes, from four requests to the pod server to three, and the
+head write from about 185 ms to 50 ms with a 403-byte body in place of 122 KB.
+With no delay it is 80 ms to 73 ms. The live effect is not measured yet.
+
+- `packages/pgsl`: `NativeCommitStore` option `acceptHeadReceipt`. The head
+  write is answered with a receipt that the client already refuses unless it is
+  bound to the bytes it sent: their digest and size, the expected revision, and
+  the revision and ETag of the write. With the option on, that receipt is the
+  confirmation and the head is not fetched a second time. This is the
+  confirmation batched staging already accepts for immutable representations.
+  Off by default; without it the head is read back and compared as before. The
+  head compare-and-set, conflict and replay handling are unchanged.
+- `applications/foxxi-content-intelligence`: the LRS turns it on.
+- `packages/pgsl-store`: the Postgres adapter sends `BEGIN` with the first
+  statement that writes or locks, not before the first read. Under READ
+  COMMITTED every statement takes its own snapshot inside a transaction or out
+  of one, so a read before the first write returns the same rows either way.
+  A callback that only reads now costs one round trip per read instead of that
+  plus `BEGIN` and `COMMIT`, which applies to every read of a pod resource.
+  Atomic writes and held locks start where the first of them is issued, as
+  before. A callback that swallows a failed read is still never acknowledged.
+
+- `integrations/pgsl-css-accessor`: a native commit may name a `source` in
+  place of `bodyBase64`: the path of a native document that already holds the
+  representation, with its digest and size. The server commits the target from
+  that document's stored content in one small transaction, with the same
+  compare-and-set and the same receipt, and only if the source is a
+  native-managed document holding exactly the stated digest, size and media
+  type (409 otherwise, nothing written). The source is named by path alone and
+  must lie under the target's own top-level container, so it is always in the
+  pod the caller is already writing; containers, auxiliary resources, the
+  target itself and anything in another pod are refused (400). Advertised on
+  OPTIONS as `Interego-Native-Commit-Source: 1`.
+- `packages/pgsl-store`: `LdpStore.commitResourceFrom`, the engine side of it.
+- `packages/pgsl`: `NativeCommitStore` option `commitHeadFromStaged`. The
+  head's bytes are those of the commit object the same commit has just
+  confirmed staged, so the head write names that object and does not send them
+  again. Used only when the server advertises it; a server that refuses is
+  sent the ordinary commit under the same expected revision. The receipt is
+  checked against the bytes as always. Off by default; the LRS turns it on.
+
 ## 2026-11-15 — Foxxi: a hosted cmi5 package keeps its own moveOn
 
 Found on the first run against the deployed bridge. A package uploaded and

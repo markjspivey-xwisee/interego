@@ -148,6 +148,8 @@ jobs:
       # answered 400 with no verdict. The event's SHAs are fixed when the event is made, both are
       # ancestors of the merge ref this job checks out, and no later merge changes what they name.
       # A manual run has no pull request: it compares the default branch with the checkout.
+      # A range that yields no changed files now fails this step (400, naming the commits compared)
+      # instead of answering with the whole suite, so the decision reads the selection as not green.
       - name: Follow the selection chain
         id: selection
         continue-on-error: true

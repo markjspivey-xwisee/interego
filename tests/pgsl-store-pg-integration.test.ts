@@ -845,6 +845,71 @@ describe.skipIf(!RUN)('pgsl-store: physical write admission over REAL PostgreSQL
   }, 20_000);
 
 
+  it('opens a transaction at the first write, not at the first read, and still commits or rolls back whole', async () => {
+    const fixture = await pressureFixture('lazy_begin');
+    try {
+      const applicationName = `pgsl-lazy-${fixture.suffix}`;
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 1 << 20, writeReserveBytes: 8192 }, applicationName);
+      const inTransaction = async (): Promise<boolean> => (await fixture.client.query<{ open: boolean }>(
+        'SELECT xact_start IS NOT NULL AS open FROM pg_stat_activity WHERE application_name = $1', [applicationName])).rows.some(row => row.open);
+      const key = (name: string): Buffer => Buffer.from(`lazy-${name}`);
+      await fixture.client.query(`INSERT INTO ${fixture.table}(k,v) VALUES ($1,$2)`, [key('seed'), Buffer.from('seed')]);
+      // Reads alone: every kind of read, and no transaction is ever open.
+      expect(await adapter.transact(async tx => {
+        expect(Buffer.from((await tx.get(key('seed')))!).toString()).toBe('seed');
+        expect((await tx.getRange(key(''), key('\xff'), { limit: 10 })).length).toBe(1);
+        expect((await tx.getMany!([key('seed'), key('none')])).map(Boolean)).toEqual([true, false]);
+        expect(await tx.anyInRanges!([{ begin: key(''), end: key('\xff') }])).toEqual([true]);
+        expect(await inTransaction()).toBe(false);
+        return 'read';
+      })).toBe('read');
+      // A read, then a write: the transaction opens with the write and the write is seen by the next read.
+      await adapter.transact(async tx => {
+        await tx.get(key('seed'));
+        expect(await inTransaction()).toBe(false);
+        tx.set(key('a'), Buffer.from('a'));
+        expect(Buffer.from((await tx.get(key('a')))!).toString()).toBe('a');
+        expect(await inTransaction()).toBe(true);
+        expect(await fixture.value(key('a'))).toBeUndefined(); // not visible outside until COMMIT
+      });
+      expect((await fixture.value(key('a')))?.toString()).toBe('a');
+      expect(await inTransaction()).toBe(false);
+      // Writes buffered and never read are still committed together at the end.
+      await adapter.transact(async tx => { tx.set(key('b'), Buffer.from('b')); tx.clear(key('a')); });
+      expect((await fixture.value(key('b')))?.toString()).toBe('b');
+      expect(await fixture.value(key('a'))).toBeUndefined();
+      // A callback that throws after writing leaves nothing; one that throws after only reading leaves no open transaction.
+      await expect(adapter.transact(async tx => { expect(await tx.compareAndSet(key('c'), null, Buffer.from('c'))).toBe(true); throw new Error('abandon'); })).rejects.toThrow('abandon');
+      expect(await fixture.value(key('c'))).toBeUndefined();
+      await expect(adapter.transact(async tx => { await tx.get(key('seed')); throw new Error('read only'); })).rejects.toThrow('read only');
+      expect(await inTransaction()).toBe(false);
+    } finally { await fixture.close(); }
+  }, 20_000);
+
+  it('never acknowledges a callback that swallowed a failed read, whether or not it goes on to write', async () => {
+    const fixture = await pressureFixture('failed_read');
+    const moved = `${fixture.table}_moved`;
+    try {
+      const adapter = await fixture.open({ maxDatabaseBytes: Number.MAX_SAFE_INTEGER, maxTransactionInputBytes: 1 << 20, writeReserveBytes: 8192 });
+      const key = Buffer.from('after-failed-read');
+      for (const writes of [false, true]) {
+        let caught: string | undefined;
+        await expect(adapter.transact(async tx => {
+          await fixture.client.query(`ALTER TABLE ${fixture.table} RENAME TO ${moved}`);
+          try { await tx.get(key); } catch (error) { caught = (error as { code?: string }).code; }
+          finally { await fixture.client.query(`ALTER TABLE ${moved} RENAME TO ${fixture.table}`); }
+          if (writes) { tx.set(key, Buffer.from('must not land')); await tx.get(key); }
+          return 'acknowledged';
+        })).rejects.toMatchObject({ code: '42P01' });
+        expect(caught).toBe('42P01');
+        expect(await fixture.value(key)).toBeUndefined();
+      }
+      // The pool is usable afterwards.
+      await adapter.transact(async tx => { tx.set(key, Buffer.from('later')); });
+      expect((await fixture.value(key))?.toString()).toBe('later');
+    } finally { await fixture.client.query(`ALTER TABLE IF EXISTS ${moved} RENAME TO ${fixture.table}`).catch(() => undefined); await fixture.close(); }
+  }, 20_000);
+
   it('never acknowledges a swallowed lock-only CAS SQL error after PostgreSQL turns COMMIT into ROLLBACK', async () => {
     const fixture = await pressureFixture('proof_abort');
     const proofKey = Buffer.from('proof'), value = Buffer.from('original');

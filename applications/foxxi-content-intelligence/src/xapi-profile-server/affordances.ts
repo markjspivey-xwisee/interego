@@ -24,7 +24,7 @@ export const xapiProfileServerAffordances: Affordance[] = [
     annotations: { title: 'Add an xAPI Profile', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: signedInputs('profile?: <the profile document>, uri?: "https://…" — exactly one of the two'),
     outputs: {
-      description: 'Where the version now answers. 400 when the document is not a profile, 409 when another agent added that profile IRI, 413 when it is too large, 507 when the server is full, 429 past the hourly count, 502 when a uri could not be fetched.',
+      description: 'Where the version now answers. 400 when the document is not a profile, 409 when another agent added that profile IRI or the profile is being changed at that moment, 413 when it is too large, 507 when the server is full, 429 past the hourly count, 502 when a uri could not be fetched. 503 with ok: false, added: false and persisted: false when the pod write did not land: the version is not held, a version it would have replaced is unchanged, and the same request can be sent again to `retry`.',
       properties: {
         ok: { type: 'boolean' },
         profile: { type: 'string', description: 'The profile IRI.' },
@@ -37,7 +37,9 @@ export const xapiProfileServerAffordances: Affordance[] = [
         validateTemplates: { type: 'string' },
         validatePatterns: { type: 'string' },
         holonUri: { type: 'string', description: 'The profile version as a holon in the lattice.' },
-        persisted: { type: 'boolean', description: 'False when the pod write did not land: the profile answers now but would not survive a restart.' },
+        persisted: { type: 'boolean', description: 'True on an addition. False only on 503, when the pod write did not land and nothing was added.' },
+        added: { type: 'boolean', description: 'Present and false on 503.' },
+        retry: { type: 'string', description: 'On 503, where to send the same request again.' },
       },
       required: ['ok'],
     },
@@ -54,8 +56,13 @@ export const xapiProfileServerAffordances: Affordance[] = [
     annotations: { title: 'Take down an xAPI Profile', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     inputs: signedInputs('iri: <profile or version IRI>'),
     outputs: {
-      description: 'The version IRIs no longer served. 403 when you did not add it, 404 when it is not held, 409 for the deployment\'s own profile.',
-      properties: { ok: { type: 'boolean' }, removed: { type: 'array', items: { type: 'string' } }, persisted: { type: 'boolean' } },
+      description: 'The version IRIs no longer served. 403 when you did not add it, 404 when it is not held, 409 for the deployment\'s own profile or when the profile is being changed at that moment. 503 with ok: false, removed: [] and persisted: false when the pod write did not land: everything named is still held and still answers, and the same request can be sent again to `retry`.',
+      properties: {
+        ok: { type: 'boolean' }, removed: { type: 'array', items: { type: 'string' } },
+        persisted: { type: 'boolean', description: 'True on a removal. False only on 503, when the pod write did not land and nothing was taken down.' },
+        stillHeld: { type: 'boolean', description: 'Present and true on 503.' },
+        retry: { type: 'string', description: 'On 503, where to send the same request again.' },
+      },
       required: ['ok'],
     },
   },

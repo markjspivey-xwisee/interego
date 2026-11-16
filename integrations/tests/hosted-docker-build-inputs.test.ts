@@ -5,6 +5,7 @@
  * This integration check reads application and library inputs across the hosted
  * fleet, including workspaces deliberately absent from the base-only checkout.
  */
+import { execFileSync } from 'node:child_process';
 import { existsSync, readFileSync, statSync } from 'node:fs';
 import { dirname, join, posix, relative } from 'node:path';
 import { fileURLToPath } from 'node:url';
@@ -255,7 +256,79 @@ describe('partial hosted images have the workspaces their actual build commands 
   });
 
   it('cannot reuse dependency installation from an unrelated stage', () => {
-    const mutated = bridge().replace('RUN npm ci', 'RUN npm ci\nFROM node:22-slim AS unrelated\nWORKDIR /app\nCOPY package.json package-lock.json tsconfig.base.json tsconfig.json ./');
+    // The whole install line, which also prunes (tools/prune-image-dev-tools.mjs): splitting it
+    // after `npm ci` would hang the rest of the RUN off the injected COPY.
+    const mutated = bridge().replace(/^RUN npm ci\b[^\r\n]*/m, '$&\nFROM node:22-slim AS unrelated\nWORKDIR /app\nCOPY package.json package-lock.json tsconfig.base.json tsconfig.json ./');
+    expect(mutated).not.toBe(bridge());
     expect(errors(mutated)).toContain('packages/local-node/package.json was not copied before the workspace dependency install');
+  });
+});
+
+// ── The cold builds run when an input changes ──────────────────────────────────────────────────
+
+const HOSTED_WORKFLOW = '.github/workflows/hosted-image-builds.yml';
+
+/** The workflow's `on.pull_request.paths` filter, and the Dockerfiles its matrix cold-builds. */
+function hostedBuilds(text = readFileSync(join(ROOT, HOSTED_WORKFLOW), 'utf8')): { paths: string[]; dockerfiles: string[] } {
+  const block = /^ {2}pull_request:\n(?: {4}.*\n)*? {4}paths:\n((?: {6}(?:- |#).*\n)+)/m.exec(text);
+  if (!block) throw new Error(`${HOSTED_WORKFLOW}: no on.pull_request.paths list`);
+  const paths = [...block[1]!.matchAll(/^ {6}- ['"]?([^'"\n]+?)['"]?\s*$/gm)].map(m => m[1]!);
+  const dockerfiles = [...text.matchAll(/^\s+dockerfile:\s*(\S+)\s*$/gm)].map(m => m[1]!);
+  return { paths, dockerfiles };
+}
+
+/** A paths-filter pattern as GitHub reads it: `*` stays inside one directory, `**` crosses them. */
+function filterRegex(pattern: string): RegExp {
+  if (pattern.startsWith('!')) throw new Error(`negated path filter ${pattern} is not read here`);
+  let out = '';
+  for (let i = 0; i < pattern.length; i++) {
+    const c = pattern[i]!;
+    if (c === '*' && pattern[i + 1] === '*') {
+      if (pattern[i + 2] === '/') { out += '(?:.*/)?'; i += 2; } else { out += '.*'; i++; }
+    } else if (c === '*') out += '[^/]*';
+    else if (c === '?') out += '[^/]';
+    else out += c.replace(/[.+^${}()|[\]\\]/g, '\\$&');
+  }
+  return new RegExp(`^${out}$`);
+}
+
+const TRACKED = execFileSync('git', ['ls-files'], { cwd: ROOT, encoding: 'utf8', maxBuffer: 1 << 28 }).split('\n').filter(Boolean);
+
+/** Every tracked file a cold-built Dockerfile copies that no paths pattern matches, as `dockerfile: file`. */
+function untriggered(paths: readonly string[], built: readonly string[]): string[] {
+  const filters = paths.map(filterRegex);
+  const out: string[] = [];
+  for (const dockerfile of built) {
+    const scope = copySources(readFileSync(join(ROOT, dockerfile), 'utf8'));
+    if (!scope.confident) { out.push(`${dockerfile}: ${scope.reason}`); continue; }
+    for (const source of scope.paths) {
+      for (const file of TRACKED) {
+        if ((file === source || file.startsWith(`${source}/`)) && !filters.some(rx => rx.test(file))) out.push(`${dockerfile}: ${file}`);
+      }
+    }
+  }
+  return out;
+}
+
+describe('the hosted cold builds run on a pull request that changes anything their images copy', () => {
+  it('every tracked file a cold-built Dockerfile copies from the context matches the pull_request paths', () => {
+    const { paths, dockerfiles: built } = hostedBuilds();
+    expect(built).toEqual(expect.arrayContaining(['deploy/Dockerfile.interego-bridge', 'deploy/Dockerfile.discord', 'deploy/Dockerfile.relay']));
+    expect(paths.length).toBeGreaterThan(20);
+    // Every entry, comments between them included, as a YAML reader sees them.
+    expect(paths).toContain('.github/workflows/hosted-image-builds.yml');
+    expect(untriggered(paths, built)).toEqual([]);
+  });
+
+  it('the check can fail: without the prune script on the list, a pull request changing only it builds nothing', () => {
+    const { paths, dockerfiles: built } = hostedBuilds();
+    expect(untriggered(paths.filter(p => p !== 'tools/prune-image-dev-tools.mjs'), built)).toEqual([
+      'deploy/Dockerfile.interego-bridge: tools/prune-image-dev-tools.mjs',
+      'deploy/Dockerfile.discord: tools/prune-image-dev-tools.mjs',
+    ]);
+    expect(filterRegex('**/package.json').test('package.json')).toBe(true);
+    expect(filterRegex('**/package.json').test('packages/core/package.json')).toBe(true);
+    expect(filterRegex('demos/**').test('demos/interego-bridge/server.ts')).toBe(true);
+    expect(filterRegex('tsconfig*.json').test('packages/core/tsconfig.json')).toBe(false);
   });
 });
