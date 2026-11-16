@@ -41,8 +41,9 @@ export const IEP_DECORATIONS = {
 export const MODAL_STATUSES = ['Asserted', 'Hypothetical', 'Counterfactual', 'Quoted'] as const;
 
 /**
- * Every term xapi-x adds, by local name. The ontology is published at XAPIX_NS. No emitter
- * writes any of these yet, and the first profile declares none of them.
+ * Every term xapi-x adds, by local name. The ontology is published at XAPIX_NS. Version 2 of the
+ * profile declares the ones a statement carries; ./statement.ts builds them and the lrs-adapter
+ * writes the projection category, the descriptor digest and supersession.
  */
 export const XAPIX_TERM_NAMES = [
   // What a term is.

@@ -15,12 +15,15 @@
  */
 import { buildFoxxiProfileDoc } from '../xapi-profile.js';
 import { PROFILE_GENERATED_AT } from '../xapi-lrs.js';
-import { buildXapixProfileDoc } from '../xapix/profile.js';
+import { buildXapixProfileDoc, buildXapixProfileDocV1 } from '../xapix/profile.js';
 import type { Json } from './rdf.js';
 
 export function builtInProfiles(): Json[] {
   return [
     buildFoxxiProfileDoc({ generatedAt: PROFILE_GENERATED_AT }) as unknown as Json,
+    // Version 1 stays held beside the current one: statements written before the projection
+    // category existed are judged against it, and its IRI has been served since it was published.
+    buildXapixProfileDocV1() as Json,
     buildXapixProfileDoc() as Json,
   ];
 }

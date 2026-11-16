@@ -5,9 +5,12 @@
 # nothing in xAPI 2.0 or xAPI Profiles 1.0. Every term here is something a plain
 # LRS or a plain profile processor may ignore.
 #
-# Status of every term below: declared, not yet emitted. The first xapi-x profile
-# declares four iep: terms the lrs-adapter already writes; those are defined in the
-# iep: vocabulary and are not repeated here.
+# Status: Projection, descriptorDigest and supersedesStatement are written by the
+# lrs-adapter. previous, previousDigest and the order bases are
+# built and judged by src/xapix/statement.ts and written by no emitter yet. controls,
+# orderAttestation, evidences and offers are declared and linted, and nothing writes them.
+# The xapi-x profile also declares four iep: terms; those are defined in the iep:
+# vocabulary and are not repeated here.
 
 @prefix xapix: <https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix#> .
 @prefix iep:   <https://markjspivey-xwisee.github.io/interego/ns/iep#> .

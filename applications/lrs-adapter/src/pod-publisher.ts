@@ -185,6 +185,10 @@ export interface ProjectDescriptorArgs {
    *  result.response. */
   readonly coherentNarratives?: readonly string[];
   readonly modalStatus?: 'Asserted' | 'Hypothetical' | 'Counterfactual';
+  /** `sha256:` and 64 hex of the descriptor's bytes as served, when the caller holds them. */
+  readonly descriptorDigest?: string;
+  /** Ids of the statements this one replaces as the current account, most recent first. Voids none. */
+  readonly supersedesStatements?: readonly string[];
 }
 
 export interface ProjectDescriptorResult {
