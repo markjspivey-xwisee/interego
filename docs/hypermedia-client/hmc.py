@@ -59,6 +59,9 @@ P_REQUIRED = HYDRA + "required"
 P_SEARCH = HYDRA + "search"
 P_SUPOP = HYDRA + "supportedOperation"
 P_SUPCLASS = HYDRA + "supportedClass"
+P_OPERATION = HYDRA + "operation"
+P_SUPPROP = HYDRA + "supportedProperty"
+P_RANGE = RDFS + "range"
 P_MEDIA = DCAT + "mediaType"
 P_LABEL = RDFS + "label"
 P_COMMENT = RDFS + "comment"
@@ -106,8 +109,12 @@ TERM_FALLBACKS = {
     "supportedOperation": P_SUPOP, "supportedClass": P_SUPCLASS,
     "readOnlyHint": P_READONLY, "idempotentHint": P_IDEMPOTENT,
     "destructiveHint": P_DESTRUCTIVE, "label": P_LABEL, "comment": P_COMMENT,
-    "seeAlso": P_SEEALSO,
+    "seeAlso": P_SEEALSO, "operation": P_OPERATION, "supportedProperty": P_SUPPROP,
 }
+# The keys whose values are operations, or classes that hold them, which a
+# document may write in place instead of as references.
+HARVESTED = frozenset({P_AFFORDANCE, P_CONTROL, P_SUPOP, P_SUPCLASS, P_OPERATION})
+HARVESTED_NAMES = frozenset({"affordance", "affordances", "control", "supportedOperation", "supportedClass", "operation"})
 
 
 def as_list(value: Any) -> list[Any]:
@@ -149,34 +156,233 @@ def _has_scheme(text: str) -> bool:
     return all(ch in _SCHEME_CHARS for ch in text[1:colon])
 
 
+def _split_iri(text: str) -> tuple[str | None, str | None, str, str | None, str | None]:
+    """An IRI reference's five parts (RFC 3986, section 3): scheme, authority,
+    path, query and fragment, None for a part that is absent and "" for one that
+    is present and empty, so "doc#" keeps its empty fragment. A scan, so a long
+    reference costs linear time. The page's splitIri is the same."""
+    scheme = None
+    rest = text
+    if _has_scheme(text):
+        colon = text.find(":")
+        scheme, rest = text[:colon], text[colon + 1:]
+    fragment = None
+    cut = rest.find("#")
+    if cut >= 0:
+        rest, fragment = rest[:cut], rest[cut + 1:]
+    query = None
+    cut = rest.find("?")
+    if cut >= 0:
+        rest, query = rest[:cut], rest[cut + 1:]
+    authority = None
+    if rest.startswith("//"):
+        end = rest.find("/", 2)
+        end = len(rest) if end < 0 else end
+        authority, rest = rest[2:end], rest[end:]
+    return scheme, authority, rest, query, fragment
+
+
+def _join_iri(scheme: str | None, authority: str | None, path: str, query: str | None, fragment: str | None) -> str:
+    out = "" if scheme is None else scheme + ":"
+    if authority is not None:
+        out += "//" + authority
+    out += path
+    if query is not None:
+        out += "?" + query
+    if fragment is not None:
+        out += "#" + fragment
+    return out
+
+
+def _remove_dot_segments(path: str) -> str:
+    """RFC 3986, section 5.2.4, step by step. Each step consumes input, so a long
+    path costs linear time. The page's removeDotSegments is the same."""
+    if "." not in path:
+        return path
+    out: list[str] = []
+    i, n = 0, len(path)
+    while i < n:
+        if path.startswith("../", i):
+            i += 3
+        elif path.startswith("./", i):
+            i += 2
+        elif path.startswith("/./", i):
+            i += 2
+        elif i + 2 == n and path.startswith("/.", i):
+            out.append("/")
+            i = n
+        elif path.startswith("/../", i):
+            i += 3
+            if out:
+                out.pop()
+        elif i + 3 == n and path.startswith("/..", i):
+            if out:
+                out.pop()
+            out.append("/")
+            i = n
+        elif (i + 1 == n and path[i] == ".") or (i + 2 == n and path.startswith("..", i)):
+            i = n
+        else:
+            end = path.find("/", i + 1 if path[i] == "/" else i)
+            end = n if end < 0 else end
+            out.append(path[i:end])
+            i = end
+    return "".join(out)
+
+
 def _resolve_iri(ref: str, base: str | None) -> str:
-    """A relative reference resolved against a base (RFC 3986, section 5), or
-    the reference as it is when there is no base or the base takes none."""
+    """A relative reference resolved against a base (RFC 3986, section 5.2), or
+    the reference as it is when there is no base or the base has no scheme. The
+    strings are merged as they are written: an IRI keeps its non-ASCII
+    characters, and an empty fragment or query ("#", "?") is kept, so the
+    JSON-LD idiom "@vocab": "#" names the document's own fragment namespace.
+    The page's resolveIri is the same."""
     if base is None:
         return ref
-    try:
-        return urllib.parse.urljoin(base, ref)
-    except ValueError:
+    b_scheme, b_auth, b_path, b_query, _ = _split_iri(base)
+    if b_scheme is None:
         return ref
+    scheme, auth, path, query, fragment = _split_iri(ref)
+    if scheme is not None:
+        return _join_iri(scheme, auth, _remove_dot_segments(path), query, fragment)
+    if auth is not None:
+        return _join_iri(b_scheme, auth, _remove_dot_segments(path), query, fragment)
+    if path == "":
+        return _join_iri(b_scheme, b_auth, b_path, b_query if query is None else query, fragment)
+    if not path.startswith("/"):
+        if b_auth is not None and b_path == "":
+            path = "/" + path
+        else:
+            path = b_path[:b_path.rfind("/") + 1] + path
+    return _join_iri(b_scheme, b_auth, _remove_dot_segments(path), query, fragment)
+
+
+def _iri_to_uri(iri: str) -> str:
+    """An IRI as the URI a request carries (RFC 3987, section 3.1): each
+    non-ASCII character in the path, query and fragment as the percent-encoded
+    bytes of its UTF-8, and a non-ASCII host in IDNA form, as a browser's fetch
+    sends it. Anything already ASCII is left as it is. The page's iriToUri is
+    the same."""
+    if iri.isascii():
+        return iri
+    scheme, auth, path, query, fragment = _split_iri(iri)
+
+    def enc(part: str | None) -> str | None:
+        if part is None or part.isascii():
+            return part
+        return "".join(ch if ord(ch) < 128 else urllib.parse.quote(ch, safe="") for ch in part)
+
+    if auth is not None and not auth.isascii():
+        userinfo, at, hostport = auth.rpartition("@")
+        host, colon, port = hostport.partition(":") if not hostport.startswith("[") else (hostport, "", "")
+        try:
+            host = host.encode("idna").decode("ascii")
+        except UnicodeError:
+            host = enc(host) or ""
+        auth = (enc(userinfo) + "@" if at else "") + host + (":" + port if colon else "")
+    return _join_iri(scheme, auth, enc(path) or "", enc(query), enc(fragment))
+
+
+# Keywords a context may alias with a term ("id": "@id"), and the characters
+# that end a prefix's IRI (RFC 3986 gen-delims): a simple term whose IRI ends in
+# one is a prefix, as JSON-LD 1.1 says.
+_ALIASABLE = frozenset({
+    "@id", "@type", "@graph", "@list", "@set", "@value", "@language", "@index",
+    "@included", "@nest", "@json", "@none", "@direction", "@reverse",
+})
+_GEN_DELIMS = ":/?#[]@"
+# How much context work one document may cause: each term definition read and
+# each entry copied when a node's own @context, or a scoped one, starts a child
+# context. A document past it is refused, so a crafted one cannot make reading
+# it cost more than linear time. The page's CONTEXT_BUDGET is the same.
+CONTEXT_BUDGET = 200_000
+
+
+class _Budget:
+    def __init__(self) -> None:
+        self.left = CONTEXT_BUDGET
+
+    def spend(self, amount: int) -> None:
+        self.left -= amount
+        if self.left < 0:
+            raise ValueError("This document's @context entries are too many to read.")
+
+
+def _json_schema_like(item: dict[str, Any]) -> bool:
+    """A JSON Schema written into a document as plain JSON, such as a
+    hydra:expects object with "properties": its keys are JSON Schema's, never
+    terms, so nothing in it is renamed or expanded."""
+    return isinstance(item.get("properties"), dict) and not any(key.startswith("@") for key in item)
+
+
+def _merge_value(item: dict[str, Any], key: str, value: Any) -> None:
+    if key not in item:
+        item[key] = value
+        return
+    current = item[key]
+    if not isinstance(current, list):
+        current = item[key] = [current]
+    if isinstance(value, list):
+        current.extend(value)
+    else:
+        current.append(value)
 
 
 class Context:
     """The active context: prefixes, terms, which terms hold IRIs (typed "@id"
-    or "@vocab" in the context; "@json" ones hold JSON), @vocab, and the base a
-    relative IRI resolves against: @base when the context gives one, else the
-    address the document was fetched from."""
+    or "@vocab" in the context; "@json" ones hold JSON), containers, scoped
+    contexts, keyword aliases, terms set to null, @vocab, and the base a relative
+    IRI resolves against: @base when the context gives one, else the address the
+    document came from. `terms` holds only what documents defined; the reader's
+    own names for the properties it reads (TERM_FALLBACKS) apply to keys only,
+    never to a value such as an action written as a term."""
 
-    def __init__(self, base: str | None = None) -> None:
+    def __init__(self, base: str | None = None, budget: _Budget | None = None) -> None:
         self.prefixes: dict[str, str] = dict(WELL_KNOWN_PREFIXES)
-        self.terms: dict[str, str] = dict(TERM_FALLBACKS)
+        self.terms: dict[str, str] = {}
         self.coerce: dict[str, str] = {}
+        self.containers: dict[str, frozenset[str]] = {}
+        self.scoped: dict[str, Any] = {}
+        self.aliases: dict[str, str] = {}
+        self.nulled: set[str] = set()
         self.vocab: str | None = None
         self.base: str | None = base or None
+        self.document_base = self.base
+        self.budget = budget or _Budget()
+        self._children: dict[str, Context] = {}
+
+    def child(self, local: Any) -> "Context":
+        """A copy of this context with `local` absorbed: a node's own @context,
+        or the scoped one a term or type carries."""
+        self.budget.spend(len(self.prefixes) + len(self.terms) + len(self.coerce) + len(self.containers)
+                          + len(self.scoped) + len(self.aliases) + len(self.nulled) + 1)
+        out = Context(self.base, self.budget)
+        out.prefixes, out.terms, out.coerce = dict(self.prefixes), dict(self.terms), dict(self.coerce)
+        out.containers, out.scoped, out.aliases = dict(self.containers), dict(self.scoped), dict(self.aliases)
+        out.nulled, out.vocab, out.document_base = set(self.nulled), self.vocab, self.document_base
+        out.absorb(local)
+        return out
+
+    def scoped_child(self, term: str) -> "Context":
+        """The context a term's scoped @context makes, made once per term."""
+        found = self._children.get(term)
+        if found is None:
+            found = self._children[term] = self.child(self.scoped[term])
+        return found
 
     def absorb(self, ctx: Any) -> None:
         for item in as_list(ctx):
+            if item is None:
+                # A null context empties the active context; the document's own base stays.
+                self.prefixes, self.terms, self.coerce = dict(WELL_KNOWN_PREFIXES), {}, {}
+                self.containers, self.scoped, self.aliases, self.nulled = {}, {}, {}, set()
+                self.vocab, self.base = None, self.document_base
+                self._children = {}
+                continue
             if not isinstance(item, dict):
                 continue
+            self.budget.spend(len(item) + 1)
+            self._children = {}
             if "@base" in item:
                 new_base = item["@base"]
                 if new_base is None:
@@ -188,58 +394,124 @@ class Context:
                 if vocab is None:
                     self.vocab = None
                 elif isinstance(vocab, str):
-                    self.vocab = self.expand_iri(vocab, document_relative=True)
-            for key, val in item.items():
-                if key.startswith("@") or val is None:
-                    continue
-                definition = val if isinstance(val, dict) else None
-                iri = val if isinstance(val, str) else None
-                if definition is not None and isinstance(definition.get("@id"), str):
-                    iri = definition["@id"]
-                # A definition with no "@id", keyed by a compact or absolute IRI, defines that IRI.
-                if iri is None and definition is not None and "@id" not in definition and ":" in key:
-                    iri = key
-                if not iri:
-                    continue
-                expanded = self.expand(iri)
-                self.terms[key] = expanded
-                if expanded.endswith("#") or expanded.endswith("/"):
-                    self.prefixes[key] = expanded
-                kind = definition.get("@type") if definition is not None else None
-                if kind in ("@id", "@vocab", "@json"):
-                    self.coerce[key] = kind
-                else:
-                    self.coerce.pop(key, None)
+                    self.vocab = self.expand_iri(vocab, vocab=True, document_relative=True)
+            definitions = {key: val for key, val in item.items() if not key.startswith("@")}
+            # A term may use a prefix the context defines after it, so each
+            # definition waits for the one it depends on: a depth-first walk on
+            # a stack, each term defined once, a cycle cut where it closes.
+            state: dict[str, int] = {}
+            for first in definitions:
+                stack = [first]
+                while stack:
+                    key = stack[-1]
+                    if state.get(key) == 2:
+                        stack.pop()
+                        continue
+                    dep = self._dependency(key, definitions[key])
+                    if dep is not None and dep != key and dep in definitions and dep not in state:
+                        state[key] = 1
+                        stack.append(dep)
+                        continue
+                    self._define(key, definitions[key])
+                    state[key] = 2
+                    stack.pop()
 
-    def expand(self, value: Any) -> str:
+    @staticmethod
+    def _dependency(key: str, value: Any) -> str | None:
+        """The term a definition's IRI is written with, which must be defined first."""
+        if isinstance(value, str):
+            iri: Any = value
+        elif isinstance(value, dict):
+            iri = value.get("@id") if "@id" in value else (key if ":" in key else None)
+        else:
+            return None
+        if not isinstance(iri, str) or not iri or iri.startswith("@"):
+            return None
+        colon = iri.find(":")
+        if colon < 0:
+            return iri
+        prefix, suffix = iri[:colon], iri[colon + 1:]
+        return None if prefix == "_" or suffix.startswith("//") else prefix
+
+    def _define(self, key: str, value: Any) -> None:
+        for table in (self.terms, self.prefixes, self.coerce, self.containers, self.scoped, self.aliases):
+            table.pop(key, None)
+        self.nulled.discard(key)
         if value is None:
-            return ""
-        text = str(value)
-        if text.startswith(("_:", "http://", "https://", "urn:", "@")):
-            return text
-        if ":" in text and not text.startswith("{"):
-            prefix, local = text.split(":", 1)
-            if prefix in self.prefixes and not local.startswith("//"):
-                return self.prefixes[prefix] + local
-        if text in self.terms:
-            return self.terms[text]
-        if text in self.prefixes:
-            return self.prefixes[text]
-        return self.vocab + text if self.vocab is not None and text and ":" not in text else text
+            self.nulled.add(key)
+            return
+        if isinstance(value, str):
+            if value.startswith("@"):
+                if value in _ALIASABLE:
+                    self.aliases[key] = value
+                return
+            iri = self.expand_iri(value, vocab=True)
+            if isinstance(iri, str) and ":" in iri:
+                self.terms[key] = iri
+                if ":" not in key and "/" not in key and iri[-1] in _GEN_DELIMS:
+                    self.prefixes[key] = iri
+            return
+        if not isinstance(value, dict):
+            return
+        if "@reverse" in value:
+            # A reverse property names the node as the value, not the subject; the reader reads neither way.
+            self.nulled.add(key)
+            return
+        iri: Any
+        if "@id" in value:
+            ident = value["@id"]
+            if ident is None:
+                self.nulled.add(key)
+                return
+            if not isinstance(ident, str):
+                return
+            if ident.startswith("@"):
+                if ident in _ALIASABLE:
+                    self.aliases[key] = ident
+                return
+            iri = self.expand_iri(ident, vocab=True)
+        elif ":" in key:
+            iri = self.expand_iri(key, vocab=True)
+        elif self.vocab is not None:
+            iri = self.vocab + key
+        else:
+            # A definition with no "@id" and no @vocab to supply one keeps the reader's own name for the key.
+            iri = TERM_FALLBACKS.get(key)
+        if isinstance(iri, str) and ":" in iri:
+            self.terms[key] = iri
+            flag = value.get("@prefix")
+            if flag is True or (flag is None and ":" not in key and "/" not in key and iri[-1] in "#/"):
+                self.prefixes[key] = iri
+        kind = value.get("@type")
+        if kind in ("@id", "@vocab", "@json"):
+            self.coerce[key] = kind
+        container = value.get("@container")
+        names = frozenset(c for c in as_list(container) if isinstance(c, str))
+        if names:
+            self.containers[key] = names
+        if "@context" in value:
+            self.scoped[key] = value["@context"]
 
     def expand_key(self, key: str) -> str:
+        """The property IRI a key names, or "" for a term the context set to null."""
         if key.startswith(("@", "http://", "https://")):
             return key
+        if key in self.nulled:
+            return ""
         if key in self.terms:
             return self.terms[key]
-        return self.expand(key)
+        if ":" in key:
+            return str(self.expand_iri(key))
+        if key in TERM_FALLBACKS:
+            return TERM_FALLBACKS[key]
+        return self.vocab + key if self.vocab is not None else key
 
     def expand_iri(self, value: Any, *, vocab: bool = False, document_relative: bool = False) -> Any:
-        """JSON-LD's expansion of a value in an IRI position: a term where
-        `vocab` applies; a compact IRI; an absolute IRI or a blank node as it
-        is; then @vocab + the value where `vocab` applies, or the value
-        resolved against the base where `document_relative` applies. The
-        page's expandIri is the same."""
+        """JSON-LD's expansion of a value in an IRI position: a term the
+        document defined where `vocab` applies; a compact IRI; an absolute IRI
+        or a blank node as it is; then @vocab + the value where `vocab` applies,
+        or the value resolved against the base where `document_relative`
+        applies. The page's expandIri is the same."""
         if not isinstance(value, str) or value.startswith("@"):
             return value
         if vocab and value in self.terms:
@@ -258,35 +530,138 @@ class Context:
             return _resolve_iri(value, self.base)
         return value
 
-    def expand_iris(self, document: Any) -> None:
-        """Every IRI in a document, expanded once, in place, before anything
-        reads it: each "@id", and each value of a term the context types as
-        "@id" or "@vocab", so {"@id": "xsd:integer"} is XSD's integer and
-        {"@id": "/api"} is an address on the document's host. The @context,
-        value objects and JSON literals are left as they are. A stack, not
-        recursion, so a deeply nested document costs linear time and stays
-        inside Python's recursion limit."""
-        stack: list[Any] = [document]
+    def _rename_aliases(self, item: dict[str, Any]) -> None:
+        if not self.aliases:
+            return
+        for key in list(item):
+            keyword = self.aliases.get(key)
+            if keyword and keyword not in item:
+                item[keyword] = item.pop(key)
+
+    def _is_nest(self, key: str) -> bool:
+        return key == "@nest" or self.aliases.get(key) == "@nest"
+
+    def _lift_nests(self, item: dict[str, Any]) -> None:
+        """Moves the properties under each @nest key (or a term aliased to it)
+        onto the node, where JSON-LD reads them. Each nested object is moved
+        once, so this costs linear time."""
+        work = [key for key in item if self._is_nest(key)]
+        while work:
+            key = work.pop()
+            if key not in item:
+                continue
+            for nested in as_list(item.pop(key)):
+                if not isinstance(nested, dict):
+                    continue
+                self._rename_aliases(nested)
+                for inner, value in nested.items():
+                    if inner.startswith("@") and inner != "@nest":
+                        continue
+                    if self._is_nest(inner) and inner not in item:
+                        work.append(inner)
+                    _merge_value(item, inner, value)
+
+    def _unmap(self, value: Any, containers: frozenset[str]) -> Any:
+        """A map a container term holds (@index, @id, @type or @language), as
+        the list of values it maps to: an @id map's key becomes its node's
+        "@id", a @type map's key is added to its node's types, and a language
+        map's key becomes each string's "@language"."""
+        if not isinstance(value, dict) or "@value" in value or "@id" in value or "@list" in value:
+            return value
+        out: list[Any] = []
+        for key, member in value.items():
+            for entry in as_list(member):
+                if "@language" in containers:
+                    if isinstance(entry, str) and key != "@none":
+                        out.append({"@value": entry, "@language": key})
+                    elif entry is not None:
+                        out.append(entry)
+                elif "@id" in containers:
+                    if isinstance(entry, dict):
+                        if key != "@none" and "@id" not in entry:
+                            entry["@id"] = key
+                        out.append(entry)
+                elif "@type" in containers:
+                    if isinstance(entry, str):
+                        entry = {"@id": entry}
+                    if isinstance(entry, dict):
+                        if key != "@none":
+                            entry["@type"] = as_list(entry.get("@type")) + [key]
+                        out.append(entry)
+                else:
+                    out.append(entry)
+        return out
+
+    def normalize(self, document: Any) -> None:
+        """Every node in a document put in the form the reader reads, in place,
+        once, before anything reads it. A node's own @context, a term's scoped
+        context and a type's scoped context apply to the node and what is under
+        it; keyword aliases become the keywords; @nest objects are lifted onto
+        their node; a container term's map becomes a list; each "@id", each
+        "@type" and each value of a term typed "@id" or "@vocab" is expanded, so
+        {"@id": "xsd:integer"} is XSD's integer and {"@id": "/api"} is an
+        address on the document's host; and a key that a scoped context maps
+        differently from the document's own context is renamed to the IRI it
+        names, so reading the node later finds it. Value objects, JSON literals
+        and JSON Schemas are left as they are. A stack, not recursion, so a
+        deeply nested document costs linear time and stays inside Python's
+        recursion limit. The page's normalize is the same."""
+        top_items = document if isinstance(document, list) else [document]
+        stack: list[tuple[Any, Context, bool]] = [(item, self, not isinstance(document, list)) for item in top_items]
         while stack:
-            item = stack.pop()
+            item, ctx, top = stack.pop()
             if isinstance(item, list):
-                stack.extend(x for x in item if isinstance(x, (dict, list)))
+                stack.extend((x, ctx, False) for x in item if isinstance(x, (dict, list)))
                 continue
-            if not isinstance(item, dict) or "@value" in item:
+            if not isinstance(item, dict) or _json_schema_like(item):
                 continue
+            if "@context" in item:
+                if top:
+                    ctx.absorb(item["@context"])
+                else:
+                    ctx = ctx.child(item["@context"])
+            ctx._rename_aliases(item)
+            if "@value" in item:
+                continue
+            ctx._lift_nests(item)
+            for kind in sorted(t for t in as_list(item.get("@type")) if isinstance(t, str) and t in ctx.scoped):
+                ctx = ctx.scoped_child(kind)
             for key in list(item):
                 if key == "@context":
                     continue
                 if key == "@id":
-                    item[key] = self.expand_iri(item[key], document_relative=True)
+                    item[key] = ctx.expand_iri(item[key], document_relative=True)
                     continue
-                kind = None if key.startswith("@") else self.coerce.get(key)
-                if kind == "@json":
+                if key == "@type":
+                    item[key] = ctx._expand_typed(item[key], True)
                     continue
-                if kind:
-                    item[key] = self._expand_typed(item[key], kind == "@vocab")
-                if isinstance(item[key], (dict, list)):
-                    stack.append(item[key])
+                if key.startswith("@"):
+                    if isinstance(item[key], (dict, list)):
+                        stack.append((item[key], ctx, False))
+                    continue
+                if key in ctx.nulled:
+                    del item[key]
+                    continue
+                kind = ctx.coerce.get(key)
+                containers = ctx.containers.get(key)
+                value_ctx = ctx.scoped_child(key) if key in ctx.scoped else ctx
+                value = item[key]
+                if containers:
+                    value = ctx._unmap(value, containers)
+                if kind in ("@id", "@vocab"):
+                    value = value_ctx._expand_typed(value, kind == "@vocab")
+                name = key
+                if ctx is not self:
+                    expanded = ctx.expand_key(key)
+                    if expanded and expanded != self.expand_key(key):
+                        name = expanded
+                if name != key:
+                    del item[key]
+                    _merge_value(item, name, value)
+                else:
+                    item[key] = value
+                if kind != "@json" and isinstance(value, (dict, list)):
+                    stack.append((value, value_ctx, False))
 
     def _expand_typed(self, value: Any, vocab: bool) -> Any:
         """A typed term's value: a string, or each string in an array or in a list or set object."""
@@ -349,11 +724,13 @@ class Field:
     raw_body: bool = False
     variable: str | None = None
     json_kind: str | None = None
+    # Takes a list of values: a SHACL property with no sh:maxCount, or one above 1.
+    multi: bool = False
 
     def to_public(self) -> dict[str, Any]:
         return {
             "name": self.name, "path": self.path, "datatype": self.datatype,
-            "jsonKind": self.json_kind,
+            "jsonKind": self.json_kind, "multi": self.multi,
             "minCount": self.min_count, "maxCount": self.max_count,
             "pattern": self.pattern, "defaultValue": self.default,
             "maxLength": self.max_length, "minLength": self.min_length,
@@ -384,6 +761,9 @@ class Control:
     source: str | None = None
     # The base the descriptor's relative IRIs resolved against.
     base: str | None = None
+    # Why this control cannot be invoked, when it cannot; a warning to show with it.
+    problem: str | None = None
+    warning: str | None = None
 
     @property
     def unsafe(self) -> bool:
@@ -407,6 +787,7 @@ class Control:
             "readOnly": self.read_only, "idempotent": self.idempotent,
             "destructive": self.destructive, "unsafe": self.unsafe,
             "types": self.types, "source": self.source,
+            "problem": self.problem, "warning": self.warning,
         }
 
 
@@ -484,44 +865,61 @@ class NodeIndex:
         self.nodes: dict[str, dict[str, Any]] = {}
         self.order: list[dict[str, Any]] = []
         self.root: dict[str, Any] | None = None
-        self._ingest_document(document)
+        self._ingest_document(document, fetched_from)
 
-    def _ingest_document(self, document: Any) -> None:
-        if isinstance(document, list):
-            for item in document:
-                if isinstance(item, dict):
-                    self.ctx.absorb(item.get("@context"))
-                    self.ctx.expand_iris(item)
-                    self._add(item)
+    def _ingest_document(self, document: Any, fetched_from: str | None) -> None:
+        """Indexes every node object at the top of the document, in its @graph
+        (and in each named graph's @graph within it) and in @included, in
+        document order, then the ones embedded under an affordance-like key."""
+        if not isinstance(document, (dict, list)):
             return
-        if not isinstance(document, dict):
-            return
-        self.ctx.absorb(document.get("@context"))
-        self.ctx.expand_iris(document)
-        graph = document.get("@graph")
-        extras = {k: v for k, v in document.items() if k not in {"@context", "@graph"}}
-        if extras:
-            root = dict(extras)
-            if "@id" not in root:
-                root["@id"] = self.base
-            self.root = self._add(root)
-        if isinstance(graph, list):
-            for item in graph:
-                if isinstance(item, dict):
-                    node = self._add(item)
-                    if self.root is None:
-                        self.root = node
-        elif self.root is None:
-            self.root = self._add(document if extras else {"@id": self.base})
+        self.ctx.normalize(document)
+        top: dict[str, Any] | None = None
+        first_named: dict[str, Any] | None = None
+        first_any: dict[str, Any] | None = None
+        if isinstance(document, dict):
+            extras = {k: v for k, v in document.items() if k not in {"@context", "@graph", "@included"}}
+            if extras or ("@graph" not in document and "@included" not in document):
+                top = dict(extras)
+                if "@id" not in top:
+                    top["@id"] = self.base
+                top = self._add(top)
+            pending: list[Any] = [document.get("@included"), document.get("@graph")]
+        else:
+            pending = [document]
+        while pending:
+            value = pending.pop()
+            if isinstance(value, list):
+                pending.extend(reversed(value))
+                continue
+            if not isinstance(value, dict):
+                continue
+            if any(k not in {"@id", "@context", "@graph", "@included"} for k in value):
+                node = self._add(value)
+                first_any = first_any or node
+                if first_named is None and not str(node.get("@id", "")).startswith("_:"):
+                    first_named = node
+            pending.extend([value.get("@included"), value.get("@graph")])
+        # The descriptor is the node at its address, or at the address its text
+        # came from, or at the base; only a document that names none of them
+        # falls back to its top-level node or its first named node.
+        for address in (self.base, fetched_from, self.ctx.base):
+            if address and address in self.nodes:
+                self.root = self.nodes[address]
+                break
+        else:
+            self.root = top or first_named or first_any
         for node in list(self.order):
             self._harvest_embedded(node)
 
     def _add(self, node: dict[str, Any]) -> dict[str, Any]:
         node_id = node.get("@id")
-        if not node_id:
+        if not node_id or not isinstance(node_id, str):
+            # A node with no @id gets one in place, so the object a document
+            # wrote and the one indexed are the same: an operation written
+            # inline with no @id and no action is still a control.
             action = literal(self.get(node, P_ACTION)) or node.get("action")
             node_id = str(action) if action else f"_:n{len(self.order)}"
-            node = dict(node)
             node["@id"] = node_id
         existing = self.nodes.get(node_id)
         if existing is None:
@@ -534,19 +932,26 @@ class NodeIndex:
         return existing
 
     def _harvest_embedded(self, node: dict[str, Any]) -> None:
-        for key, val in list(node.items()):
-            pred = self.ctx.expand_key(key)
-            lname = local_name(pred)
-            if pred not in {P_AFFORDANCE, P_CONTROL, P_SUPOP, P_SUPCLASS} and lname not in {
-                "affordance", "affordances", "control", "supportedOperation", "supportedClass",
-            }:
+        """Indexes the nodes written inside a node under an affordance-like
+        key, and the ones inside those. A stack and a set of the nodes already
+        walked, so a node that lists itself ends the walk instead of repeating it."""
+        pending = [node]
+        walked: set[int] = set()
+        while pending:
+            current = pending.pop()
+            if id(current) in walked:
                 continue
-            for item in as_list(val):
-                if isinstance(item, dict) and (
-                    "@id" in item or "action" in item or "method" in item or "@type" in item
-                ):
-                    added = self._add(item)
-                    self._harvest_embedded(added)
+            walked.add(id(current))
+            for key, val in list(current.items()):
+                pred = self.ctx.expand_key(key)
+                lname = local_name(pred)
+                if pred not in HARVESTED and lname not in HARVESTED_NAMES:
+                    continue
+                for item in as_list(val):
+                    if isinstance(item, dict) and (
+                        "@id" in item or "action" in item or "method" in item or "@type" in item
+                    ):
+                        pending.append(self._add(item))
 
     def get(self, node: dict[str, Any] | None, predicate: str) -> Any:
         if not node:
@@ -569,13 +974,12 @@ class NodeIndex:
 
     def node(self, ident: Any) -> dict[str, Any] | None:
         iri = raw_id(ident)
-        if not iri:
-            return None
-        found = self.nodes.get(str(iri))
-        if found:
-            return found
+        if iri and isinstance(iri, (str, int, float)):
+            found = self.nodes.get(str(iri))
+            if found:
+                return found
         # A plain string naming a node as its "@id" was written before expansion, such as "#S".
-        if isinstance(ident, str):
+        if isinstance(ident, str) and ident:
             full = self.ctx.expand_iri(ident, document_relative=True)
             if full != ident and full in self.nodes:
                 return self.nodes[full]
@@ -584,7 +988,7 @@ class NodeIndex:
         return None
 
     def types_of(self, node: dict[str, Any] | None) -> list[str]:
-        return [self.ctx.expand(x) for x in literals(self.get(node, P_TYPE) or (node or {}).get("@type"))]
+        return [str(self.ctx.expand_iri(x, vocab=True)) for x in literals(self.get(node, P_TYPE) or (node or {}).get("@type"))]
 
     def rdf_list(self, head: Any) -> list[Any]:
         out: list[Any] = []
@@ -620,13 +1024,27 @@ class NodeIndex:
 
 
 
+_MAX_SAFE_INTEGER = 2 ** 53 - 1
+
+
 def _inty(value: Any) -> int | None:
-    if value is None or value == "":
+    """A count or length facet (sh:minCount, sh:maxLength, ...) as an int: an
+    integral JSON number, or a string of digits once the shared spaces are
+    trimmed, within what a double counts exactly. Anything else, a boolean
+    included, is None. The page's inty is the same."""
+    if value is None or isinstance(value, bool):
         return None
-    try:
-        return int(str(value))
-    except (TypeError, ValueError):
-        return None
+    if isinstance(value, int):
+        return value if abs(value) <= _MAX_SAFE_INTEGER else None
+    if isinstance(value, float):
+        return int(value) if value.is_integer() and abs(value) <= _MAX_SAFE_INTEGER else None
+    if isinstance(value, str):
+        text = value.strip(_SPACES)
+        if not _INTEGER_LEXICAL.fullmatch(text) or len(text.lstrip("+-").lstrip("0")) > 16:
+            return None
+        number = int(text)
+        return number if abs(number) <= _MAX_SAFE_INTEGER else None
+    return None
 
 
 def _looks_like_operation(index: NodeIndex, node: dict[str, Any]) -> bool:
@@ -646,14 +1064,30 @@ def _looks_like_operation(index: NodeIndex, node: dict[str, Any]) -> bool:
 
 
 def _text(value: Any) -> str:
-    """Remote text as a string; a JSON value that is not a string as its JSON."""
+    """Remote text as a string; a JSON value that is not a string as its JSON,
+    written as the page's JSON.stringify writes it, with no spaces."""
     if value is None:
         return ""
     if isinstance(value, str):
         return value
     if isinstance(value, (dict, list, bool)):
-        return json.dumps(value, ensure_ascii=False)
+        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, float):
+        return _js_number_text(value)
     return str(value)
+
+
+def _json_value(value: Any) -> Any:
+    """A JSON literal written as a value object, {"@type": "@json", "@value": v}, as v."""
+    if isinstance(value, list):
+        return [_json_value(item) for item in value]
+    if isinstance(value, dict) and value.get("@type") == "@json" and "@value" in value:
+        return value["@value"]
+    return value
+
+
+def _is_json_schema(value: Any) -> bool:
+    return isinstance(value, dict) and "properties" in value and P_SH_PROP not in value
 
 
 _REST_PARAM = "rest-param-"
@@ -730,15 +1164,84 @@ def _shacl_json_kind(index: NodeIndex, node: dict[str, Any], datatype: str | Non
     node_kind = str(literal(index.get(node, P_SH_NODEKIND)) or "")
     blank = node_kind == SHACL + "BlankNode" or node_kind.endswith("#BlankNode")
     if nested is not None or blank:
-        return "array" if (max_count or 0) > 1 else "object"
+        return "array" if max_count is None or max_count > 1 else "object"
     return None
+
+
+def _is_multi(json_kind: str | None, min_count: int | None, max_count: int | None, unbounded: bool) -> bool:
+    """Whether a field takes a list of values. A SHACL property with no
+    sh:maxCount may have any number (`unbounded`), which is how Interego's own
+    shapes write a list: a single value carries sh:maxCount 1. A count above 1
+    either way also makes a list. A JSON field's list is its JSON."""
+    if json_kind:
+        return False
+    if (min_count or 0) > 1 or (max_count is not None and max_count > 1):
+        return True
+    return unbounded and max_count is None
+
+
+def _defaults(index: NodeIndex, node: dict[str, Any], multi: bool) -> Any:
+    if multi:
+        found = literals(index.get(node, P_SH_DEF))
+        return found or None
+    return literal(index.get(node, P_SH_DEF))
+
+
+def _supported_field(index: NodeIndex, ref: Any) -> Field | None:
+    """A field for one hydra:SupportedProperty: named by its hydra:property's
+    local name, or, for a property written in place as a blank node (as
+    Interego's manifests write one), by that property's rdfs:label; required
+    when hydra:required is true; constrained by the SHACL facets on it."""
+    sp = index.node(ref) or (ref if isinstance(ref, dict) else None)
+    if not sp:
+        return None
+    raw_prop = as_list(index.get(sp, P_PROPERTY))
+    head = raw_prop[0] if raw_prop else None
+    prop_node = index.node(head) or (head if isinstance(head, dict) else None)
+    if isinstance(head, dict):
+        iri = head.get("@id")
+    else:
+        # Hydra's context types hydra:property as @vocab, so a plain "schema:text" names an IRI.
+        iri = index.ctx.expand_iri(head, vocab=True, document_relative=True) if isinstance(head, str) else None
+    named = isinstance(iri, str) and bool(iri) and not iri.startswith("_:")
+    label = literal(index.get(prop_node, P_LABEL)) if prop_node else None
+    name = literal(index.get(sp, P_SH_NAME)) or (local_name(iri) if named else None) or label
+    if name is None or _text(name) == "":
+        return None
+    datatype = str(literal(index.get(sp, P_SH_DT)) or "") or None
+    if not datatype and prop_node:
+        declared = literal(index.get(prop_node, P_RANGE))
+        if _xsd_name(declared) is not None or _is_rdf_json(declared):
+            datatype = str(declared)
+    min_count = _inty(literal(index.get(sp, P_SH_MIN)))
+    max_count = _inty(literal(index.get(sp, P_SH_MAX)))
+    json_kind = "json" if _is_rdf_json(datatype) else None
+    multi = _is_multi(json_kind, min_count, max_count, False)
+    required = truthy(literal(index.get(sp, P_REQUIRED))) is True or (min_count or 0) >= 1
+    enum_raw = index.get(sp, P_SH_IN)
+    description = (literal(index.get(sp, P_SH_DESC)) or literal(index.get(sp, P_COMMENT)) or literal(index.get(sp, P_DESC))
+                   or (literal(index.get(prop_node, P_COMMENT)) if prop_node else None) or "")
+    return Field(
+        name=_field_name(name, iri if named else None, None), path=iri if named else None,
+        datatype=datatype, json_kind=json_kind,
+        min_count=min_count if min_count is not None else (1 if required else None), max_count=max_count,
+        pattern=str(literal(index.get(sp, P_SH_PAT)) or "") or None,
+        default=_defaults(index, sp, multi),
+        max_length=_inty(literal(index.get(sp, P_SH_MAXLEN))), min_length=_inty(literal(index.get(sp, P_SH_MINLEN))),
+        description=_text(description) or None,
+        enum=[] if enum_raw is None else index.list_values(enum_raw),
+        min_inclusive=literal(index.get(sp, P_SH_MINI)), max_inclusive=literal(index.get(sp, P_SH_MAXI)),
+        required=required, multi=multi,
+    )
 
 
 def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
     fields: list[Field] = []
-    if isinstance(shape_ref, dict) and "properties" in shape_ref and P_SH_PROP not in shape_ref:
+    shape_ref = _json_value(shape_ref)
+    if _is_json_schema(shape_ref):
         required = set(as_list(shape_ref.get("required") or []))
-        for name, prop in (shape_ref.get("properties") or {}).items():
+        properties = shape_ref.get("properties")
+        for name, prop in (properties.items() if isinstance(properties, dict) else []):
             prop = prop if isinstance(prop, dict) else {}
             types = _schema_types(prop)
             json_kind = _schema_json_kind(types)
@@ -759,6 +1262,9 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
         return fields
     props = index.get(shape, P_SH_PROP)
     if not props:
+        supported = index.get(shape, P_SUPPROP)
+        if supported:
+            return [f for f in (_supported_field(index, item) for item in as_list(supported)) if f]
         if index.get(shape, P_SH_DT) or index.get(shape, P_SH_MINLEN) or index.get(shape, P_SH_MAXLEN):
             label = str(literal(index.get(shape, P_LABEL)) or "")
             name = "query" if ("query" in label.lower() or "sparql" in label.lower()) else "body"
@@ -784,26 +1290,32 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
         min_count = _inty(literal(index.get(node, P_SH_MIN)))
         max_count = _inty(literal(index.get(node, P_SH_MAX)))
         datatype = str(literal(index.get(node, P_SH_DT)) or "") or None
+        json_kind = _shacl_json_kind(index, node, datatype, max_count)
+        multi = _is_multi(json_kind, min_count, max_count, True)
         fields.append(Field(
             name=_field_name(str(name) if name else None, path, None),
             path=path or None,
             datatype=datatype,
-            json_kind=_shacl_json_kind(index, node, datatype, max_count),
+            json_kind=json_kind,
             min_count=min_count, max_count=max_count,
             pattern=str(literal(index.get(node, P_SH_PAT)) or "") or None,
-            default=literal(index.get(node, P_SH_DEF)),
+            default=_defaults(index, node, multi),
             max_length=_inty(literal(index.get(node, P_SH_MAXLEN))),
             min_length=_inty(literal(index.get(node, P_SH_MINLEN))),
             description=str(literal(index.get(node, P_SH_DESC)) or literal(index.get(node, P_COMMENT)) or literal(index.get(node, P_DESC)) or "") or None,
             enum=enum,
             min_inclusive=literal(index.get(node, P_SH_MINI)),
             max_inclusive=literal(index.get(node, P_SH_MAXI)),
-            required=(min_count or 0) >= 1,
+            required=(min_count or 0) >= 1, multi=multi,
         ))
     return fields
 
 
-def _template_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]]]:
+def _template_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]], bool]:
+    """The control's IRI template and its mappings, and whether the template is
+    the control's hydra:target: a hydra:IriTemplate written as the target, as
+    Interego's decoration catalogs write one, or reached through hydra:search
+    or a key named for a template."""
     def read_template_node(tmpl: dict[str, Any] | None) -> tuple[str | None, list[dict[str, Any]]]:
         if not tmpl:
             return None, []
@@ -813,17 +1325,30 @@ def _template_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, li
             mn = index.node(item) or (item if isinstance(item, dict) else None)
             if not mn:
                 continue
+            # Hydra's context types hydra:property as @vocab, so a plain "schema:query" names an IRI.
+            prop = literal(index.get(mn, P_PROPERTY))
             found.append({
                 "variable": literal(index.get(mn, P_VARIABLE)),
-                "property": literal(index.get(mn, P_PROPERTY)),
+                "property": index.ctx.expand_iri(prop, vocab=True, document_relative=True) if isinstance(prop, str) else prop,
                 "required": truthy(literal(index.get(mn, P_REQUIRED))),
             })
         return (str(template) if template else None), found
 
+    def as_template(item: Any) -> dict[str, Any] | None:
+        tmpl = index.node(item) or (item if isinstance(item, dict) else None)
+        if tmpl and (index.get(tmpl, P_TEMPLATE) is not None or HYDRA + "IriTemplate" in index.types_of(tmpl)):
+            return tmpl
+        return None
+
     direct = literal(index.get(node, P_TEMPLATE))
     if isinstance(direct, str) and "{" in direct:
         _, mappings = read_template_node(node)
-        return direct, mappings
+        return direct, mappings, False
+    for pred in (P_TARGET, P_HMDTARGET):
+        for item in as_list(index.get(node, pred)):
+            template, mappings = read_template_node(as_template(item))
+            if template:
+                return template, mappings, True
     for key, val in node.items():
         if key.startswith("@"):
             continue
@@ -835,8 +1360,8 @@ def _template_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, li
             tmpl_node = index.node(item) or (item if isinstance(item, dict) else None)
             template, mappings = read_template_node(tmpl_node)
             if template:
-                return template, mappings
-    return (str(direct) if direct else None), []
+                return template, mappings, False
+    return (str(direct) if direct else None), [], False
 
 
 def _merge_mapping_fields(fields: list[Field], mappings: list[dict[str, Any]]) -> list[Field]:
@@ -871,29 +1396,75 @@ def _merge_mapping_fields(fields: list[Field], mappings: list[dict[str, Any]]) -
     return fields
 
 
+_HINT_DESTRUCTIVE = "destructiveHint"
+_HINT_READONLY = "readOnlyHint"
+
+
+def _hint_flags(index: NodeIndex, node: dict[str, Any]) -> tuple[bool, bool]:
+    """Whether a node says, under any key whose name ends in destructiveHint or
+    readOnlyHint, that it destroys or writes: its own keys, such as a hint under
+    a prefix the context does not define, and the keys of an object written
+    directly inside it, such as MCP's "annotations". Read only to fail closed:
+    either can make a control unsafe, and neither makes one safe. The page's
+    hintFlags is the same."""
+    destructive = writes = False
+    objects = [node]
+    for key, val in node.items():
+        if key.startswith("@"):
+            continue
+        for item in as_list(val):
+            if isinstance(item, dict) and "@value" not in item and "@list" not in item:
+                objects.append(item)
+    for obj in objects:
+        for key, val in obj.items():
+            if key.startswith("@"):
+                continue
+            names = {local_name(key), local_name(index.ctx.expand_key(key))}
+            flag = truthy(literal(val))
+            if _HINT_DESTRUCTIVE in names and flag is True:
+                destructive = True
+            if _HINT_READONLY in names and flag is False:
+                writes = True
+    return destructive, writes
+
+
+def _duplicate_name(fields: list[Field]) -> str | None:
+    seen: set[str] = set()
+    for fld in fields:
+        if fld.name in seen:
+            return fld.name
+        seen.add(fld.name)
+    return None
+
+
 def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Control:
     rel = literal(index.get(node, P_ACTION)) or literal(index.get(node, P_REL)) or node.get("@id") or ""
-    method = str(literal(index.get(node, P_METHOD)) or "GET").upper()
+    # A control that names no method is sent as the substrate's own follower
+    # (invoke_affordance, act) sends it: POST. So it is never a safe read by default.
+    method = str(literal(index.get(node, P_METHOD)) or "POST").upper()
     title = literal(index.get(node, P_TITLE)) or literal(index.get(node, P_DCTITLE)) or literal(index.get(node, P_LABEL)) or short_rel(str(rel))
     description = literal(index.get(node, P_DESC)) or literal(index.get(node, P_DCDESC)) or literal(index.get(node, P_COMMENT)) or ""
     media = literal(index.get(node, P_RETURNS_CT)) or literal(index.get(node, P_MEDIA))
-    expects_raw = index.get(node, P_EXPECTS)
+    expects_raw = _json_value(index.get(node, P_EXPECTS))
     expects = None
-    if isinstance(expects_raw, dict) and "properties" in expects_raw:
+    if _is_json_schema(expects_raw):
         expects = None
     elif isinstance(expects_raw, dict) and "@id" in expects_raw:
         expects = expects_raw["@id"]
     else:
         expects = literal(expects_raw)
     returns = literal(index.get(node, P_RETURNS))
-    target = literal(index.get(node, P_TARGET)) or literal(index.get(node, P_HMDTARGET))
-    template, mappings = _template_of(index, node)
+    template, mappings, template_is_target = _template_of(index, node)
+    target = None if template_is_target else (literal(index.get(node, P_TARGET)) or literal(index.get(node, P_HMDTARGET)))
     fields: list[Field] = []
     inline = node.get("fields")
+    warning = None
     if isinstance(inline, list) and inline and isinstance(inline[0], dict) and (
         "name" in inline[0] or "path" in inline[0] or "datatype" in inline[0]
     ):
         for item in inline:
+            if not isinstance(item, dict):
+                continue
             fields.append(Field(
                 name=_field_name(item.get("name"), item.get("path"), None),
                 path=item.get("path"), datatype=item.get("datatype"),
@@ -904,33 +1475,45 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
                 required=(_inty(item.get("minCount")) or 0) >= 1,
             ))
     elif expects_raw is not None:
-        shape_ref = expects_raw[0] if isinstance(expects_raw, list) else expects_raw
+        shape_ref = expects_raw[0] if isinstance(expects_raw, list) and expects_raw else expects_raw
         fields = _shape_fields(index, shape_ref)
+        if not fields and not _is_json_schema(shape_ref):
+            warning = (f"hydra:expects names {_text(expects) or 'a shape'}, which this document does not describe, so no "
+                       "input fields were built: what the server expects is not known here.")
     fields = _merge_mapping_fields(fields, mappings)
+    duplicate = _duplicate_name(fields)
+    destructive_flag, writes_flag = _hint_flags(index, node)
+    read_only = truthy(literal(index.get(node, P_READONLY)))
+    destructive = truthy(literal(index.get(node, P_DESTRUCTIVE)))
     return Control(
         id=str(node.get("@id") or rel), rel=str(rel), method=method,
         title=str(title or ""), description=str(description or ""),
         media_type=str(media) if media else None,
-        expects=str(expects) if expects else None,
+        expects=_text(expects) if expects else None,
         returns=str(returns) if returns else None,
         target=str(target) if target else None, template=template, fields=fields,
-        read_only=truthy(literal(index.get(node, P_READONLY))),
+        read_only=False if writes_flag else read_only,
         idempotent=truthy(literal(index.get(node, P_IDEMPOTENT))),
-        destructive=truthy(literal(index.get(node, P_DESTRUCTIVE))),
+        destructive=True if destructive_flag else destructive,
         types=index.types_of(node), source=source, base=index.ctx.base,
+        problem=(f"two input fields are both named {duplicate!r}, so their values could not be told apart; "
+                 "this control is not invoked") if duplicate else None,
+        warning=warning,
     )
 
 
 def extract_controls(index: NodeIndex, source: str) -> list[Control]:
     found: dict[str, Control] = {}
     candidates: list[dict[str, Any]] = []
+    seen: set[int] = set()
 
     def add_candidate(node: dict[str, Any] | None) -> None:
-        if node and node not in candidates:
+        if node and id(node) not in seen:
+            seen.add(id(node))
             candidates.append(node)
 
     for node in index.order:
-        for pred in (P_AFFORDANCE, P_CONTROL, P_SUPOP):
+        for pred in (P_AFFORDANCE, P_CONTROL, P_SUPOP, P_OPERATION):
             for item in as_list(index.get(node, pred)):
                 add_candidate(index.node(item) or (item if isinstance(item, dict) else None))
         for item in as_list(index.get(node, P_SUPCLASS)):
@@ -941,8 +1524,6 @@ def extract_controls(index: NodeIndex, source: str) -> list[Control]:
         if _looks_like_operation(index, node):
             add_candidate(node)
     for node in candidates:
-        if not node:
-            continue
         control = control_from_node(index, node, source)
         key = control.rel or control.id
         if key and key not in found:
@@ -953,7 +1534,7 @@ def extract_controls(index: NodeIndex, source: str) -> list[Control]:
 
 
 def descriptor_meta(index: NodeIndex, url: str, content_type: str) -> tuple[str, list[str], str, list[str]]:
-    root = index.root or index.nodes.get(url) or (index.order[0] if index.order else None)
+    root = index.root
     title, types, description, see_also = local_name(url) or url, [], "", []
     if root:
         title = str(literal(index.get(root, P_DCTITLE)) or literal(index.get(root, P_TITLE)) or literal(index.get(root, P_LABEL)) or title)
@@ -1001,7 +1582,8 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
         rel = str(data.get("rel") or ident)
         controls.append(Control(
             id=ident if ident.startswith("http") else f"{url}#{ident}",
-            rel=rel, method=str(data.get("method") or "GET").upper(),
+            # No method is POST here as in a JSON-LD control, as the substrate's HyperMarkdown lift reads it.
+            rel=rel, method=str(data.get("method") or "POST").upper(),
             title=str(data.get("title") or short_rel(rel)),
             description=str(data.get("description") or data.get("whenToUse") or ""),
             media_type=data.get("mediaType"), expects=data.get("expects"),
@@ -1033,25 +1615,32 @@ def _require_web_url(url: str, refused: str = "nothing was sent to") -> None:
 
 
 class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
-    """Follows a redirect only to another http or https URL."""
+    """Follows a redirect only to another http or https URL, and notes where a
+    303 See Other was answered from."""
+
+    def __init__(self) -> None:
+        super().__init__()
+        self.see_other_from: str | None = None
 
     def http_error_302(self, req, fp, code, msg, headers):  # type: ignore[no-untyped-def]
         location = headers.get("location") or headers.get("uri")
         if location:
             _require_web_url(urllib.parse.urljoin(req.full_url, location), "refused a redirect to")
+        if code == 303 and self.see_other_from is None:
+            self.see_other_from = req.full_url
         return super().http_error_302(req, fp, code, msg, headers)
 
     http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
 
-def _web_opener() -> urllib.request.OpenerDirector:
+def _web_opener(redirects: _WebOnlyRedirects) -> urllib.request.OpenerDirector:
     """urlopen's handlers without the file, ftp and data ones; a URL of another
     scheme reaches UnknownHandler and fails."""
     opener = urllib.request.OpenerDirector()
     for handler in (
         urllib.request.ProxyHandler(), urllib.request.UnknownHandler(),
         urllib.request.HTTPHandler(), urllib.request.HTTPSHandler(),
-        urllib.request.HTTPDefaultErrorHandler(), _WebOnlyRedirects(),
+        urllib.request.HTTPDefaultErrorHandler(), redirects,
         urllib.request.HTTPErrorProcessor(),
     ):
         opener.add_handler(handler)
@@ -1059,18 +1648,26 @@ def _web_opener() -> urllib.request.OpenerDirector:
 
 
 def http_request(url: str, method: str = "GET", headers: dict[str, str] | None = None,
-                 data: bytes | None = None, timeout: int = 60) -> tuple[int, dict[str, str], bytes]:
+                 data: bytes | None = None, timeout: int = 60) -> tuple[int, dict[str, str], bytes, str]:
+    """The status, headers and body of a request, and the address the answer
+    is the document at: the URL after any redirects, as JSON-LD takes a
+    document's base from, except that a 303 See Other leaves it at the URL that
+    answered 303. The URL is sent as its URI form (_iri_to_uri)."""
+    url = _iri_to_uri(url)
     _require_web_url(url)
     req_headers = {"User-Agent": USER_AGENT}
     if headers:
         req_headers.update(headers)
     request = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
+    redirects = _WebOnlyRedirects()
     try:
-        with _web_opener().open(request, timeout=timeout) as resp:
-            return resp.getcode() or 200, {k.lower(): v for k, v in resp.headers.items()}, resp.read()
+        with _web_opener(redirects).open(request, timeout=timeout) as resp:
+            final = redirects.see_other_from or resp.geturl() or url
+            return resp.getcode() or 200, {k.lower(): v for k, v in resp.headers.items()}, resp.read(), final
     except urllib.error.HTTPError as exc:
         body = exc.read() if exc.fp else b""
-        return exc.code, {k.lower(): v for k, v in (exc.headers.items() if exc.headers else [])}, body
+        final = redirects.see_other_from or exc.geturl() or url
+        return exc.code, {k.lower(): v for k, v in (exc.headers.items() if exc.headers else [])}, body, final
 
 
 def _with_format(url: str, fmt: str) -> str:
@@ -1116,13 +1713,16 @@ def fetch_authority(url: str) -> tuple[str, str, str]:
 
     def attempt(candidate: str) -> tuple[str, str, str] | None:
         tried.append(candidate)
-        status, headers, body = http_request(candidate, headers={"Accept": accept})
+        # The address the text came from is where it landed after redirects,
+        # which its relative IRIs resolve against: /dir answered by /dir/ puts
+        # "items" at /dir/items. The page's fetchAuthority does the same.
+        status, headers, body, landed = http_request(candidate, headers={"Accept": accept})
         if status >= 400:
             return None
         text = body.decode("utf-8", errors="replace")
         kind = classify_payload(text, headers.get("content-type", ""))
         if kind:
-            return candidate, headers.get("content-type", ""), text
+            return landed, headers.get("content-type", ""), text
         return None
 
     if existing:
@@ -1202,11 +1802,40 @@ def _template_defined(value: Any) -> bool:
     return True
 
 
+def _js_number_text(number: float) -> str:
+    """A float as JavaScript writes a number (Number.prototype.toString):
+    the shortest digits that read back as it, in plain notation from 1e-7 up to
+    1e21 and exponent notation outside that, with no ".0" on a whole number. The
+    page writes numbers this way itself, so a number field reaches a URL as the
+    same text from both clients: 2 and not 2.0, 1e-7 and not 1e-07."""
+    if number == 0:
+        return "0"
+    sign = "-" if number < 0 else ""
+    mantissa, _, exponent = repr(abs(number)).partition("e")
+    whole, _, fraction = mantissa.partition(".")
+    digits = (whole + fraction).lstrip("0")
+    trailing = len(digits) - len(digits.rstrip("0"))
+    digits = digits.rstrip("0")
+    k = len(digits)
+    n = k + int(exponent or 0) - len(fraction) + trailing
+    if k <= n <= 21:
+        return sign + digits + "0" * (n - k)
+    if 0 < n <= 21:
+        return sign + digits[:n] + "." + digits[n:]
+    if -6 < n <= 0:
+        return sign + "0." + "0" * (-n) + digits
+    power = n - 1
+    tail = ("+" if power >= 0 else "-") + str(abs(power))
+    return sign + (digits if k == 1 else digits[0] + "." + digits[1:]) + "e" + tail
+
+
 def _template_scalar(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (dict, list)):
         return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+    if isinstance(value, float):
+        return _js_number_text(value)
     return str(value)
 
 
@@ -1215,13 +1844,24 @@ def _template_encode(value: Any, op: str) -> str:
     return urllib.parse.quote(_template_scalar(value), safe=safe)
 
 
-def _template_specs(expr: str) -> list[tuple[str, bool]]:
+def _template_specs(expr: str) -> list[tuple[str, bool, int | None]]:
+    """Each variable in an expression: its name, whether it is exploded (*),
+    and the most characters a prefix modifier (:N, 1 to 9999) lets through."""
     specs = []
     for part in expr.split(","):
         explode = "*" in part
-        name = part.split("*", 1)[0].split(":", 1)[0]
-        specs.append((name, explode))
+        name, _, prefix = part.split("*", 1)[0].partition(":")
+        limit = int(prefix) if prefix.isascii() and prefix.isdigit() and len(prefix) <= 4 and int(prefix) > 0 else None
+        specs.append((name, explode, limit))
     return specs
+
+
+def _prefixed(value: Any, limit: int | None) -> Any:
+    """A string value cut to its first `limit` characters (not bytes), as RFC
+    6570's prefix modifier asks; a list or a map is left whole."""
+    if limit is None or isinstance(value, (dict, list)):
+        return value
+    return _template_scalar(value)[:limit]
 
 
 def _form_parts(name: str, explode: bool, value: Any, enc_op: str) -> list[str]:
@@ -1263,18 +1903,18 @@ def _expand_expr(expr: str, values: dict[str, Any]) -> str:
     op = ""
     if expr and expr[0] in "+#./;?&":
         op, expr = expr[0], expr[1:]
-    specs = [(name, explode) for name, explode in _template_specs(expr) if _template_defined(values.get(name))]
+    specs = [(name, explode, limit) for name, explode, limit in _template_specs(expr) if _template_defined(values.get(name))]
     if not specs:
         return ""
     enc_op = op if op in {"+", "#"} else ""
     if op in {"?", "&", ";"}:
         parts: list[str] = []
-        for name, explode in specs:
-            parts.extend(_form_parts(name, explode, values[name], enc_op))
+        for name, explode, limit in specs:
+            parts.extend(_form_parts(name, explode, _prefixed(values[name], limit), enc_op))
         if op == ";":
             return "".join(f";{part}" for part in parts)
         return ("&" if op == "&" else "?") + "&".join(parts)
-    rendered = [_path_value(explode, values[name], op, enc_op) for name, explode in specs]
+    rendered = [_path_value(explode, _prefixed(values[name], limit), op, enc_op) for name, explode, limit in specs]
     if op == "/":
         return "/" + "/".join(rendered)
     if op == ".":
@@ -1286,6 +1926,13 @@ def _expand_expr(expr: str, values: dict[str, Any]) -> str:
 
 def expand_uri_template(template: str, values: dict[str, Any]) -> str:
     return re.sub(r"\{([^{}]+)\}", lambda match: _expand_expr(match.group(1), values), template)
+
+
+def _template_variables(template: str) -> set[str]:
+    used: set[str] = set()
+    for match in re.finditer(r"\{[+#./;?&]?([^{}]+)\}", template):
+        used.update(part.split("*", 1)[0].split(":", 1)[0] for part in match.group(1).split(","))
+    return used
 
 
 # XSD datatypes whose values are numbers, by their name in the XSD namespace. A bound
@@ -1382,7 +2029,8 @@ def _coerce_number(kind: str, value: Any) -> int | float:
         raise ValueError("not a finite number")
     if kind == "decimal" and _decimal_key(text) != _decimal_key(repr(number)):
         raise ValueError("decimal cannot be sent exactly")
-    return number
+    # A whole number is sent as JavaScript sends it, 2 and not 2.0, in a URL and in JSON alike.
+    return int(number) if number.is_integer() and abs(number) < 1e21 else number
 
 
 def _enum_has_number(fld: Field, kind: str, number: int | float) -> bool:
@@ -1434,70 +2082,149 @@ def coerce_value(fld: Field, value: Any) -> Any:
     return value
 
 
+def _scalar_text(value: Any) -> str:
+    """A typed value as text, as the page's String() writes it."""
+    if isinstance(value, bool):
+        return "true" if value else "false"
+    if isinstance(value, float):
+        return _js_number_text(value)
+    return "" if value is None else str(value)
+
+
+def _multi_items(value: Any) -> list[Any]:
+    """A list field's values: a list as given (a repeated --field, or the
+    defaults), or text, read as a JSON array when it is one and otherwise as one
+    value per line, with blank values and lines dropped. The page's multiItems
+    is the same."""
+    def kept(item: Any) -> bool:
+        return item is not None and not (isinstance(item, str) and not item.strip(_SPACES))
+    if isinstance(value, list):
+        return [item for item in value if kept(item)]
+    text = str(value)
+    if text.strip(_SPACES).startswith("["):
+        try:
+            parsed = json.loads(text)
+        except json.JSONDecodeError:
+            parsed = None
+        if isinstance(parsed, list):
+            return [item for item in parsed if kept(item)]
+    lines = text.replace("\r\n", "\n").replace("\r", "\n").split("\n")
+    return [line for line in lines if line.strip(_SPACES)]
+
+
+def _check_value(fld: Field, found: Any, numeric: str | None, errors: list[str]) -> Any:
+    """One value of a field, typed and checked; each problem goes in `errors`
+    once. Returns the value to send."""
+    def report(message: str) -> None:
+        if message not in errors:
+            errors.append(message)
+    if numeric and isinstance(found, str):
+        found = found.strip(_SPACES)
+    try:
+        typed = coerce_value(fld, found)
+    except (TypeError, ValueError) as exc:
+        report(f"{fld.name}: {exc}")
+        return None
+    structured = isinstance(typed, (dict, list))
+    text = typed if isinstance(typed, str) else _scalar_text(typed)
+    if not structured and fld.min_length is not None and len(text) < fld.min_length:
+        report(f"{fld.name}: shorter than minLength {fld.min_length}")
+    if not structured and fld.max_length is not None and len(text) > fld.max_length:
+        report(f"{fld.name}: longer than maxLength {fld.max_length}")
+    # A field's pattern is reported by `describe` and never run: a remote
+    # regular expression can take time exponential in the input, and the
+    # server that receives the value is the one that enforces it.
+    allowed = [_text(x) for x in fld.enum if x is not None]
+    if not structured and allowed:
+        if numeric and isinstance(typed, (int, float)) and not isinstance(typed, bool):
+            listed = _enum_has_number(fld, numeric, typed)
+        else:
+            # Each entry's JSON text, as the page offers it: true, not Python's True.
+            listed = text in allowed
+        if not listed:
+            report(f"{fld.name}: must be one of {', '.join(allowed)}")
+    # A numeric bound needs a number to compare: a value that is none is an
+    # error, not a pass. A bound that is not a number, such as a date, is the
+    # server's to check.
+    low = None if structured else _lexical_number(fld.min_inclusive)
+    high = None if structured else _lexical_number(fld.max_inclusive)
+    if low is not None or high is not None:
+        number = _lexical_number(typed)
+        if number is None:
+            report(f"{fld.name}: not a number")
+        else:
+            if low is not None and number < low:
+                report(f"{fld.name}: below minInclusive {_scalar_text(fld.min_inclusive)}")
+            if high is not None and number > high:
+                report(f"{fld.name}: above maxInclusive {_scalar_text(fld.max_inclusive)}")
+    # A JSON request body is sent as it was written, once it parses.
+    return found if fld.raw_body and fld.json_kind and isinstance(found, str) else typed
+
+
 def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
+    """The values to send, each typed by its field, and every problem with
+    them. A name that is no field's is a problem, not something silently
+    dropped; a list field takes several values (a repeated --field, a JSON
+    array, or one per line) and is checked against its sh:minCount and
+    sh:maxCount, and a field that takes one value takes the last given. The
+    page's validateFields is the same."""
+    if control.problem:
+        return {}, [control.problem]
     errors: list[str] = []
     values: dict[str, Any] = {}
     incoming = dict(supplied)
+    known: set[str] = set()
     for fld in control.fields:
-        aliases = {fld.name, fld.variable, local_name(fld.path) if fld.path else None}
-        aliases = {a for a in aliases if a}
+        aliases = list(dict.fromkeys(a for a in (fld.name, fld.variable, local_name(fld.path) if fld.path else None) if a))
+        known.update(aliases)
         found = None
-        used = None
         for alias in aliases:
-            if alias in incoming:
-                found = incoming[alias]
-                used = alias
+            if alias in incoming and incoming[alias] is not None and incoming[alias] != "":
+                found = incoming.pop(alias)
                 break
-        # Spaces around a number are not part of it, so a number field holding only spaces is empty.
         numeric = _numeric_kind(fld)
+        required = fld.required or (fld.min_count or 0) >= 1
+        if fld.multi:
+            items = _multi_items(found) if found is not None else []
+            if not items and fld.default is not None:
+                items = _multi_items(fld.default if isinstance(fld.default, list) else [fld.default])
+            if not items:
+                if required:
+                    errors.append(f"missing required field '{fld.name}'")
+                continue
+            if fld.min_count and len(items) < fld.min_count:
+                errors.append(f"{fld.name}: needs at least {fld.min_count} values, got {len(items)}")
+            if fld.max_count is not None and len(items) > fld.max_count:
+                errors.append(f"{fld.name}: takes at most {fld.max_count} values, got {len(items)}")
+            typed_items = []
+            for item in items:
+                if isinstance(item, (dict, list)):
+                    message = f"{fld.name}: each value is one {local_name(fld.datatype) or 'text'} value, not JSON"
+                    if message not in errors:
+                        errors.append(message)
+                    continue
+                typed_items.append(_check_value(fld, item if isinstance(item, str) else _scalar_text(item), numeric, errors))
+            values[fld.name] = typed_items
+            continue
+        if isinstance(found, list):
+            # A field that takes one value takes the last one given, as a repeated option does.
+            found = found[-1] if found else None
+        # Spaces around a number are not part of it, so a number field holding only spaces is empty.
         if numeric and isinstance(found, str):
             found = found.strip(_SPACES)
         if (found is None or found == "") and fld.default is not None:
             found = fld.default.strip(_SPACES) if numeric and isinstance(fld.default, str) else fld.default
-        required = fld.required or (fld.min_count or 0) >= 1
         if found is None or found == "":
             if required:
                 errors.append(f"missing required field '{fld.name}'")
             continue
-        try:
-            typed = coerce_value(fld, found)
-        except (TypeError, ValueError) as exc:
-            errors.append(f"{fld.name}: {exc}")
-            continue
-        structured = isinstance(typed, (dict, list))
-        text = found if isinstance(found, str) else ("" if typed is None else str(typed))
-        if not structured and fld.min_length is not None and len(text) < fld.min_length:
-            errors.append(f"{fld.name}: shorter than minLength {fld.min_length}")
-        if not structured and fld.max_length is not None and len(text) > fld.max_length:
-            errors.append(f"{fld.name}: longer than maxLength {fld.max_length}")
-        # A field's pattern is reported by `describe` and never run: a remote
-        # regular expression can take time exponential in the input, and the
-        # server that receives the value is the one that enforces it.
-        if not structured and fld.enum:
-            if numeric and isinstance(typed, (int, float)):
-                listed = _enum_has_number(fld, numeric, typed)
-            else:
-                listed = text in {str(x) for x in fld.enum}
-            if not listed:
-                errors.append(f"{fld.name}: must be one of {sorted(str(x) for x in fld.enum)}")
-        # A numeric bound needs a number to compare: a value that is none is an
-        # error, not a pass. A bound that is not a number, such as a date, is
-        # the server's to check.
-        low = None if structured else _lexical_number(fld.min_inclusive)
-        high = None if structured else _lexical_number(fld.max_inclusive)
-        if low is not None or high is not None:
-            number = _lexical_number(typed)
-            if number is None:
-                errors.append(f"{fld.name}: not a number")
-            else:
-                if low is not None and number < low:
-                    errors.append(f"{fld.name}: below minInclusive {fld.min_inclusive}")
-                if high is not None and number > high:
-                    errors.append(f"{fld.name}: above maxInclusive {fld.max_inclusive}")
-        # A JSON request body is sent as it was written, once it parses.
-        values[fld.name] = found if fld.raw_body and fld.json_kind and isinstance(found, str) else typed
-        if used:
-            incoming.pop(used, None)
+        before = len(errors)
+        value = _check_value(fld, found, numeric, errors)
+        if len(errors) == before:
+            values[fld.name] = value
+    for name in incoming:
+        if name not in known:
+            errors.append(f"no input field is named {name!r}")
     return values, errors
 
 
@@ -1534,9 +2261,10 @@ def is_mcp_tool_url(target: str | None) -> bool:
 
 def classify_transport(control: Control, descriptor_url: str) -> str:
     if control.template:
-        # Before expansion, only what precedes the first variable is known.
+        # Before expansion, only what precedes the first variable is known: it
+        # resolves against the base, as the expanded address will.
         head = control.template.split("{", 1)[0]
-        return "http" if not head or is_web_url(head) else "unknown"
+        return "http" if not head or is_web_url(_resolve_iri(head, control.base)) else "unknown"
     if is_mcp_tool_url(control.target):
         return "mcp"
     if is_junction_target(control.target, descriptor_url, control.id, control.base):
@@ -1569,40 +2297,55 @@ def add_query_params(url: str, params: dict[str, Any]) -> str:
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(keep), parts.fragment))
 
 
+def _raw_content_type(fld: Field) -> str:
+    """The type of a body sent whole from one field: JSON for rdf:JSON, a
+    SPARQL query for the field a shape labels a query, and plain text
+    otherwise. The control's media type is what it returns, so it goes in
+    Accept, never here."""
+    if fld.json_kind:
+        return "application/json"
+    return "application/sparql-query" if fld.name == "query" else "text/plain"
+
+
 def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) -> RequestPlan:
     notes: list[str] = []
     transport = classify_transport(control, descriptor_url)
-    method = control.method or "GET"
+    method = control.method or "POST"
+    safe = method in SAFE_METHODS
     headers = {"User-Agent": USER_AGENT, "Accept": control.media_type or "*/*"}
     body: Any = None
     body_text: str | None = None
     url: str | None = None
     raw_body_field = next((f for f in control.fields if f.raw_body), None)
-    if raw_body_field and raw_body_field.name in values:
+    raw_text: str | None = None
+    if raw_body_field and values.get(raw_body_field.name) is not None:
         raw_value = values[raw_body_field.name]
-        body_text = raw_value if isinstance(raw_value, str) else json.dumps(raw_value, ensure_ascii=False, separators=(",", ":"))
-        body = body_text
+        raw_text = raw_value if isinstance(raw_value, str) else json.dumps(raw_value, ensure_ascii=False, separators=(",", ":"))
+    # A safe method sends no body: every field goes in the address, a field
+    # that is the whole body as a parameter named after it, as SPARQL's
+    # protocol sends ?query=.
+    params = dict(values)
+    if raw_body_field and raw_text is not None:
+        params[raw_body_field.name] = raw_text
+    if control.warning:
+        notes.append(control.warning)
 
     if control.template:
-        url = expand_uri_template(control.template, values)
+        url = _resolve_iri(expand_uri_template(control.template, values), control.base)
         transport = "http" if is_web_url(url) else "unknown"
         notes.append(f"Expanded hydra:IriTemplate {control.template}")
         if transport != "http":
             notes.append("The template does not expand to an http or https URL; hmc.py does not fetch it.")
-        used: set[str] = set()
-        for match in re.finditer(r"\{[+#./;?&]?([^{}]+)\}", control.template):
-            used.update(part.split("*", 1)[0].split(":", 1)[0] for part in match.group(1).split(","))
-        leftover = {k: v for k, v in values.items() if k not in used and not (raw_body_field and k == raw_body_field.name)}
-        if leftover and method in SAFE_METHODS:
+        used = _template_variables(control.template)
+        leftover = {k: v for k, v in params.items() if k not in used}
+        if leftover and safe and transport == "http":
             url = add_query_params(url, leftover)
     elif transport == "http" and control.target:
         url = control.target
-        if method in SAFE_METHODS and values and not raw_body_field:
-            url = add_query_params(url, values)
+        if safe and params:
+            url = add_query_params(url, params)
             notes.append("Appended fields as query parameters on hydra:target")
-        elif method not in SAFE_METHODS and raw_body_field:
-            headers["Content-Type"] = control.media_type or "text/plain"
-        elif method not in SAFE_METHODS:
+        elif not safe and not raw_body_field:
             body = values
             body_text = json.dumps(values, indent=2, ensure_ascii=False)
             headers["Content-Type"] = "application/json"
@@ -1621,12 +2364,17 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
             "declared_target": control.target,
         }
         transport = "mcp"
-    if url and method not in SAFE_METHODS and body is None and not raw_body_field and values:
-        body = values
-        body_text = json.dumps(values, indent=2, ensure_ascii=False)
-        headers.setdefault("Content-Type", "application/json")
-    if raw_body_field and body_text is not None and url:
-        headers["Content-Type"] = control.media_type or ("application/json" if raw_body_field.json_kind else "application/sparql-query")
+    if url and not safe:
+        if raw_body_field:
+            if raw_text is not None:
+                body = body_text = raw_text
+                headers["Content-Type"] = _raw_content_type(raw_body_field)
+        elif body is None and values:
+            body = values
+            body_text = json.dumps(values, indent=2, ensure_ascii=False)
+            headers.setdefault("Content-Type", "application/json")
+    if url:
+        url = _iri_to_uri(url)
     return RequestPlan(control=control, transport=transport, method=method, url=url,
                        headers=headers, body=body, body_text=body_text, fields=values,
                        mcp=mcp, notes=notes)
@@ -1654,7 +2402,7 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
             data = plan.body_text.encode("utf-8")
         elif plan.body is not None and not isinstance(plan.body, (str, bytes)):
             data = json.dumps(plan.body).encode("utf-8")
-    status, headers, body = http_request(plan.url, method=plan.method, headers=plan.headers, data=data)
+    status, headers, body, _ = http_request(plan.url, method=plan.method, headers=plan.headers, data=data)
     content_type = headers.get("content-type", "")
     text = body.decode("utf-8", errors="replace")
     parsed = None
@@ -1711,18 +2459,29 @@ def print_control_table(descriptor: Descriptor) -> None:
             if control.media_type:
                 say(f"         media: {control.media_type}")
             if control.fields:
-                names = ", ".join(("*" if f.required or (f.min_count or 0) >= 1 else "") + f.name for f in control.fields)
+                # * marks a required field, [] one that takes a list of values.
+                names = ", ".join(("*" if f.required or (f.min_count or 0) >= 1 else "") + f.name + ("[]" if f.multi else "")
+                                  for f in control.fields)
                 say(f"         fields: {names}")
+            for note in (control.problem, control.warning):
+                if note:
+                    say(f"         note: {note}")
         say()
 
 
 def parse_field_args(items: list[str]) -> dict[str, Any]:
+    """--field k=v pairs. A name given more than once is a list of values,
+    which a list field takes whole; any other field takes the last one."""
     values: dict[str, Any] = {}
     for item in items:
         if "=" not in item:
-            raise SystemExit(f"--field expects k=v, got {item!r}")
+            raise SystemExit(tty_safe(f"--field expects k=v, got {item!r}"))
         key, val = item.split("=", 1)
-        values[key] = val
+        if key in values:
+            current = values[key]
+            values[key] = (current if isinstance(current, list) else [current]) + [val]
+        else:
+            values[key] = val
     return values
 
 

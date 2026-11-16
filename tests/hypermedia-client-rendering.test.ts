@@ -24,6 +24,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
+import { sharedDescriptors } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -137,9 +138,10 @@ const hyperMarkdown = [
   ':::', '',
   ':::control hm-js',
   'title: js target', 'method: GET', 'target: javascript:pwn()', ':::', '',
-  // A key named __proto__ is a key like any other: it does not supply a method the block left out.
+  // A key named __proto__ is a key like any other: it does not supply a method the block left out,
+  // so the control has the default method, POST, and not the GET the key names.
   ':::control hm-proto',
-  'title: proto key', `target: ${HOST}/body/plain`, '__proto__: {"method": "POST", "destructiveHint": true}', ':::',
+  'title: proto key', `target: ${HOST}/body/plain`, '__proto__: {"method": "GET", "readOnlyHint": true}', ':::',
 ].join('\n');
 
 // Two writes side by side. The second one's JSON Schema names types that are Object.prototype
@@ -210,17 +212,19 @@ const XSD = 'http://www.w3.org/2001/XMLSchema#';
 const RDF_NIL = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil';
 // sh:in written each way JSON-LD allows: a list object, the same in a one-element array with
 // @value and @id members, an RDF list of rdf:first / rdf:rest nodes, and a plain array. An empty
-// list object restricts nothing, as an empty enum does.
+// list object restricts nothing, as an empty enum does. These fixtures' fields take one value each,
+// so each carries sh:maxCount 1, as Interego's own shapes write one; with no sh:maxCount a property
+// takes a list.
 const listEnum = { '@context': CTX, '@id': `${HOST}/list-enum`,
   'iep:affordance': [{ '@id': `${HOST}/list-enum#r`, '@type': 'iep:Affordance', 'iep:action': 'urn:list-enum', 'hydra:method': 'GET',
     'hydra:title': 'List enum read', 'hydra:target': `${HOST}/body/plain`, 'hydra:expects': { '@id': `${HOST}/list-enum#S` } }],
   '@graph': [
     { '@id': `${HOST}/list-enum#S`, '@type': 'sh:NodeShape', 'sh:property': [
-      { 'sh:path': 'urn:p:status', 'sh:name': 'status', 'sh:in': { '@list': ['draft', 'published'] } },
-      { 'sh:path': 'urn:p:wrapped', 'sh:name': 'wrapped', 'sh:in': [{ '@list': [{ '@value': 'low' }, { '@id': `${HOST}/high` }] }] },
-      { 'sh:path': 'urn:p:nodes', 'sh:name': 'nodes', 'sh:in': { '@id': '_:l1' } },
-      { 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:in': ['red', 'blue'] },
-      { 'sh:path': 'urn:p:empty', 'sh:name': 'empty', 'sh:in': { '@list': [] } },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:status', 'sh:name': 'status', 'sh:in': { '@list': ['draft', 'published'] } },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:wrapped', 'sh:name': 'wrapped', 'sh:in': [{ '@list': [{ '@value': 'low' }, { '@id': `${HOST}/high` }] }] },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:nodes', 'sh:name': 'nodes', 'sh:in': { '@id': '_:l1' } },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:in': ['red', 'blue'] },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:empty', 'sh:name': 'empty', 'sh:in': { '@list': [] } },
     ] },
     { '@id': '_:l1', 'rdf:first': 'one', 'rdf:rest': { '@id': '_:l2' } },
     { '@id': '_:l2', 'rdf:first': { '@value': 'two' }, 'rdf:rest': { '@id': RDF_NIL } },
@@ -231,12 +235,12 @@ const numbers = { '@context': CTX, '@id': `${HOST}/numbers`,
   'iep:affordance': [{ '@id': `${HOST}/numbers#w`, '@type': 'iep:Affordance', 'iep:action': 'urn:numbers', 'hydra:method': 'POST',
     'hydra:title': 'Numeric write', 'hydra:target': `${HOST}/num-target`, 'hydra:expects': { '@id': `${HOST}/numbers#S` } }],
   '@graph': [{ '@id': `${HOST}/numbers#S`, '@type': 'sh:NodeShape', 'sh:property': [
-    { 'sh:path': 'urn:p:amount', 'sh:name': 'amount', 'sh:datatype': `${XSD}decimal`, 'sh:minCount': 1, 'sh:minInclusive': 1, 'sh:maxInclusive': 10 },
-    { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer` },
-    { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long` },
-    { 'sh:path': 'urn:p:level', 'sh:name': 'level', 'sh:minInclusive': 1, 'sh:maxInclusive': 5 },
-    { 'sh:path': 'urn:p:price', 'sh:name': 'price', 'sh:datatype': `${XSD}decimal` },
-    { 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', 'sh:datatype': `${XSD}double` },
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:amount', 'sh:name': 'amount', 'sh:datatype': `${XSD}decimal`, 'sh:minCount': 1, 'sh:minInclusive': 1, 'sh:maxInclusive': 10 },
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer` },
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long` },
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:level', 'sh:name': 'level', 'sh:minInclusive': 1, 'sh:maxInclusive': 5 },
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:price', 'sh:name': 'price', 'sh:datatype': `${XSD}decimal` },
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', 'sh:datatype': `${XSD}double` },
   ] }] };
 // Number fields whose sh:in entries are written in other ways than the number a person would
 // type: typed literals "1.0" and "2.50" for a decimal, "1.0E0" and a JSON 0.5 for a double, "+1"
@@ -245,11 +249,11 @@ const numEnum = { '@context': CTX, '@id': `${HOST}/num-enum`,
   'iep:affordance': [{ '@id': `${HOST}/num-enum#w`, '@type': 'iep:Affordance', 'iep:action': 'urn:num-enum', 'hydra:method': 'POST',
     'hydra:title': 'Numeric enum write', 'hydra:target': `${HOST}/num-target`, 'hydra:expects': { '@id': `${HOST}/num-enum#S` } }],
   '@graph': [{ '@id': `${HOST}/num-enum#S`, '@type': 'sh:NodeShape', 'sh:property': [
-    { 'sh:path': 'urn:p:version', 'sh:name': 'version', 'sh:datatype': `${XSD}decimal`,
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:version', 'sh:name': 'version', 'sh:datatype': `${XSD}decimal`,
       'sh:in': { '@list': [{ '@value': '1.0', '@type': `${XSD}decimal` }, { '@value': '2.50', '@type': `${XSD}decimal` }] } },
-    { 'sh:path': 'urn:p:scale', 'sh:name': 'scale', 'sh:datatype': `${XSD}double`, 'sh:in': [{ '@value': '1.0E0', '@type': `${XSD}double` }, 0.5] },
-    { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long`, 'sh:in': { '@list': ['+1', '02'] } },
-    { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer`, 'sh:in': [1, 'COUNT-TWO'] },
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:scale', 'sh:name': 'scale', 'sh:datatype': `${XSD}double`, 'sh:in': [{ '@value': '1.0E0', '@type': `${XSD}double` }, 0.5] },
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long`, 'sh:in': { '@list': ['+1', '02'] } },
+    { 'sh:maxCount': 1, 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer`, 'sh:in': [1, 'COUNT-TWO'] },
   ] }] };
 // JSON.stringify writes 2.0 as 2, so the 2.0 is put in the text by hand.
 const numEnumText = JSON.stringify(numEnum).replace('"COUNT-TWO"', '2.0');
@@ -270,12 +274,12 @@ const compactTypes = { '@context': [CTX, { xsd: XSD, rdf: RDF_NS, dt: { '@id': '
   ],
   '@graph': [
     { '@id': `${HOST}/compact-types#S`, '@type': 'sh:NodeShape', 'sh:property': [
-      { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': { '@id': 'xsd:integer' } },
-      { 'sh:path': 'urn:p:flag', 'sh:name': 'flag', 'sh:datatype': { '@id': 'xsd:boolean' } },
-      { 'sh:path': 'urn:p:data', 'sh:name': 'data', 'sh:datatype': { '@id': 'rdf:JSON' } },
-      { 'sh:path': 'urn:p:size', 'sh:name': 'size', dt: 'xsd:long' },
-      { 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', vdt: 'double' },
-      { 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:datatype': 'xsd:integer' },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': { '@id': 'xsd:integer' } },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:flag', 'sh:name': 'flag', 'sh:datatype': { '@id': 'xsd:boolean' } },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:data', 'sh:name': 'data', 'sh:datatype': { '@id': 'rdf:JSON' } },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:size', 'sh:name': 'size', dt: 'xsd:long' },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', vdt: 'double' },
+      { 'sh:maxCount': 1, 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:datatype': 'xsd:integer' },
     ] },
     ...[['integer', 'xsd:integer'], ['boolean', 'xsd:boolean'], ['JSON', 'rdf:JSON']].map(([kind, dt]) => ({
       '@id': `${HOST}/compact-types#${kind}-shape`, '@type': 'sh:NodeShape', 'rdfs:label': `${kind} body`, 'sh:datatype': { '@id': dt } })),
@@ -310,6 +314,28 @@ const DOCS: Record<string, { type: string; text: string }> = {
   '/rel-base': { type: 'application/ld+json', text: JSON.stringify(relBase) },
   '/rel-http': { type: 'application/ld+json', text: JSON.stringify(relHttp) },
   '/api': { type: 'text/plain', text: 'fine' },
+  // A nested object lifted onto its node by @nest, holding a "__proto__" key. JSON text, because an
+  // object literal's __proto__ key would set its prototype here.
+  '/proto-nest': { type: 'application/ld+json', text: JSON.stringify({ '@context': { ...CTX, annotations: '@nest' }, '@id': `${HOST}/proto-nest`,
+    'iep:affordance': [{ '@id': '#p', '@type': 'iep:Affordance', 'iep:action': 'urn:proto-nest', 'hydra:method': 'GET',
+      'hydra:title': 'Proto nest', 'hydra:target': `${HOST}/body/plain`, annotations: { PROTO: { fields: [{ name: 'injected' }], action: 'urn:other' } } }] })
+    .replace('"PROTO"', '"__proto__"') },
+};
+// The documents hmc.py's test reads too, served from HOST.
+const SHARED = sharedDescriptors(HOST);
+// Documents whose fetch lands somewhere else after redirects: fetch reports that address as the
+// response's url. /dir lands at /dir/, the usual trailing-slash redirect; /short at another host and
+// path, as a w3id or purl name does.
+const relDir = { '@context': CTX, '@id': '', 'iep:affordance': [
+  { '@id': '#list', '@type': 'iep:Affordance', 'iep:action': { '@id': 'iep:list' }, 'hydra:method': 'GET', 'hydra:title': 'List items',
+    'hydra:target': { '@id': 'items' } },
+  { '@id': '#create', '@type': 'iep:Affordance', 'iep:action': { '@id': 'iep:create' }, 'hydra:method': 'POST', 'hydra:title': 'Create item',
+    'hydra:target': { '@id': 'items' }, 'hydra:expects': { type: 'object', properties: { name: { type: 'string' } } } }] };
+const LANDED: Record<string, { landed: string; text: string }> = {
+  '/dir': { landed: `${HOST}/dir/`, text: JSON.stringify(relDir) },
+  '/short': { landed: 'https://data.example/real/desc', text: JSON.stringify({ '@context': CTX, '@id': '', 'iep:affordance': [
+    { '@id': '#w', '@type': 'iep:Affordance', 'iep:action': { '@id': 'urn:write' }, 'hydra:method': 'POST', 'hydra:title': 'Write',
+      'hydra:target': { '@id': 'api' }, 'hydra:expects': { type: 'object', properties: { note: { type: 'string' } } } }] }) },
 };
 
 function respond(text: string, type: string, status = 200): Response {
@@ -338,6 +364,9 @@ function load(query: string, extra: Record<string, { type: string; text: string 
         }
         const doc = Object.prototype.hasOwnProperty.call(DOCS, u.pathname) ? DOCS[u.pathname] : undefined;
         if (doc) return respond(doc.text, doc.type);
+        if (Object.prototype.hasOwnProperty.call(SHARED, u.pathname)) return respond(SHARED[u.pathname]!, 'application/ld+json');
+        const moved = Object.prototype.hasOwnProperty.call(LANDED, u.pathname) ? LANDED[u.pathname] : undefined;
+        if (moved) return Object.defineProperty(respond(moved.text, 'application/ld+json'), 'url', { value: moved.landed });
         const kind = u.pathname.replace('/body/', '');
         const body = extra[kind] || bodies[kind];
         return body ? respond(body.text, body.type) : respond('missing', 'text/plain', 404);
@@ -356,7 +385,7 @@ const TAGS = new Set(['header', 'main', 'aside', 'section', 'h1', 'h2', 'h3', 'p
   'input', 'textarea', 'select', 'option', 'button', 'script']);
 // No `pattern`: the browser would run a remote pattern as a regular expression in its own validation.
 const ATTRS = new Set(['class', 'id', 'type', 'placeholder', 'spellcheck', 'disabled', 'required', 'value',
-  'selected', 'open', 'data-iri', 'data-rel', 'data-field', 'data-mode', 'aria-label']);
+  'selected', 'multiple', 'open', 'data-iri', 'data-rel', 'data-field', 'data-mode', 'aria-label']);
 
 /** Everything a hostile document can try to put in the DOM, checked at once. */
 function assertInert(t: Loaded, where: string) {
@@ -483,7 +512,7 @@ describe('hypermedia client: hostile remote data stays inert', () => {
       expect(count).toBe(3);
       for (let i = 0; i < count; i++) { click(t, document.querySelectorAll('.card')[i]!); assertInert(t, 'hypermarkdown detail'); }
       expect(document.getElementById('list')!.textContent).toContain(X.script);
-      expect(card(document, 'proto key')!.querySelector('.badge')!.className).toBe('badge get');
+      expect(card(document, 'proto key')!.querySelector('.badge')!.className).toBe('badge post');
       expect(t.errors).toEqual([]);
     } finally { t.dom.window.close(); }
   });
@@ -892,14 +921,19 @@ describe('hypermedia client: numbers in an enum', () => {
   });
 });
 
-/** Open `path` with an ?invoke= link that dry-runs `rel` with `fields`; returns the page and its plan. */
-async function linkPlan(path: string, rel: string, fields: Record<string, string>) {
-  const query = Object.entries(fields).map(([k, v]) => `&field.${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('');
-  const t = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1${query}`);
+/**
+ * Open `path` with an ?invoke= link that dry-runs `rel` with `fields` (a list is a field named once
+ * per value), or with `dry` false, one that invokes it as a link can; returns the page and its plan.
+ */
+async function linkPlan(path: string, rel: string, fields: Record<string, string | string[]>, dry = true) {
+  const query = Object.entries(fields).flatMap(([k, v]) => (Array.isArray(v) ? v : [v])
+    .map(one => `&field.${encodeURIComponent(k)}=${encodeURIComponent(one)}`)).join('');
+  const t = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}${dry ? '&dry=1' : ''}${query}`);
   const { document } = t;
   await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'));
   const pre = document.querySelector('#result pre');
-  const plan = pre ? JSON.parse(pre.textContent!) as { transport: string; url: string | null; body: unknown; headers: Record<string, string>; notes: string[] } : null;
+  const plan = pre ? JSON.parse(pre.textContent!) as { transport: string; url: string | null; body: unknown; headers: Record<string, string>;
+    notes: string[]; mcp: { arguments: { action_iri: string } } | null } : null;
   return { t, shown: document.getElementById('result')!.textContent!, plan };
 }
 
@@ -1016,6 +1050,323 @@ describe('hypermedia client: relative targets', () => {
       await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toMatch(/https only; nothing was sent/));
       expect(t.calls.filter(c => !c.url.startsWith(`${HOST}/rel-http`))).toEqual([]);
     } finally { t.dom.window.close(); }
+  });
+});
+
+/** Load `path` and wait for its list. */
+async function loaded(path: string): Promise<Loaded> {
+  const t = load(`?url=${encodeURIComponent(HOST + path)}&autoload=1`);
+  await vi.waitFor(() => expect(t.document.documentElement.dataset['ready'], t.document.getElementById('status')!.textContent!).toBe('list'));
+  return t;
+}
+const groupTitles = (document: Document, i: number) =>
+  [...document.querySelectorAll('.group')[i]!.querySelectorAll('.card h3')].map(h => h.textContent!).sort();
+const badges = (document: Document) => Object.fromEntries([...document.querySelectorAll('.card')].map(c =>
+  [c.querySelector('h3')!.textContent!, [...c.querySelectorAll('.badge')].map(b => b.textContent).join('/')]));
+const formFields = (document: Document) => [...document.querySelectorAll<HTMLElement>('#invokeForm [data-field]')].map(e => e.dataset['field']);
+
+describe('hypermedia client: JSON-LD read as jsonld.js reads it', () => {
+  it('treats a GET the document marks destructive as unsafe, however the mark is written, and a link sends nothing', async () => {
+    const t = await loaded('/hints');
+    try {
+      expect(groupTitles(t.document, 0)).toEqual(['Plain read']);
+      expect(groupTitles(t.document, 1)).toEqual(['Bare annotations', 'Late prefix', 'Own context', 'Purge cache']);
+    } finally { t.dom.window.close(); }
+    for (const rel of ['iep:purge', 'iep:late', 'iep:embedded', 'iep:mcp']) {
+      const { t: linked, shown } = await linkPlan('/hints', rel, {}, false);
+      try {
+        expect(shown, rel).toContain('Dry run — nothing was sent.');
+        expect(linked.calls.filter(c => c.url.includes('/purge')), rel).toEqual([]);
+      } finally { linked.dom.window.close(); }
+    }
+  });
+
+  it('resolves relative IRIs against the address a redirect landed at', async () => {
+    const t = await loaded('/dir');
+    try {
+      expect(badges(t.document)).toEqual({ 'List items': 'GET/http', 'Create item': 'POST/http' });
+    } finally { t.dom.window.close(); }
+    const list = await linkPlan('/dir', 'iep:list', {}, false);
+    try {
+      await vi.waitFor(() => expect(list.t.calls.map(c => c.url)).toContain(`${HOST}/dir/items`));
+      expect(list.t.calls.map(c => c.url)).not.toContain(`${HOST}/items`);
+    } finally { list.t.dom.window.close(); }
+    const elsewhere = await linkPlan('/short', 'urn:write', { note: 'hi' });
+    try {
+      expect(elsewhere.plan!.url).toBe('https://data.example/real/api');
+      expect(elsewhere.t.document.querySelector('#invokeForm .dest')!.textContent).toBe('Sends to data.example');
+    } finally { elsewhere.t.dom.window.close(); }
+  });
+
+  it.each([
+    ['/alias', 'iep:aliasSearch', { q: '5' }, '?q=5'], ['/alias-graph', 'iep:aliasGraph', {}, ''], ['/typeonly', 'iep:typeOnly', { n: '5' }, '?n=5'],
+    ['/named-graph', 'iep:named', {}, ''], ['/included', 'iep:included', {}, ''], ['/index-map', 'iep:indexMap', {}, ''], ['/id-map', 'iep:idMap', {}, ''],
+  ])('reads %s: keyword aliases, type-only terms, named graphs, @included and container maps', async (path, rel, fields, query) => {
+    const { t, plan } = await linkPlan(path, rel, fields);
+    try {
+      expect(plan, t.document.getElementById('result')!.textContent!).not.toBeNull();
+      expect(plan!.transport).toBe('http');
+      expect(plan!.url).toBe(`${HOST}/api${query}`);
+    } finally { t.dom.window.close(); }
+  });
+
+  // A number input drops text that is no number before the page reads it, so the wrong value is a fraction.
+  it('types a field by a shape its keyword-aliased or type-only reference names', async () => {
+    for (const [path, rel, name] of [['/alias', 'iep:aliasSearch', 'q'], ['/typeonly', 'iep:typeOnly', 'n']]) {
+      const { t, shown } = await linkPlan(path!, rel!, { [name!]: '1.5' });
+      try { expect(shown, path).toContain(`${name}: not an integer`); } finally { t.dom.window.close(); }
+    }
+  });
+
+  it('reads a JSON Schema given as a JSON literal value object', async () => {
+    const bad = await linkPlan('/json-value', 'iep:jsonValue', { count: '1.5' });
+    try {
+      expect(bad.shown).toContain("missing required field 'name'");
+      expect(bad.shown).toContain('count: not an integer');
+    } finally { bad.t.dom.window.close(); }
+    const good = await linkPlan('/json-value', 'iep:jsonValue', { name: 'a', count: '2' });
+    try { expect(good.plan!.body).toEqual({ name: 'a', count: 2 }); } finally { good.t.dom.window.close(); }
+  });
+
+  it('expands an action under "@vocab": "#" and a vocabulary term as the document defines it, not as the page names a property', async () => {
+    const cases: Array<[string, string, string]> = [
+      ['/vocab-hash', 'publish', `${HOST}/vocab-hash#publish`],
+      ['/actions', 'https://vocab.example/actions#search', 'https://vocab.example/actions#search'],
+      ['/actions', 'https://vocab.example/actions#comment', 'https://vocab.example/actions#comment'],
+      ['/actions', 'urn:example:action:lookup', 'urn:example:action:lookup'],
+    ];
+    for (const [path, rel, action] of cases) {
+      const { t, plan } = await linkPlan(path, rel, {});
+      try {
+        expect(plan, rel).not.toBeNull();
+        expect(plan!.mcp!.arguments.action_iri, rel).toBe(action);
+      } finally { t.dom.window.close(); }
+    }
+  });
+
+  it('takes a flattened document\'s title and links from the node at its address, not the first node', async () => {
+    const t = await loaded('/flat');
+    try {
+      expect(t.document.querySelector('#meta strong')!.textContent).toBe('Glossary catalog');
+      expect([...t.document.querySelectorAll('#meta [data-iri]')].map(e => e.getAttribute('data-iri'))).toEqual([`${HOST}/next`]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('lifts a nested "__proto__" key as a key, not as the node\'s prototype', async () => {
+    const t = await loaded('/proto-nest');
+    try {
+      expect(badges(t.document)).toEqual({ 'Proto nest': 'GET/http' });
+      click(t, card(t.document, 'Proto nest')!);
+      expect(formFields(t.document)).toEqual([]);
+      expect(t.errors).toEqual([]);
+      assertInert(t, 'proto nest');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('lists operations under hydra:operation, and warns when the class one expects is not described', async () => {
+    const t = await loaded('/events');
+    try {
+      expect(badges(t.document)).toEqual({ 'Create event': 'POST/mcp' });
+      click(t, card(t.document, 'Create event')!);
+      expect(t.document.querySelector('#detail')!.textContent).toContain('hydra:expects names https://vocab.example/Event, which this document does not describe');
+      assertInert(t, 'events');
+    } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: templates and transport', () => {
+  it('resolves a relative IRI template against the base, and applies a prefix modifier', async () => {
+    const t = await loaded('/tmpl/desc');
+    try {
+      expect(badges(t.document)).toEqual({ 'Relative search': 'GET/http', 'Relative items': 'GET/http', 'Prefix shard': 'GET/http' });
+    } finally { t.dom.window.close(); }
+    const cases: Array<[string, string, Record<string, string>, string]> = [
+      ['/tmpl/desc', 'iep:relSearch', { q: 'x' }, `${HOST}/search?q=x`],
+      ['/tmpl/desc', 'iep:relItems', { id: '7', limit: '3' }, `${HOST}/tmpl/items/7?limit=3`],
+      ['/tmpl/desc', 'iep:prefixShard', { id: 'abcdef' }, `${HOST}/tmpl/shard/ab/abcdef`],
+      ['/tmpl-base', 'iep:baseItems', { q: 'x' }, 'https://api.example/v1/items?q=x'],
+    ];
+    for (const [path, rel, fields, url] of cases) {
+      const { t: linked, plan } = await linkPlan(path, rel, fields);
+      try { expect(plan!.url, rel).toBe(url); } finally { linked.dom.window.close(); }
+    }
+    const sent = await linkPlan('/tmpl/desc', 'iep:relSearch', { q: 'x' }, false);
+    try {
+      await vi.waitFor(() => expect(sent.t.calls.map(c => c.url)).toContain(`${HOST}/search?q=x`));
+    } finally { sent.t.dom.window.close(); }
+  });
+
+  it('keeps a template mapping with no hydra:property as its own required field', async () => {
+    const t = await loaded('/mappings');
+    try {
+      click(t, card(t.document, 'Delete item')!);
+      expect(formFields(t.document)).toEqual(['id', 'force']);
+      // The id input is required, so a browser does not submit the form while it is empty.
+      expect(t.document.querySelector('#invokeForm [data-field="id"]')!.hasAttribute('required')).toBe(true);
+      (t.document.querySelector('#invokeForm [data-field="force"]') as HTMLInputElement).value = 'true';
+      const box = t.document.getElementById('confirmUnsafe') as HTMLInputElement;
+      box.checked = true;
+      box.dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
+      click(t, button(t.document, 'live'));
+      await new Promise(r => setTimeout(r, 50));
+      expect(t.calls.filter(c => c.url.includes('/items'))).toEqual([]);
+    } finally { t.dom.window.close(); }
+    const { t: linked, shown } = await linkPlan('/mappings', 'urn:delete-item', { force: 'true' });
+    try {
+      expect(shown).toContain("missing required field 'id'");
+      expect(linked.calls.filter(c => c.url.includes('/items'))).toEqual([]);
+    } finally { linked.dom.window.close(); }
+    const full = await linkPlan('/mappings', 'urn:delete-item', { id: '7', force: 'true' });
+    try { expect(full.plan!.url).toBe(`${HOST}/items/7?force=true`); } finally { full.t.dom.window.close(); }
+  });
+
+  it('names a host only when the template fixes it, and sends a template\'s target as a template', async () => {
+    const t = await loaded('/dest');
+    try {
+      click(t, card(t.document, 'Post note')!);
+      expect(t.document.querySelector('#invokeForm .dest')!.textContent).toBe('The address comes from a template; the dry run shows it.');
+      click(t, card(t.document, 'Fixed host note')!);
+      expect(t.document.querySelector('#invokeForm .dest')!.textContent).toBe('Sends to relay.good.example');
+    } finally { t.dom.window.close(); }
+    const about = await linkPlan('/target-template', 'control-about', { endpoint: `${HOST}/lrs` }, false);
+    try {
+      await vi.waitFor(() => expect(about.t.calls.map(c => c.url)).toContain(`${HOST}/lrs/about`));
+    } finally { about.t.dom.window.close(); }
+  });
+
+  it('sends a safe method\'s whole-body field as a parameter and labels a body by its own type', async () => {
+    const query = 'SELECT * WHERE { ?s ?p ?o } LIMIT 1';
+    const get = await linkPlan('/raw', 'iep:sparqlGet', { query }, false);
+    try {
+      await vi.waitFor(() => expect(get.t.calls.map(c => c.url).some(u => u.startsWith(`${HOST}/sparql?query=`))).toBe(true));
+      const sent = new URL(get.t.calls.find(c => c.url.startsWith(`${HOST}/sparql`))!.url);
+      expect(sent.searchParams.get('query')).toBe(query);
+    } finally { get.t.dom.window.close(); }
+    const post = await linkPlan('/raw', 'iep:sparqlPost', { query });
+    try {
+      expect(post.plan!.headers).toEqual({ Accept: 'application/sparql-results+json', 'Content-Type': 'application/sparql-query' });
+      expect(post.plan!.body).toBe(query);
+    } finally { post.t.dom.window.close(); }
+    const put = await linkPlan('/raw', 'iep:notePut', { body: 'hello' });
+    try {
+      expect(put.plan!.headers).toEqual({ Accept: 'text/turtle', 'Content-Type': 'text/plain' });
+    } finally { put.t.dom.window.close(); }
+  });
+
+  it('treats a control with no method as a POST, so a link sends nothing', async () => {
+    const t = await loaded('/no-method');
+    try { expect(badges(t.document)).toEqual({ 'Publish note': 'POST/http' }); } finally { t.dom.window.close(); }
+    const { t: linked, shown } = await linkPlan('/no-method', 'urn:publish-note', {}, false);
+    try {
+      expect(shown).toContain('Dry run — nothing was sent.');
+      expect(linked.calls.filter(c => c.url.includes('/publish'))).toEqual([]);
+    } finally { linked.dom.window.close(); }
+  });
+
+  it('writes the same URL as hmc.py for a non-ASCII path, a replaced query parameter and number fields', async () => {
+    const cases: Array<[string, string, Record<string, string>, string]> = [
+      ['/wiki', 'urn:wiki', {}, `${HOST}/wiki/Caf%C3%A9`],
+      ['/merge', 'urn:merge', { tag: '["a","b"]', view: 'brief' }, `${HOST}/items?tag=a&tag=b&view=brief`],
+      ['/rates', 'urn:rates', { amount: '2', lat: '0.0000001', big: '1e16' }, `${HOST}/rates/2?lat=1e-7&big=10000000000000000`],
+    ];
+    for (const [path, rel, fields, url] of cases) {
+      const { t, plan } = await linkPlan(path, rel, fields);
+      try { expect(plan!.url, rel).toBe(url); } finally { t.dom.window.close(); }
+    }
+  });
+});
+
+describe('hypermedia client: forms', () => {
+  it('takes a list for a property with no sh:maxCount, checks its count, and sends it as a JSON array', async () => {
+    const t = await loaded('/multi');
+    try {
+      click(t, card(t.document, 'Publish classified')!);
+      const field = (name: string) => t.document.querySelector<HTMLTextAreaElement & HTMLSelectElement>(`#invokeForm [data-field="${name}"]`)!;
+      expect(field('graph_iri').localName).toBe('input');
+      expect(field('conforms_to_shapes').localName).toBe('textarea');
+      expect(field('conforms_to_shapes').value).toBe(`${HOST}/shapes`);
+      expect(field('tags').localName).toBe('textarea');
+      expect(field('levels').multiple).toBe(true);
+      expect([...field('levels').options].map(o => o.value)).toEqual(['1', '2', '3']);
+      const result = t.document.getElementById('result')!;
+      const dry = async () => {
+        result.innerHTML = '';
+        click(t, button(t.document, 'dry'));
+        await vi.waitFor(() => expect(result.textContent).toMatch(/Dry run — nothing was sent\.|Validation failed/));
+        return result.textContent!;
+      };
+      field('graph_iri').value = `${HOST}/g`;
+      field('tags').value = 'a';
+      expect(await dry()).toContain('tags: needs at least 2 values, got 1');
+      field('tags').value = 'a\nb\nc\nd\ne\nf';
+      expect(await dry()).toContain('tags: takes at most 5 values, got 6');
+      field('tags').value = 'a\n\nb\n';
+      for (const o of field('levels').options) o.selected = o.value !== '2';
+      expect(await dry()).not.toContain('Validation failed');
+      expect((JSON.parse(result.querySelector('pre')!.textContent!) as { body: unknown }).body)
+        .toEqual({ graph_iri: `${HOST}/g`, conforms_to_shapes: [`${HOST}/shapes`], tags: ['a', 'b'], levels: [1, 3] });
+      expect(t.calls.filter(c => c.url.includes('/num-target'))).toEqual([]);
+      assertInert(t, 'list fields');
+    } finally { t.dom.window.close(); }
+    // A field named twice in a link is a list.
+    const linked = await linkPlan('/multi', 'urn:act-publish', { graph_iri: `${HOST}/g`, tags: ['x', 'y'], levels: ['2', '3'] });
+    try {
+      expect((linked.plan!.body as Record<string, unknown>)).toEqual({ graph_iri: `${HOST}/g`, conforms_to_shapes: [`${HOST}/shapes`], tags: ['x', 'y'], levels: [2, 3] });
+    } finally { linked.t.dom.window.close(); }
+  });
+
+  it('builds fields from hydra:supportedProperty, by property IRI and by an inline property\'s label', async () => {
+    const apidoc = await linkPlan('/apidoc', 'post-comment', { text: 'hello' });
+    try {
+      expect(formFields(apidoc.t.document)).toEqual(['text', 'author']);
+      expect(apidoc.plan!.body).toEqual({ text: 'hello' });
+    } finally { apidoc.t.dom.window.close(); }
+    const missing = await linkPlan('/apidoc', 'post-comment', {});
+    try { expect(missing.shown).toContain("missing required field 'text'"); } finally { missing.t.dom.window.close(); }
+    const manifest = await linkPlan('/manifest', 'urn:create-note', { title: 'x', kind: 'memo', priority: '9' });
+    try {
+      expect(formFields(manifest.t.document)).toEqual(['title', 'priority', 'kind']);
+      expect(manifest.shown).toContain('priority: above maxInclusive 5');
+    } finally { manifest.t.dom.window.close(); }
+  });
+
+  it('matches a template mapping\'s compact hydra:property to the shape\'s path, so one field carries the shape\'s limits', async () => {
+    const { t, shown } = await linkPlan('/mapprop', 'iep:find', { text: 'abcdefgh' });
+    try {
+      expect(formFields(t.document)).toEqual(['text']);
+      expect(shown).toContain('text: longer than maxLength 5');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('names a field from a relative path with non-ASCII characters as written, as hmc.py does', async () => {
+    const { t, plan } = await linkPlan('/fiche', 'urn:fiche', { 'prénom': 'Ada', 'âge': '36' });
+    try {
+      expect(formFields(t.document)).toEqual(['prénom', 'âge']);
+      expect(plan!.body).toEqual({ 'prénom': 'Ada', 'âge': 36 });
+    } finally { t.dom.window.close(); }
+  });
+
+  it('refuses a control with two fields of one name, and a link field no input has', async () => {
+    const t = await loaded('/dup');
+    try {
+      click(t, card(t.document, 'Two descriptions')!);
+      expect(t.document.getElementById('invokeForm')).toBeNull();
+      expect(t.document.querySelector('#detail .warn')!.textContent).toContain("two input fields are both named 'description'");
+    } finally { t.dom.window.close(); }
+    const unknown = await linkPlan('/bool-enum', 'urn:accept', { agree: 'true', nope: '1' });
+    try {
+      expect(unknown.shown).toContain("no input field is named 'nope'");
+      expect(unknown.plan).toBeNull();
+    } finally { unknown.t.dom.window.close(); }
+  });
+
+  it('accepts a JSON boolean or object enum entry as its JSON text, and reads a count facet written 1.0', async () => {
+    const { t, plan } = await linkPlan('/bool-enum', 'urn:accept', { agree: 'true', mode: '{"a":1}' });
+    try { expect(plan!.body).toEqual({ agree: true, mode: '{"a":1}' }); } finally { t.dom.window.close(); }
+    const facets = await linkPlan('/mincount', 'urn:mincount', { a: 'toolong' });
+    try { expect(facets.shown).toContain('a: longer than maxLength 3'); } finally { facets.t.dom.window.close(); }
+    const empty = await linkPlan('/mincount', 'urn:mincount', {});
+    try { expect(empty.shown).toContain("missing required field 'a'"); } finally { empty.t.dom.window.close(); }
   });
 });
 

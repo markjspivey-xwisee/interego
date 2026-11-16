@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-0bXiXdXSKPTPgNZlrIFWbR0K4OuBH7U7y7Z+2FX/Xko='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-tTKagxNGhi5Ez1iO56lN4l6c8h2gK6bHQMzQG16kIL4='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -141,7 +141,8 @@ const P = {
   mapping: HYDRA + "mapping", variable: HYDRA + "variable",
   property: HYDRA + "property", required: HYDRA + "required",
   search: HYDRA + "search", supOp: HYDRA + "supportedOperation",
-  supClass: HYDRA + "supportedClass", media: DCAT + "mediaType",
+  supClass: HYDRA + "supportedClass", operation: HYDRA + "operation",
+  supProp: HYDRA + "supportedProperty", range: RDFS + "range", media: DCAT + "mediaType",
   label: RDFS + "label", comment: RDFS + "comment", seeAlso: RDFS + "seeAlso",
   dcTitle: DCT + "title", dcDesc: DCT + "description", rel: HMD + "rel",
   control: HMD + "control", hmdTarget: HMD + "target",
@@ -165,7 +166,8 @@ const TERMS0 = {
   property: P.property, required: P.required, search: P.search,
   supportedOperation: P.supOp, supportedClass: P.supClass,
   readOnlyHint: P.readOnly, idempotentHint: P.idempotent,
-  destructiveHint: P.destructive, label: P.label, comment: P.comment, seeAlso: P.seeAlso
+  destructiveHint: P.destructive, label: P.label, comment: P.comment, seeAlso: P.seeAlso,
+  operation: P.operation, supportedProperty: P.supProp
 };
 const SAFE = new Set(["GET", "HEAD", "OPTIONS"]);
 
@@ -195,7 +197,18 @@ function truthy(v) {
   if (["false", "0", "no"].includes(t)) return false;
   return null;
 }
-function inty(v) { if (v == null || v === "") return null; const n = Number(v); return Number.isFinite(n) ? n : null; }
+// A count or length facet (sh:minCount, sh:maxLength, ...) as a number: an
+// integral JSON number, or a string of digits once the shared spaces are
+// trimmed, within what a double counts exactly. Anything else, a boolean
+// included, is null. hmc.py's _inty is the same.
+function inty(v) {
+  if (typeof v === "number") return Number.isSafeInteger(v) ? v : null;
+  if (typeof v !== "string") return null;
+  const t = trimSpaces(v);
+  if (!INTEGER_LEXICAL.test(t)) return null;
+  const n = Number(t);
+  return Number.isSafeInteger(n) ? n : null;
+}
 
 // Remote text as a string. A JSON value that is not a string is shown as its JSON.
 function asText(v) {
@@ -221,25 +234,175 @@ function hasScheme(text) {
   for (let i = 1; i < colon; i++) if (!SCHEME_CHARS.includes(text[i])) return false;
   return true;
 }
-// A relative reference resolved against a base (RFC 3986, section 5), or the
-// reference as it is when there is no base or the base takes none.
+// An IRI reference's five parts (RFC 3986, section 3): scheme, authority, path,
+// query and fragment, null for a part that is absent and "" for one that is
+// present and empty, so "doc#" keeps its empty fragment. A scan, so a long
+// reference costs linear time. hmc.py's _split_iri is the same.
+function splitIri(text) {
+  let scheme = null, rest = text;
+  if (hasScheme(text)) { const colon = text.indexOf(":"); scheme = text.slice(0, colon); rest = text.slice(colon + 1); }
+  let fragment = null, cut = rest.indexOf("#");
+  if (cut >= 0) { fragment = rest.slice(cut + 1); rest = rest.slice(0, cut); }
+  let query = null; cut = rest.indexOf("?");
+  if (cut >= 0) { query = rest.slice(cut + 1); rest = rest.slice(0, cut); }
+  let authority = null;
+  if (rest.startsWith("//")) {
+    let end = rest.indexOf("/", 2); if (end < 0) end = rest.length;
+    authority = rest.slice(2, end); rest = rest.slice(end);
+  }
+  return { scheme, authority, path: rest, query, fragment };
+}
+function joinIri(p) {
+  return (p.scheme == null ? "" : p.scheme + ":") + (p.authority == null ? "" : "//" + p.authority) + p.path +
+    (p.query == null ? "" : "?" + p.query) + (p.fragment == null ? "" : "#" + p.fragment);
+}
+// RFC 3986, section 5.2.4, step by step. Each step consumes input, so a long
+// path costs linear time. hmc.py's _remove_dot_segments is the same.
+function removeDotSegments(path) {
+  if (!path.includes(".")) return path;
+  const out = [];
+  let i = 0; const n = path.length;
+  while (i < n) {
+    if (path.startsWith("../", i)) i += 3;
+    else if (path.startsWith("./", i)) i += 2;
+    else if (path.startsWith("/./", i)) i += 2;
+    else if (i + 2 === n && path.startsWith("/.", i)) { out.push("/"); i = n; }
+    else if (path.startsWith("/../", i)) { i += 3; out.pop(); }
+    else if (i + 3 === n && path.startsWith("/..", i)) { out.pop(); out.push("/"); i = n; }
+    else if ((i + 1 === n && path[i] === ".") || (i + 2 === n && path.startsWith("..", i))) i = n;
+    else {
+      let end = path.indexOf("/", path[i] === "/" ? i + 1 : i);
+      if (end < 0) end = n;
+      out.push(path.slice(i, end)); i = end;
+    }
+  }
+  return out.join("");
+}
+// A relative reference resolved against a base (RFC 3986, section 5.2), or the
+// reference as it is when there is no base or the base has no scheme. The
+// strings are merged as they are written, not through the URL parser: an IRI
+// keeps its non-ASCII characters (a field named by "#prénom" is "prénom"), and
+// an empty fragment or query ("#", "?") is kept, so the JSON-LD idiom
+// "@vocab": "#" names the document's own fragment namespace. hmc.py's
+// _resolve_iri is the same.
 function resolveIri(ref, base) {
-  if (base == null) return ref;
-  try { return new URL(ref, base).href; } catch { return ref; }
+  if (base == null || typeof ref !== "string") return ref;
+  const b = splitIri(String(base));
+  if (b.scheme == null) return ref;
+  const r = splitIri(ref);
+  if (r.scheme != null) return joinIri({ ...r, path: removeDotSegments(r.path) });
+  if (r.authority != null) return joinIri({ ...r, scheme: b.scheme, path: removeDotSegments(r.path) });
+  if (r.path === "") return joinIri({ scheme: b.scheme, authority: b.authority, path: b.path, query: r.query == null ? b.query : r.query, fragment: r.fragment });
+  let path = r.path;
+  if (!path.startsWith("/")) path = (b.authority != null && b.path === "") ? "/" + path : b.path.slice(0, b.path.lastIndexOf("/") + 1) + path;
+  return joinIri({ scheme: b.scheme, authority: b.authority, path: removeDotSegments(path), query: r.query, fragment: r.fragment });
+}
+const ASCII_ONLY = /^[\x00-\x7f]*$/;
+// An IRI as the URI a request carries (RFC 3987, section 3.1): each non-ASCII
+// character in the path, query and fragment as the percent-encoded bytes of its
+// UTF-8, and a non-ASCII host in IDNA form, as fetch sends it. Anything already
+// ASCII is left as it is. hmc.py's _iri_to_uri is the same.
+function iriToUri(iri) {
+  if (ASCII_ONLY.test(iri)) return iri;
+  const p = splitIri(iri);
+  const enc = (part) => part == null || ASCII_ONLY.test(part) ? part :
+    Array.from(part).map(ch => ch.codePointAt(0) < 128 ? ch : encodeURIComponent(ch)).join("");
+  let authority = p.authority;
+  if (authority != null && !ASCII_ONLY.test(authority)) {
+    const at = authority.lastIndexOf("@");
+    const userinfo = at >= 0 ? authority.slice(0, at) : null;
+    const hostport = authority.slice(at + 1);
+    const colon = hostport.startsWith("[") ? -1 : hostport.indexOf(":");
+    let host = colon >= 0 ? hostport.slice(0, colon) : hostport;
+    try { host = new URL("https://" + host + "/").hostname; } catch { host = enc(host); }
+    authority = (userinfo == null ? "" : enc(userinfo) + "@") + host + (colon >= 0 ? hostport.slice(colon) : "");
+  }
+  return joinIri({ scheme: p.scheme, authority, path: enc(p.path), query: enc(p.query), fragment: enc(p.fragment) });
+}
+function isWebUrl(url) {
+  const scheme = typeof url === "string" ? splitIri(url).scheme : null;
+  return scheme != null && ["http", "https"].includes(scheme.toLowerCase());
 }
 
+// Keywords a context may alias with a term ("id": "@id"), and the characters
+// that end a prefix's IRI (RFC 3986 gen-delims): a simple term whose IRI ends in
+// one is a prefix, as JSON-LD 1.1 says.
+const ALIASABLE = new Set(["@id", "@type", "@graph", "@list", "@set", "@value", "@language", "@index",
+  "@included", "@nest", "@json", "@none", "@direction", "@reverse"]);
+const GEN_DELIMS = ":/?#[]@";
+// How much context work one document may cause: each term definition read and
+// each entry copied when a node's own @context, or a scoped one, starts a child
+// context. A document past it is refused, so a crafted one cannot make reading
+// it cost more than linear time. hmc.py's CONTEXT_BUDGET is the same.
+const CONTEXT_BUDGET = 200000;
+function spend(budget, amount) {
+  budget.left -= amount;
+  if (budget.left < 0) throw new Error("This document's @context entries are too many to read.");
+}
+// A JSON Schema written into a document as plain JSON, such as a hydra:expects
+// object with "properties": its keys are JSON Schema's, never terms, so nothing
+// in it is renamed or expanded.
+function jsonSchemaLike(item) {
+  const props = item.properties;
+  return !!props && typeof props === "object" && !Array.isArray(props) && !Object.keys(item).some(k => k.startsWith("@"));
+}
+// Writes an own property, so a remote key such as "__proto__" is a key like any
+// other and never the setter that would replace the object's prototype.
+function putOwn(obj, key, value) {
+  Object.defineProperty(obj, key, { value, writable: true, enumerable: true, configurable: true });
+}
+function mergeValue(item, key, value) {
+  if (!own(item, key)) { putOwn(item, key, value); return; }
+  let current = item[key];
+  if (!Array.isArray(current)) { current = [current]; item[key] = current; }
+  if (Array.isArray(value)) { for (const v of value) current.push(v); } else current.push(value);
+}
+const sizeOf = (map) => Object.keys(map).length;
+
 // The active context: prefixes, terms, which terms hold IRIs (typed "@id" or
-// "@vocab" in the context; "@json" ones hold JSON), @vocab, and the base a
-// relative IRI resolves against: @base when the context gives one, else the
-// address the document was fetched from.
+// "@vocab" in the context; "@json" ones hold JSON), containers, scoped
+// contexts, keyword aliases, terms set to null, @vocab, and the base a relative
+// IRI resolves against: @base when the context gives one, else the address the
+// document came from. `terms` holds only what documents defined; the reader's
+// own names for the properties it reads (TERMS0) apply to keys only, never to a
+// value such as an action written as a term. hmc.py's Context is the same.
 class Ctx {
-  constructor(base) {
-    this.prefixes = bare(PREFIXES0); this.terms = bare(TERMS0); this.coerce = bare({});
-    this.vocab = null; this.base = base || null;
+  constructor(base, budget) {
+    this.prefixes = bare(PREFIXES0); this.terms = bare({}); this.coerce = bare({});
+    this.containers = bare({}); this.scoped = bare({}); this.aliases = bare({}); this.nulled = bare({});
+    this.vocab = null; this.base = base || null; this.documentBase = this.base;
+    this.budget = budget || { left: CONTEXT_BUDGET };
+    this.children = bare({});
+  }
+  // A copy of this context with `local` absorbed: a node's own @context, or the
+  // scoped one a term or type carries.
+  child(local) {
+    spend(this.budget, sizeOf(this.prefixes) + sizeOf(this.terms) + sizeOf(this.coerce) + sizeOf(this.containers) +
+      sizeOf(this.scoped) + sizeOf(this.aliases) + sizeOf(this.nulled) + 1);
+    const out = new Ctx(this.base, this.budget);
+    out.prefixes = bare(this.prefixes); out.terms = bare(this.terms); out.coerce = bare(this.coerce);
+    out.containers = bare(this.containers); out.scoped = bare(this.scoped); out.aliases = bare(this.aliases);
+    out.nulled = bare(this.nulled); out.vocab = this.vocab; out.documentBase = this.documentBase;
+    out.absorb(local);
+    return out;
+  }
+  // The context a term's scoped @context makes, made once per term.
+  scopedChild(term) {
+    if (!own(this.children, term)) this.children[term] = this.child(this.scoped[term]);
+    return this.children[term];
   }
   absorb(ctx) {
     for (const item of asList(ctx)) {
+      if (item === null) {
+        // A null context empties the active context; the document's own base stays.
+        this.prefixes = bare(PREFIXES0); this.terms = bare({}); this.coerce = bare({});
+        this.containers = bare({}); this.scoped = bare({}); this.aliases = bare({}); this.nulled = bare({});
+        this.vocab = null; this.base = this.documentBase; this.children = bare({});
+        continue;
+      }
       if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      spend(this.budget, Object.keys(item).length + 1);
+      this.children = bare({});
       if (own(item, "@base")) {
         const b = item["@base"];
         if (b === null) this.base = null;
@@ -248,79 +411,207 @@ class Ctx {
       if (own(item, "@vocab")) {
         const v = item["@vocab"];
         if (v === null) this.vocab = null;
-        else if (typeof v === "string") this.vocab = this.expandIri(v, { base: true });
+        else if (typeof v === "string") this.vocab = this.expandIri(v, { vocab: true, base: true });
       }
-      for (const [key, val] of Object.entries(item)) {
-        if (key.startsWith("@") || val == null) continue;
-        const def = typeof val === "object" && !Array.isArray(val) ? val : null;
-        let iri = typeof val === "string" ? val : (def && typeof def["@id"] === "string" ? def["@id"] : null);
-        // A definition with no "@id", keyed by a compact or absolute IRI, defines that IRI.
-        if (iri == null && def && !own(def, "@id") && key.includes(":")) iri = key;
-        if (!iri) continue;
-        const exp = this.expand(iri);
-        this.terms[key] = exp;
-        if (exp.endsWith("#") || exp.endsWith("/")) this.prefixes[key] = exp;
-        const type = def ? def["@type"] : null;
-        if (type === "@id" || type === "@vocab" || type === "@json") this.coerce[key] = type;
-        else delete this.coerce[key];
+      const defs = bare({});
+      for (const [key, val] of Object.entries(item)) if (!key.startsWith("@")) defs[key] = val;
+      // A term may use a prefix the context defines after it, so each definition
+      // waits for the one it depends on: a depth-first walk on a stack, each term
+      // defined once, a cycle cut where it closes.
+      const state = bare({});
+      for (const first of Object.keys(defs)) {
+        const stack = [first];
+        while (stack.length) {
+          const key = stack[stack.length - 1];
+          if (state[key] === 2) { stack.pop(); continue; }
+          const dep = Ctx.dependency(key, defs[key]);
+          if (dep != null && dep !== key && own(defs, dep) && !own(state, dep)) { state[key] = 1; stack.push(dep); continue; }
+          this.define(key, defs[key]);
+          state[key] = 2;
+          stack.pop();
+        }
       }
     }
   }
-  expand(value) {
-    if (value == null) return "";
-    const text = String(value);
-    if (/^(_:|http:\/\/|https:\/\/|urn:|@)/.test(text)) return text;
-    const colon = text.indexOf(":");
-    if (colon >= 0 && !text.startsWith("{")) {
-      const prefix = text.slice(0, colon); const local = text.slice(colon + 1);
-      if (this.prefixes[prefix] && !local.startsWith("//")) return this.prefixes[prefix] + local;
-    }
-    if (this.terms[text]) return this.terms[text];
-    if (this.prefixes[text]) return this.prefixes[text];
-    return this.vocab != null && text && colon < 0 ? this.vocab + text : text;
+  // The term a definition's IRI is written with, which must be defined first.
+  static dependency(key, value) {
+    let iri = null;
+    if (typeof value === "string") iri = value;
+    else if (value && typeof value === "object" && !Array.isArray(value)) iri = own(value, "@id") ? value["@id"] : (key.includes(":") ? key : null);
+    if (typeof iri !== "string" || !iri || iri.startsWith("@")) return null;
+    const colon = iri.indexOf(":");
+    if (colon < 0) return iri;
+    const prefix = iri.slice(0, colon); const suffix = iri.slice(colon + 1);
+    return prefix === "_" || suffix.startsWith("//") ? null : prefix;
   }
+  define(key, value) {
+    for (const table of [this.terms, this.prefixes, this.coerce, this.containers, this.scoped, this.aliases, this.nulled]) delete table[key];
+    if (value === null) { this.nulled[key] = true; return; }
+    if (typeof value === "string") {
+      if (value.startsWith("@")) { if (ALIASABLE.has(value)) this.aliases[key] = value; return; }
+      const iri = this.expandIri(value, { vocab: true });
+      if (typeof iri === "string" && iri.includes(":")) {
+        this.terms[key] = iri;
+        if (!key.includes(":") && !key.includes("/") && GEN_DELIMS.includes(iri[iri.length - 1])) this.prefixes[key] = iri;
+      }
+      return;
+    }
+    if (!value || typeof value !== "object" || Array.isArray(value)) return;
+    // A reverse property names the node as the value, not the subject; the reader reads neither way.
+    if (own(value, "@reverse")) { this.nulled[key] = true; return; }
+    let iri = null;
+    if (own(value, "@id")) {
+      const ident = value["@id"];
+      if (ident === null) { this.nulled[key] = true; return; }
+      if (typeof ident !== "string") return;
+      if (ident.startsWith("@")) { if (ALIASABLE.has(ident)) this.aliases[key] = ident; return; }
+      iri = this.expandIri(ident, { vocab: true });
+    } else if (key.includes(":")) iri = this.expandIri(key, { vocab: true });
+    else if (this.vocab != null) iri = this.vocab + key;
+    // A definition with no "@id" and no @vocab to supply one keeps the reader's own name for the key.
+    else iri = own(TERMS0, key) ? TERMS0[key] : null;
+    if (typeof iri === "string" && iri.includes(":")) {
+      this.terms[key] = iri;
+      const flag = own(value, "@prefix") ? value["@prefix"] : null;
+      if (flag === true || (flag == null && !key.includes(":") && !key.includes("/") && "#/".includes(iri[iri.length - 1]))) this.prefixes[key] = iri;
+    }
+    const kind = own(value, "@type") ? value["@type"] : null;
+    if (kind === "@id" || kind === "@vocab" || kind === "@json") this.coerce[key] = kind;
+    const names = asList(own(value, "@container") ? value["@container"] : null).filter(c => typeof c === "string");
+    if (names.length) this.containers[key] = new Set(names);
+    if (own(value, "@context")) this.scoped[key] = value["@context"];
+  }
+  // The property IRI a key names, or "" for a term the context set to null.
   expandKey(key) {
     if (key.startsWith("@") || key.startsWith("http://") || key.startsWith("https://")) return key;
-    return this.terms[key] || this.expand(key);
+    if (own(this.nulled, key)) return "";
+    if (own(this.terms, key)) return this.terms[key];
+    if (key.includes(":")) return String(this.expandIri(key));
+    if (own(TERMS0, key)) return TERMS0[key];
+    return this.vocab != null ? this.vocab + key : key;
   }
-  // JSON-LD's expansion of a value in an IRI position: a term where `vocab`
-  // applies; a compact IRI; an absolute IRI or a blank node as it is; then
-  // @vocab + the value where `vocab` applies, or the value resolved against
-  // the base where `base` applies. hmc.py's expand_iri is the same.
+  // JSON-LD's expansion of a value in an IRI position: a term the document
+  // defined where `vocab` applies; a compact IRI; an absolute IRI or a blank
+  // node as it is; then @vocab + the value where `vocab` applies, or the value
+  // resolved against the base where `base` applies. hmc.py's expand_iri is the same.
   expandIri(value, { vocab = false, base = false } = {}) {
     if (typeof value !== "string" || value.startsWith("@")) return value;
-    if (vocab && this.terms[value]) return this.terms[value];
+    if (vocab && own(this.terms, value)) return this.terms[value];
     const colon = value.indexOf(":");
     if (colon >= 0) {
       const prefix = value.slice(0, colon); const suffix = value.slice(colon + 1);
       if (prefix === "_" || suffix.startsWith("//")) return value;
-      if (this.prefixes[prefix]) return this.prefixes[prefix] + suffix;
+      if (own(this.prefixes, prefix)) return this.prefixes[prefix] + suffix;
       if (hasScheme(value)) return value;
     }
     if (vocab && this.vocab != null) return this.vocab + value;
     if (base && this.base != null) return resolveIri(value, this.base);
     return value;
   }
-  // Every IRI in a document, expanded once, in place, before anything reads
-  // it: each "@id", and each value of a term the context types as "@id" or
-  // "@vocab", so {"@id": "xsd:integer"} is XSD's integer and {"@id": "/api"}
-  // is an address on the document's host. The @context, value objects and
-  // JSON literals are left as they are. A stack, not recursion, so a deeply
-  // nested document costs linear time and no call stack.
-  expandIris(document) {
-    const stack = [document];
+  renameAliases(item) {
+    if (!sizeOf(this.aliases)) return;
+    for (const key of Object.keys(item)) {
+      const keyword = own(this.aliases, key) ? this.aliases[key] : null;
+      if (keyword && !own(item, keyword)) { putOwn(item, keyword, item[key]); delete item[key]; }
+    }
+  }
+  isNest(key) { return key === "@nest" || (own(this.aliases, key) && this.aliases[key] === "@nest"); }
+  // Moves the properties under each @nest key (or a term aliased to it) onto
+  // the node, where JSON-LD reads them. Each nested object is moved once, so
+  // this costs linear time.
+  liftNests(item) {
+    const work = Object.keys(item).filter(k => this.isNest(k));
+    while (work.length) {
+      const key = work.pop();
+      if (!own(item, key)) continue;
+      const nested = item[key];
+      delete item[key];
+      for (const obj of asList(nested)) {
+        if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
+        this.renameAliases(obj);
+        for (const [inner, value] of Object.entries(obj)) {
+          if (inner.startsWith("@") && inner !== "@nest") continue;
+          if (this.isNest(inner) && !own(item, inner)) work.push(inner);
+          mergeValue(item, inner, value);
+        }
+      }
+    }
+  }
+  // A map a container term holds (@index, @id, @type or @language), as the list
+  // of values it maps to: an @id map's key becomes its node's "@id", a @type
+  // map's key is added to its node's types, and a language map's key becomes
+  // each string's "@language".
+  unmap(value, containers) {
+    if (!value || typeof value !== "object" || Array.isArray(value) || own(value, "@value") || own(value, "@id") || own(value, "@list")) return value;
+    const out = [];
+    for (const [key, member] of Object.entries(value)) {
+      for (let entry of asList(member)) {
+        if (containers.has("@language")) {
+          if (typeof entry === "string" && key !== "@none") out.push({ "@value": entry, "@language": key });
+          else if (entry != null) out.push(entry);
+        } else if (containers.has("@id")) {
+          if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+            if (key !== "@none" && !own(entry, "@id")) entry["@id"] = key;
+            out.push(entry);
+          }
+        } else if (containers.has("@type")) {
+          if (typeof entry === "string") entry = { "@id": entry };
+          if (entry && typeof entry === "object" && !Array.isArray(entry)) {
+            if (key !== "@none") entry["@type"] = asList(own(entry, "@type") ? entry["@type"] : null).concat([key]);
+            out.push(entry);
+          }
+        } else out.push(entry);
+      }
+    }
+    return out;
+  }
+  // Every node in a document put in the form the reader reads, in place, once,
+  // before anything reads it. A node's own @context, a term's scoped context and
+  // a type's scoped context apply to the node and what is under it; keyword
+  // aliases become the keywords; @nest objects are lifted onto their node; a
+  // container term's map becomes a list; each "@id", each "@type" and each
+  // value of a term typed "@id" or "@vocab" is expanded, so {"@id":
+  // "xsd:integer"} is XSD's integer and {"@id": "/api"} is an address on the
+  // document's host; and a key that a scoped context maps differently from the
+  // document's own context is renamed to the IRI it names, so reading the node
+  // later finds it. Value objects, JSON literals and JSON Schemas are left as
+  // they are. A stack, not recursion, so a deeply nested document costs linear
+  // time and no call stack. hmc.py's normalize is the same.
+  normalize(document) {
+    const root = this;
+    const isArray = Array.isArray(document);
+    const stack = (isArray ? document : [document]).map(item => [item, this, !isArray]);
     while (stack.length) {
-      const item = stack.pop();
-      if (Array.isArray(item)) { for (const x of item) if (x && typeof x === "object") stack.push(x); continue; }
-      if (!item || typeof item !== "object" || own(item, "@value")) continue;
+      let [item, ctx, top] = stack.pop();
+      if (Array.isArray(item)) { for (const x of item) if (x && typeof x === "object") stack.push([x, ctx, false]); continue; }
+      if (!item || typeof item !== "object" || jsonSchemaLike(item)) continue;
+      if (own(item, "@context")) {
+        if (top) ctx.absorb(item["@context"]); else ctx = ctx.child(item["@context"]);
+      }
+      ctx.renameAliases(item);
+      if (own(item, "@value")) continue;
+      ctx.liftNests(item);
+      const scopedTypes = asList(own(item, "@type") ? item["@type"] : null).filter(t => typeof t === "string" && own(ctx.scoped, t)).sort();
+      for (const kind of scopedTypes) ctx = ctx.scopedChild(kind);
       for (const key of Object.keys(item)) {
         if (key === "@context") continue;
-        if (key === "@id") { item[key] = this.expandIri(item[key], { base: true }); continue; }
-        const type = key.startsWith("@") ? null : this.coerce[key];
-        if (type === "@json") continue;
-        if (type) item[key] = this.expandTyped(item[key], type === "@vocab");
-        const val = item[key];
-        if (val && typeof val === "object") stack.push(val);
+        if (key === "@id") { item[key] = ctx.expandIri(item[key], { base: true }); continue; }
+        if (key === "@type") { item[key] = ctx.expandTyped(item[key], true); continue; }
+        if (key.startsWith("@")) { if (item[key] && typeof item[key] === "object") stack.push([item[key], ctx, false]); continue; }
+        if (own(ctx.nulled, key)) { delete item[key]; continue; }
+        const kind = own(ctx.coerce, key) ? ctx.coerce[key] : null;
+        const containers = own(ctx.containers, key) ? ctx.containers[key] : null;
+        const valueCtx = own(ctx.scoped, key) ? ctx.scopedChild(key) : ctx;
+        let value = item[key];
+        if (containers) value = ctx.unmap(value, containers);
+        if (kind === "@id" || kind === "@vocab") value = valueCtx.expandTyped(value, kind === "@vocab");
+        let name = key;
+        if (ctx !== root) {
+          const expanded = ctx.expandKey(key);
+          if (expanded && expanded !== root.expandKey(key)) name = expanded;
+        }
+        if (name !== key) { delete item[key]; mergeValue(item, name, value); } else putOwn(item, key, value);
+        if (kind !== "@json" && value && typeof value === "object") stack.push([value, valueCtx, false]);
       }
     }
   }
@@ -343,6 +634,11 @@ class Ctx {
   }
 }
 
+// The keys whose values are operations, or classes that hold them, which a
+// document may write in place instead of as references.
+const HARVESTED = new Set([P.affordance, P.control, P.supOp, P.supClass, P.operation]);
+const HARVESTED_NAMES = new Set(["affordance", "affordances", "control", "supportedOperation", "supportedClass", "operation"]);
+
 class NodeIndex {
   // `base` is the descriptor's address; `fetchedFrom`, when it differs, is the
   // address its text came from, which relative IRIs resolve against.
@@ -352,41 +648,53 @@ class NodeIndex {
     this.nodes = new Map();
     this.order = [];
     this.root = null;
-    this._ingest(document);
+    this._ingest(document, fetchedFrom);
   }
-  _ingest(document) {
-    if (Array.isArray(document)) {
-      for (const item of document) {
-        if (item && typeof item === "object") { this.ctx.absorb(item["@context"]); this.ctx.expandIris(item); this._add(item); }
-      }
-      return;
-    }
+  // Indexes every node object at the top of the document, in its @graph (and in
+  // each named graph's @graph within it) and in @included, in document order,
+  // then the ones embedded under an affordance-like key. hmc.py's
+  // _ingest_document is the same.
+  _ingest(document, fetchedFrom) {
     if (!document || typeof document !== "object") return;
-    this.ctx.absorb(document["@context"]);
-    this.ctx.expandIris(document);
-    const extras = Object.fromEntries(Object.entries(document).filter(([k]) => k !== "@context" && k !== "@graph"));
-    if (Object.keys(extras).length) {
-      const root = { ...extras };
-      if (!root["@id"]) root["@id"] = this.base;
-      this.root = this._add(root);
-    }
-    if (Array.isArray(document["@graph"])) {
-      for (const item of document["@graph"]) {
-        if (item && typeof item === "object") {
-          const node = this._add(item);
-          if (!this.root) this.root = node;
-        }
+    this.ctx.normalize(document);
+    let top = null, firstNamed = null, firstAny = null;
+    let pending;
+    if (!Array.isArray(document)) {
+      const extras = bare({});
+      for (const [k, v] of Object.entries(document)) if (!["@context", "@graph", "@included"].includes(k)) extras[k] = v;
+      if (Object.keys(extras).length || (!own(document, "@graph") && !own(document, "@included"))) {
+        const node = { ...extras };
+        if (!node["@id"]) node["@id"] = this.base;
+        top = this._add(node);
       }
-    } else if (!this.root) {
-      this.root = this._add(Object.keys(extras).length ? document : { "@id": this.base });
+      pending = [document["@included"], document["@graph"]];
+    } else pending = [document];
+    while (pending.length) {
+      const value = pending.pop();
+      if (Array.isArray(value)) { for (let i = value.length - 1; i >= 0; i--) pending.push(value[i]); continue; }
+      if (!value || typeof value !== "object") continue;
+      if (Object.keys(value).some(k => !["@id", "@context", "@graph", "@included"].includes(k))) {
+        const node = this._add(value);
+        firstAny = firstAny || node;
+        if (!firstNamed && !String(node["@id"] || "").startsWith("_:")) firstNamed = node;
+      }
+      pending.push(value["@included"], value["@graph"]);
     }
+    // The descriptor is the node at its address, or at the address its text came
+    // from, or at the base; only a document that names none of them falls back
+    // to its top-level node or its first named node.
+    const address = [this.base, fetchedFrom, this.ctx.base].find(a => a && this.nodes.has(a));
+    this.root = address ? this.nodes.get(address) : (top || firstNamed || firstAny);
     for (const node of [...this.order]) this._harvest(node);
   }
   _add(node) {
     let id = node["@id"];
-    if (!id) {
-      id = literal(this.get(node, P.action)) || node.action || `_:n${this.order.length}`;
-      node = { ...node, "@id": id };
+    if (!id || typeof id !== "string") {
+      // A node with no @id gets one in place, so the object a document wrote and
+      // the one indexed are the same: an operation written inline with no @id
+      // and no action is still a control.
+      id = String(literal(this.get(node, P.action)) || node.action || `_:n${this.order.length}`);
+      node["@id"] = id;
     }
     if (!this.nodes.has(id)) {
       this.nodes.set(id, node);
@@ -397,22 +705,30 @@ class NodeIndex {
     for (const [k, v] of Object.entries(node)) if (!(k in existing)) existing[k] = v;
     return existing;
   }
+  // Indexes the nodes written inside a node under an affordance-like key, and
+  // the ones inside those. A stack and a set of the nodes already walked, so a
+  // node that lists itself ends the walk instead of repeating it.
   _harvest(node) {
-    for (const [key, val] of Object.entries(node)) {
-      const pred = this.ctx.expandKey(key);
-      const lname = localName(pred);
-      if (![P.affordance, P.control, P.supOp, P.supClass].includes(pred) &&
-          !["affordance", "affordances", "control", "supportedOperation", "supportedClass"].includes(lname)) continue;
-      for (const item of asList(val)) {
-        if (item && typeof item === "object" && (item["@id"] || item.action || item.method || item["@type"])) {
-          this._harvest(this._add(item));
+    const pending = [node];
+    const walked = new Set();
+    while (pending.length) {
+      const current = pending.pop();
+      if (walked.has(current)) continue;
+      walked.add(current);
+      for (const [key, val] of Object.entries(current)) {
+        const pred = this.ctx.expandKey(key);
+        if (!HARVESTED.has(pred) && !HARVESTED_NAMES.has(localName(pred))) continue;
+        for (const item of asList(val)) {
+          if (item && typeof item === "object" && !Array.isArray(item) && (item["@id"] || item.action || item.method || item["@type"])) {
+            pending.push(this._add(item));
+          }
         }
       }
     }
   }
   get(node, predicate) {
     if (!node) return null;
-    if (predicate in node) return node[predicate];
+    if (own(node, predicate)) return node[predicate];
     for (const [key, val] of Object.entries(node)) {
       if (!key.startsWith("@") && this.ctx.expandKey(key) === predicate) return val;
     }
@@ -425,17 +741,16 @@ class NodeIndex {
   }
   node(ident) {
     const iri = rawId(ident);
-    if (iri == null) return null;
-    if (this.nodes.has(String(iri))) return this.nodes.get(String(iri));
+    if (iri != null && typeof iri !== "object" && this.nodes.has(String(iri))) return this.nodes.get(String(iri));
     // A plain string naming a node as its "@id" was written before expansion, such as "#S".
     if (typeof ident === "string") {
       const full = this.ctx.expandIri(ident, { base: true });
       if (full !== ident && this.nodes.has(full)) return this.nodes.get(full);
     }
-    if (ident && typeof ident === "object" && Object.keys(ident).some(k => k !== "@id")) return ident;
+    if (ident && typeof ident === "object" && !Array.isArray(ident) && Object.keys(ident).some(k => k !== "@id")) return ident;
     return null;
   }
-  typesOf(node) { return literals(this.get(node, P.type) || (node && node["@type"])).map(x => this.ctx.expand(x)); }
+  typesOf(node) { return literals(this.get(node, P.type) || (node && node["@type"])).map(x => String(this.ctx.expandIri(x, { vocab: true }))); }
   rdfList(head) {
     const out = []; const seen = new Set();
     let current = rawId(head);
@@ -512,15 +827,78 @@ function shaclJsonKind(index, node, datatype, maxCount) {
   const nested = index.get(node, P.shNode);
   const nodeKind = String(literal(index.get(node, P.shNodeKind)) || "");
   const blank = nodeKind === SHACL + "BlankNode" || nodeKind.endsWith("#BlankNode");
-  if (nested != null || blank) return (maxCount || 0) > 1 ? "array" : "object";
+  if (nested != null || blank) return maxCount == null || maxCount > 1 ? "array" : "object";
   return null;
+}
+// Whether a field takes a list of values. A SHACL property with no sh:maxCount
+// may have any number (`unbounded`), which is how Interego's own shapes write a
+// list: a single value carries sh:maxCount 1. A count above 1 either way also
+// makes a list. A JSON field's list is its JSON. hmc.py's _is_multi is the same.
+function isMulti(jsonKind, minCount, maxCount, unbounded) {
+  if (jsonKind) return false;
+  if ((minCount || 0) > 1 || (maxCount != null && maxCount > 1)) return true;
+  return unbounded && maxCount == null;
+}
+function fieldDefaults(index, node, multi) {
+  if (multi) { const found = literals(index.get(node, P.shDef)); return found.length ? found : null; }
+  return literal(index.get(node, P.shDef));
+}
+// A JSON literal written as a value object, {"@type": "@json", "@value": v}, as v.
+function jsonValue(v) {
+  if (Array.isArray(v)) return v.map(jsonValue);
+  if (v && typeof v === "object" && v["@type"] === "@json" && own(v, "@value")) return v["@value"];
+  return v;
+}
+function isJsonSchema(v) { return !!v && typeof v === "object" && !Array.isArray(v) && !!v.properties && !own(v, P.shProp); }
+// A field for one hydra:SupportedProperty: named by its hydra:property's local
+// name, or, for a property written in place as a blank node (as Interego's
+// manifests write one), by that property's rdfs:label; required when
+// hydra:required is true; constrained by the SHACL facets on it. hmc.py's
+// _supported_field is the same.
+function supportedField(index, ref) {
+  const sp = index.node(ref) || (ref && typeof ref === "object" && !Array.isArray(ref) ? ref : null);
+  if (!sp) return null;
+  const head = asList(index.get(sp, P.property))[0];
+  const propNode = head == null ? null : (index.node(head) || (typeof head === "object" && !Array.isArray(head) ? head : null));
+  let iri = null;
+  if (head && typeof head === "object" && !Array.isArray(head)) iri = own(head, "@id") ? head["@id"] : null;
+  // Hydra's context types hydra:property as @vocab, so a plain "schema:text" names an IRI.
+  else if (typeof head === "string") iri = index.ctx.expandIri(head, { vocab: true, base: true });
+  const named = typeof iri === "string" && !!iri && !iri.startsWith("_:");
+  const label = propNode ? literal(index.get(propNode, P.label)) : null;
+  const name = literal(index.get(sp, P.shName)) || (named ? localName(iri) : null) || label;
+  if (name == null || asText(name) === "") return null;
+  let datatype = String(literal(index.get(sp, P.shDt)) || "") || null;
+  if (!datatype && propNode) {
+    const declared = literal(index.get(propNode, P.range));
+    if (xsdName(declared) != null || isRdfJson(declared)) datatype = String(declared);
+  }
+  const minCount = inty(literal(index.get(sp, P.shMin)));
+  const maxCount = inty(literal(index.get(sp, P.shMax)));
+  const jsonKind = isRdfJson(datatype) ? "json" : null;
+  const multi = isMulti(jsonKind, minCount, maxCount, false);
+  const required = truthy(literal(index.get(sp, P.required))) === true || (minCount || 0) >= 1;
+  const enumRaw = index.get(sp, P.shIn);
+  const description = literal(index.get(sp, P.shDesc)) || literal(index.get(sp, P.comment)) || literal(index.get(sp, P.desc)) ||
+    (propNode ? literal(index.get(propNode, P.comment)) : null) || "";
+  return {
+    name: fieldName(name, named ? iri : null, null), path: named ? iri : null, datatype, jsonKind,
+    minCount: minCount != null ? minCount : (required ? 1 : null), maxCount,
+    pattern: String(literal(index.get(sp, P.shPat)) || "") || null, defaultValue: fieldDefaults(index, sp, multi),
+    maxLength: inty(literal(index.get(sp, P.shMaxLen))), minLength: inty(literal(index.get(sp, P.shMinLen))),
+    description: asText(description), enum: enumRaw == null ? [] : index.listValues(enumRaw),
+    minInclusive: literal(index.get(sp, P.shMinI)), maxInclusive: literal(index.get(sp, P.shMaxI)),
+    required, rawBody: false, multi
+  };
 }
 
 function shapeFields(index, shapeRef) {
   const fields = [];
-  if (shapeRef && typeof shapeRef === "object" && shapeRef.properties && !(P.shProp in shapeRef)) {
+  shapeRef = jsonValue(shapeRef);
+  if (isJsonSchema(shapeRef)) {
     const required = new Set(asList(shapeRef.required || []));
-    for (const [name, prop0] of Object.entries(shapeRef.properties || {})) {
+    const properties = shapeRef.properties && typeof shapeRef.properties === "object" && !Array.isArray(shapeRef.properties) ? shapeRef.properties : {};
+    for (const [name, prop0] of Object.entries(properties)) {
       const prop = (prop0 && typeof prop0 === "object") ? prop0 : {};
       const types = schemaTypes(prop);
       const jsonKind = schemaJsonKind(types);
@@ -529,7 +907,7 @@ function shapeFields(index, shapeRef) {
         jsonKind, minCount: required.has(name) ? 1 : 0, maxCount: 1, pattern: asTextOrNull(prop.pattern),
         defaultValue: prop.default, maxLength: inty(prop.maxLength), minLength: inty(prop.minLength),
         description: asText(prop.description), enum: asList(prop.enum || []),
-        minInclusive: prop.minimum, maxInclusive: prop.maximum, required: required.has(name), rawBody: false
+        minInclusive: prop.minimum, maxInclusive: prop.maximum, required: required.has(name), rawBody: false, multi: false
       });
     }
     return fields;
@@ -538,6 +916,8 @@ function shapeFields(index, shapeRef) {
   if (!shape) return fields;
   const props = index.get(shape, P.shProp);
   if (!props) {
+    const supported = index.get(shape, P.supProp);
+    if (supported) return asList(supported).map(item => supportedField(index, item)).filter(Boolean);
     if (index.get(shape, P.shDt) || index.get(shape, P.shMinLen) || index.get(shape, P.shMaxLen)) {
       const label = String(literal(index.get(shape, P.label)) || "");
       const name = /query|sparql/i.test(label) ? "query" : "body";
@@ -547,7 +927,7 @@ function shapeFields(index, shapeRef) {
         minCount: 1, maxCount: 1, required: true, rawBody: true, pattern: null, defaultValue: null,
         minLength: inty(literal(index.get(shape, P.shMinLen))), maxLength: inty(literal(index.get(shape, P.shMaxLen))),
         description: String(literal(index.get(shape, P.comment)) || literal(index.get(shape, P.shDesc)) || ""),
-        enum: []
+        enum: [], multi: false
       });
     }
     return fields;
@@ -562,21 +942,26 @@ function shapeFields(index, shapeRef) {
     const minCount = inty(literal(index.get(node, P.shMin)));
     const maxCount = inty(literal(index.get(node, P.shMax)));
     const datatype = String(literal(index.get(node, P.shDt)) || "") || null;
+    const jsonKind = shaclJsonKind(index, node, datatype, maxCount);
+    const multi = isMulti(jsonKind, minCount, maxCount, true);
     fields.push({
       name: fieldName(name ? String(name) : null, path, null), path: path || null,
-      datatype, jsonKind: shaclJsonKind(index, node, datatype, maxCount),
-      minCount, maxCount,
+      datatype, jsonKind, minCount, maxCount,
       pattern: String(literal(index.get(node, P.shPat)) || "") || null,
-      defaultValue: literal(index.get(node, P.shDef)),
+      defaultValue: fieldDefaults(index, node, multi),
       maxLength: inty(literal(index.get(node, P.shMaxLen))), minLength: inty(literal(index.get(node, P.shMinLen))),
       description: String(literal(index.get(node, P.shDesc)) || literal(index.get(node, P.comment)) || literal(index.get(node, P.desc)) || "") || "",
       enum: enumVals, minInclusive: literal(index.get(node, P.shMinI)), maxInclusive: literal(index.get(node, P.shMaxI)),
-      required: (minCount || 0) >= 1, rawBody: false
+      required: (minCount || 0) >= 1, rawBody: false, multi
     });
   }
   return fields;
 }
 
+// The control's IRI template and its mappings, and whether the template is the
+// control's hydra:target: a hydra:IriTemplate written as the target, as
+// Interego's decoration catalogs write one, or reached through hydra:search or
+// a key named for a template. hmc.py's _template_of is the same.
 function templateOf(index, node) {
   const readT = (tmpl) => {
     if (!tmpl) return [null, []];
@@ -585,18 +970,30 @@ function templateOf(index, node) {
     for (const item of asList(index.get(tmpl, P.mapping))) {
       const mn = index.node(item) || (item && typeof item === "object" ? item : null);
       if (!mn) continue;
+      // Hydra's context types hydra:property as @vocab, so a plain "schema:query" names an IRI.
+      const prop = literal(index.get(mn, P.property));
       mappings.push({
         variable: asTextOrNull(literal(index.get(mn, P.variable))),
-        property: asTextOrNull(literal(index.get(mn, P.property))),
+        property: asTextOrNull(typeof prop === "string" ? index.ctx.expandIri(prop, { vocab: true, base: true }) : prop),
         required: truthy(literal(index.get(mn, P.required)))
       });
     }
     return [template ? String(template) : null, mappings];
   };
+  const asTemplate = (item) => {
+    const tmpl = index.node(item) || (item && typeof item === "object" && !Array.isArray(item) ? item : null);
+    return tmpl && (index.get(tmpl, P.template) != null || index.typesOf(tmpl).includes(HYDRA + "IriTemplate")) ? tmpl : null;
+  };
   const direct = literal(index.get(node, P.template));
   if (typeof direct === "string" && direct.includes("{")) {
     const [, mappings] = readT(node);
-    return [direct, mappings];
+    return [direct, mappings, false];
+  }
+  for (const pred of [P.target, P.hmdTarget]) {
+    for (const item of asList(index.get(node, pred))) {
+      const [template, mappings] = readT(asTemplate(item));
+      if (template) return [template, mappings, true];
+    }
   }
   for (const [key, val] of Object.entries(node)) {
     if (key.startsWith("@")) continue;
@@ -604,24 +1001,25 @@ function templateOf(index, node) {
     if (![P.template, P.search].includes(pred) && !localName(pred).toLowerCase().includes("template")) continue;
     for (const item of asList(val)) {
       const [template, mappings] = readT(index.node(item) || (item && typeof item === "object" ? item : null));
-      if (template) return [template, mappings];
+      if (template) return [template, mappings, false];
     }
   }
-  return [direct ? String(direct) : null, []];
+  return [direct ? String(direct) : null, [], false];
 }
 
 function mergeMappings(fields, mappings) {
   for (const mapping of mappings) {
     const variable = mapping.variable;
     if (!variable) continue;
-    let match = fields.find(f => f.path === mapping.property) || fields.find(f => f.name === variable) ||
+    // A mapping with no hydra:property matches by its variable's name only, as in hmc.py.
+    const match = (mapping.property && fields.find(f => f.path === mapping.property)) || fields.find(f => f.name === variable) ||
       fields.find(f => f.path && localName(f.path) === variable);
     if (match) {
       match.variable = variable; match.name = variable;
       if (mapping.required) { match.required = true; if (!match.minCount) match.minCount = 1; }
     } else {
       fields.push({ name: variable, path: mapping.property || null, variable, required: !!mapping.required,
-        minCount: mapping.required ? 1 : 0, maxCount: 1, datatype: null, description: "", enum: [], rawBody: false });
+        minCount: mapping.required ? 1 : 0, maxCount: 1, datatype: null, description: "", enum: [], rawBody: false, multi: false });
     }
   }
   return fields;
@@ -641,40 +1039,83 @@ function isUnsafe(c) {
   return (method && !SAFE.has(method)) || c.destructive === true || c.readOnly === false;
 }
 
+// Whether a node says, under any key whose name ends in destructiveHint or
+// readOnlyHint, that it destroys or writes: its own keys, such as a hint under a
+// prefix the context does not define, and the keys of an object written directly
+// inside it, such as MCP's "annotations". Read only to fail closed: either can
+// make a control unsafe, and neither makes one safe. hmc.py's _hint_flags is the same.
+function hintFlags(index, node) {
+  let destructive = false, writes = false;
+  const objects = [node];
+  for (const [key, val] of Object.entries(node)) {
+    if (key.startsWith("@")) continue;
+    for (const item of asList(val)) {
+      if (item && typeof item === "object" && !Array.isArray(item) && !own(item, "@value") && !own(item, "@list")) objects.push(item);
+    }
+  }
+  for (const obj of objects) {
+    for (const [key, val] of Object.entries(obj)) {
+      if (key.startsWith("@")) continue;
+      const names = [localName(key), localName(index.ctx.expandKey(key))];
+      const flag = truthy(literal(val));
+      if (names.includes("destructiveHint") && flag === true) destructive = true;
+      if (names.includes("readOnlyHint") && flag === false) writes = true;
+    }
+  }
+  return { destructive, writes };
+}
+function duplicateName(fields) {
+  const seen = new Set();
+  for (const f of fields) { if (seen.has(f.name)) return f.name; seen.add(f.name); }
+  return null;
+}
+
 function controlFromNode(index, node, source) {
   const rel = literal(index.get(node, P.action)) || literal(index.get(node, P.rel)) || node["@id"] || "";
-  const method = String(literal(index.get(node, P.method)) || "GET").toUpperCase();
-  const expectsRaw = index.get(node, P.expects);
+  // A control that names no method is sent as the substrate's own follower
+  // (invoke_affordance, act) sends it: POST. So it is never a safe read by default.
+  const method = String(literal(index.get(node, P.method)) || "POST").toUpperCase();
+  const expectsRaw = jsonValue(index.get(node, P.expects));
   let expects = null;
-  if (expectsRaw && typeof expectsRaw === "object" && !Array.isArray(expectsRaw) && expectsRaw.properties) expects = null;
-  else if (expectsRaw && typeof expectsRaw === "object" && expectsRaw["@id"]) expects = expectsRaw["@id"];
+  if (isJsonSchema(expectsRaw)) expects = null;
+  else if (expectsRaw && typeof expectsRaw === "object" && !Array.isArray(expectsRaw) && expectsRaw["@id"]) expects = expectsRaw["@id"];
   else expects = literal(expectsRaw);
-  const [template, mappings] = templateOf(index, node);
+  const [template, mappings, templateIsTarget] = templateOf(index, node);
   let fields = [];
+  let warning = null;
   const inline = node.fields;
   if (Array.isArray(inline) && inline[0] && (inline[0].name || inline[0].path || inline[0].datatype)) {
     fields = inline.filter(item => item && typeof item === "object").map(item => ({
       name: fieldName(item.name, item.path, null), path: asTextOrNull(item.path), datatype: asTextOrNull(item.datatype),
       minCount: inty(item.minCount), maxCount: inty(item.maxCount), pattern: asTextOrNull(item.pattern),
       defaultValue: item.defaultValue, maxLength: inty(item.maxLength), minLength: inty(item.minLength),
-      description: asText(item.description), required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false
+      description: asText(item.description), required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false, multi: false
     }));
   } else if (expectsRaw != null) {
-    fields = shapeFields(index, Array.isArray(expectsRaw) ? expectsRaw[0] : expectsRaw);
+    const shapeRef = Array.isArray(expectsRaw) ? expectsRaw[0] : expectsRaw;
+    fields = shapeFields(index, shapeRef);
+    if (!fields.length && !isJsonSchema(shapeRef)) {
+      warning = "hydra:expects names " + (asText(expects) || "a shape") + ", which this document does not describe, so no " +
+        "input fields were built: what the server expects is not known here.";
+    }
   }
   fields = mergeMappings(fields, mappings);
+  const duplicate = duplicateName(fields);
+  const hints = hintFlags(index, node);
   const control = {
     id: String(node["@id"] || rel), rel: String(rel), method,
     title: String(literal(index.get(node, P.title)) || literal(index.get(node, P.dcTitle)) || literal(index.get(node, P.label)) || shortRel(rel)),
     description: String(literal(index.get(node, P.desc)) || literal(index.get(node, P.dcDesc)) || literal(index.get(node, P.comment)) || ""),
     mediaType: asTextOrNull(literal(index.get(node, P.returnsCT)) || literal(index.get(node, P.media))),
     expects: expects ? asText(expects) : null, returns: asTextOrNull(literal(index.get(node, P.returns))),
-    target: asTextOrNull(literal(index.get(node, P.target)) || literal(index.get(node, P.hmdTarget))),
+    target: templateIsTarget ? null : asTextOrNull(literal(index.get(node, P.target)) || literal(index.get(node, P.hmdTarget))),
     template, fields,
-    readOnly: truthy(literal(index.get(node, P.readOnly))),
+    readOnly: hints.writes ? false : truthy(literal(index.get(node, P.readOnly))),
     idempotent: truthy(literal(index.get(node, P.idempotent))),
-    destructive: truthy(literal(index.get(node, P.destructive))),
-    types: index.typesOf(node), source, base: index.ctx.base
+    destructive: hints.destructive ? true : truthy(literal(index.get(node, P.destructive))),
+    types: index.typesOf(node), source, base: index.ctx.base,
+    problem: duplicate == null ? null : "two input fields are both named '" + duplicate + "', so their values could not be told apart; this control is not invoked",
+    warning
   };
   control.unsafe = isUnsafe(control);
   return control;
@@ -683,9 +1124,10 @@ function controlFromNode(index, node, source) {
 function extractControls(index, source) {
   const found = new Map();
   const candidates = [];
-  const add = (node) => { if (node && !candidates.includes(node)) candidates.push(node); };
+  const seen = new Set();
+  const add = (node) => { if (node && !seen.has(node)) { seen.add(node); candidates.push(node); } };
   for (const node of index.order) {
-    for (const pred of [P.affordance, P.control, P.supOp]) {
+    for (const pred of [P.affordance, P.control, P.supOp, P.operation]) {
       for (const item of asList(index.get(node, pred))) add(index.node(item) || (item && typeof item === "object" ? item : null));
     }
     for (const item of asList(index.get(node, P.supClass))) {
@@ -695,7 +1137,6 @@ function extractControls(index, source) {
     if (looksLikeOp(index, node)) add(node);
   }
   for (const node of candidates) {
-    if (!node) continue;
     const control = controlFromNode(index, node, source);
     const key = control.rel || control.id;
     if (key && !found.has(key)) found.set(key, control);
@@ -726,11 +1167,12 @@ function parseMarkdown(text, url, contentType) {
       name: fieldName(item.name, item.path, null), path: asTextOrNull(item.path), datatype: asTextOrNull(item.datatype),
       minCount: inty(item.minCount), maxCount: inty(item.maxCount), pattern: asTextOrNull(item.pattern),
       defaultValue: item.defaultValue, maxLength: inty(item.maxLength), minLength: inty(item.minLength),
-      description: asText(item.description), required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false
+      description: asText(item.description), required: (inty(item.minCount) || 0) >= 1, enum: [], rawBody: false, multi: false
     }));
     const control = {
+      // No method is POST here as in a JSON-LD control, as the substrate's HyperMarkdown lift reads it.
       id: ident.startsWith("http") ? ident : `${url}#${ident}`, rel,
-      method: (asText(data.method) || "GET").toUpperCase(), title: asText(data.title) || shortRel(rel),
+      method: (asText(data.method) || "POST").toUpperCase(), title: asText(data.title) || shortRel(rel),
       description: asText(data.description) || asText(data.whenToUse), mediaType: asTextOrNull(data.mediaType),
       expects: asTextOrNull(data.expects), returns: asTextOrNull(data.returns), target: asTextOrNull(data.target),
       template: null, fields, types: [], source: url
@@ -808,11 +1250,18 @@ function viaProxy(url) {
   if (!out || out.protocol !== "https:") throw new Error("The proxy field needs an absolute https:// URL; nothing was sent.");
   return out.toString();
 }
+// `landed` is the address the answer is the document at: the URL fetch ended at
+// after redirects, as JSON-LD takes a document's base from. Through a proxy that
+// is the proxy's own address, so the requested URL stands. fetch does not say
+// whether a redirect was a 303 See Other, after which JSON-LD keeps the
+// requested URL; hmc.py can tell, and does.
 async function fetchText(url, accept) {
-  const res = await fetch(viaProxy(url), { headers: { Accept: accept || "*/*" } });
+  const proxied = viaProxy(url);
+  const res = await fetch(proxied, { headers: { Accept: accept || "*/*" } });
   const text = await res.text();
   const ct = res.headers.get("content-type") || "";
-  return { ok: res.ok, status: res.status, contentType: ct, text, url };
+  const landed = !proxyBase() && typeof res.url === "string" && /^https:\/\//.test(res.url) ? res.url : url;
+  return { ok: res.ok, status: res.status, contentType: ct, text, url, landed };
 }
 async function fetchAuthority(url) {
   url = stripFrag(url);
@@ -822,7 +1271,9 @@ async function fetchAuthority(url) {
     const res = await fetchText(candidate, accept);
     if (!res.ok) return null;
     const kind = classifyPayload(res.text, res.contentType);
-    return kind ? { ...res, kind, finalUrl: candidate } : null;
+    // Relative IRIs resolve against where the text came from: /dir answered by
+    // /dir/ puts "items" at /dir/items. hmc.py's fetch_authority does the same.
+    return kind ? { ...res, kind, finalUrl: res.landed } : null;
   };
   // JSON-LD is preferred. An answer in another form is retried as
   // ?format=jsonld, except that a format the address names itself is kept
@@ -853,7 +1304,7 @@ function parseDescriptor(text, contentType, url, fetchedFrom) {
   if (kind === "jsonld") {
     const document = JSON.parse(text);
     const index = new NodeIndex(document, url, fetchedFrom);
-    const root = index.root || index.nodes.get(url) || index.order[0];
+    const root = index.root;
     const title = String(literal(index.get(root, P.dcTitle)) || literal(index.get(root, P.title)) || literal(index.get(root, P.label)) || localName(url) || url);
     const types = root ? index.typesOf(root) : [];
     const description = String(literal(index.get(root, P.dcDesc)) || literal(index.get(root, P.desc)) || literal(index.get(root, P.comment)) || "");
@@ -909,23 +1360,45 @@ function templateEncode(value, op) {
 function expandUriTemplate(template, values) {
   return template.replace(/\{([^{}]+)\}/g, (_, expr) => expandTemplateExpr(expr, values));
 }
+// Each variable in an expression: its name, whether it is exploded (*), and the
+// most characters a prefix modifier (:N, 1 to 9999) lets through.
+function templateSpecs(expr) {
+  return expr.split(",").map((part) => {
+    const explode = part.includes("*");
+    const head = part.split("*")[0];
+    const colon = head.indexOf(":");
+    const name = colon < 0 ? head : head.slice(0, colon);
+    const prefix = colon < 0 ? "" : head.slice(colon + 1);
+    const limit = /^[0-9]{1,4}$/.test(prefix) && Number(prefix) > 0 ? Number(prefix) : null;
+    return { name, explode, limit };
+  });
+}
+// A string value cut to its first `limit` characters (not UTF-16 units), as RFC
+// 6570's prefix modifier asks; a list or a map is left whole.
+function prefixed(value, limit) {
+  if (limit == null || (value != null && typeof value === "object")) return value;
+  return Array.from(templateScalar(value)).slice(0, limit).join("");
+}
+function templateVariables(template) {
+  const used = new Set();
+  for (const m of template.matchAll(/\{([+#./;?&]?)([^{}]+)\}/g)) {
+    for (const part of m[2].split(",")) used.add(part.split("*")[0].split(":")[0]);
+  }
+  return used;
+}
 function expandTemplateExpr(expr, values) {
   let op = "";
   if ("+#./;?&".includes(expr[0])) { op = expr[0]; expr = expr.slice(1); }
-  const specs = expr.split(",").map((part) => {
-    const explode = part.includes("*");
-    const name = part.split("*")[0].split(":")[0];
-    return { name, explode };
-  }).filter((spec) => templateDefined(values[spec.name]));
+  const specs = templateSpecs(expr).filter((spec) => own(values, spec.name) && templateDefined(values[spec.name]));
   if (!specs.length) return "";
   const encOp = (op === "+" || op === "#") ? op : "";
   if (op === "?" || op === "&" || op === ";") {
     const parts = [];
-    for (const spec of specs) parts.push(...templateFormParts(spec, values[spec.name], encOp));
+    for (const spec of specs) parts.push(...templateFormParts(spec, prefixed(values[spec.name], spec.limit), encOp));
     if (op === ";") return parts.map((part) => ";" + part).join("");
     return (op === "&" ? "&" : "?") + parts.join("&");
   }
-  const rendered = specs.map((spec) => templatePathValue(spec, values[spec.name], op, encOp));
+  const rendered = specs.map((spec) => templatePathValue(spec, prefixed(values[spec.name], spec.limit), op, encOp));
   if (op === "/") return "/" + rendered.join("/");
   if (op === ".") return "." + rendered.join(".");
   if (op === "#") return "#" + rendered.join(",");
@@ -1082,45 +1555,103 @@ function coerceValue(field, value) {
 function enumOptions(field) {
   return asList(field.enum).filter(v => v != null).map(asText);
 }
-// A field's pattern is shown in its hint and never run: a remote regular
-// expression can take time exponential in the input, and the server that
-// receives the value is the one that enforces it.
+// A list field's values: a list as given (the options chosen in a multiple
+// select, or the defaults), or text, read as a JSON array when it is one and
+// otherwise as one value per line, with blank values and lines dropped.
+// hmc.py's _multi_items is the same.
+function multiItems(value) {
+  const kept = (item) => item != null && !(typeof item === "string" && trimSpaces(item) === "");
+  if (Array.isArray(value)) return value.filter(kept);
+  const text = String(value);
+  if (trimSpaces(text).startsWith("[")) {
+    let parsed = null;
+    try { parsed = JSON.parse(text); } catch {}
+    if (Array.isArray(parsed)) return parsed.filter(kept);
+  }
+  return text.replace(/\r\n?/g, "\n").split("\n").filter(line => trimSpaces(line) !== "");
+}
+// One value of a field, typed and checked; each problem goes in `errors` once.
+// Returns the value to send. hmc.py's _check_value is the same.
+function checkValue(field, found, numeric, errors) {
+  const report = (message) => { if (!errors.includes(message)) errors.push(message); };
+  if (numeric && typeof found === "string") found = trimSpaces(found);
+  let typed;
+  try { typed = coerceValue(field, found); } catch (err) { report(String(err.message || err)); return null; }
+  const structured = typed != null && typeof typed === "object";
+  const text = typeof typed === "string" ? typed : (typed == null ? "" : String(typed));
+  if (!structured && field.minLength != null && text.length < field.minLength) report(field.name + ": shorter than minLength " + field.minLength);
+  if (!structured && field.maxLength != null && text.length > field.maxLength) report(field.name + ": longer than maxLength " + field.maxLength);
+  const allowed = enumOptions(field);
+  if (!structured && allowed.length) {
+    const listed = numeric && typeof typed === "number" ? enumHasNumber(field, numeric, typed) : allowed.includes(text);
+    if (!listed) report(field.name + ": must be one of " + allowed.join(", "));
+  }
+  // A numeric bound needs a number to compare: a value that is none is an
+  // error, not a pass. A bound that is not a number, such as a date, is the
+  // server's to check.
+  const low = structured ? null : lexicalNumber(field.minInclusive);
+  const high = structured ? null : lexicalNumber(field.maxInclusive);
+  if (low != null || high != null) {
+    const n = lexicalNumber(typed);
+    if (n == null) report(field.name + ": not a number");
+    else {
+      if (low != null && n < low) report(field.name + ": below minInclusive " + asText(field.minInclusive));
+      if (high != null && n > high) report(field.name + ": above maxInclusive " + asText(field.maxInclusive));
+    }
+  }
+  // A JSON request body is sent as it was written, once it parses.
+  return field.rawBody && field.jsonKind && typeof found === "string" ? found : typed;
+}
+// The values to send, each typed by its field, and every problem with them. A
+// name that is no field's is a problem, not something silently dropped; a list
+// field takes several values (a multiple select, a JSON array, or one per line)
+// and is checked against its sh:minCount and sh:maxCount. A field's pattern is
+// shown in its hint and never run: a remote regular expression can take time
+// exponential in the input, and the server that receives the value is the one
+// that enforces it. hmc.py's validate_fields is the same.
 function validateFields(control, supplied) {
   const errors = []; const values = Object.create(null);
+  if (control.problem) return { values, errors: [control.problem] };
+  const incoming = Object.assign(Object.create(null), supplied);
+  const known = new Set();
   for (const field of control.fields) {
-    const aliases = [field.name, field.variable, field.path && localName(field.path)].filter(Boolean);
-    // Spaces around a number are not part of it, so a number field holding only spaces is empty.
-    const numeric = numericKind(field);
-    const trim = (v) => (numeric && typeof v === "string" ? trimSpaces(v) : v);
-    let found = aliases.map(a => trim(supplied[a])).find(v => v != null && v !== "");
-    if ((found == null || found === "") && field.defaultValue != null) found = trim(field.defaultValue);
-    const required = field.required || (field.minCount || 0) >= 1;
-    if (found == null || found === "") { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
-    let typed;
-    try { typed = coerceValue(field, found); } catch (err) { errors.push(String(err.message || err)); continue; }
-    const structured = typed != null && typeof typed === "object";
-    const text = structured ? (typeof found === "string" ? found : JSON.stringify(typed)) : (typed == null ? "" : String(typed));
-    if (!structured && field.minLength != null && text.length < field.minLength) errors.push(field.name + ": shorter than minLength " + field.minLength);
-    if (!structured && field.maxLength != null && text.length > field.maxLength) errors.push(field.name + ": longer than maxLength " + field.maxLength);
-    const allowed = enumOptions(field);
-    const listed = numeric && typeof typed === "number" ? enumHasNumber(field, numeric, typed) : allowed.includes(text);
-    if (!structured && allowed.length && !listed) errors.push(field.name + ": must be one of " + allowed.join(", "));
-    // A numeric bound needs a number to compare: a value that is none is an
-    // error, not a pass. A bound that is not a number, such as a date, is the
-    // server's to check.
-    const low = structured ? null : lexicalNumber(field.minInclusive);
-    const high = structured ? null : lexicalNumber(field.maxInclusive);
-    if (low != null || high != null) {
-      const n = lexicalNumber(typed);
-      if (n == null) errors.push(field.name + ": not a number");
-      else {
-        if (low != null && n < low) errors.push(field.name + ": below minInclusive");
-        if (high != null && n > high) errors.push(field.name + ": above maxInclusive");
-      }
+    const aliases = [...new Set([field.name, field.variable, field.path && localName(field.path)].filter(Boolean))];
+    for (const a of aliases) known.add(a);
+    let found = null;
+    for (const a of aliases) {
+      if (own(incoming, a) && incoming[a] != null && incoming[a] !== "") { found = incoming[a]; delete incoming[a]; break; }
     }
-    // A JSON request body is sent as it was written, once it parses.
-    values[field.name] = field.rawBody && field.jsonKind && typeof found === "string" ? found : typed;
+    const numeric = numericKind(field);
+    const required = field.required || (field.minCount || 0) >= 1;
+    if (field.multi) {
+      let items = found != null ? multiItems(found) : [];
+      if (!items.length && field.defaultValue != null) items = multiItems(Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue]);
+      if (!items.length) { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
+      if (field.minCount && items.length < field.minCount) errors.push(field.name + ": needs at least " + field.minCount + " values, got " + items.length);
+      if (field.maxCount != null && items.length > field.maxCount) errors.push(field.name + ": takes at most " + field.maxCount + " values, got " + items.length);
+      const typedItems = [];
+      for (const item of items) {
+        if (item != null && typeof item === "object") {
+          const message = field.name + ": each value is one " + (localName(field.datatype) || "text") + " value, not JSON";
+          if (!errors.includes(message)) errors.push(message);
+          continue;
+        }
+        typedItems.push(checkValue(field, typeof item === "string" ? item : String(item), numeric, errors));
+      }
+      values[field.name] = typedItems;
+      continue;
+    }
+    // A field that takes one value takes the last one given, as a repeated option does.
+    if (Array.isArray(found)) found = found.length ? found[found.length - 1] : null;
+    // Spaces around a number are not part of it, so a number field holding only spaces is empty.
+    if (numeric && typeof found === "string") found = trimSpaces(found);
+    if ((found == null || found === "") && field.defaultValue != null) found = numeric && typeof field.defaultValue === "string" ? trimSpaces(field.defaultValue) : field.defaultValue;
+    if (found == null || found === "") { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
+    const before = errors.length;
+    const value = checkValue(field, found, numeric, errors);
+    if (errors.length === before) values[field.name] = value;
   }
+  for (const name of Object.keys(incoming)) if (!known.has(name)) errors.push("no input field is named '" + name + "'");
   return { values, errors };
 }
 function isMcpTool(target) {
@@ -1149,55 +1680,73 @@ function isJunction(target, descriptorUrl, control) {
   });
 }
 function classifyTransport(control, descriptorUrl) {
-  if (control.template) return "http";
+  // Before expansion, only what precedes a template's first variable is known:
+  // it resolves against the base, as the expanded address will. hmc.py's
+  // classify_transport is the same.
+  if (control.template) {
+    const head = control.template.split("{")[0];
+    return !head || isWebUrl(resolveIri(head, control.base)) ? "http" : "unknown";
+  }
   if (isMcpTool(control.target)) return "mcp";
   if (isJunction(control.target, descriptorUrl, control)) return "junction";
   if (control.target && /^https?:\/\//.test(control.target)) return "http";
   return control.rel ? "mcp" : "unknown";
 }
+// Fields as query parameters. A parameter the address already carries under a
+// field's name is replaced, not added to, as hmc.py's add_query_params does.
 function addQuery(url, params) {
   const u = new URL(url);
-  for (const [k, v] of Object.entries(params)) {
-    if (v == null || v === "") continue;
+  const keys = Object.keys(params).filter(k => params[k] != null && params[k] !== "");
+  for (const k of keys) u.searchParams.delete(k);
+  for (const k of keys) {
+    const v = params[k];
     if (Array.isArray(v)) {
       for (const item of v) if (item != null && item !== "") u.searchParams.append(k, templateScalar(item));
     } else if (typeof v === "object") {
-      u.searchParams.set(k, JSON.stringify(v));
+      u.searchParams.append(k, JSON.stringify(v));
     } else {
-      u.searchParams.set(k, templateScalar(v));
+      u.searchParams.append(k, templateScalar(v));
     }
   }
   return u.toString();
 }
+// The type of a body sent whole from one field: JSON for rdf:JSON, a SPARQL
+// query for the field a shape labels a query, and plain text otherwise. The
+// control's media type is what it returns, so it goes in Accept, never here.
+function rawContentType(field) {
+  if (field.jsonKind) return "application/json";
+  return field.name === "query" ? "application/sparql-query" : "text/plain";
+}
 function resolvePlan(control, values, descriptorUrl) {
   const notes = [];
   let transport = classifyTransport(control, descriptorUrl);
-  const method = control.method || "GET";
+  const method = control.method || "POST";
+  const safe = SAFE.has(method);
   const headers = { Accept: control.mediaType || "*/*" };
   let body = null, bodyText = null, url = null;
   const raw = control.fields.find(f => f.rawBody);
-  if (raw && values[raw.name] != null) {
-    const v = values[raw.name];
-    bodyText = typeof v === "string" ? v : JSON.stringify(v); body = bodyText;
-  }
+  const rawValue = raw && own(values, raw.name) ? values[raw.name] : null;
+  const rawText = rawValue == null ? null : (typeof rawValue === "string" ? rawValue : JSON.stringify(rawValue));
+  // A safe method sends no body: every field goes in the address, a field that
+  // is the whole body as a parameter named after it, as SPARQL's protocol
+  // sends ?query=.
+  const params = Object.assign(Object.create(null), values);
+  if (raw && rawText != null) params[raw.name] = rawText;
+  if (control.warning) notes.push(control.warning);
   if (control.template) {
-    url = expandUriTemplate(control.template, values);
-    transport = "http";
+    url = resolveIri(expandUriTemplate(control.template, values), control.base);
+    transport = isWebUrl(url) ? "http" : "unknown";
     notes.push("Expanded hydra:IriTemplate " + control.template);
-    const used = new Set();
-    for (const m of control.template.matchAll(/\{([+#./;?&]?)([^{}]+)\}/g)) {
-      for (const part of m[2].split(",")) used.add(part.split("*")[0].split(":")[0]);
-    }
-    const leftover = Object.fromEntries(Object.entries(values).filter(([k]) => !used.has(k) && !(raw && k === raw.name)));
-    if (Object.keys(leftover).length && SAFE.has(method)) url = addQuery(url, leftover);
+    if (transport !== "http") notes.push("The template does not expand to an http or https URL; nothing is sent to it.");
+    const used = templateVariables(control.template);
+    const leftover = Object.fromEntries(Object.entries(params).filter(([k]) => !used.has(k)));
+    if (Object.keys(leftover).length && safe && transport === "http") url = addQuery(url, leftover);
   } else if (transport === "http" && control.target) {
     url = control.target;
-    if (SAFE.has(method) && Object.keys(values).length && !raw) {
-      url = addQuery(url, values);
+    if (safe && Object.keys(params).length) {
+      url = addQuery(url, params);
       notes.push("Appended fields as query parameters on hydra:target");
-    } else if (!SAFE.has(method) && raw) {
-      headers["Content-Type"] = control.mediaType || "text/plain";
-    } else if (!SAFE.has(method)) {
+    } else if (!safe && !raw) {
       body = values; bodyText = JSON.stringify(values, null, 2); headers["Content-Type"] = "application/json";
     }
   } else if (transport === "mcp") {
@@ -1215,10 +1764,14 @@ function resolvePlan(control, values, descriptorUrl) {
     };
     transport = "mcp";
   }
-  if (url && !SAFE.has(method) && body == null && !raw && Object.keys(values).length) {
-    body = values; bodyText = JSON.stringify(values, null, 2); headers["Content-Type"] = headers["Content-Type"] || "application/json";
+  if (url && !safe) {
+    if (raw) {
+      if (rawText != null) { body = bodyText = rawText; headers["Content-Type"] = rawContentType(raw); }
+    } else if (body == null && Object.keys(values).length) {
+      body = values; bodyText = JSON.stringify(values, null, 2); headers["Content-Type"] = headers["Content-Type"] || "application/json";
+    }
   }
-  if (raw && bodyText != null && url) headers["Content-Type"] = control.mediaType || (raw.jsonKind ? "application/json" : "application/sparql-query");
+  if (url) url = iriToUri(url);
   return { control, transport, method, url, headers, body, bodyText, fields: values, mcp, notes, unsafe: control.unsafe };
 }
 
@@ -1376,6 +1929,7 @@ function renderList() {
 }
 function fieldDefaultText(field) {
   if (field.defaultValue == null) return "";
+  if (field.multi && Array.isArray(field.defaultValue)) return field.defaultValue.map(asText).join("\n");
   return typeof field.defaultValue === "object" ? JSON.stringify(field.defaultValue) : String(field.defaultValue);
 }
 // Inputs carry the remote field name in data-field, never in name or id. In a
@@ -1387,17 +1941,24 @@ function fieldControl(field) {
   const val = esc(fieldDefaultText(field));
   let input;
   const options = enumOptions(field);
-  if (options.length && !field.jsonKind) {
+  // A list field is a multiple select when it has choices, and otherwise a text
+  // area that takes one value per line (or a JSON array).
+  if (options.length && !field.jsonKind && field.multi) {
+    const chosen = new Set(asList(field.defaultValue).map(asText));
+    input = `<select data-field="${key}" multiple>${options.map(v => `<option value="${esc(v)}" ${chosen.has(v) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
+  } else if (options.length && !field.jsonKind) {
     const chosen = asText(field.defaultValue);
     input = `<select data-field="${key}"><option value=""></option>${options.map(v => `<option value="${esc(v)}" ${v === chosen ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
-  } else if (field.rawBody || field.jsonKind || (field.maxLength && field.maxLength > 200) || /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
+  } else if (field.multi || field.rawBody || field.jsonKind || (field.maxLength && field.maxLength > 200) || /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
     input = `<textarea data-field="${key}" ${req ? "required" : ""}>${val}</textarea>`;
   } else {
     const type = xsdName(field.datatype) === "integer" ? "number" : "text";
     input = `<input data-field="${key}" type="${type}" value="${val}" ${req ? "required" : ""}>`;
   }
   return `<div class="field"><label>${esc(field.name)} ${req ? '<span class="req">*</span>' : ""}</label>${input}
-    <div class="hint">${esc([field.jsonKind ? ("JSON " + field.jsonKind) : (field.datatype && localName(field.datatype)), field.pattern, field.description].filter(Boolean).join(" · "))}</div></div>`;
+    <div class="hint">${esc([field.jsonKind ? ("JSON " + field.jsonKind) : (field.datatype && localName(field.datatype)),
+      field.multi ? (options.length ? "a list: choose one or more" : "a list: one value per line") : null,
+      field.pattern, field.description].filter(Boolean).join(" · "))}</div></div>`;
 }
 // The previous control's form, and its confirmation, go before anything else
 // happens, and a control that cannot be shown leaves a warning, never a form.
@@ -1425,11 +1986,27 @@ function renderDetail() {
   });
   state.formFor = c;
 }
+// The host a control sends to, when its address fixes one: its target's, or a
+// template's when the text before the template's first variable, resolved
+// against the base, already ends the authority (a "/", "?" or "#" follows the
+// host). A variable straight after the host could extend it, so such a template
+// names no host here, and runInvoke checks the host named against the address
+// it sends to.
 function destinationHost(c) {
-  const head = asText(c.template || c.target).split("{")[0];
-  try { const u = new URL(head); return u.protocol === "https:" ? u.host : null; } catch { return null; }
+  let fixed = c.target;
+  if (c.template) {
+    const head = asText(c.template).split("{")[0];
+    if (!head) return null;
+    const abs = resolveIri(head, c.base);
+    const parts = splitIri(abs);
+    if (parts.authority == null || (parts.path === "" && parts.query == null && parts.fragment == null)) return null;
+    fixed = abs;
+  }
+  try { const u = new URL(asText(fixed)); return u.protocol === "https:" ? u.host : null; } catch { return null; }
 }
 function detailHtml(c, desc) {
+  // A control that cannot be invoked as written gets a warning and no form.
+  if (c.problem) throw new Error(c.problem);
   const transport = classifyTransport(c, desc.url);
   const target = c.template || c.target || "(none)";
   let html = `<div class="crumbs">${esc(shortRel(c.rel))}</div>
@@ -1442,6 +2019,7 @@ function detailHtml(c, desc) {
       target: ${iriSpan(c.target, target)}
     </div>`;
   if (c.unsafe) html += `<div class="warn">Unsafe operation. The default is a dry run that shows the exact request. Confirm before anything is sent.</div>`;
+  if (c.warning) html += `<div class="warn">${esc(c.warning)}</div>`;
   // The host a control sends to, so a form cannot pass for one that goes elsewhere.
   const host = destinationHost(c);
   const dest = transport !== "http" ? "" : host ? `<span class="dest">Sends to <code>${esc(host)}</code></span>`
@@ -1460,7 +2038,9 @@ function detailHtml(c, desc) {
 }
 function readForm() {
   const supplied = Object.create(null);
-  for (const el of document.querySelectorAll("#invokeForm [data-field]")) supplied[el.dataset.field] = el.value;
+  for (const el of document.querySelectorAll("#invokeForm [data-field]")) {
+    supplied[el.dataset.field] = el.multiple ? [...el.selectedOptions].map(o => o.value) : el.value;
+  }
   return supplied;
 }
 function showResult(html) {
@@ -1469,7 +2049,9 @@ function showResult(html) {
 }
 // A form invokes only the control it was built for, and only while it is the
 // one selected; the confirmation it carries is read from that same form.
-async function runInvoke(forceDry, formControl) {
+// `linkProblems` are what an ?invoke= link asked for that the form could not
+// take, such as a field it does not have; any one of them sends nothing.
+async function runInvoke(forceDry, formControl, linkProblems) {
   const desc = state.descriptor;
   const control = state.selected;
   if (!desc || !control) return;
@@ -1477,12 +2059,19 @@ async function runInvoke(forceDry, formControl) {
     setStatus("Nothing was sent: the form on screen is not the selected control's.");
     return;
   }
-  const { values, errors } = validateFields(control, readForm());
+  const checked = validateFields(control, readForm());
+  const errors = (linkProblems || []).concat(checked.errors);
   if (errors.length) {
     showResult(`<div class="warn">Validation failed:<ul>${errors.map(e => "<li>" + esc(e) + "</li>").join("")}</ul></div>`);
     return;
   }
-  const plan = resolvePlan(control, values, desc.url);
+  let plan;
+  try { plan = resolvePlan(control, checked.values, desc.url); } catch (err) {
+    const msg = String(err && err.message || err);
+    showResult(`<div class="warn">${esc("The request could not be built, so nothing was sent: " + msg)}</div>`);
+    setStatus("Invoke failed: " + msg);
+    return;
+  }
   const dry = forceDry || (control.unsafe && !(document.getElementById("confirmUnsafe") && document.getElementById("confirmUnsafe").checked));
   let html = `<details ${dry ? "open" : ""}><summary>Request (${esc(plan.method)} ${esc(plan.transport)})</summary><pre>${linkify(JSON.stringify({
     method: plan.method, transport: plan.transport, url: plan.url, headers: plan.headers,
@@ -1492,8 +2081,20 @@ async function runInvoke(forceDry, formControl) {
     showResult(html + `<div class="warn">Dry run — nothing was sent.</div>`);
     return;
   }
+  if (plan.transport === "unknown" && plan.url) {
+    showResult(html + `<div class="warn">${esc("This page sends requests over https only; nothing was sent to " + plan.url)}</div>`);
+    return;
+  }
   if (plan.transport !== "http" || !plan.url) {
     showResult(html + `<div class="warn">No plain-HTTP transport. Use the Interego relay MCP <code>invoke_affordance</code> / <code>act</code> call shown above.</div>`);
+    return;
+  }
+  // The host the form named next to its buttons is the host the request goes to, or nothing is sent.
+  const shown = destinationHost(control);
+  let host = null;
+  try { host = new URL(plan.url).host; } catch {}
+  if (shown && host !== shown) {
+    showResult(html + `<div class="warn">${esc("The address goes to " + (host || plan.url) + ", not to " + shown + ", the host this form names; nothing was sent.")}</div>`);
     return;
   }
   setStatus("Invoking " + shortRel(control.rel) + " …");
@@ -1536,17 +2137,29 @@ async function loadDescriptorUrl(url, push = true) {
   document.documentElement.dataset.ready = state.selected ? "0" : "list";
   return descriptor;
 }
+// Selects a control and fills its form with an ?invoke= link's values. Returns
+// what the form could not take: a name no input has. A field named twice is a
+// list for a list field, and its last value for any other field.
 function selectRel(rel, values) {
   const control = findControl(state.descriptor, rel);
-  if (!control) return;
+  if (!control) return [];
   state.selected = control;
   renderDetail();
   renderList();
+  const problems = [];
   if (values) {
-    for (const el of document.querySelectorAll("#invokeForm [data-field]")) {
-      if (Object.prototype.hasOwnProperty.call(values, el.dataset.field)) el.value = values[el.dataset.field];
+    const inputs = [...document.querySelectorAll("#invokeForm [data-field]")];
+    for (const [name, given] of Object.entries(values)) {
+      const el = inputs.find(e => e.dataset.field === name);
+      const field = control.fields.find(f => f.name === name);
+      if (!el || !field) { problems.push("no input field is named '" + name + "'"); continue; }
+      const list = asList(given);
+      if (el.multiple) { for (const o of el.options) o.selected = list.includes(o.value); }
+      else if (field.multi) el.value = list.join("\n");
+      else el.value = list[list.length - 1];
     }
   }
+  return problems;
 }
 // The page does not run inside another page's frame: a page that framed it
 // could cover it and steer the clicks that confirm a write. A <meta> policy
@@ -1599,11 +2212,13 @@ async function boot() {
     try {
       await loadDescriptorUrl(document.getElementById("url").value);
       if (params.get("invoke")) {
+        // A field named twice in the link is a list of values.
         const fields = Object.create(null);
-        if (params.get("query")) fields.query = params.get("query");
-        for (const [k, v] of params.entries()) if (k.startsWith("field.")) fields[k.slice(6)] = v;
-        selectRel(params.get("invoke"), fields);
-        await runInvoke(params.get("dry") === "1");
+        const put = (name, v) => { fields[name] = own(fields, name) ? asList(fields[name]).concat([v]) : v; };
+        if (params.get("query")) put("query", params.get("query"));
+        for (const [k, v] of params.entries()) if (k.startsWith("field.")) put(k.slice(6), v);
+        const problems = selectRel(params.get("invoke"), fields);
+        await runInvoke(params.get("dry") === "1", null, problems);
         document.documentElement.dataset.ready = "done";
       } else {
         document.documentElement.dataset.ready = "list";

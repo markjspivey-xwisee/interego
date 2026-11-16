@@ -15,6 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
+import { sharedDescriptors } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -28,6 +29,8 @@ const LONG_NAME = 'rest-param-' + '-'.repeat(60_000) + '\nx';
 let server: Server;
 let base = '';
 const seen: string[] = [];
+// Each request as the server received it, with its body and content type.
+const received: Array<{ line: string; body: string; type: string }> = [];
 // Terminal control sequences: a window title (OSC 0), colour (CSI), a clipboard write (OSC 52),
 // a carriage return that would overwrite the line, and a C1 control.
 const ESC = '\x1b]0;PWNED-TITLE\x07\x1b[31mRED\x1b[0m\x1b]52;c;cHduZWQ=\x07\r\x9b2J';
@@ -76,16 +79,18 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
     '/to-file': () => ({ status: 302, headers: { location: secretUrl } }),
     '/to-ftp': () => ({ status: 302, headers: { location: 'ftp://127.0.0.1:9/x' } }),
     // sh:in as a JSON-LD list object, the same in a one-element array with @value and @id members,
-    // an RDF list of rdf:first / rdf:rest nodes, a plain array, and an empty list object.
+    // an RDF list of rdf:first / rdf:rest nodes, a plain array, and an empty list object. These
+    // fixtures' fields take one value each, so each carries sh:maxCount 1, as Interego's own shapes
+    // write one; with no sh:maxCount a property takes a list.
     '/list-enum': json(descriptor('list-enum', [{ '@id': `${base}/list-enum#r`, '@type': 'iep:Affordance',
       'iep:action': 'urn:list-enum', 'hydra:method': 'GET', 'hydra:title': 'List enum read', 'hydra:target': `${base}/list-ok`,
       'hydra:expects': { '@id': `${base}/list-enum#S` } }], [
       { '@id': `${base}/list-enum#S`, '@type': 'sh:NodeShape', 'sh:property': [
-        { 'sh:path': 'urn:p:status', 'sh:name': 'status', 'sh:in': { '@list': ['draft', 'published'] } },
-        { 'sh:path': 'urn:p:wrapped', 'sh:name': 'wrapped', 'sh:in': [{ '@list': [{ '@value': 'low' }, { '@id': `${base}/high` }] }] },
-        { 'sh:path': 'urn:p:nodes', 'sh:name': 'nodes', 'sh:in': { '@id': '_:l1' } },
-        { 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:in': ['red', 'blue'] },
-        { 'sh:path': 'urn:p:empty', 'sh:name': 'empty', 'sh:in': { '@list': [] } },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:status', 'sh:name': 'status', 'sh:in': { '@list': ['draft', 'published'] } },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:wrapped', 'sh:name': 'wrapped', 'sh:in': [{ '@list': [{ '@value': 'low' }, { '@id': `${base}/high` }] }] },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:nodes', 'sh:name': 'nodes', 'sh:in': { '@id': '_:l1' } },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:in': ['red', 'blue'] },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:empty', 'sh:name': 'empty', 'sh:in': { '@list': [] } },
       ] },
       { '@id': '_:l1', 'rdf:first': 'one', 'rdf:rest': { '@id': '_:l2' } },
       { '@id': '_:l2', 'rdf:first': { '@value': 'two' }, 'rdf:rest': { '@id': 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil' } },
@@ -97,12 +102,12 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       'iep:action': 'urn:numbers', 'hydra:method': 'POST', 'hydra:title': 'Numeric write', 'hydra:target': `${base}/num-target`,
       'hydra:expects': { '@id': `${base}/numbers#S` } }], [
       { '@id': `${base}/numbers#S`, '@type': 'sh:NodeShape', 'sh:property': [
-        { 'sh:path': 'urn:p:amount', 'sh:name': 'amount', 'sh:datatype': `${XSD}decimal`, 'sh:minCount': 1, 'sh:minInclusive': 1, 'sh:maxInclusive': 10 },
-        { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer` },
-        { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long` },
-        { 'sh:path': 'urn:p:level', 'sh:name': 'level', 'sh:minInclusive': 1, 'sh:maxInclusive': 5 },
-        { 'sh:path': 'urn:p:price', 'sh:name': 'price', 'sh:datatype': `${XSD}decimal` },
-        { 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', 'sh:datatype': `${XSD}double` },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:amount', 'sh:name': 'amount', 'sh:datatype': `${XSD}decimal`, 'sh:minCount': 1, 'sh:minInclusive': 1, 'sh:maxInclusive': 10 },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer` },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long` },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:level', 'sh:name': 'level', 'sh:minInclusive': 1, 'sh:maxInclusive': 5 },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:price', 'sh:name': 'price', 'sh:datatype': `${XSD}decimal` },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', 'sh:datatype': `${XSD}double` },
       ] },
     ])),
     // Number fields whose sh:in entries are written in other ways than the number a person would
@@ -113,11 +118,11 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       '@type': 'iep:Affordance', 'iep:action': 'urn:num-enum', 'hydra:method': 'POST', 'hydra:title': 'Numeric enum write',
       'hydra:target': `${base}/num-target`, 'hydra:expects': { '@id': `${base}/num-enum#S` } }], [
       { '@id': `${base}/num-enum#S`, '@type': 'sh:NodeShape', 'sh:property': [
-        { 'sh:path': 'urn:p:version', 'sh:name': 'version', 'sh:datatype': `${XSD}decimal`,
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:version', 'sh:name': 'version', 'sh:datatype': `${XSD}decimal`,
           'sh:in': { '@list': [{ '@value': '1.0', '@type': `${XSD}decimal` }, { '@value': '2.50', '@type': `${XSD}decimal` }] } },
-        { 'sh:path': 'urn:p:scale', 'sh:name': 'scale', 'sh:datatype': `${XSD}double`, 'sh:in': [{ '@value': '1.0E0', '@type': `${XSD}double` }, 0.5] },
-        { 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long`, 'sh:in': { '@list': ['+1', '02'] } },
-        { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer`, 'sh:in': [1, 'COUNT-TWO'] },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:scale', 'sh:name': 'scale', 'sh:datatype': `${XSD}double`, 'sh:in': [{ '@value': '1.0E0', '@type': `${XSD}double` }, 0.5] },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:size', 'sh:name': 'size', 'sh:datatype': `${XSD}long`, 'sh:in': { '@list': ['+1', '02'] } },
+        { 'sh:maxCount': 1, 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': `${XSD}integer`, 'sh:in': [1, 'COUNT-TWO'] },
       ] },
     ])).replace('"COUNT-TWO"', '2.0') }),
     '/num-target': () => ({ type: 'application/json', body: '{"ok":true}' }),
@@ -136,12 +141,12 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       ],
       '@graph': [
         { '@id': `${base}/compact-types#S`, '@type': 'sh:NodeShape', 'sh:property': [
-          { 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': { '@id': 'xsd:integer' } },
-          { 'sh:path': 'urn:p:flag', 'sh:name': 'flag', 'sh:datatype': { '@id': 'xsd:boolean' } },
-          { 'sh:path': 'urn:p:data', 'sh:name': 'data', 'sh:datatype': { '@id': 'rdf:JSON' } },
-          { 'sh:path': 'urn:p:size', 'sh:name': 'size', dt: 'xsd:long' },
-          { 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', vdt: 'double' },
-          { 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:datatype': 'xsd:integer' },
+          { 'sh:maxCount': 1, 'sh:path': 'urn:p:count', 'sh:name': 'count', 'sh:datatype': { '@id': 'xsd:integer' } },
+          { 'sh:maxCount': 1, 'sh:path': 'urn:p:flag', 'sh:name': 'flag', 'sh:datatype': { '@id': 'xsd:boolean' } },
+          { 'sh:maxCount': 1, 'sh:path': 'urn:p:data', 'sh:name': 'data', 'sh:datatype': { '@id': 'rdf:JSON' } },
+          { 'sh:maxCount': 1, 'sh:path': 'urn:p:size', 'sh:name': 'size', dt: 'xsd:long' },
+          { 'sh:maxCount': 1, 'sh:path': 'urn:p:ratio', 'sh:name': 'ratio', vdt: 'double' },
+          { 'sh:maxCount': 1, 'sh:path': 'urn:p:plain', 'sh:name': 'plain', 'sh:datatype': 'xsd:integer' },
         ] },
         ...[['integer', 'xsd:integer'], ['boolean', 'xsd:boolean'], ['JSON', 'rdf:JSON']].map(([kind, dt]) => ({
           '@id': `${base}/compact-types#${kind}-shape`, '@type': 'sh:NodeShape', 'rdfs:label': `${kind} body`, 'sh:datatype': { '@id': dt } })),
@@ -158,6 +163,20 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
     '/rel-file': json({ '@context': [REL_CTX, { '@base': new URL('.', secretUrl).href }], '@id': `${base}/rel-file`,
       'iep:affordance': [relOp('file', 'File target', { '@id': 'secret.txt' })] }),
     '/api': () => ({ type: 'text/plain', body: 'fine' }),
+    // The documents the page's test reads too, and the addresses their controls reach.
+    ...Object.fromEntries(Object.entries(sharedDescriptors(base)).map(([path, text]) => [path, () => ({ type: 'application/ld+json', body: text })])),
+    ...Object.fromEntries(['/purge', '/sparql', '/notes/1', '/publish', '/wiki/Caf%C3%A9', '/items', '/lrs/about', '/search', '/tmpl/items/7',
+      '/tmpl/shard/ab/abcdef', '/rates/2', '/find', '/dir/items'].map(path => [path, () => ({ type: 'text/plain', body: 'fine' })])),
+    // /dir answers with the usual trailing-slash redirect; /see-other with a 303, after which JSON-LD
+    // keeps the address that answered it as the base.
+    '/dir': () => ({ status: 301, headers: { location: '/dir/' } }),
+    '/dir/': json({ '@context': CTX, '@id': '', 'iep:affordance': [
+      { '@id': '#list', '@type': 'iep:Affordance', 'iep:action': { '@id': 'iep:list' }, 'hydra:method': 'GET', 'hydra:title': 'List items',
+        'hydra:target': { '@id': 'items' } },
+      { '@id': '#create', '@type': 'iep:Affordance', 'iep:action': { '@id': 'iep:create' }, 'hydra:method': 'POST', 'hydra:title': 'Create item',
+        'hydra:target': { '@id': 'items' }, 'hydra:expects': { type: 'object', properties: { name: { type: 'string' } } } }] }),
+    '/see-other': () => ({ status: 303, headers: { location: '/other/desc' } }),
+    '/other/desc': json({ '@context': CTX, 'iep:affordance': [relOp('see-other', 'See other api', { '@id': 'api' })] }),
   };
 }
 const CTX = { hydra: 'http://www.w3.org/ns/hydra/core#', iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#',
@@ -191,11 +210,17 @@ beforeAll(async () => {
   secretUrl = new URL(`file://${join(dir, 'secret.txt')}`).href;
   server = createServer((req: IncomingMessage, res: ServerResponse) => {
     const url = new URL(req.url || '/', base);
-    seen.push(`${req.method} ${url.pathname}${url.search}`);
-    const route = Object.prototype.hasOwnProperty.call(routes(), url.pathname) ? routes()[url.pathname] : undefined;
-    if (!route) { res.writeHead(404, { 'content-type': 'text/plain' }).end('missing'); return; }
-    const out = route();
-    res.writeHead(out.status || 200, { 'content-type': out.type || 'text/plain', ...out.headers }).end(out.body || '');
+    const line = `${req.method} ${url.pathname}${url.search}`;
+    seen.push(line);
+    const chunks: Buffer[] = [];
+    req.on('data', (chunk: Buffer) => chunks.push(chunk));
+    req.on('end', () => {
+      received.push({ line, body: Buffer.concat(chunks).toString('utf8'), type: String(req.headers['content-type'] || '') });
+      const route = Object.prototype.hasOwnProperty.call(routes(), url.pathname) ? routes()[url.pathname] : undefined;
+      if (!route) { res.writeHead(404, { 'content-type': 'text/plain' }).end('missing'); return; }
+      const out = route();
+      res.writeHead(out.status || 200, { 'content-type': out.type || 'text/plain', ...out.headers }).end(out.body || '');
+    });
   });
   await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
   base = `http://127.0.0.1:${(server.address() as AddressInfo).port}`;
@@ -477,5 +502,218 @@ describe('hmc.py: remote text reaches the terminal as text', () => {
     expect(r.code).not.toBe(0);
     expect(r.stderr).toContain('No control matching');
     expect(r.stdout + r.stderr).not.toMatch(CONTROL);
+  });
+});
+
+type Request = { url: string | null; transport: string; body: unknown; headers: Record<string, string>; notes: string[];
+  mcp: { arguments: { action_iri: string } } | null };
+/** A dry run of `rel` in the document at `path` with `fields` (a list is the field repeated); its plan or its failure. */
+async function dry(path: string, rel: string, fields: Record<string, string | string[]> = {}) {
+  const args = Object.entries(fields).flatMap(([k, v]) => (Array.isArray(v) ? v : [v]).flatMap(one => ['--field', `${k}=${one}`]));
+  const r = await hmc(['invoke', `${base}${path}`, rel, ...args, '--dry-run', '--json']);
+  return { r, request: r.code === 0 ? (JSON.parse(r.stdout) as { request: Request }).request : null };
+}
+type Listed = { title: string; seeAlso: string[]; controls: Array<{ rel: string; title: string; method: string; unsafe: boolean; target: string | null;
+  warning: string | null; problem: string | null; fields: Array<{ name: string; required: boolean; multi: boolean }> }> };
+async function listed(path: string): Promise<Listed> {
+  const r = await hmc(['list', `${base}${path}`, '--json']);
+  expect(r.code, r.stderr).toBe(0);
+  return JSON.parse(r.stdout) as Listed;
+}
+const fieldsOf = (doc: Listed, title: string) => doc.controls.find(c => c.title === title)!.fields.map(f => [f.name, f.required, f.multi]);
+
+describe('hmc.py: JSON-LD read as jsonld.js reads it', () => {
+  it('treats a GET the document marks destructive as unsafe, however the mark is written, and sends nothing unconfirmed', async () => {
+    const doc = await listed('/hints');
+    expect(Object.fromEntries(doc.controls.map(c => [c.title, c.unsafe]))).toEqual({
+      'Purge cache': true, 'Late prefix': true, 'Own context': true, 'Bare annotations': true, 'Plain read': false });
+    for (const rel of ['iep:purge', 'iep:late', 'iep:embedded', 'iep:mcp']) {
+      const r = await hmc(['invoke', `${base}/hints`, rel]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout, rel).toContain('Dry run');
+    }
+    expect(seen.filter(s => s.startsWith('GET /purge'))).toEqual([]);
+  });
+
+  it('resolves relative IRIs against the address a redirect landed at, except after a 303', async () => {
+    const doc = await listed('/dir');
+    expect(doc.controls.map(c => c.target)).toEqual([`${base}/dir/items`, `${base}/dir/items`]);
+    const r = await hmc(['invoke', `${base}/dir`, 'iep:create', '--field', 'name=x', '--confirm']);
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen).toContain('POST /dir/items');
+    expect(seen).not.toContain('POST /items');
+    expect((await listed('/see-other')).controls.map(c => c.target)).toEqual([`${base}/api`]);
+  });
+
+  it.each([
+    ['/alias', 'iep:aliasSearch', { q: '5' }, '?q=5'], ['/alias-graph', 'iep:aliasGraph', {}, ''], ['/typeonly', 'iep:typeOnly', { n: '5' }, '?n=5'],
+    ['/named-graph', 'iep:named', {}, ''], ['/included', 'iep:included', {}, ''], ['/index-map', 'iep:indexMap', {}, ''], ['/id-map', 'iep:idMap', {}, ''],
+  ])('reads %s: keyword aliases, type-only terms, named graphs, @included and container maps', async (path, rel, fields, query) => {
+    const { r, request } = await dry(path, rel, fields);
+    expect(r.code, r.stdout + r.stderr).toBe(0);
+    expect([request!.transport, request!.url]).toEqual(['http', `${base}/api${query}`]);
+  });
+
+  it('types a field by a shape its keyword-aliased or type-only reference names', async () => {
+    for (const [path, rel, name] of [['/alias', 'iep:aliasSearch', 'q'], ['/typeonly', 'iep:typeOnly', 'n']]) {
+      const { r } = await dry(path!, rel!, { [name!]: '1.5' });
+      expect(r.code, path).toBe(2);
+      expect(r.stderr, path).toContain(`${name}: not an integer`);
+    }
+  });
+
+  it('reads a JSON Schema given as a JSON literal value object', async () => {
+    const bad = await dry('/json-value', 'iep:jsonValue', { count: '1.5' });
+    expect(bad.r.code).toBe(2);
+    expect(bad.r.stderr).toContain("missing required field 'name'");
+    expect(bad.r.stderr).toContain('count: not an integer');
+    expect((await dry('/json-value', 'iep:jsonValue', { name: 'a', count: '2' })).request!.body).toEqual({ name: 'a', count: 2 });
+  });
+
+  it('expands an action under "@vocab": "#" and a vocabulary term as the document defines it, as the page does', async () => {
+    const cases: Array<[string, string, string]> = [
+      ['/vocab-hash', 'publish', `${base}/vocab-hash#publish`],
+      ['/actions', 'https://vocab.example/actions#search', 'https://vocab.example/actions#search'],
+      ['/actions', 'https://vocab.example/actions#comment', 'https://vocab.example/actions#comment'],
+      ['/actions', 'urn:example:action:lookup', 'urn:example:action:lookup'],
+    ];
+    for (const [path, rel, action] of cases) {
+      const { r, request } = await dry(path, rel);
+      expect(r.code, `${rel}: ${r.stderr}`).toBe(0);
+      expect(request!.mcp!.arguments.action_iri, rel).toBe(action);
+    }
+  });
+
+  it('takes a flattened document\'s title and links from the node at its address, not the first node', async () => {
+    const doc = await listed('/flat');
+    expect([doc.title, doc.seeAlso]).toEqual(['Glossary catalog', [`${base}/next`]]);
+  });
+
+  it('lists operations under hydra:operation, and warns when the class one expects is not described', async () => {
+    const doc = await listed('/events');
+    expect(doc.controls.map(c => [c.title, c.method])).toEqual([['Create event', 'POST']]);
+    expect(doc.controls[0]!.warning).toContain('hydra:expects names https://vocab.example/Event, which this document does not describe');
+  });
+});
+
+describe('hmc.py: templates and transport', () => {
+  it('resolves a relative IRI template against the base, and applies a prefix modifier', async () => {
+    const r = await hmc(['list', `${base}/tmpl/desc`]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).not.toContain('unknown');
+    const cases: Array<[string, string, Record<string, string>, string]> = [
+      ['/tmpl/desc', 'iep:relSearch', { q: 'x' }, `${base}/search?q=x`],
+      ['/tmpl/desc', 'iep:relItems', { id: '7', limit: '3' }, `${base}/tmpl/items/7?limit=3`],
+      ['/tmpl/desc', 'iep:prefixShard', { id: 'abcdef' }, `${base}/tmpl/shard/ab/abcdef`],
+      ['/tmpl-base', 'iep:baseItems', { q: 'x' }, 'https://api.example/v1/items?q=x'],
+    ];
+    for (const [path, rel, fields, url] of cases) {
+      const { r: run, request } = await dry(path, rel, fields);
+      expect(run.code, `${rel}: ${run.stderr}`).toBe(0);
+      expect(request!.url, rel).toBe(url);
+    }
+    const live = await hmc(['invoke', `${base}/tmpl/desc`, 'iep:relSearch', '--field', 'q=x']);
+    expect(live.code, live.stderr).toBe(0);
+    expect(seen).toContain('GET /search?q=x');
+  });
+
+  it('keeps a template mapping with no hydra:property as its own required field', async () => {
+    const r = await hmc(['invoke', `${base}/mappings`, 'urn:delete-item', '--field', 'force=true', '--confirm']);
+    expect(r.code).toBe(2);
+    expect(r.stderr).toContain("missing required field 'id'");
+    expect((await dry('/mappings', 'urn:delete-item', { id: '7', force: 'true' })).request!.url).toBe(`${base}/items/7?force=true`);
+  });
+
+  it('sends a hydra:target that is an IRI template as a template', async () => {
+    const r = await hmc(['invoke', `${base}/target-template`, 'control-about', '--field', `endpoint=${base}/lrs`]);
+    expect(r.code, r.stderr).toBe(0);
+    expect(seen).toContain('GET /lrs/about');
+  });
+
+  it('sends a safe method\'s whole-body field as a parameter and labels a body by its own type', async () => {
+    const query = 'SELECT * WHERE { ?s ?p ?o } LIMIT 1';
+    const r = await hmc(['invoke', `${base}/raw`, 'iep:sparqlGet', '--field', `query=${query}`]);
+    expect(r.code, r.stderr).toBe(0);
+    const got = received.filter(x => x.line.startsWith('GET /sparql?'));
+    expect(got.length).toBeGreaterThan(0);
+    expect(new URL(got[0]!.line.slice(4), base).searchParams.get('query')).toBe(query);
+    expect([got[0]!.body, got[0]!.type]).toEqual(['', '']);
+    const post = await dry('/raw', 'iep:sparqlPost', { query });
+    expect([post.request!.headers['Accept'], post.request!.headers['Content-Type'], post.request!.body])
+      .toEqual(['application/sparql-results+json', 'application/sparql-query', query]);
+    const put = await dry('/raw', 'iep:notePut', { body: 'hello' });
+    expect([put.request!.headers['Accept'], put.request!.headers['Content-Type']]).toEqual(['text/turtle', 'text/plain']);
+  });
+
+  it('treats a control with no method as a POST, so it sends nothing unconfirmed', async () => {
+    const doc = await listed('/no-method');
+    expect(doc.controls.map(c => [c.method, c.unsafe])).toEqual([['POST', true]]);
+    const r = await hmc(['invoke', `${base}/no-method`, 'urn:publish-note']);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain('Dry run');
+    expect(seen.filter(s => s.includes('/publish'))).toEqual([]);
+  });
+
+  it('writes the same URL as the page for a non-ASCII path, a replaced query parameter and number fields', async () => {
+    const wiki = await hmc(['invoke', `${base}/wiki`, 'urn:wiki']);
+    expect(wiki.code, wiki.stderr).toBe(0);
+    expect(seen).toContain('GET /wiki/Caf%C3%A9');
+    expect((await dry('/merge', 'urn:merge', { tag: '["a","b"]', view: 'brief' })).request!.url).toBe(`${base}/items?tag=a&tag=b&view=brief`);
+    expect((await dry('/rates', 'urn:rates', { amount: '2', lat: '0.0000001', big: '1e16' })).request!.url)
+      .toBe(`${base}/rates/2?lat=1e-7&big=10000000000000000`);
+  });
+});
+
+describe('hmc.py: forms', () => {
+  it('takes a list for a property with no sh:maxCount, checks its count, and sends it as a JSON array', async () => {
+    const doc = await listed('/multi');
+    expect(fieldsOf(doc, 'Publish classified')).toEqual([['graph_iri', true, false], ['conforms_to_shapes', true, true],
+      ['tags', true, true], ['levels', false, true]]);
+    const g = `${base}/g`;
+    const few = await dry('/multi', 'urn:act-publish', { graph_iri: g, tags: 'a' });
+    expect(few.r.stderr).toContain('tags: needs at least 2 values, got 1');
+    const many = await dry('/multi', 'urn:act-publish', { graph_iri: g, tags: ['a', 'b', 'c', 'd', 'e', 'f'] });
+    expect(many.r.stderr).toContain('tags: takes at most 5 values, got 6');
+    const wrong = await dry('/multi', 'urn:act-publish', { graph_iri: g, tags: ['a', 'b'], levels: '4' });
+    expect(wrong.r.stderr).toContain('levels: must be one of 1, 2, 3');
+    for (const tags of [['a', 'b'], 'a\nb', '["a","b"]']) {
+      const ok = await dry('/multi', 'urn:act-publish', { graph_iri: g, tags, levels: ['1', '3'] });
+      expect(ok.r.code, ok.r.stderr).toBe(0);
+      expect(ok.request!.body).toEqual({ graph_iri: g, conforms_to_shapes: [`${base}/shapes`], tags: ['a', 'b'], levels: [1, 3] });
+    }
+  });
+
+  it('builds fields from hydra:supportedProperty, by property IRI and by an inline property\'s label', async () => {
+    expect(fieldsOf(await listed('/apidoc'), 'Post a comment')).toEqual([['text', true, false], ['author', false, false]]);
+    expect((await dry('/apidoc', 'post-comment', { text: 'hello' })).request!.body).toEqual({ text: 'hello' });
+    expect((await dry('/apidoc', 'post-comment')).r.stderr).toContain("missing required field 'text'");
+    expect(fieldsOf(await listed('/manifest'), 'Create note').map(f => f[0])).toEqual(['title', 'priority', 'kind']);
+    expect((await dry('/manifest', 'urn:create-note', { title: 'x', kind: 'memo', priority: '9' })).r.stderr).toContain('priority: above maxInclusive 5');
+  });
+
+  it('matches a template mapping\'s compact hydra:property to the shape\'s path, so one field carries the shape\'s limits', async () => {
+    expect(fieldsOf(await listed('/mapprop'), 'Find').map(f => f[0])).toEqual(['text']);
+    expect((await dry('/mapprop', 'iep:find', { text: 'abcdefgh' })).r.stderr).toContain('text: longer than maxLength 5');
+  });
+
+  it('names a field from a relative path with non-ASCII characters as written, as the page does', async () => {
+    expect((await dry('/fiche', 'urn:fiche', { 'prénom': 'Ada', 'âge': '36' })).request!.body).toEqual({ 'prénom': 'Ada', 'âge': 36 });
+  });
+
+  it('refuses a control with two fields of one name, and a field name no input has', async () => {
+    const dup = await dry('/dup', 'urn:dup', { description: 'A dataset' });
+    expect(dup.r.code).toBe(2);
+    expect(dup.r.stderr).toContain("two input fields are both named 'description'");
+    const unknown = await dry('/bool-enum', 'urn:accept', { agree: 'true', nope: '1' });
+    expect(unknown.r.code).toBe(2);
+    expect(unknown.r.stderr).toContain("no input field is named 'nope'");
+  });
+
+  it('accepts a JSON boolean or object enum entry as its JSON text, and reads a count facet written 1.0', async () => {
+    const accepted = await dry('/bool-enum', 'urn:accept', { agree: 'true', mode: '{"a":1}' });
+    expect(accepted.r.code, accepted.r.stderr).toBe(0);
+    expect(accepted.request!.body).toEqual({ agree: true, mode: '{"a":1}' });
+    expect((await dry('/mincount', 'urn:mincount', { a: 'toolong' })).r.stderr).toContain('a: longer than maxLength 3');
+    expect((await dry('/mincount', 'urn:mincount')).r.stderr).toContain("missing required field 'a'");
   });
 });

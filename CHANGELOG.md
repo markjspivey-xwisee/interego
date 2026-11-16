@@ -199,6 +199,49 @@ fragment at a known address and under an explicit `@base`, and an `@base` of
 address was new, and nothing was sent before either. The CSP script hash is
 updated.
 
+**JSON-LD read as JSON-LD reads it, and requests that go where they say.** A
+review served both clients documents that jsonld.js reads one way and they read
+another. A GET marked `iep:destructiveHint true` under `@nest` (MCP's
+`annotations` shape), through a term written before the prefix it uses, or in a
+node's own `@context` was a safe read that `hmc.py` and an `?invoke=` link sent
+unconfirmed. Keyword aliases (`"id": "@id"`), a term with no `@id` under
+`@vocab`, a named graph, `@included`, `@index` and `@id` maps, a JSON Schema in a
+`@json` value object, and `"@vocab": "#"` each lost a control, its target or its
+fields, and a flattened document took its title from whichever node sorted
+first. Each client now puts the whole document in one form before reading it:
+context terms in dependency order, aliases, `@nest`, node, property and type
+scoped contexts, containers and expanded types, with the descriptor taken as
+the node at its address. Both resolve IRIs by RFC 3986 on the text as written,
+against the address a document landed at after redirects (except after a 303 in
+`hmc.py`; the page cannot tell one apart), so `/dir` answered from `/dir/` no
+longer sends `items` to `/items`, and a field named by `#prénom` is `prénom` on
+the page too. A document that needs more context work than a fixed budget is
+refused. A control with no `hydra:method` is now a POST, as the kernel's follower
+sends it, so it is unsafe (a HyperMarkdown block too, which is why the
+`__proto__` test now expects `post`), and a `destructiveHint` under an unknown
+prefix or in an object directly inside a control makes it unsafe. A
+`hydra:IriTemplate` given as the `hydra:target`, as Foxxi's decoration catalogs
+write it, is read as a template; a relative template resolves against the base;
+`{id:2}` cuts its value; two mappings with no `hydra:property` stay two fields
+on the page; and the page names a template's host only when no variable can
+extend it, and checks that host before sending. A GET sends a whole-body field
+as a parameter named after it, a body is labelled by its own type rather than
+the type the control returns, `hmc.py` sends non-ASCII targets percent-encoded
+and writes numbers as the page does (`2`, `1e-7`), and the page replaces a query
+parameter a field names. In forms, a SHACL property with no `sh:maxCount` takes
+a list, as Interego's shapes mean it, so the I2IDL catalog's
+`conforms_to_shapes` goes as the JSON array the relay reads, with its count
+checked; `hydra:supportedProperty` and `hydra:operation` give fields and
+controls; a plain `schema:query` mapping property matches its shape again; an
+enum compares by JSON text (`true`, not `True`); a count written `1.0` reads in
+both; two fields of one name refuse the control; and a name that is no field's
+is an error rather than dropped. Existing fixtures whose fields take one value
+now carry `sh:maxCount 1`. Both test files serve the same documents, from
+`tests/hypermedia-client-fixtures.ts`, and each finding has a page or
+command-line test, mostly both, that failed before. That module raises the lint
+gate's `MIN_FILES` to 683, the number the gate named. The CSP script hash is
+updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and
