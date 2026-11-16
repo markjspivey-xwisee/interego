@@ -733,7 +733,9 @@ const BASELINE = {};
 // 2026-11-15: tools/coached-world-guest-provision.mjs, its declarations and its test bring it to 715; the gate named 681.
 // 2026-11-15: tests/hypermedia-client-rendering.test.ts and tests/hypermedia-client-cli.test.ts bring it to 717; the gate named 682.
 // 2026-11-16: tests/hypermedia-client-fixtures.ts brings it to 718; the gate named 683.
-export const MIN_FILES = 683;
+// 2026-11-16: merging master (tools/prune-image-dev-tools.mjs among its new files) brings it to
+// 719; the gate named 684.
+export const MIN_FILES = 684;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

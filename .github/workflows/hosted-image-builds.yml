@@ -25,6 +25,13 @@ on:
       - 'examples/multi-agent/css-config.json'
       - 'demos/**'
       - 'applications/shared-workspace/**'
+      # The relay's reference stage compiles these compositions into the image.
+      - 'integrations/application-runtime/**'
+      - 'integrations/affordance-surface/**'
+      - 'applications/llm-telemetry/relay-observer.ts'
+      - 'applications/llm-telemetry/tsconfig.relay.json'
+      # interego-bridge and discord run it inside their npm ci layer.
+      - 'tools/prune-image-dev-tools.mjs'
       - 'package.json'
       - 'package-lock.json'
       - '**/package.json'

@@ -26,7 +26,9 @@
  *      This is the leg that says WHAT the endpoint emits instead, verbatim, so a reader does
  *      not have to take leg 2's word for it.
  *   2. SDK — drive `SSEClientTransport` from `@modelcontextprotocol/sdk` (the reference
- *      implementation every MCP client is built on) at the endpoint and see whether
+ *      implementation every MCP client is built on; this file is why the root package.json
+ *      declares that v1 SDK as a dev dependency, since it is in `tsconfig.check.json` and
+ *      nothing deployed uses v1) at the endpoint and see whether
  *      `Client.connect()` resolves. This is the leg that answers the actual question, because
  *      "no MCP client can handshake here" is a claim about clients, not about frames.
  *   3. CONTROL — drive `StreamableHTTPClientTransport` at `/mcp` with the SAME bearer in the
