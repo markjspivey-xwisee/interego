@@ -40,7 +40,7 @@ import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/o
 import { createOwnSubjectActivityStore } from '../src/own-subject-activity-store.js';
 import { rateLimit } from 'express-rate-limit';
 import { SignerHourlyLimit, openHostingRequest, openHostingSettings } from '../src/open-hosting.js';
-import { ProfileServer, ProfileServerError, mountProfileServerReads, MAX_PROFILE_BYTES, type ProfileRecord } from '../src/xapi-profile-server/service.js';
+import { ProfileServer, ProfileServerError, AdditionNotKept, RemovalNotKept, notKeptAnswer, mountProfileServerReads, MAX_PROFILE_BYTES, type ProfileRecord } from '../src/xapi-profile-server/service.js';
 import { validates as profileValidates } from '../src/xapi-profile-server/processor.js';
 import { buildFoxxiProfileDoc as ownXapiProfileDoc, FOXXI_PROFILE_ID as OWN_XAPI_PROFILE_ID } from '../src/xapi-profile.js';
 import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
@@ -11051,7 +11051,8 @@ async function fetchProfileByUri(uri: string): Promise<unknown> {
 }
 
 // POST /agent/xapi-profiles/add — add a profile version, by its contents (`profile`) or by where
-// it is published (`uri`). Signed: the profile is held under the agent that added it.
+// it is published (`uri`). Signed: the profile is held under the agent that added it. The version
+// is held only once its pod write is acknowledged; otherwise 503, not ok, and nothing changed.
 app.post('/agent/xapi-profiles/add', xapiProfileWriteRateLimit, async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
@@ -11080,6 +11081,7 @@ app.post('/agent/xapi-profiles/add', xapiProfileWriteRateLimit, async (req, res)
       holonUri: r.holonUri ?? null, persisted: r.persisted,
     }, bridgeBaseUrl, 'Profile added', []);
   } catch (err) {
+    if (err instanceof AdditionNotKept) { res.status(err.status).json(notKeptAnswer(err, `${bridgeBaseUrl}/agent/xapi-profiles/add`)); return; }
     if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
     sendServerError(res, err, 'route-handler');
   }
@@ -11087,7 +11089,8 @@ app.post('/agent/xapi-profiles/add', xapiProfileWriteRateLimit, async (req, res)
 
 // POST /agent/xapi-profiles/remove — take down a profile (every version) or one version. The
 // agent that added it, or the operator. The lattice is append-only, so what is recorded is the
-// removal; the earlier holon stays addressable and the server stops answering from it.
+// removal; the earlier holon stays addressable and the server stops answering from it, once the
+// removal is acknowledged by the pod. Otherwise 503, not ok, and the profile still answers.
 app.post('/agent/xapi-profiles/remove', xapiProfileWriteRateLimit, async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
@@ -11097,6 +11100,7 @@ app.post('/agent/xapi-profiles/remove', xapiProfileWriteRateLimit, async (req, r
     const r = await xapiProfileServer.remove(iri, auth.callerDid);
     sendActionResult(req, res, { ok: true, removed: r.removed, persisted: r.persisted, server: xapiProfileServerBase }, bridgeBaseUrl, 'Profile taken down', []);
   } catch (err) {
+    if (err instanceof RemovalNotKept) { res.status(err.status).json(notKeptAnswer(err, `${bridgeBaseUrl}/agent/xapi-profiles/remove`)); return; }
     if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
     sendServerError(res, err, 'route-handler');
   }
