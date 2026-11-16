@@ -24,7 +24,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, jsonldPlans, jsonldRefusals, sharedDescriptors } from './hypermedia-client-fixtures.js';
+import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, jsonldPlans, jsonldRefusals, sharedDescriptors,
+  sharedMarkdown } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -323,6 +324,7 @@ const DOCS: Record<string, { type: string; text: string }> = {
 };
 // The documents hmc.py's test reads too, served from HOST.
 const SHARED = sharedDescriptors(HOST);
+const SHARED_MD = sharedMarkdown(HOST);
 // Large documents whose shape once cost a product of two of their sizes, built once.
 const COST = costDescriptors(HOST);
 // Documents whose fetch lands somewhere else after redirects: fetch reports that address as the
@@ -367,6 +369,7 @@ function load(query: string, extra: Record<string, { type: string; text: string 
         const doc = Object.prototype.hasOwnProperty.call(DOCS, u.pathname) ? DOCS[u.pathname] : undefined;
         if (doc) return respond(doc.text, doc.type);
         if (Object.prototype.hasOwnProperty.call(SHARED, u.pathname)) return respond(SHARED[u.pathname]!, 'application/ld+json');
+        if (Object.prototype.hasOwnProperty.call(SHARED_MD, u.pathname)) return respond(SHARED_MD[u.pathname]!, 'text/markdown');
         if (Object.prototype.hasOwnProperty.call(COST, u.pathname)) return respond(COST[u.pathname]!, 'application/ld+json');
         const moved = Object.prototype.hasOwnProperty.call(LANDED, u.pathname) ? LANDED[u.pathname] : undefined;
         if (moved) return Object.defineProperty(respond(moved.text, 'application/ld+json'), 'url', { value: moved.landed });
@@ -1242,6 +1245,87 @@ describe('hypermedia client: scoped contexts, map references and repeated keys a
   it('passes a percent-encoded triplet through a reserved expansion as it is', async () => {
     const { t, plan } = await linkPlan('/tmpl-pct', 'urn:tmpl:pct', { path: '/x?y=%2F&z=a b' });
     try { expect(plan!.url).toBe(`${HOST}/r/x?y=%2F&z=a%20b`); } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: every value read, or the control or document refused', () => {
+  it('reads every hint value: a GET marked unsafe in any of them is a dry run, and true with false is refused', async () => {
+    const t = await loaded('/hint-values');
+    try {
+      expect(groupTitles(t.document, 0)).toEqual(['Plain hint read']);
+      expect(groupTitles(t.document, 1)).toEqual(['Listed hint', 'Merged hint', 'String hint', 'Two hints', 'Typed hint', 'Unreadable hint']);
+    } finally { t.dom.window.close(); }
+    for (const rel of ['urn:hint:typed', 'urn:hint:string', 'urn:hint:unread']) {
+      const { t: linked, shown } = await linkPlan('/hint-values', rel, {}, false);
+      try {
+        expect(shown, rel).toContain('Dry run — nothing was sent.');
+        expect(linked.calls.filter(c => c.url.includes('/purge')), rel).toEqual([]);
+      } finally { linked.dom.window.close(); }
+    }
+  });
+
+  it('reads an input of a shape whose properties and counts are written as @set objects', async () => {
+    const { t, plan } = await linkPlan('/set-values', 'urn:set:shape', { q: '5' });
+    try { expect(plan!.url).toBe(`${HOST}/api?q=5`); } finally { t.dom.window.close(); }
+    const bad = await linkPlan('/set-values', 'urn:set:shape', { q: '1.5' });
+    try {
+      expect(bad.plan).toBeNull();
+      expect(bad.shown).toContain('Validation failed');
+    } finally { bad.t.dom.window.close(); }
+  });
+
+  it.each(DOCUMENT_REFUSALS)('refuses %s whole, with a problem that names it, and sends nothing', async (path, problem) => {
+    const t = load(`?url=${encodeURIComponent(HOST + path)}&autoload=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready']).toBe('error'));
+      expect(document.getElementById('status')!.textContent).toBe(problem);
+      expect(document.querySelectorAll('.card')).toHaveLength(0);
+      expect(t.calls.filter(c => !c.url.startsWith(HOST + path))).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it.each([
+    ['a short name two controls share', `invoke=remove`, 'More than one control matches remove (urn:a:remove, urn:b:remove); nothing was sent.'],
+    ['two controls named in one link', `invoke=urn:a:remove&invoke=urn:b:remove`, 'This link names more than one control to invoke; nothing was sent.'],
+  ])('sends nothing for a link that names %s', async (_what, invoke, status) => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/same-names')}&${invoke}`);
+    try {
+      await vi.waitFor(() => expect(t.document.documentElement.dataset['ready']).toBe('done'));
+      expect(t.document.getElementById('status')!.textContent).toBe(status);
+      expect(t.document.getElementById('invokeForm')).toBeNull();
+      expect(t.calls.filter(c => !c.url.startsWith(`${HOST}/same-names`))).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('loads nothing from a link that names two descriptors', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/same-names')}&url=${encodeURIComponent(HOST + '/hints')}`);
+    try {
+      await vi.waitFor(() => expect(t.document.documentElement.dataset['ready']).toBe('error'));
+      expect(t.document.getElementById('status')!.textContent).toBe('This link names more than one descriptor to load; nothing was loaded.');
+      expect(t.calls).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('refuses a document that writes NaN, which is not JSON', async () => {
+    const t = load(`?url=${encodeURIComponent(HOST + '/not-json')}&autoload=1`);
+    try {
+      await vi.waitFor(() => expect(t.document.documentElement.dataset['ready']).toBe('error'));
+      expect(t.document.querySelectorAll('.card')).toHaveLength(0);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('refuses a HyperMarkdown block that gives its method twice, shows a title given twice as the last, and reads a hint', async () => {
+    const t = await loaded('/hm-repeat');
+    try {
+      expect(groupTitles(t.document, 0)).toEqual(['Second title']);
+      expect(groupTitles(t.document, 1)).toEqual(['Destructive read', 'Repeated method']);
+    } finally { t.dom.window.close(); }
+    const { t: linked, shown } = await linkPlan('/hm-repeat', 'hm-destructive', {}, false);
+    try {
+      expect(shown).toContain('Dry run — nothing was sent.');
+      expect(linked.calls.filter(c => c.url.includes('/purge'))).toEqual([]);
+    } finally { linked.dom.window.close(); }
   });
 });
 

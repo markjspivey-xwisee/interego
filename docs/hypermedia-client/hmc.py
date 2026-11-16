@@ -119,6 +119,55 @@ TERM_FALLBACKS = {
 # document may write in place instead of as references.
 HARVESTED = frozenset({P_AFFORDANCE, P_CONTROL, P_SUPOP, P_SUPCLASS, P_OPERATION})
 HARVESTED_NAMES = frozenset({"affordance", "affordances", "control", "supportedOperation", "supportedClass", "operation"})
+# The properties whose values the reader takes as members: operations and the
+# classes that hold them, a shape's properties, a class's supported properties
+# and a template's mappings. A @list or a graph object there holds members.
+MEMBERS = HARVESTED | {SHACL + "property", HYDRA + "supportedProperty", HYDRA + "mapping"}
+
+# What a document that uses a JSON-LD structure this reader does not read is
+# refused with. The page's REFUSED is the same.
+REFUSED = {
+    "graph": "This document holds a @graph inside a node, which this client does not read, so it is not read.",
+    "included": "This document holds @included inside a node that is not at its top or in a @graph, which this client "
+                "does not read, so it is not read.",
+    "reverse": "This document uses @reverse, which this client does not read, so it is not read.",
+    "set": "This document has a @set object with a key other than @set and @index, which JSON-LD does not allow, so it is "
+           "not read.",
+    "set-in-list": "This document has a @set object inside a @list, which this client does not read, so it is not read.",
+}
+
+
+def _colliding(keyword: str) -> ValueError:
+    return ValueError(f"This document gives one node {keyword} twice, which JSON-LD does not allow, so it is not read.")
+
+
+def _nested_keyword(keyword: str) -> ValueError:
+    return ValueError(f"This document puts {keyword} inside a @nest object, which this client does not read, so it is not read.")
+
+
+def _repeated_key(key: str) -> ValueError:
+    return ValueError(f'This document repeats the key "{key}" in one object, so which value it means is not known, and it is '
+                      "not read.")
+
+
+def _not_json(constant: str) -> Any:
+    """json.loads' parse_constant: NaN and Infinity are not JSON, and the
+    page's JSON.parse refuses them, so this does too."""
+    raise ValueError(f"This document writes {constant}, which is not JSON, so it is not read.")
+
+
+def _no_repeated_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
+    """json.loads' object_pairs_hook: an object, or a refusal when it repeats a
+    key. JSON leaves a repeated key's meaning open; a reader that took its last
+    value would read a method the document also says is something else. The
+    page's repeatedKey finds the same key: the first repeated in the object
+    that closes first."""
+    out: dict[str, Any] = {}
+    for key, value in pairs:
+        if key in out:
+            raise _repeated_key(key)
+        out[key] = value
+    return out
 
 
 def as_list(value: Any) -> list[Any]:
@@ -136,14 +185,160 @@ def raw_id(value: Any) -> Any:
     return value
 
 
-def literal(value: Any) -> Any:
-    items = [raw_id(v) for v in as_list(value)]
-    items = [i for i in items if i is not None]
-    return items[0] if items else None
-
-
 def literals(value: Any) -> list[Any]:
     return [raw_id(v) for v in as_list(value) if raw_id(v) is not None]
+
+
+# The reader reads the JSON-LD forms it models and fails closed on the rest. A
+# property that decides what a control does (its method, target, template,
+# hints, action, shape, media type, an input's datatype, counts, lengths, path,
+# name, pattern or default) is read with _one: more than one distinct value, or
+# a value in a form this reader does not read there (a @list, a JSON literal, a
+# node written in place with no @id), is a problem that names it, and the
+# control is listed with the writes and not invoked. A label or a description is
+# only shown, so the first value it can read is enough (_label).
+_VALUE_KEYS = frozenset({"@value", "@type", "@language", "@direction", "@index"})
+
+
+def _value_of(item: Any) -> tuple[bool, Any]:
+    """One JSON-LD value read as a single value: (True, value) for a string,
+    number or boolean, a value object's @value when it is one, or a node's
+    @id (a reference, or a node written in place with one); (True, None) for
+    null; (False, why) for a form this reader does not read as one value. The
+    page's valueOf is the same."""
+    if item is None or isinstance(item, (str, int, float)):
+        return True, item
+    if isinstance(item, dict):
+        if "@value" in item:
+            if item.get("@type") == "@json":
+                return False, "a JSON literal (@json)"
+            value = item["@value"]
+            if any(key not in _VALUE_KEYS for key in item) or not (value is None or isinstance(value, (str, int, float))):
+                return False, "a value object this client does not read"
+            return True, value
+        for keyword in ("@list", "@set", "@graph"):
+            if keyword in item:
+                return False, f"a JSON-LD {keyword}"
+        if isinstance(item.get("@id"), str):
+            return True, item["@id"]
+        return False, "a node written in place with no @id"
+    return False, "a value this client does not read"
+
+
+def _label(value: Any) -> Any:
+    """The first value of a property that is only shown (a title, a label, a
+    description) that reads as one value, or None."""
+    for item in as_list(value):
+        ok, found = _value_of(item)
+        if ok and found is not None:
+            return found
+    return None
+
+
+def _distinct(value: Any, key: Any = None) -> tuple[list[Any], str | None]:
+    """A property's values as _value_of reads them, each distinct one once, in
+    the order written (two are the same when `key` gives them one key, their
+    text by default), and why the first value that could not be read could
+    not, or None."""
+    key = key or _text
+    found: list[Any] = []
+    keys: set[str] = set()
+    for item in as_list(value):
+        ok, read = _value_of(item)
+        if not ok:
+            return found, read
+        if read is None:
+            continue
+        k = key(read)
+        if k not in keys:
+            keys.add(k)
+            found.append(read)
+    return found, None
+
+
+def _one(value: Any, label: str, problems: list[str], what: str, subject: str = "this control",
+         tail: str = "it is not invoked", key: Any = None) -> Any:
+    """The one value of a property the reader acts on, or None when it has
+    none. More than one distinct value, or one it cannot read, adds a problem
+    that names the property to `problems` (the first value read, if any, is
+    still returned, to show). The page's one is the same."""
+    found, why = _distinct(value, key)
+    if why is not None:
+        problems.append(f"{subject} writes {label} as {why}, which this client does not read, so {what} is not known; {tail}")
+    elif len(found) > 1:
+        problems.append(f"{subject} names more than one {label} ({', '.join(_text(v) for v in found)}), so {what} is not known; {tail}")
+    return found[0] if found else None
+
+
+def _count_key(value: Any) -> str:
+    number = _inty(value)
+    return _text(value) if number is None else str(number)
+
+
+def _count(value: Any, label: str, problems: list[str], subject: str) -> int | None:
+    """A count or length facet of an input: a whole number, one value of it.
+    One that is no whole number is a problem, not a facet left out."""
+    before = len(problems)
+    found = _one(value, label, problems, "what it takes", subject, "this control is not invoked", _count_key)
+    if found is None:
+        return None
+    number = _inty(found)
+    if number is None and len(problems) == before:
+        problems.append(f"{subject} names an {label} that is not a whole number ({_text(found)}), so what it takes is not "
+                        "known; this control is not invoked")
+    return number
+
+
+_XSD_BOOLEAN = XSD + "boolean"
+
+
+def _hint_value(item: Any) -> tuple[str, Any]:
+    """One value of a destructiveHint or readOnlyHint: ("bool", True or False)
+    for a JSON boolean, an xsd:boolean literal or a string "true", "false",
+    "1" or "0"; ("none", None) for null; ("unread", None) for any other
+    string, number or literal, which the reader takes as the unsafe value;
+    ("form", why) for a form it does not read as one value. The page's
+    hintValue is the same."""
+    if item is None:
+        return "none", None
+    if isinstance(item, bool):
+        return "bool", item
+    if isinstance(item, dict) and "@value" in item:
+        ok, why = _value_of(item)
+        if not ok:
+            return "form", why
+        if item["@value"] is None:
+            return "none", None
+        kind = item.get("@type")
+        if (kind is not None and kind != _XSD_BOOLEAN) or "@language" in item or "@direction" in item:
+            return "unread", None
+        item = item["@value"]
+        if isinstance(item, bool):
+            return "bool", item
+    elif isinstance(item, dict):
+        ok, why = _value_of(item)
+        return ("unread", None) if ok else ("form", why)
+    if isinstance(item, str):
+        text = item.strip(_SPACES)
+        if text in ("true", "1"):
+            return "bool", True
+        if text in ("false", "0"):
+            return "bool", False
+    return "unread", None
+
+
+def _js_json(value: Any) -> str:
+    """JSON text as the page's JSON.stringify writes it: no spaces, and each
+    number as JavaScript writes it, so a JSON 1.0 is 1 in both clients."""
+    if value is None or isinstance(value, (bool, str, int)):
+        return json.dumps(value, ensure_ascii=False)
+    if isinstance(value, float):
+        return _js_number_text(value) if math.isfinite(value) else "null"
+    if isinstance(value, list):
+        return "[" + ",".join(_js_json(item) for item in value) + "]"
+    if isinstance(value, dict):
+        return "{" + ",".join(json.dumps(str(k), ensure_ascii=False) + ":" + _js_json(v) for k, v in value.items()) + "}"
+    return json.dumps(str(value), ensure_ascii=False)
 
 
 _SCHEME_LETTERS = "abcdefghijklmnopqrstuvwxyzABCDEFGHIJKLMNOPQRSTUVWXYZ"
@@ -749,8 +944,9 @@ class Context:
         if not isinstance(value, dict):
             return
         if "@reverse" in value:
-            # A reverse property names the node as the value, not the subject; the reader reads neither way.
-            self.nulled.add(key)
+            # A reverse property names the node as the value, not the subject. The
+            # reader does not read it, so a document that uses one is refused (normalize).
+            self.coerce[key] = "@reverse"
             return
         iri: Any
         if "@id" in value:
@@ -830,12 +1026,71 @@ class Context:
         return value
 
     def _rename_aliases(self, item: dict[str, Any]) -> None:
+        """Each key aliased to a keyword renamed to it. A second @type or
+        @included adds to the first, as JSON-LD 1.1 has it; a second of any
+        other keyword is refused, as JSON-LD refuses colliding keywords. A
+        @nest alias keeps its name (_is_nest reads it)."""
         if not self.aliases:
             return
         for key in list(item):
             keyword = self.aliases.get(key)
-            if keyword and keyword not in item:
+            if not keyword or keyword == "@nest":
+                continue
+            if keyword not in item:
                 item[keyword] = item.pop(key)
+            elif keyword in ("@type", "@included"):
+                _merge_value(item, keyword, item.pop(key))
+            else:
+                raise _colliding(keyword)
+
+    def _keyword(self, key: str) -> str | None:
+        return key if key.startswith("@") else self.aliases.get(key)
+
+    def _wrapper(self, item: dict[str, Any], member: bool) -> str | None:
+        """The key holding what `item` wraps, when it is a @set object or, as
+        a value of a property whose values are members (MEMBERS), a @list
+        object or a graph object with no @context or properties of its own;
+        else None. Keys are read through this context's aliases. A @set object
+        with a key other than @index is refused, as JSON-LD refuses it."""
+        kinds = {key: self._keyword(key) for key in item}
+        for wanted, allowed in (("@set", ("@set", "@index")), ("@list", ("@list", "@index")), ("@graph", ("@graph", "@id", "@index"))):
+            found = [key for key, kind in kinds.items() if kind == wanted]
+            if len(found) > 1:
+                raise _colliding(wanted)
+            if not found:
+                continue
+            if wanted == "@set" and any(kind not in allowed for kind in kinds.values()):
+                raise ValueError(REFUSED["set"])
+            if wanted == "@set" or (member and all(kind in allowed for kind in kinds.values())):
+                return found[0]
+            return None
+        return None
+
+    def _contents(self, value: Any, member: bool) -> Any:
+        """A property's value as JSON-LD expands it, with each @set object in
+        it (and, as a value of a member property, each @list object and graph
+        object _wrapper unwraps) replaced by what it holds, and nested arrays
+        flattened. A value that holds none of these is returned as it is. A
+        stack, so a deep value costs linear time. The page's contents is the
+        same."""
+        if isinstance(value, dict):
+            if self._wrapper(value, member) is None:
+                return value
+        elif not isinstance(value, list):
+            return value
+        out: list[Any] = []
+        stack: list[Any] = [value]
+        while stack:
+            item = stack.pop()
+            if isinstance(item, list):
+                stack.extend(reversed(item))
+                continue
+            key = self._wrapper(item, member) if isinstance(item, dict) else None
+            if key is None:
+                out.append(item)
+            else:
+                stack.append(item[key])
+        return out
 
     def _is_nest(self, key: str) -> bool:
         return key == "@nest" or self.aliases.get(key) == "@nest"
@@ -860,10 +1115,12 @@ class Context:
                         _merge_value(item, "@type", value)
                         continue
                     if inner == "@id":
-                        item.setdefault("@id", value)
+                        if "@id" in item:
+                            raise _colliding("@id")
+                        item["@id"] = value
                         continue
                     if inner.startswith("@") and inner != "@nest":
-                        continue
+                        raise _nested_keyword(inner)
                     if self._is_nest(inner) and inner not in item:
                         work.append(inner)
                     _merge_value(item, inner, value)
@@ -906,7 +1163,7 @@ class Context:
         out: list[Any] = []
         for key in sorted(value, key=_utf16_key):
             none = key == "@none" or value_ctx.aliases.get(key) == "@none"
-            for entry in as_list(value[key]):
+            for entry in as_list(value_ctx._contents(value[key], False)):
                 if language:
                     if isinstance(entry, str) and not none:
                         out.append({"@value": entry, "@language": key})
@@ -979,14 +1236,16 @@ class Context:
         top_items = document if isinstance(document, list) else [document]
         # Each entry: the item, its context, whether it is the document's top,
         # the property-scoped context of the key it is a value of (taken again
-        # after a type's scoped context ends), and whether that key is hydra:expects.
-        stack: list[tuple[Any, Context, bool, Any, bool]] = [
-            (item, self, not isinstance(document, list), unset, False) for item in top_items]
+        # after a type's scoped context ends), whether that key is hydra:expects,
+        # and whether the item is a node of the document's graphs (its top, or in
+        # a @graph or @included of one), which the reader indexes.
+        stack: list[tuple[Any, Context, bool, Any, bool, bool]] = [
+            (item, self, not isinstance(document, list), unset, False, True) for item in top_items]
         keyed: dict[int, tuple[Any, dict[str, Any]]] = {}
         while stack:
-            item, ctx, top, scoped, expected = stack.pop()
+            item, ctx, top, scoped, expected, level = stack.pop()
             if isinstance(item, list):
-                stack.extend((x, ctx, False, scoped, expected) for x in item if isinstance(x, (dict, list)))
+                stack.extend((x, ctx, False, scoped, expected, level) for x in item if isinstance(x, (dict, list)))
                 continue
             if not isinstance(item, dict):
                 continue
@@ -1020,6 +1279,9 @@ class Context:
                 if "type" in from_map:
                     item["@type"] = [from_map["type"]] + as_list(item.get("@type"))
             if "@value" in item:
+                # A literal's datatype is an IRI, expanded as @vocab expands one.
+                if isinstance(item.get("@type"), str) and item["@type"] != "@json":
+                    item["@type"] = ctx.expand_iri(item["@type"], vocab=True, document_relative=True)
                 continue
             # A type's scoped context, looked up in the context before any of
             # them, in the order of the types' names, holds for this node's own keys.
@@ -1040,18 +1302,39 @@ class Context:
                     item[key] = type_ctx._expand_typed(item[key], True)
                     continue
                 if key.startswith("@"):
+                    # The structures the reader does not read are refused, not skipped:
+                    # @reverse, and a @graph or @included it would not index.
+                    if key == "@reverse":
+                        raise ValueError(REFUSED["reverse"])
+                    if key == "@set":
+                        raise ValueError(REFUSED["set-in-list"])
+                    graphs = key in ("@graph", "@included")
+                    if graphs:
+                        if not level:
+                            raise ValueError(REFUSED["graph" if key == "@graph" else "included"])
+                        item[key] = ctx._contents(item[key], False)
                     if isinstance(item[key], (dict, list)):
-                        stack.append((item[key], ctx, False, scoped if key in ("@list", "@set") else unset, False))
+                        stack.append((item[key], ctx, False, scoped if key in ("@list", "@set") else unset, False, graphs))
                     continue
                 if key in ctx.nulled:
                     del item[key]
                     continue
                 kind = ctx.coerce.get(key)
+                if kind == "@reverse":
+                    raise ValueError(REFUSED["reverse"])
                 local = ctx.scoped[key] if key in ctx.scoped else unset
                 value_ctx = ctx.scoped_child(local, True) if local is not unset else ctx
                 value = item[key]
-                if key in ctx.containers:
+                containers = ctx.containers.get(key)
+                if containers and "@list" in containers:
+                    # A @list term's value is a list, as JSON-LD expands it.
+                    if value is not None and not (isinstance(value, dict) and any(value_ctx._keyword(k) == "@list" for k in value)):
+                        value = {"@list": as_list(value)}
+                elif containers:
                     value = ctx._unmap(key, value, keyed, value_ctx)
+                pred = ctx.expand_key(key)
+                if kind != "@json":
+                    value = value_ctx._contents(value, pred in MEMBERS or local_name(pred) in HARVESTED_NAMES)
                 if kind in ("@id", "@vocab"):
                     value = value_ctx._expand_typed(value, kind == "@vocab")
                 name = key
@@ -1065,7 +1348,7 @@ class Context:
                 else:
                     item[key] = value
                 if kind != "@json" and isinstance(value, (dict, list)):
-                    stack.append((value, value_ctx, False, local, ctx.expand_key(key) == P_EXPECTS))
+                    stack.append((value, value_ctx, False, local, pred == P_EXPECTS, False))
 
     def _expand_typed(self, value: Any, vocab: bool) -> Any:
         """A typed term's value: a string, or each string in an array or in a list or set object."""
@@ -1247,15 +1530,18 @@ class Descriptor:
     raw: Any = None
     context: Context | None = None
 
-    def find(self, rel: str) -> Control | None:
+    def matches(self, rel: str) -> list[Control]:
+        """The controls a name given on the command line names: those it names
+        exactly (as an action or an @id), or else those whose short name it is.
+        The page's matchControls is the same."""
         rel = (rel or "").strip()
         if not rel:
-            return None
+            return []
         # A name expands as the document's own IRIs did, so "iep:x" finds an action written "iep:x".
         full = self.context.expand_iri(rel, document_relative=True) if self.context else rel
         exact = [c for c in self.controls if c.rel in (rel, full) or c.id in (rel, full)]
         if exact:
-            return exact[0]
+            return exact
         lowered = rel.lower()
         loose = []
         for control in self.controls:
@@ -1266,7 +1552,13 @@ class Descriptor:
                 loose.append(control)
             elif control.rel.lower().endswith(":" + lowered):
                 loose.append(control)
-        return loose[0] if loose else None
+        return loose
+
+    def find(self, rel: str) -> Control | None:
+        """The one control a name names, or None when it names none or more
+        than one: a short name two controls share is never read as the first."""
+        found = self.matches(rel)
+        return found[0] if len(found) == 1 else None
 
     def to_public(self) -> dict[str, Any]:
         return {
@@ -1309,11 +1601,12 @@ class NodeIndex:
         self.nodes: dict[str, dict[str, Any]] = {}
         self.order: list[dict[str, Any]] = []
         self.root: dict[str, Any] | None = None
-        # Each template node's (template, mappings), read once (_template_of),
-        # and each shape's fields, built once (_shared_shape_fields); keyed by
-        # the node's id(), with the node kept so the id stays its own.
-        self.templates: dict[int, tuple[Any, tuple[str | None, list[dict[str, Any]]]]] = {}
-        self.shapes: dict[int, tuple[Any, list[Field], str | None, Any]] = {}
+        # Each template node's (template, mappings, problems), read once
+        # (_address_of), and each shape's fields and the problems they give,
+        # built once (_shared_shape_fields); keyed by the node's id(), with the
+        # node kept so the id stays its own.
+        self.templates: dict[int, tuple[Any, tuple[str | None, list[dict[str, Any]], list[str]]]] = {}
+        self.shapes: dict[int, tuple[Any, list[Field], list[str], str | None, Any]] = {}
         self._ingest_document(document, fetched_from)
 
     def _ingest_document(self, document: Any, fetched_from: str | None) -> None:
@@ -1363,18 +1656,17 @@ class NodeIndex:
     def _add(self, node: dict[str, Any], added: list[tuple[str, list[Any]]] | None = None) -> dict[str, Any]:
         """Adds a node, or merges it into the node already indexed at its @id:
         a key that node lacks is added, and a key both have gets the other's
-        literals and references ({"@id": ...}), so a method, a target or a hint
-        written in two places is read in both, as JSON-LD merges a node's
-        values; an object written in place stays the first one's. `added`, when
-        given, collects the (key, values) a merge added. The page's _add is the
-        same."""
+        values, objects written in place included, so a method, a target or a
+        hint written in two places is read in both, as JSON-LD merges a node's
+        values. `added`, when given, collects the (key, values) a merge added.
+        The page's _add is the same."""
         node_id = node.get("@id")
         if not node_id or not isinstance(node_id, str):
             # A node with no @id gets one in place, so the object a document
             # wrote and the one indexed are the same: an operation written
             # inline with no @id and no action is still a control.
-            action = literal(self.get(node, P_ACTION)) or node.get("action")
-            node_id = str(action) if action else f"_:n{len(self.order)}"
+            action = _label(self.get(node, P_ACTION))
+            node_id = _text(action) if action is not None and action != "" else f"_:n{len(self.order)}"
             node["@id"] = node_id
         existing = self.nodes.get(node_id)
         if existing is None:
@@ -1391,8 +1683,7 @@ class NodeIndex:
                 if added is not None:
                     added.append((key, as_list(val)))
                 continue
-            more = [x for x in as_list(val) if not isinstance(x, (dict, list)) or (
-                isinstance(x, dict) and ("@value" in x or all(k == "@id" for k in x)))]
+            more = as_list(val)
             if not more:
                 continue
             _merge_value(existing, key, more)
@@ -1474,38 +1765,74 @@ class NodeIndex:
     def types_of(self, node: dict[str, Any] | None) -> list[str]:
         return [str(self.ctx.expand_iri(x, vocab=True)) for x in literals(self.get(node, P_TYPE) or (node or {}).get("@type"))]
 
-    def rdf_list(self, head: Any) -> list[Any]:
+    def _list_node(self, item: Any) -> dict[str, Any] | None:
+        """The node an RDF list value names, written in place or by its @id,
+        when it has an rdf:first or rdf:rest; else None."""
+        if isinstance(item, dict) and ("@value" in item or "@list" in item):
+            return None
+        node = self.node(item)
+        if node is not None and (self.get(node, P_FIRST) is not None or self.get(node, P_REST) is not None):
+            return node
+        return None
+
+    def rdf_list(self, head: Any) -> tuple[list[Any], str | None]:
+        """The members of an RDF list of rdf:first / rdf:rest nodes, and why it
+        could not be read: a node with other than one rdf:first and one
+        rdf:rest, a rest that is no list node, a cycle, or a member this reader
+        does not read as one value."""
         out: list[Any] = []
-        seen: set[str] = set()
-        current = raw_id(head)
-        while current and current != P_NIL and str(current) not in seen:
-            seen.add(str(current))
-            node = self.node(current) if not isinstance(current, dict) else current
-            if isinstance(current, dict) and "@id" not in current and P_FIRST not in current:
-                out.append(raw_id(current))
-                break
-            if not node:
-                out.append(current)
-                break
-            first = self.get(node, P_FIRST)
-            if first is not None:
-                out.extend(literals(first) or [raw_id(first)])
-            current = literal(self.get(node, P_REST))
-        return out
+        seen: set[int] = set()
+        node = self._list_node(head)
+        while node is not None:
+            if id(node) in seen:
+                return out, "a malformed RDF list"
+            seen.add(id(node))
+            firsts = [x for x in as_list(self.get(node, P_FIRST)) if x is not None]
+            rests = [x for x in as_list(self.get(node, P_REST)) if x is not None]
+            if len(firsts) != 1 or len(rests) != 1:
+                return out, "a malformed RDF list"
+            ok, value = _value_of(firsts[0])
+            if not ok:
+                return out, f"a list with {value} in it"
+            if value is not None:
+                out.append(value)
+            rest = raw_id(rests[0])
+            if isinstance(rest, str) and self.ctx.expand_iri(rest) == P_NIL:
+                return out, None
+            node = self._list_node(rests[0])
+            if node is None:
+                return out, "a malformed RDF list"
+        return out, None
 
-    def list_values(self, raw: Any) -> list[Any]:
+    def list_values(self, raw: Any) -> tuple[list[Any], str | None, bool]:
         """The members of a list value such as sh:in's: a JSON-LD list object
-        ({"@list": [...]}, alone or in a one-element array), an RDF list of
-        rdf:first / rdf:rest nodes, or a plain array. A member is unwrapped as
-        any literal is, so {"@value": v} is v and {"@id": i} is i."""
-        items = as_list(raw)
-        if len(items) == 1 and isinstance(items[0], dict) and "@list" in items[0]:
-            return literals(items[0]["@list"])
-        head = literal(raw)
-        if isinstance(head, str) and (head.startswith("_:") or self.node(head)):
-            return self.rdf_list(head)
-        return literals(raw)
-
+        ({"@list": [...]}), an RDF list of rdf:first / rdf:rest nodes, or a
+        plain array of values; why it could not be read, or None; and whether
+        it holds more than one list. A member is read as _value_of reads one,
+        so {"@value": v} is v and {"@id": i} is i. The page's listValues is the
+        same."""
+        items = [item for item in as_list(raw) if item is not None]
+        lists = [item for item in items if isinstance(item, dict) and "@list" in item]
+        if lists:
+            if len(items) > 1:
+                return [], None, True
+            members = as_list(lists[0]["@list"])
+        else:
+            heads = [item for item in items if self._list_node(item) is not None]
+            if heads:
+                if len(items) > 1:
+                    return [], None, True
+                found, why = self.rdf_list(heads[0])
+                return found, why, False
+            members = items
+        out: list[Any] = []
+        for member in members:
+            ok, value = _value_of(member)
+            if not ok:
+                return out, f"a list with {value} in it", False
+            if value is not None:
+                out.append(value)
+        return out, None, False
 
 
 _MAX_SAFE_INTEGER = 2 ** 53 - 1
@@ -1555,7 +1882,7 @@ def _text(value: Any) -> str:
     if isinstance(value, str):
         return value
     if isinstance(value, (dict, list, bool)):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        return _js_json(value)
     if isinstance(value, float):
         return _js_number_text(value)
     return str(value)
@@ -1638,14 +1965,15 @@ def _is_rdf_json(datatype: Any) -> bool:
     return _text(datatype) in (RDF_JSON, "rdf:JSON")
 
 
-def _shacl_json_kind(index: NodeIndex, node: dict[str, Any], datatype: str | None, max_count: int | None) -> str | None:
+def _shacl_json_kind(index: NodeIndex, node: dict[str, Any], datatype: str | None, max_count: int | None,
+                     read: Any) -> str | None:
     dt = datatype or ""
     if _is_rdf_json(dt):
         return "json"
     if dt:
         return None
     nested = index.get(node, P_SH_NODE)
-    node_kind = str(literal(index.get(node, P_SH_NODEKIND)) or "")
+    node_kind = _text(read(P_SH_NODEKIND, "sh:nodeKind"))
     blank = node_kind == SHACL + "BlankNode" or node_kind.endswith("#BlankNode")
     if nested is not None or blank:
         return "array" if max_count is None or max_count > 1 else "object"
@@ -1664,14 +1992,69 @@ def _is_multi(json_kind: str | None, min_count: int | None, max_count: int | Non
     return unbounded and max_count is None
 
 
-def _defaults(index: NodeIndex, node: dict[str, Any], multi: bool) -> Any:
-    if multi:
-        found = literals(index.get(node, P_SH_DEF))
+class _Facets:
+    """Reads the facets of one input (a SHACL property shape, a hydra:
+    SupportedProperty, or a shape whose own datatype makes a request body),
+    each one it acts on as one value, adding to `problems` what _one and
+    _count find. `subject` names the input in a problem. The page's facets is
+    the same."""
+
+    def __init__(self, index: NodeIndex, node: dict[str, Any], problems: list[str], subject: str) -> None:
+        self.index, self.node, self.problems, self.subject = index, node, problems, subject
+
+    def one(self, predicate: str, label: str, key: Any = None) -> Any:
+        return _one(self.index.get(self.node, predicate), label, self.problems, "what it takes", self.subject,
+                    "this control is not invoked", key)
+
+    def text(self, predicate: str, label: str) -> str | None:
+        return _text(self.one(predicate, label)) or None
+
+    def count(self, predicate: str, label: str) -> int | None:
+        return _count(self.index.get(self.node, predicate), label, self.problems, self.subject)
+
+    def enum(self) -> list[Any]:
+        raw = self.index.get(self.node, P_SH_IN)
+        if raw is None:
+            return []
+        found, why, several = self.index.list_values(raw)
+        if several:
+            self.problems.append(f"{self.subject} names more than one sh:in, so what it takes is not known; this control is not invoked")
+        elif why is not None:
+            self.problems.append(f"{self.subject} writes sh:in as {why}, which this client does not read, so what it takes is not "
+                                 "known; this control is not invoked")
+        return found
+
+    def defaults(self, multi: bool) -> Any:
+        """A field's default: every value for a field that takes a list, else one."""
+        if not multi:
+            return self.one(P_SH_DEF, "sh:defaultValue")
+        found: list[Any] = []
+        for item in as_list(self.index.get(self.node, P_SH_DEF)):
+            ok, value = _value_of(item)
+            if not ok:
+                self.problems.append(f"{self.subject} writes sh:defaultValue as {value}, which this client does not read, so what "
+                                     "it takes is not known; this control is not invoked")
+                break
+            if value is not None:
+                found.append(value)
         return found or None
-    return literal(index.get(node, P_SH_DEF))
+
+    def describe(self, *predicates: str) -> str | None:
+        """The first description that reads as one value, of the first predicate that gives one: shown, never acted on."""
+        for predicate in predicates:
+            found = _label(self.index.get(self.node, predicate))
+            if found is not None and found != "":
+                return _text(found)
+        return None
 
 
-def _supported_field(index: NodeIndex, ref: Any) -> Field | None:
+def _subject(name: Any, path: Any) -> str:
+    """How a problem names an input: by the name the field would get from the
+    first name and path that read as one value."""
+    return f'the input "{_field_name(name, path if isinstance(path, str) else None, None)}"'
+
+
+def _supported_field(index: NodeIndex, ref: Any, problems: list[str]) -> Field | None:
     """A field for one hydra:SupportedProperty: named by its hydra:property's
     local name, or, for a property written in place as a blank node (as
     Interego's manifests write one), by that property's rdfs:label; required
@@ -1679,8 +2062,8 @@ def _supported_field(index: NodeIndex, ref: Any) -> Field | None:
     sp = index.node(ref) or (ref if isinstance(ref, dict) else None)
     if not sp:
         return None
-    raw_prop = as_list(index.get(sp, P_PROPERTY))
-    head = raw_prop[0] if raw_prop else None
+    props = [item for item in as_list(index.get(sp, P_PROPERTY)) if item is not None]
+    head = props[0] if props else None
     prop_node = index.node(head) or (head if isinstance(head, dict) else None)
     if isinstance(head, dict):
         iri = head.get("@id")
@@ -1688,39 +2071,52 @@ def _supported_field(index: NodeIndex, ref: Any) -> Field | None:
         # Hydra's context types hydra:property as @vocab, so a plain "schema:text" names an IRI.
         iri = index.ctx.expand_iri(head, vocab=True, document_relative=True) if isinstance(head, str) else None
     named = isinstance(iri, str) and bool(iri) and not iri.startswith("_:")
-    label = literal(index.get(prop_node, P_LABEL)) if prop_node else None
-    name = literal(index.get(sp, P_SH_NAME)) or (local_name(iri) if named else None) or label
+    shown_label = _label(index.get(prop_node, P_LABEL)) if prop_node else None
+    shown = _label(index.get(sp, P_SH_NAME)) or (local_name(iri) if named else None) or shown_label
+    facets = _Facets(index, sp, problems, _subject(shown, None))
+    if len({_text(p.get("@id")) if isinstance(p, dict) and isinstance(p.get("@id"), str) else _js_json(p) for p in props}) > 1:
+        problems.append(f"{facets.subject} names more than one hydra:property, so what it takes is not known; this control is not invoked")
+    name = facets.one(P_SH_NAME, "sh:name")
+    if (name is None or name == "") and not named and prop_node:
+        name = _Facets(index, prop_node, problems, facets.subject).one(P_LABEL, "rdfs:label")
+    elif name is None or name == "":
+        name = local_name(iri) if named else None
     if name is None or _text(name) == "":
         return None
-    datatype = str(literal(index.get(sp, P_SH_DT)) or "") or None
+    datatype = facets.text(P_SH_DT, "sh:datatype")
     if not datatype and prop_node:
-        declared = literal(index.get(prop_node, P_RANGE))
+        declared = _Facets(index, prop_node, problems, facets.subject).one(P_RANGE, "rdfs:range")
         if _xsd_name(declared) is not None or _is_rdf_json(declared):
-            datatype = str(declared)
-    min_count = _inty(literal(index.get(sp, P_SH_MIN)))
-    max_count = _inty(literal(index.get(sp, P_SH_MAX)))
+            datatype = _text(declared)
+    min_count = facets.count(P_SH_MIN, "sh:minCount")
+    max_count = facets.count(P_SH_MAX, "sh:maxCount")
     json_kind = "json" if _is_rdf_json(datatype) else None
     multi = _is_multi(json_kind, min_count, max_count, False)
-    required = truthy(literal(index.get(sp, P_REQUIRED))) is True or (min_count or 0) >= 1
-    enum_raw = index.get(sp, P_SH_IN)
-    description = (literal(index.get(sp, P_SH_DESC)) or literal(index.get(sp, P_COMMENT)) or literal(index.get(sp, P_DESC))
-                   or (literal(index.get(prop_node, P_COMMENT)) if prop_node else None) or "")
+    required = truthy(facets.one(P_REQUIRED, "hydra:required", lambda v: str(truthy(v)))) is True or (min_count or 0) >= 1
+    enum = facets.enum()
+    description = facets.describe(P_SH_DESC, P_COMMENT, P_DESC) or (
+        _Facets(index, prop_node, problems, facets.subject).describe(P_COMMENT) if prop_node else None)
     return Field(
         name=_field_name(name, iri if named else None, None), path=iri if named else None,
         datatype=datatype, json_kind=json_kind,
         min_count=min_count if min_count is not None else (1 if required else None), max_count=max_count,
-        pattern=str(literal(index.get(sp, P_SH_PAT)) or "") or None,
-        default=_defaults(index, sp, multi),
-        max_length=_inty(literal(index.get(sp, P_SH_MAXLEN))), min_length=_inty(literal(index.get(sp, P_SH_MINLEN))),
-        description=_text(description) or None,
-        enum=[] if enum_raw is None else index.list_values(enum_raw),
-        min_inclusive=literal(index.get(sp, P_SH_MINI)), max_inclusive=literal(index.get(sp, P_SH_MAXI)),
+        pattern=facets.text(P_SH_PAT, "sh:pattern"),
+        default=facets.defaults(multi),
+        max_length=facets.count(P_SH_MAXLEN, "sh:maxLength"), min_length=facets.count(P_SH_MINLEN, "sh:minLength"),
+        description=description,
+        enum=enum,
+        min_inclusive=facets.one(P_SH_MINI, "sh:minInclusive"), max_inclusive=facets.one(P_SH_MAXI, "sh:maxInclusive"),
         required=required, multi=multi,
     )
 
 
-def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
+def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[str]]:
+    """The fields a shape gives, and the problems reading their facets gave:
+    a JSON Schema's properties, a SHACL shape's sh:property, a hydra:Class's
+    hydra:supportedProperty, or one field for the whole body of a shape whose
+    own datatype or length makes one. The page's shapeFields is the same."""
     fields: list[Field] = []
+    problems: list[str] = []
     shape_ref = _json_value(shape_ref)
     if _is_json_schema(shape_ref):
         required = set(as_list(shape_ref.get("required") or []))
@@ -1744,94 +2140,105 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> list[Field]:
                 min_inclusive=prop.get("minimum"), max_inclusive=prop.get("maximum"),
                 required=name in required,
             ))
-        return fields
+        return fields, problems
     shape = index.node(shape_ref)
     if not shape:
-        return fields
+        return fields, problems
     props = index.get(shape, P_SH_PROP)
     if not props:
         supported = index.get(shape, P_SUPPROP)
         if supported:
-            return [f for f in (_supported_field(index, item) for item in as_list(supported)) if f]
+            return [f for f in (_supported_field(index, item, problems) for item in as_list(supported)) if f], problems
         if index.get(shape, P_SH_DT) or index.get(shape, P_SH_MINLEN) or index.get(shape, P_SH_MAXLEN):
-            label = str(literal(index.get(shape, P_LABEL)) or "")
+            facets = _Facets(index, shape, problems, "the request body")
+            label = _text(facets.one(P_LABEL, "rdfs:label"))
             name = "query" if ("query" in label.lower() or "sparql" in label.lower()) else "body"
-            datatype = str(literal(index.get(shape, P_SH_DT)) or XSD + "string")
+            datatype = facets.text(P_SH_DT, "sh:datatype") or XSD + "string"
             fields.append(Field(
                 name=name,
                 path=shape.get("@id") if isinstance(shape, dict) else None,
                 datatype=datatype, json_kind="json" if _is_rdf_json(datatype) else None,
                 min_count=1, max_count=1, required=True, raw_body=True,
-                min_length=_inty(literal(index.get(shape, P_SH_MINLEN))),
-                max_length=_inty(literal(index.get(shape, P_SH_MAXLEN))),
-                description=str(literal(index.get(shape, P_COMMENT)) or literal(index.get(shape, P_SH_DESC)) or ""),
+                min_length=facets.count(P_SH_MINLEN, "sh:minLength"),
+                max_length=facets.count(P_SH_MAXLEN, "sh:maxLength"),
+                description=facets.describe(P_COMMENT, P_SH_DESC) or "",
             ))
-        return fields
+        return fields, problems
     for pref in as_list(props):
         node = index.node(pref) or (pref if isinstance(pref, dict) else None)
         if not node:
             continue
-        path = str(literal(index.get(node, P_SH_PATH)) or "")
-        name = literal(index.get(node, P_SH_NAME))
-        enum_raw = index.get(node, P_SH_IN)
-        enum: list[Any] = [] if enum_raw is None else index.list_values(enum_raw)
-        min_count = _inty(literal(index.get(node, P_SH_MIN)))
-        max_count = _inty(literal(index.get(node, P_SH_MAX)))
-        datatype = str(literal(index.get(node, P_SH_DT)) or "") or None
-        json_kind = _shacl_json_kind(index, node, datatype, max_count)
+        facets = _Facets(index, node, problems, _subject(_label(index.get(node, P_SH_NAME)), _label(index.get(node, P_SH_PATH))))
+        path = facets.text(P_SH_PATH, "sh:path") or ""
+        name = facets.one(P_SH_NAME, "sh:name")
+        enum = facets.enum()
+        min_count = facets.count(P_SH_MIN, "sh:minCount")
+        max_count = facets.count(P_SH_MAX, "sh:maxCount")
+        datatype = facets.text(P_SH_DT, "sh:datatype")
+        json_kind = _shacl_json_kind(index, node, datatype, max_count, facets.one)
         multi = _is_multi(json_kind, min_count, max_count, True)
         # Node values go in one JSON array (or, for one at most, one object), so its length is their count.
         counted = json_kind in ("array", "object")
         fields.append(Field(
-            name=_field_name(str(name) if name else None, path, None),
+            name=_field_name(_text(name) or None, path, None),
             path=path or None,
             datatype=datatype,
             json_kind=json_kind,
             min_count=min_count, max_count=max_count,
             min_items=min_count if counted else None, max_items=max_count if counted else None,
-            pattern=str(literal(index.get(node, P_SH_PAT)) or "") or None,
-            default=_defaults(index, node, multi),
-            max_length=_inty(literal(index.get(node, P_SH_MAXLEN))),
-            min_length=_inty(literal(index.get(node, P_SH_MINLEN))),
-            description=str(literal(index.get(node, P_SH_DESC)) or literal(index.get(node, P_COMMENT)) or literal(index.get(node, P_DESC)) or "") or None,
+            pattern=facets.text(P_SH_PAT, "sh:pattern"),
+            default=facets.defaults(multi),
+            max_length=facets.count(P_SH_MAXLEN, "sh:maxLength"),
+            min_length=facets.count(P_SH_MINLEN, "sh:minLength"),
+            description=facets.describe(P_SH_DESC, P_COMMENT, P_DESC),
             enum=enum,
-            min_inclusive=literal(index.get(node, P_SH_MINI)),
-            max_inclusive=literal(index.get(node, P_SH_MAXI)),
+            min_inclusive=facets.one(P_SH_MINI, "sh:minInclusive"),
+            max_inclusive=facets.one(P_SH_MAXI, "sh:maxInclusive"),
             required=(min_count or 0) >= 1, multi=multi,
         ))
-    return fields
+    return fields, problems
 
 
-def _template_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]], bool]:
-    """The control's IRI template and its mappings, and whether the template is
-    the control's hydra:target: a hydra:IriTemplate written as the target, as
-    Interego's decoration catalogs write one, or reached through hydra:search
-    or a key named for a template. A template node many controls share is read
-    once (index.templates), so its mappings cost their size once, not once per
-    control. The page's templateOf is the same."""
-    def read_template_node(tmpl: Any) -> tuple[str | None, list[dict[str, Any]]]:
+def _address_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]], bool, str | None, list[str]]:
+    """Where a control sends: its IRI template and the template's mappings,
+    whether the template is its hydra:target, the IRI its target names, and
+    the problems reading them gave. A template of the control's own with a
+    variable in it comes first; then its hydra:target (or, when it has none,
+    its hmd:target), each value an IRI or a hydra:IriTemplate, as Interego's
+    decoration catalogs write one; then a template reached through
+    hydra:search or a key named for a template; then a template of its own
+    with no variable. A target, template, variable, property or required flag
+    with more than one distinct value, or one it cannot read, is a problem. A
+    template node many controls share is read once (index.templates), so its
+    mappings cost their size once, not once per control. The page's addressOf
+    is the same."""
+    def read_template_node(tmpl: Any) -> tuple[str | None, list[dict[str, Any]], list[str]]:
         if not tmpl:
-            return None, []
+            return None, [], []
         hit = index.templates.get(id(tmpl))
         if hit is None or hit[0] is not tmpl:
             hit = index.templates[id(tmpl)] = (tmpl, read_template(tmpl))
         return hit[1]
 
-    def read_template(tmpl: Any) -> tuple[str | None, list[dict[str, Any]]]:
-        template = literal(index.get(tmpl, P_TEMPLATE))
+    def read_template(tmpl: Any) -> tuple[str | None, list[dict[str, Any]], list[str]]:
+        problems: list[str] = []
+        template = _one(index.get(tmpl, P_TEMPLATE), "hydra:template", problems, "where it sends")
         found = []
         for item in as_list(index.get(tmpl, P_MAPPING)):
             mn = index.node(item) or (item if isinstance(item, dict) else None)
             if not mn:
                 continue
+            variable = _one(index.get(mn, P_VARIABLE), "hydra:variable in one hydra:mapping", problems, "where it sends")
             # Hydra's context types hydra:property as @vocab, so a plain "schema:query" names an IRI.
-            prop = literal(index.get(mn, P_PROPERTY))
+            prop = _one(index.get(mn, P_PROPERTY), "hydra:property in one hydra:mapping", problems, "which input fills it")
+            required = _one(index.get(mn, P_REQUIRED), "hydra:required in one hydra:mapping", problems, "which inputs it needs",
+                            key=lambda v: str(truthy(v)))
             found.append({
-                "variable": _text(literal(index.get(mn, P_VARIABLE))) or None,
+                "variable": _text(variable) or None,
                 "property": _text(index.ctx.expand_iri(prop, vocab=True, document_relative=True) if isinstance(prop, str) else prop) or None,
-                "required": truthy(literal(index.get(mn, P_REQUIRED))),
+                "required": truthy(required),
             })
-        return (str(template) if template else None), found
+        return (_text(template) or None), found, problems
 
     def as_template(item: Any) -> dict[str, Any] | None:
         tmpl = index.node(item) or (item if isinstance(item, dict) else None)
@@ -1839,28 +2246,63 @@ def _template_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, li
             return tmpl
         return None
 
-    direct = literal(index.get(node, P_TEMPLATE))
-    if isinstance(direct, str) and "{" in direct:
-        _, mappings = read_template_node(node)
-        return direct, mappings, False
-    for pred in (P_TARGET, P_HMDTARGET):
+    problems: list[str] = []
+    own, own_mappings, own_problems = read_template_node(node)
+    if index.get(node, P_TEMPLATE) is not None:
+        problems.extend(own_problems)
+    # Each distinct target once, keyed by its text: ("template", template, mappings, problems) or ("iri", iri).
+    first: tuple[Any, ...] | None = None
+    for pred, label in ((P_TARGET, "hydra:target"), (P_HMDTARGET, "hmd:target")):
+        entries: dict[str, tuple[Any, ...]] = {}
+        why = None
         for item in as_list(index.get(node, pred)):
-            template, mappings = read_template_node(as_template(item))
-            if template:
-                return template, mappings, True
+            if item is None:
+                continue
+            tmpl = as_template(item)
+            template, mappings, template_problems = read_template_node(tmpl) if tmpl is not None else (None, [], [])
+            if template is not None:
+                entries.setdefault(template, ("template", template, mappings, template_problems))
+                continue
+            ok, value = _value_of(item)
+            if not ok:
+                why = value
+                break
+            if value is not None and value != "":
+                entries.setdefault(_text(value), ("iri", _text(value)))
+        if why is not None:
+            problems.append(f"this control writes {label} as {why}, which this client does not read, so where it sends is not known; "
+                            "it is not invoked")
+        elif len(entries) > 1:
+            problems.append(f"this control names more than one {label} ({', '.join(entries)}), so where it sends is not known; "
+                            "it is not invoked")
+        if entries or why is not None:
+            first = next(iter(entries.values()), None)
+            break
+    target = first[1] if first is not None and first[0] == "iri" else None
+    if own is not None and "{" in own:
+        return own, own_mappings, False, target, problems
+    if first is not None and first[0] == "template":
+        problems.extend(first[3])
+        return first[1], first[2], True, None, problems
+    searched: dict[str, tuple[str, list[dict[str, Any]], list[str]]] = {}
     for key, val in node.items():
         if key.startswith("@"):
             continue
         pred = index.ctx.expand_key(key)
-        lname = local_name(pred).lower()
-        if pred not in {P_TEMPLATE, P_SEARCH} and "template" not in lname:
+        if pred not in {P_TEMPLATE, P_SEARCH} and "template" not in local_name(pred).lower():
             continue
         for item in as_list(val):
-            tmpl_node = index.node(item) or (item if isinstance(item, dict) else None)
-            template, mappings = read_template_node(tmpl_node)
+            template, mappings, template_problems = read_template_node(index.node(item) or (item if isinstance(item, dict) else None))
             if template:
-                return template, mappings, False
-    return (str(direct) if direct else None), [], False
+                searched.setdefault(template, (template, mappings, template_problems))
+    if searched:
+        if len(searched) > 1:
+            problems.append(f"this control names more than one hydra:search ({', '.join(searched)}), so where it sends is not known; "
+                            "it is not invoked")
+        template, mappings, template_problems = next(iter(searched.values()))
+        problems.extend(template_problems)
+        return template, mappings, False, target, problems
+    return own, [], False, target, problems
 
 
 class _FieldIndex:
@@ -1952,36 +2394,68 @@ def _merge_mapping_fields(fields: list[Field], mappings: list[dict[str, Any]],
     return fields
 
 
-_HINT_DESTRUCTIVE = "destructiveHint"
-_HINT_READONLY = "readOnlyHint"
+_HINTS = (("destructiveHint", "iep:destructiveHint"), ("readOnlyHint", "iep:readOnlyHint"))
 
 
-def _hint_flags(index: NodeIndex, node: dict[str, Any]) -> tuple[bool, bool]:
-    """Whether a node says, under any key whose name ends in destructiveHint or
-    readOnlyHint, that it destroys or writes: its own keys, such as a hint under
-    a prefix the context does not define, and the keys of an object written
-    directly inside it, such as MCP's "annotations". Read only to fail closed:
-    either can make a control unsafe, and neither makes one safe. The page's
+def _hint_problems(found: dict[str, set[bool]], why: dict[str, str | None]) -> list[str]:
+    problems = []
+    for hint, label in _HINTS:
+        if why[hint] is not None:
+            problems.append(f"this control writes {label} as {why[hint]}, which this client does not read, so whether it is safe "
+                            "is not known; it is not invoked")
+        elif len(found[hint]) > 1:
+            problems.append(f"this control names more than one {label} (false, true), so whether it is safe is not known; "
+                            "it is not invoked")
+    return problems
+
+
+def _hint_flags(index: NodeIndex | None, node: dict[str, Any]) -> tuple[bool | None, bool | None, list[str]]:
+    """What a node says, under every key whose name ends in destructiveHint or
+    readOnlyHint, about whether it destroys or writes: its own keys, such as a
+    hint under a prefix the context does not define, and the keys of an object
+    written directly inside it (or in a @list in it), such as MCP's
+    "annotations". Every value counts, merged descriptions of one @id
+    included: any destructive true or read-only false is destructive or
+    writing, and so is a value that is no boolean (_hint_value). True and false
+    both, or a value in a form the reader does not read, is a problem. Read
+    only to fail closed: neither hint ever makes a control safe. The page's
     hintFlags is the same."""
-    destructive = writes = False
     objects = [node]
     for key, val in node.items():
         if key.startswith("@"):
             continue
         for item in as_list(val):
-            if isinstance(item, dict) and "@value" not in item and "@list" not in item:
-                objects.append(item)
+            if isinstance(item, dict) and "@value" not in item:
+                if "@list" in item:
+                    objects.extend(x for x in as_list(item["@list"]) if isinstance(x, dict) and "@value" not in x and "@list" not in x)
+                else:
+                    objects.append(item)
+    found: dict[str, set[bool]] = {hint: set() for hint, _ in _HINTS}
+    unread = {hint: False for hint, _ in _HINTS}
+    why: dict[str, str | None] = {hint: None for hint, _ in _HINTS}
     for obj in objects:
         for key, val in obj.items():
             if key.startswith("@"):
                 continue
-            names = {local_name(key), local_name(index.ctx.expand_key(key))}
-            flag = truthy(literal(val))
-            if _HINT_DESTRUCTIVE in names and flag is True:
-                destructive = True
-            if _HINT_READONLY in names and flag is False:
-                writes = True
-    return destructive, writes
+            names = {local_name(key), local_name(index.ctx.expand_key(key))} if index else {local_name(key)}
+            for hint, _ in _HINTS:
+                if hint not in names:
+                    continue
+                for item in as_list(val):
+                    kind, value = _hint_value(item)
+                    if kind == "bool":
+                        found[hint].add(value)
+                    elif kind == "unread":
+                        unread[hint] = True
+                    elif kind == "form" and why[hint] is None:
+                        why[hint] = value
+    destructive = found["destructiveHint"]
+    writes = found["readOnlyHint"]
+    destructive_flag = (True if True in destructive or unread["destructiveHint"] or why["destructiveHint"]
+                        else (False if destructive else None))
+    read_only = (False if False in writes or unread["readOnlyHint"] or why["readOnlyHint"]
+                 else (True if writes else None))
+    return destructive_flag, read_only, _hint_problems(found, why)
 
 
 def _duplicate_name(fields: list[Field]) -> str | None:
@@ -1993,48 +2467,101 @@ def _duplicate_name(fields: list[Field]) -> str | None:
     return None
 
 
+def _inline_fields(node: dict[str, Any]) -> list[Any] | None:
+    """A control's own "fields" list, as the HyperMarkdown lift writes one, or None."""
+    inline = node.get("fields")
+    if isinstance(inline, list) and inline and isinstance(inline[0], dict) and (
+        "name" in inline[0] or "path" in inline[0] or "datatype" in inline[0]
+    ):
+        return inline
+    return None
+
+
+def _expects_of(index: NodeIndex, node: dict[str, Any], problems: list[str]) -> tuple[Any, Any]:
+    """The one shape a control expects (a reference, a shape or JSON Schema
+    written in place, or a JSON literal holding a schema) and the name it is
+    shown by. More than one distinct shape, or a value in a form the reader
+    does not read there, is a problem."""
+    values = [v for v in as_list(_json_value(index.get(node, P_EXPECTS))) if v is not None]
+    shown: dict[str, str] = {}
+    for value in values:
+        if isinstance(value, dict) and "@value" not in value:
+            ok, why = _value_of(value) if any(k in value for k in ("@list", "@set", "@graph")) else (True, None)
+            if not ok:
+                problems.append(f"this control writes hydra:expects as {why}, which this client does not read, so what it sends is "
+                                "not known; it is not invoked")
+                return None, None
+            ident = value.get("@id")
+            key = _text(ident) if isinstance(ident, str) else _js_json(value)
+            shown.setdefault(key, _text(ident) if isinstance(ident, str) else "a shape written in place")
+        else:
+            ok, read = _value_of(value)
+            if not ok:
+                problems.append(f"this control writes hydra:expects as {read}, which this client does not read, so what it sends is "
+                                "not known; it is not invoked")
+                return None, None
+            if read is not None:
+                shown.setdefault(_text(read), _text(read))
+    if len(shown) > 1:
+        problems.append(f"this control names more than one hydra:expects ({', '.join(shown.values())}), so what it sends is not "
+                        "known; it is not invoked")
+    expects_raw = values[0] if values else None
+    if expects_raw is None or _is_json_schema(expects_raw):
+        return expects_raw, None
+    if isinstance(expects_raw, dict) and "@id" in expects_raw:
+        return expects_raw, expects_raw["@id"]
+    return expects_raw, _label(expects_raw)
+
+
 def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Control:
-    rel = literal(index.get(node, P_ACTION)) or literal(index.get(node, P_REL)) or node.get("@id") or ""
+    """A control read from a JSON-LD node. Every property that decides what it
+    does is read as one value (_one); a problem any of them gives is its
+    `conflict`, so it is listed with the writes and not invoked. The page's
+    controlFromNode is the same."""
+    problems: list[str] = []
     # A control that names no method is sent as the substrate's own follower
     # (invoke_affordance, act) sends it: POST. So it is never a safe read by
     # default. One that names several is not invoked, and shows the first of
     # them that is not safe, so it is never listed as a safe read either.
-    methods = list(dict.fromkeys(m for m in (_template_scalar(x).upper() for x in literals(index.get(node, P_METHOD))) if m))
+    method_values, why = _distinct(index.get(node, P_METHOD), lambda v: _template_scalar(v).upper())
+    methods = [m for m in dict.fromkeys(_template_scalar(v).upper() for v in method_values) if m]
+    if why is not None:
+        problems.append(f"this control writes hydra:method as {why}, which this client does not read, so what it does is not known; "
+                        "it is not invoked")
+    elif len(methods) > 1:
+        problems.append(f"this control names more than one hydra:method ({', '.join(methods)}), so what it does is not known; "
+                        "it is not invoked")
     method = next((m for m in methods if m not in SAFE_METHODS), None) or (methods[0] if methods else "POST")
-    title = literal(index.get(node, P_TITLE)) or literal(index.get(node, P_DCTITLE)) or literal(index.get(node, P_LABEL)) or short_rel(str(rel))
-    description = literal(index.get(node, P_DESC)) or literal(index.get(node, P_DCDESC)) or literal(index.get(node, P_COMMENT)) or ""
-    media = literal(index.get(node, P_RETURNS_CT)) or literal(index.get(node, P_MEDIA))
-    expects_raw = _json_value(index.get(node, P_EXPECTS))
-    expects = None
-    if _is_json_schema(expects_raw):
-        expects = None
-    elif isinstance(expects_raw, dict) and "@id" in expects_raw:
-        expects = expects_raw["@id"]
-    else:
-        expects = literal(expects_raw)
-    returns = literal(index.get(node, P_RETURNS))
-    template, mappings, template_is_target = _template_of(index, node)
-    target = None if template_is_target else (literal(index.get(node, P_TARGET)) or literal(index.get(node, P_HMDTARGET)))
-    # Two addresses for one control are refused as two methods are: where it sends is not known.
-    targets = [] if template_is_target else list(dict.fromkeys(t for t in literals(index.get(node, P_TARGET)) if isinstance(t, str)))
-    destructive_flag, writes_flag = _hint_flags(index, node)
-    read_only = truthy(literal(index.get(node, P_READONLY)))
-    destructive = truthy(literal(index.get(node, P_DESTRUCTIVE)))
+    template, mappings, template_is_target, target, address_problems = _address_of(index, node)
+    problems.extend(address_problems)
+    rel = _one(index.get(node, P_ACTION), "iep:action", problems, "which affordance it names")
+    if rel is None or rel == "":
+        rel = _one(index.get(node, P_REL), "hmd:rel", problems, "which affordance it names")
+    rel = _text(rel) if rel is not None and rel != "" else (node.get("@id") or "")
+    destructive, read_only, hint_problems = _hint_flags(index, node)
+    problems.extend(hint_problems)
+    expects_raw, expects = _expects_of(index, node, problems)
+    media = _one(index.get(node, P_RETURNS_CT), "hydra:returnsContentType", problems, "what it returns")
+    if media is None or media == "":
+        media = _one(index.get(node, P_MEDIA), "dcat:mediaType", problems, "what it returns")
+    # A shape's facets are read now, once per shape (_shared_shape_fields), so
+    # an input that names two datatypes or two counts is a problem here too.
+    if _inline_fields(node) is None and expects_raw is not None:
+        problems.extend(_shared_shape_fields(index, expects_raw)[1])
+    title = _label(index.get(node, P_TITLE)) or _label(index.get(node, P_DCTITLE)) or _label(index.get(node, P_LABEL)) or short_rel(str(rel))
+    description = _label(index.get(node, P_DESC)) or _label(index.get(node, P_DCDESC)) or _label(index.get(node, P_COMMENT)) or ""
+    returns = _label(index.get(node, P_RETURNS))
+    idempotent = _label(index.get(node, P_IDEMPOTENT))
     control = Control(
-        id=str(node.get("@id") or rel), rel=str(rel), method=method,
-        title=str(title or ""), description=str(description or ""),
-        media_type=str(media) if media else None,
+        id=_text(node.get("@id") or rel), rel=str(rel), method=method,
+        title=_text(title), description=_text(description),
+        media_type=_text(media) if media is not None and media != "" else None,
         expects=_text(expects) if expects else None,
-        returns=str(returns) if returns else None,
-        target=str(target) if target else None, template=template,
-        read_only=False if writes_flag else read_only,
-        idempotent=truthy(literal(index.get(node, P_IDEMPOTENT))),
-        destructive=True if destructive_flag else destructive,
+        returns=_text(returns) if returns is not None and returns != "" else None,
+        target=target or None, template=template,
+        read_only=read_only, idempotent=truthy(idempotent), destructive=destructive,
         types=index.types_of(node), source=source, base=index.ctx.base,
-        conflict=(f"this control names more than one hydra:method ({', '.join(methods)}), so what it does is not known; "
-                  "it is not invoked") if len(methods) > 1 else
-                 (f"this control names more than one hydra:target ({', '.join(targets)}), so where it sends is not known; "
-                  "it is not invoked") if len(targets) > 1 else None,
+        conflict=problems[0] if problems else None,
     )
     control.__dict__["_build"] = lambda: _control_inputs(index, node, expects_raw, expects, mappings)
     return control
@@ -2046,20 +2573,21 @@ def _duplicate_problem(fields: list[Field]) -> str | None:
             "this control is not invoked") if duplicate else None
 
 
-def _shared_shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], str | None, _FieldIndex | None]:
+def _shared_shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[str], str | None, _FieldIndex | None]:
     """The fields a SHACL shape or a hydra:Class gives, built once per shape
-    node however many controls name it, with the problem they give and their
+    node however many controls name it, with the problems reading their
+    facets gave, the problem two fields of one name give, and their
     _FieldIndex; a JSON Schema written in a control is its own. The list is
     shared, so it is never changed: _merge_mapping_fields copies."""
     shape = None if _is_json_schema(_json_value(shape_ref)) else index.node(_json_value(shape_ref))
     if shape is None:
-        fields = _shape_fields(index, shape_ref)
-        return fields, _duplicate_problem(fields), None
+        fields, problems = _shape_fields(index, shape_ref)
+        return fields, problems, _duplicate_problem(fields), None
     hit = index.shapes.get(id(shape))
     if hit is None or hit[0] is not shape:
-        fields = _shape_fields(index, shape_ref)
-        hit = index.shapes[id(shape)] = (shape, fields, _duplicate_problem(fields), _FieldIndex(fields))
-    return hit[1], hit[2], hit[3]
+        fields, problems = _shape_fields(index, shape_ref)
+        hit = index.shapes[id(shape)] = (shape, fields, problems, _duplicate_problem(fields), _FieldIndex(fields))
+    return hit[1], hit[2], hit[3], hit[4]
 
 
 def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, expects: Any,
@@ -2069,13 +2597,11 @@ def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, ex
     keeps it from being invoked, if any; and a warning to show with it. The
     page's controlInputs is the same."""
     fields: list[Field] = []
-    inline = node.get("fields")
+    inline = _inline_fields(node)
     warning = None
     problem = None
     base: _FieldIndex | None = None
-    if isinstance(inline, list) and inline and isinstance(inline[0], dict) and (
-        "name" in inline[0] or "path" in inline[0] or "datatype" in inline[0]
-    ):
+    if inline is not None:
         for item in inline:
             if not isinstance(item, dict):
                 continue
@@ -2090,9 +2616,8 @@ def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, ex
             ))
         problem = _duplicate_problem(fields)
     elif expects_raw is not None:
-        shape_ref = expects_raw[0] if isinstance(expects_raw, list) and expects_raw else expects_raw
-        fields, problem, base = _shared_shape_fields(index, shape_ref)
-        if not fields and not _is_json_schema(shape_ref):
+        fields, _, problem, base = _shared_shape_fields(index, expects_raw)
+        if not fields and not _is_json_schema(expects_raw):
             warning = (f"hydra:expects names {_text(expects) or 'a shape'}, which this document does not describe, so no "
                        "input fields were built: what the server expects is not known here.")
     if mappings:
@@ -2149,12 +2674,25 @@ def descriptor_meta(index: NodeIndex, url: str, content_type: str) -> tuple[str,
     root = index.root
     title, types, description, see_also = local_name(url) or url, [], "", []
     if root:
-        title = str(literal(index.get(root, P_DCTITLE)) or literal(index.get(root, P_TITLE)) or literal(index.get(root, P_LABEL)) or title)
+        # Shown, never acted on: the first value of each that reads as one.
+        title = _text(_label(index.get(root, P_DCTITLE)) or _label(index.get(root, P_TITLE)) or _label(index.get(root, P_LABEL)) or title)
         types = index.types_of(root)
-        description = str(literal(index.get(root, P_DCDESC)) or literal(index.get(root, P_DESC)) or literal(index.get(root, P_COMMENT)) or "")
-        see_also = [str(x) for x in literals(index.get(root, P_SEEALSO))]
+        description = _text(_label(index.get(root, P_DCDESC)) or _label(index.get(root, P_DESC)) or _label(index.get(root, P_COMMENT)) or "")
+        see_also = [_text(read) for ok, read in (_value_of(x) for x in as_list(index.get(root, P_SEEALSO))) if ok and read is not None]
     return title, types, description, see_also
 
+
+
+# The keys of a HyperMarkdown control block that decide what it does, and what
+# is not known when one is given twice. The page's MD_DECISIVE is the same.
+_MD_DECISIVE = {"rel": "which affordance it names", "method": "what it does", "target": "where it sends",
+                "expects": "what it sends", "mediaType": "what it returns", "fields": "what it sends"}
+def _unquote(text: str) -> str:
+    """A value with one double quote taken off each end, as the page's
+    replace(/^"|"$/g, "") takes them."""
+    if text.startswith('"'):
+        text = text[1:]
+    return text[:-1] if text.endswith('"') else text
 
 
 CONTROL_BLOCK = re.compile(r":::control\s+(\S+)\s*\n(.*?)(?:\n:::|\Z)", re.DOTALL)
@@ -2165,6 +2703,8 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
     for match in CONTROL_BLOCK.finditer(text):
         ident = match.group(1).strip()
         data: dict[str, Any] = {}
+        # Every value each key is given, as written, each once.
+        given: dict[str, list[str]] = {}
         for line in match.group(2).splitlines():
             if ":" not in line:
                 continue
@@ -2172,13 +2712,15 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
             key, val = key.strip(), val.strip()
             if not key:
                 continue
+            if val not in given.setdefault(key, []):
+                given[key].append(val)
             if val.startswith("{") or val.startswith("["):
                 try:
                     data[key] = json.loads(val)
                     continue
                 except json.JSONDecodeError:
                     pass
-            data[key] = val.strip('"')
+            data[key] = _unquote(val)
         fields: list[Field] = []
         for item in data.get("fields") or []:
             if isinstance(item, dict):
@@ -2192,15 +2734,30 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
                     required=(_inty(item.get("minCount")) or 0) >= 1,
                 ))
         rel = str(data.get("rel") or ident)
+        # A key the block gives twice with different values is the last one to
+        # a reader that keeps the last: one that decides what the control does
+        # is a problem instead. A title or a description shows the last.
+        conflict = None
+        for key, values in given.items():
+            if key in _MD_DECISIVE and len(values) > 1:
+                conflict = (f"this control block gives {key} more than once ({', '.join(values)}), so {_MD_DECISIVE[key]} is not "
+                            "known; it is not invoked")
+                break
+        # destructiveHint and readOnlyHint are read as in a JSON-LD control: every value, failing closed.
+        hints = {key: [v for v in values] for key, values in given.items() if local_name(key) in ("destructiveHint", "readOnlyHint")}
+        destructive, read_only, hint_problems = _hint_flags(None, hints)
+        conflict = conflict or (hint_problems[0] if hint_problems else None)
+        # No method is POST here as in a JSON-LD control, as the substrate's HyperMarkdown lift reads it.
+        methods = [m for m in dict.fromkeys(_unquote(v).upper() for v in given.get("method", [])) if m]
+        method = next((m for m in methods if m not in SAFE_METHODS), None) or (methods[0] if methods else "POST")
         controls.append(Control(
             id=ident if ident.startswith("http") else f"{url}#{ident}",
-            # No method is POST here as in a JSON-LD control, as the substrate's HyperMarkdown lift reads it.
-            rel=rel, method=str(data.get("method") or "POST").upper(),
+            rel=rel, method=method,
             title=str(data.get("title") or short_rel(rel)),
             description=str(data.get("description") or data.get("whenToUse") or ""),
             media_type=data.get("mediaType"), expects=data.get("expects"),
             returns=data.get("returns"), target=data.get("target"),
-            fields=fields, source=url,
+            fields=fields, source=url, destructive=destructive, read_only=read_only, conflict=conflict,
         ))
     title_match = re.search(r"^#\s+(.+)$", text, re.MULTILINE)
     title = title_match.group(1).strip() if title_match else local_name(url) or url
@@ -2338,7 +2895,8 @@ def fetch_authority(url: str) -> tuple[str, str, str]:
     url = _strip_fragment(url)
     accept = "application/ld+json, application/json;q=0.9, text/turtle;q=0.8, text/markdown;q=0.4, */*;q=0.1"
     tried: list[str] = []
-    existing = dict(urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query)).get("format", "").lower()
+    # The address names a format when any "format" parameter in it has a value, as the page's fetchAuthority reads it.
+    existing = any(key == "format" and val for key, val in urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query, keep_blank_values=True))
 
     def attempt(candidate: str) -> tuple[str, str, str] | None:
         tried.append(candidate)
@@ -2390,7 +2948,7 @@ def parse_turtle_via_rdflib(text: str, url: str) -> Any:
 def parse_descriptor(text: str, content_type: str, url: str, fetched_from: str | None = None) -> Descriptor:
     kind = classify_payload(text, content_type)
     if kind == "jsonld":
-        document = json.loads(text)
+        document = json.loads(text, object_pairs_hook=_no_repeated_keys, parse_constant=_not_json)
         index = NodeIndex(document, url, fetched_from)
         title, types, description, see_also = descriptor_meta(index, url, content_type)
         return Descriptor(
@@ -2825,11 +3383,14 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
     for fld in control.fields:
         aliases = list(dict.fromkeys(a for a in (fld.name, fld.variable, local_name(fld.path) if fld.path else None) if a))
         known.update(aliases)
-        found = None
-        for alias in aliases:
-            if alias in incoming and incoming[alias] is not None and incoming[alias] != "":
-                found = incoming.pop(alias)
-                break
+        # A value is given under one of a field's names; values under two of
+        # them are a problem, never one of them taken and the other dropped.
+        named = [alias for alias in aliases if alias in incoming and incoming[alias] is not None and incoming[alias] != ""]
+        found = incoming.pop(named[0]) if named else None
+        if len(named) > 1:
+            errors.append(f"{fld.name}: values were given under more than one of its names ({', '.join(named)})")
+            for alias in named[1:]:
+                incoming.pop(alias)
         numeric = _numeric_kind(fld)
         required = fld.required or (fld.min_count or 0) >= 1
         if fld.multi:
@@ -3165,12 +3726,20 @@ def cmd_list(args: argparse.Namespace) -> int:
     return 0
 
 
+def _find_control(descriptor: Descriptor, rel: str) -> Control:
+    found = descriptor.matches(rel)
+    if len(found) > 1:
+        raise SystemExit(tty_safe(f"More than one control matches {rel!r}: {', '.join(c.rel for c in found)}. "
+                                  "Name one by its full IRI; nothing was sent."))
+    if not found:
+        known = ", ".join(short_rel(c.rel) for c in descriptor.controls[:20])
+        raise SystemExit(tty_safe(f"No control matching {rel!r}. Known (sample): {known}"))
+    return found[0]
+
+
 def cmd_describe(args: argparse.Namespace) -> int:
     descriptor = load_descriptor(args.url)
-    control = descriptor.find(args.rel)
-    if not control:
-        known = ", ".join(short_rel(c.rel) for c in descriptor.controls[:20])
-        raise SystemExit(tty_safe(f"No control matching {args.rel!r}. Known (sample): {known}"))
+    control = _find_control(descriptor, args.rel)
     public = control.to_public()
     public["transport"] = classify_transport(control, descriptor.url)
     print(json.dumps(public, indent=2))
@@ -3179,10 +3748,7 @@ def cmd_describe(args: argparse.Namespace) -> int:
 
 def cmd_invoke(args: argparse.Namespace) -> int:
     descriptor = load_descriptor(args.url)
-    control = descriptor.find(args.rel)
-    if not control:
-        known = ", ".join(short_rel(c.rel) for c in descriptor.controls[:20])
-        raise SystemExit(tty_safe(f"No control matching {args.rel!r}. Known (sample): {known}"))
+    control = _find_control(descriptor, args.rel)
     supplied = parse_field_args(args.field or [])
     values, errors = validate_fields(control, supplied)
     if errors:

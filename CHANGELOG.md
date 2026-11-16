@@ -350,6 +350,25 @@ reserved template expansion keeps `%2F` as it is, `hmc.py` refuses an
 shared fixtures; every new test failed before. The CSP script hash is
 updated.
 
+**Fail closed.** The clients now read the JSON-LD forms they model and refuse
+the rest. Every value of what decides a control (method, target, template,
+action, hints, shape, media type, and an input's path, name, datatype, counts,
+lengths, pattern, choices, default and bounds) is read, merged descriptions of
+one `@id` included; two distinct values, or a form not read there such as a
+`@list` or a JSON literal, list the control with the writes and refuse it with
+a problem that names the property. Any `destructiveHint` true or
+`readOnlyHint` false, or a hint that is no boolean, makes a control unsafe, so
+`[false, true]` no longer reads as false. A `@set` object is read as what it
+holds wherever it is, and a `@list` or graph object as its members where
+operations, a shape's properties or mappings go, so an operation under
+`{"@set": [...]}` is found. A document that uses `@reverse`, puts `@graph` or
+`@included` inside a node, gives a node one keyword twice or repeats a JSON key
+is refused whole, as is `NaN` in `hmc.py`, which the page's JSON parser already
+refused; so are a HyperMarkdown block that gives its method twice, a name two
+controls share and a link with two `invoke` values. Titles and descriptions
+still show their first value. The new tests failed before, but for four that
+pin what already worked. The CSP script hash is updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

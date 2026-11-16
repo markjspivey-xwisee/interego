@@ -401,10 +401,126 @@ export function sharedDescriptors(base: string): Record<string, string> {
     // A reserved expansion passes a percent-encoded triplet through as it is (RFC 6570, 3.2.3).
     '/tmpl-pct': { '@context': CTX, '@id': `${base}/tmpl-pct`, 'iep:affordance': [op('r', 'urn:tmpl:pct', 'GET', 'Reserved triplet', {
       'hydra:template': `${base}/r{+path}`, 'hydra:mapping': [{ 'hydra:variable': 'path', 'hydra:required': true }] })] },
+    // Hints the clients once read only the first value of: [false, true], and false and true in two
+    // descriptions of one @id, are refused, and so is a hint written as a @list; a typed literal, a
+    // string and a value that is no boolean each make a GET unsafe. The plain read stays a safe read.
+    '/hint-values': { '@context': CTX, '@id': `${base}/hint-values`, 'iep:affordance': [
+      op('two', 'urn:hint:two', 'GET', 'Two hints', { ...target('/purge'), 'iep:destructiveHint': [false, true] }),
+      op('merged', 'urn:hint:merged', 'GET', 'Merged hint', { ...target('/purge'), 'iep:destructiveHint': false }),
+      op('listed', 'urn:hint:listed', 'GET', 'Listed hint', { ...target('/purge'), 'iep:destructiveHint': { '@list': [false] } }),
+      op('typed', 'urn:hint:typed', 'GET', 'Typed hint', { ...target('/purge'), 'iep:destructiveHint': { '@value': 'true', '@type': 'xsd:boolean' } }),
+      op('string', 'urn:hint:string', 'GET', 'String hint', { ...target('/purge'), 'iep:readOnlyHint': 'false' }),
+      op('unread', 'urn:hint:unread', 'GET', 'Unreadable hint', { ...target('/purge'), 'iep:destructiveHint': 'maybe' }),
+      op('read', 'urn:hint:read', 'GET', 'Plain hint read', { ...target('/api'), 'iep:readOnlyHint': [true, { '@value': 'true', '@type': 'xsd:boolean' }] }),
+    ], '@graph': [{ '@id': '#merged', 'iep:destructiveHint': true }] },
+    // Explicit @set, @list and @graph objects where an operation, a shape's properties or a value
+    // goes, nested in an array and through a keyword alias; a language-tagged method is still GET.
+    '/set-values': { '@context': { ...CTX, items: '@set' }, '@id': `${base}/set-values`,
+      'hydra:operation': { '@set': [{ '@id': '#read', 'iep:action': { '@id': 'urn:set:read' }, 'hydra:method': 'GET', 'hydra:title': 'Set object read',
+        'hydra:target': { '@id': '/api' } }] },
+      'iep:affordance': [
+        { '@set': [op('nested', 'urn:set:nested', 'GET', 'Nested set read', target('/api'))] },
+        { '@list': [op('listed', 'urn:set:list', 'GET', 'List object read', target('/api'))] },
+        { '@graph': [op('graphed', 'urn:set:graph', 'GET', 'Graph object read', target('/api'))] },
+        { items: [op('aliased', 'urn:set:alias', 'GET', 'Aliased set read', target('/api'))] },
+        op('method', 'urn:set:method', null, 'Set method read', { 'hydra:method': { '@set': ['GET'] }, 'hydra:target': { '@set': [{ '@id': '/api' }] } }),
+        op('tagged', 'urn:set:tagged', null, 'Tagged method read', { 'hydra:method': { '@value': 'GET', '@language': 'en' }, ...target('/api') }),
+        op('shape', 'urn:set:shape', 'GET', 'Set shape read', { ...target('/api'), 'hydra:expects': { '@id': '#S' } }),
+      ],
+      '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { '@set': [{ 'sh:path': { '@id': `${base}/q` }, 'sh:name': 'q',
+        'sh:maxCount': { '@set': [1] }, 'sh:datatype': { '@id': 'xsd:integer' } }] } }] },
+    // A value the clients act on written in a form they do not read, or with more than one value:
+    // a method as a @list or under a @list container, a target as a JSON literal, two actions, two
+    // templates, a template and an address, two shapes, two media types, a mapping with two
+    // variables, and an input with two datatypes, two counts, a count in words, a path that is a
+    // SHACL sequence, or two defaults. Each control is refused with a problem that names it.
+    '/value-forms': { '@context': { ...CTX, verbs: { '@id': 'hydra:method', '@container': '@list' } }, '@id': `${base}/value-forms`,
+      'iep:affordance': [
+        op('lm', 'urn:form:list-method', null, 'Listed method', { 'hydra:method': { '@list': ['GET'] }, ...target('/api') }),
+        op('cm', 'urn:form:container-method', null, 'List container method', { verbs: 'GET', ...target('/api') }),
+        op('jt', 'urn:form:json-target', 'GET', 'JSON target', { 'hydra:target': { '@value': '/api', '@type': '@json' } }),
+        op('ia', 'urn:form:two-actions', 'GET', 'Two actions', { ...target('/api'),
+          'iep:action': [{ '@id': 'urn:form:two-actions' }, { '@id': 'urn:form:other' }] }),
+        op('tt', 'urn:form:two-templates', 'GET', 'Two templates', { 'hydra:template': [`${base}/a{?q}`, `${base}/b{?q}`] }),
+        op('te', 'urn:form:template-and-address', 'GET', 'Template and address', {
+          'hydra:target': [{ '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/t{?q}` }, { '@id': '/api' }] }),
+        op('ex', 'urn:form:two-shapes', 'POST', 'Two shapes', { ...target('/api'), 'hydra:expects': [{ '@id': '#S1' }, { '@id': '#S2' }] }),
+        op('mt', 'urn:form:two-media', 'GET', 'Two media types', { ...target('/api'), 'hydra:returnsContentType': ['application/json', 'text/html'] }),
+        op('mv', 'urn:form:two-variables', 'GET', 'Two variables', { 'hydra:search': { '@type': 'hydra:IriTemplate',
+          'hydra:template': `${base}/api{?q}`, 'hydra:mapping': [{ 'hydra:variable': ['q', 'r'] }] } }),
+        op('fd', 'urn:form:two-datatypes', 'POST', 'Two datatypes', { ...target('/api'), 'hydra:expects': { '@id': '#D' } }),
+        op('fc', 'urn:form:two-counts', 'POST', 'Two counts', { ...target('/api'), 'hydra:expects': { '@id': '#C' } }),
+        op('fw', 'urn:form:word-count', 'POST', 'Word count', { ...target('/api'), 'hydra:expects': { '@id': '#W' } }),
+        op('fp', 'urn:form:sequence-path', 'POST', 'Sequence path', { ...target('/api'), 'hydra:expects': { '@id': '#P' } }),
+        op('fv', 'urn:form:two-defaults', 'POST', 'Two defaults', { ...target('/api'), 'hydra:expects': { '@id': '#V' } }),
+      ],
+      '@graph': [
+        { '@id': '#S1', '@type': 'sh:NodeShape' }, { '@id': '#S2', '@type': 'sh:NodeShape' },
+        { '@id': '#D', 'sh:property': { 'sh:path': { '@id': '#n' }, 'sh:name': 'n', 'sh:maxCount': 1,
+          'sh:datatype': [{ '@id': 'xsd:integer' }, { '@id': 'xsd:string' }] } },
+        { '@id': '#C', 'sh:property': { 'sh:path': { '@id': '#n' }, 'sh:name': 'n', 'sh:maxCount': [1, 2] } },
+        { '@id': '#W', 'sh:property': { 'sh:path': { '@id': '#n' }, 'sh:name': 'n', 'sh:maxCount': 'one' } },
+        { '@id': '#P', 'sh:property': { 'sh:path': { '@list': [{ '@id': '#a' }, { '@id': '#b' }] }, 'sh:name': 'n', 'sh:maxCount': 1 } },
+        { '@id': '#V', 'sh:property': { 'sh:path': { '@id': '#n' }, 'sh:name': 'n', 'sh:maxCount': 1, 'sh:defaultValue': ['a', 'b'] } },
+      ] },
+    // Documents that use a JSON-LD structure the clients do not read, each refused whole
+    // (DOCUMENT_REFUSALS): a named graph as a property's value, @included inside a node, @reverse,
+    // a @set object with another key, and a node given two "@id"s through an alias or a @nest.
+    '/nested-graph': { '@context': CTX, '@id': `${base}/nested-graph`, 'iep:affordance': [op('r', 'urn:ng:read', 'GET', 'Nested graph read', target('/api'))],
+      'dct:hasPart': { '@graph': [op('w', 'urn:ng:hidden', 'DELETE', 'Hidden delete', target('/thing'))] } },
+    '/nested-included': { '@context': CTX, '@id': `${base}/nested-included`, 'iep:affordance': [op('r', 'urn:ni:read', 'GET', 'Included in a node', {
+      ...target('/api'), '@included': [op('w', 'urn:ni:hidden', 'DELETE', 'Hidden delete', target('/thing'))] })] },
+    '/reverse': { '@context': CTX, '@id': `${base}/reverse`, '@graph': [
+      { '@id': '#w', '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:rev:write' }, 'hydra:method': 'GET', 'hydra:title': 'Reverse read',
+        ...target('/api'), '@reverse': { 'hydra:operation': { '@id': `${base}/reverse` } } }] },
+    '/set-extra': { '@context': CTX, '@id': `${base}/set-extra`, 'hydra:operation': { '@set': [op('r', 'urn:se:read', 'GET', 'Set with a title', target('/api'))],
+      'hydra:title': 'extra' } },
+    '/colliding': { '@context': { ...CTX, id: '@id' }, '@id': `${base}/colliding`, 'iep:affordance': [
+      { ...op('a', 'urn:collide:a', 'GET', 'Colliding ids', target('/api')), id: '#b' }] },
+    // Two controls whose short names are one name: a name that matches both is refused, not read as
+    // the first. The write's input takes a value by its name or its path's, but not by both.
+    '/same-names': { '@context': CTX, '@id': `${base}/same-names`, 'iep:affordance': [
+      op('a', 'urn:a:remove', 'GET', 'Read remove', target('/api')),
+      op('b', 'urn:b:remove', 'DELETE', 'Delete remove', target('/thing')),
+      op('w', 'urn:same:write', 'POST', 'Write by two names', { ...target('/api'), 'hydra:expects': { '@id': '#S' } }),
+    ], '@graph': [{ '@id': '#S', 'sh:property': { 'sh:path': { '@id': `${base}/query` }, 'sh:name': 'q', 'sh:maxCount': 1 } }] },
+    '/nest-id': { '@context': { ...CTX, meta: '@nest' }, '@id': `${base}/nest-id`, 'iep:affordance': [
+      { ...op('a', 'urn:collide:nest', 'GET', 'Nested id', target('/api')), meta: { '@id': '#b' } }] },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
-  return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')]));
+  const out = Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')]));
+  // JSON.stringify writes each key once, so a repeated key is put in the text by hand: JSON leaves
+  // its meaning open, and a reader that takes the last "hydra:method" takes GET.
+  out['/repeated-key'] = JSON.stringify({ '@context': CTX, '@id': `${base}/repeated-key`, 'iep:affordance': [
+    op('d', 'urn:repeat:delete', 'DELETE', 'Repeated method', target('/thing'))] }).replace('"hydra:method":"DELETE"', '"hydra:method":"DELETE","hydra:method":"GET"');
+  // NaN is not JSON: the page's JSON.parse refuses it, and hmc.py, whose json.loads would read it, does too.
+  out['/not-json'] = JSON.stringify({ '@context': CTX, '@id': `${base}/not-json`, 'iep:affordance': [
+    op('n', 'urn:nan:read', 'GET', 'NaN read', { ...target('/api'), 'hydra:title': 'NAN-HERE' })] }).replace('"NAN-HERE"', 'NaN');
+  return out;
 }
+
+/** HyperMarkdown documents served to both clients as text/markdown. */
+export function sharedMarkdown(base: string): Record<string, string> {
+  return {
+    // A block that gives its method twice is refused, whichever comes last; a title given twice
+    // is shown as the last; a GET marked destructive is unsafe.
+    '/hm-repeat': ['# Repeated keys', '',
+      ':::control hm-two-methods', 'title: Repeated method', 'method: DELETE', 'method: GET', `target: ${base}/thing`, ':::', '',
+      ':::control hm-two-titles', 'title: First title', 'title: Second title', 'method: GET', `target: ${base}/api`, ':::', '',
+      ':::control hm-destructive', 'title: Destructive read', 'method: GET', 'destructiveHint: true', `target: ${base}/purge`, ':::', ''].join('\n'),
+  };
+}
+
+/** Documents each client refuses whole, as [path, the problem it names]; nothing is listed or sent. */
+export const DOCUMENT_REFUSALS: ReadonlyArray<readonly [path: string, problem: string]> = [
+  ['/nested-graph', 'This document holds a @graph inside a node, which this client does not read, so it is not read.'],
+  ['/nested-included', 'This document holds @included inside a node that is not at its top or in a @graph, which this client does not read, so it is not read.'],
+  ['/reverse', 'This document uses @reverse, which this client does not read, so it is not read.'],
+  ['/set-extra', 'This document has a @set object with a key other than @set and @index, which JSON-LD does not allow, so it is not read.'],
+  ['/colliding', 'This document gives one node @id twice, which JSON-LD does not allow, so it is not read.'],
+  ['/nest-id', 'This document gives one node @id twice, which JSON-LD does not allow, so it is not read.'],
+  ['/repeated-key', 'This document repeats the key "hydra:method" in one object, so which value it means is not known, and it is not read.'],
+];
 
 /**
  * The GETs to /api that /containers holds, as [the IRI that names it, title]: every one is a
@@ -506,6 +622,15 @@ export function jsonldPlans(base: string): ReadonlyArray<readonly [path: string,
     ['/two-terms', 'urn:two:write', 'Two-term write', 'POST', `${base}/api`],
     ['/prefix-terms', 'urn:prefix:expanded', 'Expanded prefix', 'POST', null],
     ['/prefix-terms', 'urn:prefix:simple', 'Simple prefix', 'POST', `${base}/collect`],
+    ['/hint-values', 'urn:hint:read', 'Plain hint read', 'GET', `${base}/api`],
+    ['/set-values', 'urn:set:read', 'Set object read', 'GET', `${base}/api`],
+    ['/set-values', 'urn:set:nested', 'Nested set read', 'GET', `${base}/api`],
+    ['/set-values', 'urn:set:list', 'List object read', 'GET', `${base}/api`],
+    ['/set-values', 'urn:set:graph', 'Graph object read', 'GET', `${base}/api`],
+    ['/set-values', 'urn:set:alias', 'Aliased set read', 'GET', `${base}/api`],
+    ['/set-values', 'urn:set:method', 'Set method read', 'GET', `${base}/api`],
+    ['/set-values', 'urn:set:tagged', 'Tagged method read', 'GET', `${base}/api`],
+    ['/set-values', 'urn:set:shape', 'Set shape read', 'GET', `${base}/api`],
   ];
 }
 
@@ -525,5 +650,42 @@ export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: stri
       'this control names more than one hydra:method (GET, DELETE), so what it does is not known; it is not invoked'],
     ['/two-targets', 'urn:targets:two', 'Two targets', 'POST',
       `this control names more than one hydra:target (${base}/dest, ${base}/t), so where it sends is not known; it is not invoked`],
+    ['/hint-values', 'urn:hint:two', 'Two hints', 'GET',
+      'this control names more than one iep:destructiveHint (false, true), so whether it is safe is not known; it is not invoked'],
+    ['/hint-values', 'urn:hint:merged', 'Merged hint', 'GET',
+      'this control names more than one iep:destructiveHint (false, true), so whether it is safe is not known; it is not invoked'],
+    ['/hint-values', 'urn:hint:listed', 'Listed hint', 'GET',
+      'this control writes iep:destructiveHint as a JSON-LD @list, which this client does not read, so whether it is safe is not known; it is not invoked'],
+    ['/value-forms', 'urn:form:list-method', 'Listed method', 'POST',
+      'this control writes hydra:method as a JSON-LD @list, which this client does not read, so what it does is not known; it is not invoked'],
+    ['/value-forms', 'urn:form:container-method', 'List container method', 'POST',
+      'this control writes hydra:method as a JSON-LD @list, which this client does not read, so what it does is not known; it is not invoked'],
+    ['/value-forms', 'urn:form:json-target', 'JSON target', 'GET',
+      'this control writes hydra:target as a JSON literal (@json), which this client does not read, so where it sends is not known; it is not invoked'],
+    ['/value-forms', 'urn:form:two-actions', 'Two actions', 'GET',
+      'this control names more than one iep:action (urn:form:two-actions, urn:form:other), so which affordance it names is not known; it is not invoked'],
+    ['/value-forms', 'urn:form:two-templates', 'Two templates', 'GET',
+      `this control names more than one hydra:template (${base}/a{?q}, ${base}/b{?q}), so where it sends is not known; it is not invoked`],
+    ['/value-forms', 'urn:form:template-and-address', 'Template and address', 'GET',
+      `this control names more than one hydra:target (${base}/t{?q}, ${base}/api), so where it sends is not known; it is not invoked`],
+    ['/value-forms', 'urn:form:two-shapes', 'Two shapes', 'POST',
+      `this control names more than one hydra:expects (${base}/value-forms#S1, ${base}/value-forms#S2), so what it sends is not known; it is not invoked`],
+    ['/value-forms', 'urn:form:two-media', 'Two media types', 'GET',
+      'this control names more than one hydra:returnsContentType (application/json, text/html), so what it returns is not known; it is not invoked'],
+    ['/value-forms', 'urn:form:two-variables', 'Two variables', 'GET',
+      'this control names more than one hydra:variable in one hydra:mapping (q, r), so where it sends is not known; it is not invoked'],
+    ['/value-forms', 'urn:form:two-datatypes', 'Two datatypes', 'POST',
+      'the input "n" names more than one sh:datatype (http://www.w3.org/2001/XMLSchema#integer, http://www.w3.org/2001/XMLSchema#string), ' +
+      'so what it takes is not known; this control is not invoked'],
+    ['/value-forms', 'urn:form:two-counts', 'Two counts', 'POST',
+      'the input "n" names more than one sh:maxCount (1, 2), so what it takes is not known; this control is not invoked'],
+    ['/value-forms', 'urn:form:word-count', 'Word count', 'POST',
+      'the input "n" names an sh:maxCount that is not a whole number (one), so what it takes is not known; this control is not invoked'],
+    ['/value-forms', 'urn:form:sequence-path', 'Sequence path', 'POST',
+      'the input "n" writes sh:path as a JSON-LD @list, which this client does not read, so what it takes is not known; this control is not invoked'],
+    ['/value-forms', 'urn:form:two-defaults', 'Two defaults', 'POST',
+      'the input "n" names more than one sh:defaultValue (a, b), so what it takes is not known; this control is not invoked'],
+    ['/hm-repeat', 'hm-two-methods', 'Repeated method', 'DELETE',
+      'this control block gives method more than once (DELETE, GET), so what it does is not known; it is not invoked'],
   ];
 }

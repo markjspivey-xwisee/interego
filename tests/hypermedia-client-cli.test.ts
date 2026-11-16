@@ -15,7 +15,8 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, jsonldPlans, jsonldRefusals, sharedDescriptors } from './hypermedia-client-fixtures.js';
+import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, jsonldPlans, jsonldRefusals, sharedDescriptors,
+  sharedMarkdown } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -167,6 +168,7 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
     '/api': () => ({ type: 'text/plain', body: 'fine' }),
     // The documents the page's test reads too, and the addresses their controls reach.
     ...Object.fromEntries(Object.entries(sharedDescriptors(base)).map(([path, text]) => [path, () => ({ type: 'application/ld+json', body: text })])),
+    ...Object.fromEntries(Object.entries(sharedMarkdown(base)).map(([path, text]) => [path, () => ({ type: 'text/markdown', body: text })])),
     ...Object.fromEntries(Object.entries(cost).map(([path, text]) => [path, () => ({ type: 'application/ld+json', body: text })])),
     ...Object.fromEntries(['/purge', '/sparql', '/notes/1', '/publish', '/wiki/Caf%C3%A9', '/items', '/lrs/about', '/search', '/tmpl/items/7',
       '/tmpl/shard/ab/abcdef', '/rates/2', '/find', '/dir/items', '/admin', '/q', '/s'].map(path => [path, () => ({ type: 'text/plain', body: 'fine' })])),
@@ -657,6 +659,59 @@ describe('hmc.py: scoped contexts, map references and repeated keys as jsonld.js
 
   it('passes a percent-encoded triplet through a reserved expansion as it is', async () => {
     expect((await dry('/tmpl-pct', 'urn:tmpl:pct', { path: '/x?y=%2F&z=a b' })).request!.url).toBe(`${base}/r/x?y=%2F&z=a%20b`);
+  });
+});
+
+describe('hmc.py: every value read, or the control or document refused', () => {
+  it('reads every hint value: a GET marked unsafe in any of them is a dry run, and true with false is refused', async () => {
+    const doc = await listed('/hint-values');
+    expect(Object.fromEntries(doc.controls.map(c => [c.title, c.unsafe]))).toEqual({ 'Two hints': true, 'Merged hint': true,
+      'Listed hint': true, 'Typed hint': true, 'String hint': true, 'Unreadable hint': true, 'Plain hint read': false });
+    for (const rel of ['urn:hint:typed', 'urn:hint:string', 'urn:hint:unread']) {
+      const r = await hmc(['invoke', `${base}/hint-values`, rel]);
+      expect(r.code, r.stderr).toBe(0);
+      expect(r.stdout, rel).toContain('Dry run');
+    }
+    expect(seen.filter(s => s.startsWith('GET /purge'))).toEqual([]);
+  });
+
+  it('reads an input of a shape whose properties and counts are written as @set objects', async () => {
+    expect((await dry('/set-values', 'urn:set:shape', { q: '5' })).request!.url).toBe(`${base}/api?q=5`);
+    const bad = await dry('/set-values', 'urn:set:shape', { q: '1.5' });
+    expect([bad.r.code, bad.r.stderr]).toEqual([2, expect.stringContaining('Validation failed')]);
+  });
+
+  it('refuses a document whole when it uses a structure it does not read, with a problem that names it, and sends nothing', async () => {
+    for (const [path, problem] of DOCUMENT_REFUSALS) {
+      const before = seen.length;
+      const r = await hmc(['list', `${base}${path}`]);
+      expect([r.code, r.stderr.trim()], path).toEqual([1, `error: ${problem}`]);
+      expect(seen.slice(before).filter(line => !line.startsWith(`GET ${path}`)), path).toEqual([]);
+    }
+    const nan = await hmc(['list', `${base}/not-json`]);
+    expect([nan.code, nan.stderr.trim()]).toEqual([1, 'error: This document writes NaN, which is not JSON, so it is not read.']);
+  });
+
+  it('refuses a name two controls share, and values given under two names of one input', async () => {
+    const before = seen.length;
+    const r = await hmc(['invoke', `${base}/same-names`, 'remove', '--confirm']);
+    expect(r.code).toBe(1);
+    expect(r.stderr).toContain("More than one control matches 'remove': urn:a:remove, urn:b:remove. Name one by its full IRI; nothing was sent.");
+    expect(seen.slice(before).filter(line => !line.startsWith('GET /same-names'))).toEqual([]);
+    expect((await dry('/same-names', 'urn:a:remove')).request!.url).toBe(`${base}/api`);
+    const both = await dry('/same-names', 'urn:same:write', { q: '1', query: '2' });
+    expect(both.r.code).toBe(2);
+    expect(both.r.stderr).toContain('q: values were given under more than one of its names (q, query)');
+  });
+
+  it('refuses a HyperMarkdown block that gives its method twice, shows a title given twice as the last, and reads a hint', async () => {
+    const doc = await listed('/hm-repeat');
+    expect(Object.fromEntries(doc.controls.map(c => [c.title, [c.method, c.unsafe]]))).toEqual({
+      'Repeated method': ['DELETE', true], 'Second title': ['GET', false], 'Destructive read': ['GET', true] });
+    const r = await hmc(['invoke', `${base}/hm-repeat`, 'hm-destructive']);
+    expect(r.code, r.stderr).toBe(0);
+    expect(r.stdout).toContain('Dry run');
+    expect(seen.filter(s => s.startsWith('GET /purge'))).toEqual([]);
   });
 
   it('keeps every repeated query parameter when it asks again for JSON-LD', async () => {
