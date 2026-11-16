@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-+Md0+qYiF9tuFq7gVsygdRZ0/yoGiEKvgfVINThXFA0='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-VWbqa1dLQuyLb9UTq09gu13XaGb8y7Z3TjoOxtiv/Rc='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -403,12 +403,28 @@ function spend(budget, amount) {
   budget.left -= amount;
   if (budget.left < 0) throw new Error("This document's @context entries are too many to read.");
 }
-// A JSON Schema written into a document as plain JSON, such as a hydra:expects
-// object with "properties": its keys are JSON Schema's, never terms, so nothing
-// in it is renamed or expanded.
-function jsonSchemaLike(item) {
-  const props = item.properties;
-  return !!props && typeof props === "object" && !Array.isArray(props) && !Object.keys(item).some(k => k.startsWith("@"));
+// A JSON Schema written into a document as plain JSON: an object whose
+// "properties" is an object, with no keyword of its own, or with "@id" or
+// "@type" too when it is a value of hydra:expects. Its keys are JSON Schema's,
+// never terms, so only its own "@id" and "@type" are read as JSON-LD, and
+// nothing under it is renamed or expanded. hmc.py's _json_schema_like is the same.
+function jsonSchemaLike(item, expected) {
+  const props = own(item, "properties") ? item.properties : null;
+  return !!props && typeof props === "object" && !Array.isArray(props) && (expected || !Object.keys(item).some(k => k.startsWith("@")));
+}
+// Whether a local context propagates to the node objects under the node it
+// applies to: its first entry's "@propagate" when that is a boolean, as
+// jsonld.js reads it, else `fallback` (false for a type's scoped context, true
+// for any other).
+function propagates(local, fallback) {
+  const first = Array.isArray(local) ? local[0] : local;
+  return first && typeof first === "object" && !Array.isArray(first) && typeof first["@propagate"] === "boolean" ? first["@propagate"] : fallback;
+}
+// The value at `key` in each of a context's tables, undefined where it has none.
+const entriesAt = (tables, key) => tables.map(t => own(t, key) ? t[key] : undefined);
+function sameEntry(a, b) {
+  if (a === b) return true;
+  return a instanceof Set && b instanceof Set && a.size === b.size && [...a].every(x => b.has(x));
 }
 // Writes an own property, so a remote key such as "__proto__" is a key like any
 // other and never the setter that would replace the object's prototype.
@@ -428,33 +444,75 @@ const sizeOf = (map) => Object.keys(map).length;
 // whose values an @index map's keys are, scoped contexts, keyword aliases,
 // terms set to null, @vocab, and the base a relative
 // IRI resolves against: @base when the context gives one, else the address the
-// document came from. `terms` holds only what documents defined; the reader's
-// own names for the properties it reads (TERMS0) apply to keys only, never to a
-// value such as an action written as a term. hmc.py's Context is the same.
+// document came from. `previous`, when set, is the context a node object under
+// the node goes back to: a type's scoped context, and one whose "@propagate" is
+// false, hold for that node's own keys only. `terms` holds only what documents
+// defined; the reader's own names for the properties it reads (TERMS0) apply to
+// keys only, never to a value such as an action written as a term. hmc.py's
+// Context is the same.
 class Ctx {
   constructor(base, budget) {
     this.prefixes = bare(PREFIXES0); this.terms = bare({}); this.coerce = bare({});
     this.containers = bare({}); this.indexes = bare({}); this.scoped = bare({}); this.aliases = bare({}); this.nulled = bare({});
     this.vocab = null; this.base = base || null; this.documentBase = this.base;
     this.budget = budget || { left: CONTEXT_BUDGET };
-    this.children = bare({});
+    this.previous = null;
+    // The contexts scoped contexts made from this one, each made once (scopedChild).
+    this.made = new Map();
+    // While wouldKeep absorbs a context, each key's entries before it changed.
+    this.journal = null;
   }
-  // A copy of this context with `local` absorbed: a node's own @context, or the
-  // scoped one a term or type carries.
-  child(local) {
-    spend(this.budget, sizeOf(this.prefixes) + sizeOf(this.terms) + sizeOf(this.coerce) + sizeOf(this.containers) +
-      sizeOf(this.indexes) + sizeOf(this.scoped) + sizeOf(this.aliases) + sizeOf(this.nulled) + 1);
+  tables() { return [this.prefixes, this.terms, this.coerce, this.containers, this.indexes, this.scoped, this.aliases, this.nulled]; }
+  // A copy of this context, `previous` included.
+  copy() {
+    spend(this.budget, this.tables().reduce((n, t) => n + sizeOf(t), 1));
     const out = new Ctx(this.base, this.budget);
     out.prefixes = bare(this.prefixes); out.terms = bare(this.terms); out.coerce = bare(this.coerce);
     out.containers = bare(this.containers); out.indexes = bare(this.indexes); out.scoped = bare(this.scoped); out.aliases = bare(this.aliases);
-    out.nulled = bare(this.nulled); out.vocab = this.vocab; out.documentBase = this.documentBase;
+    out.nulled = bare(this.nulled); out.vocab = this.vocab; out.documentBase = this.documentBase; out.previous = this.previous;
+    return out;
+  }
+  // This context with `local` absorbed: a node's own @context, or the scoped
+  // one a term or type carries. One that does not propagate keeps the context
+  // before it as `previous`, as jsonld.js does.
+  child(local, propagate = true) {
+    const out = this.copy();
+    if (!propagate && !out.previous) out.previous = this;
     out.absorb(local);
     return out;
   }
-  // The context a term's scoped @context makes, made once per term.
-  scopedChild(term) {
-    if (!own(this.children, term)) this.children[term] = this.child(this.scoped[term]);
-    return this.children[term];
+  // The context a scoped @context makes from this one, made once for each
+  // scoped context and fallback. A scoped context that would change nothing
+  // here, such as a term's met again inside its own value, gives this context
+  // itself, so a term nested in itself many levels deep makes no copy per level.
+  scopedChild(local, fallback) {
+    const propagate = propagates(local, fallback);
+    let made = this.made.get(local);
+    if (!made) { made = [null, null]; this.made.set(local, made); }
+    const slot = propagate ? 1 : 0;
+    if (!made[slot]) made[slot] = (propagate || this.previous) && this.wouldKeep(local) ? this : this.child(local, propagate);
+    return made[slot];
+  }
+  // Whether absorbing `local` would leave this context as it is. It is absorbed
+  // here with each entry it changes saved first and put back after, so the
+  // check costs `local`'s size, not this context's. A local context that
+  // empties the context (null) is not checked.
+  wouldKeep(local) {
+    if (asList(local).some(item => item === null)) return false;
+    const { base, vocab, made } = this;
+    const saved = new Map();
+    this.journal = saved;
+    try { this.absorb(local); } finally { this.journal = null; }
+    let same = this.base === base && this.vocab === vocab;
+    const tables = this.tables();
+    for (const [key, before] of saved) {
+      tables.forEach((table, i) => {
+        if (!sameEntry(before[i], own(table, key) ? table[key] : undefined)) same = false;
+        if (before[i] === undefined) delete table[key]; else table[key] = before[i];
+      });
+    }
+    this.base = base; this.vocab = vocab; this.made = made;
+    return same;
   }
   absorb(ctx) {
     for (const item of asList(ctx)) {
@@ -462,12 +520,12 @@ class Ctx {
         // A null context empties the active context; the document's own base stays.
         this.prefixes = bare(PREFIXES0); this.terms = bare({}); this.coerce = bare({});
         this.containers = bare({}); this.indexes = bare({}); this.scoped = bare({}); this.aliases = bare({}); this.nulled = bare({});
-        this.vocab = null; this.base = this.documentBase; this.children = bare({});
+        this.vocab = null; this.base = this.documentBase; this.made = new Map();
         continue;
       }
       if (!item || typeof item !== "object" || Array.isArray(item)) continue;
       spend(this.budget, Object.keys(item).length + 1);
-      this.children = bare({});
+      this.made = new Map();
       if (own(item, "@base")) {
         const b = item["@base"];
         if (b === null) this.base = null;
@@ -510,7 +568,8 @@ class Ctx {
     return prefix === "_" || suffix.startsWith("//") ? null : prefix;
   }
   define(key, value) {
-    for (const table of [this.terms, this.prefixes, this.coerce, this.containers, this.indexes, this.scoped, this.aliases, this.nulled]) delete table[key];
+    if (this.journal && !this.journal.has(key)) this.journal.set(key, entriesAt(this.tables(), key));
+    for (const table of this.tables()) delete table[key];
     if (value === null) { this.nulled[key] = true; return; }
     if (typeof value === "string") {
       if (value.startsWith("@")) { if (ALIASABLE.has(value)) this.aliases[key] = value; return; }
@@ -537,8 +596,8 @@ class Ctx {
     else iri = own(TERMS0, key) ? TERMS0[key] : null;
     if (typeof iri === "string" && iri.includes(":")) {
       this.terms[key] = iri;
-      const flag = own(value, "@prefix") ? value["@prefix"] : null;
-      if (flag === true || (flag == null && !key.includes(":") && !key.includes("/") && "#/".includes(iri[iri.length - 1]))) this.prefixes[key] = iri;
+      // An expanded definition is a prefix only when it says so, as JSON-LD 1.1 has it.
+      if (own(value, "@prefix") && value["@prefix"] === true) this.prefixes[key] = iri;
     }
     const kind = own(value, "@type") ? value["@type"] : null;
     if (kind === "@id" || kind === "@vocab" || kind === "@json") this.coerce[key] = kind;
@@ -585,8 +644,9 @@ class Ctx {
   }
   isNest(key) { return key === "@nest" || (own(this.aliases, key) && this.aliases[key] === "@nest"); }
   // Moves the properties under each @nest key (or a term aliased to it) onto
-  // the node, where JSON-LD reads them. Each nested object is moved once, so
-  // this costs linear time.
+  // the node, where JSON-LD reads them: a nested "@type" (or its alias) adds
+  // to the node's types, and a nested "@id" is the node's when it has none.
+  // Each nested object is moved once, so this costs linear time.
   liftNests(item) {
     const work = Object.keys(item).filter(k => this.isNest(k));
     while (work.length) {
@@ -598,6 +658,8 @@ class Ctx {
         if (!obj || typeof obj !== "object" || Array.isArray(obj)) continue;
         this.renameAliases(obj);
         for (const [inner, value] of Object.entries(obj)) {
+          if (inner === "@type") { mergeValue(item, "@type", value); continue; }
+          if (inner === "@id") { if (!own(item, "@id")) putOwn(item, "@id", value); continue; }
           if (inner.startsWith("@") && inner !== "@nest") continue;
           if (this.isNest(inner) && !own(item, inner)) work.push(inner);
           mergeValue(item, inner, value);
@@ -608,19 +670,24 @@ class Ctx {
   // A container term's value as the values it holds, as JSON-LD 1.1 expands it.
   // Only an @language, @index, @id or @type container holds a map (alone, with
   // @set, or, for @index and @id, with @graph), and there every object is a
-  // map, whatever its keys. A language map's key becomes each string's
-  // "@language"; an @index map's key is dropped, or is a value of the property
-  // the term's "@index" names, put before the node's own; an @id map's key
-  // becomes its node's "@id" unless the node has one, or @graph makes the key
-  // the IRI of the graph that holds the node; and a @type map's key is put
-  // before its node's types. Keys are read in `valueCtx`, the context the
-  // term's values are read in, as jsonld.js reads them. `keyed` holds the
-  // "@id" or type for normalize to give a node once its keyword aliases are
-  // keywords, so a node's own "id": "@id" alias is its own "@id". A key that
-  // is @none, or a term aliased to it, adds nothing. Under any other
-  // container (@set, @list, @graph alone or with @set) a value is what it is,
-  // so one node object stays one node, never a list of its properties.
-  // hmc.py's _unmap is the same.
+  // map, whatever its keys. A map's keys are read in sorted order, as jsonld.js
+  // reads them, so both clients meet its values in one order. A language map's
+  // key becomes each string's "@language"; an @index map's key is dropped, or
+  // is a value of the property the term's "@index" names, put before the
+  // node's own (under @graph that property is the graph's, which the reader
+  // does not keep, so the node gets nothing); an @id map's key becomes its
+  // node's "@id" unless the node has one, or @graph makes the key the IRI of
+  // the graph that holds the node; and a @type map's key is put before its
+  // node's types. A string where the term holds IRIs (a @type map's always
+  // does) is a reference to the node it names, which an @index property
+  // reaches as it reaches a node written in place. Keys are read in
+  // `valueCtx`, the context the term's values are read in, as jsonld.js reads
+  // them. `keyed` holds each object a map gives, with the "@id" or type for
+  // normalize to give it once its keyword aliases are keywords, so a node's
+  // own "id": "@id" alias is its own "@id". A key that is @none, or a term
+  // aliased to it, adds nothing. Under any other container (@set, @list,
+  // @graph alone or with @set) a value is what it is, so one node object stays
+  // one node, never a list of its properties. hmc.py's _unmap is the same.
   unmap(term, value, keyed, valueCtx) {
     const containers = this.containers[term];
     if (!value || typeof value !== "object" || Array.isArray(value)) return value;
@@ -629,77 +696,132 @@ class Ctx {
     if (!language && !index && !ids && !types) return value;
     const graph = containers.has("@graph");
     const indexBy = index && own(this.indexes, term) ? this.indexes[term] : null;
+    const coerced = own(this.coerce, term) ? this.coerce[term] : null;
+    const refKind = types ? (coerced === "@vocab" ? "@vocab" : "@id") : (coerced === "@id" || coerced === "@vocab" ? coerced : null);
     const out = [];
-    for (const [key, member] of Object.entries(value)) {
+    for (const key of Object.keys(value).sort()) {
       const none = key === "@none" || (own(valueCtx.aliases, key) && valueCtx.aliases[key] === "@none");
-      for (let entry of asList(member)) {
+      for (let entry of asList(value[key])) {
         if (language) {
           if (typeof entry === "string" && !none) out.push({ "@value": entry, "@language": key });
           else if (entry != null) out.push(entry);
           continue;
         }
-        if (types && typeof entry === "string") entry = { "@id": entry };
+        const info = {};
+        if (typeof entry === "string" && refKind) {
+          entry = { "@id": valueCtx.expandIri(entry, { vocab: refKind === "@vocab", base: true }) };
+          info.expanded = true;
+        }
         const node = !!entry && typeof entry === "object" && !Array.isArray(entry);
         if (index) {
-          if (node && indexBy && !none && !own(entry, "@value")) {
+          if (node && indexBy && !none && !graph && !own(entry, "@value")) {
             // The key is the property's value as a value of that term is read: an IRI where the term holds IRIs.
             const kind = own(valueCtx.coerce, indexBy) ? valueCtx.coerce[indexBy] : null;
             const indexed = kind === "@id" || kind === "@vocab" ? valueCtx.expandIri(key, { vocab: kind === "@vocab", base: true }) : key;
             const name = this.expandKey(indexBy) || indexBy;
             putOwn(entry, name, [indexed].concat(own(entry, name) ? asList(entry[name]) : []));
           }
+          if (node) keyed.set(entry, info);
           if (entry != null) out.push(entry);
         } else if (node) {
-          if (!none && (types || !graph)) keyed.set(entry, ids ? { id: valueCtx.expandIri(key, { base: true }) } : { type: key });
+          if (!none && (types || !graph)) {
+            if (ids) info.id = valueCtx.expandIri(key, { base: true }); else info.type = key;
+          }
+          // A @type map's values go back to the context before a type's scoped one, as jsonld.js reads them.
+          if (types) info.revert = true;
+          keyed.set(entry, info);
           out.push(entry);
         }
       }
     }
     return out;
   }
+  // Whether an object is a value object or a node reference (one "@id" and
+  // nothing else), which keep the context they are written in, as jsonld.js
+  // reads them: only a node object under a type's scoped context goes back.
+  keepsContext(item) {
+    const keys = Object.keys(item);
+    if (keys.length > 2 || keys.includes("@context")) return false;
+    for (const key of keys) {
+      const keyword = key.startsWith("@") ? key : (own(this.aliases, key) ? this.aliases[key] : null);
+      if (keyword === "@value") return true;
+      if (keyword === "@id" && keys.length === 1) return true;
+    }
+    return false;
+  }
   // Every node in a document put in the form the reader reads, in place, once,
-  // before anything reads it. A node's own @context, a term's scoped context and
-  // a type's scoped context apply to the node and what is under it; keyword
-  // aliases become the keywords; @nest objects are lifted onto their node; a
-  // container term's map becomes a list; each "@id", each "@type" and each
-  // value of a term typed "@id" or "@vocab" is expanded, so {"@id":
-  // "xsd:integer"} is XSD's integer and {"@id": "/api"} is an address on the
-  // document's host; and a key that a scoped context maps differently from the
-  // document's own context is renamed to the IRI it names, so reading the node
-  // later finds it. Value objects, JSON literals and JSON Schemas are left as
-  // they are. A stack, not recursion, so a deeply nested document costs linear
-  // time and no call stack. hmc.py's normalize is the same.
+  // before anything reads it. A node's own @context and a term's scoped context
+  // apply to the node and what is under it unless they say "@propagate":
+  // false; a type's scoped context applies to the node's own keys only, so a
+  // node object under the node goes back to the context before it, and a
+  // property-scoped context is taken again from there, as jsonld.js reads
+  // them. Keyword aliases become the keywords; @nest objects are lifted onto
+  // their node; a container term's map becomes a list; each "@id", each
+  // "@type" and each value of a term typed "@id" or "@vocab" is expanded, so
+  // {"@id": "xsd:integer"} is XSD's integer and {"@id": "/api"} is an address
+  // on the document's host; and a key that a scoped context maps differently
+  // from the document's own context is renamed to the IRI it names, so reading
+  // the node later finds it. Value objects, JSON literals and JSON Schemas are
+  // left as they are, but for a schema's own "@id" and "@type". A stack, not
+  // recursion, so a deeply nested document costs linear time and no call
+  // stack. hmc.py's normalize is the same.
   normalize(document) {
     const root = this;
     const keyed = new Map();
     const isArray = Array.isArray(document);
-    const stack = (isArray ? document : [document]).map(item => [item, this, !isArray]);
+    // Each entry: the item, its context, whether it is the document's top, the
+    // property-scoped context of the key it is a value of (taken again after a
+    // type's scoped context ends), and whether that key is hydra:expects.
+    const stack = (isArray ? document : [document]).map(item => [item, this, !isArray, undefined, false]);
     while (stack.length) {
-      let [item, ctx, top] = stack.pop();
-      if (Array.isArray(item)) { for (const x of item) if (x && typeof x === "object") stack.push([x, ctx, false]); continue; }
-      // A map's value is a node, whatever keys it has.
-      if (!item || typeof item !== "object" || (!keyed.has(item) && jsonSchemaLike(item))) continue;
+      let [item, ctx, top, scoped, expected] = stack.pop();
+      if (Array.isArray(item)) { for (const x of item) if (x && typeof x === "object") stack.push([x, ctx, false, scoped, expected]); continue; }
+      if (!item || typeof item !== "object") continue;
+      // A map's value is a node, whatever keys it has, and keeps the context the map is read in.
+      const fromMap = keyed.get(item);
+      if (!fromMap && jsonSchemaLike(item, expected)) {
+        ctx.renameAliases(item);
+        if (own(item, "@id")) item["@id"] = ctx.expandIri(item["@id"], { base: true });
+        if (own(item, "@type")) item["@type"] = ctx.expandTyped(item["@type"], true);
+        continue;
+      }
+      if (ctx.previous && (fromMap ? fromMap.revert : !ctx.keepsContext(item))) {
+        ctx = ctx.previous;
+        if (scoped !== undefined && !fromMap) ctx = ctx.scopedChild(scoped, true);
+      }
       if (own(item, "@context")) {
-        if (top) ctx.absorb(item["@context"]); else ctx = ctx.child(item["@context"]);
+        const local = item["@context"];
+        if (top) {
+          // A top-level context that does not propagate leaves the nodes under the top with the empty context.
+          if (!propagates(local, true)) root.previous = new Ctx(root.documentBase, root.budget);
+          ctx.absorb(local);
+        } else ctx = ctx.child(local, propagates(local, true));
       }
       ctx.renameAliases(item);
-      const fromMap = keyed.get(item);
       if (fromMap) {
         if (fromMap.id != null && !own(item, "@id")) item["@id"] = fromMap.id;
         if (fromMap.type != null) item["@type"] = [fromMap.type].concat(own(item, "@type") ? asList(item["@type"]) : []);
       }
       if (own(item, "@value")) continue;
+      // A type's scoped context, looked up in the context before any of them,
+      // in the order of the types' names, holds for this node's own keys.
+      const typeCtx = ctx;
+      const scopedTypes = asList(own(item, "@type") ? item["@type"] : null).filter(t => typeof t === "string" && own(typeCtx.scoped, t)).sort();
+      for (const kind of scopedTypes) ctx = ctx.scopedChild(typeCtx.scoped[kind], false);
+      if (ctx !== typeCtx) ctx.renameAliases(item);
       ctx.liftNests(item);
-      const scopedTypes = asList(own(item, "@type") ? item["@type"] : null).filter(t => typeof t === "string" && own(ctx.scoped, t)).sort();
-      for (const kind of scopedTypes) ctx = ctx.scopedChild(kind);
-      for (const key of Object.keys(item)) {
+      for (const key of Object.keys(item).sort()) {
         if (key === "@context") continue;
-        if (key === "@id") { item[key] = ctx.expandIri(item[key], { base: true }); continue; }
-        if (key === "@type") { item[key] = ctx.expandTyped(item[key], true); continue; }
-        if (key.startsWith("@")) { if (item[key] && typeof item[key] === "object") stack.push([item[key], ctx, false]); continue; }
+        if (key === "@id") { if (!(fromMap && fromMap.expanded)) item[key] = ctx.expandIri(item[key], { base: true }); continue; }
+        if (key === "@type") { item[key] = typeCtx.expandTyped(item[key], true); continue; }
+        if (key.startsWith("@")) {
+          if (item[key] && typeof item[key] === "object") stack.push([item[key], ctx, false, key === "@list" || key === "@set" ? scoped : undefined, false]);
+          continue;
+        }
         if (own(ctx.nulled, key)) { delete item[key]; continue; }
         const kind = own(ctx.coerce, key) ? ctx.coerce[key] : null;
-        const valueCtx = own(ctx.scoped, key) ? ctx.scopedChild(key) : ctx;
+        const local = own(ctx.scoped, key) ? ctx.scoped[key] : undefined;
+        const valueCtx = local !== undefined ? ctx.scopedChild(local, true) : ctx;
         let value = item[key];
         if (own(ctx.containers, key)) value = ctx.unmap(key, value, keyed, valueCtx);
         if (kind === "@id" || kind === "@vocab") value = valueCtx.expandTyped(value, kind === "@vocab");
@@ -709,7 +831,7 @@ class Ctx {
           if (expanded && expanded !== root.expandKey(key)) name = expanded;
         }
         if (name !== key) { delete item[key]; mergeValue(item, name, value); } else putOwn(item, key, value);
-        if (kind !== "@json" && value && typeof value === "object") stack.push([value, valueCtx, false]);
+        if (kind !== "@json" && value && typeof value === "object") stack.push([value, valueCtx, false, local, ctx.expandKey(key) === P.expects]);
       }
     }
   }
@@ -787,8 +909,12 @@ class NodeIndex {
     this.root = address ? this.nodes.get(address) : (top || firstNamed || firstAny);
     this._harvest();
   }
-  // Adds a node, or merges its keys into the node already indexed at its @id;
-  // `added`, when given, collects the keys a merge added.
+  // Adds a node, or merges it into the node already indexed at its @id: a key
+  // that node lacks is added, and a key both have gets the other's literals
+  // and references ({"@id": ...}), so a method, a target or a hint written in
+  // two places is read in both, as JSON-LD merges a node's values; an object
+  // written in place stays the first one's. `added`, when given, collects the
+  // [key, values] a merge added.
   _add(node, added) {
     let id = node["@id"];
     if (!id || typeof id !== "string") {
@@ -804,8 +930,14 @@ class NodeIndex {
       return node;
     }
     const existing = this.nodes.get(id);
+    if (existing === node) return existing;
     for (const [k, v] of Object.entries(node)) {
-      if (!(k in existing)) { existing[k] = v; if (added) added.push(k); }
+      if (k === "@id" || k === "@context") continue;
+      if (!own(existing, k)) { putOwn(existing, k, v); if (added) added.push([k, asList(v)]); continue; }
+      const more = asList(v).filter(x => x == null || typeof x !== "object" || (!Array.isArray(x) && (own(x, "@value") || Object.keys(x).every(key => key === "@id"))));
+      if (!more.length) continue;
+      mergeValue(existing, k, more);
+      if (added) added.push([k, more]);
     }
     return existing;
   }
@@ -821,15 +953,15 @@ class NodeIndex {
     const pending = [];
     for (let i = this.order.length - 1; i >= 0; i--) pending.push([this.order[i], null]);
     while (pending.length) {
-      const [current, keys] = pending.pop();
-      if (keys == null) {
+      const [current, entries] = pending.pop();
+      if (entries == null) {
         if (walked.has(current)) continue;
         walked.add(current);
       }
-      for (const key of keys || Object.keys(current)) {
+      for (const [key, values] of entries || Object.keys(current).map(k => [k, asList(current[k])])) {
         const pred = this.ctx.expandKey(key);
         if (!HARVESTED.has(pred) && !HARVESTED_NAMES.has(localName(pred))) continue;
-        for (const item of asList(current[key])) {
+        for (const item of values) {
           if (item && typeof item === "object" && !Array.isArray(item) && (item["@id"] || item.action || item.method || item["@type"])) {
             const added = [];
             const node = this._add(item, added);
@@ -840,17 +972,24 @@ class NodeIndex {
       }
     }
   }
+  // A node's values for a property: those of every key that names it, joined
+  // in the order of the keys' names, as jsonld.js joins them, so two terms for
+  // one property are both read and both clients read the same value first.
+  // Only when no key names it is a key the context does not define (no term,
+  // alias or null, and no compact or absolute IRI) read by the property's local
+  // name, as a plain JSON document's "target" is.
   get(node, predicate) {
     if (!node) return null;
-    if (own(node, predicate)) return node[predicate];
-    for (const [key, val] of Object.entries(node)) {
-      if (!key.startsWith("@") && this.ctx.expandKey(key) === predicate) return val;
+    const keys = [];
+    for (const key of Object.keys(node)) {
+      if (key === predicate || (!key.startsWith("@") && this.ctx.expandKey(key) === predicate)) keys.push(key);
     }
+    if (keys.length === 1) return node[keys[0]];
+    if (keys.length) return keys.sort().flatMap(key => asList(node[key]));
     const want = localName(predicate);
-    for (const [key, val] of Object.entries(node)) {
-      if (key.startsWith("@") || key.startsWith("http://") || key.startsWith("https://") || key.includes(":")) continue;
-      if (key === want) return val;
-    }
+    const ctx = this.ctx;
+    if (want && own(node, want) && !want.startsWith("@") && !want.includes(":") &&
+        !own(ctx.terms, want) && !own(ctx.aliases, want) && !own(ctx.nulled, want)) return node[want];
     return null;
   }
   node(ident) {
@@ -1210,9 +1349,10 @@ function looksLikeOp(index, node) {
   return false;
 }
 
+// A control that cannot be invoked as written (`conflict`) is listed with the writes too.
 function isUnsafe(c) {
   const method = (c.method || "").toUpperCase();
-  return (method && !SAFE.has(method)) || c.destructive === true || c.readOnly === false;
+  return (method && !SAFE.has(method)) || c.destructive === true || c.readOnly === false || !!c.conflict;
 }
 
 // Whether a node says, under any key whose name ends in destructiveHint or
@@ -1249,14 +1389,19 @@ function duplicateName(fields) {
 function controlFromNode(index, node, source) {
   const rel = literal(index.get(node, P.action)) || literal(index.get(node, P.rel)) || node["@id"] || "";
   // A control that names no method is sent as the substrate's own follower
-  // (invoke_affordance, act) sends it: POST. So it is never a safe read by default.
-  const method = String(literal(index.get(node, P.method)) || "POST").toUpperCase();
+  // (invoke_affordance, act) sends it: POST. So it is never a safe read by
+  // default. One that names several is not invoked, and shows the first of
+  // them that is not safe, so it is never listed as a safe read either.
+  const methods = [...new Set(literals(index.get(node, P.method)).map(m => String(m).toUpperCase()).filter(m => m))];
+  const method = methods.find(m => !SAFE.has(m)) || methods[0] || "POST";
   const expectsRaw = jsonValue(index.get(node, P.expects));
   let expects = null;
   if (isJsonSchema(expectsRaw)) expects = null;
   else if (expectsRaw && typeof expectsRaw === "object" && !Array.isArray(expectsRaw) && expectsRaw["@id"]) expects = expectsRaw["@id"];
   else expects = literal(expectsRaw);
   const [template, mappings, templateIsTarget] = templateOf(index, node);
+  // Two addresses for one control are refused as two methods are: where it sends is not known.
+  const targets = templateIsTarget ? [] : [...new Set(literals(index.get(node, P.target)).filter(t => typeof t === "string"))];
   const hints = hintFlags(index, node);
   const control = {
     id: String(node["@id"] || rel), rel: String(rel), method,
@@ -1269,7 +1414,9 @@ function controlFromNode(index, node, source) {
     readOnly: hints.writes ? false : truthy(literal(index.get(node, P.readOnly))),
     idempotent: truthy(literal(index.get(node, P.idempotent))),
     destructive: hints.destructive ? true : truthy(literal(index.get(node, P.destructive))),
-    types: index.typesOf(node), source, base: index.ctx.base
+    types: index.typesOf(node), source, base: index.ctx.base,
+    conflict: methods.length > 1 ? "this control names more than one hydra:method (" + methods.join(", ") + "), so what it does is not known; it is not invoked"
+      : targets.length > 1 ? "this control names more than one hydra:target (" + targets.join(", ") + "), so where it sends is not known; it is not invoked" : null
   };
   control.unsafe = isUnsafe(control);
   // The fields, and the problem and warning they give, are built when first
@@ -1278,7 +1425,9 @@ function controlFromNode(index, node, source) {
   // once, not once per control.
   let inputs = null;
   const build = () => inputs || (inputs = controlInputs(index, node, expectsRaw, expects, mappings));
-  for (const key of ["fields", "problem", "warning"]) Object.defineProperty(control, key, { enumerable: true, get: () => build()[key] });
+  for (const key of ["fields", "problem", "warning"]) {
+    Object.defineProperty(control, key, { enumerable: true, get: () => (key === "problem" && control.conflict) || build()[key] });
+  }
   return control;
 }
 // A control's input fields, from its inline fields or the shape hydra:expects
@@ -1330,10 +1479,18 @@ function extractControls(index, source) {
     }
     if (looksLikeOp(index, node)) add(node);
   }
+  // Two controls with one name that send different requests are one control
+  // that is not invoked: which one a link or a name means is not known.
   for (const node of candidates) {
     const control = controlFromNode(index, node, source);
     const key = control.rel || control.id;
-    if (key && !found.has(key)) found.set(key, control);
+    if (!key) continue;
+    const first = found.get(key);
+    if (!first) { found.set(key, control); continue; }
+    if (first.method !== control.method || first.target !== control.target || first.template !== control.template) {
+      first.conflict = "two controls are both named " + key + " but send different requests, so which one is meant is not known; this control is not invoked";
+      first.unsafe = true;
+    }
   }
   return [...found.values()].sort((a, b) => Number(a.unsafe) - Number(b.unsafe) || a.method.localeCompare(b.method) || a.title.localeCompare(b.title));
 }
@@ -1547,9 +1704,14 @@ function templateScalar(value) {
   if (value != null && typeof value === "object") return JSON.stringify(value);
   return String(value);
 }
+// A reserved expansion ({+x}, {#x}) passes a percent-encoded triplet through
+// as it is (RFC 6570, section 3.2.3); every other expansion encodes its "%".
+// hmc.py's _template_encode is the same.
 function templateEncode(value, op) {
-  const safe = op === "+" ? RESERVED_SAFE : (op === "#" ? FRAGMENT_SAFE : "");
-  return pctEncode(templateScalar(value), safe);
+  const text = templateScalar(value);
+  if (op !== "+" && op !== "#") return pctEncode(text, "");
+  const safe = op === "+" ? RESERVED_SAFE : FRAGMENT_SAFE;
+  return text.split(/(%[0-9A-Fa-f]{2})/).map((part, i) => i % 2 ? part : pctEncode(part, safe)).join("");
 }
 function expandUriTemplate(template, values) {
   return template.replace(/\{([^{}]+)\}/g, (_, expr) => expandTemplateExpr(expr, values));

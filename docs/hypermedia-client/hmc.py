@@ -13,6 +13,7 @@ from __future__ import annotations
 
 import argparse
 import copy
+import encodings.idna as _idna_codec
 import heapq
 import ipaddress
 import json
@@ -375,6 +376,38 @@ def _request_url_problem(uri: str) -> str | None:
     return None
 
 
+# The characters IDNA 2003 maps to others and a browser keeps, each with one
+# IDNA 2003 keeps that checks as it does; a joiner is refused outright.
+_DEVIATION_STAND_INS = {0xDF: "s", 0x3C2: "\u03c3"}
+
+
+def _punycode_valid(host: str) -> bool:
+    """Whether each "xn--" label of an ASCII host is one a browser's URL
+    parser accepts: punycode that decodes, to a label that is not all ASCII
+    and that IDNA writes back as it is, with nothing mapped away. Python's
+    IDNA 2003 stands in for the browser's UTS 46 check; the two differ for ß
+    and ς, which a browser keeps, so those are checked as the letters IDNA 2003
+    keeps, and for ZWJ and ZWNJ, which are refused. The page's URL parser makes
+    this check itself."""
+    for label in host.split("."):
+        if label[:4].lower() != "xn--":
+            continue
+        try:
+            decoded = label[4:].encode("ascii").decode("punycode")
+        except UnicodeError:
+            return False
+        if decoded.isascii() or "\u200c" in decoded or "\u200d" in decoded:
+            return False
+        checked = decoded.translate(_DEVIATION_STAND_INS)
+        try:
+            if _idna_codec.nameprep(checked) != checked:
+                return False
+            _idna_codec.ToASCII(checked)
+        except UnicodeError:
+            return False
+    return True
+
+
 def _ipv6_text(inner: str) -> str:
     """An IPv6 address as a URL parser writes it: lower-case hex pieces with no
     leading zeros, the first longest run of two or more zero pieces as "::",
@@ -443,6 +476,8 @@ def _request_url(iri: str) -> str:
             raise ValueError(f"the address is not a URL; nothing is sent to {uri}") from None
     else:
         host = host.lower()
+        if not _punycode_valid(host):
+            raise ValueError(f"the address is not a URL; nothing is sent to {uri}")
     port_text = "" if not port or _port_number(port) == _DEFAULT_PORTS[scheme] else ":" + str(_port_number(port))
     out = f"{scheme}://{host}{port_text}{_request_path(path)}"
     return out if query is None else out + "?" + query.translate(_QUERY_ENCODE)
@@ -473,11 +508,37 @@ class _Budget:
             raise ValueError("This document's @context entries are too many to read.")
 
 
-def _json_schema_like(item: dict[str, Any]) -> bool:
-    """A JSON Schema written into a document as plain JSON, such as a
-    hydra:expects object with "properties": its keys are JSON Schema's, never
-    terms, so nothing in it is renamed or expanded."""
-    return isinstance(item.get("properties"), dict) and not any(key.startswith("@") for key in item)
+def _json_schema_like(item: dict[str, Any], expected: bool = False) -> bool:
+    """A JSON Schema written into a document as plain JSON: an object whose
+    "properties" is an object, with no keyword of its own, or with "@id" or
+    "@type" too when it is a value of hydra:expects. Its keys are JSON
+    Schema's, never terms, so only its own "@id" and "@type" are read as
+    JSON-LD, and nothing under it is renamed or expanded. The page's
+    jsonSchemaLike is the same."""
+    return isinstance(item.get("properties"), dict) and (expected or not any(key.startswith("@") for key in item))
+
+
+def _propagates(local: Any, fallback: bool) -> bool:
+    """Whether a local context propagates to the node objects under the node
+    it applies to: its first entry's "@propagate" when that is a boolean, as
+    jsonld.js reads it, else `fallback` (False for a type's scoped context,
+    True for any other)."""
+    first = local[0] if isinstance(local, list) and local else local
+    flag = first.get("@propagate") if isinstance(first, dict) else None
+    return flag if isinstance(flag, bool) else fallback
+
+
+def _utf16_key(text: str) -> bytes:
+    """A key that sorts strings as JavaScript's sort() does, by UTF-16 code
+    unit, so both clients read a map's keys in one order."""
+    return text.encode("utf-16-be", "surrogatepass")
+
+
+_ABSENT = object()
+
+
+def _same_entry(a: Any, b: Any) -> bool:
+    return a is b or (isinstance(a, (str, frozenset)) and type(a) is type(b) and a == b)
 
 
 def _merge_value(item: dict[str, Any], key: str, value: Any) -> None:
@@ -499,9 +560,12 @@ class Context:
     whose values an @index map's keys are, scoped contexts, keyword aliases,
     terms set to null, @vocab, and the base a relative
     IRI resolves against: @base when the context gives one, else the address the
-    document came from. `terms` holds only what documents defined; the reader's
-    own names for the properties it reads (TERM_FALLBACKS) apply to keys only,
-    never to a value such as an action written as a term."""
+    document came from. `previous`, when set, is the context a node object under
+    the node goes back to: a type's scoped context, and one whose "@propagate"
+    is false, hold for that node's own keys only. `terms` holds only what
+    documents defined; the reader's own names for the properties it reads
+    (TERM_FALLBACKS) apply to keys only, never to a value such as an action
+    written as a term. The page's Ctx is the same."""
 
     def __init__(self, base: str | None = None, budget: _Budget | None = None) -> None:
         self.prefixes: dict[str, str] = dict(WELL_KNOWN_PREFIXES)
@@ -516,27 +580,88 @@ class Context:
         self.base: str | None = base or None
         self.document_base = self.base
         self.budget = budget or _Budget()
-        self._children: dict[str, Context] = {}
+        self.previous: Context | None = None
+        # The contexts scoped contexts made from this one, each made once
+        # (scoped_child), keyed by the scoped context's id() with it kept.
+        self._made: dict[Any, tuple[Any, list[Context | None]]] = {}
+        # While would_keep absorbs a context, each key's entries before it changed.
+        self._journal: dict[str, tuple[Any, ...]] | None = None
 
-    def child(self, local: Any) -> "Context":
-        """A copy of this context with `local` absorbed: a node's own @context,
-        or the scoped one a term or type carries."""
-        self.budget.spend(len(self.prefixes) + len(self.terms) + len(self.coerce) + len(self.containers)
-                          + len(self.indexes) + len(self.scoped) + len(self.aliases) + len(self.nulled) + 1)
+    def _tables(self) -> tuple[dict[str, Any], ...]:
+        return (self.prefixes, self.terms, self.coerce, self.containers, self.indexes, self.scoped, self.aliases)
+
+    def _entries(self, key: str) -> tuple[Any, ...]:
+        return tuple(table.get(key, _ABSENT) for table in self._tables()) + (key in self.nulled,)
+
+    def copy(self) -> "Context":
+        """A copy of this context, `previous` included."""
+        self.budget.spend(sum(len(table) for table in self._tables()) + len(self.nulled) + 1)
         out = Context(self.base, self.budget)
         out.prefixes, out.terms, out.coerce = dict(self.prefixes), dict(self.terms), dict(self.coerce)
         out.containers, out.indexes = dict(self.containers), dict(self.indexes)
         out.scoped, out.aliases = dict(self.scoped), dict(self.aliases)
         out.nulled, out.vocab, out.document_base = set(self.nulled), self.vocab, self.document_base
+        out.previous = self.previous
+        return out
+
+    def child(self, local: Any, propagate: bool = True) -> "Context":
+        """This context with `local` absorbed: a node's own @context, or the
+        scoped one a term or type carries. One that does not propagate keeps the
+        context before it as `previous`, as jsonld.js does."""
+        out = self.copy()
+        if not propagate and out.previous is None:
+            out.previous = self
         out.absorb(local)
         return out
 
-    def scoped_child(self, term: str) -> "Context":
-        """The context a term's scoped @context makes, made once per term."""
-        found = self._children.get(term)
-        if found is None:
-            found = self._children[term] = self.child(self.scoped[term])
-        return found
+    def scoped_child(self, local: Any, fallback: bool) -> "Context":
+        """The context a scoped @context makes from this one, made once for
+        each scoped context and fallback. A scoped context that would change
+        nothing here, such as a term's met again inside its own value, gives
+        this context itself, so a term nested in itself many levels deep makes
+        no copy per level."""
+        propagate = _propagates(local, fallback)
+        key = id(local) if isinstance(local, (dict, list)) else ("value", local)
+        hit = self._made.get(key)
+        if hit is None or hit[0] is not local:
+            hit = self._made[key] = (local, [None, None])
+        slot = 1 if propagate else 0
+        made = hit[1][slot]
+        if made is None:
+            keep = (propagate or self.previous is not None) and self.would_keep(local)
+            made = hit[1][slot] = self if keep else self.child(local, propagate)
+        return made
+
+    def would_keep(self, local: Any) -> bool:
+        """Whether absorbing `local` would leave this context as it is. It is
+        absorbed here with each entry it changes saved first and put back
+        after, so the check costs `local`'s size, not this context's. A local
+        context that empties the context (null) is not checked."""
+        if any(item is None for item in as_list(local)):
+            return False
+        base, vocab, made = self.base, self.vocab, self._made
+        saved: dict[str, tuple[Any, ...]] = {}
+        self._journal = saved
+        try:
+            self.absorb(local)
+        finally:
+            self._journal = None
+        same = self.base == base and self.vocab == vocab
+        for key, before in saved.items():
+            now = self._entries(key)
+            if not all(_same_entry(a, b) for a, b in zip(before, now)):
+                same = False
+            for table, value in zip(self._tables(), before):
+                if value is _ABSENT:
+                    table.pop(key, None)
+                else:
+                    table[key] = value
+            if before[-1]:
+                self.nulled.add(key)
+            else:
+                self.nulled.discard(key)
+        self.base, self.vocab, self._made = base, vocab, made
+        return same
 
     def absorb(self, ctx: Any) -> None:
         for item in as_list(ctx):
@@ -545,12 +670,12 @@ class Context:
                 self.prefixes, self.terms, self.coerce = dict(WELL_KNOWN_PREFIXES), {}, {}
                 self.containers, self.indexes, self.scoped, self.aliases, self.nulled = {}, {}, {}, {}, set()
                 self.vocab, self.base = None, self.document_base
-                self._children = {}
+                self._made = {}
                 continue
             if not isinstance(item, dict):
                 continue
             self.budget.spend(len(item) + 1)
-            self._children = {}
+            self._made = {}
             if "@base" in item:
                 new_base = item["@base"]
                 if new_base is None:
@@ -602,7 +727,9 @@ class Context:
         return None if prefix == "_" or suffix.startswith("//") else prefix
 
     def _define(self, key: str, value: Any) -> None:
-        for table in (self.terms, self.prefixes, self.coerce, self.containers, self.indexes, self.scoped, self.aliases):
+        if self._journal is not None and key not in self._journal:
+            self._journal[key] = self._entries(key)
+        for table in self._tables():
             table.pop(key, None)
         self.nulled.discard(key)
         if value is None:
@@ -647,8 +774,8 @@ class Context:
             iri = TERM_FALLBACKS.get(key)
         if isinstance(iri, str) and ":" in iri:
             self.terms[key] = iri
-            flag = value.get("@prefix")
-            if flag is True or (flag is None and ":" not in key and "/" not in key and iri[-1] in "#/"):
+            # An expanded definition is a prefix only when it says so, as JSON-LD 1.1 has it.
+            if value.get("@prefix") is True:
                 self.prefixes[key] = iri
         kind = value.get("@type")
         if kind in ("@id", "@vocab", "@json"):
@@ -715,8 +842,10 @@ class Context:
 
     def _lift_nests(self, item: dict[str, Any]) -> None:
         """Moves the properties under each @nest key (or a term aliased to it)
-        onto the node, where JSON-LD reads them. Each nested object is moved
-        once, so this costs linear time."""
+        onto the node, where JSON-LD reads them: a nested "@type" (or its
+        alias) adds to the node's types, and a nested "@id" is the node's when
+        it has none. Each nested object is moved once, so this costs linear
+        time."""
         work = [key for key in item if self._is_nest(key)]
         while work:
             key = work.pop()
@@ -727,26 +856,38 @@ class Context:
                     continue
                 self._rename_aliases(nested)
                 for inner, value in nested.items():
+                    if inner == "@type":
+                        _merge_value(item, "@type", value)
+                        continue
+                    if inner == "@id":
+                        item.setdefault("@id", value)
+                        continue
                     if inner.startswith("@") and inner != "@nest":
                         continue
                     if self._is_nest(inner) and inner not in item:
                         work.append(inner)
                     _merge_value(item, inner, value)
 
-    def _unmap(self, term: str, value: Any, keyed: dict[int, tuple[Any, dict[str, str]]], value_ctx: "Context") -> Any:
+    def _unmap(self, term: str, value: Any, keyed: dict[int, tuple[Any, dict[str, Any]]], value_ctx: "Context") -> Any:
         """A container term's value as the values it holds, as JSON-LD 1.1
         expands it. Only an @language, @index, @id or @type container holds a
         map (alone, with @set, or, for @index and @id, with @graph), and there
-        every object is a map, whatever its keys. A language map's key becomes
-        each string's "@language"; an @index map's key is dropped, or is a value
-        of the property the term's "@index" names, put before the node's own;
-        an @id map's key becomes its node's "@id" unless the node has one, or
-        @graph makes the key the IRI of the graph that holds the node; and a
-        @type map's key is put before its node's types. Keys are read in
-        `value_ctx`, the context the term's values are read in, as jsonld.js
-        reads them. `keyed` holds the "@id" or type for normalize to give a
-        node once its keyword aliases are keywords, so a node's own
-        "id": "@id" alias is its own "@id". A key that is @none, or a term
+        every object is a map, whatever its keys. A map's keys are read in
+        sorted order, as jsonld.js reads them, so both clients meet its values
+        in one order. A language map's key becomes each string's "@language";
+        an @index map's key is dropped, or is a value of the property the
+        term's "@index" names, put before the node's own (under @graph that
+        property is the graph's, which the reader does not keep, so the node
+        gets nothing); an @id map's key becomes its node's "@id" unless the
+        node has one, or @graph makes the key the IRI of the graph that holds
+        the node; and a @type map's key is put before its node's types. A
+        string where the term holds IRIs (a @type map's always does) is a
+        reference to the node it names, which an @index property reaches as it
+        reaches a node written in place. Keys are read in `value_ctx`, the
+        context the term's values are read in, as jsonld.js reads them.
+        `keyed` holds each object a map gives, with the "@id" or type for
+        normalize to give it once its keyword aliases are keywords, so a node's
+        own "id": "@id" alias is its own "@id". A key that is @none, or a term
         aliased to it, adds nothing. Under any other container (@set, @list,
         @graph alone or with @set) a value is what it is, so one node object
         stays one node, never a list of its properties. The page's unmap is the
@@ -760,94 +901,154 @@ class Context:
             return value
         graph = "@graph" in containers
         index_by = self.indexes.get(term) if index else None
+        coerced = self.coerce.get(term)
+        ref_kind = ("@vocab" if coerced == "@vocab" else "@id") if types else (coerced if coerced in ("@id", "@vocab") else None)
         out: list[Any] = []
-        for key, member in value.items():
+        for key in sorted(value, key=_utf16_key):
             none = key == "@none" or value_ctx.aliases.get(key) == "@none"
-            for entry in as_list(member):
+            for entry in as_list(value[key]):
                 if language:
                     if isinstance(entry, str) and not none:
                         out.append({"@value": entry, "@language": key})
                     elif entry is not None:
                         out.append(entry)
                     continue
-                if types and isinstance(entry, str):
-                    entry = {"@id": entry}
+                info: dict[str, Any] = {}
+                if isinstance(entry, str) and ref_kind:
+                    entry = {"@id": value_ctx.expand_iri(entry, vocab=ref_kind == "@vocab", document_relative=True)}
+                    info["expanded"] = True
                 if index:
-                    if isinstance(entry, dict) and index_by and not none and "@value" not in entry:
+                    if isinstance(entry, dict) and index_by and not none and not graph and "@value" not in entry:
                         # The key is the property's value as a value of that term is read: an IRI where the term holds IRIs.
                         kind = value_ctx.coerce.get(index_by)
                         indexed = (value_ctx.expand_iri(key, vocab=kind == "@vocab", document_relative=True)
                                    if kind in ("@id", "@vocab") else key)
                         name = self.expand_key(index_by) or index_by
                         entry[name] = [indexed] + (as_list(entry[name]) if name in entry else [])
+                    if isinstance(entry, dict):
+                        keyed[id(entry)] = (entry, info)
                     if entry is not None:
                         out.append(entry)
                 elif isinstance(entry, dict):
                     if not none and (types or not graph):
-                        keyed[id(entry)] = (entry, {"id": value_ctx.expand_iri(key, document_relative=True)} if ids else {"type": key})
+                        if ids:
+                            info["id"] = value_ctx.expand_iri(key, document_relative=True)
+                        else:
+                            info["type"] = key
+                    # A @type map's values go back to the context before a type's scoped one, as jsonld.js reads them.
+                    if types:
+                        info["revert"] = True
+                    keyed[id(entry)] = (entry, info)
                     out.append(entry)
         return out
 
+    def _keeps_context(self, item: dict[str, Any]) -> bool:
+        """Whether an object is a value object or a node reference (one "@id"
+        and nothing else), which keep the context they are written in, as
+        jsonld.js reads them: only a node object under a type's scoped context
+        goes back."""
+        if len(item) > 2 or "@context" in item:
+            return False
+        for key in item:
+            keyword = key if key.startswith("@") else self.aliases.get(key)
+            if keyword == "@value":
+                return True
+            if keyword == "@id" and len(item) == 1:
+                return True
+        return False
+
     def normalize(self, document: Any) -> None:
         """Every node in a document put in the form the reader reads, in place,
-        once, before anything reads it. A node's own @context, a term's scoped
-        context and a type's scoped context apply to the node and what is under
-        it; keyword aliases become the keywords; @nest objects are lifted onto
-        their node; a container term's map becomes a list; each "@id", each
-        "@type" and each value of a term typed "@id" or "@vocab" is expanded, so
-        {"@id": "xsd:integer"} is XSD's integer and {"@id": "/api"} is an
-        address on the document's host; and a key that a scoped context maps
-        differently from the document's own context is renamed to the IRI it
-        names, so reading the node later finds it. Value objects, JSON literals
-        and JSON Schemas are left as they are. A stack, not recursion, so a
-        deeply nested document costs linear time and stays inside Python's
-        recursion limit. The page's normalize is the same."""
+        once, before anything reads it. A node's own @context and a term's
+        scoped context apply to the node and what is under it unless they say
+        "@propagate": false; a type's scoped context applies to the node's own
+        keys only, so a node object under the node goes back to the context
+        before it, and a property-scoped context is taken again from there, as
+        jsonld.js reads them. Keyword aliases become the keywords; @nest objects
+        are lifted onto their node; a container term's map becomes a list; each
+        "@id", each "@type" and each value of a term typed "@id" or "@vocab" is
+        expanded, so {"@id": "xsd:integer"} is XSD's integer and
+        {"@id": "/api"} is an address on the document's host; and a key that a
+        scoped context maps differently from the document's own context is
+        renamed to the IRI it names, so reading the node later finds it. Value
+        objects, JSON literals and JSON Schemas are left as they are, but for a
+        schema's own "@id" and "@type". A stack, not recursion, so a deeply
+        nested document costs linear time and stays inside Python's recursion
+        limit. The page's normalize is the same."""
+        unset = object()
         top_items = document if isinstance(document, list) else [document]
-        stack: list[tuple[Any, Context, bool]] = [(item, self, not isinstance(document, list)) for item in top_items]
-        keyed: dict[int, tuple[Any, dict[str, str]]] = {}
+        # Each entry: the item, its context, whether it is the document's top,
+        # the property-scoped context of the key it is a value of (taken again
+        # after a type's scoped context ends), and whether that key is hydra:expects.
+        stack: list[tuple[Any, Context, bool, Any, bool]] = [
+            (item, self, not isinstance(document, list), unset, False) for item in top_items]
+        keyed: dict[int, tuple[Any, dict[str, Any]]] = {}
         while stack:
-            item, ctx, top = stack.pop()
+            item, ctx, top, scoped, expected = stack.pop()
             if isinstance(item, list):
-                stack.extend((x, ctx, False) for x in item if isinstance(x, (dict, list)))
+                stack.extend((x, ctx, False, scoped, expected) for x in item if isinstance(x, (dict, list)))
                 continue
-            # A map's value is a node, whatever keys it has.
-            if not isinstance(item, dict) or (id(item) not in keyed and _json_schema_like(item)):
+            if not isinstance(item, dict):
                 continue
+            # A map's value is a node, whatever keys it has, and keeps the context the map is read in.
+            hit = keyed.get(id(item))
+            from_map = hit[1] if hit is not None and hit[0] is item else None
+            if from_map is None and _json_schema_like(item, expected):
+                ctx._rename_aliases(item)
+                if "@id" in item:
+                    item["@id"] = ctx.expand_iri(item["@id"], document_relative=True)
+                if "@type" in item:
+                    item["@type"] = ctx._expand_typed(item["@type"], True)
+                continue
+            if ctx.previous is not None and (from_map.get("revert", False) if from_map is not None else not ctx._keeps_context(item)):
+                ctx = ctx.previous
+                if scoped is not unset and from_map is None:
+                    ctx = ctx.scoped_child(scoped, True)
             if "@context" in item:
+                local = item["@context"]
                 if top:
-                    ctx.absorb(item["@context"])
+                    # A top-level context that does not propagate leaves the nodes under the top with the empty context.
+                    if not _propagates(local, True):
+                        self.previous = Context(self.document_base, self.budget)
+                    ctx.absorb(local)
                 else:
-                    ctx = ctx.child(item["@context"])
+                    ctx = ctx.child(local, _propagates(local, True))
             ctx._rename_aliases(item)
-            from_map = keyed.get(id(item))
-            if from_map is not None and from_map[0] is item:
-                if "id" in from_map[1] and "@id" not in item:
-                    item["@id"] = from_map[1]["id"]
-                if "type" in from_map[1]:
-                    item["@type"] = [from_map[1]["type"]] + as_list(item.get("@type"))
+            if from_map is not None:
+                if "id" in from_map and "@id" not in item:
+                    item["@id"] = from_map["id"]
+                if "type" in from_map:
+                    item["@type"] = [from_map["type"]] + as_list(item.get("@type"))
             if "@value" in item:
                 continue
+            # A type's scoped context, looked up in the context before any of
+            # them, in the order of the types' names, holds for this node's own keys.
+            type_ctx = ctx
+            for kind in sorted((t for t in as_list(item.get("@type")) if isinstance(t, str) and t in type_ctx.scoped), key=_utf16_key):
+                ctx = ctx.scoped_child(type_ctx.scoped[kind], False)
+            if ctx is not type_ctx:
+                ctx._rename_aliases(item)
             ctx._lift_nests(item)
-            for kind in sorted(t for t in as_list(item.get("@type")) if isinstance(t, str) and t in ctx.scoped):
-                ctx = ctx.scoped_child(kind)
-            for key in list(item):
+            for key in sorted(item, key=_utf16_key):
                 if key == "@context":
                     continue
                 if key == "@id":
-                    item[key] = ctx.expand_iri(item[key], document_relative=True)
+                    if not (from_map is not None and from_map.get("expanded")):
+                        item[key] = ctx.expand_iri(item[key], document_relative=True)
                     continue
                 if key == "@type":
-                    item[key] = ctx._expand_typed(item[key], True)
+                    item[key] = type_ctx._expand_typed(item[key], True)
                     continue
                 if key.startswith("@"):
                     if isinstance(item[key], (dict, list)):
-                        stack.append((item[key], ctx, False))
+                        stack.append((item[key], ctx, False, scoped if key in ("@list", "@set") else unset, False))
                     continue
                 if key in ctx.nulled:
                     del item[key]
                     continue
                 kind = ctx.coerce.get(key)
-                value_ctx = ctx.scoped_child(key) if key in ctx.scoped else ctx
+                local = ctx.scoped[key] if key in ctx.scoped else unset
+                value_ctx = ctx.scoped_child(local, True) if local is not unset else ctx
                 value = item[key]
                 if key in ctx.containers:
                     value = ctx._unmap(key, value, keyed, value_ctx)
@@ -864,7 +1065,7 @@ class Context:
                 else:
                     item[key] = value
                 if kind != "@json" and isinstance(value, (dict, list)):
-                    stack.append((value, value_ctx, False))
+                    stack.append((value, value_ctx, False, local, ctx.expand_key(key) == P_EXPECTS))
 
     def _expand_typed(self, value: Any, vocab: bool) -> Any:
         """A typed term's value: a string, or each string in an array or in a list or set object."""
@@ -972,10 +1173,16 @@ class Control:
     # Why this control cannot be invoked, when it cannot; a warning to show with it.
     problem: str | None = None
     warning: str | None = None
+    # Why the document's own reading of this control is in doubt (several
+    # methods, or another control of its name that sends something else): the
+    # problem shown first, and the control is listed with the writes.
+    conflict: str | None = None
 
     @property
     def unsafe(self) -> bool:
         method = (self.method or "").upper()
+        if self.conflict:
+            return True
         if method and method not in SAFE_METHODS:
             return True
         if self.destructive is True:
@@ -1010,6 +1217,8 @@ _BUILT_ON_READ = ("fields", "problem", "warning")
 
 def _built_on_read(name: str) -> property:
     def read(self: Control) -> Any:
+        if name == "problem" and self.__dict__.get("conflict"):
+            return self.__dict__["conflict"]
         build = self.__dict__.pop("_build", None)
         if build is not None:
             for key, value in zip(_BUILT_ON_READ, build()):
@@ -1151,9 +1360,14 @@ class NodeIndex:
             self.root = top or first_named or first_any
         self._harvest_embedded()
 
-    def _add(self, node: dict[str, Any], added: list[str] | None = None) -> dict[str, Any]:
-        """Adds a node, or merges its keys into the node already indexed at its
-        @id; `added`, when given, collects the keys a merge added."""
+    def _add(self, node: dict[str, Any], added: list[tuple[str, list[Any]]] | None = None) -> dict[str, Any]:
+        """Adds a node, or merges it into the node already indexed at its @id:
+        a key that node lacks is added, and a key both have gets the other's
+        literals and references ({"@id": ...}), so a method, a target or a hint
+        written in two places is read in both, as JSON-LD merges a node's
+        values; an object written in place stays the first one's. `added`, when
+        given, collects the (key, values) a merge added. The page's _add is the
+        same."""
         node_id = node.get("@id")
         if not node_id or not isinstance(node_id, str):
             # A node with no @id gets one in place, so the object a document
@@ -1167,11 +1381,23 @@ class NodeIndex:
             self.nodes[node_id] = node
             self.order.append(node)
             return node
+        if existing is node:
+            return existing
         for key, val in node.items():
+            if key in ("@id", "@context"):
+                continue
             if key not in existing:
                 existing[key] = val
                 if added is not None:
-                    added.append(key)
+                    added.append((key, as_list(val)))
+                continue
+            more = [x for x in as_list(val) if not isinstance(x, (dict, list)) or (
+                isinstance(x, dict) and ("@value" in x or all(k == "@id" for k in x)))]
+            if not more:
+                continue
+            _merge_value(existing, key, more)
+            if added is not None:
+                added.append((key, more))
         return existing
 
     def _harvest_embedded(self) -> None:
@@ -1184,23 +1410,23 @@ class NodeIndex:
         walked. The work is linear in the document. The page's _harvest is the
         same."""
         walked: set[int] = set()
-        pending: list[tuple[dict[str, Any], list[str] | None]] = [(node, None) for node in reversed(self.order)]
+        pending: list[tuple[dict[str, Any], list[tuple[str, list[Any]]] | None]] = [(node, None) for node in reversed(self.order)]
         while pending:
-            current, keys = pending.pop()
-            if keys is None:
+            current, entries = pending.pop()
+            if entries is None:
                 if id(current) in walked:
                     continue
                 walked.add(id(current))
-            for key in keys if keys is not None else list(current):
+            for key, values in entries if entries is not None else [(k, as_list(v)) for k, v in list(current.items())]:
                 pred = self.ctx.expand_key(key)
                 lname = local_name(pred)
                 if pred not in HARVESTED and lname not in HARVESTED_NAMES:
                     continue
-                for item in as_list(current[key]):
+                for item in values:
                     if isinstance(item, dict) and (
                         "@id" in item or "action" in item or "method" in item or "@type" in item
                     ):
-                        added: list[str] = []
+                        added: list[tuple[str, list[Any]]] = []
                         node = self._add(item, added)
                         if id(node) not in walked:
                             pending.append((node, None))
@@ -1208,22 +1434,26 @@ class NodeIndex:
                             pending.append((node, added))
 
     def get(self, node: dict[str, Any] | None, predicate: str) -> Any:
+        """A node's values for a property: those of every key that names it,
+        joined in the order of the keys' names, as jsonld.js joins them, so two
+        terms for one property are both read and both clients read the same
+        value first. Only when no key names it is a key the context does not
+        define (no term, alias or null, and no compact or absolute IRI) read by
+        the property's local name, as a plain JSON document's "target" is. The
+        page's get is the same."""
         if not node:
             return None
-        if predicate in node:
-            return node[predicate]
-        for key, val in node.items():
-            if not key.startswith("@") and self.ctx.expand_key(key) == predicate:
-                return val
+        keys = [key for key in node
+                if key == predicate or (not key.startswith("@") and self.ctx.expand_key(key) == predicate)]
+        if len(keys) == 1:
+            return node[keys[0]]
+        if keys:
+            return [value for key in sorted(keys, key=_utf16_key) for value in as_list(node[key])]
         want = local_name(predicate)
-        if want:
-            for key, val in node.items():
-                if key.startswith("@") or key.startswith("http://") or key.startswith("https://"):
-                    continue
-                if ":" in key:
-                    continue
-                if key == want:
-                    return val
+        ctx = self.ctx
+        if (want and want in node and not want.startswith("@") and ":" not in want
+                and want not in ctx.terms and want not in ctx.aliases and want not in ctx.nulled):
+            return node[want]
         return None
 
     def node(self, ident: Any) -> dict[str, Any] | None:
@@ -1766,8 +1996,11 @@ def _duplicate_name(fields: list[Field]) -> str | None:
 def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Control:
     rel = literal(index.get(node, P_ACTION)) or literal(index.get(node, P_REL)) or node.get("@id") or ""
     # A control that names no method is sent as the substrate's own follower
-    # (invoke_affordance, act) sends it: POST. So it is never a safe read by default.
-    method = str(literal(index.get(node, P_METHOD)) or "POST").upper()
+    # (invoke_affordance, act) sends it: POST. So it is never a safe read by
+    # default. One that names several is not invoked, and shows the first of
+    # them that is not safe, so it is never listed as a safe read either.
+    methods = list(dict.fromkeys(m for m in (_template_scalar(x).upper() for x in literals(index.get(node, P_METHOD))) if m))
+    method = next((m for m in methods if m not in SAFE_METHODS), None) or (methods[0] if methods else "POST")
     title = literal(index.get(node, P_TITLE)) or literal(index.get(node, P_DCTITLE)) or literal(index.get(node, P_LABEL)) or short_rel(str(rel))
     description = literal(index.get(node, P_DESC)) or literal(index.get(node, P_DCDESC)) or literal(index.get(node, P_COMMENT)) or ""
     media = literal(index.get(node, P_RETURNS_CT)) or literal(index.get(node, P_MEDIA))
@@ -1782,6 +2015,8 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
     returns = literal(index.get(node, P_RETURNS))
     template, mappings, template_is_target = _template_of(index, node)
     target = None if template_is_target else (literal(index.get(node, P_TARGET)) or literal(index.get(node, P_HMDTARGET)))
+    # Two addresses for one control are refused as two methods are: where it sends is not known.
+    targets = [] if template_is_target else list(dict.fromkeys(t for t in literals(index.get(node, P_TARGET)) if isinstance(t, str)))
     destructive_flag, writes_flag = _hint_flags(index, node)
     read_only = truthy(literal(index.get(node, P_READONLY)))
     destructive = truthy(literal(index.get(node, P_DESTRUCTIVE)))
@@ -1796,6 +2031,10 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
         idempotent=truthy(literal(index.get(node, P_IDEMPOTENT))),
         destructive=True if destructive_flag else destructive,
         types=index.types_of(node), source=source, base=index.ctx.base,
+        conflict=(f"this control names more than one hydra:method ({', '.join(methods)}), so what it does is not known; "
+                  "it is not invoked") if len(methods) > 1 else
+                 (f"this control names more than one hydra:target ({', '.join(targets)}), so where it sends is not known; "
+                  "it is not invoked") if len(targets) > 1 else None,
     )
     control.__dict__["_build"] = lambda: _control_inputs(index, node, expects_raw, expects, mappings)
     return control
@@ -1887,11 +2126,20 @@ def extract_controls(index: NodeIndex, source: str) -> list[Control]:
                 add_candidate(index.node(op) or (op if isinstance(op, dict) else None))
         if _looks_like_operation(index, node):
             add_candidate(node)
+    # Two controls with one name that send different requests are one control
+    # that is not invoked: which one a link or a name means is not known.
     for node in candidates:
         control = control_from_node(index, node, source)
         key = control.rel or control.id
-        if key and key not in found:
+        if not key:
+            continue
+        first = found.get(key)
+        if first is None:
             found[key] = control
+            continue
+        if (first.method, first.target, first.template) != (control.method, control.target, control.template):
+            first.conflict = (f"two controls are both named {key} but send different requests, so which one is meant "
+                              "is not known; this control is not invoked")
     controls = list(found.values())
     controls.sort(key=lambda c: (0 if not c.unsafe else 1, c.method, (c.title or c.rel).lower()))
     return controls
@@ -2038,10 +2286,24 @@ def http_request(url: str, method: str = "GET", headers: dict[str, str] | None =
 
 
 def _with_format(url: str, fmt: str) -> str:
+    """The address with its "format" parameter set to `fmt`, as the page's
+    withFormat has URLSearchParams set it: the first "format" takes the value
+    and any other goes, every other parameter stays where it is, repeated ones
+    included, and a missing "format" is added last."""
     parts = urllib.parse.urlsplit(url)
-    query = dict(urllib.parse.parse_qsl(parts.query, keep_blank_values=True))
-    query["format"] = fmt
-    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, urllib.parse.urlencode(query), parts.fragment))
+    pairs: list[tuple[str, str]] = []
+    placed = False
+    for key, val in urllib.parse.parse_qsl(parts.query, keep_blank_values=True):
+        if key == "format":
+            if not placed:
+                pairs.append((key, fmt))
+                placed = True
+            continue
+        pairs.append((key, val))
+    if not placed:
+        pairs.append(("format", fmt))
+    query = urllib.parse.urlencode(pairs, quote_via=_form_quote)
+    return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, query, parts.fragment))
 
 
 def _strip_fragment(url: str) -> str:
@@ -2206,9 +2468,19 @@ def _template_scalar(value: Any) -> str:
     return str(value)
 
 
+_PCT_TRIPLET = re.compile(r"(%[0-9A-Fa-f]{2})")
+
+
 def _template_encode(value: Any, op: str) -> str:
-    safe = _RESERVED_SAFE if op == "+" else (_FRAGMENT_SAFE if op == "#" else _COMPONENT_SAFE)
-    return urllib.parse.quote(_template_scalar(value), safe=safe)
+    """A value as an expression writes it. A reserved expansion ({+x}, {#x})
+    passes a percent-encoded triplet through as it is (RFC 6570, section
+    3.2.3); every other expansion encodes its "%". The page's templateEncode
+    is the same."""
+    text = _template_scalar(value)
+    if op not in ("+", "#"):
+        return urllib.parse.quote(text, safe=_COMPONENT_SAFE)
+    safe = _RESERVED_SAFE if op == "+" else _FRAGMENT_SAFE
+    return "".join(part if i % 2 else urllib.parse.quote(part, safe=safe) for i, part in enumerate(_PCT_TRIPLET.split(text)))
 
 
 def _template_specs(expr: str) -> list[tuple[str, bool, int | None]]:

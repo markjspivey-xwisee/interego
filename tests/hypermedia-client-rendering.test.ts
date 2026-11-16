@@ -24,7 +24,7 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, sharedDescriptors } from './hypermedia-client-fixtures.js';
+import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, jsonldPlans, jsonldRefusals, sharedDescriptors } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -935,7 +935,7 @@ async function linkPlan(path: string, rel: string, fields: Record<string, string
   const { document } = t;
   await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'));
   const pre = document.querySelector('#result pre');
-  const plan = pre ? JSON.parse(pre.textContent!) as { transport: string; url: string | null; body: unknown; headers: Record<string, string>;
+  const plan = pre ? JSON.parse(pre.textContent!) as { method: string; transport: string; url: string | null; body: unknown; headers: Record<string, string>;
     notes: string[]; mcp: { arguments: { action_iri: string } } | null } : null;
   return { t, shown: document.getElementById('result')!.textContent!, plan };
 }
@@ -1193,6 +1193,55 @@ describe('hypermedia client: JSON-LD read as jsonld.js reads it', () => {
       }
       assertInert(t, 'containers');
     } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: scoped contexts, map references and repeated keys as jsonld.js reads them', () => {
+  it.each(jsonldPlans(HOST))('reads %s: %s is the control jsonld.js gives it', async (path, rel, title, method, url) => {
+    const { t, plan, shown } = await linkPlan(path, rel, {});
+    try {
+      expect(plan, shown).not.toBeNull();
+      expect(t.document.querySelector('#detail .detail-title')!.textContent).toBe(title);
+      expect([plan!.method, plan!.transport, plan!.url]).toEqual([method, url ? 'http' : 'mcp', url]);
+      expect(t.errors).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it.each(jsonldRefusals(HOST))('lists %s %s as unsafe and refuses it with a problem', async (path, rel, title, method, problem) => {
+    const t = await loaded(path);
+    try {
+      const c = card(t.document, title)!;
+      expect(c, title).toBeDefined();
+      expect(c.querySelector('.badge')!.textContent).toBe(method);
+      expect(groupTitles(t.document, 1)).toContain(title);
+      click(t, c);
+      expect(t.document.getElementById('invokeForm')).toBeNull();
+      expect(t.document.querySelector('#detail .warn')!.textContent).toContain(problem);
+    } finally { t.dom.window.close(); }
+    // A link that invokes it shows the same warning, builds no form, and sends nothing.
+    const linked = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}`);
+    try {
+      await vi.waitFor(() => expect(linked.document.documentElement.dataset['ready']).toBe('done'));
+      expect(linked.document.getElementById('invokeForm')).toBeNull();
+      expect(linked.document.querySelector('#detail .warn')!.textContent).toContain(problem);
+      expect(linked.calls.filter(call => !call.url.startsWith(`${HOST}${path}`))).toEqual([]);
+    } finally { linked.dom.window.close(); }
+  });
+
+  it('reads a JSON Schema with an "@id" under a "type" alias as JSON Schema, numbers and array counts included', async () => {
+    const good = await linkPlan('/schema-alias', 'urn:schema:alias', { n: '3', tags: '["a","b"]' });
+    try { expect(good.plan!.body).toEqual({ n: 3, tags: ['a', 'b'] }); } finally { good.t.dom.window.close(); }
+    const bad = await linkPlan('/schema-alias', 'urn:schema:alias', { n: '9', tags: '[1]' });
+    try {
+      expect(bad.plan).toBeNull();
+      expect(bad.shown).toContain('tags: needs at least 2 values, got 1');
+      expect(bad.shown).toContain('n: above maxInclusive 5');
+    } finally { bad.t.dom.window.close(); }
+  });
+
+  it('passes a percent-encoded triplet through a reserved expansion as it is', async () => {
+    const { t, plan } = await linkPlan('/tmpl-pct', 'urn:tmpl:pct', { path: '/x?y=%2F&z=a b' });
+    try { expect(plan!.url).toBe(`${HOST}/r/x?y=%2F&z=a%20b`); } finally { t.dom.window.close(); }
   });
 });
 
@@ -1486,6 +1535,7 @@ describe('hypermedia client: the address sent is the address shown', () => {
     ['urn:sent-user', {}, 'the address carries user information before its host'],
     ['urn:sent-number', {}, "the address's host is a number written other than as four decimal parts"],
     ['urn:sent-tab', {}, 'the address holds a backslash, a space or a control character'],
+    ['urn:sent-punycode', {}, 'the address is not a URL'],
   ])('refuses %s, an address a URL parser reads differently from its text, and sends nothing', async (rel, fields, message) => {
     const { plan, text, sentText, calls } = await shownAndSent(rel, fields);
     expect(plan).toBeNull();

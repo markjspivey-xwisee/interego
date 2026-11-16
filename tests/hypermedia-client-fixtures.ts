@@ -25,6 +25,23 @@ const target = (path: string) => ({ 'hydra:target': { '@id': path } });
 const inline = (action: string, title: string) => ({ '@type': 'hydra:Operation', 'iep:action': { '@id': action }, 'hydra:method': 'GET',
   'hydra:title': title, ...target('/api') });
 
+/**
+ * A context of 3,000 terms and 80 nested classes under it, the last with a GET to /api: each class
+ * typed with a type-scoped context, or each the value of a term with a property-scoped one.
+ */
+function deepScoped(base: string, path: string, scoped: 'type' | 'property') {
+  const terms = Object.fromEntries(Array.from({ length: 3000 }, (_, i) => [`t${i}`, `urn:t:${i}`]));
+  const local = { home: { '@id': 'urn:x:home', '@type': '@id' } };
+  const read = { '@type': 'hydra:Operation', 'iep:action': { '@id': `urn:deep:${scoped}` }, 'hydra:method': 'GET',
+    'hydra:title': `Deep ${scoped} read`, 'hydra:target': { '@id': '/api' } };
+  const key = scoped === 'type' ? 'hydra:supportedClass' : 'member';
+  let level: Record<string, unknown> = { '@type': scoped === 'type' ? 'Catalog' : 'hydra:Class', home: '/home', 'hydra:supportedOperation': [read] };
+  for (let i = 0; i < 80; i++) level = { '@type': scoped === 'type' ? 'Catalog' : 'hydra:Class', home: '/home', [key]: level };
+  const term = scoped === 'type' ? { Catalog: { '@id': 'urn:x:Catalog', '@context': local } }
+    : { member: { '@id': 'hydra:supportedClass', '@context': local } };
+  return { '@context': { ...CTX, ...terms, ...term }, '@id': `${base}${path}`, [key]: level };
+}
+
 /** Each path's document as the text served. */
 export function sharedDescriptors(base: string): Record<string, string> {
   const docs: Record<string, unknown> = {
@@ -239,6 +256,7 @@ export function sharedDescriptors(base: string): Record<string, string> {
         'hydra:expects': { type: 'object', properties: { a: { type: 'string' } } } }),
       op('v6', 'urn:sent-v6', 'GET', 'IPv6 port', { 'hydra:template': 'ftp://üser@[::1]:8443/x{?q}' }),
       op('sz', 'urn:sent-sharp-s', 'GET', 'Sharp s host', { 'hydra:target': { '@id': 'https://straße.example/x' } }),
+      op('puny', 'urn:sent-punycode', 'GET', 'Bad punycode host', { 'hydra:target': { '@id': 'https://xn--a.example/x' } }),
     ] },
     // Two mappings of one variable, and a mapping that renames a shape's field followed by a bare
     // mapping of the name it gave: one field each, as the page always read them.
@@ -298,6 +316,91 @@ export function sharedDescriptors(base: string): Record<string, string> {
       ] },
       { '@id': '#M', '@type': 'sh:NodeShape' },
     ] },
+    // A type's scoped context holds for that node's own keys only, and an embedded context marked
+    // "@propagate": false for its own node only: a node object written under either reads the
+    // context before it, as jsonld.js reads it. Here the catalog's "target" is its home, and the
+    // operation's "target" is the document's hydra:target while its "goto" names nothing.
+    '/type-scoped': {
+      '@context': { ...CTX, target: { '@id': 'hydra:target', '@type': '@id' },
+        Catalog: { '@id': 'urn:x:Catalog', '@context': { target: { '@id': 'urn:x:catalogHome', '@type': '@id' }, goto: { '@id': 'hydra:target', '@type': '@id' } } } },
+      '@id': `${base}/type-scoped`, '@type': 'Catalog', target: '/home',
+      'hydra:operation': [{ '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:scope:type' }, 'hydra:method': 'POST',
+        'hydra:title': 'Type-scoped write', target: '/right', goto: '/wrong' }] },
+    '/propagate': {
+      '@context': { ...CTX, to: { '@id': 'hydra:target', '@type': '@id' } }, '@id': `${base}/propagate`,
+      'hydra:operation': { '@context': { '@version': 1.1, '@propagate': false, to: { '@id': 'urn:x:audience', '@type': '@id' } }, '@id': '#holder', to: '/people',
+        'hydra:operation': [{ '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:scope:propagate' }, 'hydra:method': 'POST',
+          'hydra:title': 'Unpropagated write', to: '/right' }] } },
+    // Both again 80 levels deep under a context of 3,000 terms: a level goes back to the context
+    // before its type's, and a term's scoped context met inside its own value adds nothing, so
+    // neither copies the 3,000 terms once per level.
+    '/type-scoped-deep': deepScoped(base, '/type-scoped-deep', 'type'),
+    '/property-scoped-deep': deepScoped(base, '/property-scoped-deep', 'property'),
+    // A string in an @index map whose term holds IRIs names a node, which the map's "@index"
+    // property reaches; under @graph that property is the graph's, not the node's.
+    '/index-refs': { '@context': { ...CTX, ops: { '@id': 'hydra:operation', '@type': '@id', '@container': '@index', '@index': 'hydra:method' } },
+      '@id': `${base}/index-refs`, ops: { DELETE: '#remove', PUT: ['#replace'] },
+      '@graph': [
+        { '@id': '#remove', '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:refs:remove' }, 'hydra:title': 'Remove', ...target('/thing') },
+        { '@id': '#replace', '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:refs:replace' }, 'hydra:title': 'Replace', ...target('/thing') },
+      ] },
+    '/graph-index': { '@context': { ...CTX, ops: { '@id': 'hydra:operation', '@container': ['@graph', '@index'], '@index': 'hydra:method' } },
+      '@id': `${base}/graph-index`, ops: {
+        DELETE: { '@type': 'hydra:Operation', 'hydra:method': 'GET', 'iep:action': { '@id': 'urn:graph:own' }, 'hydra:title': 'Own method', ...target('/thing') },
+        GET: { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:graph:keyed' }, 'hydra:title': 'Keyed method', ...target('/thing') } } },
+    // A JSON Schema with an "@id", under a context that aliases "type" to "@type", as Interego's
+    // own context does: its property schemas keep their "type".
+    '/schema-alias': { '@context': { ...CTX, type: '@type' }, '@id': `${base}/schema-alias`, 'iep:affordance': [
+      { '@id': '#w', type: 'iep:Affordance', 'iep:action': { '@id': 'urn:schema:alias' }, 'hydra:method': 'POST', 'hydra:title': 'Aliased schema',
+        ...target('/num-target'), 'hydra:expects': { '@id': '#schema', type: 'object', required: ['n'],
+          properties: { n: { type: 'integer', maximum: 5 }, tags: { type: 'array', minItems: 2 } } } }] },
+    // A node's "@type" and "@id" written inside a @nest object are the node's.
+    '/nest-keywords': { '@context': { ...CTX, meta: '@nest', kind: '@type' }, '@id': `${base}/nest-keywords`, '@graph': [
+      { '@id': '#op', meta: { kind: 'hydra:Operation', 'hydra:title': 'Nested alias type' }, ...target('/thing'), 'iep:action': { '@id': 'urn:nest:alias' } },
+      { meta: { '@type': 'iep:Affordance', '@id': '#typed' }, 'hydra:title': 'Nested type', ...target('/thing2') },
+    ] },
+    // "target" and "method" that the context defines as other properties are those properties.
+    '/defined-terms': { '@context': { ...CTX, target: { '@id': 'urn:x:audience' }, method: { '@id': 'urn:x:approach' } },
+      '@id': `${base}/defined-terms`, 'hydra:operation': [
+        { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:defined:target' }, 'hydra:title': 'Audience note', 'hydra:method': 'POST',
+          target: 'https://audience.example/inbox' },
+        { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:defined:method' }, 'hydra:title': 'Approach note', method: 'GET',
+          target: 'https://elsewhere.example/hook' },
+      ] },
+    // Two terms for one property, each holding an inline operation with no "@id" or "@type".
+    '/two-terms': { '@context': { ...CTX, reads: { '@id': 'hydra:operation', '@container': '@set' }, writes: { '@id': 'hydra:operation', '@container': '@set' } },
+      '@id': `${base}/two-terms`,
+      reads: [{ 'iep:action': { '@id': 'urn:two:read' }, 'hydra:method': 'GET', 'hydra:title': 'Two-term read', ...target('/api') }],
+      writes: [{ 'iep:action': { '@id': 'urn:two:write' }, 'hydra:method': 'POST', 'hydra:title': 'Two-term write', ...target('/api') }] },
+    // An expanded term definition is a prefix only with "@prefix": true; a simple one ending in "/" is one.
+    '/prefix-terms': { '@context': { ...CTX, api: { '@id': `${base}/` }, api2: `${base}/` }, '@id': `${base}/prefix-terms`, 'hydra:operation': [
+      { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:prefix:expanded' }, 'hydra:method': 'POST', 'hydra:title': 'Expanded prefix', 'hydra:target': { '@id': 'api:collect' } },
+      { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:prefix:simple' }, 'hydra:method': 'POST', 'hydra:title': 'Simple prefix', 'hydra:target': { '@id': 'api2:collect' } },
+    ] },
+    // A map's keys read in one order in both clients, as jsonld.js sorts them ("2" before
+    // "current"): two operations with one action, a GET and a DELETE, are refused, whether they are
+    // two nodes or, with no "@id", one; and one operation with two methods is refused too.
+    '/index-order': { '@context': { ...CTX, versions: { '@id': 'hydra:operation', '@container': '@index' } }, '@id': `${base}/index-order`,
+      versions: {
+        current: { '@id': '#current', '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:order:item' }, 'hydra:method': 'GET', 'hydra:title': 'Read item', ...target('/item') },
+        2: { '@id': '#v2', '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:order:item' }, 'hydra:method': 'DELETE', 'hydra:title': 'Delete item', ...target('/item') } } },
+    '/index-order-inline': { '@context': { ...CTX, versions: { '@id': 'hydra:operation', '@container': '@index' } }, '@id': `${base}/index-order-inline`,
+      versions: {
+        current: { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:order:inline' }, 'hydra:method': 'GET', 'hydra:title': 'Read inline item', ...target('/item') },
+        2: { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:order:inline' }, 'hydra:method': 'DELETE', 'hydra:title': 'Delete inline item', ...target('/item') } } },
+    '/two-methods': { '@context': { ...CTX, ops: { '@id': 'hydra:operation', '@container': '@index', '@index': 'hydra:method' } },
+      '@id': `${base}/two-methods`,
+      ops: { GET: { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:methods:keyed' }, 'hydra:method': 'DELETE', 'hydra:title': 'Keyed delete', ...target('/thing') } },
+      'hydra:operation': { '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:methods:listed' }, 'hydra:method': ['GET', 'DELETE'],
+        'hydra:title': 'Listed delete', ...target('/thing') } },
+    // An operation that a property-scoped context gives a second hydra:target, as jsonld.js reads it.
+    '/two-targets': { '@context': { ...CTX, target: { '@id': 'hydra:target', '@type': '@id' },
+      ops: { '@id': 'hydra:operation', '@context': { dest: { '@id': 'hydra:target', '@type': '@id' } } } }, '@id': `${base}/two-targets`,
+      ops: [{ '@type': 'hydra:Operation', 'iep:action': { '@id': 'urn:targets:two' }, 'hydra:method': 'POST', 'hydra:title': 'Two targets',
+        dest: '/dest', target: '/t' }] },
+    // A reserved expansion passes a percent-encoded triplet through as it is (RFC 6570, 3.2.3).
+    '/tmpl-pct': { '@context': CTX, '@id': `${base}/tmpl-pct`, 'iep:affordance': [op('r', 'urn:tmpl:pct', 'GET', 'Reserved triplet', {
+      'hydra:template': `${base}/r{+path}`, 'hydra:mapping': [{ 'hydra:variable': 'path', 'hydra:required': true }] })] },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
   return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')]));
@@ -378,4 +481,49 @@ export function costDescriptors(base: string): Record<string, string> {
       ...range(1500).map(i => ({ '@id': `urn:n${i}`, 'hydra:supportedClass': { '@id': 'urn:C' } }))] },
   };
   return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc)]));
+}
+
+/**
+ * Controls the documents above hold as jsonld.js reads them, each dry-run by both clients, as [path,
+ * the IRI that names it, title, method, the address its plan sends to, or null for a control the
+ * document gives no hydra:target, which goes to the Interego relay instead].
+ */
+export function jsonldPlans(base: string): ReadonlyArray<readonly [path: string, rel: string, title: string, method: string, url: string | null]> {
+  return [
+    ['/type-scoped', 'urn:scope:type', 'Type-scoped write', 'POST', `${base}/right`],
+    ['/propagate', 'urn:scope:propagate', 'Unpropagated write', 'POST', `${base}/right`],
+    ['/type-scoped-deep', 'urn:deep:type', 'Deep type read', 'GET', `${base}/api`],
+    ['/property-scoped-deep', 'urn:deep:property', 'Deep property read', 'GET', `${base}/api`],
+    ['/index-refs', 'urn:refs:remove', 'Remove', 'DELETE', `${base}/thing`],
+    ['/index-refs', 'urn:refs:replace', 'Replace', 'PUT', `${base}/thing`],
+    ['/graph-index', 'urn:graph:own', 'Own method', 'GET', `${base}/thing`],
+    ['/graph-index', 'urn:graph:keyed', 'Keyed method', 'POST', `${base}/thing`],
+    ['/nest-keywords', 'urn:nest:alias', 'Nested alias type', 'POST', `${base}/thing`],
+    ['/nest-keywords', `${base}/nest-keywords#typed`, 'Nested type', 'POST', `${base}/thing2`],
+    ['/defined-terms', 'urn:defined:target', 'Audience note', 'POST', null],
+    ['/defined-terms', 'urn:defined:method', 'Approach note', 'POST', null],
+    ['/two-terms', 'urn:two:read', 'Two-term read', 'GET', `${base}/api`],
+    ['/two-terms', 'urn:two:write', 'Two-term write', 'POST', `${base}/api`],
+    ['/prefix-terms', 'urn:prefix:expanded', 'Expanded prefix', 'POST', null],
+    ['/prefix-terms', 'urn:prefix:simple', 'Simple prefix', 'POST', `${base}/collect`],
+  ];
+}
+
+/**
+ * Controls each client lists, as an unsafe one, and refuses to invoke, as [path, action, title,
+ * the method shown, the problem it names].
+ */
+export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: string, rel: string, title: string, method: string, problem: string]> {
+  return [
+    ['/index-order', 'urn:order:item', 'Delete item', 'DELETE',
+      'two controls are both named urn:order:item but send different requests, so which one is meant is not known; this control is not invoked'],
+    ['/index-order-inline', 'urn:order:inline', 'Delete inline item', 'DELETE',
+      'this control names more than one hydra:method (DELETE, GET), so what it does is not known; it is not invoked'],
+    ['/two-methods', 'urn:methods:keyed', 'Keyed delete', 'DELETE',
+      'this control names more than one hydra:method (GET, DELETE), so what it does is not known; it is not invoked'],
+    ['/two-methods', 'urn:methods:listed', 'Listed delete', 'DELETE',
+      'this control names more than one hydra:method (GET, DELETE), so what it does is not known; it is not invoked'],
+    ['/two-targets', 'urn:targets:two', 'Two targets', 'POST',
+      `this control names more than one hydra:target (${base}/dest, ${base}/t), so where it sends is not known; it is not invoked`],
+  ];
 }

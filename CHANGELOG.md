@@ -323,6 +323,33 @@ bounds as `minItems` and `maxItems`. The documents are in the shared fixtures,
 and the four new tests, one per finding in each file, failed before. The CSP
 script hash is updated.
 
+A further review found eight more places where the clients read JSON-LD
+otherwise than jsonld.js. A type's scoped context now holds for that node's
+own keys only, and an embedded context with `"@propagate": false` for its own
+node only: an operation written under such a node reads the document's
+context again, so its `target` is the document's `hydra:target` and not the
+address a catalog's context gave another term. Neither copies the whole
+context per level any more, so a 3,000-term context 80 levels deep is read,
+not refused; a term's scoped context met again inside its own value adds
+nothing either. A string in an `@index` map whose term holds IRIs names a
+node, which the map's `"@index"` property reaches, so `"DELETE": "#remove"`
+is a DELETE; under `@graph` that property is the graph's, not the
+operation's. A JSON Schema under `hydra:expects` with an `@id`, in a context
+that aliases `type`, keeps its property types, so numbers and array counts
+are checked. A `@type` or `@id` inside a `@nest` object is the node's. A key
+the context defines as another property is no longer read as `hydra:target`
+or `hydra:method` by its name. Two terms for one property are both read. A
+map's keys are read in sorted order in both clients, so they meet its values
+in one order. A control that names two methods or two targets, or shares its
+name with another that sends something else, is listed with the writes and
+refused with a named problem instead of one of them being picked. Smaller
+fixes: an expanded term definition is a prefix only with `"@prefix": true`, a
+reserved template expansion keeps `%2F` as it is, `hmc.py` refuses an
+`xn--` host the page's URL parser refuses, and its retry with
+`?format=jsonld` keeps repeated query parameters. The documents are in the
+shared fixtures; every new test failed before. The CSP script hash is
+updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

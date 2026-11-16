@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, sharedDescriptors } from './hypermedia-client-fixtures.js';
+import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, jsonldPlans, jsonldRefusals, sharedDescriptors } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -179,6 +179,8 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       { '@id': '#create', '@type': 'iep:Affordance', 'iep:action': { '@id': 'iep:create' }, 'hydra:method': 'POST', 'hydra:title': 'Create item',
         'hydra:target': { '@id': 'items' }, 'hydra:expects': { type: 'object', properties: { name: { type: 'string' } } } }] }),
     '/see-other': () => ({ status: 303, headers: { location: '/other/desc' } }),
+    // HyperMarkdown, which is retried as ?format=jsonld with the address's own query kept whole.
+    '/fmt': () => ({ type: 'text/markdown', body: '---\ntitle: Format retry\n---\n' }),
     '/other/desc': json({ '@context': CTX, 'iep:affordance': [relOp('see-other', 'See other api', { '@id': 'api' })] }),
   };
 }
@@ -509,7 +511,7 @@ describe('hmc.py: remote text reaches the terminal as text', () => {
   });
 });
 
-type Request = { url: string | null; transport: string; body: unknown; headers: Record<string, string>; notes: string[];
+type Request = { url: string | null; method: string; transport: string; body: unknown; headers: Record<string, string>; notes: string[];
   mcp: { arguments: { action_iri: string } } | null };
 /** A dry run of `rel` in the document at `path` with `fields` (a list is the field repeated); its plan or its failure. */
 async function dry(path: string, rel: string, fields: Record<string, string | string[]> = {}) {
@@ -615,6 +617,51 @@ describe('hmc.py: JSON-LD read as jsonld.js reads it', () => {
       expect(r.code, `${rel}: ${r.stderr}`).toBe(0);
       expect([request!.transport, request!.url], rel).toEqual(['http', `${base}/api`]);
     }
+  });
+});
+
+describe('hmc.py: scoped contexts, map references and repeated keys as jsonld.js reads them', () => {
+  it('reads each control as jsonld.js gives it, as the page does', async () => {
+    for (const [path, rel, title, method, url] of jsonldPlans(base)) {
+      const doc = await listed(path);
+      const control = doc.controls.find(c => c.rel === rel);
+      expect(control, `${path} ${rel}: ${doc.controls.map(c => c.rel).join(', ')}`).toBeDefined();
+      expect([control!.title, control!.problem], rel).toEqual([title, null]);
+      const { r, request } = await dry(path, rel);
+      expect(r.code, `${rel}: ${r.stderr}`).toBe(0);
+      expect([request!.method, request!.transport, request!.url], rel).toEqual([method, url ? 'http' : 'mcp', url]);
+    }
+  });
+
+  it('lists a control whose requests it cannot tell apart as unsafe, and refuses it with a problem', async () => {
+    for (const [path, rel, title, method, problem] of jsonldRefusals(base)) {
+      const doc = await listed(path);
+      const control = doc.controls.find(c => c.title === title);
+      expect(control, title).toBeDefined();
+      expect([control!.rel, control!.method, control!.unsafe, control!.problem], title).toEqual([rel, method, true, problem]);
+      const before = seen.length;
+      const r = await hmc(['invoke', `${base}${path}`, rel, '--confirm']);
+      expect(r.code, title).toBe(2);
+      expect(r.stderr, title).toContain(problem);
+      expect(seen.slice(before).filter(line => !line.startsWith(`GET ${path}`)), title).toEqual([]);
+    }
+  });
+
+  it('reads a JSON Schema with an "@id" under a "type" alias as JSON Schema, numbers and array counts included', async () => {
+    expect((await dry('/schema-alias', 'urn:schema:alias', { n: '3', tags: '["a","b"]' })).request!.body).toEqual({ n: 3, tags: ['a', 'b'] });
+    const bad = await dry('/schema-alias', 'urn:schema:alias', { n: '9', tags: '[1]' });
+    expect(bad.r.code).toBe(2);
+    expect(bad.r.stderr).toContain('tags: needs at least 2 values, got 1');
+    expect(bad.r.stderr).toContain('n: above maxInclusive 5');
+  });
+
+  it('passes a percent-encoded triplet through a reserved expansion as it is', async () => {
+    expect((await dry('/tmpl-pct', 'urn:tmpl:pct', { path: '/x?y=%2F&z=a b' })).request!.url).toBe(`${base}/r/x?y=%2F&z=a%20b`);
+  });
+
+  it('keeps every repeated query parameter when it asks again for JSON-LD', async () => {
+    await hmc(['list', `${base}/fmt?tag=a&tag=b&format2=x`]);
+    expect(seen).toContain('GET /fmt?tag=a&tag=b&format2=x&format=jsonld');
   });
 });
 
@@ -795,6 +842,8 @@ describe('hmc.py: the address sent is the address printed', () => {
     ['urn:sent-user', {}, 'the address carries user information before its host'],
     ['urn:sent-number', {}, "the address's host is a number written other than as four decimal parts"],
     ['urn:sent-tab', {}, 'the address holds a backslash, a space or a control character'],
+    // "xn--a" is no punycode a URL parser accepts, so the page refuses it too.
+    ['urn:sent-punycode', {}, 'the address is not a URL'],
     // IDNA 2003 maps "ß" to "ss", so this would go to strasse.example, where the page goes to
     // xn--strae-oqa.example; hmc.py refuses it rather than send to another domain.
     ['urn:sent-sharp-s', {}, 'hmc.py does not send to a host with ß, ς, ZWJ or ZWNJ'],
