@@ -597,9 +597,33 @@ export function sharedDescriptors(base: string): Record<string, string> {
     // A @set object with a @context of its own, which JSON-LD reads as what it holds.
     '/set-context': { '@context': CTX, '@id': `${base}/set-context`, 'iep:affordance': [op('a', 'urn:setctx:read', null, 'Set with a context',
       { 'hydra:method': { '@context': { s: '@set' }, s: ['GET'] }, ...target('/api') })] },
+    // Writes that take JSON, as a JSON Schema object, an rdf:JSON property and a whole rdf:JSON
+    // body, one whose default holds a number past a double (1e400, put in the text below), and
+    // string fields with JSON Schema and SHACL length facets. VALUE_CASES are their values.
+    '/values': { '@context': CTX, '@id': `${base}/values`, 'iep:affordance': [
+      op('o', 'urn:values:object', 'POST', 'Object value', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { document: { type: 'object' } } } }),
+      op('j', 'urn:values:json', 'POST', 'JSON value', { ...target('/num-target'), 'hydra:expects': { '@id': '#J' } }),
+      op('b', 'urn:values:body', 'POST', 'JSON body', { ...target('/num-target'), 'hydra:expects': { '@id': '#B' } }),
+      op('d', 'urn:values:default', 'POST', 'Large default', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { report: { type: 'object', default: { score: 'LARGE-SCORE' } } } } }),
+      op('l', 'urn:values:length', 'POST', 'Schema lengths', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { one: { type: 'string', maxLength: 1 }, two: { type: 'string', minLength: 2 } } } }),
+      op('s', 'urn:values:shacl-length', 'POST', 'Shape lengths', { ...target('/num-target'), 'hydra:expects': { '@id': '#L' } }),
+    ], '@graph': [
+      { '@id': '#J', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:data' }, 'sh:name': 'data',
+        'sh:datatype': { '@id': 'rdf:JSON' }, 'sh:maxCount': 1 } },
+      { '@id': '#B', '@type': 'sh:NodeShape', 'rdfs:label': 'JSON body', 'sh:datatype': { '@id': 'rdf:JSON' } },
+      { '@id': '#L', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:one' }, 'sh:name': 'one', 'sh:maxLength': 1, 'sh:maxCount': 1 },
+        { 'sh:path': { '@id': 'urn:p:two' }, 'sh:name': 'two', 'sh:minLength': 2, 'sh:maxCount': 1 }] },
+    ] },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
   const out = Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')]));
+  // JSON.stringify writes no number past a double, so the 1e400 is put in the text by hand. JSON's
+  // grammar allows it, and both clients read it as an infinity.
+  out['/values'] = out['/values']!.replace('"LARGE-SCORE"', '1e400');
   // JSON.stringify writes each key once, so a repeated key is put in the text by hand: JSON leaves
   // its meaning open, and a reader that takes the last "hydra:method" takes GET.
   out['/repeated-key'] = JSON.stringify({ '@context': CTX, '@id': `${base}/repeated-key`, 'iep:affordance': [
@@ -688,6 +712,8 @@ export function dryRuns(base: string): ReadonlyArray<readonly [path: string, rel
     ['/truthiness', 'urn:truth:null-properties', {}, { error: "missing required field 'q'" }],
     ['/line-names', 'urn:lines:write', { 'abc\n': '1', 'rest-param-q-limit\n': '2', 'rest-param-q-li\rmit': '3', offset: '4' },
       { url: `${base}/api`, body: { 'abc\n': '1', 'rest-param-q-limit\n': '2', 'rest-param-q-li\rmit': '3', offset: '4' } }],
+    // NaN is not JSON, so this list is one line of text, not three values.
+    ['/multi', 'urn:act-publish', { graph_iri: `${base}/g`, tags: '["a","b",NaN]' }, { error: 'tags: needs at least 2 values, got 1' }],
   ];
 }
 
@@ -720,6 +746,53 @@ export function countCases(base: string): ReadonlyArray<readonly [path: string, 
     ['/multi', 'urn:act-publish', 'Publish classified', { graph_iri: `${base}/g`, tags: '["a","b","c","d","e","f"]' }, 'tags: takes at most 5 values, got 6'],
   ];
 }
+
+/** U+1F600, one code point that JavaScript's .length counts as two UTF-16 code units. */
+const SMILE = '\u{1F600}';
+/** "e" and U+0301, a combining acute accent: two code points, shown as one letter. */
+const COMBINED = 'e\u0301';
+/**
+ * Values for /values each client reads alike, as [path, action, title, fields, the body a dry run
+ * plans, or the validation error that stops a dry run and a confirmed write alike, sending nothing]:
+ *   - NaN, Infinity and -Infinity are not JSON, in a field that takes a JSON object, an rdf:JSON
+ *     field or a whole JSON body; Python's json.loads reads them and json.dumps writes them back;
+ *   - a repeated key leaves which value an object means open, as it does in a document;
+ *   - a number past what a double holds (1e400, -1e400, an integer of 400 or 5,000 digits, or a
+ *     descriptor's default of 1e400) cannot be sent: JSON.parse reads it as Infinity, which
+ *     JSON.stringify sends as null;
+ *   - a length facet counts Unicode code points, as Python's len() does, and not JavaScript's
+ *     UTF-16 code units: U+1F600 is one character, and "e" followed by a combining acute accent two.
+ */
+export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, title: string, fields: Record<string, string>,
+  outcome: { readonly body: unknown } | { readonly error: string }]> = [
+  ['/values', 'urn:values:object', 'Object value', { document: '{"score":NaN}' }, { error: 'document must be JSON' }],
+  ['/values', 'urn:values:object', 'Object value', { document: '{"score":Infinity}' }, { error: 'document must be JSON' }],
+  ['/values', 'urn:values:object', 'Object value', { document: '{"score":-Infinity}' }, { error: 'document must be JSON' }],
+  ['/values', 'urn:values:object', 'Object value', { document: '{"score":1e400}' }, { error: 'document: holds a number too large to send' }],
+  ['/values', 'urn:values:object', 'Object value', { document: `{"score":1${'0'.repeat(400)}}` }, { error: 'document: holds a number too large to send' }],
+  ['/values', 'urn:values:object', 'Object value', { document: `{"score":${'9'.repeat(5000)}}` }, { error: 'document: holds a number too large to send' }],
+  ['/values', 'urn:values:object', 'Object value', { document: '{"a":1,"a":2}' },
+    { error: 'document repeats the key "a" in one object, so which value it means is not known' }],
+  ['/values', 'urn:values:object', 'Object value', { document: '{"score":1.5,"tags":["a"]}' }, { body: { document: { score: 1.5, tags: ['a'] } } }],
+  ['/values', 'urn:values:json', 'JSON value', { data: '[1,NaN]' }, { error: 'data must be JSON' }],
+  ['/values', 'urn:values:json', 'JSON value', { data: '-1e400' }, { error: 'data: holds a number too large to send' }],
+  ['/values', 'urn:values:json', 'JSON value', { data: '[1,2.5]' }, { body: { data: [1, 2.5] } }],
+  ['/values', 'urn:values:body', 'JSON body', { body: '{"score":NaN}' }, { error: 'body must be JSON' }],
+  ['/values', 'urn:values:body', 'JSON body', { body: '{"score":Infinity}' }, { error: 'body must be JSON' }],
+  ['/values', 'urn:values:body', 'JSON body', { body: '[1e400]' }, { error: 'body: holds a number too large to send' }],
+  ['/values', 'urn:values:body', 'JSON body', { body: '{"score": 1.5}' }, { body: '{"score": 1.5}' }],
+  ['/values', 'urn:values:default', 'Large default', {}, { error: 'report: holds a number too large to send' }],
+  ...(['Schema lengths', 'Shape lengths'] as const).flatMap(title => {
+    const rel = title === 'Schema lengths' ? 'urn:values:length' : 'urn:values:shacl-length';
+    return [
+      ['/values', rel, title, { one: SMILE, two: SMILE + SMILE }, { body: { one: SMILE, two: SMILE + SMILE } }],
+      ['/values', rel, title, { two: SMILE }, { error: 'two: shorter than minLength 2' }],
+      ['/values', rel, title, { one: SMILE + SMILE }, { error: 'one: longer than maxLength 1' }],
+      ['/values', rel, title, { one: COMBINED }, { error: 'one: longer than maxLength 1' }],
+      ['/values', rel, title, { two: COMBINED }, { body: { two: COMBINED } }],
+    ] as const;
+  }),
+];
 
 /**
  * Documents of a few hundred kilobytes whose shape once made both clients' work grow as the product

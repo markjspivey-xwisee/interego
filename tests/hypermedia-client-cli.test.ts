@@ -12,11 +12,11 @@ import { mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { createServer, type IncomingMessage, type Server, type ServerResponse } from 'node:http';
 import type { AddressInfo } from 'node:net';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals, LISTED,
-  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS } from './hypermedia-client-fixtures.js';
+  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -181,6 +181,12 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       { '@id': '#create', '@type': 'iep:Affordance', 'iep:action': { '@id': 'iep:create' }, 'hydra:method': 'POST', 'hydra:title': 'Create item',
         'hydra:target': { '@id': 'items' }, 'hydra:expects': { type: 'object', properties: { name: { type: 'string' } } } }] }),
     '/see-other': () => ({ status: 303, headers: { location: '/other/desc' } }),
+    // Responses JSON.parse reads otherwise than json.loads: NaN, which is not JSON, and a number past a double.
+    '/odd-bodies': json(descriptor('odd-bodies', ['nan', 'large'].map(name => ({ '@id': `${base}/odd-bodies#${name}`,
+      '@type': 'iep:Affordance', 'iep:action': `urn:odd-${name}`, 'hydra:method': 'GET', 'hydra:title': `Odd ${name}`,
+      'hydra:target': `${base}/odd-${name}` })))),
+    '/odd-nan': () => ({ type: 'application/json', body: '{"score":NaN}' }),
+    '/odd-large': () => ({ type: 'application/json', body: '{"score":1e400}' }),
     // HyperMarkdown, which is retried as ?format=jsonld with the address's own query kept whole.
     '/fmt': () => ({ type: 'text/markdown', body: '---\ntitle: Format retry\n---\n' }),
     '/other/desc': json({ '@context': CTX, 'iep:affordance': [relOp('see-other', 'See other api', { '@id': 'api' })] }),
@@ -941,6 +947,71 @@ describe('hmc.py: the address sent is the address printed', () => {
     expect(r.code).toBe(1);
     expect(r.stderr).toContain(message);
     expect(seen.slice(before).filter(line => line !== 'GET /sent')).toEqual([]);
+  });
+});
+
+describe('hmc.py: values a request can carry, and lengths in code points', () => {
+  const sentTo = () => seen.filter(s => s.startsWith('POST /num-target')).length;
+
+  it.each(VALUE_CASES)('reads %s %s (%s) as the page does: case %#', async (path, rel, _title, fields, outcome) => {
+    if ('body' in outcome) {
+      const { r, request } = await dry(path, rel, fields);
+      expect(r.code, r.stderr).toBe(0);
+      expect(request!.body).toEqual(outcome.body);
+      return;
+    }
+    const before = sentTo();
+    const args = Object.entries(fields).flatMap(([k, v]) => ['--field', `${k}=${v}`]);
+    for (const mode of ['--dry-run', '--confirm']) {
+      const r = await hmc(['invoke', `${base}${path}`, rel, ...args, mode]);
+      expect(r.code, `${mode}: ${r.stdout}${r.stderr}`).toBe(2);
+      expect(r.stderr, mode).toContain('Validation failed');
+      expect(r.stderr, mode).toContain(outcome.error);
+    }
+    expect(sentTo()).toBe(before);
+  });
+
+  it('refuses NaN or an infinity handed to resolve_plan or invoke_plan unchecked, and sends nothing', async () => {
+    const before = sentTo();
+    // hmc.py as a library, given values validate_fields would have refused.
+    const script = [
+      'import json, sys', 'sys.dont_write_bytecode = True', 'sys.path.insert(0, sys.argv[1])', 'import hmc',
+      'url = sys.argv[2]', 'd = hmc.parse_descriptor(sys.stdin.read(), "application/ld+json", url)',
+      'control = next(c for c in d.controls if c.rel == "urn:values:object")', 'out = []',
+      'try:', '    hmc.resolve_plan(control, {"document": {"score": float("nan")}}, url)', '    out.append("planned")',
+      'except hmc.UnsendableValue as exc:', '    out.append(str(exc))',
+      'plan = hmc.resolve_plan(control, {"document": {"score": 1}}, url)',
+      'plan.body, plan.body_text = {"document": {"score": float("inf")}}, None',
+      'try:', '    hmc.invoke_plan(plan, confirm=True)', '    out.append("sent")',
+      'except hmc.UnsendableValue as exc:', '    out.append(str(exc))', 'print(json.dumps(out))'].join('\n');
+    const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+      const child = spawn(PYTHON, ['-I', '-c', script, dirname(HMC), `${base}/values`],
+        { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*' } });
+      let stdout = ''; let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', d => { stdout += d; });
+      child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
+      child.on('close', code => resolve({ code, stdout, stderr }));
+      child.stdin.end(sharedDescriptors(base)['/values']);
+    });
+    expect(r.code, r.stderr).toBe(0);
+    expect(JSON.parse(r.stdout)).toEqual(['document: holds NaN or an infinity, which is not JSON, so nothing is sent',
+      'a value holds NaN or an infinity, which is not JSON, so nothing is sent']);
+    expect(sentTo()).toBe(before);
+  });
+
+  it('writes --json output as JSON: a number past a double as null, as JSON.stringify does, and a NaN response as its text', async () => {
+    const d = await hmc(['describe', `${base}/values`, 'urn:values:default']);
+    expect(d.code, d.stderr).toBe(0);
+    expect((JSON.parse(d.stdout) as { fields: Array<{ defaultValue: unknown }> }).fields[0]!.defaultValue).toEqual({ score: null });
+    const nan = await hmc(['invoke', `${base}/odd-bodies`, 'urn:odd-nan', '--json']);
+    expect(nan.code, nan.stderr).toBe(0);
+    expect((JSON.parse(nan.stdout) as { response: unknown }).response).toMatchObject({ body: null, bodyText: '{"score":NaN}' });
+    const large = await hmc(['invoke', `${base}/odd-bodies`, 'urn:odd-large', '--json']);
+    expect(large.code, large.stderr).toBe(0);
+    expect((JSON.parse(large.stdout) as { response: unknown }).response).toMatchObject({ body: { score: null }, bodyText: '{"score":1e400}' });
+    // Shown as text, each is what the page shows: NaN as received, and the large number as null.
+    expect((await hmc(['invoke', `${base}/odd-bodies`, 'urn:odd-nan'])).stdout).toContain('{"score":NaN}');
+    expect((await hmc(['invoke', `${base}/odd-bodies`, 'urn:odd-large'])).stdout).toContain('"score": null');
   });
 });
 

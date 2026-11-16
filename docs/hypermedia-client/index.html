@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-q0wUARtzj2Q5op3TX6JWojTt13g0yy88R6dvBvTXQSU='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-hX4LXk05qNCFQa/AjheK5au1cEufAO6MeeXUKK2pyv4='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -2479,8 +2479,13 @@ function coerceValue(field, value) {
   if (kind) {
     let parsed = value;
     if (typeof value !== "object") {
-      try { parsed = JSON.parse(String(value)); }
+      // Read as a document is: NaN, Infinity and a repeated key are refused,
+      // as hmc.py's _strict_json refuses them, and never reach a request.
+      const text = String(value);
+      try { parsed = JSON.parse(text); }
       catch { throw new Error(field.name + " must be JSON"); }
+      const repeated = repeatedKey(text);
+      if (repeated != null) throw new Error(field.name + ' repeats the key "' + repeated + '" in one object, so which value it means is not known');
     }
     if (kind === "object" && (parsed == null || typeof parsed !== "object" || Array.isArray(parsed))) {
       throw new Error(field.name + " must be a JSON object");
@@ -2518,6 +2523,28 @@ function multiItems(value) {
   }
   return text.replace(/\r\n?/g, "\n").split("\n").filter(line => trimSpaces(line) !== "");
 }
+// Whether a value holds a number no double holds: JSON.parse reads 1e400, or an
+// integer past the largest double, as Infinity, which JSON.stringify would send
+// as null. A walk with a stack, so a deep value costs no recursion. hmc.py's
+// _past_double is the same.
+function tooLarge(value) {
+  const stack = [value];
+  while (stack.length) {
+    const item = stack.pop();
+    if (typeof item === "number") { if (!Number.isFinite(item)) return true; }
+    else if (item != null && typeof item === "object") for (const key of Object.keys(item)) stack.push(item[key]);
+  }
+  return false;
+}
+// A string's length as a length facet counts it: in Unicode code points, as
+// JSON Schema's maxLength and SHACL's sh:maxLength do and as hmc.py's len()
+// does, so U+1F600 is one character, not the two UTF-16 code units .length
+// counts.
+function codePoints(text) {
+  let n = 0;
+  for (const _ of text) n++;
+  return n;
+}
 // One value of a field, typed and checked; each problem goes in `errors` once.
 // Returns the value to send. hmc.py's _check_value is the same.
 function checkValue(field, found, numeric, errors) {
@@ -2525,6 +2552,9 @@ function checkValue(field, found, numeric, errors) {
   if (numeric && typeof found === "string") found = trimSpaces(found);
   let typed;
   try { typed = coerceValue(field, found); } catch (err) { report(String(err.message || err)); return null; }
+  // A number no double holds cannot be sent. A number field's value is checked
+  // by its type instead.
+  if (!numeric && tooLarge(typed)) { report(field.name + ": holds a number too large to send"); return null; }
   const structured = typed != null && typeof typed === "object";
   // A JSON array holds as many values as it has items, and a field that takes
   // one object holds one; a field's minItems and maxItems bound that count.
@@ -2532,8 +2562,8 @@ function checkValue(field, found, numeric, errors) {
   if (count != null && field.minItems != null && count < field.minItems) report(field.name + ": needs at least " + field.minItems + " values, got " + count);
   if (count != null && field.maxItems != null && count > field.maxItems) report(field.name + ": takes at most " + field.maxItems + " values, got " + count);
   const text = typeof typed === "string" ? typed : (typed == null ? "" : String(typed));
-  if (!structured && field.minLength != null && text.length < field.minLength) report(field.name + ": shorter than minLength " + field.minLength);
-  if (!structured && field.maxLength != null && text.length > field.maxLength) report(field.name + ": longer than maxLength " + field.maxLength);
+  if (!structured && field.minLength != null && codePoints(text) < field.minLength) report(field.name + ": shorter than minLength " + field.minLength);
+  if (!structured && field.maxLength != null && codePoints(text) > field.maxLength) report(field.name + ": longer than maxLength " + field.maxLength);
   const allowed = enumOptions(field);
   if (!structured && allowed.length) {
     const listed = numeric && typeof typed === "number" ? enumHasNumber(field, numeric, typed) : allowed.includes(text);
@@ -2892,6 +2922,10 @@ function renderList() {
 function fieldDefaultText(field) {
   if (field.defaultValue == null) return "";
   if (field.multi && Array.isArray(field.defaultValue)) return field.defaultValue.map(asText).join("\n");
+  // A default that holds a number no double holds is not written into the
+  // form, where JSON.stringify would write it as null: the field is left empty,
+  // so the default itself is checked, and refused, as hmc.py refuses it.
+  if (tooLarge(field.defaultValue)) return "";
   return typeof field.defaultValue === "object" ? JSON.stringify(field.defaultValue) : String(field.defaultValue);
 }
 // Inputs carry the remote field name in data-field, never in name or id. In a

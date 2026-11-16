@@ -391,6 +391,19 @@ attribute. Most new shared cases failed before in one client or both. Of 1,500
 random documents the clients read 382 differently at the PR head; of 12,000
 they now read none differently. The CSP script hash is updated.
 
+A review then found two more. `hmc.py` read a field's JSON with plain
+`json.loads`, which takes `NaN` and `Infinity`, and `json.dumps` wrote them back,
+so a confirmed write sent a body that is not JSON. Every JSON value that may go
+into a request (a JSON or rdf:JSON field, a whole JSON body, a default, a
+HyperMarkdown value) is now read as a document is, in both clients, refusing
+those and a repeated key; a number no double holds, such as `1e400`, which the
+page sent as `null`, is refused in both; and `hmc.py` writes request JSON with
+`allow_nan=False`, while its `--json` output stays JSON. The page counted
+`minLength` and `maxLength` in UTF-16 code units, so an emoji failed
+`maxLength: 1`; it now counts code points, as `hmc.py` does. 27 of the new
+shared-fixture tests failed before; the rest pin what already held. The CSP
+script hash is updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

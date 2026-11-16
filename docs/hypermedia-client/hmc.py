@@ -147,15 +147,117 @@ def _nested_keyword(keyword: str) -> ValueError:
     return ValueError(f"This document puts {keyword} inside a @nest object, which this client does not read, so it is not read.")
 
 
+class _RepeatedKey(ValueError):
+    """An object that gives one key twice; `key` is the key."""
+
+    def __init__(self, key: str) -> None:
+        super().__init__(f'This document repeats the key "{key}" in one object, so which value it means is not known, and it is '
+                         "not read.")
+        self.key = key
+
+
 def _repeated_key(key: str) -> ValueError:
-    return ValueError(f'This document repeats the key "{key}" in one object, so which value it means is not known, and it is '
-                      "not read.")
+    return _RepeatedKey(key)
 
 
 def _not_json(constant: str) -> Any:
     """json.loads' parse_constant: NaN and Infinity are not JSON, and the
     page's JSON.parse refuses them, so this does too."""
     raise ValueError(f"This document writes {constant}, which is not JSON, so it is not read.")
+
+
+def _json_int(digits: str) -> int | float:
+    """json.loads' parse_int: the integer, or, past the digits int() reads
+    (sys.get_int_max_str_digits, 4,300 by default), the float its digits
+    give, an infinity, which is what the page's JSON.parse reads, where
+    json.loads would raise instead. A value that holds it is not sent; see
+    _past_double."""
+    try:
+        return int(digits)
+    except ValueError:
+        return float(digits)
+
+
+def _page_json(text: str) -> Any:
+    """JSON as the page's JSON.parse reads it: NaN and Infinity refused (a
+    ValueError), and a repeated key taking its last value. For what is only
+    looked at, never sent: whether a payload is JSON, and a response."""
+    return json.loads(text, parse_constant=_not_json, parse_int=_json_int)
+
+
+def _past_double(value: Any, *, integers: bool = True) -> bool:
+    """Whether a value holds a number no double holds: NaN, an infinity (JSON's
+    1e400 reads as one in both clients) or, with `integers`, an integer past
+    the largest double, which the page's JSON.parse reads as Infinity. A walk
+    with a stack, so a deep value costs no recursion. The page's tooLarge is
+    the same."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, float):
+            if not math.isfinite(item):
+                return True
+        elif isinstance(item, int) and not isinstance(item, bool):
+            if integers:
+                try:
+                    float(item)
+                except OverflowError:
+                    return True
+        elif isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return False
+
+
+class UnsendableValue(ValueError):
+    """A request that would carry NaN or an infinity, which json.dumps writes
+    as NaN or Infinity, text that is not JSON. validate_fields refuses such a
+    value first; this stops one given to resolve_plan or invoke_plan unchecked.
+    cmd_invoke reports it as a validation failure, and nothing is sent."""
+
+
+def _request_json(value: Any, **options: Any) -> str:
+    """JSON text that goes into a request, as its body or in its address.
+    allow_nan=False, so a non-finite number raises UnsendableValue instead
+    of being written as text that is not JSON."""
+    try:
+        return json.dumps(value, allow_nan=False, **options)
+    except ValueError as exc:
+        raise UnsendableValue("a value holds NaN or an infinity, which is not JSON, so nothing is sent") from exc
+
+
+def _finite_copy(value: Any) -> Any:
+    """A copy of a value with each NaN or infinity as None, which is how
+    JSON.stringify writes them. Built with a stack, so a value as deep as
+    json.loads reads costs no recursion."""
+    def fresh(item: Any) -> Any:
+        if isinstance(item, float) and not math.isfinite(item):
+            return None
+        return {} if isinstance(item, dict) else [] if isinstance(item, list) else item
+    root = fresh(value)
+    stack = [(value, root)] if isinstance(value, (dict, list)) else []
+    while stack:
+        source, target = stack.pop()
+        for key, item in (source.items() if isinstance(source, dict) else enumerate(source)):
+            made = fresh(item)
+            if isinstance(target, dict):
+                target[key] = made
+            else:
+                target.append(made)
+            if isinstance(item, (dict, list)):
+                stack.append((item, made))
+    return root
+
+
+def _json_out(value: Any, indent: int | None = 2) -> str:
+    """What --json and a shown JSON body print: JSON, always. A remote 1e400
+    reads as an infinity, which json.dumps would write as Infinity; it is
+    written null, as the page's JSON.stringify writes it."""
+    try:
+        return json.dumps(value, indent=indent, allow_nan=False)
+    except ValueError:
+        return json.dumps(_finite_copy(value), indent=indent)
 
 
 def _no_repeated_keys(pairs: list[tuple[str, Any]]) -> dict[str, Any]:
@@ -2840,10 +2942,11 @@ _MD_TEXT = ("rel", "method", "target", "expects", "mediaType")
 
 
 def _strict_json(text: str) -> Any:
-    """JSON as a document's is read: NaN, Infinity and a repeated key are
-    refused (a ValueError), as the page's JSON.parse and repeatedKey refuse
-    them."""
-    return json.loads(text, object_pairs_hook=_no_repeated_keys, parse_constant=_not_json)
+    """JSON as a document's is read, and as everything that may go into a
+    request is: NaN, Infinity and a repeated key are refused (a ValueError,
+    _RepeatedKey for a key), as the page's JSON.parse and repeatedKey refuse
+    them, and an integer of any length is read, as JSON.parse reads one."""
+    return json.loads(text, object_pairs_hook=_no_repeated_keys, parse_constant=_not_json, parse_int=_json_int)
 
 
 def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descriptor:
@@ -3044,10 +3147,12 @@ def classify_payload(text: str, content_type: str) -> str | None:
         if ":::control" in text or sample.startswith("---"):
             return "markdown"
     if sample[:1] in "{[":
+        # Whether it is JSON at all, as the page's JSON.parse decides it; a
+        # repeated key is refused when the document is read.
         try:
-            json.loads(text)
+            _page_json(text)
             return "jsonld"
-        except json.JSONDecodeError:
+        except ValueError:
             pass
     if sample.startswith("@prefix") or sample.startswith("PREFIX") or sample.startswith("<http"):
         return "turtle"
@@ -3107,13 +3212,14 @@ def parse_turtle_via_rdflib(text: str, url: str) -> Any:
         ) from exc
     graph = Graph()
     graph.parse(data=text, format="turtle", publicID=url)
+    # rdflib's own output; parse_descriptor reads it again with _strict_json.
     return json.loads(graph.serialize(format="json-ld"))
 
 
 def parse_descriptor(text: str, content_type: str, url: str, fetched_from: str | None = None) -> Descriptor:
     kind = classify_payload(text, content_type)
     if kind == "jsonld":
-        document = json.loads(text, object_pairs_hook=_no_repeated_keys, parse_constant=_not_json)
+        document = _strict_json(text)
         index = NodeIndex(document, url, fetched_from)
         title, types, description, see_also = descriptor_meta(index, url, content_type)
         return Descriptor(
@@ -3160,6 +3266,8 @@ def _js_number_text(number: float) -> str:
     1e21 and exponent notation outside that, with no ".0" on a whole number. The
     page writes numbers this way itself, so a number field reaches a URL as the
     same text from both clients: 2 and not 2.0, 1e-7 and not 1e-07."""
+    if not math.isfinite(number):
+        return "NaN" if math.isnan(number) else ("Infinity" if number > 0 else "-Infinity")
     if number == 0:
         return "0"
     sign = "-" if number < 0 else ""
@@ -3185,7 +3293,7 @@ def _template_scalar(value: Any) -> str:
     if isinstance(value, bool):
         return "true" if value else "false"
     if isinstance(value, (dict, list)):
-        return json.dumps(value, ensure_ascii=False, separators=(",", ":"))
+        return _request_json(value, ensure_ascii=False, separators=(",", ":"))
     if isinstance(value, float):
         return _js_number_text(value)
     return str(value)
@@ -3422,9 +3530,14 @@ def coerce_value(fld: Field, value: Any) -> Any:
     if fld.json_kind:
         parsed = value
         if not isinstance(value, (dict, list)):
+            # Read as a document is: NaN, Infinity and a repeated key are
+            # refused, as the page refuses them, and never reach a request.
             try:
-                parsed = json.loads(str(value))
-            except json.JSONDecodeError as exc:
+                parsed = _strict_json(str(value))
+            except _RepeatedKey as exc:
+                raise ValueError(f'{fld.name} repeats the key "{exc.key}" in one object, so which value it means is not '
+                                 "known") from exc
+            except ValueError as exc:
                 raise ValueError(f"{fld.name} must be JSON") from exc
         if fld.json_kind == "object" and not isinstance(parsed, dict):
             raise ValueError(f"{fld.name} must be a JSON object")
@@ -3457,7 +3570,10 @@ def _multi_items(value: Any) -> list[Any]:
     """A list field's values: a list as given (a repeated --field, or the
     defaults), or text, read as a JSON array when it is one and otherwise as one
     value per line, with blank values and lines dropped. The page's multiItems
-    is the same."""
+    is the same. NaN and Infinity are not JSON, so "[NaN]" is a line of text.
+    A repeated key takes its last value here, as in JSON.parse: it can only be
+    in an object, and no object is a list field's value; validate_fields
+    refuses each one, whatever its keys."""
     def kept(item: Any) -> bool:
         return item is not None and not (isinstance(item, str) and not item.strip(_SPACES))
     if isinstance(value, list):
@@ -3465,8 +3581,8 @@ def _multi_items(value: Any) -> list[Any]:
     text = str(value)
     if text.strip(_SPACES).startswith("["):
         try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
+            parsed = _page_json(text)
+        except ValueError:
             parsed = None
         if isinstance(parsed, list):
             return [item for item in parsed if kept(item)]
@@ -3486,6 +3602,14 @@ def _check_value(fld: Field, found: Any, numeric: str | None, errors: list[str])
         typed = coerce_value(fld, found)
     except (TypeError, ValueError) as exc:
         report(f"{fld.name}: {exc}")
+        return None
+    # A number no double holds (JSON's 1e400, a descriptor's default of it, or
+    # an integer past the largest double) cannot be sent: json.dumps would
+    # write Infinity, which is not JSON, and the page's JSON.stringify null. A
+    # number field's value is checked by its type instead, and an integer
+    # there is sent exactly.
+    if not numeric and _past_double(typed):
+        report(f"{fld.name}: holds a number too large to send")
         return None
     structured = isinstance(typed, (dict, list))
     # A JSON array holds as many values as it has items, and a field that takes
@@ -3676,7 +3800,7 @@ def add_query_params(url: str, params: dict[str, Any]) -> str:
                 if item is not None and item != "":
                     keep.append((key, _template_scalar(item)))
         elif isinstance(val, dict):
-            keep.append((key, json.dumps(val, ensure_ascii=False, separators=(",", ":"))))
+            keep.append((key, _request_json(val, ensure_ascii=False, separators=(",", ":"))))
         else:
             keep.append((key, _template_scalar(val)))
     query = urllib.parse.urlencode(keep, quote_via=_form_quote)
@@ -3694,6 +3818,12 @@ def _raw_content_type(fld: Field) -> str:
 
 
 def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) -> RequestPlan:
+    """The request a control's values make. A value holding NaN or an
+    infinity, which no JSON or address carries, raises UnsendableValue naming
+    its field; validate_fields refuses one first."""
+    for name, value in values.items():
+        if _past_double(value, integers=False):
+            raise UnsendableValue(f"{name}: holds NaN or an infinity, which is not JSON, so nothing is sent")
     notes: list[str] = []
     transport = classify_transport(control, descriptor_url)
     method = control.method or "POST"
@@ -3706,7 +3836,7 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
     raw_text: str | None = None
     if raw_body_field and values.get(raw_body_field.name) is not None:
         raw_value = values[raw_body_field.name]
-        raw_text = raw_value if isinstance(raw_value, str) else json.dumps(raw_value, ensure_ascii=False, separators=(",", ":"))
+        raw_text = raw_value if isinstance(raw_value, str) else _request_json(raw_value, ensure_ascii=False, separators=(",", ":"))
     # A safe method sends no body: every field goes in the address, a field
     # that is the whole body as a parameter named after it, as SPARQL's
     # protocol sends ?query=.
@@ -3737,7 +3867,7 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
             notes.append("Appended fields as query parameters on hydra:target")
         elif not safe and not raw_body_field:
             body = values
-            body_text = json.dumps(values, indent=2, ensure_ascii=False)
+            body_text = _request_json(values, indent=2, ensure_ascii=False)
             headers["Content-Type"] = "application/json"
     elif transport == "mcp":
         notes.append("hydra:target is an Interego tool junction (or missing). Plain HTTP will not reach it; use the Interego relay MCP.")
@@ -3761,7 +3891,7 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
                 headers["Content-Type"] = _raw_content_type(raw_body_field)
         elif body is None and values:
             body = values
-            body_text = json.dumps(values, indent=2, ensure_ascii=False)
+            body_text = _request_json(values, indent=2, ensure_ascii=False)
             headers.setdefault("Content-Type", "application/json")
     # An address that is sent is shown exactly as it is sent; one that is not
     # (a template that does not give http or https) in its URI form.
@@ -3793,15 +3923,18 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
         if plan.body_text is not None:
             data = plan.body_text.encode("utf-8")
         elif plan.body is not None and not isinstance(plan.body, (str, bytes)):
-            data = json.dumps(plan.body).encode("utf-8")
+            data = _request_json(plan.body).encode("utf-8")
     status, headers, body, _ = http_request(plan.url, method=plan.method, headers=plan.headers, data=data)
     content_type = headers.get("content-type", "")
     text = body.decode("utf-8", errors="replace")
     parsed = None
     if "json" in content_type or text.lstrip()[:1] in "{[":
+        # Shown, never sent, so read as leniently as the page's JSON.parse
+        # reads it: a repeated key takes its last value. NaN and Infinity are
+        # not JSON there either, so such a body is shown as its text.
         try:
-            parsed = json.loads(text)
-        except json.JSONDecodeError:
+            parsed = _page_json(text)
+        except ValueError:
             parsed = None
     result["response"] = {"status": status, "headers": headers, "contentType": content_type,
                           "bodyText": text, "body": parsed, "url": plan.url}
@@ -3885,7 +4018,7 @@ def parse_field_args(items: list[str]) -> dict[str, Any]:
 def cmd_list(args: argparse.Namespace) -> int:
     descriptor = load_descriptor(args.url)
     if args.json:
-        print(json.dumps(descriptor.to_public(), indent=2))
+        print(_json_out(descriptor.to_public()))
     else:
         print_control_table(descriptor)
     return 0
@@ -3907,7 +4040,7 @@ def cmd_describe(args: argparse.Namespace) -> int:
     control = _find_control(descriptor, args.rel)
     public = control.to_public()
     public["transport"] = classify_transport(control, descriptor.url)
-    print(json.dumps(public, indent=2))
+    print(_json_out(public))
     return 0
 
 
@@ -3916,15 +4049,19 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     control = _find_control(descriptor, args.rel)
     supplied = parse_field_args(args.field or [])
     values, errors = validate_fields(control, supplied)
+    if not errors:
+        try:
+            plan = resolve_plan(control, values, descriptor.url)
+            result = invoke_plan(plan, confirm=args.confirm, dry_run=True if args.dry_run else None)
+        except UnsendableValue as exc:
+            errors = [str(exc)]
     if errors:
         say("Validation failed:", file=sys.stderr)
         for err in errors:
             say("  - " + err, file=sys.stderr)
         return 2
-    plan = resolve_plan(control, values, descriptor.url)
-    result = invoke_plan(plan, confirm=args.confirm, dry_run=True if args.dry_run else None)
     if args.json:
-        print(json.dumps(result, indent=2))
+        print(_json_out(result))
         return 0
     req = result["request"]
     say(f"{req['method']} {req.get('url') or '(no HTTP URL)'}")
@@ -3933,7 +4070,7 @@ def cmd_invoke(args: argparse.Namespace) -> int:
         say(f"note: {note}")
     if req.get("mcp"):
         say("mcp:")
-        say(textwrap.indent(json.dumps(req["mcp"], indent=2), "  "))
+        say(textwrap.indent(_json_out(req["mcp"]), "  "))
     if req.get("bodyText"):
         say("body:")
         say(textwrap.indent(str(req["bodyText"]), "  "))
@@ -3948,7 +4085,7 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     body = resp.get("body")
     text = resp.get("bodyText") or ""
     if isinstance(body, (dict, list)):
-        pretty = json.dumps(body, indent=2)
+        pretty = _json_out(body)
         say(pretty if len(pretty) < 8000 else pretty[:8000] + "\n…")
     else:
         say(text if len(text) < 8000 else text[:8000] + "\n…")

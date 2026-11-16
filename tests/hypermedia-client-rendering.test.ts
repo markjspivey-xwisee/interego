@@ -25,7 +25,7 @@ import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals, LISTED,
-  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS } from './hypermedia-client-fixtures.js';
+  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -1614,6 +1614,46 @@ describe('hypermedia client: forms', () => {
     try { expect(facets.shown).toContain('a: longer than maxLength 3'); } finally { facets.t.dom.window.close(); }
     const empty = await linkPlan('/mincount', 'urn:mincount', {});
     try { expect(empty.shown).toContain("missing required field 'a'"); } finally { empty.t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: values a request can carry, and lengths in code points', () => {
+  it.each(VALUE_CASES)('reads %s %s (%s) as hmc.py does, by a link and by the form: case %#', async (path, rel, title, fields, outcome) => {
+    const link = await linkPlan(path, rel, fields);
+    try {
+      if ('body' in outcome) {
+        expect(link.plan, link.shown).not.toBeNull();
+        expect(link.plan!.body).toEqual(outcome.body);
+      } else {
+        expect(link.plan, link.shown).toBeNull();
+        expect(link.shown).toContain(outcome.error);
+      }
+    } finally { link.t.dom.window.close(); }
+    // The form shows the planned body on Dry run, or refuses on Dry run and a confirmed Invoke alike.
+    const t = await loaded(path);
+    try {
+      click(t, card(t.document, title)!);
+      const box = t.document.getElementById('confirmUnsafe') as HTMLInputElement;
+      box.checked = true;
+      box.dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
+      for (const [name, value] of Object.entries(fields)) {
+        t.document.querySelector<HTMLTextAreaElement>(`#invokeForm [data-field="${name}"]`)!.value = value;
+      }
+      const result = t.document.getElementById('result')!;
+      for (const mode of 'body' in outcome ? ['dry'] : ['dry', 'live']) {
+        result.innerHTML = '';
+        click(t, button(t.document, mode));
+        await vi.waitFor(() => expect(result.textContent).toMatch(/Dry run — nothing was sent\.|Validation failed|Response HTTP/));
+        if ('body' in outcome) {
+          expect((JSON.parse(t.document.querySelector('#result pre')!.textContent!) as { body: unknown }).body, mode).toEqual(outcome.body);
+        } else {
+          expect(result.textContent, mode).toContain('Validation failed');
+          expect(result.textContent, mode).toContain(outcome.error);
+        }
+      }
+      await new Promise(r => setTimeout(r, 50));
+      expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+    } finally { t.dom.window.close(); }
   });
 });
 
