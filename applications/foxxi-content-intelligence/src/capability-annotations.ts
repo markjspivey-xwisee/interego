@@ -901,6 +901,7 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
     ],
     "notes": [
       "Bounded by document size, triple count and a count per signer each hour; the first agent to add a profile IRI adds its later versions.",
+      "A version is held only once its pod write is acknowledged. Otherwise the answer is 503 with ok false: nothing was added and the same request can be sent again.",
       "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
     ]
   },
@@ -913,6 +914,7 @@ export const FOXXI_CAPABILITY_ANNOTATIONS: Record<string, CapabilityAnnotation> 
     ],
     "notes": [
       "Records the removal; the lattice is append-only, so the earlier holon stays addressable.",
+      "A profile stops answering only once the removal is acknowledged by the pod. Otherwise the answer is 503 with ok false and the profile still answers.",
       "This contract is an HTTP action. Follow its advertised descriptor and action; it is not automatically a named bridge MCP shim."
     ]
   },
