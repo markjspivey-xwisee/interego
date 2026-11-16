@@ -9,8 +9,9 @@
  * The profile is authored as an xAPI Profiles JSON-LD document (profile.ts). A pod holds RDF, so
  * the graph is that document's triples, written by the same function the profile server uses to
  * read a profile (`profileTriples`). Its version, its template and its concepts are subjects in
- * it, so `…/xapix-profile/v/1` and `…/xapix-profile/templates/descriptor-projection` resolve to
- * the document they are part of.
+ * it, so `…/xapix-profile/v/2` and `…/xapix-profile/templates/projection` resolve to the document
+ * they are part of. Version 1 was published first (51 triples); pass `buildXapixProfileDocV1()`
+ * to get those triples again.
  *
  * Publishing is a person's or an agent's act through the relay (`publish_context`, public,
  * signed authorship). Nothing here writes anywhere; a test checks that what this returns parses
@@ -37,9 +38,9 @@ function node(stored: string): Quad_Object {
 }
 
 /** The xapi-x profile as N-Triples, one triple a line, sorted, so the same profile gives the same bytes. */
-export function xapixProfileTurtle(): string {
+export function xapixProfileTurtle(doc: Record<string, unknown> = buildXapixProfileDoc()): string {
   const writer = new Writer({ format: 'N-Triples' });
-  const lines = profileTriples(buildXapixProfileDoc() as Json, XAPIX_PROFILE_ID)
+  const lines = profileTriples(doc as Json, XAPIX_PROFILE_ID)
     .map(t => writer.quadToString(node(t.subject) as Quad_Subject, namedNode(t.predicate), node(t.object)));
   return [...new Set(lines)].sort().join('');
 }

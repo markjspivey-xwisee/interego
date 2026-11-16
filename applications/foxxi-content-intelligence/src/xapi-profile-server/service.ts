@@ -47,7 +47,7 @@ export interface ProfileServerOptions {
    * other publishers its templates name. Served where a published version's are. A built-in
    * profile was never published from a draft, so this is the deployment's own say-so, from code.
    */
-  readonly builtInKept?: () => Array<{ profile: string; examples: ProfileExamples; external: ExternalTerm[] }>;
+  readonly builtInKept?: () => Array<{ /** A built-in profile's IRI, or the IRI of one version of it. */ profile: string; examples: ProfileExamples; external: ExternalTerm[] }>;
   /** Keep a record durably. Resolves with where it went, or throws. */
   readonly persist?: (record: ProfileRecord, held?: HeldProfile) => Promise<{ holonUri?: string; persisted?: boolean }>;
   /** Every record kept so far. */
@@ -120,7 +120,9 @@ export class ProfileServer {
   constructor(private readonly options: ProfileServerOptions) {
     for (const doc of options.builtIn()) this.builtInIds.add(this.dataset.add(doc).id);
     for (const kept of options.builtInKept?.() ?? []) {
-      const held = this.builtInIds.has(kept.profile) ? this.dataset.get(kept.profile) : undefined;
+      // Named by profile (its current version) or by one version of it.
+      const named = this.dataset.get(kept.profile);
+      const held = named && this.builtInIds.has(named.id) ? named : undefined;
       if (!held) throw new Error(`${kept.profile} is not one of this deployment's built-in profiles, so nothing is kept with it.`);
       this.builtInWith.set(held.version, { examples: kept.examples, external: kept.external });
     }

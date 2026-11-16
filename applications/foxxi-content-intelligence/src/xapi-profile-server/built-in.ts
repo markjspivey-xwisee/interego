@@ -18,23 +18,30 @@
  */
 import { buildFoxxiProfileDoc, FOXXI_EXTERNAL_TERMS, FOXXI_PROFILE_ID } from '../xapi-profile.js';
 import { PROFILE_GENERATED_AT } from '../xapi-lrs.js';
-import { buildXapixProfileDoc } from '../xapix/profile.js';
-import { XAPIX_PROFILE_ID } from '../xapix/namespace.js';
-import { foxxiProfileExamples, xapixProfileExamples } from '../built-in-profile-examples.js';
+import { buildXapixProfileDoc, buildXapixProfileDocV1, XAPIX_PROFILE_V1_ID, XAPIX_PROFILE_VERSION_ID } from '../xapix/profile.js';
+import { foxxiProfileExamples, xapixProfileExamples, xapixProfileV1Examples } from '../built-in-profile-examples.js';
 import type { ExternalTerm, ProfileExamples } from './lint.js';
 import type { Json } from './rdf.js';
 
 export function builtInProfiles(): Json[] {
   return [
     buildFoxxiProfileDoc({ generatedAt: PROFILE_GENERATED_AT }) as unknown as Json,
+    // Version 1 stays held beside the current one: statements written before the projection
+    // category existed are judged against it, and its IRI has been served since it was published.
+    buildXapixProfileDocV1() as Json,
     buildXapixProfileDoc() as Json,
   ];
 }
 
-/** What each built-in profile is kept with: its examples and the external terms its templates name. */
+/**
+ * What each built-in profile version is kept with: its examples and the external terms its
+ * templates name. `profile` names a profile (its current version) or one version: the xapi-x
+ * profile is held in two versions, and each has its own examples.
+ */
 export function builtInKept(): Array<{ profile: string; examples: ProfileExamples; external: ExternalTerm[] }> {
   return [
     { profile: FOXXI_PROFILE_ID, examples: foxxiProfileExamples(), external: FOXXI_EXTERNAL_TERMS.map(t => ({ ...t })) },
-    { profile: XAPIX_PROFILE_ID, examples: xapixProfileExamples(), external: [] },
+    { profile: XAPIX_PROFILE_V1_ID, examples: xapixProfileV1Examples(), external: [] },
+    { profile: XAPIX_PROFILE_VERSION_ID, examples: xapixProfileExamples(), external: [] },
   ];
 }

@@ -21,7 +21,7 @@
 import { FOXXI_NS, FOXXI_PROFILE_ID } from './xapi-profile.js';
 import { projectMeshEntry, type MeshDiscoverEntry } from './mesh-event-projector.js';
 import { ingestExternalRun } from './agent-run-ingest.js';
-import { XAPIX_PROJECTION_TEMPLATE_ID } from './xapix/profile.js';
+import { XAPIX_PROJECTION_TEMPLATE_ID, XAPIX_V1_TEMPLATE_ID } from './xapix/profile.js';
 import { buildProjectionStatement } from '../../lrs-adapter/src/projection-statement.js';
 import type { ExampleSequence, ExampleStatement, ProfileExamples } from './xapi-profile-server/lint.js';
 import type { Json } from './xapi-profile-server/processor.js';
@@ -107,14 +107,24 @@ export function foxxiProfileExamples(): ProfileExamples {
   return { statements, sequences };
 }
 
-/** The xapi-x profile: the statement the lrs-adapter posts for a descriptor it projects. */
+const adapterProjection = (): Record<string, unknown> => buildProjectionStatement({
+  descriptorIri: 'https://pod.example/fictional-learner/context-graphs/1790000000000.ttl',
+  actor: { account: { homePage: 'https://example.org', name: 'fictional-learner' } },
+  verbId: 'https://example.org/verbs/made-up-verb',
+  objectId: 'https://example.org/activities/made-up-activity',
+  coherentNarratives: ['A made-up first reading.', 'A made-up second reading.'],
+}, '6f1d2c9a-3b4e-4f5a-8b6c-7d8e9f0a1b2c', '2026-11-15T12:00:00.000Z');
+
+/** The xapi-x profile, current version: the statement the lrs-adapter posts for a descriptor it projects. */
 export function xapixProfileExamples(): ProfileExamples {
-  const statement = buildProjectionStatement({
-    descriptorIri: 'https://pod.example/fictional-learner/context-graphs/1790000000000.ttl',
-    actor: { account: { homePage: 'https://example.org', name: 'fictional-learner' } },
-    verbId: 'https://example.org/verbs/made-up-verb',
-    objectId: 'https://example.org/activities/made-up-activity',
-    coherentNarratives: ['A made-up first reading.', 'A made-up second reading.'],
-  }, '6f1d2c9a-3b4e-4f5a-8b6c-7d8e9f0a1b2c', '2026-11-15T12:00:00.000Z');
-  return { statements: [{ id: 'a-projection', follows: [XAPIX_PROJECTION_TEMPLATE_ID], statement: json(statement) }], sequences: [] };
+  return { statements: [{ id: 'a-projection', follows: [XAPIX_PROJECTION_TEMPLATE_ID], statement: json(adapterProjection()) }], sequences: [] };
+}
+
+/**
+ * The xapi-x profile, version 1: the statement the lrs-adapter posted before it wrote the
+ * projection category. It is today's statement without its `context`, which is all that differs.
+ */
+export function xapixProfileV1Examples(): ProfileExamples {
+  const { context: _since, ...before } = adapterProjection();
+  return { statements: [{ id: 'a-projection-before-the-category', follows: [XAPIX_V1_TEMPLATE_ID], statement: json(before) }], sequences: [] };
 }

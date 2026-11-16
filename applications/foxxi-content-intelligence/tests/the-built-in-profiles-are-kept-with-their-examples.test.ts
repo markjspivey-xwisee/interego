@@ -6,8 +6,8 @@
  * Foxxi's profile declares only Foxxi's own terms. The ADL and cmi5 terms its statements use are
  * named as external, by IRI and type, and are not concepts of the profile.
  *
- * Foxxi's projector writes the four `iep:` keys the xapi-x profile declares, beside its own, and
- * what it writes follows both profiles.
+ * Foxxi's projector writes the `iep:` keys the xapi-x profile declares, beside its own, and what
+ * it writes follows Foxxi's profile and version 1 of the xapi-x profile.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
@@ -21,7 +21,7 @@ import { validates, type Json } from '../src/xapi-profile-server/processor.js';
 import { buildFoxxiProfileDoc, FOXXI_EXTERNAL_TERMS, FOXXI_NS, FOXXI_PROFILE_ID, FOXXI_PROFILE_PARTS, verbIsDeclared } from '../src/xapi-profile.js';
 import { PROFILE_GENERATED_AT } from '../src/xapi-lrs.js';
 import { projectMeshEntry, type MeshDiscoverEntry } from '../src/mesh-event-projector.js';
-import { buildXapixProfileDoc, XAPIX_PROFILE_VERSION_ID } from '../src/xapix/profile.js';
+import { buildXapixProfileDocV1, XAPIX_PROFILE_V1_ID, XAPIX_PROFILE_VERSION_ID } from '../src/xapix/profile.js';
 import { IEP_DECORATIONS, XAPIX_PROFILE_ID } from '../src/xapix/namespace.js';
 
 type Obj = Record<string, unknown>;
@@ -46,9 +46,12 @@ describe('the examples kept with a built-in profile', () => {
   it('pass the lint a published profile has to pass, for each built-in profile', () => {
     const authoring = new ProfileAuthoring(server, { hostedUnder: `${BASE}/p/` });
     const kept = builtInKept();
-    expect(kept.map(k => k.profile)).toEqual(builtInProfiles().map(p => (p as { id: string }).id));
+    // One for each version held: Foxxi's profile, and the xapi-x profile in its two versions.
+    const versionOf = (doc: unknown) => (doc as { versions: Array<{ id: string }> }).versions[0]!.id;
+    expect(kept.map(k => server.dataset.get(k.profile)!.version)).toEqual(builtInProfiles().map(versionOf));
     for (const k of kept) {
-      const doc = builtInProfiles().find(p => (p as { id: string }).id === k.profile);
+      const version = server.dataset.get(k.profile)!.version;
+      const doc = builtInProfiles().find(p => versionOf(p) === version);
       expect(authoring.lintDocument(doc, k.examples, k.external), k.profile).toEqual([]);
     }
   });
@@ -64,9 +67,14 @@ describe('the examples kept with a built-in profile', () => {
   });
 
   it('are served where a published version\'s are, by profile or by version, and say the profile is built in', async () => {
-    for (const [profile, version] of [[FOXXI_PROFILE_ID, FOXXI_VERSION], [XAPIX_PROFILE_ID, XAPIX_PROFILE_VERSION_ID]] as const) {
-      const kept = builtInKept().find(k => k.profile === profile)!;
-      for (const iri of [profile, version]) {
+    // A profile's IRI answers for its current version; each version answers for itself.
+    for (const [profile, version, asked] of [
+      [FOXXI_PROFILE_ID, FOXXI_VERSION, [FOXXI_PROFILE_ID, FOXXI_VERSION]],
+      [XAPIX_PROFILE_ID, XAPIX_PROFILE_VERSION_ID, [XAPIX_PROFILE_ID, XAPIX_PROFILE_VERSION_ID]],
+      [XAPIX_PROFILE_ID, XAPIX_PROFILE_V1_ID, [XAPIX_PROFILE_V1_ID]],
+    ] as const) {
+      const kept = builtInKept().find(k => server.dataset.get(k.profile)!.version === version)!;
+      for (const iri of asked) {
         const res = await examplesOf(iri);
         expect(res.status, iri).toBe(200);
         const body = await res.json() as Obj;
@@ -124,7 +132,9 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     conformsTo: ['https://example.org/types/RefundDecision'], ...more });
   const project = (more: Partial<MeshDiscoverEntry> = {}) => projectMeshEntry(entry(more), 'https://pod.example/fictional-agent/')!.statement as Json;
   const decorations = (statement: Json) => ((statement.result as Json | undefined)?.extensions ?? {}) as Json;
-  const xapix = (buildXapixProfileDoc() as { templates: Json[] }).templates;
+  // Version 1 of the xapi-x profile: the keys. The current version also selects on the projection
+  // category, which this projector does not write yet.
+  const xapix = (buildXapixProfileDocV1() as { templates: Json[] }).templates;
   const followsFoxxi = (statement: Json) => server.validateTemplates(statement, FOXXI_PROFILE_ID);
 
   it.each([
