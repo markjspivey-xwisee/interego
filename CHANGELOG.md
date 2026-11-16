@@ -46,6 +46,22 @@ whose id it already holds, so a descriptor projected before today keeps the
 statement it has. No lint rule refuses a profile that declares another publisher's term;
 this is fixed for Foxxi's profile and tested there.
 
+## 2026-11-15 — jev-harness: a selection whose base yields no changed files is refused
+
+`select-tests` given a `base_ref` that yields no changed files answered
+`mode=full` with "no changed files were given, so nothing narrows the suite".
+That reads as a selection made. On #899, #901 and #905 it hid a range that
+named nothing, and only the gate's 400 showed the fault.
+
+- `src/service.ts`: the selection now answers 400 for that case, as the gate
+  does for an empty diff, and names the commits it compared and their merge
+  base. No judgment is recorded.
+- Unchanged: `changed_files` given by the caller are used as they are, and a
+  call with neither `changed_files` nor `base_ref` still gets the whole suite.
+- In CI the selection step fails, so the merge decision reads the selection as
+  not green. A pull request whose diff really is empty will not merge by
+  itself.
+
 ## 2026-11-15 — Dependencies: what merging @hono/node-server 2.1.8 ships to the relay
 
 A review of the entry below found that it understated what merging it does to
@@ -222,7 +238,6 @@ Callers that read `persisted: false` on a 200 from
 `/agent/xapi-profiles/add` or `/remove` will not see it again: that case is
 now a 503.
 
-
 ## 2026-11-15 — Native commits: the head is not read back or uploaded twice, and reads open no transaction
 
 After the staging change of 2026-11-13 a live single-statement write is about
@@ -270,6 +285,7 @@ With no delay it is 80 ms to 73 ms. The live effect is not measured yet.
   again. Used only when the server advertises it; a server that refuses is
   sent the ordinary commit under the same expected revision. The receipt is
   checked against the bytes as always. Off by default; the LRS turns it on.
+
 ## 2026-11-15 — Foxxi: a hosted cmi5 package keeps its own moveOn
 
 Found on the first run against the deployed bridge. A package uploaded and
