@@ -1,5 +1,151 @@
 # Changelog
 
+## 2026-11-15 — Dependencies: what merging @hono/node-server 2.1.8 ships to the relay
+
+A review of the entry below found that it understated what merging it does to
+the relay, and overstated what CI runs on it. That entry is corrected in place.
+This one says what the merge ships and what has checked it.
+
+- **Merging rebuilds and redeploys the relay, with a freshly resolved runtime
+  tree.** `deploy/Dockerfile.relay` copies the root `package.json` and
+  `package-lock.json` at the top of its build stage. Later in that same stage
+  it runs `npm install` in `/app` from `deploy/mcp-relay/package.json`, with
+  no lockfile. A change to the root lockfile therefore invalidates that
+  install step. `bundlePathsFor('relay')` in `tools/deploy-bundle-scope.ts`
+  agrees: it answers with confidence and puts `package-lock.json` in the
+  relay's scope. So `auto-deploy.yml` rebuilds the relay through
+  `build-ghcr.yml` and redeploys it. The rebuild resolves the relay's whole
+  runtime tree again, not just this package. Resolved today, that is
+  `@hono/node-server` 2.1.8 and `hono` 4.13.18, plus the newest match for
+  every other runtime dependency of the relay (the `@modelcontextprotocol/*`
+  packages, express, pg, ws and the rest).
+- **When a relay image picks new versions.** npm resolves the relay's tree
+  again only when that install step is rebuilt. `build-ghcr.yml`, the build
+  that ships, reuses cached layers (the registry `:buildcache` and the Actions
+  cache, at `mode=max`). So a relay image carries the versions resolved by the
+  last build that changed one of the inputs ahead of that step, or found no
+  cached copy of it. Those inputs are the root package files and
+  `tsconfig.base.json`, `scripts/`, `packages/`, the copied documents and
+  ontologies, and `deploy/mcp-relay/package.json`. A merge that changes only
+  the relay's `.ts` files reuses the earlier install. Only the pull-request
+  check in `hosted-image-builds.yml` builds with `--no-cache --pull`, and that
+  image is not shipped.
+- **What earlier relay builds resolved.** A relay install that ran between 23
+  October (`@modelcontextprotocol/node` 2.1.2) and 2 November resolved
+  `@hono/node-server` 2.1.5. Two moderate advisories cover every 2.x before
+  2.1.6. In one, a backslash in a request path is read as a path separator. In
+  the other, a socket reset during a WebSocket upgrade crashes the process.
+  Neither can be reached in the relay. A request reaches hono only after
+  Express has routed it to `/mcp`, and nothing after that decides anything by
+  its path. The relay also does not use hono's WebSocket upgrade. Which
+  version the deployed relay runs today was not checked. The redeploy that
+  this merge causes moves it to 2.1.8.
+- **Loaded at start, called for legacy sessions.** The relay loads
+  `@hono/node-server` every time it starts, because
+  `@modelcontextprotocol/node` imports it at the top of its module, and 2.x in
+  turn imports `hono/ws`. Both `hono` 4.13.14 (the root lockfile) and 4.13.18
+  (what the image resolves today) export what it needs. If loading failed, the
+  whole relay would stop, not just legacy sessions. The deploy waits for
+  `/health` to report the new build, so it would fail rather than finish.
+- **What checked 2.1.8.** #861's own CI ran on this same lockfile, so against
+  2.1.8, and passed. It ran the whole root suite, in four parts, in Bridge
+  Typecheck (`bridge-typecheck.yml`, which triggers on the lockfile). It ran
+  "Emergence with the verticals; the base without them", which includes 89 of
+  the relay's own test steps. And it ran a cold build of the relay image. The
+  root suite includes `tests/client-interaction-mcp.test.ts`, the one test
+  that sends requests through `@hono/node-server`. Its legacy URL elicitation
+  case opens a session through `createRelayMcpHandler` in
+  `deploy/mcp-relay/mcp-serving.ts`. It covers the `initialize` that opens the
+  session, the `notifications/initialized` POST, a 404 when another account
+  uses the session, and a `tools/call` event stream with a client POST in the
+  middle. It does not cover the standalone GET event stream or DELETE. None of
+  the relay's own tests sends a request through `@hono/node-server`.
+  `mcp-transport-wiring` uses the stateless handler. The tests that start
+  `server.ts` only load it. One of them, `tool-result-size`, connects with the
+  v2 client, which opens with the current protocol's `server/discover` probe,
+  not with `initialize`.
+- **After the deploy:** confirm that `/health` names the merge commit. Then
+  open one legacy session against the live relay: `initialize` with protocol
+  version 2025-11-25, a POST carrying the `mcp-session-id` it returns, then a
+  GET for the event stream. The client-signature check that starts after a
+  relay deploy does not do this. It calls `/mcp` without initializing, which
+  takes the stateless path and never reaches hono's request listener.
+
+Not covered: the live legacy session above has not been opened, and nothing
+automatic opens one. The Relay Tests workflow (`relay-tests.yml`) did not run on
+#861 and will not run on this branch. Its paths filter has no
+`package-lock.json`, so a change to the lockfile alone never starts it. Adding
+the lockfile to that filter belongs in its own pull request. The run without
+the verticals leaves out four relay steps that reach a vertical
+(`listen-loopback`, `notification-body-shape`, `authorship-content-binding` and
+`e2e-collection`), so those four did not run on #861 at all. Locally,
+`node_modules` still holds 1.19.17, so nothing on this machine ran against
+2.1.8.
+
+## 2026-11-15 — Dependencies: @hono/node-server 2.1.8, in place of Dependabot's #861
+
+This lands Dependabot's #861 with the changelog entry its checks needed.
+
+- **Root lockfile:** one entry changes. `@hono/node-server` moves from 1.19.17
+  to 2.1.8. No package is added or removed, and no other version moves. Two
+  packages depend on it, and 2.1.8 satisfies both, so they keep sharing one
+  copy: `@modelcontextprotocol/node` 2.1.2, the relay's MCP transport, which
+  asks for `^1.19.9 || ^2.1.3`, and the dev-only v1 `@modelcontextprotocol/sdk`
+  1.32.2 under claude-code-acp, which asks for `^1.19.9 || ^2.0.5`. The only
+  other tracked lockfile that has the package is Foxxi's
+  (`applications/foxxi-content-intelligence/package-lock.json`), at 2.1.5 and
+  dev only, through its own v1 SDK. 2.1.5 is inside the range of the two 2.x
+  advisories that the entry above describes, so that lockfile needs a bump of
+  its own. It is not changed here.
+- **Audit:** `npm audit` goes from 24 moderate findings to 23. Both advisories
+  it reported for 1.19.17 are gone. One is in the package's static file server
+  (`serveStatic`). The other is in how a backslash in a request path is read.
+  The advisory data `npm audit` uses lists the first as fixed only from 2.1.3,
+  so a newer 1.x would not have cleared it from the audit.
+- **What 2.x changes:** the 2.0.0 release notes list two breaking changes. It
+  needs Node 20 or later, and the Vercel adapter (`@hono/node-server/vercel`) is
+  removed; the notes say the rest of the public API stays the same. The two
+  published packages agree. 2.1.8's main entry exports what 1.19.17's did
+  (`serve`, `createAdaptorServer`, `getRequestListener`, `RequestError`) plus
+  `upgradeWebSocket`, and `getRequestListener` takes the same options. The
+  package is now ES modules first, with a CommonJS build beside it.
+- **What uses it:** the library code of both MCP packages imports one function,
+  `getRequestListener`, and calls it with `overrideGlobalObjects: false`, which
+  2.1.8 handles as 1.19.17 did. (The v1 SDK's bundled examples also import
+  `serve`; nothing here loads them.) The relay loads the package when it starts
+  and calls it only through `NodeStreamableHTTPServerTransport`, which
+  `deploy/mcp-relay/mcp-serving.ts` uses for clients that open a legacy MCP
+  session. `toNodeHandler` and `toWebRequest`, the relay's other imports from
+  that package, do not use it. The 2.x request listener does change inside. It
+  reads headers differently, checks the URL (a backslash in the path now gets a
+  400), normalises the method, and records aborts in its own way. None of this
+  reaches the relay: the transport is handed the body Express already parsed,
+  and it reads only the method and the request headers. No source file in this
+  repository imports `@hono/node-server` or `hono`, and nothing calls
+  `serveStatic` or the Vercel adapter.
+- **Node:** the repository already asks for Node 20 or later, the relay image
+  runs Node 22, and `@modelcontextprotocol/node` 2.1.2 itself asks for Node 20.
+- **The relay:** its image installs its runtime dependencies from
+  `deploy/mcp-relay/package.json` with no lockfile, so it does not take its
+  versions from this lockfile. But the root lockfile is an input to the relay's
+  build, so merging this rebuilds and redeploys the relay. The entry above says
+  what that ships and what has checked it. The copy in the root lockfile is the
+  one tests and local runs use, and the one the bridge images get from `npm ci`.
+  No bridge source imports `@modelcontextprotocol/node` or the v1 SDK.
+- **#861's own checks:** its test-selection job could not pass because a
+  Dependabot run gets no secrets. This branch runs it with the usual secrets.
+  Its other checks passed against 2.1.8; the entry above lists the ones that
+  matter here.
+
+Not covered: the local checkout's `node_modules` still holds 1.19.17, so nothing
+here ran against 2.1.8 locally. The entry above says what CI ran against it, and
+what it did not. `hono` itself, at 4.13.14 in the root lockfile, has five
+advisories in `npm audit` (four moderate, one low), fixed in 4.13.16. It is a
+separate entry, left for its own change. The relay's rebuild on merge resolves
+4.13.18. Foxxi's lockfile is left at 2.1.5. The other moderate findings, in the
+Solid server, eslint, electron-builder and claude-code-acp chains, are
+unchanged.
+
 ## 2026-11-15 — Foxxi: a profile is added or taken down only once its durable write is acknowledged
 
 Follow-up to the publication fix below, for the two whole-document routes of
