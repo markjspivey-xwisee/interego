@@ -54,13 +54,45 @@ export interface ProfileServerOptions {
 export class ProfileServerError extends Error { constructor(readonly status: number, message: string) { super(message); } }
 
 /**
+ * A change whose durable write was not acknowledged. Nothing changed: what the server held and
+ * answered before, it holds and answers now, and the same request can be sent again.
+ */
+export class WriteNotKept extends ProfileServerError {
+  constructor(message: string) { super(503, message); }
+}
+
+/**
  * A publication whose durable write was not acknowledged. Nothing was published: the version is
  * not held and answers nowhere, and publishing the same version again is allowed.
  */
-export class PublicationNotKept extends ProfileServerError {
+export class PublicationNotKept extends WriteNotKept {
   constructor(readonly profile: string, readonly version: string, why: string) {
-    super(503, `${version} was not published: ${why} Nothing changed: the version is not held here and answers nowhere. Publishing the same version again is allowed.`);
+    super(`${version} was not published: ${why} Nothing changed: the version is not held here and answers nowhere. Publishing the same version again is allowed.`);
   }
+}
+
+/** An added version whose durable write was not acknowledged. It is not held; what was held before still is. */
+export class AdditionNotKept extends WriteNotKept {
+  constructor(readonly profile: string, readonly version: string, why: string) {
+    super(`${version} was not added: ${why} Nothing changed: what this server held and answered before, it holds and answers now. Adding the same version again is allowed.`);
+  }
+}
+
+/** A removal whose durable write was not acknowledged. Everything it named is still held and still answers. */
+export class RemovalNotKept extends WriteNotKept {
+  constructor(readonly iri: string, why: string) {
+    super(`${iri} was not taken down: ${why} Nothing changed: it is still held here and still answers. Taking it down again is allowed.`);
+  }
+}
+
+/**
+ * What a route answers for an addition or a removal that was not kept: not ok, and nothing changed.
+ * `retry` is where the same signed request is sent again.
+ */
+export function notKeptAnswer(e: AdditionNotKept | RemovalNotKept, retry: string): Record<string, unknown> {
+  return e instanceof AdditionNotKept
+    ? { ok: false, added: false, persisted: false, error: e.message, profile: e.profile, version: e.version, retry }
+    : { ok: false, removed: [], persisted: false, error: e.message, iri: e.iri, stillHeld: true, retry };
 }
 
 export class ProfileServer {
@@ -70,8 +102,10 @@ export class ProfileServer {
   private readonly builtInIds = new Set<string>();
   /** version IRI → what it was published with. A version here is immutable. */
   private readonly publishedVersions = new Map<string, { examples: ProfileExamples; external: ExternalTerm[]; at: string }>();
-  /** version IRI → a publication waiting on its durable write. The version is not held until that lands. */
-  private readonly publishing = new Map<string, { id: string; by: string }>();
+  /** version IRI → an addition or publication waiting on its durable write. The version is not held until that lands. */
+  private readonly writing = new Map<string, { id: string; by: string }>();
+  /** profile IRI → a removal under it waiting on its durable write. What it names is held until that lands. */
+  private readonly removing = new Set<string>();
   private hydrated: Promise<void> | undefined;
   private keptBytes = 0;
 
@@ -120,12 +154,19 @@ export class ProfileServer {
     const taken = this.dataset.all().find(h => h.version === version || h.id === version);
     if (taken && taken.id !== id) throw new ProfileServerError(409, `${version} is already held as a version of ${taken.id}.`);
     if (this.dataset.all().some(h => h.version === id)) throw new ProfileServerError(409, `${id} is held here as a version, not as a profile.`);
-    // A publication waiting on its durable write has the version, and the profile for its writer.
-    if (this.publishing.has(version)) throw new ProfileServerError(409, `${version} is being published now.`);
-    if ([...this.publishing.values()].some(p => p.id === id && p.by !== by)) throw new ProfileServerError(409, `${id} is being published by another agent now.`);
+    // A write waiting on its pod has the version, and the profile: one version of a profile is
+    // written at a time, its own writer's included. Which version is current can turn on the order
+    // versions were held in, and a restart holds them in the order of their records' times. Two
+    // writes under one profile acknowledged out of that order would leave a restarted server
+    // resolving the profile to a different version than this one does.
+    if (this.writing.has(version)) throw new ProfileServerError(409, `${version} is being written now.`);
+    if ([...this.writing.values()].some(p => p.id === id)) throw new ProfileServerError(409, `A version of ${id} is being written now. Send this one once that has finished.`);
     // The two checks above on what is held, made on what is about to be: an IRI is a profile or a version, not both.
-    if (this.publishing.has(id)) throw new ProfileServerError(409, `${id} is being published now as a version, and cannot also be a profile.`);
-    if ([...this.publishing.values()].some(p => p.id === version)) throw new ProfileServerError(409, `${version} is being published now as a profile, and cannot also be a version.`);
+    if (this.writing.has(id)) throw new ProfileServerError(409, `${id} is being written now as a version, and cannot also be a profile.`);
+    if ([...this.writing.values()].some(p => p.id === version)) throw new ProfileServerError(409, `${version} is being written now as a profile, and cannot also be a version.`);
+    // Records are replayed in the order of their times. A version written under a profile while a
+    // removal under it waits would be held here and gone, or gone here and held, after a restart.
+    if (this.removing.has(id)) throw new ProfileServerError(409, `${id} is being taken down now. Add to it once that has finished.`);
     const held = this.dataset.prepare(doc);
     if (held.stated.length > MAX_PROFILE_TRIPLES)
       throw new ProfileServerError(413, `The profile states ${held.stated.length} triples; this server holds profiles of up to ${MAX_PROFILE_TRIPLES}.`);
@@ -139,25 +180,49 @@ export class ProfileServer {
     return gone;
   }
 
-  /** Add a profile version by its contents. */
-  async add(doc: Json, by: string, source?: string): Promise<{ held: HeldProfile; replaced: boolean; holonUri?: string; persisted: boolean }> {
+  /**
+   * Add a profile version by its contents.
+   *
+   * ★ THE DURABLE WRITE COMES FIRST, as for `publish` below. The version is held, and answers, only
+   * once `persist` has said `persisted: true`. When the write fails or is not acknowledged this
+   * throws AdditionNotKept: the version is not held, a version it would have replaced is still the
+   * document it was, and the same addition can be sent again. A server given no `persist` adds nothing.
+   */
+  async add(doc: Json, by: string, source?: string): Promise<{ held: HeldProfile; replaced: boolean; holonUri?: string; persisted: true }> {
     await this.ready();
-    const before = isObj(doc) && typeof doc.id === 'string' ? this.dataset.all().map(h => h.version) : [];
+    const held = this.admit(doc, by);
+    if (!this.options.persist) throw new AdditionNotKept(held.id, held.version, 'this server has no durable store to keep a profile in.');
     const size = sizeOf(doc);
-    if (this.options.persist && this.keptBytes + size > MAX_KEPT_BYTES) throw new ProfileServerError(507, 'This server has kept as many profile documents as it holds; an operator has to make room.');
-    const held = this.hold(doc, by);
+    if (this.keptBytes + size > MAX_KEPT_BYTES) throw new ProfileServerError(507, 'This server has kept as many profile documents as it holds; an operator has to make room.');
+    const replaced = this.dataset.all().some(h => h.version === held.version);
+    this.writing.set(held.version, { id: held.id, by });
+    // Counted from here, as a publication's are, and given back if it is not kept.
     this.keptBytes += size;
-    const replaced = before.includes(held.version);
-    let kept: { holonUri?: string; persisted?: boolean } = {};
-    if (this.options.persist) {
+    let landed = false;
+    try {
+      let kept: { holonUri?: string; persisted?: boolean };
       try { kept = await this.options.persist({ kind: 'added', doc, by, at: new Date().toISOString(), ...(source ? { source } : {}) }, held); }
-      catch (e) { kept = { persisted: false }; void e; }
+      catch { throw new AdditionNotKept(held.id, held.version, 'the durable write failed.'); }
+      if (kept.persisted !== true) throw new AdditionNotKept(held.id, held.version, 'the durable write was not acknowledged.');
+      this.dataset.put(held);
+      this.owners.set(held.id, by);
+      landed = true;
+      return { held, replaced, ...(kept.holonUri ? { holonUri: kept.holonUri } : {}), persisted: true };
+    } finally {
+      this.writing.delete(held.version);
+      if (!landed) this.keptBytes -= size;
     }
-    return { held, replaced, ...(kept.holonUri ? { holonUri: kept.holonUri } : {}), persisted: kept.persisted === true };
   }
 
-  /** Take down a profile (every version) or one version. */
-  async remove(iri: string, by: string): Promise<{ removed: string[]; persisted: boolean }> {
+  /**
+   * Take down a profile (every version) or one version.
+   *
+   * ★ THE DURABLE WRITE COMES FIRST here too. A removal that only this process knew of would be
+   * undone by the next restart: the profile would answer again with nobody having added it. So
+   * what is named stops answering only once `persist` has said `persisted: true`; otherwise this
+   * throws RemovalNotKept and everything is still held. A server given no `persist` removes nothing.
+   */
+  async remove(iri: string, by: string): Promise<{ removed: string[]; persisted: true }> {
     await this.ready();
     const target = this.dataset.all().find(h => h.id === iri || h.version === iri);
     if (!target) throw new ProfileServerError(404, `No profile or version ${iri} is held here.`);
@@ -166,10 +231,20 @@ export class ProfileServer {
     // What was published stays: others may hold statements that name it. The operator can still take it down.
     if (!this.options.isOperator?.(by) && this.dataset.all().some(h => (h.id === iri || h.version === iri) && this.publishedVersions.has(h.version)))
       throw new ProfileServerError(409, 'A published version is not taken down by its author. Publish a new version: what it leaves out stays resolvable, marked deprecated.');
-    const removed = this.drop(iri);
-    let persisted = false;
-    if (this.options.persist) { try { persisted = (await this.options.persist({ kind: 'removed', iri, by, at: new Date().toISOString() })).persisted === true; } catch { persisted = false; } }
-    return { removed, persisted };
+    // One change to a profile at a time, for the reason given in `admit`.
+    if (this.removing.has(target.id)) throw new ProfileServerError(409, `${target.id} is being taken down now.`);
+    if ([...this.writing.values()].some(p => p.id === target.id)) throw new ProfileServerError(409, `A version of ${target.id} is being written now. Take it down once that has finished.`);
+    if (!this.options.persist) throw new RemovalNotKept(iri, 'this server has no durable store to record a removal in.');
+    this.removing.add(target.id);
+    try {
+      let kept: { persisted?: boolean };
+      try { kept = await this.options.persist({ kind: 'removed', iri, by, at: new Date().toISOString() }); }
+      catch { throw new RemovalNotKept(iri, 'the durable write failed.'); }
+      if (kept.persisted !== true) throw new RemovalNotKept(iri, 'the durable write was not acknowledged.');
+      return { removed: this.drop(iri), persisted: true };
+    } finally {
+      this.removing.delete(target.id);
+    }
   }
 
   /**
@@ -189,12 +264,12 @@ export class ProfileServer {
     const version = versionsOf(doc).current.id;
     if (this.dataset.all().some(h => h.version === version)) throw new ProfileServerError(409, `${version} is already held here. A published version is not changed: give the draft a new version IRI.`);
     const size = sizeOf(doc) + sizeOf(examples);
-    if (this.options.persist && this.keptBytes + size > MAX_KEPT_BYTES) throw new ProfileServerError(507, 'This server has kept as many profile documents as it holds; an operator has to make room.');
+    if (this.keptBytes + size > MAX_KEPT_BYTES) throw new ProfileServerError(507, 'This server has kept as many profile documents as it holds; an operator has to make room.');
     const held = this.admit(doc, by);
     if (!this.options.persist) throw new PublicationNotKept(held.id, version, 'this server has no durable store to keep a published version in.');
-    this.publishing.set(version, { id: held.id, by });
+    this.writing.set(version, { id: held.id, by });
     // Its bytes are counted from here, so what is on its way to the pod is inside the ceiling that
-    // `add` and other publications are measured against. They are given back if it is not kept.
+    // additions and other publications are measured against. They are given back if it is not kept.
     this.keptBytes += size;
     let landed = false;
     try {
@@ -208,7 +283,7 @@ export class ProfileServer {
       landed = true;
       return { held, ...(kept.holonUri ? { holonUri: kept.holonUri } : {}), persisted: true };
     } finally {
-      this.publishing.delete(version);
+      this.writing.delete(version);
       if (!landed) this.keptBytes -= size;
     }
   }
