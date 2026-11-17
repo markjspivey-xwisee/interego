@@ -1,7 +1,7 @@
 import { test } from 'node:test';
 import * as assert from 'node:assert/strict';
 import { createHash } from 'node:crypto';
-import { deleteGameData, isPlayGameData, playGameDataResidue, purgeProvisionalPlayPod } from '../provisional-play-cleanup.js';
+import { LISTING_BYTES, PASS_RESOURCES, deleteGameData, isPlayGameData, playGameDataResidue, purgeProvisionalPlayPod } from '../provisional-play-cleanup.js';
 const userId = `u-try-play-${'a'.repeat(32)}`;
 const cssUrl = 'https://css.example/';
 const root = `${cssUrl}${userId}/`;
@@ -81,7 +81,7 @@ function fakePod(documents: Record<string, 'native' | 'plain'>, options: { adver
     /** The requests that are not listings (GETs), in order. */
     changes: () => events.filter(e => !e.startsWith('GET ')) };
 }
-const purge = (pod: ReturnType<typeof fakePod>, close: (listed: readonly string[]) => Promise<'purge' | 'closed' | 'kept'> = async () => 'purge') =>
+const purge = (pod: ReturnType<typeof fakePod>, close: (listed: readonly string[], whole: boolean) => Promise<'purge' | 'closed' | 'kept'> = async () => 'purge') =>
   purgeProvisionalPlayPod({ userId, cssUrl, close, fetcher: pod.fetcher });
 
 test('cleanup closes the account once the tree is checked, then deletes the other resources, the game data by native delete and the containers after their children; the record and its container stay', async () => {
@@ -300,17 +300,165 @@ test('cleanup discovers foreign references and refuses all deletes', async () =>
   assert.equal(deleted.length, 0);
   assert.equal(closed, 0, 'the account is not closed either');
 });
-test('cleanup refuses traversal overflow before its first mutation', async () => {
-  let deletions = 0;
-  let closed = 0;
-  await assert.rejects(purgeProvisionalPlayPod({ userId, cssUrl, close: async () => { closed++; return 'purge'; },
-    fetcher: (async (_input, init) => {
-      if (init?.method === 'DELETE') deletions++;
-      return new Response(`ldp:contains ${Array.from({ length: 129 }, (_, i) => `<${i}.json>`).join(', ')} .`);
-    }) as typeof fetch }), /limit/);
-  assert.equal(deletions, 0);
-  assert.equal(closed, 0);
+// ── A pod that holds more than one pass lists (PlayPurgeProgress) ──
+
+/** `count` documents under `prefix`, plain unless `kind` says otherwise. */
+const many = (prefix: string, count: number, kind: 'native' | 'plain' = 'plain') =>
+  Object.fromEntries(Array.from({ length: count }, (_, i) => [`${prefix}${String(i).padStart(4, '0')}.json`, kind]));
+/** A pod an application filled: 300 records eleven levels down, 200 beside the root's own, a registry, and the guest's game data. */
+const filled = () => fakePod({ 'auth-methods.jsonld': 'plain', agents: 'plain', [save]: 'native', [budget]: 'native',
+  ...many('records/a/b/c/d/e/f/g/h/i/j/', 300), ...many('workbench/', 200) });
+/** What one pass asked of the pod: its listings, and its deletions. */
+const passWork = (pod: ReturnType<typeof fakePod>, from: number) => {
+  const events = pod.events.slice(from);
+  return { listings: events.filter(e => e.startsWith('GET ')).length, deletions: events.filter(e => /^(NATIVE-)?DELETE /.test(e)).length };
+};
+
+test('a pod past 128 resources and eight levels is closed at its first pass and purged over the passes after it, each bounded, none leaving the pod', async () => {
+  for (const carried of [true, false]) {
+    const pod = filled();
+    // `carried`: the passes of one process. Without it every pass is a new process's first.
+    const progress = { retained: new Set<string>() };
+    const closes: boolean[] = [];
+    let closedAt = -1;
+    const outcomes: string[] = [];
+    for (let pass = 1; pass <= 12 && outcomes.at(-1) !== 'purged'; pass++) {
+      const from = pod.events.length;
+      const result = await purgeProvisionalPlayPod({ userId, cssUrl, fetcher: pod.fetcher, ...(carried ? { progress } : {}),
+        close: async (_listed, whole) => { closes.push(whole); if (closedAt < 0) closedAt = pod.events.length; return 'purge'; } });
+      outcomes.push(result.outcome);
+      const work = passWork(pod, from);
+      // A pass lists at most 128 resources, and the last one lists what is left once more (the closure fence).
+      assert.ok(work.listings <= 2 * 128 && work.deletions <= 128, `pass ${pass}: ${JSON.stringify(work)}`);
+      if (result.outcome === 'partial') assert.ok(result.deleted! > 0, `pass ${pass} deleted something`);
+    }
+    // 504 documents and 15 containers besides the record and the root: four passes, and one that lists the rest whole and finishes.
+    assert.deepEqual(outcomes, ['partial', 'partial', 'partial', 'partial', 'purged'], `carried ${carried}`);
+    assert.deepEqual(closes, [false, false, false, false, true], 'close() is told when the listing is not the whole pod');
+    assert.ok(closedAt > 0 && pod.events.slice(0, closedAt).every(e => e.startsWith('GET ')), 'the account is closed at the first pass, before anything is deleted');
+    assert.ok(pod.has('auth-methods.jsonld'), 'the record stays, as the tombstone');
+    for (const gone of ['agents', save, budget, 'records/', 'workbench/', 'hallowmarch/', 'records/a/b/c/d/e/f/g/h/i/j/0299.json', 'workbench/0199.json'])
+      assert.equal(pod.has(gone), false, gone);
+    // fakePod's fetcher fails any request outside `<pod origin>/<userId>/`; nothing is sent to the record or the root but listings.
+    assert.deepEqual(pod.changes().filter(e => ['', 'auth-methods.jsonld'].includes(e.split(' ')[1]!)), []);
+  }
 });
+
+test('a pod within the bound is listed whole and purged in one pass, as before; one resource more makes it two', async () => {
+  // The root and 127 more: the record, the registry and 125 records.
+  const within = fakePod({ 'auth-methods.jsonld': 'plain', agents: 'plain', ...many('w', 125) });
+  let whole: boolean | undefined;
+  assert.equal((await purge(within, async (_listed, all) => { whole = all; return 'purge'; })).outcome, 'purged');
+  assert.equal(whole, true);
+  const over = fakePod({ 'auth-methods.jsonld': 'plain', agents: 'plain', ...many('w', 126) });
+  assert.deepEqual((await purge(over)).outcome, 'partial');
+  assert.equal((await purge(over)).outcome, 'purged');
+  // Eight levels was a limit of its own: a small pod deeper than that was never closed either.
+  const deep = fakePod({ 'auth-methods.jsonld': 'plain', 'a/b/c/d/e/f/g/h/i/j/k/record.json': 'plain' });
+  assert.deepEqual(await purge(deep), { outcome: 'purged', retained: [] });
+  assert.equal(deep.has('a/'), false);
+});
+
+test('a guest that was claimed, or whose account close() otherwise keeps, loses nothing of a pod of any size', async () => {
+  for (const answer of ['kept', 'closed'] as const) {
+    const pod = filled();
+    assert.deepEqual(await purge(pod, async () => answer), { outcome: answer, retained: [] });
+    assert.deepEqual(pod.changes(), [], `${answer}: nothing but listings`);
+    assert.ok(passWork(pod, 0).listings <= 128, 'and no more of those than a pass lists');
+  }
+});
+
+test('a pass that is interrupted is taken up by the next: what it deleted is not listed again, and the purge finishes', async () => {
+  const pod = filled();
+  const progress = { retained: new Set<string>() };
+  const run = () => purgeProvisionalPlayPod({ userId, cssUrl, fetcher: pod.fetcher, progress, close: async () => 'purge' });
+  // The store stops answering at the 41st deletion of the first pass.
+  let deletions = 0;
+  pod.hooks.answer = label => (label.startsWith('DELETE ') && ++deletions === 41 ? 503 : undefined);
+  await assert.rejects(run(), /deletion incomplete/);
+  const deletedFirst = pod.changes().filter(e => e.endsWith(' 205')).map(e => e.split(' ')[1]!);
+  assert.ok(deletedFirst.length >= 40 && deletedFirst.length < 128, `${deletedFirst.length} deleted before the pass stopped`);
+  pod.hooks.answer = undefined;
+  const outcomes: string[] = [];
+  for (let pass = 1; pass <= 12 && outcomes.at(-1) !== 'purged'; pass++) outcomes.push((await run()).outcome);
+  assert.equal(outcomes.at(-1), 'purged');
+  for (const path of deletedFirst) assert.equal(pod.changes().filter(e => /^(NATIVE-)?DELETE /.test(e) && e.split(' ')[1] === path).length, 1, `${path} is sent one DELETE in all`);
+  assert.equal(pod.has('records/') || pod.has('workbench/') || pod.has(save), false);
+});
+
+test('documents the store refuses to delete (409) do not hold a large pod open: later passes neither count nor send them again, and the purge finishes without them', async () => {
+  // 200 native heads no cleanup expects come first in the listing, then 200 documents it can delete.
+  const pod = fakePod({ 'auth-methods.jsonld': 'plain', ...many('a-heads/', 200, 'native'), ...many('b-records/', 200) });
+  const progress = { retained: new Set<string>() };
+  const outcomes: string[] = [];
+  let retained: string[] = [];
+  for (let pass = 1; pass <= 12 && outcomes.at(-1) !== 'purged'; pass++) {
+    const result = await purgeProvisionalPlayPod({ userId, cssUrl, fetcher: pod.fetcher, progress, close: async () => 'purge' });
+    outcomes.push(result.outcome);
+    retained = result.retained;
+  }
+  assert.equal(outcomes.at(-1), 'purged', outcomes.join(' '));
+  assert.ok(outcomes.length <= 5, outcomes.join(' '));
+  assert.equal(retained.length, 200);
+  assert.ok(retained.every(url => url.startsWith(`${root}a-heads/`)));
+  assert.equal(pod.changes().filter(e => e.startsWith('DELETE a-heads/') && e.endsWith(' 409')).length, 200, 'each is sent one DELETE in all');
+  assert.equal(pod.changes().some(e => e.startsWith('DELETE a-heads/ ')), false, 'the container that holds them is not sent one');
+  assert.ok(pod.has('a-heads/') && !pod.has('b-records/'));
+});
+
+test('a chain of containers deeper than a pass lists is walked down over the passes of one process, and then deleted from its end', async () => {
+  const chain = Array.from({ length: 300 }, (_, i) => `c${i}`).join('/');
+  const pod = fakePod({ 'auth-methods.jsonld': 'plain', [`${chain}/record.json`]: 'plain' });
+  const progress: { retained: Set<string>; resume?: string } = { retained: new Set<string>() };
+  const outcomes: string[] = [];
+  for (let pass = 1; pass <= 12 && outcomes.at(-1) !== 'purged'; pass++) {
+    const from = pod.events.length;
+    outcomes.push((await purgeProvisionalPlayPod({ userId, cssUrl, fetcher: pod.fetcher, progress, close: async () => 'purge' })).outcome);
+    assert.ok(progress.resume === undefined || progress.resume.startsWith(root), 'where the next pass starts is inside the pod');
+    const work = passWork(pod, from);
+    assert.ok(work.listings <= 2 * 128 + 1 && work.deletions <= 128, `pass ${pass}: ${JSON.stringify(work)}`);
+  }
+  assert.equal(outcomes.at(-1), 'purged', outcomes.join(' '));
+  assert.equal(pod.has('c0/'), false);
+});
+
+test('where a pass starts is never outside the pod: a `resume` that names another pod, the root, a document or no URL is ignored', async () => {
+  for (const resume of [`${cssUrl}u-try-play-${'b'.repeat(32)}/records/`, 'https://other.example/records/', root, `${root}agents`, `${root}records/?x=1`, 'not a url']) {
+    const pod = fakePod({ 'auth-methods.jsonld': 'plain', agents: 'plain', 'records/one.json': 'plain' });
+    const progress: { retained: Set<string>; resume?: string } = { retained: new Set<string>(), resume };
+    assert.equal((await purgeProvisionalPlayPod({ userId, cssUrl, fetcher: pod.fetcher, progress, close: async () => 'purge' })).outcome, 'purged', resume);
+    assert.equal(pod.events[0], 'GET  200', `${resume}: the pass lists from the root`);
+    assert.equal(pod.has('records/'), false);
+  }
+  // One that names a container of the pod that is gone: from the root, in the same pass.
+  const pod = fakePod({ 'auth-methods.jsonld': 'plain', agents: 'plain' });
+  const progress: { retained: Set<string>; resume?: string } = { retained: new Set<string>(), resume: `${root}gone/` };
+  assert.equal((await purgeProvisionalPlayPod({ userId, cssUrl, fetcher: pod.fetcher, progress, close: async () => 'purge' })).outcome, 'purged');
+  assert.deepEqual(pod.events.slice(0, 2), ['GET gone/ 404', 'GET  200']);
+});
+
+test('a listing longer than a pass reads is cut there: the pass deletes what it read of it, and no more than a pass deletes', async () => {
+  // One container whose listing is over LISTING_BYTES: 6,000 children with names of 1,000 characters.
+  assert.equal(LISTING_BYTES, 4 * 1024 * 1024);
+  const names = Array.from({ length: 6000 }, (_, i) => `${String(i).padStart(5, '0')}${'n'.repeat(995)}`);
+  const gone = new Set<string>();
+  let whole: boolean | undefined;
+  const requests: string[] = [];
+  const result = await purgeProvisionalPlayPod({ userId, cssUrl, close: async (_listed, all) => { whole = all; return 'purge'; },
+    fetcher: (async (input, init) => {
+      const url = String(input);
+      assert.ok(url.startsWith(root), url);
+      requests.push(`${init?.method ?? 'GET'} ${url.slice(root.length, root.length + 12)}`);
+      if (init?.method === 'DELETE') { gone.add(url); return new Response(null, { status: 205 }); }
+      return new Response(`<> ldp:contains ${names.filter(n => !gone.has(`${root}${n}`)).map(n => `<${n}>`).join(', ')} .\n`);
+    }) as typeof fetch });
+  assert.equal(whole, false);
+  assert.equal(result.outcome, 'partial');
+  assert.equal(result.deleted, PASS_RESOURCES - 1, 'the root counts as one of the resources a pass lists');
+  assert.deepEqual(requests.filter(r => r.startsWith('GET ')), ['GET '], 'one listing');
+  assert.equal(gone.has(`${root}${names[0]}`), true);
+});
+
 test('an account close() keeps (an enrolment landed, or its anchor has not expired) keeps every resource, its game data included', async () => {
   const pod = fakePod({ 'auth-methods.jsonld': 'plain', checkpoint: 'plain', [save]: 'native', [budget]: 'native' });
   assert.deepEqual(await purge(pod, async () => 'kept'), { outcome: 'kept', retained: [] });
