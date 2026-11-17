@@ -784,6 +784,9 @@ pev:judgeRoute a owl:DatatypeProperty ;
     rdfs:label "primary judge route" ;
     rdfs:comment "The route of the primary judgment." ;
     rdfs:range xsd:string .
+pev:reviewedAt a owl:DatatypeProperty ;
+    rdfs:label "reviewed at" ;
+    rdfs:comment "When the standing review was made. Kept on a statement sent later, whose own timestamp is the time it was sent in its session." .
 pev:criterionLevels a owl:DatatypeProperty ;
     rdfs:label "criterion levels" ;
     rdfs:comment "The reviewed level of every criterion, as a map from criterion id to level id." .
