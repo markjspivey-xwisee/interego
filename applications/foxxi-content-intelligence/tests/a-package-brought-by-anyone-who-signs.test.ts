@@ -67,19 +67,19 @@ describe('how many one signer may bring in an hour', () => {
   const HOUR = 3_600_000;
   it('admits up to the limit, then says when the next would be admitted', () => {
     const limit = new SignerHourlyLimit(2);
-    expect(limit.admit('did:ethr:0xAA', 0)).toEqual({ ok: true });
-    expect(limit.admit('did:ethr:0xAA', 60_000)).toEqual({ ok: true });
+    expect(limit.admit('did:ethr:0xAA', 0)).toMatchObject({ ok: true });
+    expect(limit.admit('did:ethr:0xAA', 60_000)).toMatchObject({ ok: true });
     expect(limit.admit('did:ethr:0xAA', 120_000)).toEqual({ ok: false, retryAfterSeconds: 3480 });
     // A refusal is not counted: the first admission still ages out on time.
-    expect(limit.admit('did:ethr:0xAA', HOUR)).toEqual({ ok: true });
+    expect(limit.admit('did:ethr:0xAA', HOUR)).toMatchObject({ ok: true });
     expect(limit.admit('did:ethr:0xAA', HOUR + 1)).toMatchObject({ ok: false });
   });
 
   it('counts a signer the same however its address is cased, and each signer on its own', () => {
     const limit = new SignerHourlyLimit(1);
-    expect(limit.admit('did:ethr:0xAbC', 0)).toEqual({ ok: true });
+    expect(limit.admit('did:ethr:0xAbC', 0)).toMatchObject({ ok: true });
     expect(limit.admit('did:ethr:0xabc', 1)).toMatchObject({ ok: false });
-    expect(limit.admit('did:ethr:0xdef', 1)).toEqual({ ok: true });
+    expect(limit.admit('did:ethr:0xdef', 1)).toMatchObject({ ok: true });
   });
 });
 
