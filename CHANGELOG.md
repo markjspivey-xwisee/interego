@@ -27,9 +27,8 @@ live one.
 The css image's class was not reused here. local-node gives Components.js
 only CSS's own component graph (`isolatedCssModules`, so no ancestor
 `node_modules` reaches the loader), so wiring `PipedJsonResourceStorage` in
-would mean shipping a hand-made component module inside the desktop app, and,
-on Node 20, whose `require()` cannot load an ES module, a CommonJS build of the
-class as well. The backend route uses only CSS's own classes. What it gives up
+would mean shipping a hand-made component module inside the desktop app. The
+backend route uses only CSS's own classes. What it gives up
 is the resource lock on the documents this storage owns (accounts, cookies,
 OIDC and setup entries). Besides CSS's own setup at boot and the sweeps, only
 CSS's account and OIDC routes write those. They are outside the pod's path, so
@@ -315,14 +314,19 @@ required edge; with the root override removed, `npm ls uuid` on the root exits
 1; and the uuid test fails with the root override removed, with the nested
 uuid 9.0.1 entry put back, and with the accessor's lockfile from master.
 
+With master merged in (the native store's signed heads), Bridge Typecheck's
+durable-LRS steps ran against this accessor tree on Node 20 and a private
+PostgreSQL 16: the inventory file, the accessor's `native-commit.it.ts`, the
+native-store files (163 tests) and Foxxi's `native-lrs-store.test.ts` and
+`xapi-durable-primary.test.ts` (75) passed. The vitest here is 3.2.6, not the
+lockfile's 4.1.12, and after `native-commit-store.test.ts` it reported a
+worker RPC timeout ("Timeout calling onTaskUpdate") with every test passed.
+
 Not covered: the FoundationDB run was not repeated here; `pgsl-css-server.yml`
 runs the server and the contract battery on PostgreSQL. CSS 7.3.0 renews a
 write's lock only when the pipe pulls, so a slow client's upload gets no
 renewal after it starts; css-gate gives up on it at 60 to 90 s, near the
 90 s lock, and per-chunk renewal would need a paused-mode read of its own.
-
-The first commit of this change says the css image stays on 7.2.0. The next
-one moved it to 7.3.0, which is what ships.
 
 ## 2026-11-16 — jev-harness: a test selection can replace an earlier one
 
