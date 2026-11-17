@@ -39,6 +39,9 @@ describe('a descriptor projection', () => {
     expect(check(projected({ success: false }))).toMatchObject({ outcome: 'success', templates: [T('production-performance-failed')] });
     expect(check(projected({ modalStatus: 'Hypothetical' })).outcome).toBe('success');
     expect(check(projected({ modalStatus: 'Counterfactual' })).outcome).toBe('success');
+    // A Quoted descriptor is not an outcome, whatever its envelope carried.
+    expect(check(projected({ modalStatus: 'Quoted' }))).toMatchObject({ outcome: 'success', templates: [T('quoted-descriptor')] });
+    expect(check(projected({ modalStatus: 'Quoted', success: true }))).toMatchObject({ outcome: 'success', templates: [T('quoted-descriptor')] });
   });
 
   it('that revises another follows both the descriptor and the superseding template', () => {
@@ -115,9 +118,10 @@ describe('what is not a descriptor projection', () => {
       const marked = performanceCategoriesFor(type).length > 0;
       expect(marked, String(type)).toBe(!isLearningActivityType(type));
     }
-    // A descriptor typed as a course and projected as an outcome carries the descriptor marker only.
+    // A descriptor typed as a course and projected as an outcome carries the two projection markers
+    // (Foxxi's and xapi-x's) and no performance category.
     const cats = ((projected({ success: true, conformsTo: [`${ADL}/activities/course`] }).context as { contextActivities: { category: Array<{ definition: { type: string } }> } }).contextActivities.category).map(c => c.definition.type);
-    expect(cats).toEqual([descriptorProjectionCategory().definition.type]);
+    expect(cats).toEqual([descriptorProjectionCategory().definition.type, 'https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix#Projection']);
   });
 
   it('what record_performance builds follows the profile, for every kind of thing a performance is recorded against', () => {
@@ -235,7 +239,7 @@ describe('every template has a statement that follows it, and only it', () => {
       .toEqual({ follows: true, pattern: P('composition-attempt'), reasons: [] });
     expect(follows(e('passed', 'credentialed'), doc.templates, doc.patterns)).toEqual({ follows: true, pattern: P('credentialing'), reasons: [] });
     const first = projected({ verb: `${FOXXI_NS}performed` });
-    const acts = [first, projected({ modalStatus: 'Hypothetical' }), projected({ modalStatus: 'Counterfactual' })];
+    const acts = [first, projected({ modalStatus: 'Hypothetical' }), projected({ modalStatus: 'Counterfactual' }), projected({ modalStatus: 'Quoted' })];
     expect(follows(acts as Json[], doc.templates, doc.patterns)).toEqual({ follows: true, pattern: P('agent-performance-stream'), reasons: [] });
     // A revision is also a stream of acts, and `follows` names the first primary pattern that fits,
     // so the revision arc is matched directly: the first act, then what supersedes it, nothing left over.
