@@ -131,12 +131,12 @@ const bodies: Record<string, { type: string; text: string }> = {
 const hyperMarkdown = [
   `# HM ${X.img}`, '',
   ':::control hm-read',
-  `title: {"html": "${X.script.replace(/"/g, '\\"')}"}`,
+  `title: {"html": ${JSON.stringify(X.script)}}`,
   'method: GET',
   `target: ["${HOST}/body/plain"]`,
   `description: ${X.svg}`,
   `mediaType: {"x": 1}`,
-  `fields: [{"name": 5, "path": "${HOST}/p"}, {"name": "${X.dq.replace(/"/g, '\\"')}", "defaultValue": {"a": "${X.img.replace(/"/g, '\\"')}"}}]`,
+  `fields: [{"name": 5, "path": "${HOST}/p"}, {"name": ${JSON.stringify(X.dq)}, "defaultValue": {"a": ${JSON.stringify(X.img)}}}]`,
   ':::', '',
   ':::control hm-js',
   'title: js target', 'method: GET', 'target: javascript:pwn()', ':::', '',
@@ -2040,8 +2040,10 @@ describe('hypermedia client: Content-Security-Policy', () => {
   });
 
   it('names the exact hash of the inline script and the inline style', () => {
-    const scripts = [...HTML.matchAll(/<script>([\s\S]*?)<\/script>/g)].map(m => m[1]!);
-    const styles = [...HTML.matchAll(/<style>([\s\S]*?)<\/style>/g)].map(m => m[1]!);
+    // Read as a browser reads the file: the parser, not a pattern, decides what is a script or a style.
+    const parsed = new JSDOM(HTML).window.document;
+    const scripts = [...parsed.querySelectorAll('script')].map(e => e.textContent!);
+    const styles = [...parsed.querySelectorAll('style')].map(e => e.textContent!);
     expect(scripts).toHaveLength(1);
     expect(styles).toHaveLength(1);
     expect(policy.get('script-src')).toEqual([sha(scripts[0]!)]);
@@ -2049,7 +2051,9 @@ describe('hypermedia client: Content-Security-Policy', () => {
   });
 
   it('has no inline event handler, style attribute or script URL that the policy would block', () => {
-    const markup = HTML.replace(/<script>[\s\S]*?<\/script>/, '').replace(/<style>[\s\S]*?<\/style>/, '');
+    const parsed = new JSDOM(HTML).window.document;
+    for (const e of parsed.querySelectorAll('script, style')) e.remove();
+    const markup = parsed.documentElement.outerHTML;
     expect(markup).not.toMatch(/\son[a-z]+\s*=/i);
     expect(markup).not.toMatch(/javascript:/i);
     // The script writes markup too; a style attribute there would be refused under style-src.
