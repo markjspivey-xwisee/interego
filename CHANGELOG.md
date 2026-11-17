@@ -615,6 +615,19 @@ and times are checked as XSD 1.1 writes them; their bounds are still refused.
 rows, 51 failed in `hmc.py` and 49 on the page before; on the live catalogs only
 a warning on HyperMarkdown controls changed. The CSP hash moves.
 
+A fourteenth review found a default, a description or a pattern that many
+template variables share copied once for each (a 23 KB document planned a 4 MB
+address), and constraints still passed over. Now, in both, that sharing keeps
+the control from being invoked; a shape the document describes with no
+properties is still the shape, so a closed one refuses a template variable and
+fields written in place, and its warning says it is described; a JSON Schema
+default is checked as written, never converted, a null default is sent as null
+where its schema allows it, and a list default with a blank value is refused; a
+nested `@id` schema, a count written in place that is no whole number and a
+negative count are refused; and an entry past 2^53 matches no value at any
+depth. Of 44 new shared rows, 34 failed in each client before. The CSP hash
+moves.
+
 ## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
 
 From review of #934. With `requireSignedHead` on, a head with no signature was

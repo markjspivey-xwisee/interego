@@ -1301,7 +1301,7 @@ describe('hmc.py: a document\'s size, not its shape, sets the cost', () => {
     } else expect(run.code, run.stderr).toBe(0);
   }, 60_000);
 
-  it.each(SHARED_COST_CASES)('refuses %s\'s control %s, whose inputs share one list of choices, within the budget', async (path, rel, problem) => {
+  it.each(SHARED_COST_CASES)('refuses %s\'s control %s, whose inputs share one list of choices or one long text, within the budget', async (path, rel, problem) => {
     const r = await hmc(['describe', `${base}${path}`, rel]);
     expect(r.timedOut, 'killed after 30 s').toBe(false);
     expect(r.ms, 'run time').toBeLessThan(3_000);

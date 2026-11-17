@@ -2153,7 +2153,7 @@ describe('hypermedia client: a document\'s size, not its shape, sets the cost', 
 });
 
 describe('hypermedia client: one list of choices for many inputs', () => {
-  it.each(SHARED_COST_CASES)('refuses %s\'s control %s, whose inputs share one list of choices, within the budget', async (path, rel, problem) => {
+  it.each(SHARED_COST_CASES)('refuses %s\'s control %s, whose inputs share one list of choices or one long text, within the budget', async (path, rel, problem) => {
     const started = Date.now();
     const t = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1`);
     try {

@@ -426,17 +426,19 @@ def _count_key(value: Any) -> str:
 
 
 def _count(value: Any, label: str, problems: list[str], subject: str) -> int | None:
-    """A count or length facet of an input: a whole number, one value of it.
-    One that is no whole number is a problem, not a facet left out."""
+    """A count or length facet of an input: a whole number of zero or more,
+    one value of it. One that is no such number (a fraction, text that is
+    none, a negative number, which SHACL fails every value set against) is a
+    problem, not a facet left out. The page's count is the same."""
     before = len(problems)
     found = _one(value, label, problems, "what it takes", subject, "this control is not invoked", _count_key)
     if found is None:
         return None
     number = _inty(found)
-    if number is None and len(problems) == before:
+    if (number is None or number < 0) and len(problems) == before:
         problems.append(f"{subject} names an {label} that is not a whole number ({_text(found)}), so what it takes is not "
                         "known; this control is not invoked")
-    return number
+    return number if number is not None and number >= 0 else None
 
 
 _XSD_BOOLEAN = XSD + "boolean"
@@ -1696,11 +1698,14 @@ class Field:
     # A JSON Schema property's: its schema, the type names it writes (None for
     # none), whether one of them is null, and the choices its select offers, as
     # (text, entry). None for a field a shape gives, whose choices are its sh:in.
+    # A default of JSON null, which `default` (None for none) cannot hold, is
+    # `null_default`: it is sent as null where the schema allows null.
     json_schema: bool = False
     schema: Any = None
     schema_types: list[str] | None = None
     nullable: bool = False
     choices: list[tuple[str, Any]] | None = None
+    null_default: bool = False
     # The first node of the RDF list that is its sh:in, which no other field
     # of its shape may share (_shared_list_problem); and whether it is a
     # template variable a closed shape does not name, which takes no value.
@@ -2650,7 +2655,7 @@ def _schema_field(name: str, prop0: Any, required: bool, problems: list[str]) ->
         min_inclusive=prop.get("minimum"), max_inclusive=prop.get("maximum"),
         required=required,
         json_schema=True, schema=prop0, schema_types=written, nullable=written is not None and "null" in written,
-        unchecked=unchecked,
+        unchecked=unchecked, null_default="default" in prop and prop["default"] is None and prop.get("readOnly") is not True,
     )
     fld.choices = _schema_choices(fld, problems, subject)
     return fld
@@ -3183,16 +3188,31 @@ def _inline_fields(node: dict[str, Any]) -> list[Any] | None:
 # inlineKeyProblem are the same.
 _INLINE_KEYS = frozenset({"name", "path", "datatype", "minCount", "maxCount", "minLength", "maxLength", "pattern", "defaultValue",
                           "description"})
+# The counts and lengths a field written in place may give: each a JSON number
+# that is a whole number of zero or more. The lift drops any other (a
+# fraction, text, true), and SHACL fails every value set against a negative
+# one, so neither is passed over: it keeps the control from being invoked.
+_INLINE_COUNTS = ("minCount", "maxCount", "minLength", "maxLength")
 
 
 def _inline_key_problem(items: list[Any]) -> str | None:
+    """The first problem the keys of the fields written in place give: a key
+    the lift does not write, or a count or a length that is no whole number of
+    zero or more. The page's inlineKeyProblem is the same."""
     for item in items:
         if not isinstance(item, dict):
             continue
+        subject = _subject(item.get("name"), item.get("path"))
         key = next((k for k in _js_keys(item) if k not in _INLINE_KEYS), None)
         if key is not None:
-            return (f"{_subject(item.get('name'), item.get('path'))} names {key}, which this client does not read in a field written in "
-                    "place, so what it takes is not known; this control is not invoked")
+            return (f"{subject} names {key}, which this client does not read in a field written in place, so what it takes is not "
+                    "known; this control is not invoked")
+        for key in _INLINE_COUNTS:
+            value = item.get(key)
+            number = _inty(value) if _is_number(value) else None
+            if value is not None and (number is None or number < 0):
+                return (f"{subject} names a {key} that is not a whole number ({_js_json(value)}), so what it takes is not known; this "
+                        "control is not invoked")
     return None
 
 
@@ -3275,10 +3295,15 @@ def _inline_disagreement(items: list[dict[str, Any]], fields: list[Field]) -> st
     return None
 
 
-def _expects_warning(expects: Any, inline: bool) -> str:
+def _expects_warning(expects: Any, inline: bool, described: bool = False) -> str:
     """The warning a control shows when hydra:expects names a shape the
-    document does not describe: only its fields written in place, if any, are
-    known. The page's expectsWarning is the same."""
+    document does not describe, whose fields written in place, if any, are
+    all that is known, or one it describes with no input fields (a shape with
+    no properties, a class with no supported property). The page's
+    expectsWarning is the same."""
+    if described:
+        return (f"hydra:expects names {_text(expects) or 'a shape'}, which this document describes with no input fields, so no input "
+                "fields were built: what the server expects is not known here.")
     rest = ("only the input fields written in place were built: what else the server expects is not known here." if inline
             else "no input fields were built: what the server expects is not known here.")
     return f"hydra:expects names {_text(expects) or 'a shape'}, which this document does not describe, so {rest}"
@@ -3416,17 +3441,19 @@ def _shared_shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field],
 def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, expects: Any,
                     mappings: list[dict[str, Any]]) -> tuple[list[Field], str | None, str | None]:
     """A control's input fields, from the shape hydra:expects names when the
-    document describes it (a JSON Schema, or a shape that gives fields),
-    checked against any fields the control writes in place, or else from
-    those, joined to its template's mappings; the problem that keeps it from
-    being invoked, if any; and a warning to show with it. A template's
-    variable that is no input's is sent in the body too, so where the body is
-    a JSON Schema's that names additionalProperties, that is its schema: false
-    refuses a value for it, and a schema types and checks it as a property's;
-    it is read once for all such variables, and choices in it that two of
-    them would share are a problem. Where the body is a closed SHACL shape's,
-    such a variable is refused unless sh:ignoredProperties names its property.
-    The page's controlInputs is the same."""
+    document describes it (a JSON Schema, or a node it describes, whether or
+    not that gives fields), checked against any fields the control writes in
+    place, or else from those, joined to its template's mappings; the problem
+    that keeps it from being invoked, if any; and a warning to show with it.
+    A template's variable that is no input's is sent in the body too, so
+    where the body is a JSON Schema's that names additionalProperties, that is
+    its schema: false refuses a value for it, and a schema types and checks it
+    as a property's; it is read once for all such variables, and choices, a
+    default, a description or a pattern in it that two of them would share
+    are a problem (_shared_schema_problem). Where the body is a closed SHACL
+    shape's, with properties or none, such a variable is refused unless
+    sh:ignoredProperties names its property. The page's controlInputs is the
+    same."""
     fields: list[Field] = []
     inline = _inline_fields(node)
     items = [item for item in inline if isinstance(item, dict)] if inline is not None else []
@@ -3435,7 +3462,10 @@ def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, ex
     inline_problem = None
     base: _FieldIndex | None = None
     shape = _shared_shape_fields(index, expects_raw) if expects_raw is not None else None
-    if shape is not None and not shape[0] and not _is_json_schema(expects_raw):
+    as_schema = _is_json_schema(expects_raw)
+    # A node the document describes is the shape, though it gives no fields:
+    # its fields, none, are the inputs, and its sh:closed is read.
+    if shape is not None and not shape[0] and not as_schema and _node_of(index, _json_value(expects_raw)) is None:
         shape = None
     if shape is not None:
         fields, _, problem, base = shape
@@ -3445,8 +3475,8 @@ def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, ex
     elif inline is not None:
         fields = [_inline_field(item) for item in items]
         problem = _duplicate_problem(fields)
-    if expects_raw is not None and shape is None:
-        warning = _expects_warning(expects, inline is not None and bool(items))
+    if expects_raw is not None and (shape is None or (not fields and not as_schema)):
+        warning = _expects_warning(expects, inline is not None and bool(items), shape is not None)
     if mappings:
         given = len(fields)
         fields = _merge_mapping_fields(fields, mappings, base)
@@ -3454,14 +3484,17 @@ def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, ex
         extra: list[str] = []
         if (len(fields) > given and _is_json_schema(schema) and "additionalProperties" in schema
                 and schema["additionalProperties"] is not True):
-            # Built once, for the first such variable, and copied for each.
+            # Built once, for the first such variable, and copied for each,
+            # unless what each copy shows or sends would cost the document's
+            # size once per variable: then the control is not invoked, and the
+            # variables are left as they are.
             first = fields[given]
             built = _schema_field(first.name, schema["additionalProperties"], first.required, extra)
-            if len(fields) - given > 1 and _names_choices(schema["additionalProperties"]):
-                extra.append(f'the inputs "{first.name}" and "{fields[given + 1].name}" share the choices of additionalProperties, which '
-                             "this client would show and check once for each, at a cost the document's size does not bound; this "
-                             "control is not invoked")
-            for i in range(given, len(fields)):
+            shared = (_shared_schema_problem(first.name, fields[given + 1].name, schema["additionalProperties"])
+                      if len(fields) - given > 1 else None)
+            if shared is not None:
+                extra.append(shared)
+            for i in range(given, len(fields) if shared is None else given):
                 added = fields[i]
                 one = copy.copy(built)
                 one.name, one.path, one.variable = added.name, added.path, added.variable
@@ -3480,6 +3513,26 @@ def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, ex
                     fields[i].closed_out = True
         problem = inline_problem or _duplicate_problem(fields) or (extra[0] if extra else None)
     return fields, problem, warning
+
+
+def _shared_schema_problem(first: str, second: str, schema: Any) -> str | None:
+    """The problem with an additionalProperties schema that two or more
+    template variables would each take, when what each would take with it
+    costs the document's size once per variable: choices, which each input
+    offers and a check names; a default, which each shows, checks and sends;
+    or a description or a pattern, which each shows. None for a schema with
+    none of them, which costs a fixed amount per variable. The page's
+    sharedSchemaProblem is the same."""
+    if _names_choices(schema):
+        what, does = "choices", "show and check"
+    elif isinstance(schema, dict) and "default" in schema:
+        what, does = "default", "show, check and send"
+    elif isinstance(schema, dict) and ("description" in schema or "pattern" in schema):
+        what, does = "description" if "description" in schema else "pattern", "show"
+    else:
+        return None
+    return (f'the inputs "{first}" and "{second}" share the {what} of additionalProperties, which this client would {does} once for '
+            "each, at a cost the document's size does not bound; this control is not invoked")
 
 
 def _names_choices(schema: Any) -> bool:
@@ -4428,6 +4481,47 @@ def _shape_entry_matches(fld: Field, numeric: str | None, typed: Any, entry: Any
     return _text(entry) == (typed if isinstance(typed, str) else _scalar_text(typed))
 
 
+def _holds_unsafe_integer(value: Any) -> bool:
+    """Whether a JSON value holds, at any depth, a number that is an integer
+    past 2^53, which reading JSON (JSON.parse, and _json_int alike) may have
+    rounded: the document may have written another. A walk with a stack. The
+    page's holdsUnsafeInteger is the same."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, float):
+            if math.isfinite(item) and item.is_integer() and abs(item) > _MAX_SAFE_INTEGER:
+                return True
+        elif isinstance(item, int) and not isinstance(item, bool):
+            if abs(item) > _MAX_SAFE_INTEGER:
+                return True
+        elif isinstance(item, dict):
+            stack.extend(item.values())
+        elif isinstance(item, list):
+            stack.extend(item)
+    return False
+
+
+def _rounded_entry(fld: Field, entry: Any) -> bool:
+    """Whether a shape's sh:in entry or sh:hasValue holds an integer past 2^53
+    as a JSON number, which reading it may have rounded: a number entry, or in
+    an rdf:JSON field the JSON an entry's text holds. Text is read as written.
+    The page's roundedEntry is the same."""
+    if _is_rdf_json(fld.datatype) and isinstance(entry, str):
+        try:
+            return _holds_unsafe_integer(_strict_json(entry))
+        except ValueError:
+            return False
+    return not isinstance(entry, str) and _holds_unsafe_integer(entry)
+
+
+def _rounded_problem(at: str, entry: str) -> str:
+    """What a value is refused with when the only entry it matches holds an
+    integer past 2^53: the entry may not be what the document wrote, so the
+    match is not known to be one."""
+    return f"{at}: matches only {entry}, which holds an integer past 2^53 that reading JSON may have rounded, so it is not sent"
+
+
 def _same_json(a: Any, b: Any) -> bool:
     """Whether two JSON values are the same value, as JSON Schema compares an
     enum's or a const's: arrays item by item in order, objects by the same keys
@@ -4567,8 +4661,9 @@ def _read_schema(prop: Any, subject: str) -> tuple[list[str], list[str]]:
     not check. A keyword this client checks written in a form JSON Schema does
     not allow (a length or a bound written as text, which JSON Schema writes
     as a number, among them) is a problem, and the control is not invoked; a keyword it does
-    not check (_UNCHECKED_KEYWORDS, or items written as a list) is named where
-    it is, so a value given is refused. Keywords that only describe (title,
+    not check (_UNCHECKED_KEYWORDS, items written as a list, or an "@id" that
+    makes a schema a reference to a node) is named where it is, so a value
+    given is refused. Keywords that only describe (title,
     description, default, examples, format, a pattern, which neither client
     runs) and keywords JSON Schema does not define are passed over, as JSON
     Schema passes over them. A walk with a stack, in the order the page's
@@ -4612,6 +4707,10 @@ def _read_schema(prop: Any, subject: str) -> tuple[list[str], list[str]]:
         for key in _UNCHECKED_KEYWORDS:
             if key in schema and not (key == "uniqueItems" and schema[key] is False):
                 unchecked.append(where(key))
+        # A schema written as a reference to a node, as $ref is to a schema, is
+        # not read: what the node holds is not this object's keys.
+        if "@id" in schema:
+            unchecked.append(where("@id"))
         nested: list[tuple[Any, str]] = []
         if "items" in schema:
             items = schema["items"]
@@ -4696,40 +4795,51 @@ def _schema_choices(fld: Field, problems: list[str], subject: str) -> list[tuple
 class _ShapeChoices:
     """A shape field's sh:in, read once per field however many values it
     checks: the problem a value that is no entry gives, and whether a typed
-    value is one, as _shape_entry_matches has it, looked up in a set of each
-    entry's number, JSON key or text. The page's shapeChoices is the same."""
+    value is one, as _shape_entry_matches has it, looked up by each entry's
+    number, JSON key or text. An entry that holds an integer past 2^53 as a
+    JSON number (_rounded_entry) admits no value: one it alone would admit is
+    refused naming it. The page's shapeChoices is the same."""
 
     def __init__(self, fld: Field, numeric: str | None, entries: list[Any]) -> None:
+        self.name = fld.name
         self.numeric = numeric
         self.rdf_json = _is_rdf_json(fld.datatype)
-        self.numbers: set[Any] = set()
-        self.json: set[str] = set()
-        self.texts: set[str] = set()
+        self.keys: set[str] = set()
+        self.rounded: dict[str, str] = {}
         for entry in entries:
+            keys = ["t" + _text(entry)]
             if numeric and (_is_number(entry) or isinstance(entry, str)):
                 try:
-                    self.numbers.add(_coerce_number(numeric, entry))
+                    keys.append("n" + _number_key(_coerce_number(numeric, entry)))
                 except ValueError:
                     pass
             if self.rdf_json:
-                if not isinstance(entry, str):
-                    self.json.add(_json_key(entry))
-                else:
-                    try:
-                        self.json.add(_json_key(_strict_json(entry)))
-                    except ValueError:
-                        pass
-            self.texts.add(_text(entry))
+                try:
+                    keys.append("j" + _json_key(entry if not isinstance(entry, str) else _strict_json(entry)))
+                except ValueError:
+                    pass
+            if _rounded_entry(fld, entry):
+                for key in keys:
+                    self.rounded.setdefault(key, _text(entry))
+            else:
+                self.keys.update(keys)
         self.problem = f"{fld.name}: must be one of {', '.join(text for text, _ in _choices_of(fld))}"
 
-    def has(self, typed: Any) -> bool:
+    def problem_for(self, typed: Any) -> str | None:
+        """None when a typed value is an entry, else the problem it gives."""
         if self.numeric and _is_number(typed):
-            return typed in self.numbers
-        if self.rdf_json:
-            return _json_key(typed) in self.json
-        if isinstance(typed, (dict, list)):
-            return False
-        return (typed if isinstance(typed, str) else _scalar_text(typed)) in self.texts
+            key: str | None = "n" + _number_key(typed)
+        elif self.rdf_json:
+            key = "j" + _json_key(typed)
+        elif isinstance(typed, (dict, list)):
+            key = None
+        else:
+            key = "t" + (typed if isinstance(typed, str) else _scalar_text(typed))
+        if key is not None and key in self.keys:
+            return None
+        if key is not None and key in self.rounded:
+            return _rounded_problem(self.name, self.rounded[key])
+        return self.problem
 
 
 def _shape_choices(fld: Field, numeric: str | None) -> _ShapeChoices | None:
@@ -4749,7 +4859,7 @@ def _choices_of(fld: Field) -> list[tuple[str, Any]]:
     return [(_text(entry), entry) for entry in fld.enum if entry is not None]
 
 
-def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[int, set[str]] | None = None) -> None:
+def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[int, Any] | None = None) -> None:
     """Checks a JSON Schema field's value against its schema, and each part of
     it against the schema inside (items, properties, additionalProperties),
     applying each keyword to the kinds of value JSON Schema applies it to: a
@@ -4786,16 +4896,33 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
             if not any(t in types for t in _json_types_of(val)):
                 report(f"{at}: must be a JSON {' or '.join(types)}")
                 return
+        # An entry that holds an integer past 2^53 may not be what the document
+        # wrote, so it admits no value: one that matches only it is refused naming it.
         if isinstance(sch.get("enum"), list):
-            keys = enums.get(id(sch))
-            if keys is None:
-                keys = enums[id(sch)] = {_json_key(entry) for entry in sch["enum"]}
-            if _json_key(val) not in keys:
-                report(f"{at}: must be one of {', '.join(_entry_text(entry) for entry in sch['enum'])}")
+            keyed = enums.get(id(sch))
+            if keyed is None:
+                sure: set[str] = set()
+                rounded: dict[str, Any] = {}
+                for entry in sch["enum"]:
+                    if _holds_unsafe_integer(entry):
+                        rounded.setdefault(_json_key(entry), entry)
+                    else:
+                        sure.add(_json_key(entry))
+                keyed = enums[id(sch)] = (sure, rounded)
+            key = _json_key(val)
+            if key not in keyed[0]:
+                if key in keyed[1]:
+                    report(_rounded_problem(at, _entry_text(keyed[1][key])))
+                else:
+                    report(f"{at}: must be one of {', '.join(_entry_text(entry) for entry in sch['enum'])}")
                 return
-        if "const" in sch and not _same_json(sch["const"], val):
-            report(f"{at}: must be {_entry_text(sch['const'])}")
-            return
+        if "const" in sch:
+            if not _same_json(sch["const"], val):
+                report(f"{at}: must be {_entry_text(sch['const'])}")
+                return
+            if _holds_unsafe_integer(sch["const"]):
+                report(_rounded_problem(at, _entry_text(sch["const"])))
+                return
         problem = None
         if isinstance(val, str):
             n = len(val)
@@ -5179,7 +5306,7 @@ def _multi_items(value: Any) -> list[Any]:
 
 
 def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choices: _ShapeChoices | None,
-                 from_default: bool, enums: dict[int, set[str]] | None = None) -> Any:
+                 from_default: bool, enums: dict[int, Any] | None = None) -> Any:
     """One value of a field, typed and checked; each problem goes to `report`,
     which keeps it once. Returns the value to send. A value given for a field
     with a constraint this client does not check is refused, with the
@@ -5190,8 +5317,10 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     facets, its sh:in by `choices` (_shape_choices, read once per field). A
     field that takes no value (sh:maxCount 0), or a template variable a closed
     shape does not name, refuses any; a default is first checked to be of the
-    kind its field takes. `enums` keys each enum once for a whole check. The
-    page's checkValue is the same."""
+    kind its field takes, and a JSON Schema field's default is the value the
+    document gives, never trimmed, read as a number or a boolean, or parsed as
+    JSON: its schema checks it as it is. `enums` keys each enum once for a
+    whole check. The page's checkValue is the same."""
     if fld.unchecked:
         report(f"{fld.name}: has a constraint this client does not check ({', '.join(fld.unchecked)}), so it is not sent")
         return None
@@ -5212,12 +5341,19 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     if wrong_kind:
         report(wrong_kind)
         return None
-    if numeric and isinstance(found, str):
+    as_given = from_default and fld.json_schema
+    if numeric and isinstance(found, str) and not as_given:
         found = found.strip(_SPACES)
     choice = (next((c for c in _choices_of(fld) if c[0] == found), None)
               if fld.json_schema and not from_default and isinstance(found, str) else None)
     if choice is not None:
         typed = choice[1]
+    elif as_given:
+        # An integer field's default past 2^53 is the double reading JSON gave, not surely the integer written.
+        if numeric == "integer" and _is_number(found) and _holds_unsafe_integer(found):
+            report(f"{fld.name}: integer too large to send exactly")
+            return None
+        typed = found
     else:
         try:
             typed = coerce_value(fld, found)
@@ -5229,7 +5365,7 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     # write Infinity, which is not JSON, and the page's JSON.stringify null. A
     # number field's value is checked by its type instead, and an integer
     # there is sent exactly.
-    if not numeric and _past_double(typed):
+    if (not numeric or as_given) and _past_double(typed):
         report(f"{fld.name}: holds a number too large to send")
         return None
     if _unpaired_surrogate(typed):
@@ -5282,10 +5418,14 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     # A field's pattern is reported by `describe` and never run: a remote
     # regular expression can take time exponential in the input, and the
     # server that receives the value is the one that enforces it.
-    if choices is not None and not choices.has(typed):
-        report(choices.problem)
-    if fld.has_value is not None and not fld.multi and not _shape_entry_matches(fld, numeric, typed, fld.has_value):
-        report(f"{fld.name}: must be {_text(fld.has_value)}")
+    choice_problem = choices.problem_for(typed) if choices is not None else None
+    if choice_problem is not None:
+        report(choice_problem)
+    if fld.has_value is not None and not fld.multi:
+        if not _shape_entry_matches(fld, numeric, typed, fld.has_value):
+            report(f"{fld.name}: must be {_text(fld.has_value)}")
+        elif _rounded_entry(fld, fld.has_value):
+            report(_rounded_problem(fld.name, _text(fld.has_value)))
     # A bound is compared with a number: a value that is none (text, or a node)
     # is an error, not a pass, as SHACL has a comparison it cannot make. A bound
     # that is no number, such as a date, is not compared, so a value is refused;
@@ -5338,19 +5478,24 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
 def _default_kind_problem(fld: Field, value: Any) -> str | None:
     """A default is of the kind its field takes when the field is neither JSON
     Schema's (whose schema checks its default) nor JSON: text, or for a number
-    or a boolean that value or its text. One of another kind is refused by
-    name, never sent as another kind of JSON nor changed into its text. The
-    page's defaultKindProblem is the same."""
-    if fld.json_schema or fld.json_kind or isinstance(value, str):
+    or a boolean that value or its text, a boolean's being XSD's (true, false,
+    1 or 0). One of another kind is refused by name, never sent as another
+    kind of JSON nor changed into its text. The page's defaultKindProblem is
+    the same."""
+    if fld.json_schema or fld.json_kind:
         return None
     kind = "number" if _numeric_kind(fld) else ("boolean" if _xsd_name(fld.datatype) == "boolean" else None)
+    # A boolean's text is XSD's, true, false, 1 or 0, with the spaces XSD
+    # collapses around it: "yes" is a value a form may take, never a default.
+    if isinstance(value, str) and not (kind == "boolean" and value.strip(_SPACES) not in ("true", "false", "1", "0")):
+        return None
     if kind == "number" and _is_number(value) or kind == "boolean" and isinstance(value, bool):
         return None
     word = {"number": "a number", "boolean": "a boolean"}.get(kind or "", "text")
     return f"{fld.name}: its default {_entry_text(value)} is not {word}, which this field takes, so it is not sent"
 
 
-def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, set[str]]) -> tuple[Any, bool]:
+def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, Any]) -> tuple[Any, bool]:
     """One field's value from what was given for it, typed and checked, as
     (the value, whether it is one to send); each problem goes to `report`.
     Nothing given (None, "" or an empty list) is the field's default as the
@@ -5359,9 +5504,11 @@ def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, set[str]]
     list field takes several values (a repeated --field, a JSON array, or one
     per line) and is checked against its sh:minCount and sh:maxCount; a list
     given is checked as it was given, and one that reads as no values is
-    refused, never replaced by the default. A field that takes one value takes
-    the last one given. `enums` keys each enum once for the whole check. The
-    page's fieldValue is the same."""
+    refused, never replaced by the default; a default is sent with every value
+    it holds or refused, never without a blank one. A field that takes one
+    value takes the last one given; a JSON Schema default of null is that
+    value, sent where its schema allows null. `enums` keys each enum once for
+    the whole check. The page's fieldValue is the same."""
     problems = 0
 
     def note(message: str) -> None:
@@ -5384,10 +5531,15 @@ def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, set[str]]
             return None, False
         from_default = not items and fld.default is not None
         if from_default:
-            items = _multi_items(fld.default if isinstance(fld.default, list) else [fld.default])
+            listed = fld.default if isinstance(fld.default, list) else [fld.default]
+            items = _multi_items(listed)
             # A default is read as a value given is: one with entries that are all blank holds no values.
-            if not items and any(x is not None for x in as_list(fld.default)):
+            if not items and any(x is not None for x in listed):
                 note(f"{fld.name}: was given no values")
+                return None, False
+            # One with a blank entry among others is sent as the document gives it or not at all: never without it.
+            if len(items) != len(listed):
+                note(f"{fld.name}: its default holds a blank value, which this client neither drops nor sends, so it is not sent")
                 return None, False
         if not items:
             if required:
@@ -5411,20 +5563,24 @@ def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, set[str]]
             typed_items.append(_check_value(fld, item if isinstance(item, str) or numeric else _scalar_text(item), numeric, note,
                                             choices, False, enums))
         # sh:hasValue asks that one of a list's values be the one it names.
-        if fld.has_value is not None and not any(v is not None and _shape_entry_matches(fld, numeric, v, fld.has_value)
-                                                 for v in typed_items):
-            note(f"{fld.name}: must include {_text(fld.has_value)}")
+        if fld.has_value is not None:
+            if not any(v is not None and _shape_entry_matches(fld, numeric, v, fld.has_value) for v in typed_items):
+                note(f"{fld.name}: must include {_text(fld.has_value)}")
+            elif _rounded_entry(fld, fld.has_value):
+                note(_rounded_problem(fld.name, _text(fld.has_value)))
         return typed_items, problems == 0
     if isinstance(found, list):
         found = found[-1] if found else None
     from_default = False
-    if (found is None or found == "") and fld.default is not None:
+    # A JSON Schema default of null is sent as null where the schema allows null, and refused where it does not.
+    if (found is None or found == "") and (fld.default is not None or fld.null_default):
         found = fld.default
         from_default = True
     # Spaces around a number are not part of it; a number field given only
     # spaces holds no number, which is refused, not filled with the default,
-    # and a default of only spaces is refused as one given is.
-    if numeric and isinstance(found, str):
+    # and a default of only spaces is refused as one given is. A JSON Schema
+    # default is checked by its schema as it is.
+    if numeric and isinstance(found, str) and not (from_default and fld.json_schema):
         spaced = found != ""
         found = found.strip(_SPACES)
         if found == "" and spaced:
@@ -5433,7 +5589,7 @@ def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, set[str]]
             except ValueError as exc:
                 note(f"{fld.name}: {exc}")
             return None, False
-    if found is None or found == "":
+    if (found is None or found == "") and not (from_default and fld.null_default):
         if required:
             note(f"missing required field '{fld.name}'")
         return None, False
@@ -5457,7 +5613,7 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
         if message not in seen:
             seen.add(message)
             errors.append(message)
-    enums: dict[int, set[str]] = {}
+    enums: dict[int, Any] = {}
     incoming = dict(supplied)
     known: set[str] = set()
     for fld in control.fields:

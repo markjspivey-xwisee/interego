@@ -1062,6 +1062,58 @@ export function sharedDescriptors(base: string): Record<string, string> {
       schemaOp('np', 'urn:rules:number-past-safe', 'POST', 'Number entry past 2^53', { n: { type: 'number', enum: ['NUMBER-PAST-SAFE'] } }),
       schemaOp('up', 'urn:rules:untyped-past-safe', 'POST', 'Untyped entry past 2^53', { m: { enum: ['NUMBER-PAST-SAFE', 'a'] } }),
       op('ee', 'urn:rules:empty-entry', 'POST', 'Empty entry', { ...target('/num-target'), 'hydra:expects': { '@id': '#EE' } }),
+      // A shape the document describes with no properties is still the shape: closed, it allows no
+      // template variable sh:ignoredProperties does not name, and beside it no field written in
+      // place is one of its inputs; open or closed, its warning says it is described.
+      op('ce', 'urn:rules:closed-empty-var', 'POST', 'Closed empty shape variable', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] },
+      'hydra:expects': { '@id': '#CE' } }),
+      op('cg', 'urn:rules:closed-empty-ignored', 'POST', 'Closed empty shape ignoring the variable', { 'hydra:target': {
+        '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/num-target{?q}`,
+        'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] }, 'hydra:expects': { '@id': '#CG' } }),
+      op('cf', 'urn:rules:closed-empty-inline', 'POST', 'Inline beside a closed empty shape', { ...target('/num-target'),
+        fields: [{ name: 'x' }], 'hydra:expects': { '@id': '#CE' } }),
+      op('of', 'urn:rules:open-empty-inline', 'POST', 'Inline beside an open empty shape', { ...target('/num-target'),
+        fields: [{ name: 'x' }], 'hydra:expects': { '@id': 'urn:shape:Empty' } }),
+      op('es', 'urn:rules:empty-shape', 'POST', 'Empty shape', { ...target('/num-target'), 'hydra:expects': { '@id': 'urn:shape:Empty' } }),
+      op('ec', 'urn:rules:empty-class', 'POST', 'Empty class', { ...target('/num-target'), 'hydra:expects': { '@id': 'urn:class:Empty' } }),
+      // A JSON Schema default is checked as the document gives it, text included: never trimmed,
+      // read as a number or a boolean, or parsed as JSON. A shape's boolean default is an XSD
+      // boolean's text.
+      schemaOp('tn', 'urn:rules:number-text-schema', 'POST', 'Schema number text default', { m: { type: 'number', default: '5' } }),
+      schemaOp('ti', 'urn:rules:integer-text-schema', 'POST', 'Schema integer text default', { m: { type: 'integer', default: ' 7 ' } }),
+      schemaOp('tb', 'urn:rules:boolean-text-schema', 'POST', 'Schema boolean text default', { m: { type: 'boolean', default: 'yes' } }),
+      schemaOp('to', 'urn:rules:object-text-schema', 'POST', 'Schema object text default', { m: { type: 'object', default: '{}' } }),
+      schemaOp('te', 'urn:rules:enum-text-schema', 'POST', 'Schema enum text default', { m: { type: 'integer', enum: [1], default: '1' } }),
+      op('sy', 'urn:rules:bool-yes-default', 'POST', 'Boolean yes default', { ...target('/num-target'), 'hydra:expects': { '@id': '#SY' } }),
+      op('sz', 'urn:rules:bool-text-default', 'POST', 'Boolean text default', { ...target('/num-target'), 'hydra:expects': { '@id': '#SZ' } }),
+      // A schema inside a property's schema written as a reference (@id) is not read: a value given is refused.
+      schemaOp('nz', 'urn:rules:nested-ref', 'POST', 'Nested reference', { a: { type: 'array', items: { '@id': '#E' } },
+        o: { type: 'object', additionalProperties: { '@id': '#E' } }, p: { type: 'object', properties: { k: { '@id': '#E' } } } }),
+      // Counts and lengths written in place that are not whole numbers of zero or more, which the
+      // substrate's lift drops, and a shape's negative sh:maxCount.
+      op('if', 'urn:rules:inline-fraction', 'POST', 'Inline fraction count', { ...target('/num-target'), fields: [{ name: 'x', maxCount: 1.5 }] }),
+      op('it', 'urn:rules:inline-text-count', 'POST', 'Inline text length', { ...target('/num-target'), fields: [{ name: 'x', minLength: '2' }] }),
+      op('in', 'urn:rules:inline-negative', 'POST', 'Inline negative count', { ...target('/num-target'), fields: [{ name: 'x', maxCount: -1 }] }),
+      op('sm', 'urn:rules:shape-negative', 'POST', 'Shape negative count', { ...target('/num-target'), 'hydra:expects': { '@id': '#NC' } }),
+      // Entries an integer past 2^53, which reading JSON may have rounded, match nothing: a sh:in,
+      // a sh:hasValue, and an enum and a const inside a property's schema.
+      op('ri', 'urn:rules:rounded-in', 'POST', 'Rounded entries', { ...target('/num-target'), 'hydra:expects': { '@id': '#RI' } }),
+      op('rh', 'urn:rules:rounded-has-value', 'POST', 'Rounded has value', { ...target('/num-target'), 'hydra:expects': { '@id': '#RH' } }),
+      schemaOp('rn', 'urn:rules:rounded-nested', 'POST', 'Rounded nested entries', { a: { type: 'array', items: { enum: ['NUMBER-PAST-SAFE', 1] } },
+        o: { type: 'object', enum: [{ a: 'NUMBER-PAST-SAFE' }] }, c: { type: 'array', items: { const: 'NUMBER-PAST-SAFE' } } }),
+      // A list default holding a blank value, and JSON Schema defaults of null.
+      op('lb', 'urn:rules:list-blank-default', 'POST', 'List blank default', { ...target('/num-target'), 'hydra:expects': { '@id': '#LB' } }),
+      schemaOp('nd', 'urn:rules:null-default', 'POST', 'Null choice default', { m: { enum: ['a', null], default: null } }),
+      schemaOp('nn', 'urn:rules:nullable-default', 'POST', 'Nullable default', { m: { type: ['string', 'null'], default: null } }),
+      schemaOp('nx', 'urn:rules:null-not-allowed', 'POST', 'Null default not allowed', { m: { type: 'string', default: null } }),
+      // A body schema of JSON Schema keywords alone, under a property-scoped context that maps one
+      // of them to an IRI: its keys are JSON Schema's, never terms.
+      op('sc', 'urn:rules:scoped-schema', 'POST', 'Schema under a scoped context', {
+        '@context': { scopedExpects: { '@id': 'hydra:expects', '@context': { additionalProperties: 'urn:other#additionalProperties' } } },
+        'hydra:target': { '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/num-target{?q}`,
+          'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] },
+        scopedExpects: { type: 'object', additionalProperties: false } }),
     ], '@graph': [
       { '@id': '#SD', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
         'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': 5 } },
@@ -1096,6 +1148,27 @@ export function sharedDescriptors(base: string): Record<string, string> {
       ] },
       { '@id': '#EE', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:c' }, 'sh:name': 'c', 'sh:maxCount': 1,
         'sh:in': ['', 'a'] } },
+      { '@id': '#CE', '@type': 'sh:NodeShape', 'sh:closed': true },
+      { '@id': '#CG', '@type': 'sh:NodeShape', 'sh:closed': true, 'sh:ignoredProperties': { '@list': [{ '@id': 'urn:p:q' }] } },
+      { '@id': 'urn:shape:Empty', '@type': 'sh:NodeShape' },
+      { '@id': 'urn:class:Empty', '@type': 'hydra:Class' },
+      { '@id': '#SY', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:b' }, 'sh:name': 'b', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:boolean' }, 'sh:defaultValue': 'yes' } },
+      { '@id': '#SZ', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:b' }, 'sh:name': 'b', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:boolean' }, 'sh:defaultValue': '0' } },
+      { '@id': '#E', type: 'string', enum: ['a', 'b'] },
+      { '@id': '#NC', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': -1 } },
+      { '@id': '#RI', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:u' }, 'sh:name': 'u', 'sh:maxCount': 1, 'sh:in': { '@list': ['NUMBER-PAST-SAFE', 1] } },
+        { 'sh:path': { '@id': 'urn:p:d' }, 'sh:name': 'd', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:decimal' },
+          'sh:in': { '@list': ['NUMBER-PAST-SAFE', 1] } },
+        { 'sh:path': { '@id': 'urn:p:j' }, 'sh:name': 'j', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'rdf:JSON' },
+          'sh:in': { '@list': ['{"a":9007199254740993}', '{"a":1}'] } },
+      ] },
+      { '@id': '#RH', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:h' }, 'sh:name': 'h', 'sh:maxCount': 1,
+        'sh:hasValue': 'NUMBER-PAST-SAFE' } },
+      { '@id': '#LB', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
+        'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': ['a', ''] } },
     ] },
     // One field for each XSD 1.1 date and time datatype, named for it. TEMPORAL_CASES read it.
     '/temporal': { '@context': CTX, '@id': `${base}/temporal`, 'iep:affordance': [
@@ -1166,8 +1239,11 @@ export function sharedMarkdown(base: string): Record<string, string> {
       ':::control hm-unread-key', 'title: Unread field key', 'method: POST', `target: ${base}/num-target`,
       'fields: [{"name": "x", "datatype": "xsd:integer", "minInclusive": 5}]', ':::', ''].join('\n'),
     // A block's fields counted as a property shape's are, a block that expects a shape it cannot
-    // describe, with and without fields, and fields nested deeper than either client reads.
+    // describe, with and without fields, fields nested deeper than either client reads, and a
+    // length past 2^53, which no count is.
     '/rules-md': ['# Rules', '',
+      ':::control hm-inline-bad-length', 'title: Block length past 2^53', 'method: POST', `target: ${base}/num-target`,
+      'fields: [{"name": "x", "maxLength": 9007199254740993}]', ':::', '',
       ':::control hm-inline-min', 'title: Block two or more', 'method: POST', `target: ${base}/num-target`,
       'fields: [{"name": "x", "minCount": 2}]', ':::', '',
       ':::control hm-expects', 'title: Block expects', 'method: POST', `target: ${base}/num-target`, 'expects: urn:shape:Outside',
@@ -1475,6 +1551,9 @@ const rootUnchecked = (keyword: string) =>
 /** The problem that keeps a control whose shape, which has properties, names sh:`key` itself from being invoked. */
 const nodeUnchecked = (key: string) =>
   `the shape names sh:${key}, which this client does not check, so what it sends is not known; this control is not invoked`;
+/** What a value is refused with when the only entry it matches holds an integer past 2^53, which reading JSON may have rounded. */
+const rounded = (at: string, entry: string) =>
+  `${at}: matches only ${entry}, which holds an integer past 2^53 that reading JSON may have rounded, so it is not sent`;
 /** The problem that keeps a control whose field written in place names `key` from being invoked. */
 const inlineUnread = (name: string, key: string) =>
   `the input "${name}" names ${key}, which this client does not read in a field written in place, so what it takes is not known; this control is not invoked`;
@@ -1483,8 +1562,9 @@ const inlineUnread = (name: string, key: string) =>
  * Choices for /choices each client reads alike, as VALUE_CASES are: an enumeration (or a const)
  * holds JSON values of any kind, and a value is one of them when it is the same JSON value: arrays
  * item by item in order, objects by the same keys with the same values in any order, numbers by
- * value (1.0 is 1, and 2^53 + 1 is the 2^53 JSON.parse reads), and a string, a boolean or null only
- * the same of its kind ("1" is not 1, true is not 1). A choice in a field whose type leaves its
+ * value (1.0 is 1, and 2^53 + 1 is the 2^53 JSON.parse reads, so an entry that holds one matches
+ * no value, and one that would match only it is refused naming it), and a string, a boolean or
+ * null only the same of its kind ("1" is not 1, true is not 1). A choice in a field whose type leaves its
  * kind open is sent as the entry it names, an array, an object, a number, a boolean or null, never
  * as the text that names it; null is offered as a choice of its own, and refused where an address
  * would leave it out. Two entries written alike are a problem, and the control is not invoked.
@@ -1516,7 +1596,7 @@ export const CHOICE_CASES: ReadonlyArray<ValueCase> = [
   ['/choices', 'urn:choice:null-array', 'Null array choice', { list: '["b"]' }, { error: 'list: must be one of null, ["a"]' }],
   ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[1,{"n":2}]' }, { body: { pair: [1, { n: 2 }] } }],
   ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[1.0,{"n":2.00}]' }, { body: { pair: [1, { n: 2 }] } }],
-  ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[9007199254740993]' }, { body: { pair: [9007199254740992] } }],
+  ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[9007199254740993]' }, { error: rounded('pair', '[9007199254740992]') }],
   ...['[1,{"n":2.5}]', '[true,{"n":2}]', '["1",{"n":2}]', '[1,{"n":"2"}]'].map(pair =>
     ['/choices', 'urn:choice:numbers', 'Number choice', { pair }, { error: 'pair: must be one of [1,{"n":2}], [9007199254740992]' }] as const),
   ['/choices', 'urn:choice:list', 'List choice', { tags: '["a","c"]' }, { error: 'tags: must be one of a, b' }],
@@ -1688,7 +1768,23 @@ const inlinePlace = (name: string, what: string) => `the input "${name}" ${what}
  *   - a field name holding "/" is set apart from the pointer after it;
  *   - readOnly on the body schema keeps the control from being invoked, and a property that is
  *     readOnly or not writable is never given its default;
- *   - an entry past 2^53 is not offered, and a number that names it is refused.
+ *   - an entry past 2^53 is not offered, and a number that names it is refused;
+ *   - a shape the document describes with no properties is the shape: closed, it refuses a template
+ *     variable sh:ignoredProperties does not name, and beside it a field written in place keeps the
+ *     control from being invoked;
+ *   - a JSON Schema default written as text is that text, in any field: never trimmed, read as a
+ *     number or a boolean, or parsed as JSON; a shape's boolean default is true, false, 1 or 0;
+ *   - a schema inside a property's schema written as a reference (@id) refuses a value given;
+ *   - a count or a length written in place that is no whole number of zero or more (a fraction,
+ *     text, a negative number, one past 2^53) keeps the control from being invoked, and so does a
+ *     shape's negative count;
+ *   - an entry that holds an integer past 2^53, which reading JSON may have rounded, matches no
+ *     value, in sh:in, sh:hasValue, and an enum or a const at any depth: a value that would match
+ *     only it is refused naming it;
+ *   - a list default with a blank value is refused, never sent without it; a JSON Schema default of
+ *     null is sent as null where its schema allows null, and refused where it does not;
+ *   - a body schema of keywords alone is read as JSON Schema under a scoped context that maps a
+ *     keyword to an IRI.
  */
 export const RULE_CASES: ReadonlyArray<ValueCase> = [
   ['/rules', 'urn:rules:schema-default', 'String default 1', {}, { error: 'm: must be a JSON string' }],
@@ -1753,14 +1849,64 @@ export const RULE_CASES: ReadonlyArray<ValueCase> = [
   ['/rules', 'urn:rules:number-past-safe', 'Number entry past 2^53', { n: '9007199254740992' }, { error: 'n: integer too large to send exactly' }],
   ['/rules', 'urn:rules:untyped-past-safe', 'Untyped entry past 2^53', { m: 'a' }, { body: { m: 'a' } }],
   ['/rules', 'urn:rules:untyped-past-safe', 'Untyped entry past 2^53', { m: '9007199254740992' }, { error: 'm: must be one of 9007199254740992, a' }],
+  ['/rules', 'urn:rules:closed-empty-var', 'Closed empty shape variable', { q: 'y' },
+    { error: 'q: is not allowed by its shape, which is closed (sh:closed true), so it is not sent' }],
+  ['/rules', 'urn:rules:closed-empty-ignored', 'Closed empty shape ignoring the variable', { q: 'y' }, { body: { q: 'y' } }],
+  ['/rules', 'urn:rules:closed-empty-inline', 'Inline beside a closed empty shape', { x: 'a' },
+    { error: inlinePlace('x', 'is written in place but is not in the shape hydra:expects names') }],
+  ['/rules', 'urn:rules:open-empty-inline', 'Inline beside an open empty shape', { x: 'a' },
+    { error: inlinePlace('x', 'is written in place but is not in the shape hydra:expects names') }],
+  ['/rules', 'urn:rules:number-text-schema', 'Schema number text default', {}, { error: 'm: must be a JSON number' }],
+  ['/rules', 'urn:rules:number-text-schema', 'Schema number text default', { m: '' }, { error: 'm: must be a JSON number' }],
+  ['/rules', 'urn:rules:number-text-schema', 'Schema number text default', { m: '5' }, { body: { m: 5 } }],
+  ['/rules', 'urn:rules:integer-text-schema', 'Schema integer text default', {}, { error: 'm: must be a JSON integer' }],
+  ['/rules', 'urn:rules:boolean-text-schema', 'Schema boolean text default', {}, { error: 'm: must be a JSON boolean' }],
+  ['/rules', 'urn:rules:object-text-schema', 'Schema object text default', {}, { error: 'm: must be a JSON object' }],
+  ['/rules', 'urn:rules:enum-text-schema', 'Schema enum text default', {}, { error: 'm: must be a JSON integer' }],
+  ['/rules', 'urn:rules:bool-yes-default', 'Boolean yes default', {}, { error: wrongDefault('b', 'yes', 'a boolean') }],
+  ['/rules', 'urn:rules:bool-text-default', 'Boolean text default', {}, { body: { b: false } }],
+  ['/rules', 'urn:rules:nested-ref', 'Nested reference', { a: '["zzz"]' }, { error: `a: ${unchecked('items/@id')}` }],
+  ['/rules', 'urn:rules:nested-ref', 'Nested reference', { o: '{"k":"zzz"}' }, { error: `o: ${unchecked('additionalProperties/@id')}` }],
+  ['/rules', 'urn:rules:nested-ref', 'Nested reference', { p: '{"k":"zzz"}' }, { error: `p: ${unchecked('properties/k/@id')}` }],
+  ['/rules', 'urn:rules:inline-fraction', 'Inline fraction count', { x: 'abcd' }, { error: inlinePlace('x', 'names a maxCount that is not a whole number (1.5)') }],
+  ['/rules', 'urn:rules:inline-text-count', 'Inline text length', { x: 'abcd' }, { error: inlinePlace('x', 'names a minLength that is not a whole number ("2")') }],
+  ['/rules', 'urn:rules:inline-negative', 'Inline negative count', { x: 'abcd' }, { error: inlinePlace('x', 'names a maxCount that is not a whole number (-1)') }],
+  ['/rules-md', 'hm-inline-bad-length', 'Block length past 2^53', { x: 'abcd' },
+    { error: inlinePlace('x', 'names a maxLength that is not a whole number (9007199254740992)') }],
+  ['/rules', 'urn:rules:shape-negative', 'Shape negative count', { m: 'a' }, { error: inlinePlace('m', 'names an sh:maxCount that is not a whole number (-1)') }],
+  ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { u: '9007199254740992' }, { error: rounded('u', '9007199254740992') }],
+  ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { u: '1' }, { body: { u: '1' } }],
+  ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { d: '9007199254740992' }, { error: rounded('d', '9007199254740992') }],
+  ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { j: '{"a":9007199254740993}' }, { error: rounded('j', '{"a":9007199254740993}') }],
+  ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { j: '{"a":1}' }, { body: { j: { a: 1 } } }],
+  ['/rules', 'urn:rules:rounded-has-value', 'Rounded has value', { h: '9007199254740992' }, { error: rounded('h', '9007199254740992') }],
+  ['/rules', 'urn:rules:rounded-has-value', 'Rounded has value', { h: '1' }, { error: 'h: must be 9007199254740992' }],
+  ['/rules', 'urn:rules:rounded-nested', 'Rounded nested entries', { a: '[9007199254740992]' }, { error: rounded('a/0', '9007199254740992') }],
+  ['/rules', 'urn:rules:rounded-nested', 'Rounded nested entries', { a: '[1]' }, { body: { a: [1] } }],
+  ['/rules', 'urn:rules:rounded-nested', 'Rounded nested entries', { o: '{"a":9007199254740992}' }, { error: rounded('o', '{"a":9007199254740992}') }],
+  ['/rules', 'urn:rules:rounded-nested', 'Rounded nested entries', { c: '[9007199254740992]' }, { error: rounded('c/0', '9007199254740992') }],
+  ['/rules', 'urn:rules:rounded-nested', 'Rounded nested entries', { c: '[1]' }, { error: 'c/0: must be 9007199254740992' }],
+  ['/rules', 'urn:rules:list-blank-default', 'List blank default', {},
+    { error: 'm: its default holds a blank value, which this client neither drops nor sends, so it is not sent' }],
+  ['/rules', 'urn:rules:list-blank-default', 'List blank default', { m: 'b' }, { body: { m: ['b'] } }],
+  ['/rules', 'urn:rules:null-default', 'Null choice default', {}, { body: { m: null } }],
+  ['/rules', 'urn:rules:null-default', 'Null choice default', { m: 'a' }, { body: { m: 'a' } }],
+  ['/rules', 'urn:rules:nullable-default', 'Nullable default', {}, { body: { m: null } }],
+  ['/rules', 'urn:rules:null-not-allowed', 'Null default not allowed', {}, { error: 'm: must be a JSON string' }],
+  ['/rules', 'urn:rules:scoped-schema', 'Schema under a scoped context', { q: 'y' }, { error: 'q: is not allowed by its schema' }],
 ];
 
 /**
  * Controls each client shows a warning with, as [path, the name that invokes it, title, the
  * warning]: hydra:expects names a shape the document does not describe, so the fields written in
- * place, if any, are all that is known of what the server expects.
+ * place, if any, are all that is known of what the server expects; or one it describes with no
+ * input fields (a shape with no properties, a class with no supported property), which is said so.
  */
 export const WARNING_CASES: ReadonlyArray<readonly [path: string, rel: string, title: string, warning: string]> = [
+  ['/rules', 'urn:rules:empty-shape', 'Empty shape', 'hydra:expects names urn:shape:Empty, which this document describes with no input ' +
+    'fields, so no input fields were built: what the server expects is not known here.'],
+  ['/rules', 'urn:rules:empty-class', 'Empty class', 'hydra:expects names urn:class:Empty, which this document describes with no input ' +
+    'fields, so no input fields were built: what the server expects is not known here.'],
   ['/rules', 'urn:rules:inline-outside', 'Inline beside an outside shape', 'hydra:expects names https://vocab.example/Outside, which this ' +
     'document does not describe, so only the input fields written in place were built: what else the server expects is not known here.'],
   ['/rules-md', 'hm-expects', 'Block expects', 'hydra:expects names urn:shape:Outside, which this document does not describe, so only the ' +
@@ -1856,13 +2002,18 @@ export const COST_CASES: ReadonlyArray<readonly [path: string, rel: string, cont
 ];
 
 /**
- * Documents of a few dozen kilobytes in which one list of choices serves many inputs, which the form
- * would offer and a check would name once for each, as [path, the control's name, the problem that
- * keeps it from being invoked]. Before, 400 inputs sharing an enum of 400 entries took the page 7 s
- * to select, and 300 sharing an RDF list of 300 4 s; each is now refused within the tests' budget.
+ * Documents of a few dozen kilobytes in which one list of choices, or one default, description or
+ * pattern, serves many inputs, which the form would offer and a check would name once for each, as
+ * [path, the control's name, the problem that keeps it from being invoked]. Before, 400 inputs
+ * sharing an enum of 400 entries took the page 7 s to select, and 300 sharing an RDF list of 300
+ * 4 s; each is now refused within the tests' budget.
  *   - shared-schema: 400 template variables that additionalProperties types, with an enum of 400;
  *   - shared-list: 300 properties whose sh:in is one RDF list of 300 nodes;
- *   - shared-tail: 300 RDF lists that each share a tail of 300 nodes, read as their own.
+ *   - shared-tail: 300 RDF lists that each share a tail of 300 nodes, read as their own;
+ *   - shared-default, shared-description and shared-pattern: 400 template variables that
+ *     additionalProperties types, with a default, a description or a pattern of 10,000 characters,
+ *     which each input would show (and the default send): a 23 KB document planned a 4 MB address,
+ *     in 21 s on the page.
  */
 export const SHARED_COST_CASES: ReadonlyArray<readonly [path: string, rel: string, problem: string]> = [
   ['/cost/shared-schema', 'urn:shared-schema', 'the inputs "v0" and "v1" share the choices of additionalProperties, which this client would ' +
@@ -1871,6 +2022,12 @@ export const SHARED_COST_CASES: ReadonlyArray<readonly [path: string, rel: strin
     "each, at a cost the document's size does not bound; this control is not invoked"],
   ['/cost/shared-tail', 'urn:shared-list', 'the input "p1" writes sh:in as an RDF list that shares nodes with another list, which this ' +
     'client does not read, so what it takes is not known; this control is not invoked'],
+  ['/cost/shared-default', 'urn:shared-schema', 'the inputs "v0" and "v1" share the default of additionalProperties, which this client ' +
+    "would show, check and send once for each, at a cost the document's size does not bound; this control is not invoked"],
+  ['/cost/shared-description', 'urn:shared-schema', 'the inputs "v0" and "v1" share the description of additionalProperties, which this ' +
+    "client would show once for each, at a cost the document's size does not bound; this control is not invoked"],
+  ['/cost/shared-pattern', 'urn:shared-schema', 'the inputs "v0" and "v1" share the pattern of additionalProperties, which this client ' +
+    "would show once for each, at a cost the document's size does not bound; this control is not invoked"],
 ];
 
 /** Each COST_CASES path's document as the text served; build it once per test file. */
@@ -1886,6 +2043,12 @@ export function costDescriptors(base: string): Record<string, string> {
     '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': heads.map((head, j) =>
       ({ 'sh:path': { '@id': `urn:p${j}` }, 'sh:name': `p${j}`, 'sh:maxCount': 1, 'sh:in': head, 'sh:defaultValue': 'zz' })) },
     ...range(300).map(j => ({ '@id': `#L${j}`, 'rdf:first': `e${j}`, 'rdf:rest': { '@id': j === 299 ? 'rdf:nil' : `#L${j + 1}` } })), ...more] });
+  // A write whose 400 template variables, none a property, all take the schema additionalProperties names.
+  const sharedSchema = (path: string, additional: Record<string, unknown>) => ({ '@context': CTX, '@id': `${base}${path}`,
+    'iep:affordance': [{ '@id': '#s', '@type': 'iep:Affordance', 'iep:action': { '@id': 'urn:shared-schema' }, 'hydra:method': 'POST',
+      'hydra:title': 'Shared schema', 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/api{?${range(400).map(j => `v${j}`).join(',')}}`, 'hydra:mapping': range(400).map(j => ({ 'hydra:variable': `v${j}` })) },
+      'hydra:expects': { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: additional } }] });
   // A write whose one input takes a list, each of whose values is one of 50,000 entries, with a default of 50,000 values.
   const items = (defaults: string[]) => ({ '@context': CTX, '@id': `${base}/cost/items`, 'iep:affordance': [{ '@id': '#i', '@type': 'iep:Affordance',
     'iep:action': { '@id': 'urn:items' }, 'hydra:method': 'POST', 'hydra:title': 'Items', 'hydra:target': { '@id': `${base}/api` },
@@ -1915,12 +2078,11 @@ export function costDescriptors(base: string): Record<string, string> {
     '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
       'sh:in': { '@list': range(5000).map(j => `e${j}`) }, 'sh:defaultValue': range(5000).map(j => `x${j}`) } }] },
     // 400 template variables, none a property, that all take the enum of 400 entries additionalProperties names.
-    '/cost/shared-schema': { '@context': CTX, '@id': `${base}/cost/shared-schema`, 'iep:affordance': [{ '@id': '#s', '@type': 'iep:Affordance',
-      'iep:action': { '@id': 'urn:shared-schema' }, 'hydra:method': 'POST', 'hydra:title': 'Shared schema',
-      'hydra:target': { '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/api{?${range(400).map(j => `v${j}`).join(',')}}`,
-        'hydra:mapping': range(400).map(j => ({ 'hydra:variable': `v${j}` })) },
-      'hydra:expects': { type: 'object', properties: { a: { type: 'string' } },
-        additionalProperties: { enum: range(400).map(j => `e${j}`), default: 'zz' } } }] },
+    '/cost/shared-schema': sharedSchema('/cost/shared-schema', { enum: range(400).map(j => `e${j}`), default: 'zz' }),
+    // 400 such variables that would each take a default, a description or a pattern of 10,000 characters.
+    '/cost/shared-default': sharedSchema('/cost/shared-default', { type: 'string', default: 'x'.repeat(10000) }),
+    '/cost/shared-description': sharedSchema('/cost/shared-description', { type: 'string', description: 'x'.repeat(10000) }),
+    '/cost/shared-pattern': sharedSchema('/cost/shared-pattern', { type: 'string', pattern: 'x'.repeat(10000) }),
     // 300 properties whose sh:in is one RDF list of 300 nodes.
     '/cost/shared-list': listShape('/cost/shared-list', range(300).map(() => ({ '@id': '#L0' })), []),
     // 300 properties each with an RDF list of its own first node, all ending in one tail of 300 nodes.
