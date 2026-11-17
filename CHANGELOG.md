@@ -48,6 +48,18 @@ is another profile's. A 204 has no body, so on success the caller is not told
 what was not checked. An extension that sits in a place its declared type does
 not name (a context extension under `result`) is still checked for its value
 and not reported as misplaced.
+## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
+
+From review of #934. With `requireSignedHead` on, a head with no signature was
+refused, and a store with no head at all was still read as empty. So whoever
+could delete the one head resource could make the store read as new, and the
+next commit would have begun it again from nothing over every record still
+there.
+
+A store that requires signed heads now refuses a missing head, on read and on
+commit. Requiring is turned on only after a signed head exists, so such a store
+is never empty. A new store is started with the option off, as before.
+
 ## 2026-11-17 — Foxxi: a Quoted descriptor is projected as quoted, not as completed or failed
 
 A Quoted descriptor repeats a claim someone else made, without endorsing it.
