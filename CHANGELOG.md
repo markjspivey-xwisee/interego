@@ -49,6 +49,32 @@ remove: the checks it waited for were themselves queued for a runner that
 afternoon, so they ended later than twenty minutes after the push. One run is
 not a measurement of the average.
 
+
+## 2026-11-17 — xapi-x: the lint and the controls document are affordances, and Foxxi's profile states what it offers
+
+From the xapi-x list of what was only designed.
+
+- **`foxxi.xapi_profile_lint_decorations`** (`POST /xapi/profiles/lint_decorations`)
+  runs rules X1 to X10 over statements, a profile, or both. It reads the
+  profiles held, keeps nothing and asks for no signature. Its answer says what
+  was judged and whether each lookup for rule X9 was available.
+- **The two X9 lookups have real sources on the bridge.** A design idea is a
+  concept of the I2IDL release the bridge already reads; an affordance is an
+  action of the manifest the bridge serves.
+- **`foxxi.xapi_profile_controls`** (`GET /xapi/profiles/controls?template=...`)
+  serves the document an `xapix:controls` link points at: what a template
+  offers, each affordance with the target, method and inputs served today.
+  The document is of a template, not of a statement, so it says nothing a
+  statement says. `POST` with a statement finds the templates it follows.
+- **Foxxi's profile states offers.** Its `lesson-failed` and `course-failed`
+  templates offer asking the course a question, reading the passages that bear
+  on one, and taking the lesson. `xapix:offers` is a property a plain profile
+  processor ignores; the same statements follow the templates as before.
+
+**Not done.** No statement links to a controls document. Foxxi's profile
+states no `xapix:evidences`: each is a proposal about someone else's concept
+and wants review first. An `i2x:` target is taken by its namespace.
+
 ## 2026-11-17 — mcp-server: the local Solid server fallback starts
 
 When its home pod is on localhost and nothing answers there,
@@ -149,6 +175,53 @@ chain and an order attestation and no emitter that used them.
 
 **Not done.** The attestation is not written to a pod. The world attests its
 own emissions only. llm-telemetry does not chain.
+
+## 2026-11-17 — Foxxi: the pod resolver can place an identity guest on its own pod (not switched on)
+
+Second step toward a dashboard general guest being a real caller. Nothing is
+switched on: no route, and no caller of the resolver, passes the new option.
+
+`resolveSubjectPodUrlPure` answers the shared tenant pod for any subject it has
+no rule for. A general guest's DID, `did:web:<identity host>:users:u-try-guest-<32 hex>`,
+is one of those, so every guest would have shared one pod and one statement
+lens.
+
+- **The rule.** `SubjectPodUrlOptions` takes an optional `identityHost`. With
+  it, a subject `did:web:<that host>:users:<id>` that `ownPodSegment` does not
+  recognise resolves to `<pod origin>/<id>/`, the address identity creates the
+  pod at and the css-gate scopes that user's bearer to. `<id>` must be one of
+  identity's own shapes in full: `u-pk-`, `u-eth-`, `u-did-` or `u-try-` and 12
+  hex, `u-try-play-` or `u-try-guest-` and 32 hex. The host is compared whole
+  and case-insensitively, with a port in either spelling (`host:port` as
+  identity writes it, `host%3Aport` as Foxxi's learning sign-in does). Anything
+  else is answered as before: a seeded legacy id, another host, a look-alike
+  host, an uppercase or over-long id, a slash, a dot segment, a percent escape,
+  a control character.
+- **Unchanged without the option.** Without `identityHost` the function is the
+  one on master. The test file keeps master's body as a reference and compares
+  the two over a table of every form in use and 3,300 generated subjects. A
+  guest linked to an account is given as the account's DID, which already
+  resolved to the account's pod.
+- **A guard, not called yet.** `guardSubjectPod` refuses a general guest, or any
+  DID under the identity host's `:users:`, whose pod is the tenant pod; one of
+  identity's own ids whose pod is not `<pod origin>/<that id>/`; and a pod URL
+  it cannot read. Every other subject is answered `ok`.
+
+**Why the bridge does not pass the host yet.** Guest DIDs already reach the
+resolver in the running bridge: the LRS picks forwarding targets by the
+statement actor's pod (`ownerTenantOfStatement`), and an applied void is kept
+with the voided statement's owner. For a `u-try-play-` or `u-try-guest-` actor
+both land on the tenant pod's lens today. Passing the host there would move
+them, so it is left to the step that decides each call site.
+
+**Not done.** The bridge writes pods with the operator bearer, which the
+css-gate lets write any pod, a guest's included, outside the guest's write
+budget and after its account is closed. Identity's cleanup lists at most 128
+resources of a guest pod and keeps the whole pod when there are more. Neither
+is changed here.
+
+The port spelling of the identity host is rewritten with a global replace; a
+validated host has at most one colon, so the result is the same.
 
 ## 2026-11-17 — Foxxi: a profile write the bridge never sent is not kept, not in doubt
 
