@@ -124,8 +124,9 @@ export class HarnessStore {
     return existsSync(p) ? readFileSync(p, 'utf8') : undefined;
   }
 
+  /** The newest judgment saved under a graph IRI: a selection that replaced another shares its graph. */
   findByGraphIri(graphIri: string): Published | undefined {
-    const row = this.index().find((r) => r.graphIri === graphIri);
+    const row = this.index().filter((r) => r.graphIri === graphIri).pop();
     return row ? this.get(row.id) : undefined;
   }
 
