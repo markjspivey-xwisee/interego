@@ -172,9 +172,8 @@ describe('the caller of a signed /agent/* route is decided in one place', () => 
   it('the three former copies are shims over the resolver, each stating its own options', () => {
     const bind = body('async function bindSignedCaller(');
     expect(bind).toContain(`${RESOLVER}(body, { agentIdBounds: true, anchorRefusalExplains: true`);
-    const verify = body('async function verifyDelegatedCallerPrincipal(');
+    const verify = body('async function verifyDelegatedCaller(');
     expect(verify).toContain(`${RESOLVER}(body, { agentIdBounds: false, anchorRefusalExplains: false })`);
-    expect(body('async function verifyDelegatedCaller(')).toContain('verifyDelegatedCallerPrincipal(body)');
     const issue = body("app.post('/agent/issue-credential',");
     expect(issue).toContain(`${RESOLVER}(req.body, {`);
     expect(issue).toMatch(/agentIdBounds: false, anchorRefusalExplains: false,\s*unsignedHint: 'sign_request the issuance args/);
@@ -197,9 +196,9 @@ describe('the caller of a signed /agent/* route is decided in one place', () => 
     expect(calls(/\bverifyAgentDelegation\(/)).toEqual(['signedCallerDelegationChecks', 'verifyDelegatedTenantAdmin']);
   });
 
-  it('learner kind is read from how the caller was authenticated, not rebuilt from strings', () => {
+  it('learner kind compares against the one place a signer becomes a caller DID, not a string rebuilt here', () => {
     const fn = body('async function resolveForCaller(');
-    expect(fn).toContain("principal.authMode === 'direct' ? 'human' : 'agent'");
+    expect(fn).toContain("callerDid === directSubject(signer) ? 'human' : 'agent'");
     expect(fn).not.toMatch(/did:ethr:/);
   });
 });

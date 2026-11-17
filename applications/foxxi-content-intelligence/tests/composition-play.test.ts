@@ -249,9 +249,9 @@ describe('the bridge launches and steps a play for its own learner', () => {
     expect(shared).toMatch(/contentStore\.gather\(root\)/);
     expect(shared).toMatch(/learnerCompetencies\(callerDid, kind\)/);
     expect(shared).toMatch(/admissionFrom\(p\.admission\)/);
-    expect(route("app.post('/agent/content/resolve'")).toMatch(/resolveForCaller\(auth\.principal, auth\.payload\)/);
+    expect(route("app.post('/agent/content/resolve'")).toMatch(/resolveForCaller\(auth\.callerDid, auth\.signer, auth\.payload\)/);
     const launch = route("app.post('/agent/content/launch'");
-    expect(launch).toMatch(/resolveForCaller\(auth\.principal, auth\.payload\)/);
+    expect(launch).toMatch(/resolveForCaller\(auth\.callerDid, auth\.signer, auth\.payload\)/);
     expect(launch).toMatch(/startPlay\(r\.resolution/);
     expect(launch).toMatch(/keepPlay\(play, wayInBy\(r\.kind, r\.admit\)\)/);
     const next = route("app.post('/agent/content/next'");

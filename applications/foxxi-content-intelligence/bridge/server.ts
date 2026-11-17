@@ -230,7 +230,7 @@ import { mintSessionToken, deriveUserWallet } from '../src/auth.js';
 import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
-import { decideCallerPrincipal, type CallerDecision, type CallerPrincipal, type CallerPrincipalOptions, type DelegationChecks } from '../src/caller-principal.js';
+import { decideCallerPrincipal, directSubject, type CallerDecision, type CallerPrincipalOptions, type DelegationChecks } from '../src/caller-principal.js';
 import { acceptSessionKeys, sessionKeyPolicy, sessionKeyPolicyFor, SESSION_KEY_CHAIN_ID } from '../src/session-key.js';
 import { deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -8216,21 +8216,13 @@ async function verifyPrivatePerformanceCaller(body: unknown, write: boolean): Pr
   })(body, write);
 }
 
-/** `verifyDelegatedCaller`, and with it the principal it was decided from (for a caller that reads how it was authenticated). */
-async function verifyDelegatedCallerPrincipal(body: unknown):
-  Promise<{ ok: true; callerDid: string; signer: string; payload: Record<string, unknown>; principal: CallerPrincipal } | { ok: false; status: number; error: string }> {
+async function verifyDelegatedCaller(body: unknown):
+  Promise<{ ok: true; callerDid: string; signer: string; payload: Record<string, unknown> } | { ok: false; status: number; error: string }> {
   const r = await resolveSignedPrincipal(body, { agentIdBounds: false, anchorRefusalExplains: false });
   if (!r.ok) return { ok: false, status: r.status, error: r.error };
   // DIRECT: the signer IS the actor. DELEGATED: the signer is the delegation ANCHOR — the
   // delegator's key (the pod owner), which is exactly what the ownership guard should check.
-  return { ok: true, callerDid: r.principal.subject, signer: r.principal.key, payload: r.principal.payload, principal: r.principal };
-}
-
-async function verifyDelegatedCaller(body: unknown):
-  Promise<{ ok: true; callerDid: string; signer: string; payload: Record<string, unknown> } | { ok: false; status: number; error: string }> {
-  const r = await verifyDelegatedCallerPrincipal(body);
-  if (!r.ok) return r;
-  return { ok: true, callerDid: r.callerDid, signer: r.signer, payload: r.payload };
+  return { ok: true, callerDid: r.principal.subject, signer: r.principal.key, payload: r.principal.payload };
 }
 
 // ── Hardened delegated-tenant-admin (bug #2b) ──────────────────────────────
@@ -12152,15 +12144,14 @@ function persistEfficacy(): void {
 }
 
 /** Resolve a composition for a verified caller from their own record: the one path resolve and launch share. */
-async function resolveForCaller(principal: CallerPrincipal, p: Record<string, unknown>): Promise<
+async function resolveForCaller(callerDid: string, signer: string, p: Record<string, unknown>): Promise<
   | { ok: true; root: Composition; kind: 'human' | 'agent'; resolution: ReturnType<typeof resolveComposition>; missing: string[]; admittedBy: AdmissionRecord[]; admit?: (competency: string) => Admission | null | undefined }
   | { ok: false; status: number; error: string }> {
   const root = typeof p.composition === 'string' ? await contentStore.fetch(p.composition) : undefined;
   if (!root || !isCompositionItem(root)) return { ok: false, status: 404, error: 'no such composition here: name one by its IRI' };
   // A wallet signing for itself is a person; a delegated agent is an agent. Either may say otherwise.
   const kind: 'human' | 'agent' = p.learner_kind === 'human' || p.learner_kind === 'agent'
-    ? p.learner_kind : (principal.authMode === 'direct' ? 'human' : 'agent');
-  const callerDid = principal.subject;
+    ? p.learner_kind : (callerDid === directSubject(signer) ? 'human' : 'agent');
   try {
     const admission: Admission | undefined = p.admission === undefined ? undefined : admissionFrom(p.admission);
     // With none in the request, what the learner has kept for each competency stands
@@ -12194,9 +12185,9 @@ async function resolveForCaller(principal: CallerPrincipal, p: Record<string, un
 app.post('/agent/content/resolve', async (req, res) => {
   try {
     if (contentRateLimited(req, res)) return;
-    const auth = await verifyDelegatedCallerPrincipal(req.body);
+    const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
-    const r = await resolveForCaller(auth.principal, auth.payload);
+    const r = await resolveForCaller(auth.callerDid, auth.signer, auth.payload);
     if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     sendActionResult(req, res, {
       ok: true, ...r.resolution, learnerKind: r.kind, missing: r.missing, ...(r.admittedBy.length ? { admittedBy: r.admittedBy } : {}),
@@ -12275,9 +12266,9 @@ async function recordPlayStatements(learnerDid: string, statements: ReadonlyArra
 app.post('/agent/content/launch', async (req, res) => {
   try {
     if (contentRateLimited(req, res)) return;
-    const auth = await verifyDelegatedCallerPrincipal(req.body);
+    const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
-    const r = await resolveForCaller(auth.principal, auth.payload);
+    const r = await resolveForCaller(auth.callerDid, auth.signer, auth.payload);
     if (!r.ok) { res.status(r.status).json({ error: r.error }); return; }
     const play = startPlay(r.resolution, r.root.title, { id: auth.callerDid, kind: r.kind }, { session: randomUUID(), registration: randomUUID() }, new Date().toISOString());
     const about = { skipped: r.resolution.skipped, unmet: r.resolution.unmet, refused: r.resolution.refused, trace: r.resolution.trace, missing: r.missing, ...(r.admittedBy.length ? { admittedBy: r.admittedBy } : {}) };

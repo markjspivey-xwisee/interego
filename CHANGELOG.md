@@ -163,15 +163,12 @@ call site keeps what it did:
   call site gave it, `/agent/issue-credential` always sends its own, and
   `verifyDelegatedCaller` sends none (`unsignedHint`).
 
-`resolveForCaller` now takes the principal and reads
-`principal.authMode === 'direct'`. This is the same test as before.
-`recoverSignedRequest` always returns an address as the signer, so an
-`agent_id` equal to `did:ethr:<signer>` has that address as its only one and
-is direct, and a direct caller's subject is `did:ethr:<signer>` by
-construction. `/agent/content/resolve` and `/agent/content/launch` call
-`verifyDelegatedCallerPrincipal`, which is `verifyDelegatedCaller` with the
-principal beside it. `verifyDelegatedCaller` itself returns the same fields
-as before, since four modules take it as a dependency.
+`resolveForCaller` keeps its arguments and compares the caller against
+`directSubject(signer)`, the module's one place a signer address becomes a
+caller DID, where it used to rebuild that string itself. The comparison is
+the same. The handlers of `/agent/content/resolve` and
+`/agent/content/launch` are not edited, and `verifyDelegatedCaller` returns
+the same fields as before, since four modules take it as a dependency.
 
 Not changed: `resolveCaller` (the directory and role resolver),
 `mergeSignedEnvelope`, and the sites that recover a signed request to ask
@@ -184,9 +181,7 @@ resolver and fifteen named sites, each listed with its reason; a listed site
 that no longer matches fails too. `tests/caller-principal.test.ts` covers the
 rule: direct, delegated, each refusal's status and wording, each option, and
 that `authMode` is direct exactly when the subject is `did:ethr:<signer>`.
-Two existing source-text tests (`composition-play.test.ts`,
-`content-service.test.ts`) pinned the old argument list of
-`resolveForCaller` and now pin the new one.
+No existing test is edited.
 
 Checks: the nine existing Foxxi test modules of signed callers (110 cases)
 pass unchanged. All of `applications/foxxi-content-intelligence/tests`, run
