@@ -6,9 +6,9 @@
 # LRS or a plain profile processor may ignore.
 #
 # Status: Projection, descriptorDigest and supersedesStatement are written by the
-# lrs-adapter. previous, previousDigest and the order bases are
-# built and judged by src/xapix/statement.ts and written by no emitter yet. controls,
-# orderAttestation, evidences and offers are declared and linted, and nothing writes them.
+# lrs-adapter. previous, previousDigest and orderAttestation are written by
+# coached-world, and the order bases are judged by src/xapix/statement.ts. controls,
+# evidences and offers are declared and linted, and nothing writes them yet.
 # The xapi-x profile also declares four iep: terms; those are defined in the iep:
 # vocabulary and are not repeated here.
 

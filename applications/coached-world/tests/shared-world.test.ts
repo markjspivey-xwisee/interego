@@ -110,6 +110,13 @@ describe('a shared coached world', () => {
       expect(intervention?.turtle).toContain('iep:CausalFacet');
       expect(intervention?.turtle).toContain('iep:causalRole "Intervention"');
       expect(verifyMessage(intervention!.canonical, intervention!.signature)).toMatch(/^0x[0-9a-fA-F]{40}$/);
+      // Settling a mission also publishes the signed order of its registration's statements.
+      const order = rows.find(row => row.kind === 'order-attestation');
+      expect(order?.graph).toContain('cpw:StatementOrder');
+      const listed = (JSON.parse(order!.canonical) as { statementDigests: string[] }).statementDigests;
+      expect(listed.length).toBeGreaterThan(statements.length);
+      expect(listed.every(d => /^sha256:[0-9a-f]{64}$/.test(d))).toBe(true);
+      expect(verifyMessage(order!.canonical, order!.signature)).toBe(verifyMessage(intervention!.canonical, intervention!.signature));
       const territory = rows.find(row => row.kind === 'territory');
       expect(territory?.graph).toContain('cpw:Territory');
       expect(territory?.turtle).toContain('iep:FederationFacet');

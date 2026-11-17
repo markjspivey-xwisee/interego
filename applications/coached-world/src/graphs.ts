@@ -138,6 +138,37 @@ export function interventionGraph(input: {
   return bundle(data, graph);
 }
 
+/**
+ * The order this world emitted a registration's statements in, as a descriptor it signs: an
+ * xapi-x order attestation (foxxi-content-intelligence/xapix/README.md, section 6).
+ *
+ * What is signed is `canonical`, and here that holds the digests as well as the descriptor, so the
+ * signature covers the list. A reader recomputes each statement's digest and compares
+ * (`readOrderAttestation` in ./order.ts). It attests this world's own emissions and nothing else:
+ * a statement another party stored under the same registration is not in it.
+ */
+export function orderAttestationGraph(input: {
+  readonly base: string; readonly registration: string; readonly writerDid: string; readonly at: string;
+  readonly digests: readonly string[];
+}): GraphBundle {
+  const id = iri(orderAttestationIri(input.base, input.registration));
+  const graphIri = `${input.base}graphs/order/${input.registration}`;
+  const data = ContextDescriptor.create(id)
+    .describes(iri(graphIri))
+    .version(1)
+    .generatedBy(iri(input.writerDid), { endedAt: input.at })
+    .selfAsserted(iri(input.writerDid))
+    .build();
+  const graph = `${prefix()}${ref(graphIri)} a cpw:StatementOrder ; cpw:registration ${lit(input.registration)} ; cpw:statementDigests ( ${input.digests.map(lit).join(' ')} ) .\n`;
+  return {
+    id: data.id, data, turtle: toTurtle(data, { extraPrefixes: { cpw: CPW } }), graph,
+    canonical: canonicalJson({ descriptor: data, registration: input.registration, statementDigests: [...input.digests] }),
+  };
+}
+
+/** Where a registration's order attestation is, known before it is written: its statements name it. */
+export const orderAttestationIri = (base: string, registration: string): string => `${base}descriptors/order/${registration}`;
+
 export function observationGraph(input: {
   readonly base: string; readonly registration: string; readonly agentDid: string; readonly at: string;
 }): GraphBundle {

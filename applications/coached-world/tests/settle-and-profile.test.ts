@@ -234,3 +234,75 @@ describe('work a connected agent wrote', () => {
     expect(JSON.stringify(statement)).not.toMatch(/adlnet\.gov\/expapi\/verbs\/(passed|completed|failed|satisfied)/);
   });
 });
+
+// xapi-x, section 6: who stands behind the order of a registration's statements. Every statement
+// of an opening carries one timestamp, so without the chain only the array says which came first.
+describe('the order of a registration is chained, and the world signs the list', async () => {
+  const { Wallet } = await import('ethers');
+  const { orderBasis, statementDigest } = await import('../../foxxi-content-intelligence/src/xapix/statement.js');
+  const { lintXapixStatements } = await import('../../foxxi-content-intelligence/src/xapix/lint.js');
+  const { buildXapixProfileDoc } = await import('../../foxxi-content-intelligence/src/xapix/profile.js');
+  const { xapix } = await import('../../foxxi-content-intelligence/src/xapix/namespace.js');
+  const { orderAttestationGraph, orderAttestationIri } = await import('../src/graphs.js');
+  const { orderOf, readOrderAttestation } = await import('../src/order.js');
+  const base = 'http://127.0.0.1:9/';
+  const mission = orchard.missions[0]!;
+  const cause = orchard.causes.find(c => c.symptoms.length > 0)!;
+  const common = { pack: orchard, homePage: base, actorDid: 'did:web:example:agents:pip', missionId: mission.id, missionTitle: mission.title, missionObject: mission.object };
+  const opened = buildMissionStatements({ ...common, symptoms: cause.symptoms.slice(0, 3), herring: undefined, progressed: 2, measured: undefined, timestamp: '2026-11-14T00:00:00.000Z' });
+  const work = buildWorkStatement({ ...common, response: 'A made-up note from a fictional agent.', timestamp: '2026-11-14T00:01:00.000Z', registration: opened.registration, after: opened.statements.at(-1) });
+  const attestation = orderAttestationIri(base, opened.registration);
+  const closed = buildMissionStatements({ ...common, symptoms: [], herring: undefined, progressed: 1, measured: { raw: 60, success: true }, timestamp: '2026-11-14T00:02:00.000Z', registration: opened.registration, after: work, orderAttestation: attestation });
+  const run = [...opened.statements, work, ...closed.statements].map(s => JSON.parse(JSON.stringify(s)) as Json);
+  const wallet = Wallet.createRandom();
+  const bundle = orderAttestationGraph({ base, registration: opened.registration, writerDid: 'did:web:example:world', at: '2026-11-14T00:02:00.000Z', digests: run.map(statementDigest) });
+  const published = { canonical: bundle.canonical, signature: await wallet.signMessage(bundle.canonical) };
+
+  it('gives every statement a UUID, and each after the first the one before it and its digest', () => {
+    expect(run.length).toBeGreaterThan(5);
+    for (const [i, s] of run.entries()) {
+      expect(s.id).toMatch(/^[0-9a-f]{8}-[0-9a-f]{4}-4[0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/);
+      const ext = ((s.context as Json).extensions ?? {}) as Json;
+      if (i === 0) { expect(ext[xapix('previous')]).toBeUndefined(); continue; }
+      expect(ext[xapix('previous')]).toBe(run[i - 1]!.id);
+      expect(ext[xapix('previousDigest')]).toBe(statementDigest(run[i - 1]!));
+    }
+    expect(orderBasis(run).basis).toBe('Chained');
+    // The same statements in another order, or with one changed, are not a chain.
+    expect(orderBasis([run[1]!, run[0]!, ...run.slice(2)]).basis).toBe('ProviderClaimed');
+    expect(orderBasis(run.map((s, i) => i === 1 ? { ...s, timestamp: '2026-11-14T00:00:01.000Z' } : s)).basis).toBe('ProviderClaimed');
+  });
+
+  it('still follows the pack profile, and passes the xapi-x statement rules', () => {
+    const profile = buildProfile(orchard) as unknown as Json;
+    for (const s of run) expect(validateAgainstSuppliedProfile(s, profile).matchedTemplates.length).toBeGreaterThan(0);
+    expect(follows(run, profile.templates as Json[], profile.patterns as Json[]).follows).toBe(true);
+    expect(lintXapixStatements(run, [buildXapixProfileDoc() as Json, profile])).toEqual([]);
+  });
+
+  it('names the signed list on the statements that close the registration, and only there', () => {
+    const named = run.map(s => ((s.context as Json).extensions as Json | undefined)?.[xapix('orderAttestation')]);
+    expect(named.slice(0, opened.statements.length + 1).every(v => v === undefined)).toBe(true);
+    expect(named.slice(opened.statements.length + 1).every(v => v === attestation)).toBe(true);
+    expect(bundle.id).toBe(attestation);
+    expect(bundle.graph).toContain('cpw:StatementOrder');
+  });
+
+  it('is Attested when the signature verifies and the digests are these statements in this order', () => {
+    const read = readOrderAttestation(published, wallet.address);
+    expect(read).toMatchObject({ signatureVerified: true, signer: wallet.address, registration: opened.registration });
+    expect(orderOf(run, published, wallet.address)).toMatchObject({ basis: 'Attested', signer: wallet.address });
+  });
+
+  it('is not Attested for a list that was changed, a signer that is not the one named, or other statements', () => {
+    const changed = { ...published, canonical: published.canonical.replace(/sha256:[0-9a-f]{4}/, 'sha256:0000') };
+    expect(readOrderAttestation(changed, wallet.address).signatureVerified).toBe(false);
+    const other = Wallet.createRandom();
+    expect(readOrderAttestation(published, other.address)).toMatchObject({ signatureVerified: false, signer: wallet.address });
+    expect(readOrderAttestation({ canonical: 'not json', signature: published.signature }).signatureVerified).toBe(false);
+    expect(readOrderAttestation({ canonical: published.canonical, signature: '0x00' }).signatureVerified).toBe(false);
+    // A run with its last statement left off is still a chain, and is not what was attested.
+    expect(orderOf(run.slice(0, -1), published, wallet.address).basis).toBe('Chained');
+    expect(orderOf(run, changed, wallet.address).basis).toBe('Chained');
+  });
+});
