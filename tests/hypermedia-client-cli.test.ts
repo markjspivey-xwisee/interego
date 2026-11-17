@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES, fetchRoutes,
   hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED, LOAD_HEADERS,
-  OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, BODY_TEXTS, type HopHeaders } from './hypermedia-client-fixtures.js';
+  OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -539,14 +539,15 @@ describe('hmc.py: numeric fields', () => {
     expect(sent()).toBe(before);
   });
 
-  it('sends numbers written as numbers as numbers, an integer of any size exactly', async () => {
-    // A double is the double nearest its text, the value XSD gives that text.
+  it('sends numbers written as numbers as numbers, an integer past 2^53 exactly', async () => {
+    // A double is the double nearest its text, the value XSD gives that text. The long is past
+    // 2^53, which a double does not hold, and within xsd:long's range, so it is sent as written.
     const dry = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount= 2.5 ', '--field', 'count=-3',
-      '--field', 'size=+12345678901234567890', '--field', 'level=3', '--field', 'price=\t2.50\r\n',
+      '--field', 'size=+1234567890123456789', '--field', 'level=3', '--field', 'price=\t2.50\r\n',
       '--field', 'ratio=0.10000000000000001', '--dry-run', '--json']);
     expect(dry.code, dry.stderr).toBe(0);
     // JSON.parse would round the long integer, so its text is checked as printed.
-    expect(dry.stdout).toContain('"size": 12345678901234567890');
+    expect(dry.stdout).toContain('"size": 1234567890123456789');
     const body = (JSON.parse(dry.stdout) as { request: { body: Record<string, unknown> } }).request.body;
     expect({ ...body, size: null }).toEqual({ amount: 2.5, count: -3, size: null, level: '3', price: 2.5, ratio: 0.1 });
     const before = sent();
@@ -1109,10 +1110,10 @@ describe('hmc.py: forms', () => {
     expect(unknown.r.stderr).toContain("no input field is named 'nope'");
   });
 
-  it('accepts a JSON boolean or object enum entry as its JSON text, and reads a count facet written 1.0', async () => {
+  it('sends a JSON boolean or object enum entry named by its JSON text as the entry itself, and reads a count facet written 1.0', async () => {
     const accepted = await dry('/bool-enum', 'urn:accept', { agree: 'true', mode: '{"a":1}' });
     expect(accepted.r.code, accepted.r.stderr).toBe(0);
-    expect(accepted.request!.body).toEqual({ agree: true, mode: '{"a":1}' });
+    expect(accepted.request!.body).toEqual({ agree: true, mode: { a: 1 } });
     expect((await dry('/mincount', 'urn:mincount', { a: 'toolong' })).r.stderr).toContain('a: longer than maxLength 3');
     expect((await dry('/mincount', 'urn:mincount')).r.stderr).toContain("missing required field 'a'");
   });
@@ -1163,7 +1164,7 @@ describe('hmc.py: the address sent is the address printed', () => {
 describe('hmc.py: values a request can carry, and lengths in code points', () => {
   const sentTo = () => seen.filter(s => / \/num-target(\?|$)/.test(s)).length;
 
-  it.each(VALUE_CASES)('reads %s %s (%s) as the page does: case %#', async (path, rel, _title, fields, outcome) => {
+  it.each([...VALUE_CASES, ...CHOICE_CASES, ...SWEEP_CASES])('reads %s %s (%s) as the page does: case %#', async (path, rel, _title, fields, outcome) => {
     if ('body' in outcome) {
       const { r, request } = await dry(path, rel, fields);
       expect(r.code, r.stderr).toBe(0);

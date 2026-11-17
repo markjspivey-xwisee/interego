@@ -26,7 +26,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES,
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
-  LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, type HopHeaders } from './hypermedia-client-fixtures.js';
+  LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -146,9 +146,10 @@ const hyperMarkdown = [
   'title: proto key', `target: ${HOST}/body/plain`, '__proto__: {"method": "GET", "readOnlyHint": true}', ':::',
 ].join('\n');
 
-// Two writes side by side. The second one's JSON Schema names types that are Object.prototype
+// Writes side by side. The second one's JSON Schema names types that are Object.prototype
 // members; a lookup that reached the prototype used to make its detail view throw, which left
-// the first control's form, and its ticked confirmation, on screen for the second control.
+// the first control's form, and its ticked confirmation, on screen for the second control. Such a
+// type is no JSON Schema type, so that control is refused by name. The third is a plain delete.
 const PROTO_TYPES = ['toString', 'constructor', 'valueOf', '__proto__', 'hasOwnProperty'];
 const pair = {
   '@context': { hydra: 'http://www.w3.org/ns/hydra/core#', iep: 'https://markjspivey-xwisee.github.io/interego/ns/iep#' },
@@ -160,6 +161,9 @@ const pair = {
     { '@id': `${HOST}/pair#b`, '@type': 'iep:Affordance', 'iep:action': 'urn:b', 'hydra:method': 'DELETE',
       'hydra:title': 'B delete', 'hydra:target': `${HOST}/delete-b`,
       'hydra:expects': { type: 'object', properties: Object.fromEntries(PROTO_TYPES.map(t => [`f_${t}`, { type: t }])) } },
+    { '@id': `${HOST}/pair#c`, '@type': 'iep:Affordance', 'iep:action': 'urn:c', 'hydra:method': 'DELETE',
+      'hydra:title': 'C delete', 'hydra:target': `${HOST}/delete-c`,
+      'hydra:expects': { type: 'object', properties: { note: { type: 'string' } } } },
   ],
 };
 // Remote text the page must not spend super-linear time on. A pattern with overlapping
@@ -920,18 +924,17 @@ describe('hypermedia client: a confirmation belongs to one control', () => {
     await new Promise(r => setTimeout(r, 50));
   }
 
-  it('renders a JSON Schema whose type names an Object.prototype member, with a fresh, unticked form', async () => {
+  it('refuses a JSON Schema whose type names an Object.prototype member by name, with nothing of A left on screen', async () => {
     const t = await confirmA();
     try {
       const { document } = t;
       click(t, card(document, 'B delete')!);
-      expect(document.querySelector('#detail h2')!.textContent).toBe('B delete');
-      const fields = [...document.querySelectorAll<HTMLElement>('#invokeForm [data-field]')].map(f => f.dataset['field']);
-      expect(fields).toEqual(PROTO_TYPES.map(p => `f_${p}`));
-      // An unknown type is a string field, and its hint says so.
-      for (const hint of document.querySelectorAll('#invokeForm .hint')) expect(hint.textContent).toBe('string');
-      expect((document.getElementById('confirmUnsafe') as HTMLInputElement).checked).toBe(false);
-      expect(button(document, 'live').disabled).toBe(true);
+      expect(document.querySelector('.card.active h3')!.textContent).toBe('B delete');
+      // An unknown type is no JSON Schema type: the control is refused, and the first such input named.
+      expect(document.getElementById('invokeForm')).toBeNull();
+      expect(document.getElementById('confirmUnsafe')).toBeNull();
+      expect(document.querySelector('#detail .warn')!.textContent).toContain(
+        'the input "f_toString" writes type as something other than a JSON Schema type name or a list of them');
       await pressInvoke(t);
       expect(t.calls.filter(c => c.url.includes('/delete-b'))).toEqual([]);
       expect(t.errors).toEqual([]);
@@ -939,20 +942,20 @@ describe('hypermedia client: a confirmation belongs to one control', () => {
     } finally { t.dom.window.close(); }
   });
 
-  it('shows a warning and no form when a control cannot be rendered, so A\'s confirmation cannot send B', async () => {
+  it('shows a warning and no form when a control cannot be rendered, so A\'s confirmation cannot send C', async () => {
     const t = await confirmA();
     try {
       const { document } = t;
-      // Any failure while building B's form. The page's function declarations are globals,
+      // Any failure while building C's form. The page's function declarations are globals,
       // so the test can make one throw.
       (t.dom.window as unknown as { fieldControl: () => never }).fieldControl = () => { throw new Error('render fault'); };
-      click(t, card(document, 'B delete')!);
+      click(t, card(document, 'C delete')!);
       expect(document.getElementById('invokeForm')).toBeNull();
       expect(document.getElementById('confirmUnsafe')).toBeNull();
       expect(document.querySelector('#detail .warn')!.textContent).toContain('render fault');
-      expect(document.querySelector('.card.active h3')!.textContent).toBe('B delete');
+      expect(document.querySelector('.card.active h3')!.textContent).toBe('C delete');
       await pressInvoke(t);
-      expect(t.calls.filter(c => c.url.includes('/delete-b') || c.url.includes('/write-a'))).toEqual([]);
+      expect(t.calls.filter(c => c.url.includes('/delete-c') || c.url.includes('/write-a'))).toEqual([]);
       expect(t.errors).toEqual([]);
     } finally { t.dom.window.close(); }
   });
@@ -974,15 +977,15 @@ describe('hypermedia client: rendering details', () => {
     } finally { t.dom.window.close(); }
   });
 
-  it('offers and accepts an enum entry that is not a string, as its JSON', async () => {
+  it('offers an enum entry that is not a string as its JSON, and null as a choice of its own', async () => {
     const t = load(`?url=${encodeURIComponent(HOST + '/enum')}&autoload=1`);
     try {
       const { document } = t;
       await vi.waitFor(() => expect(document.documentElement.dataset['ready']).toBe('list'));
       click(t, card(document, 'Enum read')!);
       const select = document.querySelector<HTMLSelectElement>('#invokeForm select')!;
-      // The blank option stands for "unset"; a null entry adds no second one.
-      expect([...select.options].map(o => o.value)).toEqual(['', '{"x":1}', 'plain']);
+      // The blank option stands for "unset", and a null entry is a choice of its own, sent as null.
+      expect([...select.options].map(o => o.value)).toEqual(['', '{"x":1}', 'plain', 'null']);
       expect(select.value).toBe('{"x":1}');
       click(t, button(document, 'dry'));
       await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toContain('Dry run'));
@@ -1907,9 +1910,9 @@ describe('hypermedia client: forms', () => {
     } finally { unknown.t.dom.window.close(); }
   });
 
-  it('accepts a JSON boolean or object enum entry as its JSON text, and reads a count facet written 1.0', async () => {
+  it('sends a JSON boolean or object enum entry named by its JSON text as the entry itself, and reads a count facet written 1.0', async () => {
     const { t, plan } = await linkPlan('/bool-enum', 'urn:accept', { agree: 'true', mode: '{"a":1}' });
-    try { expect(plan!.body).toEqual({ agree: true, mode: '{"a":1}' }); } finally { t.dom.window.close(); }
+    try { expect(plan!.body).toEqual({ agree: true, mode: { a: 1 } }); } finally { t.dom.window.close(); }
     const facets = await linkPlan('/mincount', 'urn:mincount', { a: 'toolong' });
     try { expect(facets.shown).toContain('a: longer than maxLength 3'); } finally { facets.t.dom.window.close(); }
     const empty = await linkPlan('/mincount', 'urn:mincount', {});
@@ -1947,6 +1950,62 @@ describe('hypermedia client: values a request can carry, and lengths in code poi
     // The form shows the planned body on Dry run, or refuses on Dry run and a confirmed Invoke alike.
     const t = await filledForm(path, title, fields);
     try {
+      const result = t.document.getElementById('result')!;
+      for (const mode of 'body' in outcome ? ['dry'] : ['dry', 'live']) {
+        result.innerHTML = '';
+        click(t, button(t.document, mode));
+        await vi.waitFor(() => expect(result.textContent).toMatch(/Dry run — nothing was sent\.|Validation failed|Response HTTP/));
+        if ('body' in outcome) {
+          expect((JSON.parse(t.document.querySelector('#result pre')!.textContent!) as { body: unknown }).body, mode).toEqual(outcome.body);
+        } else {
+          expect(result.textContent, mode).toContain('Validation failed');
+          expect(listed(t.document), mode).toContain(outcome.error);
+        }
+      }
+      await new Promise(r => setTimeout(r, 50));
+      expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+
+  // A choice is set in the form only where the form offers it: a select is given one of its options,
+  // and a value no option holds, or a list of them, is given by the link alone, as is a value for a
+  // control the page shows no form for.
+  it.each([...CHOICE_CASES, ...SWEEP_CASES])('reads %s %s (%s) as hmc.py does, by a link and by the form: case %#', async (path, rel, title, fields, outcome) => {
+    // A control refused as it is read shows its problem in place of a form, and a link builds none.
+    const query = Object.entries(fields).map(([k, v]) => `&field.${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('');
+    const opened = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1${query}`);
+    try {
+      await vi.waitFor(() => expect(opened.document.documentElement.dataset['ready']).toBe('done'));
+      if (!opened.document.getElementById('invokeForm')) {
+        expect('error' in outcome && outcome.error).toBeTruthy();
+        expect(opened.document.querySelector('#detail .warn')!.textContent).toContain('error' in outcome ? outcome.error : '');
+        return;
+      }
+    } finally { opened.dom.window.close(); }
+    const link = await linkPlan(path, rel, fields);
+    try {
+      if ('body' in outcome) {
+        expect(link.plan, link.shown).not.toBeNull();
+        expect(link.plan!.body).toEqual(outcome.body);
+      } else {
+        expect(link.plan, link.shown).toBeNull();
+        expect(listed(link.t.document), link.shown).toContain(outcome.error);
+      }
+    } finally { link.t.dom.window.close(); }
+    const t = await loaded(path);
+    try {
+      click(t, card(t.document, title)!);
+      const form = t.document.getElementById('invokeForm');
+      const inputs = Object.entries(fields).map(([name, value]) => [form?.querySelector<HTMLInputElement | HTMLSelectElement>(`[data-field="${name}"]`), value] as const);
+      const settable = !!form && inputs.every(([el, value]) => el && (el.localName !== 'select' ||
+        (!(el as HTMLSelectElement).multiple && [...(el as HTMLSelectElement).options].some(o => o.value === value))));
+      if (!settable) return;
+      const box = t.document.getElementById('confirmUnsafe') as HTMLInputElement | null;
+      if (box) {
+        box.checked = true;
+        box.dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
+      }
+      for (const [el, value] of inputs) el!.value = value;
       const result = t.document.getElementById('result')!;
       for (const mode of 'body' in outcome ? ['dry'] : ['dry', 'live']) {
         result.innerHTML = '';

@@ -21,6 +21,9 @@ function op(id: string, action: string, method: string | null, title: string, ex
     ...(method ? { 'hydra:method': method } : {}), 'hydra:title': title, ...extra };
 }
 const target = (path: string) => ({ 'hydra:target': { '@id': path } });
+/** An affordance that sends to /num-target and expects a JSON Schema object with these properties. */
+const schemaOp = (id: string, action: string, method: string, title: string, properties: Record<string, unknown>) =>
+  op(id, action, method, title, { ...target('/num-target'), 'hydra:expects': { type: 'object', properties } });
 /** A GET to /api written in place with no "@id", as a container term's single value. */
 const inline = (action: string, title: string) => ({ '@type': 'hydra:Operation', 'iep:action': { '@id': action }, 'hydra:method': 'GET',
   'hydra:title': title, ...target('/api') });
@@ -860,6 +863,85 @@ export function sharedDescriptors(base: string): Record<string, string> {
       { '@id': '#W', '@type': 'sh:NodeShape', 'sh:property': [
         { 'sh:path': { '@id': 'urn:p:picks' }, 'sh:name': 'picks', 'sh:in': ['x', 'y', 'z'], 'sh:defaultValue': ['x', 'w'] }] },
     ] },
+    // Enumerations whose entries are JSON values of every kind: an array, an object, nested arrays,
+    // entries of mixed kinds in a property with no type, null, numbers written 1.0 and past 2^53
+    // inside arrays and objects, a list whose items each have choices, a const, and two entries
+    // written alike. CHOICE_CASES reads them.
+    '/choices': { '@context': CTX, '@id': `${base}/choices`, 'iep:affordance': [
+      schemaOp('a', 'urn:choice:array', 'POST', 'Array choice', { selection: { type: 'array', enum: [['allowed']] } }),
+      schemaOp('o', 'urn:choice:object', 'POST', 'Object choice', { pick: { type: 'object', enum: [{ a: 1, b: [2, 3] }] } }),
+      schemaOp('n', 'urn:choice:nested', 'POST', 'Nested choice', { grid: { type: 'array', enum: [[[1, 2], [3]], [[]]] } }),
+      schemaOp('m', 'urn:choice:mixed', 'POST', 'Mixed choice', { mode: { enum: ['plain', 1, true, ['x'], { k: 'v' }] } }),
+      schemaOp('u', 'urn:choice:null', 'POST', 'Null choice', { state: { enum: ['open', null] },
+        kind: { type: ['string', 'null'], enum: ['a', null] } }),
+      schemaOp('ur', 'urn:choice:null-read', 'GET', 'Read of a null choice', { state: { enum: ['open', null] } }),
+      schemaOp('ua', 'urn:choice:null-array', 'POST', 'Null array choice', { list: { type: ['array', 'null'], enum: [null, ['a']] } }),
+      schemaOp('nu', 'urn:choice:numbers', 'POST', 'Number choice', { pair: { type: 'array',
+        enum: [['CHOICE-ONE', { n: 'CHOICE-TWO' }], ['CHOICE-PAST-SAFE']] } }),
+      op('l', 'urn:choice:list', 'POST', 'List choice', { ...target('/num-target'), 'hydra:expects': { '@id': '#CL' } }),
+      schemaOp('i', 'urn:choice:items', 'POST', 'Item choice', { codes: { type: 'array', items: { enum: ['x', 'y'] } } }),
+      schemaOp('c', 'urn:choice:const', 'POST', 'Const choice', { v: { const: { a: [1] } } }),
+      schemaOp('w', 'urn:choice:alike', 'POST', 'Alike choice', { flag: { enum: ['true', true] } }),
+    ], '@graph': [
+      { '@id': '#CL', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:tags' }, 'sh:name': 'tags', 'sh:in': ['a', 'b'] } },
+    ] },
+    // Every other value constraint either client reads, written so that a value of each kind meets
+    // it: JSON Schema's exclusive bounds, a type of array or object, a keyword neither client checks,
+    // lengths given a number, a bound given text, a schema inside a property, types read as no one
+    // input, and keywords written in forms JSON Schema does not allow; SHACL's exclusive bounds, a
+    // datatype whose form is not checked, a bound that is not a number, an integer type's range,
+    // node kinds, sh:class, sh:node, rdf:JSON with a length or choices, sh:hasValue and
+    // sh:qualifiedValueShape; hydra:writable; a body schema with a keyword neither client checks, or
+    // that requires a name it does not describe; and values an address leaves out. SWEEP_CASES reads them.
+    '/sweep': { '@context': CTX, '@id': `${base}/sweep`, 'iep:affordance': [
+      schemaOp('e', 'urn:sweep:exclusive', 'POST', 'Exclusive bounds', { n: { type: 'integer', exclusiveMinimum: 0, exclusiveMaximum: 10 },
+        m: { type: 'number', minimum: 0, exclusiveMinimum: true } }),
+      schemaOp('j', 'urn:sweep:json-type', 'POST', 'Array or object', { extra: { type: ['array', 'object'] } }),
+      schemaOp('k', 'urn:sweep:unchecked', 'POST', 'Unchecked keywords', { u: { type: 'array', uniqueItems: true },
+        w: { type: 'array', items: { type: 'number', multipleOf: 2 } } }),
+      schemaOp('nl', 'urn:sweep:number-length', 'POST', 'Number length', { n: { type: 'integer', maxLength: 1 } }),
+      schemaOp('sb', 'urn:sweep:string-bound', 'POST', 'String bound', { s: { type: 'string', minimum: 5 } }),
+      schemaOp('ns', 'urn:sweep:nested', 'POST', 'Nested schema', { doc: { type: 'object', required: ['id'], additionalProperties: false,
+        properties: { id: { type: 'integer', minimum: 1 }, tags: { type: 'array', maxItems: 2, items: { type: 'string', maxLength: 3 } } } } }),
+      schemaOp('un', 'urn:sweep:union', 'POST', 'Type union', { u: { type: ['integer', 'boolean'] } }),
+      schemaOp('bt', 'urn:sweep:bad-type', 'POST', 'Bad type', { u: { type: 'int' } }),
+      schemaOp('bl', 'urn:sweep:bad-length', 'POST', 'Bad length', { u: { type: 'string', maxLength: 2.5 } }),
+      schemaOp('bb', 'urn:sweep:bad-bound', 'POST', 'Bad bound', { u: { type: 'integer', minimum: 'low' } }),
+      op('s', 'urn:sweep:shacl', 'POST', 'Shape constraints', { ...target('/num-target'), 'hydra:expects': { '@id': '#SW' } }),
+      op('h', 'urn:sweep:has-value', 'POST', 'Has value', { ...target('/num-target'), 'hydra:expects': { '@id': '#HV' } }),
+      op('q', 'urn:sweep:qualified', 'POST', 'Qualified shape', { ...target('/num-target'), 'hydra:expects': { '@id': '#QV' } }),
+      op('hw', 'urn:sweep:writable', 'POST', 'Writable', { ...target('/num-target'), 'hydra:expects': { '@id': '#HC' } }),
+      schemaOp('er', 'urn:sweep:empty-read', 'GET', 'Empty read', { list: { type: 'array' }, doc: { type: 'object' } }),
+      op('ra', 'urn:sweep:root-all-of', 'POST', 'Root allOf', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { a: { type: 'string' } }, allOf: [{ required: ['a'] }] } }),
+      op('rr', 'urn:sweep:root-required', 'POST', 'Root required', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        required: ['b'], properties: { a: { type: 'string' } } } }),
+    ], '@graph': [
+      { '@id': '#SW', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:ex' }, 'sh:name': 'ex', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:integer' },
+          'sh:minExclusive': 0, 'sh:maxExclusive': 10 },
+        { 'sh:path': { '@id': 'urn:p:day' }, 'sh:name': 'day', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:date' } },
+        { 'sh:path': { '@id': 'urn:p:when' }, 'sh:name': 'when', 'sh:maxCount': 1, 'sh:minInclusive': '2024-01-01' },
+        { 'sh:path': { '@id': 'urn:p:pos' }, 'sh:name': 'pos', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:positiveInteger' } },
+        { 'sh:path': { '@id': 'urn:p:byte' }, 'sh:name': 'byte', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:byte' } },
+        { 'sh:path': { '@id': 'urn:p:iri' }, 'sh:name': 'iri', 'sh:maxCount': 1, 'sh:nodeKind': { '@id': 'sh:IRI' } },
+        { 'sh:path': { '@id': 'urn:p:cls' }, 'sh:name': 'cls', 'sh:maxCount': 1, 'sh:class': { '@id': 'urn:class:Thing' } },
+        { 'sh:path': { '@id': 'urn:p:node' }, 'sh:name': 'node', 'sh:maxCount': 1, 'sh:node': { '@id': '#NS' } },
+        { 'sh:path': { '@id': 'urn:p:jlen' }, 'sh:name': 'jlen', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'rdf:JSON' }, 'sh:maxLength': 5 },
+        { 'sh:path': { '@id': 'urn:p:jin' }, 'sh:name': 'jin', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'rdf:JSON' }, 'sh:in': ['[1]', '"x"'] },
+      ] },
+      { '@id': '#NS', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:a' }, 'sh:datatype': { '@id': 'xsd:integer' } } },
+      { '@id': '#HV', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:fixed' }, 'sh:name': 'fixed', 'sh:maxCount': 1, 'sh:hasValue': 'yes' },
+        { 'sh:path': { '@id': 'urn:p:tags' }, 'sh:name': 'tags', 'sh:hasValue': 'a' },
+      ] },
+      { '@id': '#QV', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:q' }, 'sh:name': 'q',
+        'sh:qualifiedValueShape': { '@id': '#NS' }, 'sh:qualifiedMinCount': 1 } },
+      { '@id': '#HC', '@type': 'hydra:Class', 'hydra:supportedProperty': [
+        { 'hydra:property': { '@id': 'urn:p:id' }, 'hydra:writable': false },
+        { 'hydra:property': { '@id': 'urn:p:name' } },
+      ] },
+    ] },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
   const out = Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')
@@ -868,6 +950,8 @@ export function sharedDescriptors(base: string): Record<string, string> {
   // grammar allows it, and both clients read it as an infinity.
   out['/values'] = out['/values']!.replace('"LARGE-SCORE"', '1e400').replace('"BIG-TEXT-DEFAULT"', `1${'0'.repeat(30)}`)
     .replace('"LARGE-BOUND"', `1${'0'.repeat(399)}`).replace('"TWO-POINT-ZERO"', '2.0').replace('"PAST-SAFE"', '9007199254740993');
+  // Numbers inside the choices' entries as written: 1.0, 2.0 and 2^53 + 1, which JSON.parse reads as 2^53.
+  out['/choices'] = out['/choices']!.replace('"CHOICE-ONE"', '1.0').replace('"CHOICE-TWO"', '2.0').replace('"CHOICE-PAST-SAFE"', '9007199254740993');
   // JSON.stringify writes each key once, so a repeated key is put in the text by hand: JSON leaves
   // its meaning open, and a reader that takes the last "hydra:method" takes GET.
   out['/repeated-key'] = JSON.stringify({ '@context': CTX, '@id': `${base}/repeated-key`, 'iep:affordance': [
@@ -1135,13 +1219,13 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
   ['/values-md', 'hm-surrogate-default', 'Surrogate text default', {}, { error: `a: ${UNPAIRED}` }],
   // A text field's default that is not a string is its text, as the form holds it; a JSON integer
   // past 2^53 is the double nearest it; an integer field's default of 2.0 is 2, and one past 2^53
-  // cannot be sent exactly; a bound no double holds is none, and a list's number past a double is
-  // not a number.
+  // cannot be sent exactly; a bound no double holds is an infinity, which every number a field
+  // takes is below, and a list's number past a double is not a number.
   ['/values', 'urn:values:text-default', 'Text defaults', {}, { body: { big: '1e+30', small: '5', flag: 'true', object: '{"a":[1]}' } }],
   ['/values-md', 'hm-big-default', 'Big text default', {}, { body: { a: '1e+30' } }],
   ['/values', 'urn:values:whole-default', 'Whole default', {}, { body: { n: 2 } }],
   ['/values', 'urn:values:unsafe-default', 'Past 2^53 default', {}, { error: 'n: integer too large to send exactly' }],
-  ['/values', 'urn:values:bound', 'Large bound', { amount: '5' }, { body: { amount: 5 } }],
+  ['/values', 'urn:values:bound', 'Large bound', { amount: '5' }, { error: 'amount: below minInclusive Infinity' }],
   ['/values', 'urn:values:list', 'List values', { nums: `[1${'0'.repeat(400)}]` }, { error: 'nums: not a number' }],
   ['/values', 'urn:values:list', 'List values', { counts: '[1, 9007199254740993]' }, { error: 'counts: integer too large to send exactly' }],
   // A list's defaults are what the form holds, one per line or the options a multiple choice
@@ -1185,6 +1269,133 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
       ['/values', rel, title, { two: COMBINED }, { body: { two: COMBINED } }],
     ] as const;
   }),
+];
+
+type ValueCase = readonly [path: string, action: string, title: string, fields: Record<string, string>,
+  outcome: { readonly body: unknown } | { readonly error: string }];
+/** What each client says of a value an address would leave out, after the field's name. */
+const ADDRESS_LEAVES = 'holds a value an address leaves out (null, "", [] or {}, alone or inside it), so it is not sent';
+/** What each client says of a value given for a field with a constraint neither checks, after its name. */
+const unchecked = (names: string) => `has a constraint this client does not check (${names}), so it is not sent`;
+/** The problem that keeps a control whose input `name` cannot be read from being invoked. */
+const unread = (name: string, what: string) =>
+  `the input "${name}" ${what}, which this client does not read, so what it takes is not known; this control is not invoked`;
+
+/**
+ * Choices for /choices each client reads alike, as VALUE_CASES are: an enumeration (or a const)
+ * holds JSON values of any kind, and a value is one of them when it is the same JSON value: arrays
+ * item by item in order, objects by the same keys with the same values in any order, numbers by
+ * value (1.0 is 1, and 2^53 + 1 is the 2^53 JSON.parse reads), and a string, a boolean or null only
+ * the same of its kind ("1" is not 1, true is not 1). A choice in a field whose type leaves its
+ * kind open is sent as the entry it names, an array, an object, a number, a boolean or null, never
+ * as the text that names it; null is offered as a choice of its own, and refused where an address
+ * would leave it out. Two entries written alike are a problem, and the control is not invoked.
+ */
+export const CHOICE_CASES: ReadonlyArray<ValueCase> = [
+  ['/choices', 'urn:choice:array', 'Array choice', { selection: '["not-allowed"]' }, { error: 'selection: must be one of ["allowed"]' }],
+  ['/choices', 'urn:choice:array', 'Array choice', { selection: '["allowed"]' }, { body: { selection: ['allowed'] } }],
+  ['/choices', 'urn:choice:object', 'Object choice', { pick: '{"b":[2,3],"a":1}' }, { body: { pick: { a: 1, b: [2, 3] } } }],
+  ...['{"a":1,"b":[3,2]}', '{"a":1}', '{"a":1,"b":[2,3],"c":0}'].map(pick =>
+    ['/choices', 'urn:choice:object', 'Object choice', { pick }, { error: 'pick: must be one of {"a":1,"b":[2,3]}' }] as const),
+  ['/choices', 'urn:choice:object', 'Object choice', { pick: '[{"a":1,"b":[2,3]}]' }, { error: 'pick must be a JSON object' }],
+  ['/choices', 'urn:choice:nested', 'Nested choice', { grid: '[[1,2],[3]]' }, { body: { grid: [[1, 2], [3]] } }],
+  ['/choices', 'urn:choice:nested', 'Nested choice', { grid: '[[]]' }, { body: { grid: [[]] } }],
+  ...['[[2,1],[3]]', '[[1,2,3]]', '[[1,2],[3],[]]', '[]'].map(grid =>
+    ['/choices', 'urn:choice:nested', 'Nested choice', { grid }, { error: 'grid: must be one of [[1,2],[3]], [[]]' }] as const),
+  ['/choices', 'urn:choice:mixed', 'Mixed choice', { mode: 'plain' }, { body: { mode: 'plain' } }],
+  ['/choices', 'urn:choice:mixed', 'Mixed choice', { mode: '1' }, { body: { mode: 1 } }],
+  ['/choices', 'urn:choice:mixed', 'Mixed choice', { mode: 'true' }, { body: { mode: true } }],
+  ['/choices', 'urn:choice:mixed', 'Mixed choice', { mode: '["x"]' }, { body: { mode: ['x'] } }],
+  ['/choices', 'urn:choice:mixed', 'Mixed choice', { mode: '{"k":"v"}' }, { body: { mode: { k: 'v' } } }],
+  ['/choices', 'urn:choice:mixed', 'Mixed choice', { mode: 'other' }, { error: 'mode: must be one of plain, 1, true, ["x"], {"k":"v"}' }],
+  ['/choices', 'urn:choice:null', 'Null choice', { state: 'null' }, { body: { state: null } }],
+  ['/choices', 'urn:choice:null', 'Null choice', { state: 'open', kind: 'null' }, { body: { state: 'open', kind: null } }],
+  ['/choices', 'urn:choice:null', 'Null choice', { state: 'closed' }, { error: 'state: must be one of open, null' }],
+  ['/choices', 'urn:choice:null', 'Null choice', { kind: 'b' }, { error: 'kind: must be one of a, null' }],
+  ['/choices', 'urn:choice:null-read', 'Read of a null choice', { state: 'null' }, { error: `state: ${ADDRESS_LEAVES}` }],
+  ['/choices', 'urn:choice:null-array', 'Null array choice', { list: 'null' }, { body: { list: null } }],
+  ['/choices', 'urn:choice:null-array', 'Null array choice', { list: '["a"]' }, { body: { list: ['a'] } }],
+  ['/choices', 'urn:choice:null-array', 'Null array choice', { list: '["b"]' }, { error: 'list: must be one of null, ["a"]' }],
+  ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[1,{"n":2}]' }, { body: { pair: [1, { n: 2 }] } }],
+  ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[1.0,{"n":2.00}]' }, { body: { pair: [1, { n: 2 }] } }],
+  ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[9007199254740993]' }, { body: { pair: [9007199254740992] } }],
+  ...['[1,{"n":2.5}]', '[true,{"n":2}]', '["1",{"n":2}]', '[1,{"n":"2"}]'].map(pair =>
+    ['/choices', 'urn:choice:numbers', 'Number choice', { pair }, { error: 'pair: must be one of [1,{"n":2}], [9007199254740992]' }] as const),
+  ['/choices', 'urn:choice:list', 'List choice', { tags: '["a","c"]' }, { error: 'tags: must be one of a, b' }],
+  ['/choices', 'urn:choice:list', 'List choice', { tags: '["b","a"]' }, { body: { tags: ['b', 'a'] } }],
+  ['/choices', 'urn:choice:items', 'Item choice', { codes: '["x","z"]' }, { error: 'codes/1: must be one of x, y' }],
+  ['/choices', 'urn:choice:items', 'Item choice', { codes: '["y","x"]' }, { body: { codes: ['y', 'x'] } }],
+  ['/choices', 'urn:choice:const', 'Const choice', { v: '{"a":[1]}' }, { body: { v: { a: [1] } } }],
+  ['/choices', 'urn:choice:const', 'Const choice', { v: '{"a":[2]}' }, { error: 'v: must be {"a":[1]}' }],
+  ['/choices', 'urn:choice:alike', 'Alike choice', { flag: 'true' },
+    { error: 'the input "flag" offers two choices written alike (true), so which one is meant is not known; this control is not invoked' }],
+];
+
+/**
+ * The other value constraints each client reads, swept across the kinds of value each can meet,
+ * on /sweep, read alike by both clients as VALUE_CASES are. A constraint is checked where its
+ * standard applies it to the value's kind and passed over where it does not (a JSON Schema length
+ * constrains only a string, a bound only a number); where neither client can check it, a value
+ * given is refused by name; and a keyword written in a form its standard does not allow keeps the
+ * control from being invoked.
+ */
+export const SWEEP_CASES: ReadonlyArray<ValueCase> = [
+  ['/sweep', 'urn:sweep:exclusive', 'Exclusive bounds', { n: '0' }, { error: 'n: not above exclusiveMinimum 0' }],
+  ['/sweep', 'urn:sweep:exclusive', 'Exclusive bounds', { n: '10' }, { error: 'n: not below exclusiveMaximum 10' }],
+  ['/sweep', 'urn:sweep:exclusive', 'Exclusive bounds', { m: '0' }, { error: 'm: not above exclusiveMinimum 0' }],
+  ['/sweep', 'urn:sweep:exclusive', 'Exclusive bounds', { n: '5', m: '0.5' }, { body: { n: 5, m: 0.5 } }],
+  ['/sweep', 'urn:sweep:json-type', 'Array or object', { extra: '5' }, { error: 'extra: must be a JSON array or object' }],
+  ['/sweep', 'urn:sweep:json-type', 'Array or object', { extra: 'null' }, { error: 'extra: must be a JSON array or object' }],
+  ['/sweep', 'urn:sweep:json-type', 'Array or object', { extra: '[1]' }, { body: { extra: [1] } }],
+  ['/sweep', 'urn:sweep:unchecked', 'Unchecked keywords', { u: '["a"]' }, { error: `u: ${unchecked('uniqueItems')}` }],
+  ['/sweep', 'urn:sweep:unchecked', 'Unchecked keywords', { w: '[2]' }, { error: `w: ${unchecked('items/multipleOf')}` }],
+  ['/sweep', 'urn:sweep:number-length', 'Number length', { n: '10' }, { body: { n: 10 } }],
+  ['/sweep', 'urn:sweep:string-bound', 'String bound', { s: 'abc' }, { body: { s: 'abc' } }],
+  ['/sweep', 'urn:sweep:nested', 'Nested schema', { doc: '{"tags":[]}' }, { error: 'doc: is missing the key "id"' }],
+  ['/sweep', 'urn:sweep:nested', 'Nested schema', { doc: '{"id":0}' }, { error: 'doc/id: below minInclusive 1' }],
+  ['/sweep', 'urn:sweep:nested', 'Nested schema', { doc: '{"id":"1"}' }, { error: 'doc/id: must be a JSON integer' }],
+  ['/sweep', 'urn:sweep:nested', 'Nested schema', { doc: '{"id":1.5}' }, { error: 'doc/id: must be a JSON integer' }],
+  ['/sweep', 'urn:sweep:nested', 'Nested schema', { doc: '{"id":1,"tags":["abcd"]}' }, { error: 'doc/tags/0: longer than maxLength 3' }],
+  ['/sweep', 'urn:sweep:nested', 'Nested schema', { doc: '{"id":1,"tags":["a","b","c"]}' }, { error: 'doc/tags: takes at most 2 values, got 3' }],
+  ['/sweep', 'urn:sweep:nested', 'Nested schema', { doc: '{"id":1,"x":1}' }, { error: 'doc/x: is not allowed by its schema' }],
+  ['/sweep', 'urn:sweep:nested', 'Nested schema', { doc: '{"id":2,"tags":["ab"]}' }, { body: { doc: { id: 2, tags: ['ab'] } } }],
+  ['/sweep', 'urn:sweep:union', 'Type union', { u: '1' },
+    { error: 'the input "u" names JSON Schema types (integer, boolean) that this client does not read as one input, so what it takes is not known; this control is not invoked' }],
+  ['/sweep', 'urn:sweep:bad-type', 'Bad type', { u: '1' }, { error: unread('u', 'writes type as something other than a JSON Schema type name or a list of them') }],
+  ['/sweep', 'urn:sweep:bad-length', 'Bad length', { u: 'a' }, { error: unread('u', 'writes maxLength as something other than a whole number of zero or more') }],
+  ['/sweep', 'urn:sweep:bad-bound', 'Bad bound', { u: '1' }, { error: unread('u', 'writes minimum as something other than a number') }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { ex: '0' }, { error: 'ex: not above minExclusive 0' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { ex: '10' }, { error: 'ex: not below maxExclusive 10' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { ex: '5' }, { body: { ex: 5 } }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { day: '2024-01-01' },
+    { error: 'day: takes xsd:date, whose form this client does not check, so it is not sent' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { when: '2024-02-01' },
+    { error: 'when: its sh:minInclusive 2024-01-01 is not a number, which this client does not compare, so it is not sent' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { pos: '0' }, { error: 'pos: out of the range of xsd:positiveInteger' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { byte: '128' }, { error: 'byte: out of the range of xsd:byte' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { pos: '1', byte: '-128' }, { body: { pos: 1, byte: -128 } }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { iri: 'not an iri' }, { error: 'iri: must be an IRI' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { iri: 'urn:x' }, { body: { iri: 'urn:x' } }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { cls: 'urn:thing:1' }, { error: `cls: ${unchecked('sh:class')}` }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { node: '{"a":1}' }, { error: `node: ${unchecked('sh:node')}` }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { jlen: '[1]' }, { error: 'jlen: holds JSON, which a length facet does not measure, so it is not sent' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { jin: '"x"' }, { body: { jin: 'x' } }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { jin: '[1]' }, { body: { jin: [1] } }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { jin: '[2]' }, { error: 'jin: must be one of [1], "x"' }],
+  ['/sweep', 'urn:sweep:has-value', 'Has value', { fixed: 'no', tags: 'a' }, { error: 'fixed: must be yes' }],
+  ['/sweep', 'urn:sweep:has-value', 'Has value', { tags: 'a' }, { error: "missing required field 'fixed'" }],
+  ['/sweep', 'urn:sweep:has-value', 'Has value', { fixed: 'yes', tags: 'b' }, { error: 'tags: must include a' }],
+  ['/sweep', 'urn:sweep:has-value', 'Has value', { fixed: 'yes', tags: 'b\na' }, { body: { fixed: 'yes', tags: ['b', 'a'] } }],
+  ['/sweep', 'urn:sweep:qualified', 'Qualified shape', { q: 'x' },
+    { error: 'the input "q" names sh:qualifiedValueShape, which this client does not check, so what it takes is not known; this control is not invoked' }],
+  ['/sweep', 'urn:sweep:writable', 'Writable', { id: 'x' }, { error: 'id: is not writable (hydra:writable false), so it is not sent' }],
+  ['/sweep', 'urn:sweep:writable', 'Writable', { name: 'n' }, { body: { name: 'n' } }],
+  ['/sweep', 'urn:sweep:root-all-of', 'Root allOf', { a: 'x' },
+    { error: 'the JSON Schema names allOf, which this client does not check, so what it sends is not known; this control is not invoked' }],
+  ['/sweep', 'urn:sweep:root-required', 'Root required', { a: 'x' },
+    { error: 'the JSON Schema requires "b", which it does not describe, so what it sends is not known; this control is not invoked' }],
+  ['/sweep', 'urn:sweep:empty-read', 'Empty read', { list: '[]' }, { error: `list: ${ADDRESS_LEAVES}` }],
+  ['/sweep', 'urn:sweep:empty-read', 'Empty read', { list: '["a",null]' }, { error: `list: ${ADDRESS_LEAVES}` }],
 ];
 
 /**

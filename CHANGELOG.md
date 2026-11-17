@@ -569,6 +569,22 @@ differ. The paragraph above miscounted: of the cases it lists, 11 failed in
 and 3 under 3.13, and its "redirect that never ends" is a redirect whose body
 never ends. The page needed no change; no CSP hash moves.
 
+An eleventh review found that both clients skipped a JSON Schema enumeration
+for an array or an object, so `{"type":"array","enum":[["allowed"]]}` let
+`["not-allowed"]` be sent. An enumeration or a const now admits a value of any
+kind that is the same JSON value as an entry (arrays in order, objects in any
+key order, numbers by value, and no string or boolean equal to a number), and a
+choice in a field whose type leaves its kind open is sent as the entry it names,
+null included, never as its text. The sweep that followed checks every other
+value constraint by its standard: lengths only on text and bounds only on
+numbers in a JSON Schema, exclusive bounds, a schema inside an array or an
+object, integer types' ranges, node kinds and `sh:hasValue`; refuses by name a
+value for a constraint neither client checks (`uniqueItems`, `sh:class`, a date
+datatype, a bound that is no number), and one an address would leave out. Of
+the 91 new shared rows, 68 failed in each client before, as did the changed row
+for a bound past a double, which had let any number through. The README's new
+Values section lists every decision; the page's CSP hash moves.
+
 ## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
 
 From review of #934. With `requireSignedHead` on, a head with no signature was
