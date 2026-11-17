@@ -91,15 +91,27 @@ created at start still signed in. Run with the same npx arguments at debug
 level, it logged six sweeps, each finished in 25 to 47 ms. Master's config,
 run through npx the same way, crashed on its first sweep.
 
+**The self-hosted image gets it too** (Codex, on this pull request).
+`deploy/Dockerfile.css` is built by no workflow, but `deploy/azure-deploy.sh`
+builds it and Tier 3 of `spec/STORAGE-TIERS.md` gives it as the self-host
+recipe, and it copies `css-config.json`, which would now refuse to boot alone.
+It now copies the module to `/app/css-internal-listing`, beside the config, and
+runs `npm install -g @solid/community-server@7.3.0 /app/css-internal-listing`,
+pinned like the demos (it floated on `@7`). A global install from a folder
+links the module into the global `node_modules` next to CSS, where Components.js
+finds it. No Docker daemon was available, so the image was not built. The same
+install under a scratch `--prefix`, with the config and module laid out as
+`/app` holds them, booted the copied config from the global binary and logged
+five finished sweeps in 40 s with the 6 s scratch interval.
+
 **Not covered.** mcp-server's local fallback does not start CSS at all, before
 and after this change. It runs the root's CSS binary, and Components.js walks
 up from it into the root's `node_modules`, finds `@comunica` 5 beside CSS's
 `@comunica` 2, and stops with "… ActorDereference … is not a valid component",
 the failure `solid-server.ts` moved the demos to npx for. That is its own
 change. `css-config-redis.json` was loaded, not booted: booting it needs Redis.
-`deploy/Dockerfile.css`, which nothing builds, still copies `css-config.json`
-alone and would now fail at boot, and the dashboard image copies it without
-reading it. Windows was not run.
+The dashboard image copies `css-config.json` without reading it. Windows was
+not run.
 
 The new test module takes the tracked tree to 735, the whole 35 of slack over
 `MIN_TEST_MODULES` 700, so `tests/vitest-run-integrity.test.ts` asked for the

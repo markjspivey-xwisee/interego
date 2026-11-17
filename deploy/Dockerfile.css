@@ -24,8 +24,15 @@ FROM ${NODE_BASE}
 
 WORKDIR /app
 
-# Install Community Solid Server
-RUN npm install -g @solid/community-server@7
+# Install Community Solid Server, with css-internal-listing beside it. css-config.json imports
+# that module's Override (./css-internal-listing/config/internal-listing.json, relative to the
+# config), without which CSS 7.3.0's hourly expired-entry sweep crashes the server; a server
+# without the module refuses the config at boot. Installed globally from its folder, npm links it
+# into the global node_modules next to CSS, where Components.js discovers it and Node requires it
+# by name. Pinned to the release examples/multi-agent/solid-server.ts runs, which the fix was
+# verified on.
+COPY examples/multi-agent/css-internal-listing /app/css-internal-listing
+RUN npm install -g @solid/community-server@7.3.0 /app/css-internal-listing
 
 # Copy CSS config (file-backed storage; memory resource-locker → single
 # replica only). NOTE: css-config-redis.json (a Redis-locker variant for
