@@ -154,7 +154,7 @@ They are different acts, and xapi-x keeps them different.
 
 So:
 
-The lrs-adapter writes the revision form from what its caller states in `supersedesStatements`. Foxxi's projector writes it for every descriptor that supersedes another: a statement's id there is a function of its descriptor's IRI, so the ids it supersedes are known without a lookup. It cannot tell a correction from a revision, so it never voids on supersession.
+The lrs-adapter writes the revision form from what its caller states in `supersedesStatements`. Foxxi's projector writes it for every descriptor that supersedes another: a statement's id there is a function of its descriptor's IRI, so the ids it supersedes are known without a lookup. The envelope lists what it supersedes in no promised order, so the projector orders them itself, newest first by the time each descriptor's IRI carries; a descriptor whose IRI carries no time comes after those that do, in the envelope's order. It cannot tell a correction from a revision, so it never voids on supersession.
 
 - **A revision** (the account changed; the earlier one was a fair record at the time). Emit the new statement with `XAPIX#supersedesStatement` naming the earlier statement ids, and `context.statement` as a StatementRef to the most recent of them. Void nothing. An xapi-x consumer reads the newest; a plain LRS shows both, which is the loss.
 - **A correction** (the earlier statement was wrong and is being counted). Emit the new statement as above, and also a standard voiding statement for the earlier one. Voiding is done with xAPI's own verb and StatementRef, unchanged.

@@ -182,6 +182,15 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     expect((statement.verb as Json).id).not.toBe('http://adlnet.gov/expapi/verbs/voided');
     expect((await followsFoxxi(statement)).comments).toEqual([]);
     expect(validates(statement, xapix)).toMatchObject({ outcome: 'success', findings: [] });
+    // The envelope promises no order, so the projector makes one: newest first by the time each
+    // descriptor's IRI carries, whatever order the envelope listed them in.
+    const oldestFirst = project({ supersedes: [DM1, D0] });
+    expect((context(oldestFirst).extensions as Json)[term('supersedesStatement')]).toEqual([deterministicUuid(D0), deterministicUuid(DM1)]);
+    expect(context(oldestFirst).statement).toEqual({ objectType: 'StatementRef', id: deterministicUuid(D0) });
+    // A descriptor whose IRI carries no time comes after those that do; with no time on any, the envelope's order is kept.
+    const untimed = 'https://pod.example/fictional-agent/context-graphs/made-up-note.ttl', untimed2 = 'https://pod.example/fictional-agent/context-graphs/another-made-up-note.ttl';
+    expect((context(project({ supersedes: [untimed, DM1, D0] })).extensions as Json)[term('supersedesStatement')]).toEqual([D0, DM1, untimed].map(deterministicUuid));
+    expect((context(project({ supersedes: [untimed, untimed2] })).extensions as Json)[term('supersedesStatement')]).toEqual([untimed, untimed2].map(deterministicUuid));
     // One that supersedes nothing says nothing about it.
     expect(context(project()).statement).toBeUndefined();
     expect((context(project()).extensions as Json)[term('supersedesStatement')]).toBeUndefined();

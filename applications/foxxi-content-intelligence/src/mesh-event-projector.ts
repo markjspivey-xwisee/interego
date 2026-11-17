@@ -128,6 +128,13 @@ function timestampFromDescriptor(url: string): string | undefined {
   try { return new Date(n).toISOString(); } catch { return undefined; }
 }
 
+/** Descriptor IRIs, newest first by the time each IRI carries; those that carry none keep their
+ *  order, after the ones that do. Stable, so equal times keep the order they came in. */
+function mostRecentFirst(descriptors: readonly string[]): string[] {
+  const at = (iri: string) => { const t = timestampFromDescriptor(iri); return t ? Date.parse(t) : Number.NEGATIVE_INFINITY; };
+  return descriptors.map((iri, i) => ({ iri, i, t: at(iri) })).sort((a, b) => (b.t - a.t) || (a.i - b.i)).map(d => d.iri);
+}
+
 const tail = (iri: string) => iri.split(/[:/#]/).filter(Boolean).pop() ?? iri;
 const humanLabel = (iri: string) => tail(iri).replace(/[-_]+/g, ' ').trim() || iri;
 
@@ -274,7 +281,14 @@ export function projectMeshEntry(
   // What this statement replaces as the current account: the statements projected from the
   // descriptors this one supersedes. A statement's id is a function of its descriptor's IRI, so
   // those ids are known without a lookup. It voids none of them; only a Retracted descriptor voids.
-  const replaces = supersession((entry.supersedes ?? []).filter(Boolean).map(deterministicUuid));
+  //
+  // The envelope lists what it supersedes in no promised order (the discover parser appends the
+  // triples as the document has them), and the decoration is most recent first with
+  // `context.statement` naming the first. So the order is made here, from the time each
+  // descriptor's own IRI carries: newest first, and one whose IRI carries no time after those
+  // that do, in the order the envelope gave. With no time on any of them the envelope's order is
+  // all there is, and it is kept.
+  const replaces = supersession(mostRecentFirst((entry.supersedes ?? []).filter(Boolean)).map(deterministicUuid));
 
   // Context extensions — all envelope-derived, none fabricated.
   const extensions: Record<string, unknown> = {
