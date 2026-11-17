@@ -55,6 +55,80 @@ guest").
 
 **After review.** A general guest's session that acts as a linked account may not delete that account's course-player record: `POST /learn/forget` answers 403 `player_forget_needs_account_sign_in` for it. The browser holds only a guest's key, for ten minutes at a time; deleting the account's record is the account's to do, signed in as itself.
 
+## 2026-11-17 — A runner step that opts an already-registered application into the general guest
+
+`tools/coached-world-guest-provision.mjs` sets an application up from nothing.
+An application identity already admits guests for needed a smaller step, and
+editing identity's `PROVISIONAL_PLAY_CLIENTS` by hand risks a value identity
+will not start with.
+
+- `tools/general-guest-opt-in.mjs` and the dispatch-only workflow
+  `general-guest-opt-in.yml` add `generalGuest` and `generalGuestReturnPath`
+  to the application's existing entry, then set the application's door origin
+  and its switch. The door is the one identity states. Identity is written
+  first, the switch last.
+- It creates no key, account or entry, and refuses before any write where the
+  general guest is off at identity, the entry is missing, the application's
+  guest key is not set, or the list would not parse. Every other entry and
+  field is carried over unchanged and checked to be.
+- Nothing is deployed and no value is printed. Unticked `apply` is a dry run.
+- One application is known so far: the Foxxi learner workbench.
+
+## 2026-11-17 — Foxxi: a profile write reported as not kept stays not kept, and costs its signer nothing
+
+Three things were left open when profile additions, removals and publications
+were made to wait for their durable write.
+
+**A write the server reported as not kept could come back after a restart.**
+Two ways. The write landed on the pod and its answer was lost on the way back.
+Or the write did fail: the bridge composes a record into its lattice before it
+writes, and the whole lattice goes to the pod with the next write that lands,
+the failed record with it. Either way the server answered 503 and "nothing
+changed", and the next restart replayed the record: a version nobody was told
+was added, or a profile taken down that was said to be still held.
+
+- Every record now has an `id`. When `persist` throws or does not acknowledge,
+  `ProfileServer` asks the new `confirm` option whether the store has the
+  record. The bridge answers from the pod's own copy
+  (`persistedLatticeArtifacts`), not from the lattice in the process. A record
+  that is there was kept, and the request succeeds.
+- A record that is not kept is remembered, and the next record the server sends
+  names it in `withdraws`. Replay skips a withdrawn record. The withdrawal is
+  in the same pod write as the record it withdraws when that record goes with
+  a later write, so there is no moment a restart sees one without the other.
+- One record withdraws at most 32 others. Past that many not kept, a change is
+  not sent until one record that only withdraws them has been kept; that record
+  is the same on every attempt. So a pod that is down for a long time is sent
+  no more than it was before, plus one small record.
+- When the pod can be read neither for the write's answer nor afterwards, the
+  server does not guess. The write is in doubt (`WriteInDoubt`, a 503 with
+  `inDoubt: true` and neither `persisted` nor `retry`): nothing changes in the
+  running server yet, nobody changes that profile meanwhile, and the server
+  settles it from the pod before its next write and on a timer (5 s, doubling
+  to 60 s). A record the pod has is applied; one it does not have is withdrawn.
+  Until then a restart follows the pod, which is what the answer said: not
+  known yet. An addition or publication in doubt keeps its count against the
+  signer's allowance.
+- Records kept before this have no `id` and replay as they did.
+
+**A refused addition spent the signer's hourly allowance.** The count was
+taken before the document was looked at. `SignerHourlyLimit.admit` now says
+when it counted, `giveBack` returns that one count, and the add route returns
+it whenever the version ends up not held: a
+bad document, another agent's profile, a `uri` that could not be fetched, a
+full server, a pod write that was not kept. A publication that is refused or
+not kept after its count was taken returns it too (`publishRefused` in
+`mountProfileAuthoring`). The per-address rate limit on both routes is
+unchanged, and is what bounds repeated failures.
+
+**The add and remove routes were not tested over HTTP.** They were written
+inline in `bridge/server.ts`. They are now `mountProfileServerWrites` in
+`src/xapi-profile-server/service.ts`, mounted by the bridge with the same
+verification, rate limit, allowance, fetch and answer bodies as before, and by
+`tests/a-profile-write-that-was-not-kept-stays-not-kept.test.ts` (30 tests)
+with a made-up pod. The function makes the per-address limiter itself, from
+options, so the limit is in the same place as the routes it guards.
+
 ## 2026-11-16 — jev-harness: a test selection can replace an earlier one
 
 A selection could only be superseded by an outcome, and an outcome is a score:
