@@ -185,6 +185,51 @@ chain and an order attestation and no emitter that used them.
 **Not done.** The attestation is not written to a pod. The world attests its
 own emissions only. llm-telemetry does not chain.
 
+## 2026-11-17 — css-gate: the operator bearer no longer writes into a guest's pod once the guest is closed or expired
+
+The gate's operator bearer wrote any path of any pod, and every check on a
+guest's pod (`u-try-play-`, `u-try-guest-`) was on the guest's own token. An
+application's bridge holds that bearer (it is the one secret the gate knows),
+so a bridge that keeps a guest's records in the guest's pod could go on
+writing there after the guest's deadline, and after identity had closed the
+account and purged the pod.
+
+- **Closed or expired: refused.** For `PUT`, `POST` and `PATCH` with the
+  operator bearer into a guest's pod, the gate now reads the pod's sign-in
+  record from the store at every write. A tombstone is `410 guest_pod_closed`;
+  an unclaimed guest past its anchor's deadline is `410 guest_pod_expired`,
+  whether the janitor has closed it yet or not; no record, or no anchor that
+  names the pod, is `409 guest_pod_not_open`; a record that cannot be read is
+  `503 guest_pod_state_unavailable` and nothing is let through unread.
+- **A guest's sign-in record and write budget are not written through the
+  gate** (`403 guest_pod_private_document`). Identity writes the first past
+  the gate and the gate writes the second itself; a write over a tombstone
+  would have re-opened a closed guest.
+- **A bound for a live guest's pod.** At most `GUEST_POD_OPERATOR_WRITES`
+  operator writes (default 4096) and `GUEST_POD_OPERATOR_BYTES` declared bytes
+  (default 128 MiB), each at most `GUEST_POD_OPERATOR_RESOURCE_BYTES` (default
+  8 MiB): `507` and `413` past them. Counted in the gate's process, so a
+  restart starts it again: a ceiling on a runaway writer, not a ledger.
+  `/healthz` states it (`guestPodOperatorWrites`).
+- **Unchanged:** `DELETE` (operator tooling removes what a closed pod holds),
+  reads, every pod that is not a guest's, a guest that was claimed (a
+  registered account in the same pod: no deadline, no bound), and a guest's
+  own token. Identity's provisioning and cleanup, and the relay's writes, do
+  not come through the gate (they reach the store at their `CSS_URL`), so
+  nothing here can refuse them; a test holds `deploy/railway/services.json`
+  to that.
+
+- **Shadow until switched on.** Only `GUEST_POD_OPERATOR_MODE=enforce`
+  refuses. Any other value, and the default, decides the same way, logs what
+  it would have refused (once per pod and reason) and writes as before, so the
+  rule can be watched against the real store before a live guest's writes
+  depend on it. `/healthz` names the mode.
+
+Once enforcing, a bridge gets a `410` where it used to get a `201` for a guest that has
+ended; it should treat that as the guest being gone. The gate cannot tell one
+holder of the operator bearer from another. A write let through just before a
+closure can still land after it; the rule holds from the next write on.
+
 ## 2026-11-17 — identity: a guest pod larger than one cleanup pass lists is closed and purged all the same
 
 The janitor's cleanup of a guest (`u-try-play-`, `u-try-guest-`) listed the
