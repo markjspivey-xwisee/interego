@@ -24,8 +24,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals,
-  LISTED, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
+import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals,
+  LINK_CASES, LISTED, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -817,14 +817,18 @@ describe('hypermedia client: SHACL sh:in lists', () => {
 });
 
 describe('hypermedia client: numeric fields', () => {
-  // [field, input, the error the page reports]. `count` is an <input type="number">: it drops text
-  // that is not a floating-point number before the page reads it, and its default step of 1 stops
-  // the form submitting a fraction, so a fraction there is tried through an ?invoke= link below.
+  // [field, input, the error the page reports]. Every number field is a text input, `count` an
+  // integer one included: an <input type="number"> would drop text that is not a floating-point
+  // number before the page read it, and the field's default would be sent in its place.
   const BAD: Array<[string, string, string]> = [
     ...['abc', 'NaN', 'Infinity', '0x10', '12abc', '1,5'].map(v => ['amount', v, 'amount: not a number'] as [string, string, string]),
     ['amount', '1e999', 'amount: not a finite number'],
-    ['amount', '   ', "missing required field 'amount'"],
+    // Only spaces are no number, and are refused as one, not read as an empty field.
+    ['amount', '   ', 'amount: not a number'],
     ['amount', '0.5', 'amount: below minInclusive'],
+    ['count', 'abc', 'count: not an integer'],
+    ['count', '1.5', 'count: not an integer'],
+    ['count', ' + 1', 'count: not an integer'],
     ['count', '1e3', 'count: not an integer'],
     ['size', '1.5', 'size: not an integer'],
     ['size', '12abc', 'size: not an integer'],
@@ -1367,6 +1371,62 @@ describe('hypermedia client: one reading of each document, as hmc.py reads it', 
         expect(plan, shown).not.toBeNull();
         expect([plan!.url, plan!.body]).toEqual([outcome.url, outcome.body]);
       }
+    } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: a link\'s values, checked as given', () => {
+  it.each(LINK_CASES)('plans %s %s from a link giving %j as hmc.py plans it: case %#', async (path, rel, fields, outcome) => {
+    const { t, plan, shown } = await linkPlan(path, rel, fields);
+    try {
+      if ('error' in outcome) {
+        expect(plan, shown).toBeNull();
+        expect(listed(t.document), shown).toContain(outcome.error);
+      } else {
+        expect(plan, shown).not.toBeNull();
+        expect(plan!.body).toEqual(outcome.body);
+      }
+      expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('invokes the form with a link\'s value until the person changes that input, and shows a line break in a text area', async () => {
+    const { t } = await linkPlan('/link-values', 'urn:lv:write', { scope: 'invalid', note: 'a\nb', n: 'abc' });
+    try {
+      const { document } = t;
+      const result = document.getElementById('result')!;
+      const input = (name: string) => document.querySelector<HTMLInputElement>(`#invokeForm [data-field="${name}"]`)!;
+      expect([input('note').localName, input('note').value]).toEqual(['textarea', 'a\nb']);
+      expect([input('n').getAttribute('type'), input('n').value]).toEqual(['text', 'abc']);
+      const dryRun = async () => {
+        result.innerHTML = '';
+        click(t, button(document, 'dry'));
+        await vi.waitFor(() => expect(result.textContent).toMatch(/Validation failed|Dry run — nothing was sent\./));
+      };
+      // Asked again, the form still checks what the link gave, and never sends the default in its place.
+      await dryRun();
+      expect(listed(document)).toEqual(['scope: must be one of mine, all', 'n: not an integer']);
+      // A choice the person makes, and a number they type, are what the form then reads.
+      input('scope').value = 'mine';
+      input('scope').dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
+      input('n').value = '6';
+      input('n').dispatchEvent(new t.dom.window.Event('input', { bubbles: true }));
+      await dryRun();
+      expect((JSON.parse(result.querySelector('pre')!.textContent!) as { body: unknown }).body)
+        .toEqual({ scope: 'mine', picks: ['x'], n: 6, note: 'a\nb', tags: ['a'] });
+      expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([]);
+      assertInert(t, 'link values');
+    } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: a link\'s descriptor address, checked as given', () => {
+  it.each(addressTexts(HOST))('refuses %j as hmc.py does, rather than load what the address field and the URL parser make of it', async given => {
+    const t = load(`?url=${encodeURIComponent(given)}&autoload=1`);
+    try {
+      await vi.waitFor(() => expect(t.document.documentElement.dataset['ready']).toBe('error'));
+      expect(t.document.getElementById('status')!.textContent).toBe(`${ADDRESS_TEXT_PROBLEM}; nothing is sent to ${given}`);
+      expect(t.calls).toEqual([]);
     } finally { t.dom.window.close(); }
   });
 });

@@ -415,6 +415,18 @@ is sent as `"5"`. A boolean field and `hydra:required` are trimmed of space, tab
 CR and LF only, and `hmc.py` no longer names a field twice in one message. 42 new
 or tightened tests failed before; the CSP script hash is updated.
 
+A third review found two more. Annotations written as a reference were read as
+the reference object, so a GET whose `destructiveHint` was on that node elsewhere
+was a safe read a link could send; both clients now read every object that names
+a node as that node, all its descriptions merged, and refuse a mapping, property
+or annotations the document does not describe. A link's value the form could not
+hold was replaced: `field.scope=invalid` sent the default `scope=all`. The page
+now invokes with a link's values as given, as `hmc.py` does with `--field`; number
+fields take text; a default the form cannot hold is sent as written; and spaces
+in a number field, blank lines in a list, or a tab or line break in a descriptor
+address are refused. 47 new or tightened tests failed before; the CSP script
+hash is updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

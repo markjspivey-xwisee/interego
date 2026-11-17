@@ -552,6 +552,73 @@ export function sharedDescriptors(base: string): Record<string, string> {
     ] },
     // SHACL paths that are not one property: an inverse path on a blank node, and alternatives on a
     // named one. Neither names a field.
+    // Hint containers a control names by reference, each read as the node the document describes at
+    // that @id, every description of it merged, never as the reference object: a node in @graph, one
+    // written in another node's property, one under an aliased compact @id, and one in a @list; an
+    // inline false that another description of the same node contradicts; a reference to a node the
+    // document does not describe; and a node whose references loop back to it and to the control.
+    '/ref-hints': {
+      '@context': { ...CTX, ex: 'urn:ex:', id: '@id' }, '@id': `${base}/ref-hints`,
+      'iep:affordance': [
+        op('graph', 'urn:ref:graph', 'GET', 'Graph flags', { ...target('/purge'), annotations: { '@id': '#flags' } }),
+        op('placed', 'urn:ref:placed', 'GET', 'Placed flags', { ...target('/purge'), annotations: { '@id': '#writes' } }),
+        op('alias', 'urn:ref:alias', 'GET', 'Aliased flags', { ...target('/purge'), annotations: { id: 'ex:flags' } }),
+        op('listed', 'urn:ref:listed', 'GET', 'Listed flags', { ...target('/purge'), annotations: { '@list': [{ '@id': '#flags' }] } }),
+        op('mixed', 'urn:ref:mixed', 'GET', 'Mixed flags', { ...target('/purge'), annotations: { '@id': '#mixed-flags', 'iep:destructiveHint': false } }),
+        op('missing', 'urn:ref:missing', 'GET', 'Missing flags', { ...target('/purge'), annotations: { '@id': '#nowhere' } }),
+        op('cyc', 'urn:ref:loop', 'GET', 'Looped flags', { ...target('/api'), annotations: { '@id': '#ring' } }),
+      ],
+      '@graph': [
+        { '@id': '#flags', 'iep:destructiveHint': true },
+        { '@id': '#holder', 'rdfs:seeAlso': { '@id': '#writes', 'iep:readOnlyHint': false } },
+        { '@id': 'ex:flags', 'iep:destructiveHint': true },
+        { '@id': '#mixed-flags', 'iep:destructiveHint': true },
+        { '@id': '#ring', 'iep:readOnlyHint': true, 'rdfs:seeAlso': [{ '@id': '#ring' }, { '@id': '#cyc' }] },
+      ],
+    },
+    // Inputs and addresses a control names by reference: a template mapping, a shape's property and a
+    // class's supported property the document does not describe; a target, a shape and an sh:in
+    // list that are blank nodes it does not describe; an inline field and JSON Schema properties
+    // written as references; and a mapping two descriptions of one node make required.
+    '/ref-inputs': {
+      '@context': CTX, '@id': `${base}/ref-inputs`,
+      'iep:affordance': [
+        op('mapping', 'urn:refin:mapping', 'GET', 'Missing mapping', { 'hydra:search': { '@type': 'hydra:IriTemplate',
+          'hydra:template': '/api{?q,r}', 'hydra:mapping': [{ 'hydra:variable': 'q' }, { '@id': '#m-missing' }] } }),
+        op('prop', 'urn:refin:prop', 'POST', 'Missing property', { ...target('/num-target'), 'hydra:expects': { '@id': '#S' } }),
+        op('class', 'urn:refin:class', 'POST', 'Missing supported property', { ...target('/num-target'), 'hydra:expects': { '@id': '#C' } }),
+        op('blank-target', 'urn:refin:target', 'GET', 'Blank target', { 'hydra:target': { '@id': '_:nowhere' } }),
+        op('blank-shape', 'urn:refin:shape', 'POST', 'Blank shape', { ...target('/num-target'), 'hydra:expects': { '@id': '_:shapeless' } }),
+        op('blank-list', 'urn:refin:list', 'GET', 'Blank list', { ...target('/api'), 'hydra:expects': { '@id': '#L' } }),
+        op('fields', 'urn:refin:fields', 'POST', 'Field reference', { ...target('/num-target'), fields: [{ name: 'a' }, { '@id': '#f2' }] }),
+        op('schema-ref', 'urn:refin:schema', 'POST', 'Schema reference', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+          properties: { q: { $ref: '#/definitions/q' }, r: { '@id': '#r' } } } }),
+        op('merged-mapping', 'urn:refin:merged', 'GET', 'Merged mapping', { 'hydra:search': { '@type': 'hydra:IriTemplate',
+          'hydra:template': '/api{?q}', 'hydra:mapping': { '@id': '#m1' } } }),
+      ],
+      '@graph': [
+        { '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': [{ '@id': '#p-missing' },
+          { 'sh:path': { '@id': 'urn:p:q' }, 'sh:name': 'q', 'sh:maxCount': 1 }] },
+        { '@id': '#C', '@type': 'hydra:Class', 'hydra:supportedProperty': { '@id': '#sp-missing' } },
+        { '@id': '#L', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:q' }, 'sh:name': 'q', 'sh:maxCount': 1,
+          'sh:in': { '@id': '_:unlisted' } } },
+        { '@id': '#f2', name: 'b', minCount: 1 },
+        { '@id': '#m1', 'hydra:variable': 'q' },
+        { '@id': '#holder', 'rdfs:seeAlso': { '@id': '#m1', 'hydra:required': true } },
+      ],
+    },
+    // A write whose inputs are a single choice with a default, a multiple choice with a default, an
+    // integer with a default, a line of text and a list of text with a default. LINK_CASES give it
+    // values a link or --field can hold and values its form could not.
+    '/link-values': { '@context': CTX, '@id': `${base}/link-values`,
+      'iep:affordance': [op('w', 'urn:lv:write', 'POST', 'Linked write', { ...target('/num-target'), 'hydra:expects': { '@id': '#V' } })],
+      '@graph': [{ '@id': '#V', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:scope' }, 'sh:name': 'scope', 'sh:in': ['mine', 'all'], 'sh:defaultValue': 'all', 'sh:maxCount': 1 },
+        { 'sh:path': { '@id': 'urn:p:picks' }, 'sh:name': 'picks', 'sh:in': ['x', 'y', 'z'], 'sh:defaultValue': 'x' },
+        { 'sh:path': { '@id': 'urn:p:n' }, 'sh:name': 'n', 'sh:datatype': { '@id': 'xsd:integer' }, 'sh:defaultValue': 5, 'sh:maxCount': 1 },
+        { 'sh:path': { '@id': 'urn:p:note' }, 'sh:name': 'note', 'sh:datatype': { '@id': 'xsd:string' }, 'sh:maxCount': 1 },
+        { 'sh:path': { '@id': 'urn:p:tags' }, 'sh:name': 'tags', 'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': 'a' },
+      ] }] },
     '/complex-path': { '@context': CTX, '@id': `${base}/complex-path`, 'iep:affordance': [
       op('i', 'urn:path:inverse', 'POST', 'Inverse path', { ...target('/api'), 'hydra:expects': { '@id': '#I' } }),
       op('a', 'urn:path:alternative', 'POST', 'Alternative path', { ...target('/api'), 'hydra:expects': { '@id': '#A' } }),
@@ -632,6 +699,11 @@ export function sharedDescriptors(base: string): Record<string, string> {
       op('f', 'urn:values:flag', 'POST', 'Flag value', { ...target('/num-target'), 'hydra:expects': { type: 'object',
         properties: { flag: { type: 'boolean' } } } }),
       op('ld', 'urn:values:list-default', 'POST', 'List defaults', { ...target('/num-target'), 'hydra:expects': { '@id': '#D' } }),
+      op('bp', 'urn:values:bad-pick', 'POST', 'Bad pick default', { ...target('/num-target'), 'hydra:expects': { '@id': '#W' } }),
+      op('ln', 'urn:values:line-default', 'POST', 'Line defaults', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { line: { type: 'string', default: 'a\nb' }, cr: { type: 'string', default: 'c\rd' },
+          nul: { type: 'string', default: 'x\u0000y' }, lead: { type: 'string', maxLength: 500, default: '\nx' },
+          pick: { type: 'string', enum: ['c\rd', 'x\u0000y'], default: 'x\u0000y' } } } }),
       op('j', 'urn:values:json', 'POST', 'JSON value', { ...target('/num-target'), 'hydra:expects': { '@id': '#J' } }),
       op('b', 'urn:values:body', 'POST', 'JSON body', { ...target('/num-target'), 'hydra:expects': { '@id': '#B' } }),
       op('d', 'urn:values:default', 'POST', 'Large default', { ...target('/num-target'), 'hydra:expects': { type: 'object',
@@ -653,7 +725,10 @@ export function sharedDescriptors(base: string): Record<string, string> {
         { 'sh:path': { '@id': 'urn:p:counts' }, 'sh:name': 'counts', 'sh:datatype': { '@id': 'xsd:integer' } }] },
       { '@id': '#D', '@type': 'sh:NodeShape', 'sh:property': [
         { 'sh:path': { '@id': 'urn:p:lines' }, 'sh:name': 'lines', 'sh:defaultValue': ['a\nb', 'c'] },
-        { 'sh:path': { '@id': 'urn:p:picks' }, 'sh:name': 'picks', 'sh:in': ['x', 'y', 'z'], 'sh:defaultValue': ['z', 'w', 'x'] }] },
+        { 'sh:path': { '@id': 'urn:p:picks' }, 'sh:name': 'picks', 'sh:in': ['x', 'y', 'z'], 'sh:defaultValue': ['z', 'x'] },
+        { 'sh:path': { '@id': 'urn:p:held' }, 'sh:name': 'held', 'sh:in': ['x', 'y', 'z'], 'sh:defaultValue': ['x', 'z'] }] },
+      { '@id': '#W', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:picks' }, 'sh:name': 'picks', 'sh:in': ['x', 'y', 'z'], 'sh:defaultValue': ['x', 'w'] }] },
     ] },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
@@ -709,6 +784,17 @@ export function sharedMarkdown(base: string): Record<string, string> {
   };
 }
 
+/**
+ * Descriptor addresses written with a character a URL parser drops, encodes or reads otherwise: a
+ * tab, a line feed or a carriage return at the end, and a space at the start. Each client refuses
+ * the address as it was given, naming ADDRESS_TEXT_PROBLEM, and fetches nothing: the page's
+ * address field, and Python's urlsplit, would each have dropped the character and fetched
+ * another address.
+ */
+export const addressTexts = (base: string): readonly string[] =>
+  [`${base}/link-\tvalues`, `${base}/link-values\n`, `${base}/link-values\r`, ` ${base}/link-values`];
+export const ADDRESS_TEXT_PROBLEM = 'the address holds a backslash, a space or a control character, which URL parsers read in different ways';
+
 /** Documents each client refuses whole, as [path, the problem it names]; nothing is listed or sent. */
 export const DOCUMENT_REFUSALS: ReadonlyArray<readonly [path: string, problem: string]> = [
   ['/nested-graph', 'This document holds a @graph inside a node, which this client does not read, so it is not read.'],
@@ -742,6 +828,11 @@ export const UNSAFE_CONTROLS: ReadonlyArray<readonly [path: string, rel: string 
   ['/json-terms', 'urn:json:hint', 'JSON annotations', 'GET'],
   ['/hm-lines', 'hm-cr', 'CR hint', 'GET'],
   ['/hm-lines', 'hm-bom', 'BOM method', 'GET\ufeff'],
+  // A hint on the node a control's annotations name by reference, wherever the document describes it.
+  ['/ref-hints', 'urn:ref:graph', 'Graph flags', 'GET'],
+  ['/ref-hints', 'urn:ref:placed', 'Placed flags', 'GET'],
+  ['/ref-hints', 'urn:ref:alias', 'Aliased flags', 'GET'],
+  ['/ref-hints', 'urn:ref:listed', 'Listed flags', 'GET'],
 ];
 
 /**
@@ -775,8 +866,43 @@ export function dryRuns(base: string): ReadonlyArray<readonly [path: string, rel
     ['/required-text', 'urn:required:spaced', {}, { error: "missing required field 'q'" }],
     ['/required-text', 'urn:required:whole', {}, { error: "missing required field 'q'" }],
     ['/required-text', 'urn:required:nbsp', {}, { url: `${base}/api`, body: null }],
+    // A mapping read as the node at its @id, both its descriptions merged: one names its variable,
+    // the other makes it required.
+    ['/ref-inputs', 'urn:refin:merged', {}, { error: "missing required field 'q'" }],
+    ['/ref-inputs', 'urn:refin:merged', { q: '1' }, { url: `${base}/api?q=1`, body: null }],
   ];
 }
+
+/** What /link-values' write sends when it is given nothing: each field's default. */
+const LINKED = { scope: 'all', picks: ['x'], n: 5, tags: ['a'] };
+/**
+ * Values a link (each a field.<name> parameter, a list one per value) and hmc.py's --field (repeated
+ * for a list) give /link-values' write, as [path, action, fields, the body a dry run plans, or the
+ * validation error that stops it]. Each is checked as it was given, never as a form control would
+ * change it: a choice that is none of the options, or a number that is no number, is refused
+ * rather than replaced by the default; a multiple choice is sent in the order and number given; a
+ * line break or carriage return in a line of text is kept; and a value of only spaces or blank
+ * lines is refused rather than read as none.
+ */
+export const LINK_CASES: ReadonlyArray<readonly [path: string, rel: string, fields: Record<string, string | string[]>,
+  outcome: { readonly body: unknown } | { readonly error: string }]> = [
+  ['/link-values', 'urn:lv:write', {}, { body: LINKED }],
+  ['/link-values', 'urn:lv:write', { scope: 'mine' }, { body: { ...LINKED, scope: 'mine' } }],
+  ['/link-values', 'urn:lv:write', { scope: 'invalid' }, { error: 'scope: must be one of mine, all' }],
+  ['/link-values', 'urn:lv:write', { scope: ['mine', 'invalid'] }, { error: 'scope: must be one of mine, all' }],
+  ['/link-values', 'urn:lv:write', { picks: 'w' }, { error: 'picks: must be one of x, y, z' }],
+  ['/link-values', 'urn:lv:write', { picks: ['x', 'w'] }, { error: 'picks: must be one of x, y, z' }],
+  ['/link-values', 'urn:lv:write', { picks: ['z', 'x'] }, { body: { ...LINKED, picks: ['z', 'x'] } }],
+  ['/link-values', 'urn:lv:write', { picks: ['y', 'y'] }, { body: { ...LINKED, picks: ['y', 'y'] } }],
+  ['/link-values', 'urn:lv:write', { picks: 'y\nz' }, { body: { ...LINKED, picks: ['y', 'z'] } }],
+  ['/link-values', 'urn:lv:write', { n: 'abc' }, { error: 'n: not an integer' }],
+  ['/link-values', 'urn:lv:write', { n: ' \t' }, { error: 'n: not an integer' }],
+  ['/link-values', 'urn:lv:write', { n: ' 7 ' }, { body: { ...LINKED, n: 7 } }],
+  ['/link-values', 'urn:lv:write', { note: 'a\nb' }, { body: { ...LINKED, note: 'a\nb' } }],
+  ['/link-values', 'urn:lv:write', { note: 'a\r\nb' }, { body: { ...LINKED, note: 'a\r\nb' } }],
+  ['/link-values', 'urn:lv:write', { tags: ' ' }, { error: 'tags: was given no values' }],
+  ['/link-values', 'urn:lv:write', { tags: ['b', 'c'] }, { body: { ...LINKED, tags: ['b', 'c'] } }],
+];
 
 /**
  * The GETs to /api that /containers holds, as [the IRI that names it, title]: every one is a
@@ -830,7 +956,12 @@ const COMBINED = 'e\u0301';
  *   - a JSON integer is the number JSON.parse reads, the double nearest it past 2^53, so a text
  *     field's default, a list item, a bound and an integer field's default read alike;
  *   - a default is what the page's form holds: a text field's default of 5 is "5", and a list's
- *     defaults are one per line, or the options a multiple choice selects;
+ *     defaults are one per line, or the options a multiple choice selects. A default the form
+ *     cannot hold as it is (a line break in a value, a carriage return, a NUL, a line break at the
+ *     start of a text area, choices out of the options' order, or a choice that is none of them)
+ *     is not changed to one it can: it is the default itself that is checked and sent;
+ *   - a number field given only spaces, and a list given only blank lines, are refused: a value
+ *     given is never replaced by the default;
  *   - a boolean is trimmed of space, tab, CR and LF only, as a number is.
  * Each error is the whole message, as the page lists it and hmc.py prints it.
  */
@@ -877,9 +1008,23 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
   ['/values', 'urn:values:bound', 'Large bound', { amount: '5' }, { body: { amount: 5 } }],
   ['/values', 'urn:values:list', 'List values', { nums: `[1${'0'.repeat(400)}]` }, { error: 'nums: not a number' }],
   ['/values', 'urn:values:list', 'List values', { counts: '[1, 9007199254740993]' }, { error: 'counts: integer too large to send exactly' }],
-  // A list's defaults are what the form holds: one per line, or the options a multiple choice
-  // selects, in the options' order.
-  ['/values', 'urn:values:list-default', 'List defaults', {}, { body: { lines: ['a', 'b', 'c'], picks: ['x', 'z'] } }],
+  // A list's defaults are what the form holds, one per line or the options a multiple choice
+  // selects, when it holds them as they are; when it cannot (a value with a line break in it, or
+  // choices out of the options' order), the defaults themselves, and a default that is no choice
+  // is refused rather than dropped.
+  ['/values', 'urn:values:list-default', 'List defaults', {}, { body: { lines: ['a\nb', 'c'], picks: ['z', 'x'], held: ['x', 'z'] } }],
+  ['/values', 'urn:values:bad-pick', 'Bad pick default', {}, { error: 'picks: must be one of x, y, z' }],
+  // A text default the form cannot hold as it is, a line break, a carriage return, a NUL or a line
+  // break at the start of a text area, is sent as it is, not as the form would change it; and a
+  // choice is offered, and sent, as its entry is written, a carriage return or a NUL in it.
+  ['/values', 'urn:values:line-default', 'Line defaults', {},
+    { body: { line: 'a\nb', cr: 'c\rd', nul: 'x\u0000y', lead: '\nx', pick: 'x\u0000y' } }],
+  ['/values', 'urn:values:line-default', 'Line defaults', { pick: 'c\rd' },
+    { body: { line: 'a\nb', cr: 'c\rd', nul: 'x\u0000y', lead: '\nx', pick: 'c\rd' } }],
+  // A number field takes text as typed: what is not a number, spaces only included, is refused,
+  // never replaced by its default.
+  ['/link-values', 'urn:lv:write', 'Linked write', { n: 'abc' }, { error: 'n: not an integer' }],
+  ['/link-values', 'urn:lv:write', 'Linked write', { n: ' \t ' }, { error: 'n: not an integer' }],
   // A boolean is trimmed of the spaces a number is, space, tab, CR and LF, and of nothing else.
   ['/values', 'urn:values:flag', 'Flag value', { flag: ' true\t' }, { body: { flag: true } }],
   ['/values', 'urn:values:flag', 'Flag value', { flag: '\u00a0true' }, { error: 'flag must be a boolean' }],
@@ -994,6 +1139,9 @@ export function jsonldPlans(base: string): ReadonlyArray<readonly [path: string,
     ['/nested-ops', 'urn:nest:template', 'Template with a method', 'DELETE', `${base}/thing`],
     ['/hm-lines', 'hm-ff', 'Form feed read', 'GET', `${base}/api`],
     ['/hm-lines', 'hm-cr-only', 'CR-only read', 'GET', `${base}/api`],
+    // A hint container whose references loop back to itself and to the control is read once, and
+    // says nothing unsafe.
+    ['/ref-hints', 'urn:ref:loop', 'Looped flags', 'GET', `${base}/api`],
   ];
 }
 
@@ -1094,5 +1242,27 @@ export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: stri
       'this control block writes rel as a JSON array, which this client does not read there, so which affordance it names is not known; it is not invoked'],
     ['/hm-json', 'hm-two-fields', 'Two fields of one name', 'POST',
       "two input fields are both named 'a', so their values could not be told apart; this control is not invoked"],
+    // A node named by reference is read as every description of it, and one the document does not
+    // describe is a problem wherever it decides safety, the address or the inputs.
+    ['/ref-hints', 'urn:ref:mixed', 'Mixed flags', 'GET',
+      'this control names more than one iep:destructiveHint (false, true), so whether it is safe is not known; it is not invoked'],
+    ['/ref-hints', 'urn:ref:missing', 'Missing flags', 'GET',
+      `this control names annotations ${base}/ref-hints#nowhere, which this document does not describe, so whether it is safe is not known; it is not invoked`],
+    ['/ref-inputs', 'urn:refin:mapping', 'Missing mapping', 'GET',
+      `this control names a hydra:mapping ${base}/ref-inputs#m-missing, which this document does not describe, so where it sends is not known; it is not invoked`],
+    ['/ref-inputs', 'urn:refin:prop', 'Missing property', 'POST',
+      `the shape names a sh:property ${base}/ref-inputs#p-missing, which this document does not describe, so what it takes is not known; this control is not invoked`],
+    ['/ref-inputs', 'urn:refin:class', 'Missing supported property', 'POST',
+      `the class names a hydra:supportedProperty ${base}/ref-inputs#sp-missing, which this document does not describe, so what it takes is not known; this control is not invoked`],
+    ['/ref-inputs', 'urn:refin:target', 'Blank target', 'GET',
+      'this control names hydra:target _:nowhere, a blank node this document does not describe, so where it sends is not known; it is not invoked'],
+    ['/ref-inputs', 'urn:refin:shape', 'Blank shape', 'POST',
+      'this control names hydra:expects _:shapeless, a blank node this document does not describe, so what it sends is not known; it is not invoked'],
+    ['/ref-inputs', 'urn:refin:list', 'Blank list', 'GET',
+      'the input "q" writes sh:in as a malformed RDF list, which this client does not read, so what it takes is not known; this control is not invoked'],
+    ['/ref-inputs', 'urn:refin:fields', 'Field reference', 'POST',
+      `this control writes fields with an entry that names a node (${base}/ref-inputs#f2), which this client does not read there, so what it sends is not known; it is not invoked`],
+    ['/ref-inputs', 'urn:refin:schema', 'Schema reference', 'POST',
+      'the input "q" writes its JSON Schema as a reference ($ref), which this client does not read, so what it takes is not known; this control is not invoked'],
   ];
 }

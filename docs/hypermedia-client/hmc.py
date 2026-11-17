@@ -700,6 +700,16 @@ def _ends_in_number(host: str) -> bool:
     return bool(_DIGITS.fullmatch(last) and last) or bool(_HEX_NUMBER.fullmatch(last))
 
 
+_TEXT_PROBLEM = "the address holds a backslash, a space or a control character, which URL parsers read in different ways"
+
+
+def _address_text_problem(uri: str) -> str | None:
+    """Why an address's text cannot be read as it is written, or None: a
+    backslash, a space or a control character, which a URL parser drops,
+    encodes or reads as a slash. The page's addressTextProblem is the same."""
+    return _TEXT_PROBLEM if any(ord(ch) <= 0x20 or ch in "\x7f\\" for ch in uri) else None
+
+
 def _request_url_problem(uri: str) -> str | None:
     """Why an http(s) address in URI form cannot be sent as a person reads it,
     or None. A URL parser reads some addresses differently from the text: it
@@ -709,8 +719,8 @@ def _request_url_problem(uri: str) -> str | None:
     than four decimal parts ("0x7f.1", "2130706433") as an IPv4 address. User
     information before an "@" is refused too: urllib would send it as part of
     the Host header. The page's requestUrlProblem is the same."""
-    if any(ord(ch) <= 0x20 or ch in "\x7f\\" for ch in uri):
-        return "the address holds a backslash, a space or a control character, which URL parsers read in different ways"
+    if _address_text_problem(uri):
+        return _TEXT_PROBLEM
     scheme, auth, _path, _query, _fragment = _split_iri(uri)
     if scheme is None or scheme.lower() not in WEB_SCHEMES:
         return "the address is not http or https"
@@ -2048,6 +2058,9 @@ class NodeIndex:
                     return [], None, True
                 found, why = self.rdf_list(heads[0])
                 return found, why, False
+            # A blank node that is no list node is no value: a list head the document does not describe.
+            if any(_blank_label(item) is not None for item in items if isinstance(item, dict)):
+                return [], "a malformed RDF list", False
             members = items
         out: list[Any] = []
         for member in members:
@@ -2091,6 +2104,27 @@ def _present(value: Any) -> bool:
 
 _OPERATION_TYPES = frozenset({HYDRA + "Operation", IEP + "Affordance", IEH + "Affordance", HMD + "Control"})
 _NOT_OPERATION_TYPES = frozenset({HYDRA + "IriTemplate", HYDRA + "IriTemplateMapping", SHACL + "NodeShape", SHACL + "PropertyShape"})
+
+
+def _node_of(index: NodeIndex, item: Any) -> dict[str, Any] | None:
+    """The node a value names, read as the document describes it, never as
+    the object that names it: for an object with an @id (aliased, compact or
+    relative, all expanded by now) or an IRI string, the node indexed at that
+    IRI, every description of it merged; for a node written in place with no
+    @id, itself. None for a value that names no node the document describes:
+    a literal, or a reference to an @id it says nothing about. Each caller
+    reads one level, so a reference that loops back costs nothing more. The
+    page's nodeOf is the same."""
+    if item is None or (isinstance(item, dict) and ("@value" in item or "@list" in item)):
+        return None
+    found = index.node(item)
+    return found if found is not None and _describes(found) else None
+
+
+def _blank_label(item: Any) -> str | None:
+    """The label of a blank node a value names, or None."""
+    ident = item.get("@id") if isinstance(item, dict) and "@value" not in item else item
+    return ident if isinstance(ident, str) and ident.startswith("_:") else None
 
 
 def _looks_like_operation(index: NodeIndex, node: dict[str, Any]) -> bool:
@@ -2297,12 +2331,15 @@ def _supported_field(index: NodeIndex, ref: Any, problems: list[str]) -> Field |
     local name, or, for a property written in place as a blank node (as
     Interego's manifests write one), by that property's rdfs:label; required
     when hydra:required is true; constrained by the SHACL facets on it."""
-    sp = index.node(ref) or (ref if isinstance(ref, dict) else None)
-    if not sp:
+    sp = _node_of(index, ref)
+    if sp is None:
+        if ref is not None:
+            problems.append(f"the class names a hydra:supportedProperty {_text(raw_id(ref))}, which this document does not describe, "
+                            "so what it takes is not known; this control is not invoked")
         return None
     props = [item for item in as_list(index.get(sp, P_PROPERTY)) if item is not None]
     head = props[0] if props else None
-    prop_node = index.node(head) or (head if isinstance(head, dict) else None)
+    prop_node = _node_of(index, head)
     if isinstance(head, dict):
         iri = head.get("@id")
     else:
@@ -2380,6 +2417,11 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
         properties = shape_ref.get("properties")
         for name, prop in (properties.items() if isinstance(properties, dict) else []):
             prop = prop if isinstance(prop, dict) else {}
+            ref_key = next((key for key in ("$ref", "@id") if key in prop), None)
+            if ref_key is not None:
+                # A reference is not read here: what it names is not known, and its own keys are not the property's.
+                problems.append(f"{_subject(name, None)} writes its JSON Schema as a reference ({ref_key}), which this client does "
+                                "not read, so what it takes is not known; this control is not invoked")
             enum = prop.get("enum")
             if enum is not None and not isinstance(enum, list):
                 problems.append(f"{_subject(name, None)} writes enum as something other than a list, which this client does not "
@@ -2426,8 +2468,12 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
             ))
         return fields, problems
     for pref in as_list(props):
-        node = index.node(pref) or (pref if isinstance(pref, dict) else None)
-        if not node:
+        if pref is None:
+            continue
+        node = _node_of(index, pref)
+        if node is None:
+            problems.append(f"the shape names a sh:property {_text(raw_id(pref))}, which this document does not describe, so what it "
+                            "takes is not known; this control is not invoked")
             continue
         facets = _Facets(index, node, problems, _subject(_label(index.get(node, P_SH_NAME)), _label(index.get(node, P_SH_PATH))))
         path = facets.text(P_SH_PATH, "sh:path") or ""
@@ -2492,8 +2538,13 @@ def _address_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, lis
         template = _one(index.get(tmpl, P_TEMPLATE), "hydra:template", problems, "where it sends")
         found = []
         for item in as_list(index.get(tmpl, P_MAPPING)):
-            mn = index.node(item) or (item if isinstance(item, dict) else None)
-            if not mn:
+            if item is None:
+                continue
+            mn = _node_of(index, item)
+            if mn is None:
+                # A mapping the document does not describe names a variable this client cannot read.
+                problems.append(f"this control names a hydra:mapping {_text(raw_id(item))}, which this document does not describe, so "
+                                "where it sends is not known; it is not invoked")
                 continue
             variable = _one(index.get(mn, P_VARIABLE), "hydra:variable in one hydra:mapping", problems, "where it sends")
             # Hydra's context types hydra:property as @vocab, so a plain "schema:query" names an IRI.
@@ -2508,7 +2559,7 @@ def _address_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, lis
         return (_text(template) or None), found, problems
 
     def as_template(item: Any) -> dict[str, Any] | None:
-        tmpl = index.node(item) or (item if isinstance(item, dict) else None)
+        tmpl = _node_of(index, item)
         if tmpl and (index.get(tmpl, P_TEMPLATE) is not None or HYDRA + "IriTemplate" in index.types_of(tmpl)):
             return tmpl
         return None
@@ -2543,6 +2594,14 @@ def _address_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, lis
             if not ok:
                 why = value
                 break
+            blank = _blank_label(item)
+            if blank is not None:
+                # A blank node is no address: one that is no template is not sent to.
+                state = "this document does not describe" if _node_of(index, item) is None else "that is no hydra:IriTemplate"
+                problems.append(f"this control names {label} {blank}, a blank node {state}, so where it sends is not known; "
+                                "it is not invoked")
+                unreadable = True
+                continue
             if value is not None and value != "":
                 entries.setdefault(_text(value), ("iri", _text(value)))
         if why is not None:
@@ -2702,25 +2761,36 @@ def _hint_flags(index: NodeIndex | None, node: dict[str, Any]) -> tuple[bool | N
     readOnlyHint, about whether it destroys or writes: its own keys, such as a
     hint under a prefix the context does not define, and the keys of an object
     written directly inside it (or in a @list in it, or in a JSON literal),
-    such as MCP's "annotations". Every value counts, merged descriptions of
-    one @id included: any destructive true or read-only false is destructive
-    or writing, and so is a value that is no boolean (_hint_value). True and
+    such as MCP's "annotations". An object with an @id is read as the node
+    the document describes at that @id, every description of it merged
+    (_node_of), never as the reference itself, so a hint written on that node
+    anywhere counts; annotations that name a node the document does not
+    describe are a problem. Every value counts, merged descriptions of one @id
+    included: any destructive true or read-only false is destructive or
+    writing, and so is a value that is no boolean (_hint_value). True and
     false both, or a value in a form the reader does not read, is a problem.
     Read only to fail closed: neither hint ever makes a control safe. The
     page's hintFlags is the same."""
     objects = [node]
+    missing: list[str] = []
     for key, val in node.items():
         if key.startswith("@"):
             continue
+        names = {local_name(key), local_name(index.ctx.expand_key(key))} if index else {local_name(key)}
         for item in as_list(val):
             if isinstance(item, dict) and item.get("@type") == "@json" and "@value" in item:
                 # A JSON literal, such as "annotations" under a term typed "@json": its hints count too.
                 objects.extend(x for x in as_list(item["@value"]) if isinstance(x, dict))
             elif isinstance(item, dict) and "@value" not in item:
-                if "@list" in item:
-                    objects.extend(x for x in as_list(item["@list"]) if isinstance(x, dict) and "@value" not in x and "@list" not in x)
-                else:
-                    objects.append(item)
+                members = ([x for x in as_list(item["@list"]) if isinstance(x, dict) and "@value" not in x and "@list" not in x]
+                           if "@list" in item else [item])
+                for member in members:
+                    found = member if index is None else _node_of(index, member)
+                    if found is not None:
+                        objects.append(found)
+                    elif "annotations" in names and isinstance(member.get("@id"), str) and not missing:
+                        missing.append(f"this control names {key} {_text(member['@id'])}, which this document does not describe, so "
+                                       "whether it is safe is not known; it is not invoked")
     found: dict[str, set[bool]] = {hint: set() for hint, _ in _HINTS}
     unread = {hint: False for hint, _ in _HINTS}
     why: dict[str, str | None] = {hint: None for hint, _ in _HINTS}
@@ -2746,7 +2816,7 @@ def _hint_flags(index: NodeIndex | None, node: dict[str, Any]) -> tuple[bool | N
                         else (False if destructive else None))
     read_only = (False if False in writes or unread["readOnlyHint"] or why["readOnlyHint"]
                  else (True if writes else None))
-    return destructive_flag, read_only, _hint_problems(found, why)
+    return destructive_flag, read_only, _hint_problems(found, why) + missing
 
 
 def _duplicate_name(fields: list[Field]) -> str | None:
@@ -2819,6 +2889,11 @@ def _expects_of(index: NodeIndex, node: dict[str, Any], problems: list[str]) -> 
         problems.append(f"this control names more than one hydra:expects ({', '.join(shown.values())}), so what it sends is not "
                         "known; it is not invoked")
     expects_raw = values[0] if values else None
+    blank = _blank_label(expects_raw)
+    if blank is not None and _node_of(index, expects_raw) is None:
+        # A blank node is this document's own: one it does not describe names no shape anywhere.
+        problems.append(f"this control names hydra:expects {blank}, a blank node this document does not describe, so what it sends "
+                        "is not known; it is not invoked")
     if expects_raw is None or _is_json_schema(expects_raw):
         return expects_raw, None
     if isinstance(expects_raw, dict) and "@id" in expects_raw:
@@ -2853,6 +2928,13 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
     rel = _text(rel) if rel is not None and rel != "" else index.ident(node)
     destructive, read_only, hint_problems = _hint_flags(index, node)
     problems.extend(hint_problems)
+    # A control's own "fields" list, as the HyperMarkdown lift writes one, holds
+    # each field written in place; an entry that names a node is not read there.
+    named_entry = next((entry["@id"] for entry in (node.get("fields") if isinstance(node.get("fields"), list) else [])
+                        if isinstance(entry, dict) and isinstance(entry.get("@id"), str)), None)
+    if named_entry is not None:
+        problems.append(f"this control writes fields with an entry that names a node ({_text(named_entry)}), which this client does "
+                        "not read there, so what it sends is not known; it is not invoked")
     expects_raw, expects = _expects_of(index, node, problems)
     media = _one(index.get(node, P_RETURNS_CT), "hydra:returnsContentType", problems, "what it returns")
     if media is None or media == "":
@@ -3298,6 +3380,13 @@ def parse_descriptor(text: str, content_type: str, url: str, fetched_from: str |
 
 
 def load_descriptor(url: str) -> Descriptor:
+    """The descriptor at an address, which is checked as it is given, before
+    urlsplit, which drops a tab, a line break and spaces at its start, reads
+    it. The page's loadDescriptorUrl checks a link's address the same way."""
+    uri = _iri_to_uri(url)
+    problem = _address_text_problem(uri)
+    if problem:
+        raise ValueError(f"{problem}; nothing is sent to {uri}")
     fetched_from, content_type, text = fetch_authority(url)
     descriptor = parse_descriptor(text, content_type, _strip_fragment(url), fetched_from)
     descriptor.content_type = content_type
@@ -3663,32 +3752,53 @@ def _unpaired_surrogate(value: Any) -> bool:
     return False
 
 
+def _item_text(item: Any) -> str | None:
+    """A list default's value as the form's text holds it: text as it is, a
+    number or a boolean as JavaScript writes it; None for JSON, which a list
+    of text values does not hold. The page's itemText is the same."""
+    if isinstance(item, (dict, list)):
+        return None
+    return item if isinstance(item, str) else _scalar_text(item)
+
+
 def _form_default(fld: Field) -> Any:
     """What the page's form holds for a field when nothing is given, which is
     what the page reads: the default's text (a string as it is, a JSON value
     as its JSON, a number or a boolean as JavaScript writes it); for a list,
-    its values' texts one per line, or the options a multiple choice selects,
-    in the options' order; or None where the form is left empty. It is left
-    empty for a default that holds a number no double holds, and for a choice
-    whose default is none of its options; the page then reads the default
-    itself, and so does validate_fields. A number field that is not a choice
-    reads its default itself too: _coerce_number writes a JSON number as the
-    form does, and refuses one past 2^53 in an integer field, as the page
-    refuses the text its form then holds."""
+    its values' texts one per line, or the options a multiple choice selects;
+    or None where the form is left empty. The form holds a default only as it
+    is: a choice whose default is none of its options, a multiple choice
+    whose defaults are not its options in their order, each once, text with a
+    carriage return (which a text area writes as a line feed), a list whose
+    lines read back as other values than its defaults, and a default that
+    holds a number no double holds, are left out of it. The page then reads
+    the default itself, and so does validate_fields, so a default is checked
+    and sent as the document gives it, never as a form control changed it. A
+    number field that is not a choice reads its default itself too:
+    _coerce_number writes a JSON number as the form does, and refuses one past
+    2^53 in an integer field, as the page refuses the text its form then
+    holds."""
     options = [] if fld.json_kind else [_text(x) for x in fld.enum if x is not None]
     if options and fld.multi:
-        chosen = {_text(x) for x in as_list(fld.default)}
-        return [option for option in options if option in chosen] or None
+        wanted = [_text(x) for x in as_list(fld.default)]
+        held = [option for option in options if option in wanted]
+        return held if held and held == wanted else None
     if options:
         text = _text(fld.default)
         return text if text in options else None
     if _numeric_kind(fld):
         return None
-    if fld.multi and isinstance(fld.default, list):
-        return "\n".join(_text(x) for x in fld.default)
+    if fld.multi:
+        listed = fld.default if isinstance(fld.default, list) else [fld.default]
+        text = "\n".join(_text(x) for x in listed) if isinstance(fld.default, list) else _text(fld.default)
+        wanted = [_item_text(x) for x in _multi_items(listed)]
+        # A text area reads a carriage return back as a line feed, so text with one is not held as it is.
+        held = _multi_items(text)
+        return text if "\r" not in text and None not in wanted and held == wanted else None
     if _past_double(fld.default):
         return None
-    return _text(fld.default)
+    text = _text(fld.default)
+    return None if "\r" in text else text
 
 
 def _multi_items(value: Any) -> list[Any]:
@@ -3811,9 +3921,16 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
         numeric = _numeric_kind(fld)
         required = fld.required or (fld.min_count or 0) >= 1
         if fld.multi:
+            # A list given is checked as it was given: one that reads as no
+            # values is refused, never replaced by the default. An empty list
+            # is none given, as a multiple select with nothing chosen gives none.
+            given = found is not None and found != []
             if found is None and fld.default is not None:
                 found = _form_default(fld)
             items = _multi_items(found) if found is not None else []
+            if not items and given:
+                errors.append(f"{fld.name}: was given no values")
+                continue
             if not items and fld.default is not None:
                 items = _multi_items(fld.default if isinstance(fld.default, list) else [fld.default])
             if not items:
@@ -3838,9 +3955,17 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
         if isinstance(found, list):
             # A field that takes one value takes the last one given, as a repeated option does.
             found = found[-1] if found else None
-        # Spaces around a number are not part of it, so a number field holding only spaces is empty.
+        # Spaces around a number are not part of it; a number field given only
+        # spaces holds no number, which is refused, not filled with the default.
         if numeric and isinstance(found, str):
+            spaced = found != ""
             found = found.strip(_SPACES)
+            if found == "" and spaced:
+                try:
+                    _coerce_number(numeric, found)
+                except ValueError as exc:
+                    errors.append(f"{fld.name}: {exc}")
+                continue
         if (found is None or found == "") and fld.default is not None and not numeric:
             # What the page's form holds: a text field's default of 5 is the text "5".
             found = _form_default(fld)

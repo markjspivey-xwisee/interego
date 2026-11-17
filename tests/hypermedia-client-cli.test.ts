@@ -15,7 +15,7 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals, LISTED,
+import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals, LINK_CASES, LISTED,
   sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, BODY_TEXTS } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
@@ -294,6 +294,17 @@ describe('hmc.py: http and https only', () => {
     expect(r.stderr).toMatch(/refused a redirect to (file|ftp):/);
   });
 
+  it('refuses a descriptor address as it is given, before urlsplit drops a tab, a line break or a space from it, as the page does', async () => {
+    for (const given of addressTexts(base)) {
+      const before = seen.length;
+      const r = await hmc(['list', given]);
+      // The terminal is shown a carriage return as an escape, as every control character in text mode.
+      const shown = `error: ${ADDRESS_TEXT_PROBLEM}; nothing is sent to ${given.replace(/\r/g, '\\x0d')}`;
+      expect([r.code, r.stderr.trim()], JSON.stringify(given)).toEqual([1, shown.trim()]);
+      expect(seen.slice(before), JSON.stringify(given)).toEqual([]);
+    }
+  });
+
   it('refuses a descriptor address that is not http(s)', async () => {
     const r = await hmc(['list', secretUrl]);
     expect(r.code).not.toBe(0);
@@ -322,7 +333,8 @@ describe('hmc.py: numeric fields', () => {
   it.each([
     ...['abc', 'NaN', 'Infinity', 'nan', 'inf', '0x10', '12abc', '1_000', '1,5'].map(v => ['amount', v, 'amount: not a number']),
     ['amount', '1e999', 'amount: not a finite number'],
-    ['amount', '   ', "missing required field 'amount'"],
+    // Only spaces are no number, and are refused as one, never read as an empty field.
+    ['amount', '   ', 'amount: not a number'],
     ['count', '1.5', 'count: not an integer'],
     ['count', '12abc', 'count: not an integer'],
     ['count', '1e3', 'count: not an integer'],
@@ -752,6 +764,20 @@ describe('hmc.py: every value read, or the control or document refused', () => {
       } else {
         expect(r.code, `${rel}: ${r.stderr}`).toBe(0);
         expect([request!.url, request!.body], rel).toEqual([outcome.url, outcome.body]);
+      }
+    }
+  });
+
+  it('checks and plans each --field value as it was given, as the page does a link\'s, never as a form would change it', async () => {
+    for (const [path, rel, fields, outcome] of LINK_CASES) {
+      const { r, request } = await dry(path, rel, fields);
+      const given = JSON.stringify(fields);
+      if ('error' in outcome) {
+        expect(r.code, `${given}: ${r.stdout}`).toBe(2);
+        expect(problems(r.stderr), given).toContain(outcome.error);
+      } else {
+        expect(r.code, `${given}: ${r.stderr}`).toBe(0);
+        expect(request!.body, given).toEqual(outcome.body);
       }
     }
   });

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-lJ/HqFwLxU5PGQ5DeB1LvYhnQTXFhOu9RpcNhEC/z30='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-AXrj6PMC/RWUAD3hxJl+/AJW/NJWIUKY4IitDZzGqAY='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -467,11 +467,19 @@ function endsInNumber(host) {
   const last = labels[labels.length - 1];
   return /^[0-9]+$/.test(last) || /^0[xX][0-9A-Fa-f]*$/.test(last);
 }
-function requestUrlProblem(uri) {
+// Why an address's text cannot be read as it is written, or null: a backslash,
+// a space or a control character, which a URL parser drops, encodes or reads as
+// a slash. hmc.py's _address_text_problem is the same.
+function addressTextProblem(uri) {
   for (let i = 0; i < uri.length; i++) {
     const c = uri.charCodeAt(i);
     if (c <= 0x20 || c === 0x7f || c === 0x5c) return "the address holds a backslash, a space or a control character, which URL parsers read in different ways";
   }
+  return null;
+}
+function requestUrlProblem(uri) {
+  const text = addressTextProblem(uri);
+  if (text) return text;
   const p = splitIri(uri);
   if (p.scheme == null || !["http", "https"].includes(p.scheme.toLowerCase())) return "the address is not http or https";
   if (p.authority == null) return "the address does not name its host after \"//\"";
@@ -1302,6 +1310,8 @@ class NodeIndex {
         const [found, why] = this.rdfList(heads[0]);
         return [found, why, false];
       }
+      // A blank node that is no list node is no value: a list head the document does not describe.
+      if (items.some(x => isMap(x) && blankLabel(x) != null)) return [[], "a malformed RDF list", false];
       members = items;
     }
     const out = [];
@@ -1433,11 +1443,14 @@ function subjectOf(name, path) { return 'the input "' + fieldName(name, typeof p
 // hydra:required is true; constrained by the SHACL facets on it. hmc.py's
 // _supported_field is the same.
 function supportedField(index, ref, problems) {
-  const sp = index.node(ref) || (isMap(ref) ? ref : null);
-  if (!sp) return null;
+  const sp = nodeOf(index, ref);
+  if (!sp) {
+    if (ref != null) problems.push("the class names a hydra:supportedProperty " + asText(rawId(ref)) + ", which this document does not describe, so what it takes is not known; this control is not invoked");
+    return null;
+  }
   const props = asList(index.get(sp, P.property)).filter(x => x != null);
   const head = props.length ? props[0] : null;
-  const propNode = head == null ? null : (index.node(head) || (isMap(head) ? head : null));
+  const propNode = nodeOf(index, head);
   let iri = null;
   if (isMap(head)) iri = own(head, "@id") ? head["@id"] : null;
   // Hydra's context types hydra:property as @vocab, so a plain "schema:text" names an IRI.
@@ -1503,6 +1516,9 @@ function shapeFields(index, shapeRef) {
     const properties = isMap(shapeRef.properties) ? shapeRef.properties : {};
     for (const [name, prop0] of Object.entries(properties)) {
       const prop = isMap(prop0) ? prop0 : {};
+      const refKey = ["$ref", "@id"].find(k => own(prop, k));
+      // A reference is not read here: what it names is not known, and its own keys are not the property's.
+      if (refKey) problems.push(subjectOf(name, null) + " writes its JSON Schema as a reference (" + refKey + "), which this client does not read, so what it takes is not known; this control is not invoked");
       const enumVals = own(prop, "enum") ? prop.enum : null;
       if (enumVals != null && !Array.isArray(enumVals)) {
         problems.push(subjectOf(name, null) + " writes enum as something other than a list, which this client does not read, so what it takes is not known; this control is not invoked");
@@ -1544,8 +1560,12 @@ function shapeFields(index, shapeRef) {
     return { fields, problems };
   }
   for (const pref of asList(props)) {
-    const node = index.node(pref) || (pref && typeof pref === "object" ? pref : null);
-    if (!node) continue;
+    if (pref == null) continue;
+    const node = nodeOf(index, pref);
+    if (!node) {
+      problems.push("the shape names a sh:property " + asText(rawId(pref)) + ", which this document does not describe, so what it takes is not known; this control is not invoked");
+      continue;
+    }
     const f = facets(index, node, problems, subjectOf(label(index.get(node, P.shName)), label(index.get(node, P.shPath))));
     const path = f.text(P.shPath, "sh:path") || "";
     if (path && complexPath(index, path)) {
@@ -1617,8 +1637,13 @@ function addressOf(index, node) {
     const template = one(index.get(tmpl, P.template), "hydra:template", problems, "where it sends");
     const mappings = [];
     for (const item of asList(index.get(tmpl, P.mapping))) {
-      const mn = index.node(item) || (item && typeof item === "object" ? item : null);
-      if (!mn) continue;
+      if (item == null) continue;
+      const mn = nodeOf(index, item);
+      if (!mn) {
+        // A mapping the document does not describe names a variable this client cannot read.
+        problems.push("this control names a hydra:mapping " + asText(rawId(item)) + ", which this document does not describe, so where it sends is not known; it is not invoked");
+        continue;
+      }
       const variable = one(index.get(mn, P.variable), "hydra:variable in one hydra:mapping", problems, "where it sends");
       // Hydra's context types hydra:property as @vocab, so a plain "schema:query" names an IRI.
       const prop = one(index.get(mn, P.property), "hydra:property in one hydra:mapping", problems, "which input fills it");
@@ -1632,7 +1657,7 @@ function addressOf(index, node) {
     return [asTextOrNull(template), mappings, problems];
   };
   const asTemplate = (item) => {
-    const tmpl = index.node(item) || (isMap(item) ? item : null);
+    const tmpl = nodeOf(index, item);
     return tmpl && (index.get(tmpl, P.template) != null || index.typesOf(tmpl).includes(HYDRA + "IriTemplate")) ? tmpl : null;
   };
   const unread = (name, templateProblems) => templateProblems.length ? templateProblems
@@ -1657,6 +1682,14 @@ function addressOf(index, node) {
       }
       const [ok, value] = valueOf(item);
       if (!ok) { why = value; break; }
+      const blank = blankLabel(item);
+      if (blank != null) {
+        // A blank node is no address: one that is no template is not sent to.
+        const state = nodeOf(index, item) ? "that is no hydra:IriTemplate" : "this document does not describe";
+        problems.push("this control names " + name + " " + blank + ", a blank node " + state + ", so where it sends is not known; it is not invoked");
+        unreadable = true;
+        continue;
+      }
       if (value != null && value !== "" && !entries.has(asText(value))) entries.set(asText(value), ["iri", asText(value)]);
     }
     if (why != null) problems.push("this control writes " + name + " as " + why + ", which this client does not read, so where it sends is not known; it is not invoked");
@@ -1762,6 +1795,23 @@ function mergeMappings(fields, mappings) {
   return fields;
 }
 
+// The node a value names, read as the document describes it, never as the
+// object that names it: for an object with an @id (aliased, compact or relative,
+// all expanded by now) or an IRI string, the node indexed at that IRI, every
+// description of it merged; for a node written in place with no @id, itself.
+// null for a value that names no node the document describes: a literal, or a
+// reference to an @id it says nothing about. Each caller reads one level, so a
+// reference that loops back costs nothing more. hmc.py's _node_of is the same.
+function nodeOf(index, item) {
+  if (item == null || (isMap(item) && (own(item, "@value") || own(item, "@list")))) return null;
+  const found = index.node(item);
+  return found && describes(found) ? found : null;
+}
+// The label of a blank node a value names, or null.
+function blankLabel(item) {
+  const id = isMap(item) && !own(item, "@value") ? item["@id"] : item;
+  return typeof id === "string" && id.startsWith("_:") ? id : null;
+}
 // Whether a property has a value: JSON-LD drops null and an empty array, and
 // keeps anything else, false, 0, "" and {} included. hmc.py's _present is the
 // same, so neither client reads JavaScript's truth and falsity.
@@ -1794,21 +1844,33 @@ const HINTS = [["destructiveHint", "iep:destructiveHint"], ["readOnlyHint", "iep
 // readOnlyHint, about whether it destroys or writes: its own keys, such as a
 // hint under a prefix the context does not define, and the keys of an object
 // written directly inside it (or in a @list in it, or in a JSON literal), such
-// as MCP's "annotations". Every value counts, merged descriptions of one @id included:
-// any destructive true or read-only false is destructive or writing, and so is
-// a value that is no boolean (hintValue). True and false both, or a value in a
+// as MCP's "annotations". An object with an @id is read as the node the
+// document describes at that @id, every description of it merged (nodeOf),
+// never as the reference itself, so a hint written on that node anywhere
+// counts; annotations that name a node the document does not describe are a
+// problem. Every value counts, merged descriptions of one @id included: any
+// destructive true or read-only false is destructive or writing, and so is a
+// value that is no boolean (hintValue). True and false both, or a value in a
 // form the reader does not read, is a problem. Read only to fail closed:
 // neither hint ever makes a control safe. hmc.py's _hint_flags is the same.
 function hintFlags(index, node) {
   const objects = [node];
+  const missing = [];
   for (const [key, val] of Object.entries(node)) {
     if (key.startsWith("@")) continue;
+    const names = index ? [localName(key), localName(index.ctx.expandKey(key))] : [localName(key)];
     for (const item of asList(val)) {
       // A JSON literal, such as "annotations" under a term typed "@json": its hints count too.
       if (isMap(item) && own(item, "@value") && item["@type"] === "@json") { for (const x of asList(item["@value"])) if (isMap(x)) objects.push(x); continue; }
       if (!isMap(item) || own(item, "@value")) continue;
-      if (own(item, "@list")) { for (const x of asList(item["@list"])) if (isMap(x) && !own(x, "@value") && !own(x, "@list")) objects.push(x); }
-      else objects.push(item);
+      const members = own(item, "@list") ? asList(item["@list"]).filter(x => isMap(x) && !own(x, "@value") && !own(x, "@list")) : [item];
+      for (const member of members) {
+        const found = index ? nodeOf(index, member) : member;
+        if (found) objects.push(found);
+        else if (names.includes("annotations") && typeof member["@id"] === "string" && !missing.length) {
+          missing.push("this control names " + key + " " + asText(member["@id"]) + ", which this document does not describe, so whether it is safe is not known; it is not invoked");
+        }
+      }
     }
   }
   const found = { destructiveHint: new Set(), readOnlyHint: new Set() };
@@ -1834,6 +1896,7 @@ function hintFlags(index, node) {
     if (why[hint] != null) problems.push("this control writes " + name + " as " + why[hint] + ", which this client does not read, so whether it is safe is not known; it is not invoked");
     else if (found[hint].size > 1) problems.push("this control names more than one " + name + " (false, true), so whether it is safe is not known; it is not invoked");
   }
+  problems.push(...missing);
   const d = found.destructiveHint, r = found.readOnlyHint;
   const destructive = d.has(true) || unread.destructiveHint || why.destructiveHint != null ? true : (d.size ? false : null);
   const readOnly = r.has(false) || unread.readOnlyHint || why.readOnlyHint != null ? false : (r.size ? true : null);
@@ -1895,6 +1958,9 @@ function expectsOf(index, node, problems) {
   }
   if (shown.size > 1) problems.push("this control names more than one hydra:expects (" + [...shown.values()].join(", ") + "), so what it sends is not known; it is not invoked");
   const expectsRaw = values.length ? values[0] : null;
+  const blank = blankLabel(expectsRaw);
+  // A blank node is this document's own: one it does not describe names no shape anywhere.
+  if (blank != null && !nodeOf(index, expectsRaw)) problems.push("this control names hydra:expects " + blank + ", a blank node this document does not describe, so what it sends is not known; it is not invoked");
   if (expectsRaw == null || isJsonSchema(expectsRaw)) return [expectsRaw, null];
   if (isMap(expectsRaw) && own(expectsRaw, "@id")) return [expectsRaw, expectsRaw["@id"]];
   return [expectsRaw, label(expectsRaw)];
@@ -1922,6 +1988,10 @@ function controlFromNode(index, node, source) {
   rel = rel != null && rel !== "" ? asText(rel) : index.ident(node);
   const hints = hintFlags(index, node);
   problems.push(...hints.problems);
+  // A control's own "fields" list, as the HyperMarkdown lift writes one, holds
+  // each field written in place; an entry that names a node is not read there.
+  const namedEntry = (own(node, "fields") && Array.isArray(node.fields) ? node.fields : []).find(e => isMap(e) && typeof e["@id"] === "string");
+  if (namedEntry) problems.push("this control writes fields with an entry that names a node (" + asText(namedEntry["@id"]) + "), which this client does not read there, so what it sends is not known; it is not invoked");
   const [expectsRaw, expects] = expectsOf(index, node, problems);
   let media = one(index.get(node, P.returnsCT), "hydra:returnsContentType", problems, "what it returns");
   if (media == null || media === "") media = one(index.get(node, P.media), "dcat:mediaType", problems, "what it returns");
@@ -2615,13 +2685,18 @@ function checkValue(field, found, numeric, errors) {
 // shown in its hint and never run: a remote regular expression can take time
 // exponential in the input, and the server that receives the value is the one
 // that enforces it. hmc.py's validate_fields is the same.
+// The names a field's value may be given under: its name, its template
+// variable and its path's local name. hmc.py's validate_fields reads the same.
+function aliasesOf(field) {
+  return [...new Set([field.name, field.variable, field.path && localName(field.path)].filter(Boolean))];
+}
 function validateFields(control, supplied) {
   const errors = []; const values = Object.create(null);
   if (control.problem) return { values, errors: [control.problem] };
   const incoming = Object.assign(Object.create(null), supplied);
   const known = new Set();
   for (const field of control.fields) {
-    const aliases = [...new Set([field.name, field.variable, field.path && localName(field.path)].filter(Boolean))];
+    const aliases = aliasesOf(field);
     for (const a of aliases) known.add(a);
     // A value is given under one of a field's names; values under two of them
     // are a problem, never one of them taken and the other dropped.
@@ -2632,7 +2707,12 @@ function validateFields(control, supplied) {
     const numeric = numericKind(field);
     const required = field.required || (field.minCount || 0) >= 1;
     if (field.multi) {
+      // A list given is checked as it was given: one that reads as no values
+      // is refused, never replaced by the default. An empty list is none given,
+      // as a multiple select with nothing chosen gives none.
+      const given = found != null && !(Array.isArray(found) && !found.length);
       let items = found != null ? multiItems(found) : [];
+      if (!items.length && given) { errors.push(field.name + ": was given no values"); continue; }
       if (!items.length && field.defaultValue != null) items = multiItems(Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue]);
       if (!items.length) { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
       if (field.minCount && items.length < field.minCount) errors.push(field.name + ": needs at least " + field.minCount + " values, got " + items.length);
@@ -2651,8 +2731,16 @@ function validateFields(control, supplied) {
     }
     // A field that takes one value takes the last one given, as a repeated option does.
     if (Array.isArray(found)) found = found.length ? found[found.length - 1] : null;
-    // Spaces around a number are not part of it, so a number field holding only spaces is empty.
-    if (numeric && typeof found === "string") found = trimSpaces(found);
+    // Spaces around a number are not part of it; a number field given only
+    // spaces holds no number, which is refused, not filled with the default.
+    if (numeric && typeof found === "string") {
+      const spaced = found !== "";
+      found = trimSpaces(found);
+      if (found === "" && spaced) {
+        try { coerceNumber(field, numeric, found); } catch (err) { errors.push(String(err.message || err)); }
+        continue;
+      }
+    }
     if ((found == null || found === "") && field.defaultValue != null) found = numeric && typeof field.defaultValue === "string" ? trimSpaces(field.defaultValue) : field.defaultValue;
     if (found == null || found === "") { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
     const before = errors.length;
@@ -2789,7 +2877,10 @@ function resolvePlan(control, values, descriptorUrl) {
 }
 
 // formFor is the control the form on screen was built for, and null while there is none.
-const state = { descriptor: null, selected: null, formFor: null, history: [], lastResponse: null };
+// `given` is what an ?invoke= link gave the form on screen: its values by the
+// names the link gave them, and, for each input a value fills, those names.
+const noneGiven = () => ({ values: Object.create(null), fields: new Map() });
+const state = { descriptor: null, selected: null, formFor: null, given: noneGiven(), history: [], lastResponse: null };
 
 function setStatus(msg) { document.getElementById("status").textContent = msg; }
 function esc(s) { return String(s ?? "").replace(/[&<>"']/g, c => ({ "&":"&amp;","<":"&lt;",">":"&gt;","\"":"&quot;","'":"&#39;" }[c])); }
@@ -2952,30 +3043,72 @@ function fieldDefaultText(field) {
 // Inputs carry the remote field name in data-field, never in name or id. In a
 // browser a form exposes its controls' names as its own properties, so a field
 // named "addEventListener" would otherwise replace the form's method of that name.
+// No choice and no default is written into the markup, where HTML parsing would
+// change it (a CR to a line feed, a NUL to U+FFFD, a text area's first line
+// break dropped): fillInput puts each in through the DOM. Every input takes
+// text as typed: a number field is a text input, since an <input type="number">
+// drops what is not a number before the page reads it, and a field whose default
+// has a line break is a text area, since a one-line input drops it.
 function fieldControl(field) {
   const req = field.required || (field.minCount || 0) >= 1;
   const key = esc(field.name);
-  const val = esc(fieldDefaultText(field));
   let input;
   const options = enumOptions(field);
+  const blank = options.map(() => "<option></option>").join("");
   // A list field is a multiple select when it has choices, and otherwise a text
   // area that takes one value per line (or a JSON array).
   if (options.length && !field.jsonKind && field.multi) {
-    const chosen = new Set(asList(field.defaultValue).map(asText));
-    input = `<select data-field="${key}" multiple>${options.map(v => `<option value="${esc(v)}" ${chosen.has(v) ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
+    input = `<select data-field="${key}" multiple>${blank}</select>`;
   } else if (options.length && !field.jsonKind) {
-    const chosen = asText(field.defaultValue);
-    input = `<select data-field="${key}"><option value=""></option>${options.map(v => `<option value="${esc(v)}" ${v === chosen ? "selected" : ""}>${esc(v)}</option>`).join("")}</select>`;
-  } else if (field.multi || field.rawBody || field.jsonKind || (field.maxLength && field.maxLength > 200) || /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
-    input = `<textarea data-field="${key}" ${req ? "required" : ""}>${val}</textarea>`;
+    input = `<select data-field="${key}"><option value=""></option>${blank}</select>`;
+  } else if (field.multi || field.rawBody || field.jsonKind || (field.maxLength && field.maxLength > 200) || /[\r\n]/.test(fieldDefaultText(field)) ||
+      /content|query|sparql|turtle|body/i.test(field.name + (field.description || ""))) {
+    input = `<textarea data-field="${key}" ${req ? "required" : ""}></textarea>`;
   } else {
-    const type = xsdName(field.datatype) === "integer" ? "number" : "text";
-    input = `<input data-field="${key}" type="${type}" value="${val}" ${req ? "required" : ""}>`;
+    input = `<input data-field="${key}" type="text" ${req ? "required" : ""}>`;
   }
   return `<div class="field"><label>${esc(field.name)} ${req ? '<span class="req">*</span>' : ""}</label>${input}
     <div class="hint">${esc([field.jsonKind ? ("JSON " + field.jsonKind) : (field.datatype && localName(field.datatype)),
       field.multi ? (options.length ? "a list: choose one or more" : "a list: one value per line") : null,
       field.pattern, field.description].filter(Boolean).join(" · "))}</div></div>`;
+}
+// A list default's value as the form's text holds it: text as it is, a number
+// or a boolean as JavaScript writes it; null for JSON, which a list of text
+// values does not hold. hmc.py's _item_text is the same.
+function itemText(item) {
+  return typeof item === "string" ? item : (item !== null && typeof item === "object" ? null : String(item));
+}
+// Puts a field's choices and its default in its input through the DOM, so
+// nothing HTML parsing does to markup changes either. The form shows a default
+// only when it holds it as it is: a choice whose default is none of its
+// options, a multiple choice whose defaults are not its options in their order,
+// each once, text with a carriage return (which a text area reads back as a
+// line feed), and a list whose lines read back as other values than its
+// defaults are left out, and the input is left empty. validateFields then reads
+// the default itself, as hmc.py's _form_default says, so a default is checked
+// and sent as the document gives it, never as an input changed it.
+function fillInput(el, field) {
+  if (el.localName === "select") {
+    const options = enumOptions(field);
+    [...el.options].slice(el.multiple ? 0 : 1).forEach((o, k) => { o.value = options[k]; o.textContent = options[k]; });
+  }
+  if (field.defaultValue == null) return;
+  if (el.multiple) {
+    const wanted = asList(field.defaultValue).map(asText);
+    for (const o of el.options) o.selected = wanted.includes(o.value);
+    const held = [...el.selectedOptions].map(o => o.value);
+    if (!held.length || held.length !== wanted.length || held.some((v, k) => v !== wanted[k])) for (const o of el.options) o.selected = false;
+    return;
+  }
+  const text = fieldDefaultText(field);
+  el.value = text;
+  let held = el.value === text;
+  if (held && field.multi) {
+    const wanted = multiItems(Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue]).map(itemText);
+    const lines = multiItems(el.value);
+    held = !wanted.includes(null) && lines.length === wanted.length && lines.every((v, k) => v === wanted[k]);
+  }
+  if (!held) el.value = "";
 }
 // The previous control's form, and its confirmation, go before anything else
 // happens, and a control that cannot be shown leaves a warning, never a form.
@@ -2983,6 +3116,7 @@ function renderDetail() {
   const el = document.getElementById("detail");
   el.innerHTML = "";
   state.formFor = null;
+  state.given = noneGiven();
   const desc = state.descriptor;
   const c = state.selected;
   if (!c || !desc) { el.innerHTML = `<div class="empty">Select a control.</div>`; return; }
@@ -2993,6 +3127,18 @@ function renderDetail() {
     return;
   }
   const form = document.getElementById("invokeForm");
+  const inputs = formInputs();
+  c.fields.forEach((field, i) => { if (inputs[i]) fillInput(inputs[i], field); });
+  // Once the person changes an input, what it holds is what the form reads for its field.
+  const release = (ev) => {
+    const at = formInputs().indexOf(ev.target);
+    const names = state.given.fields.get(at);
+    if (!names) return;
+    for (const name of names) delete state.given.values[name];
+    state.given.fields.delete(at);
+  };
+  form.addEventListener("input", release);
+  form.addEventListener("change", release);
   const box = document.getElementById("confirmUnsafe");
   const liveBtn = document.getElementById("liveBtn");
   if (box && liveBtn) box.addEventListener("change", () => { liveBtn.disabled = !box.checked; });
@@ -3057,13 +3203,16 @@ function detailHtml(c, desc) {
 // goes under its field's name. The name is never read back from data-field:
 // HTML parsing rewrites a CR or a NUL in an attribute, so a field so named
 // would come back under another name.
+// What an ?invoke= link gave is read as it gave it, under the names it gave,
+// in place of the inputs it fills, until the person changes one of them.
 function formInputs() { return [...document.querySelectorAll("#invokeForm [data-field]")]; }
 function readForm() {
   const supplied = Object.create(null);
   const fields = state.formFor ? state.formFor.fields : [];
   formInputs().forEach((el, i) => {
-    if (i < fields.length) supplied[fields[i].name] = el.multiple ? [...el.selectedOptions].map(o => o.value) : el.value;
+    if (i < fields.length && !state.given.fields.has(i)) supplied[fields[i].name] = el.multiple ? [...el.selectedOptions].map(o => o.value) : el.value;
   });
+  for (const name of Object.keys(state.given.values)) supplied[name] = state.given.values[name];
   return supplied;
 }
 function showResult(html) {
@@ -3072,9 +3221,7 @@ function showResult(html) {
 }
 // A form invokes only the control it was built for, and only while it is the
 // one selected; the confirmation it carries is read from that same form.
-// `linkProblems` are what an ?invoke= link asked for that the form could not
-// take, such as a field it does not have; any one of them sends nothing.
-async function runInvoke(forceDry, formControl, linkProblems) {
+async function runInvoke(forceDry, formControl) {
   const desc = state.descriptor;
   const control = state.selected;
   if (!desc || !control) return;
@@ -3083,7 +3230,7 @@ async function runInvoke(forceDry, formControl, linkProblems) {
     return;
   }
   const checked = validateFields(control, readForm());
-  const errors = (linkProblems || []).concat(checked.errors);
+  const errors = checked.errors;
   if (errors.length) {
     showResult(`<div class="warn">Validation failed:<ul>${errors.map(e => "<li>" + esc(e) + "</li>").join("")}</ul></div>`);
     return;
@@ -3141,7 +3288,13 @@ async function runInvoke(forceDry, formControl, linkProblems) {
     setStatus("Invoke failed: " + msg);
   }
 }
+// The address is checked as it is given, before anything reads it: one a URL
+// parser reads differently from its text (a tab or a line break it drops, a
+// space, a backslash) is refused, as hmc.py's load_descriptor refuses it.
 async function loadDescriptorUrl(url, push = true) {
+  const uri = iriToUri(String(url));
+  const problem = addressTextProblem(uri);
+  if (problem) throw new Error(problem + "; nothing is sent to " + uri);
   setStatus("Fetching authority document…");
   document.documentElement.dataset.ready = "0";
   const fetched = await fetchAuthority(url);
@@ -3160,30 +3313,50 @@ async function loadDescriptorUrl(url, push = true) {
   document.documentElement.dataset.ready = state.selected ? "0" : "list";
   return descriptor;
 }
-// Selects a control and fills its form with an ?invoke= link's values. Returns
-// what the form could not take: a name no input has. A field named twice is a
-// list for a list field, and its last value for any other field.
+// Selects a control and fills its form with an ?invoke= link's values. Each
+// value is kept as the link gave it, and is what the form invokes with, under
+// the name the link gave it, as hmc.py's --field values are, until the person
+// changes the input it fills: so no input puts a value of its own in place of
+// one it cannot hold (a select's blank for a choice that is no option, a list
+// of choices in the options' order, a one-line input's text without its line
+// break), and no default stands in for a value the link gave. A name no input
+// has is kept too, and validateFields names it, as it does a --field.
 function selectRel(rel, values) {
   const control = findControl(state.descriptor, rel);
-  if (!control) return [];
+  if (!control) return;
   state.selected = control;
   renderDetail();
   renderList();
-  const problems = [];
-  if (values) {
-    const inputs = formInputs();
-    for (const [name, given] of Object.entries(values)) {
-      const at = control.fields.findIndex(f => f.name === name);
-      const el = at >= 0 ? inputs[at] : null;
-      const field = at >= 0 ? control.fields[at] : null;
-      if (!el || !field) { problems.push("no input field is named '" + name + "'"); continue; }
-      const list = asList(given);
-      if (el.multiple) { for (const o of el.options) o.selected = list.includes(o.value); }
-      else if (field.multi) el.value = list.join("\n");
-      else el.value = list[list.length - 1];
-    }
+  if (!values || state.formFor !== control) return;
+  for (const [name, given] of Object.entries(values)) {
+    state.given.values[name] = given;
+    const at = control.fields.findIndex(f => aliasesOf(f).includes(name));
+    if (at < 0) continue;
+    if (!state.given.fields.has(at)) state.given.fields.set(at, []);
+    state.given.fields.get(at).push(name);
+    showGiven(at, control.fields[at], given);
   }
-  return problems;
+}
+// Shows a link's value in its input as near as the input can hold it: a list
+// of choices as the options it names, a value with a line break in a text area.
+function showGiven(at, field, given) {
+  let el = formInputs()[at];
+  if (!el) return;
+  if (el.multiple) {
+    const items = multiItems(given).map(asText);
+    for (const o of el.options) o.selected = items.includes(o.value);
+    return;
+  }
+  const list = asList(given);
+  const text = field.multi ? list.map(asText).join("\n") : asText(list.length ? list[list.length - 1] : "");
+  if (el.localName === "input" && /[\r\n]/.test(text)) {
+    const area = document.createElement("textarea");
+    area.setAttribute("data-field", el.getAttribute("data-field"));
+    area.required = el.required;
+    el.replaceWith(area);
+    el = area;
+  }
+  el.value = text;
 }
 // The page does not run inside another page's frame: a page that framed it
 // could cover it and steer the clicks that confirm a write. A <meta> policy
@@ -3198,7 +3371,8 @@ function refuseFramed() {
 }
 function start() {
   document.getElementById("loadBtn").addEventListener("click", async () => {
-    const url = document.getElementById("url").value.trim();
+    // The address field already drops spaces at its ends; nothing more is trimmed.
+    const url = document.getElementById("url").value;
     if (!url) return;
     try { await loadDescriptorUrl(url); } catch (err) {
       setStatus(String(err.message || err));
@@ -3241,7 +3415,9 @@ async function boot() {
   }
   if (params.get("url") || params.get("autoload") === "1") {
     try {
-      await loadDescriptorUrl(document.getElementById("url").value);
+      // A link's address is loaded as the link gives it, not as the address
+      // field holds it: the field drops line breaks and spaces at its ends.
+      await loadDescriptorUrl(params.get("url") || document.getElementById("url").value);
       if (params.get("invoke")) {
         const invokes = params.getAll("invoke");
         const matches = invokes.length === 1 ? matchControls(state.descriptor, invokes[0]) : [];
@@ -3253,9 +3429,9 @@ async function boot() {
           const put = (name, v) => { fields[name] = own(fields, name) ? asList(fields[name]).concat([v]) : v; };
           for (const q of params.getAll("query")) if (q) put("query", q);
           for (const [k, v] of params.entries()) if (k.startsWith("field.")) put(k.slice(6), v);
-          const problems = selectRel(invokes[0], fields);
+          selectRel(invokes[0], fields);
           // A dry run asked for anywhere in the link is a dry run.
-          await runInvoke(params.getAll("dry").includes("1"), null, problems);
+          await runInvoke(params.getAll("dry").includes("1"), null);
         }
         document.documentElement.dataset.ready = "done";
       } else {
