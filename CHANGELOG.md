@@ -54,6 +54,29 @@ verification, rate limit, allowance, fetch and answer bodies as before, and by
 `tests/a-profile-write-that-was-not-kept-stays-not-kept.test.ts` (30 tests)
 with a made-up pod. The function makes the per-address limiter itself, from
 options, so the limit is in the same place as the routes it guards.
+## 2026-11-17 — Native store: a head is signed by its writer
+
+`trustedSenderPublicKeys` keeps out whoever is not a recipient of the store. A
+recipient holds the content key of what it reads, and can seal other content
+under a wrapped key copied from a genuine artifact. For Foxxi's LRS the store
+owner is a recipient, so a holder of the owner's key who could write the pod
+could still write statements, the LMS's own included.
+
+`NativeCommitStore` takes `headSigner`, `trustedHeadSignerPublicKeys` and
+`requireSignedHead`. A signing client puts an Ed25519 signature on every head
+it commits, over the head's envelope and its address. Everything a head refers
+to is named by the digest of its stored bytes, so the one signature covers every
+record beneath it, including those stored before heads were signed.
+
+Foxxi's LRS signs with a key derived from the bridge's own and takes a signed
+head only under that key. `FOXXI_LRS_NATIVE_REQUIRE_SIGNED_HEAD=1` then refuses
+an unsigned head. It is off by default: a store from before has an unsigned head
+until its next commit, and a bridge that refused it could not start. Until it is
+on, a head with the signature left off is still read.
+
+Not covered: putting an earlier signed head back, and removing what a head
+refers to. Without the options nothing changes.
+
 ## 2026-11-17 — xapi-x: version 2 of the profile is published on the pod
 
 The owner said to publish it. The profile's IRI,
