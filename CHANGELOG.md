@@ -46,6 +46,36 @@ is another profile's. A 204 has no body, so on success the caller is not told
 what was not checked. An extension that sits in a place its declared type does
 not name (a context extension under `result`) is still checked for its value
 and not reported as misplaced.
+## 2026-11-17 — xapi-x: version 2 of the profile is published on the pod
+
+The owner said to publish it. The profile's IRI,
+`https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix-profile`, now
+serves version 2: 123 triples, the ones `xapixProfileTurtle()` returns on
+master. The publish was conditional on version 1 still being the head, and its
+descriptor supersedes version 1's. Fetched back as Turtle and compared triple
+for triple: none missing, none extra. `…/xapix-profile/v/2` and
+`…/xapix-profile/templates/projection` resolve.
+
+Only the xapi-x README changes in the repository: it said the pod served
+version 1 and listed this as left to do.
+
+## 2026-11-17 — Foxxi: a test takes a guest learner all the way to a course
+
+The guest-learner tests stopped at a guest with no links. One new case in
+`tests/i2idlx-learning-routes.test.ts` runs the whole path over real HTTP with
+the provider stand-in the other route tests use: a guest signs in by key proof,
+joins a connection with its code, the connection's owner sees the guest's WebID
+among the pending links and approves it against a real registration, the guest
+confirms, reads its own courses and progress, launches its enrolled course, and
+ends its own link.
+
+It also holds the edges: the guest cannot approve its own link or do anything
+else an owner does, another guest cannot confirm or use the link, the AI
+context and progress notifications stay closed with an active link, and no
+provider identifier appears in what the guest is shown.
+
+Test only; no source change. It fails if `courses` is taken out of the
+operations a guest may call.
 
 ## 2026-11-16 — Dependencies: minimatch 11.0.8 under typescript-eslint and electron-builder
 

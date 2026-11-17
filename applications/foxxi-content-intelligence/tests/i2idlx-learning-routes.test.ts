@@ -1,7 +1,7 @@
 import { afterEach, describe, it, expect } from 'vitest';
 import assert from 'node:assert/strict';
 import { once } from 'node:events';
-import { createHash } from 'node:crypto';
+import { createHash, createPublicKey, randomBytes, verify as verifySignature, webcrypto } from 'node:crypto';
 import { mkdtemp, writeFile, realpath, rm } from 'node:fs/promises';
 import { join, dirname } from 'node:path';
 import { tmpdir } from 'node:os';
@@ -35,6 +35,7 @@ async function fixture(launchRequestsPerMinute?: number) {
     ['procedure.html', '<html><head><title>Safety procedure</title></head><body><h1>Safety procedure</h1><p>Record BLUE-27 and notify the Orion desk.</p></body></html>'],
   ]);
   const providerPaths: string[] = [], providerWrites: string[] = [];
+  const guests = new Map<string, Row>();
   const repository: LearningRepository = {
     async read() { return structuredClone(snapshot); },
     async write(expected, state) { assert.equal(expected, snapshot.revision); snapshot = { revision: String(++serial), state: structuredClone(state) }; },
@@ -55,6 +56,13 @@ async function fixture(launchRequestsPerMinute?: number) {
         return json({ userId: who, ownerDid: `did:web:identity.example:users:${who}`, webId: `${IDENTITY}/users/${who}/profile#me`, podUrl: `${POD}/${who}/`,
           agentId: `did:web:identity.example:agents:learning-${who}`, clientId: BASE + PREFIX + '/oauth/client.json', scope: 'mcp:read', expiresAt: Math.floor(Date.now() / 1000) + 3600 });
       }
+    }
+    if (u.origin === IDENTITY) {
+      // Identity's verify for a provisional guest: a real P-256 proof over the attestation, this audience and the challenge.
+      assert.equal(u.pathname, '/play/provisional/verify'); const body = row(JSON.parse(String(init.body))), claims = guests.get(String(body.attestation));
+      const proves = !!claims && body.audience === BASE && typeof body.proof === 'string' && verifySignature('sha256',
+        Buffer.from(`interego-play-proof-v1\n${String(body.attestation)}\n${BASE}\n${String(body.challenge)}`), { key: createPublicKey({ key: claims.publicKeyJwk as never, format: 'jwk' }), dsaEncoding: 'ieee-p1363' }, Buffer.from(body.proof, 'base64url'));
+      return proves ? json({ ...claims, valid: true }) : json({ valid: false, error: 'invalid_browser_proof' }, 401);
     }
     assert.equal(u.origin, 'https://cloud.scorm.com'); cloudReads++; providerPaths.push(u.pathname + u.search);
     assert.equal(new Headers(init.headers).get('Authorization'), 'Basic ' + Buffer.from('dynamic-app:private-cloud-secret').toString('base64'));
@@ -80,7 +88,9 @@ async function fixture(launchRequestsPerMinute?: number) {
     openLearningAccess: (receipt, identity, messages) => learning.context.openTaskAccess(receipt, identity, messages),
     verifyCaller: async body => ({ ok: true, callerDid: 'did:example:paired-agent', payload: row(body) }) });
   const learning: ReturnType<typeof attachLearningRoutes> = attachLearningRoutes(app, { baseUrl: BASE, relayOrigin: RELAY, identityOrigin: IDENTITY, podOrigin: POD,
-    fetch: transport, repository, sessions, taskConfig: { baseUrl: BASE, appDataFile: glossary }, launchRequestsPerMinute });
+    fetch: transport, repository, sessions, taskConfig: { baseUrl: BASE, appDataFile: glossary }, launchRequestsPerMinute,
+    // Present only so guest sign-in is on; these tests admit a guest by proof and never ask for a grant.
+    guestGrant: async () => { throw Error('no grant is asked for here'); } });
   const server = app.listen(0, '127.0.0.1'); await once(server, 'listening'); const address = server.address(); assert.ok(address && typeof address !== 'string');
   const physical = `http://127.0.0.1:${address.port}`;
   const request = (path: string, headers: Record<string, string> = {}, body?: unknown) => fetch(physical + path, { redirect: 'manual',
@@ -93,6 +103,21 @@ async function fixture(launchRequestsPerMinute?: number) {
       { Cookie: pair(start, '__Host-i2idlx-learning-pending') }); expect(callback.status).toBe(303);
     const cookie = pair(callback, '__Host-i2idlx-learning'), account = row(await (await request(PREFIX + '/session', { Cookie: cookie })).json());
     return { Cookie: cookie, Origin: BASE, 'X-I2IDLX-Learning-CSRF': String(account.csrf) };
+  }
+  /** A provisional guest signed in the way a browser does it: a challenge, then a proof made with a key only it holds. */
+  async function guest() {
+    const pair2 = await webcrypto.subtle.generateKey({ name: 'ECDSA', namedCurve: 'P-256' }, false, ['sign']);
+    const j = await webcrypto.subtle.exportKey('jwk', pair2.publicKey), publicKeyJwk = { kty: 'EC', crv: 'P-256', x: j.x, y: j.y };
+    const userId = 'u-try-play-' + createHash('sha256').update(JSON.stringify(publicKeyJwk)).digest('hex').slice(0, 32);
+    const attestation = `ipa1_${Buffer.from(userId).toString('base64url')}.${randomBytes(32).toString('base64url')}`;
+    guests.set(attestation, { version: 1, issuer: IDENTITY, audience: BASE, userId, ownerDid: `did:web:identity.example:users:${userId}`, webId: `${IDENTITY}/users/${userId}/profile#me`,
+      podUrl: `${POD}/${userId}/`, authenticatedAgentDid: `did:web:identity.example:agents:play-${userId}`, publicKeyJwk, provisional: true, expiresAt: new Date(Date.now() + 86_400_000).toISOString() });
+    const challenge = String(row(await (await request(PREFIX + '/guest/challenge', { Origin: BASE }, {})).json()).challenge);
+    const proof = Buffer.from(await webcrypto.subtle.sign({ name: 'ECDSA', hash: 'SHA-256' }, pair2.privateKey, Buffer.from(`interego-play-proof-v1\n${attestation}\n${BASE}\n${challenge}`))).toString('base64url');
+    const entered = await request(PREFIX + '/guest/session', { Origin: BASE }, { attestation, challenge, proof }); expect(entered.status).toBe(200);
+    const cookie = pair(entered, '__Host-i2idlx-learning'), account = row(await (await request(PREFIX + '/session', { Cookie: cookie })).json());
+    expect(account.guest).toBe(true);
+    return { headers: { Cookie: cookie, Origin: BASE, 'X-I2IDLX-Learning-CSRF': String(account.csrf) }, userId, webId: `${IDENTITY}/users/${userId}/profile#me` };
   }
   async function call(headers: Record<string, string>, operation: string, args: Row = {}) {
     const response = await request(API, headers, { operation, ...args }); return { status: response.status, body: row(await response.json()) };
@@ -110,7 +135,7 @@ async function fixture(launchRequestsPerMinute?: number) {
     expect((await call(f.student, 'confirm-link', { link_id: f.link.id })).status).toBe(200);
   }
   cleanups.push(async () => { learning.launch.dispose(); learning.context.dispose(); learning.auth.dispose(); sessions.dispose(); server.closeAllConnections(); await new Promise<void>(done => server.close(() => done())); });
-  return { request, login, call, setup, activate, registrations, tokens, providerPaths, providerWrites, get cloudReads() { return cloudReads; } };
+  return { request, login, guest, call, setup, activate, registrations, tokens, providerPaths, providerWrites, get cloudReads() { return cloudReads; } };
 }
 describe('learning HTTP composition', () => {
   it('mints only the enrolled human course launch after cookie and CSRF validation', async () => {
@@ -130,6 +155,51 @@ describe('learning HTTP composition', () => {
     expect(f.providerWrites).toEqual(['/api/v2/registrations/private-registration-a/launchLink']);
     await f.call(state.admin, 'revoke-link', { link_id: state.link.id });
     expect((await f.request(API + '/launch', state.student, body)).status).toBe(403); expect(f.providerWrites).toHaveLength(1);
+  });
+  it('takes a provisional guest from a connection code to its own enrolled course, and no further', async () => {
+    const f = await fixture(), admin = await f.login('u-pk-admin'), g = await f.guest(), stranger = await f.guest();
+    const made = await f.call(admin, 'create-connector', { label: 'Institution fixture', credentials: { app_id: 'dynamic-app', secret: 'private-cloud-secret' },
+      policy: { allowAiContent: true, allowAiProgress: true }, intent: 'authorize-enrolled-learners', request_id: 'guest-link-test-1' }); expect(made.status).toBe(200);
+    const connector = row(made.body.connector);
+    // The guest joins with the code and waits: nothing is its own yet.
+    expect((await f.call(g.headers, 'discover', { join_code: connector.join_code })).status).toBe(200);
+    const requested = await f.call(g.headers, 'request-link', { join_code: connector.join_code }); expect(requested.status).toBe(200);
+    const link = row(requested.body.link); expect(link.status).toBe('pending-admin');
+    expect((await f.call(g.headers, 'courses', { link_id: link.id })).status).not.toBe(200);
+    expect(f.providerWrites).toEqual([]);
+    // The owner sees who is asking: a guest account, by its WebID.
+    const pending = await f.call(admin, 'pending-links', { connector_id: connector.id }); expect(pending.status).toBe(200);
+    expect((pending.body.links as Row[]).map(l => row(l.account).webId)).toEqual([g.webId]);
+    // A guest decides nothing about a connection, its own link included.
+    for (const [operation, args] of [['pending-links', { connector_id: connector.id }], ['approve-link', { link_id: link.id, registration_id: 'private-registration-a', confirmed: true }],
+      ['revoke-connector', { connector_id: connector.id }], ['owned-connectors', {}]] as Array<[string, Row]>) {
+      expect((await f.call(g.headers, operation, args)).body.error, operation).toBe('learning_guest_refused');
+    }
+    expect((await f.call(g.headers, 'confirm-link', { link_id: link.id })).status).toBe(409);
+    // Approved against a real registration by the owner, then confirmed by the guest.
+    expect((await f.call(admin, 'approve-link', { link_id: link.id, registration_id: 'private-registration-a', confirmed: true })).status).toBe(200);
+    expect((await f.call(stranger.headers, 'confirm-link', { link_id: link.id })).status).toBe(404);
+    expect((await f.call(g.headers, 'confirm-link', { link_id: link.id })).status).toBe(200);
+    expect((await f.call(g.headers, 'my-links')).body.links).toMatchObject([{ id: link.id, status: 'active' }]);
+    // Its own courses and progress, and nothing of the provider's private identifiers.
+    const courses = await f.call(g.headers, 'courses', { link_id: link.id }); expect(courses.status).toBe(200);
+    expect(courses.body.courses).toMatchObject([{ id: 'course-a', title: 'Course course-a', version: 0 }]);
+    const progress = await f.call(g.headers, 'progress', { link_id: link.id }); expect(progress.status).toBe(200);
+    expect(progress.body.records).toMatchObject([{ course_id: 'course-a', completion: 'COMPLETED', success: 'PASSED' }]);
+    expect(JSON.stringify([courses.body, progress.body])).not.toMatch(/private-registration|private-learner|private-cloud-secret|NEVER-RELEASE/);
+    // It launches its enrolled course. Another guest cannot use the link.
+    const body = { link_id: link.id, course_id: 'course-a', version: 0 };
+    expect((await f.request(API + '/launch', stranger.headers, body)).status).toBe(404);
+    expect((await f.call(stranger.headers, 'courses', { link_id: link.id })).status).not.toBe(200);
+    const launched = await f.request(API + '/launch', g.headers, body); expect(launched.status).toBe(200);
+    expect(String(row(await launched.json()).launch_url)).toContain('/api/cloud/registration/launch/');
+    expect(f.providerWrites).toEqual(['/api/v2/registrations/private-registration-a/launchLink']);
+    // The AI context and progress notifications stay closed to it even with an active link.
+    expect((await f.request(API + '/context', g.headers, { link_id: link.id })).status).toBe(403);
+    expect((await f.call(g.headers, 'enable-progress-notifications', { link_id: link.id })).body.error).toBe('learning_guest_refused');
+    // It can end its own link, after which the course is closed to it again.
+    expect((await f.call(g.headers, 'revoke-link', { link_id: link.id })).status).toBe(200);
+    expect((await f.request(API + '/launch', g.headers, body)).status).toBe(403); expect(f.providerWrites).toHaveLength(1);
   });
   it('limits unauthenticated launch attempts before resolving human authority', async () => {
     const f = await fixture(2), body = { link_id: 'unknown', course_id: 'unknown', version: 0 };
