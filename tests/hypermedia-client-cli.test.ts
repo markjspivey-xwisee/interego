@@ -1247,12 +1247,20 @@ describe('hmc.py: template mappings', () => {
 });
 
 describe('hmc.py: a document\'s size, not its shape, sets the cost', () => {
-  it.each(COST_CASES)('describes %s\'s control %s within the budget', async (path, rel, _controls, fields) => {
+  it.each(COST_CASES)('describes and dry-runs %s\'s control %s within the budget', async (path, rel, _controls, fields, refused) => {
     const r = await hmc(['describe', `${base}${path}`, rel]);
     expect(r.timedOut, 'killed after 30 s').toBe(false);
     expect(r.ms, 'run time').toBeLessThan(3_000);
     expect(r.code, r.stderr).toBe(0);
     expect((JSON.parse(r.stdout) as { fields: unknown[] }).fields).toHaveLength(fields);
+    const run = await hmc(['invoke', `${base}${path}`, rel, '--dry-run']);
+    expect(run.timedOut, 'killed after 30 s').toBe(false);
+    expect(run.ms, 'dry run time').toBeLessThan(3_000);
+    if (refused) {
+      expect(run.code, run.stdout).toBe(2);
+      expect(problems(run.stderr)).toHaveLength(1);
+      expect(problems(run.stderr)[0]!.startsWith(refused)).toBe(true);
+    } else expect(run.code, run.stderr).toBe(0);
   }, 60_000);
 
   it('lists every control of a document whose controls share one shape within the budget', async () => {

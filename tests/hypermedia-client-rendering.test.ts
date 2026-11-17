@@ -2096,7 +2096,7 @@ describe('hypermedia client: template mappings', () => {
 });
 
 describe('hypermedia client: a document\'s size, not its shape, sets the cost', () => {
-  it.each(COST_CASES)('lists %s and dry-runs %s within the budget', async (path, rel, controls, fields) => {
+  it.each(COST_CASES)('lists %s and dry-runs %s within the budget', async (path, rel, controls, fields, refused) => {
     const started = Date.now();
     const t = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1`);
     try {
@@ -2105,7 +2105,12 @@ describe('hypermedia client: a document\'s size, not its shape, sets the cost', 
       expect(Date.now() - started, 'link to dry run').toBeLessThan(3_000);
       expect(document.querySelectorAll('.card').length).toBe(controls);
       expect(formFields(document).length).toBe(fields);
-      expect(document.getElementById('result')!.textContent).toContain('Dry run — nothing was sent.');
+      const result = document.getElementById('result')!.textContent!;
+      if (refused) {
+        expect(result.slice(0, 200)).toContain('Validation failed');
+        expect(listed(document)).toHaveLength(1);
+        expect(listed(document)[0]!.startsWith(refused)).toBe(true);
+      } else expect(result).toContain('Dry run — nothing was sent.');
     } finally { t.dom.window.close(); }
   }, 60_000);
 });

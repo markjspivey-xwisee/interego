@@ -865,8 +865,9 @@ export function sharedDescriptors(base: string): Record<string, string> {
     ] },
     // Enumerations whose entries are JSON values of every kind: an array, an object, nested arrays,
     // entries of mixed kinds in a property with no type, null, numbers written 1.0 and past 2^53
-    // inside arrays and objects, a list whose items each have choices, a const, and two entries
-    // written alike. CHOICE_CASES reads them.
+    // inside arrays and objects, a list whose items each have choices, a const, two entries
+    // written alike, defaults that are another JSON value than the choice their text names, and an
+    // integer field's entry and const past 2^53. CHOICE_CASES reads them.
     '/choices': { '@context': CTX, '@id': `${base}/choices`, 'iep:affordance': [
       schemaOp('a', 'urn:choice:array', 'POST', 'Array choice', { selection: { type: 'array', enum: [['allowed']] } }),
       schemaOp('o', 'urn:choice:object', 'POST', 'Object choice', { pick: { type: 'object', enum: [{ a: 1, b: [2, 3] }] } }),
@@ -882,6 +883,13 @@ export function sharedDescriptors(base: string): Record<string, string> {
       schemaOp('i', 'urn:choice:items', 'POST', 'Item choice', { codes: { type: 'array', items: { enum: ['x', 'y'] } } }),
       schemaOp('c', 'urn:choice:const', 'POST', 'Const choice', { v: { const: { a: [1] } } }),
       schemaOp('w', 'urn:choice:alike', 'POST', 'Alike choice', { flag: { enum: ['true', true] } }),
+      schemaOp('dt', 'urn:choice:text-default', 'POST', 'Number default of a text choice', { m: { enum: ['1'], default: 1 } }),
+      schemaOp('ds', 'urn:choice:typed-default', 'POST', 'Number default of a string choice', { m: { type: 'string', enum: ['1'], default: 1 } }),
+      schemaOp('db', 'urn:choice:bool-default', 'POST', 'Boolean default of a text choice', { m: { enum: ['true'], default: true } }),
+      schemaOp('dn', 'urn:choice:number-default', 'POST', 'Text default of a number choice', { m: { enum: [1], default: '1' } }),
+      schemaOp('dd', 'urn:choice:same-default', 'POST', 'Default that is a choice', { m: { enum: [1, 2], default: 2 } }),
+      schemaOp('ip', 'urn:choice:past-safe', 'POST', 'Integer choice past 2^53', { n: { type: 'integer', enum: ['INTEGER-PAST-SAFE'] } }),
+      schemaOp('ic', 'urn:choice:past-safe-const', 'POST', 'Integer const past 2^53', { n: { type: 'integer', const: 'CONST-PAST-SAFE' } }),
     ], '@graph': [
       { '@id': '#CL', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:tags' }, 'sh:name': 'tags', 'sh:in': ['a', 'b'] } },
     ] },
@@ -892,7 +900,13 @@ export function sharedDescriptors(base: string): Record<string, string> {
     // datatype whose form is not checked, a bound that is not a number, an integer type's range,
     // node kinds, sh:class, sh:node, rdf:JSON with a length or choices, sh:hasValue and
     // sh:qualifiedValueShape; hydra:writable; a body schema with a keyword neither client checks, or
-    // that requires a name it does not describe; and values an address leaves out. SWEEP_CASES reads them.
+    // that requires a name it does not describe; and values an address leaves out. Then a body schema
+    // with an enum or a const; a template variable that is no property, under additionalProperties
+    // false or a schema; a property shape's own sh:property and sh:closed; bodies sent whole with
+    // sh:in, a bound, a node kind, sh:languageIn or sh:hasValue; a shape with properties and its own
+    // sh:in or sh:nodeKind; node kinds on a JSON array's items and on rdf:JSON; a float past the
+    // largest float; a field written in place with a key the reader does not model; a bound and a
+    // length written as text; entries past a double; and readOnly. SWEEP_CASES reads them.
     '/sweep': { '@context': CTX, '@id': `${base}/sweep`, 'iep:affordance': [
       schemaOp('e', 'urn:sweep:exclusive', 'POST', 'Exclusive bounds', { n: { type: 'integer', exclusiveMinimum: 0, exclusiveMaximum: 10 },
         m: { type: 'number', minimum: 0, exclusiveMinimum: true } }),
@@ -916,6 +930,32 @@ export function sharedDescriptors(base: string): Record<string, string> {
         properties: { a: { type: 'string' } }, allOf: [{ required: ['a'] }] } }),
       op('rr', 'urn:sweep:root-required', 'POST', 'Root required', { ...target('/num-target'), 'hydra:expects': { type: 'object',
         required: ['b'], properties: { a: { type: 'string' } } } }),
+      op('re', 'urn:sweep:root-enum', 'POST', 'Root enum', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { a: { type: 'string' } }, enum: [{ a: 'x' }] } }),
+      op('rc', 'urn:sweep:root-const', 'POST', 'Root const', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        properties: { a: { type: 'string' } }, const: { a: 'x' } } }),
+      op('xf', 'urn:sweep:extra-false', 'POST', 'Template variable, no other property', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] },
+      'hydra:expects': { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: false } }),
+      op('xs', 'urn:sweep:extra-schema', 'POST', 'Template variable, other properties bounded', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] },
+      'hydra:expects': { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: { type: 'integer', maximum: 5 } } }),
+      op('pn', 'urn:sweep:nested-shape', 'POST', 'Nested shape', { ...target('/num-target'), 'hydra:expects': { '@id': '#PS' } }),
+      op('ri', 'urn:sweep:raw-in', 'POST', 'Body choices', { ...target('/num-target'), 'hydra:expects': { '@id': '#RI' } }),
+      op('rm', 'urn:sweep:raw-bound', 'POST', 'Body bound', { ...target('/num-target'), 'hydra:expects': { '@id': '#RM' } }),
+      op('rk', 'urn:sweep:raw-kind', 'POST', 'Body node kind', { ...target('/num-target'), 'hydra:expects': { '@id': '#RK' } }),
+      op('rl', 'urn:sweep:raw-language', 'POST', 'Body language', { ...target('/num-target'), 'hydra:expects': { '@id': '#RL' } }),
+      op('rh', 'urn:sweep:raw-has-value', 'POST', 'Body value', { ...target('/num-target'), 'hydra:expects': { '@id': '#RH' } }),
+      op('ni', 'urn:sweep:node-in', 'POST', 'Shape choices', { ...target('/num-target'), 'hydra:expects': { '@id': '#NI' } }),
+      op('nk', 'urn:sweep:node-kind', 'POST', 'Shape node kind', { ...target('/num-target'), 'hydra:expects': { '@id': '#NK' } }),
+      op('if', 'urn:sweep:inline-key', 'POST', 'Inline field choices', { ...target('/num-target'),
+        fields: [{ name: 'x', path: 'urn:x', in: ['a'] }] }),
+      schemaOp('tb', 'urn:sweep:text-bound', 'POST', 'Bound as text', { n: { type: 'integer', minimum: '5' } }),
+      schemaOp('tl', 'urn:sweep:text-length', 'POST', 'Length as text', { s: { type: 'string', minLength: '3' } }),
+      schemaOp('ie', 'urn:sweep:infinite-entry', 'POST', 'Entry past a double', { m: { enum: ['INFINITE-ENTRY', null] } }),
+      schemaOp('in', 'urn:sweep:infinite-number', 'POST', 'Number entry past a double', { m: { type: 'number', enum: ['INFINITE-ENTRY', 1] } }),
+      schemaOp('ro', 'urn:sweep:read-only', 'POST', 'Read-only', { id: { type: 'string', readOnly: true }, name: { type: 'string' },
+        doc: { type: 'object', properties: { id: { readOnly: true } } } }),
     ], '@graph': [
       { '@id': '#SW', '@type': 'sh:NodeShape', 'sh:property': [
         { 'sh:path': { '@id': 'urn:p:ex' }, 'sh:name': 'ex', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:integer' },
@@ -929,7 +969,26 @@ export function sharedDescriptors(base: string): Record<string, string> {
         { 'sh:path': { '@id': 'urn:p:node' }, 'sh:name': 'node', 'sh:maxCount': 1, 'sh:node': { '@id': '#NS' } },
         { 'sh:path': { '@id': 'urn:p:jlen' }, 'sh:name': 'jlen', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'rdf:JSON' }, 'sh:maxLength': 5 },
         { 'sh:path': { '@id': 'urn:p:jin' }, 'sh:name': 'jin', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'rdf:JSON' }, 'sh:in': ['[1]', '"x"'] },
+        { 'sh:path': { '@id': 'urn:p:nodes' }, 'sh:name': 'nodes', 'sh:nodeKind': { '@id': 'sh:BlankNode' } },
+        { 'sh:path': { '@id': 'urn:p:jlit' }, 'sh:name': 'jlit', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'rdf:JSON' }, 'sh:nodeKind': { '@id': 'sh:Literal' } },
+        { 'sh:path': { '@id': 'urn:p:jnode' }, 'sh:name': 'jnode', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'rdf:JSON' }, 'sh:nodeKind': { '@id': 'sh:BlankNode' } },
+        { 'sh:path': { '@id': 'urn:p:fl' }, 'sh:name': 'fl', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:float' } },
       ] },
+      { '@id': '#PS', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:d' }, 'sh:name': 'd', 'sh:maxCount': 1, 'sh:nodeKind': { '@id': 'sh:BlankNode' },
+          'sh:property': { 'sh:path': { '@id': 'urn:p:id' }, 'sh:minCount': 1 } },
+        { 'sh:path': { '@id': 'urn:p:e' }, 'sh:name': 'e', 'sh:maxCount': 1, 'sh:nodeKind': { '@id': 'sh:BlankNode' }, 'sh:closed': true },
+        { 'sh:path': { '@id': 'urn:p:f' }, 'sh:name': 'f', 'sh:maxCount': 1, 'sh:nodeKind': { '@id': 'sh:BlankNode' }, 'sh:closed': false },
+      ] },
+      { '@id': '#RI', '@type': 'sh:NodeShape', 'sh:datatype': { '@id': 'xsd:string' }, 'sh:in': { '@list': ['a', 'b'] } },
+      { '@id': '#RM', '@type': 'sh:NodeShape', 'sh:datatype': { '@id': 'xsd:integer' }, 'sh:maxInclusive': 5 },
+      { '@id': '#RK', '@type': 'sh:NodeShape', 'sh:datatype': { '@id': 'xsd:string' }, 'sh:nodeKind': { '@id': 'sh:IRI' } },
+      { '@id': '#RL', '@type': 'sh:NodeShape', 'sh:datatype': { '@id': 'xsd:string' }, 'sh:languageIn': { '@list': ['en'] } },
+      { '@id': '#RH', '@type': 'sh:NodeShape', 'sh:hasValue': 'yes' },
+      { '@id': '#NI', '@type': 'sh:NodeShape', 'sh:in': { '@list': ['a'] },
+        'sh:property': { 'sh:path': { '@id': 'urn:p:z' }, 'sh:name': 'z', 'sh:maxCount': 1 } },
+      { '@id': '#NK', '@type': 'sh:NodeShape', 'sh:nodeKind': { '@id': 'sh:IRI' },
+        'sh:property': { 'sh:path': { '@id': 'urn:p:z' }, 'sh:name': 'z', 'sh:maxCount': 1 } },
       { '@id': '#NS', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:a' }, 'sh:datatype': { '@id': 'xsd:integer' } } },
       { '@id': '#HV', '@type': 'sh:NodeShape', 'sh:property': [
         { 'sh:path': { '@id': 'urn:p:fixed' }, 'sh:name': 'fixed', 'sh:maxCount': 1, 'sh:hasValue': 'yes' },
@@ -951,7 +1010,10 @@ export function sharedDescriptors(base: string): Record<string, string> {
   out['/values'] = out['/values']!.replace('"LARGE-SCORE"', '1e400').replace('"BIG-TEXT-DEFAULT"', `1${'0'.repeat(30)}`)
     .replace('"LARGE-BOUND"', `1${'0'.repeat(399)}`).replace('"TWO-POINT-ZERO"', '2.0').replace('"PAST-SAFE"', '9007199254740993');
   // Numbers inside the choices' entries as written: 1.0, 2.0 and 2^53 + 1, which JSON.parse reads as 2^53.
-  out['/choices'] = out['/choices']!.replace('"CHOICE-ONE"', '1.0').replace('"CHOICE-TWO"', '2.0').replace('"CHOICE-PAST-SAFE"', '9007199254740993');
+  out['/choices'] = out['/choices']!.replace('"CHOICE-ONE"', '1.0').replace('"CHOICE-TWO"', '2.0').replace('"CHOICE-PAST-SAFE"', '9007199254740993')
+    .replace('"INTEGER-PAST-SAFE"', '9007199254740993').replace('"CONST-PAST-SAFE"', '9007199254740993');
+  // An entry no double holds, 1e400, which JSON.parse reads as an infinity.
+  out['/sweep'] = out['/sweep']!.split('"INFINITE-ENTRY"').join('1e400');
   // JSON.stringify writes each key once, so a repeated key is put in the text by hand: JSON leaves
   // its meaning open, and a reader that takes the last "hydra:method" takes GET.
   out['/repeated-key'] = JSON.stringify({ '@context': CTX, '@id': `${base}/repeated-key`, 'iep:affordance': [
@@ -995,7 +1057,9 @@ export function sharedMarkdown(base: string): Record<string, string> {
       ':::control hm-big-default', 'title: Big text default', 'method: POST', `target: ${base}/num-target`,
       `fields: [{"name": "a", "maxLength": 10, "defaultValue": 1${'0'.repeat(30)}}]`, ':::', '',
       ':::control hm-surrogate-default', 'title: Surrogate text default', 'method: POST', `target: ${base}/num-target`,
-      'fields: [{"name": "a", "defaultValue": "\\ud800"}]', ':::', ''].join('\n'),
+      'fields: [{"name": "a", "defaultValue": "\\ud800"}]', ':::', '',
+      ':::control hm-unread-key', 'title: Unread field key', 'method: POST', `target: ${base}/num-target`,
+      'fields: [{"name": "x", "datatype": "xsd:integer", "minInclusive": 5}]', ':::', ''].join('\n'),
   };
 }
 
@@ -1280,6 +1344,15 @@ const unchecked = (names: string) => `has a constraint this client does not chec
 /** The problem that keeps a control whose input `name` cannot be read from being invoked. */
 const unread = (name: string, what: string) =>
   `the input "${name}" ${what}, which this client does not read, so what it takes is not known; this control is not invoked`;
+/** The problem that keeps a control whose body schema names `keyword` from being invoked. */
+const rootUnchecked = (keyword: string) =>
+  `the JSON Schema names ${keyword}, which this client does not check, so what it sends is not known; this control is not invoked`;
+/** The problem that keeps a control whose shape, which has properties, names sh:`key` itself from being invoked. */
+const nodeUnchecked = (key: string) =>
+  `the shape names sh:${key}, which this client does not check, so what it sends is not known; this control is not invoked`;
+/** The problem that keeps a control whose field written in place names `key` from being invoked. */
+const inlineUnread = (name: string, key: string) =>
+  `the input "${name}" names ${key}, which this client does not read in a field written in place, so what it takes is not known; this control is not invoked`;
 
 /**
  * Choices for /choices each client reads alike, as VALUE_CASES are: an enumeration (or a const)
@@ -1329,6 +1402,17 @@ export const CHOICE_CASES: ReadonlyArray<ValueCase> = [
   ['/choices', 'urn:choice:const', 'Const choice', { v: '{"a":[2]}' }, { error: 'v: must be {"a":[1]}' }],
   ['/choices', 'urn:choice:alike', 'Alike choice', { flag: 'true' },
     { error: 'the input "flag" offers two choices written alike (true), so which one is meant is not known; this control is not invoked' }],
+  // A default is checked and sent as the document gives it, so one that is another JSON value than
+  // the choice its text names is not that choice: the form leaves it out and the default is refused.
+  ['/choices', 'urn:choice:text-default', 'Number default of a text choice', {}, { error: 'm: must be one of 1' }],
+  ['/choices', 'urn:choice:typed-default', 'Number default of a string choice', {}, { error: 'm: must be a JSON string' }],
+  ['/choices', 'urn:choice:bool-default', 'Boolean default of a text choice', {}, { error: 'm: must be one of true' }],
+  ['/choices', 'urn:choice:number-default', 'Text default of a number choice', {}, { error: 'm: must be one of 1' }],
+  ['/choices', 'urn:choice:same-default', 'Default that is a choice', {}, { body: { m: 2 } }],
+  // An integer field offers no entry past 2^53, which JSON.parse has rounded, and refuses the value
+  // its rounding names rather than send it.
+  ['/choices', 'urn:choice:past-safe', 'Integer choice past 2^53', { n: '9007199254740992' }, { error: 'n: integer too large to send exactly' }],
+  ['/choices', 'urn:choice:past-safe-const', 'Integer const past 2^53', { n: '9007199254740992' }, { error: 'n: integer too large to send exactly' }],
 ];
 
 /**
@@ -1396,6 +1480,57 @@ export const SWEEP_CASES: ReadonlyArray<ValueCase> = [
     { error: 'the JSON Schema requires "b", which it does not describe, so what it sends is not known; this control is not invoked' }],
   ['/sweep', 'urn:sweep:empty-read', 'Empty read', { list: '[]' }, { error: `list: ${ADDRESS_LEAVES}` }],
   ['/sweep', 'urn:sweep:empty-read', 'Empty read', { list: '["a",null]' }, { error: `list: ${ADDRESS_LEAVES}` }],
+  // An enum or a const on the schema of the whole body is checked by neither client.
+  ['/sweep', 'urn:sweep:root-enum', 'Root enum', { a: 'y' }, { error: rootUnchecked('enum') }],
+  ['/sweep', 'urn:sweep:root-enum', 'Root enum', {}, { error: rootUnchecked('enum') }],
+  ['/sweep', 'urn:sweep:root-const', 'Root const', { a: 'x' }, { error: rootUnchecked('const') }],
+  // A template's variable that is no property of the body's schema is sent in the body too, so
+  // additionalProperties is its schema.
+  ['/sweep', 'urn:sweep:extra-false', 'Template variable, no other property', { a: 'x', q: 'y' }, { error: 'q: is not allowed by its schema' }],
+  ['/sweep', 'urn:sweep:extra-false', 'Template variable, no other property', { a: 'x' }, { body: { a: 'x' } }],
+  ['/sweep', 'urn:sweep:extra-schema', 'Template variable, other properties bounded', { q: '9' }, { error: 'q: above maxInclusive 5' }],
+  ['/sweep', 'urn:sweep:extra-schema', 'Template variable, other properties bounded', { q: 'x' }, { error: 'q: not an integer' }],
+  ['/sweep', 'urn:sweep:extra-schema', 'Template variable, other properties bounded', { q: '3' }, { body: { q: 3 } }],
+  // A property shape's own sh:property and sh:closed constrain its value node; sh:closed false does not.
+  ['/sweep', 'urn:sweep:nested-shape', 'Nested shape', { d: '{"x":1}' }, { error: `d: ${unchecked('sh:property')}` }],
+  ['/sweep', 'urn:sweep:nested-shape', 'Nested shape', { e: '{"x":1}' }, { error: `e: ${unchecked('sh:closed')}` }],
+  ['/sweep', 'urn:sweep:nested-shape', 'Nested shape', { f: '{"x":1}' }, { body: { f: { x: 1 } } }],
+  // A body sent whole is checked against the shape's own value constraints, as an input is.
+  ['/sweep', 'urn:sweep:raw-in', 'Body choices', { body: 'c' }, { error: 'body: must be one of a, b' }],
+  ['/sweep', 'urn:sweep:raw-in', 'Body choices', { body: 'a' }, { body: 'a' }],
+  ['/sweep', 'urn:sweep:raw-bound', 'Body bound', { body: '9' }, { error: 'body: above maxInclusive 5' }],
+  ['/sweep', 'urn:sweep:raw-bound', 'Body bound', { body: '3' }, { body: '3' }],
+  ['/sweep', 'urn:sweep:raw-kind', 'Body node kind', { body: 'not an iri' }, { error: 'body: must be an IRI' }],
+  ['/sweep', 'urn:sweep:raw-language', 'Body language', { body: 'x' }, { error: `body: ${unchecked('sh:languageIn')}` }],
+  ['/sweep', 'urn:sweep:raw-has-value', 'Body value', { body: 'no' }, { error: 'body: must be yes' }],
+  ['/sweep', 'urn:sweep:raw-has-value', 'Body value', { body: 'yes' }, { body: 'yes' }],
+  // A value constraint on a shape that has properties constrains the body, which no input checks.
+  ['/sweep', 'urn:sweep:node-in', 'Shape choices', { z: 'q' }, { error: nodeUnchecked('in') }],
+  ['/sweep', 'urn:sweep:node-kind', 'Shape node kind', { z: 'q' }, { error: nodeUnchecked('nodeKind') }],
+  // sh:nodeKind applies to each value: each item of a field that holds a JSON array, and an
+  // rdf:JSON value, which is a literal.
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { nodes: '["a", 1]' }, { error: 'nodes: must be a blank node' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { nodes: '[{"a":1}]' }, { body: { nodes: [{ a: 1 }] } }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { jlit: '{"a":1}' }, { body: { jlit: { a: 1 } } }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { jnode: '{"a":1}' }, { error: 'jnode: must be a blank node' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { fl: '1e300' }, { error: 'fl: out of the range of xsd:float' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { fl: '3.4e38' }, { body: { fl: 3.4e38 } }],
+  // A field written in place says only what the reader models; any other key is refused by name.
+  ['/sweep', 'urn:sweep:inline-key', 'Inline field choices', { x: 'a' }, { error: inlineUnread('x', 'in') }],
+  ['/values-md', 'hm-unread-key', 'Unread field key', { x: '6' }, { error: inlineUnread('x', 'minInclusive') }],
+  // A JSON Schema bound or length is a number; one written as text is not read.
+  ['/sweep', 'urn:sweep:text-bound', 'Bound as text', { n: '6' }, { error: unread('n', 'writes minimum as something other than a number') }],
+  ['/sweep', 'urn:sweep:text-length', 'Length as text', { s: 'abcd' },
+    { error: unread('s', 'writes minLength as something other than a whole number of zero or more') }],
+  // An entry no double holds is not offered: null is then a choice alone, and a number field's
+  // choice its one other entry.
+  ['/sweep', 'urn:sweep:infinite-entry', 'Entry past a double', { m: 'null' }, { body: { m: null } }],
+  ['/sweep', 'urn:sweep:infinite-number', 'Number entry past a double', { m: 'null' }, { error: 'm: not a number' }],
+  ['/sweep', 'urn:sweep:infinite-number', 'Number entry past a double', { m: '1' }, { body: { m: 1 } }],
+  // readOnly says the value is not the client's to write, as hydra:writable false does.
+  ['/sweep', 'urn:sweep:read-only', 'Read-only', { id: 'x' }, { error: 'id: is read-only (readOnly true), so it is not sent' }],
+  ['/sweep', 'urn:sweep:read-only', 'Read-only', { doc: '{"id":1}' }, { error: 'doc/id: is read-only (readOnly true), so it is not sent' }],
+  ['/sweep', 'urn:sweep:read-only', 'Read-only', { name: 'n', doc: '{}' }, { body: { name: 'n', doc: {} } }],
 ];
 
 /**
@@ -1428,11 +1563,17 @@ export const BODY_TEXTS: ReadonlyArray<readonly [path: string, action: string, t
  *     joined to its fields, each mapping searching all the fields before it;
  *   - mappings: one control whose template has 8,000 mappings, each searching the fields before it;
  *   - class: 1,500 nodes that each name one hydra:Class with 1,500 operations, which every naming
- *     node listed again.
+ *     node listed again;
+ *   - items: a list default of 50,000 values each checked against an items enum of 50,000 entries,
+ *     each value compared with every entry, and items-refused, the same with no value an entry,
+ *     whose problems each named every entry; and shape-list, a SHACL list default of 5,000 values
+ *     checked against an sh:in of 5,000, whose choices were rebuilt for every value.
+ * A case that names a problem is refused on its dry run, naming it alone; the others' dry runs plan.
  */
-export const COST_CASES: ReadonlyArray<readonly [path: string, rel: string, controls: number, fields: number]> = [
-  ['/cost/harvest', 'urn:op5', 1501, 0], ['/cost/shape', 'urn:c399', 400, 400], ['/cost/template', 'urn:c399', 400, 400],
-  ['/cost/mappings', 'urn:c', 1, 8000], ['/cost/class', 'urn:op5', 1500, 0],
+export const COST_CASES: ReadonlyArray<readonly [path: string, rel: string, controls: number, fields: number, refused: string | null]> = [
+  ['/cost/harvest', 'urn:op5', 1501, 0, null], ['/cost/shape', 'urn:c399', 400, 400, null], ['/cost/template', 'urn:c399', 400, 400, null],
+  ['/cost/mappings', 'urn:c', 1, 8000, null], ['/cost/class', 'urn:op5', 1500, 0, null], ['/cost/items', 'urn:items', 1, 1, null],
+  ['/cost/items-refused', 'urn:items', 1, 1, 'm/0: must be one of e0, e1, e2, '], ['/cost/shape-list', 'urn:list', 1, 1, 'm: must be one of e0, e1, e2, '],
 ];
 
 /** Each COST_CASES path's document as the text served; build it once per test file. */
@@ -1441,6 +1582,10 @@ export function costDescriptors(base: string): Record<string, string> {
     ({ 'iep:action': { '@id': rel }, 'hydra:method': 'GET', 'hydra:title': title, 'hydra:target': { '@id': `${base}/api` }, ...extra });
   const range = (n: number) => Array.from({ length: n }, (_, i) => i);
   const props = (n: number) => range(n).map(j => ({ 'sh:path': { '@id': `urn:p${j}` }, 'sh:name': `p${j}`, 'sh:maxCount': 1 }));
+  // A write whose one input takes a list, each of whose values is one of 50,000 entries, with a default of 50,000 values.
+  const items = (defaults: string[]) => ({ '@context': CTX, '@id': `${base}/cost/items`, 'iep:affordance': [{ '@id': '#i', '@type': 'iep:Affordance',
+    'iep:action': { '@id': 'urn:items' }, 'hydra:method': 'POST', 'hydra:title': 'Items', 'hydra:target': { '@id': `${base}/api` },
+    'hydra:expects': { type: 'object', properties: { m: { type: 'array', items: { enum: range(50000).map(j => `e${j}`) }, default: defaults } } } }] });
   const docs: Record<string, unknown> = {
     '/cost/harvest': { '@context': CTX, '@id': `${base}/cost/harvest`, '@graph': [
       { '@id': 'urn:x', 'iep:affordance': range(1500).map(i => ({ '@id': `urn:o${i}`, ...get(`urn:op${i}`, `Op ${i}`) })) },
@@ -1458,6 +1603,13 @@ export function costDescriptors(base: string): Record<string, string> {
     '/cost/class': { '@context': CTX, '@id': `${base}/cost/class`, '@graph': [
       { '@id': 'urn:C', 'hydra:supportedOperation': range(1500).map(j => ({ '@id': `urn:o${j}`, ...get(`urn:op${j}`, `Op ${j}`) })) },
       ...range(1500).map(i => ({ '@id': `urn:n${i}`, 'hydra:supportedClass': { '@id': 'urn:C' } }))] },
+    '/cost/items': items(range(50000).map(j => `e${j}`)),
+    '/cost/items-refused': items(range(50000).map(j => `x${j}`)),
+    '/cost/shape-list': { '@context': CTX, '@id': `${base}/cost/shape-list`, 'iep:affordance': [{ '@id': '#l', '@type': 'iep:Affordance',
+      'iep:action': { '@id': 'urn:list' }, 'hydra:method': 'POST', 'hydra:title': 'List', 'hydra:target': { '@id': `${base}/api` },
+      'hydra:expects': { '@id': '#S' } }],
+    '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
+      'sh:in': { '@list': range(5000).map(j => `e${j}`) }, 'sh:defaultValue': range(5000).map(j => `x${j}`) } }] },
   };
   return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc)]));
 }

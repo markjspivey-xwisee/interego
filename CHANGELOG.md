@@ -585,6 +585,22 @@ the 91 new shared rows, 68 failed in each client before, as did the changed row
 for a bound past a double, which had let any number through. The README's new
 Values section lists every decision; the page's CSP hash moves.
 
+A twelfth review found constraints still passed over, and checks that cost the
+square of a value's size. Both clients now refuse a body schema's `enum` or
+`const`, a property shape's own `sh:property` or `sh:closed`, `readOnly`, a
+float past the largest float, a value constraint on a shape that has
+properties, and any key a field written in place gives beyond the ten the
+HyperMarkdown lift writes; check a body sent whole against its shape's `sh:in`,
+`sh:hasValue`, bounds and `sh:nodeKind`, a template variable that is no
+property against `additionalProperties`, and `sh:nodeKind` on each item of a
+JSON array; read an rdf:JSON value as a literal and a JSON Schema bound written
+as text as no number; and check a default as the document gives it, never as
+the choice its text names. An entry past a double, or past 2^53 in an integer
+field, is not offered. A value's first problem is the one named and entries are
+keyed once, so a 50,000-item default against a 50,000-entry enum is checked in
+under a second, where `hmc.py` took over 30 s and the page ran out of memory.
+Of 44 new shared rows, 35 failed in each client before; the CSP hash moves.
+
 ## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
 
 From review of #934. With `requireSignedHead` on, a head with no signature was
