@@ -77,6 +77,36 @@ tests it selects, as `bridge-typecheck.yml`'s suite already did: its build cache
 holds `packages/*/dist` only, so on a hit `mcp-server/dist/` was never built and
 the compiled run found no server.
 
+## 2026-11-17 — Foxxi: a profile write the bridge never sent is not kept, not in doubt
+
+Found by starting the bridge and sending it signed requests, which #933 had
+not done. A profile write is "in doubt" when the pod neither acknowledged it
+nor let its own copy be read back. The bridge said "cannot be read back" in
+two cases where it had sent nothing at all:
+
+- no lattice key is configured (`FOXXI_WALLET_SEED` or
+  `FOXXI_ISSUER_KEY_SEED`), so `composeIntoSharedLattice` returns before it
+  writes;
+- the pod's address is one the fetch guard refuses (loopback or private), so
+  the write is refused before it is sent.
+
+In both, every add, remove and publish answered 503 `inDoubt`, and the
+profile was then refused to everyone (409) until the bridge restarted,
+because the doubt could never settle. The bridge's `confirm` now answers
+"not kept" when there is no key, and for a record whose write `persist`
+itself refused at the guard before composing or sending anything. So the
+request gets the plain 503 with `retry`, nothing is reserved and the signer's
+count is given back. A guard refusal at read-back time alone still leaves the
+write in doubt: it says the pod cannot be read now, not that nothing was
+written (review finding).
+
+Checked on the running bridge, before and after, with no key and with a
+loopback pod. There is no test: the change is in `bridge/server.ts`, which no
+test starts. With a key and a stand-in pod the bridge was also run through
+add, remove and publish, each with the pod's answer lost and with the pod
+down; each settled to what the pod had within five seconds of the pod coming
+back, and a restarted bridge held the same versions under the same owners.
+
 ## 2026-11-17 — multi-agent demos: their Solid server no longer crashes an hour after it starts
 
 `examples/multi-agent/css-config.json` and `css-config-redis.json` import the
@@ -3235,8 +3265,6 @@ server, several small transactions each.
 
 `POST /agent/cmi5/launch` returns one launch URL. Its fetch token is single-use and expires after 30 minutes, so a trainee who bookmarks it cannot get back into the activity. A signed caller can now mint `GET /cmi5/go/<token>` (`POST /agent/cmi5/go`) for themselves and one course. The token is 32 random bytes and the URL does not carry the learner. Each open builds a fresh cmi5 launch and redirects to the AU: a new fetch token every time, the same registration and session while that session has not been terminated, abandoned or waived, and a new registration afterwards (Review when the activity is already satisfied). `POST /agent/cmi5/go/revoke` withdraws it. Opens are rate-limited per address and per token. Links expire in 90 days unless `expires_in_days` says otherwise, and they are kept on the tenant pod at `foxxi-lattice/cmi5-personal-links.json`. A read of that file that fails is not followed by a write, so a pod that cannot be read is not replaced by this process's copy. Withdrawn and expired links stay recorded and do not count toward the learner's limit. Mint and revoke are also limited on the route, before the signature is checked. The link is not tied to one course or one person: the course is whichever published course the request names, the actor is whoever signed, and the activity's moveOn and mastery are that course's own structure. Withdrawal, expiry and the per-address limit are the same ones a SCORM dispatch uses, and both registries refuse to overwrite the pod when a read fails.
 
-
-
 ## 2026-11-13 — Foxxi is an xAPI Profile Server
 
 The bridge served one profile, its own, and checked a statement against a
@@ -3454,7 +3482,6 @@ other key a caller adds is still refused, and neither value reaches what the
 relay signs. A test reproduces the refusal with the body as routed, and another
 fails if the middleware starts adding a name the helper does not know.
 
-
 ## 2026-11-12 — Native commits: a write reads the head once and skips three repeat requests (opt-in)
 
 After batched staging, a single-statement LRS write still made eight sequential
@@ -3627,7 +3654,6 @@ calls neither identity nor the relay.
 
 `MIN_FILES` in `tools/lint-gate.mjs` goes from 670 to 673, the number the gate
 named when the new files took the linted count past its slack.
-
 
 ## 2026-11-11 — Native commits: a commit's immutable representations are staged in one receipted request
 
@@ -8071,7 +8097,6 @@ Since 20:49 UTC every identity-server start logged `Account index: 0 loaded, 360
 ## 2026-10-23 — Play guests can follow their own native descriptor heads
 
 Provisional descriptor reads now recognize only this deployment's configured internal/public store alias before applying the same exact guest-pod and resource-path checks. Both the early REST/MCP gate and the durable tool guard receive that configuration, so an internal descriptor URL returned by get_current_head can be read by its owner. Foreign origins, foreign pods, credentials, query/fragment additions, encoded separators and traversal spellings remain refused; mutation policy and quotas are unchanged. Focused tests drive native head-to-descriptor following and refusal cases.
-
 
 ## 2026-10-23 — Identity: forgotten surface agents are served again, and nobody can register another user's
 
