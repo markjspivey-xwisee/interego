@@ -147,6 +147,53 @@ whose listing is longer than 4 MiB and begins with nothing but documents the
 store refuses to delete. `purgeProvisionalPlayPod`'s `close` is given a second
 argument (`whole`), and its result may be `partial`.
 
+## 2026-11-17 — Foxxi: the pod resolver can place an identity guest on its own pod (not switched on)
+
+Second step toward a dashboard general guest being a real caller. Nothing is
+switched on: no route, and no caller of the resolver, passes the new option.
+
+`resolveSubjectPodUrlPure` answers the shared tenant pod for any subject it has
+no rule for. A general guest's DID, `did:web:<identity host>:users:u-try-guest-<32 hex>`,
+is one of those, so every guest would have shared one pod and one statement
+lens.
+
+- **The rule.** `SubjectPodUrlOptions` takes an optional `identityHost`. With
+  it, a subject `did:web:<that host>:users:<id>` that `ownPodSegment` does not
+  recognise resolves to `<pod origin>/<id>/`, the address identity creates the
+  pod at and the css-gate scopes that user's bearer to. `<id>` must be one of
+  identity's own shapes in full: `u-pk-`, `u-eth-`, `u-did-` or `u-try-` and 12
+  hex, `u-try-play-` or `u-try-guest-` and 32 hex. The host is compared whole
+  and case-insensitively, with a port in either spelling (`host:port` as
+  identity writes it, `host%3Aport` as Foxxi's learning sign-in does). Anything
+  else is answered as before: a seeded legacy id, another host, a look-alike
+  host, an uppercase or over-long id, a slash, a dot segment, a percent escape,
+  a control character.
+- **Unchanged without the option.** Without `identityHost` the function is the
+  one on master. The test file keeps master's body as a reference and compares
+  the two over a table of every form in use and 3,300 generated subjects. A
+  guest linked to an account is given as the account's DID, which already
+  resolved to the account's pod.
+- **A guard, not called yet.** `guardSubjectPod` refuses a general guest, or any
+  DID under the identity host's `:users:`, whose pod is the tenant pod; one of
+  identity's own ids whose pod is not `<pod origin>/<that id>/`; and a pod URL
+  it cannot read. Every other subject is answered `ok`.
+
+**Why the bridge does not pass the host yet.** Guest DIDs already reach the
+resolver in the running bridge: the LRS picks forwarding targets by the
+statement actor's pod (`ownerTenantOfStatement`), and an applied void is kept
+with the voided statement's owner. For a `u-try-play-` or `u-try-guest-` actor
+both land on the tenant pod's lens today. Passing the host there would move
+them, so it is left to the step that decides each call site.
+
+**Not done.** The bridge writes pods with the operator bearer, which the
+css-gate lets write any pod, a guest's included, outside the guest's write
+budget and after its account is closed. Identity's cleanup lists at most 128
+resources of a guest pod and keeps the whole pod when there are more. Neither
+is changed here.
+
+The port spelling of the identity host is rewritten with a global replace; a
+validated host has at most one colon, so the result is the same.
+
 ## 2026-11-17 — Foxxi: a profile write the bridge never sent is not kept, not in doubt
 
 Found by starting the bridge and sending it signed requests, which #933 had
