@@ -4,6 +4,8 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { routeJson } from './route-json.js';
 import { guardedFetchFn } from './ssrf-guard.js';
+import type { GeneralGuestSession } from '../../_shared/guest-access/door.js';
+import { guestSessionStanding } from '../../_shared/guest-access/session.js';
 
 type Row = Record<string, unknown>;
 export interface LearningPrincipal {
@@ -12,6 +14,16 @@ export interface LearningPrincipal {
   /** Present only on a provisional guest (browser-key possession, no human credential). Routes
    * refuse a guest unless they pass `allowGuest` to resolve(): see GUEST_LEARNING_OPERATIONS. */
   guest?: true;
+}
+/**
+ * Identity's general guest door as this sign-in uses it: `GeneralGuestDoor`
+ * (applications/_shared/guest-access/door.ts), or a stand-in with its shape. `audience` is the
+ * origin identity has this application registered under, which must be this workbench's own.
+ */
+export interface GeneralGuestEntry {
+  readonly audience: string;
+  start(): Promise<{ url: string; state: string; binding: string }>;
+  finish(returned: { code: unknown; state: unknown; binding: unknown }): Promise<GeneralGuestSession>;
 }
 /** What Foxxi asks its service agent to sign so identity will provision a guest for one browser key. */
 export interface GuestGrantRequest { audience: string; publicKeyThumbprint: string; challenge: string }
@@ -24,6 +36,12 @@ export interface LearningAccountAuthConfig {
   fetch?: typeof fetch; now?: () => number; maxSessions?: number; maxPending?: number;
   /** Guest sign-in exists only where this is supplied. Never read from HTTP. */
   guestGrant?: GuestGrantSigner;
+  /**
+   * Identity's general guest door (one guest per browser across Interego applications), offered
+   * BESIDE the workbench's own guest. Absent means no route, no status member and no cookie for it.
+   * Never read from HTTP.
+   */
+  generalGuest?: GeneralGuestEntry;
 }
 export class LearningAuthError extends Error {
   constructor(readonly status: number, readonly code: string) { super(code); }
@@ -31,7 +49,15 @@ export class LearningAuthError extends Error {
 type Account = { subject: string; userId: string; webId: string; podUrl: string; agentId: string; clientId: string; expiresAt: number };
 /** Public proof material identity re-checks against the guest's live pod anchor. Not a bearer. */
 type GuestProof = { attestation: string; challenge: string; proof: string; checkedAt: number };
-type Session = { hash: string; principal: LearningPrincipal; account: Account; token: string; csrf: string; lifetime: AbortController; timer: ReturnType<typeof setTimeout>; guest?: GuestProof };
+/**
+ * `general`: a session made at the general guest door's return. Identity vouched for it once, at
+ * the exchange; nothing here can ask again (the application token is answered only to a caller
+ * holding identity's introspection secret). So it is never re-checked and is bounded when made:
+ * `linked` says identity stated a link to a registered account, which the session then acts as.
+ */
+type Session = { hash: string; principal: LearningPrincipal; account: Account; token: string; csrf: string; lifetime: AbortController; timer: ReturnType<typeof setTimeout>; guest?: GuestProof; general?: { linked: boolean } };
+/** A general guest's visit to the door, kept until its browser returns: where to send it afterwards. */
+type DoorVisit = { next: string | null; expires: number };
 type Pending = { hash: string; state: string; verifier: string; expires: number; prior: string | null; claimed: boolean; lifetime: AbortController; next: string | null };
 type Endpoints = { authorization: string; token: string; account: string; resource: string };
 const PREFIX = '/i2idlx/learning';
@@ -48,6 +74,14 @@ export function learnerReturnPath(value: unknown): string | null {
   return value;
 }
 const COOKIE = '__Host-i2idlx-learning', PENDING_COOKIE = '__Host-i2idlx-learning-pending';
+/** Binds a visit to identity's general guest door to the browser that started it. HttpOnly; holds no credential. */
+const DOOR_COOKIE = '__Host-i2idlx-learning-door';
+/** Where identity returns a general guest's browser. Registered with identity as this application's `generalGuestReturnPath`. */
+export const GENERAL_GUEST_RETURN_PATH = PREFIX + '/guest/general/return';
+export const GENERAL_GUEST_START_PATH = PREFIX + '/guest/general/start';
+/** The ceiling of any guest learner session, whichever door it came through. */
+const GUEST_SESSION_MS = 3600_000;
+const DOOR_VISIT_MS = 600_000;
 const object = (v: unknown): v is Row => !!v && typeof v === 'object' && !Array.isArray(v);
 const opaque = () => randomBytes(32).toString('hex');
 const B64URL = /^[A-Za-z0-9_-]+$/;
@@ -67,6 +101,13 @@ function cookie(req: Request, name: string): string | null {
   if (values.length !== 1) return null;
   const value = values[0]!.slice(name.length + 1);
   return /^[a-f0-9]{64}$/.test(value) ? value : null;
+}
+/** The door cookie's value: the door's own binding (32 random bytes, base64url), or nothing. */
+function doorBinding(req: Request): string | null {
+  const values = (req.get('Cookie') ?? '').split(';').map(v => v.trim()).filter(v => v.startsWith(DOOR_COOKIE + '='));
+  if (values.length !== 1) return null;
+  const value = values[0]!.slice(DOOR_COOKIE.length + 1);
+  return /^[A-Za-z0-9_-]{43}$/.test(value) ? value : null;
 }
 function setCookie(res: Response, name: string, value: string, maxAge: number): void {
   res.cookie(name, value, { secure: true, httpOnly: true, sameSite: 'lax', path: '/', maxAge: Math.max(0, maxAge) });
@@ -98,8 +139,12 @@ export class LearningAccountAuth {
   private readonly maxPending: number;
   private readonly guestGrant?: GuestGrantSigner;
   private readonly guestChallenges = new Map<string, number>();
+  private readonly generalGuest?: GeneralGuestEntry;
+  private readonly doorVisits = new Map<string, DoorVisit>();
   /** Whether a provisional guest can sign in here at all. */
   get guestEnabled(): boolean { return this.enabled && !!this.guestGrant; }
+  /** Whether identity's general guest door is offered here. */
+  get generalGuestEnabled(): boolean { return this.enabled && !!this.generalGuest; }
   /** The identity origin this sign-in talks to, or empty when sign-in is off. */
   get identityOrigin(): string { return this.identity; }
   constructor(config: LearningAccountAuthConfig) {
@@ -111,6 +156,10 @@ export class LearningAccountAuth {
     this.fetcher = config.fetch ?? guardedFetchFn(globalThis.fetch) as typeof fetch;
     this.now = config.now ?? Date.now;
     this.guestGrant = config.guestGrant;
+    // The door answers a guest for the origin identity has registered. Were that not this
+    // workbench's own, the return path would not be here and the audience check would be another's.
+    if (config.generalGuest && this.enabled && config.generalGuest.audience !== base) throw Error('The general guest door must name this workbench as its audience');
+    this.generalGuest = config.generalGuest;
     this.maxSessions = config.maxSessions ?? 500; this.maxPending = config.maxPending ?? 200;
     if (![this.maxSessions, this.maxPending].every(v => Number.isSafeInteger(v) && v >= 1 && v <= 2000)) throw Error('Invalid learning session capacity');
   }
@@ -126,6 +175,7 @@ export class LearningAccountAuth {
     const now = this.now();
     for (const [key, p] of this.pending) if (p.expires <= now) this.dropPending(key);
     for (const [key, expires] of this.guestChallenges) if (expires <= now) this.guestChallenges.delete(key);
+    for (const [key, visit] of this.doorVisits) if (visit.expires <= now) this.doorVisits.delete(key);
     for (const [key, s] of this.sessions) if (s.principal.expiresAt <= now) this.drop(key);
   }
   private drop(key: string): void {
@@ -134,7 +184,7 @@ export class LearningAccountAuth {
     for (const [pendingKey, pending] of this.pending) if (pending.prior === key) this.dropPending(pendingKey);
   }
   private dropPending(key: string): void { const p = this.pending.get(key); if (p) { this.pending.delete(key); p.verifier = ''; p.lifetime.abort(); } }
-  dispose(): void { for (const key of this.sessions.keys()) this.drop(key); for (const key of this.pending.keys()) this.dropPending(key); this.rates.clear(); this.guestChallenges.clear(); this.endpoints = undefined; }
+  dispose(): void { for (const key of this.sessions.keys()) this.drop(key); for (const key of this.pending.keys()) this.dropPending(key); this.rates.clear(); this.guestChallenges.clear(); this.doorVisits.clear(); this.endpoints = undefined; }
   private async json(url: string, init: RequestInit = {}, lifetime?: AbortSignal): Promise<Row> {
     if (this.active >= 8) refuse(429, 'learning_sign_in_busy');
     this.active++;
@@ -195,7 +245,8 @@ export class LearningAccountAuth {
     this.ready(); this.sweep();
     const value = cookie(req, COOKIE), s = value ? this.sessions.get(hash(value)) : undefined;
     if (!s) refuse(401, 'learning_sign_in_required');
-    if (s.guest && options.allowGuest !== true) refuse(403, 'learning_guest_refused');
+    // Read from the principal too, so a guest is a guest whichever door made the session.
+    if ((s.guest || s.general || s.principal.guest) && options.allowGuest !== true) refuse(403, 'learning_guest_refused');
     return this.validateSession(s);
   }
   /**
@@ -230,6 +281,11 @@ export class LearningAccountAuth {
   private async validateSession(s: Session): Promise<LearningPrincipal> {
     this.admit('session:' + s.hash, 120);
     try {
+      if (s.general) {
+        // Nothing to ask identity (see Session). The session stands until the bound it was given.
+        if (this.sessions.get(s.hash) !== s || s.lifetime.signal.aborted || this.now() >= s.principal.expiresAt) refuse(401, 'learning_session_expired');
+        return { ...s.principal };
+      }
       if (s.guest && this.now() - s.guest.checkedAt < GUEST_RECHECK_MS && this.now() < s.principal.expiresAt && !s.lifetime.signal.aborted) return { ...s.principal };
       const account = s.guest ? await this.guestAccount(s.guest, s.lifetime.signal) : await this.account(s.token, s.lifetime.signal);
       if (s.guest) s.guest.checkedAt = this.now();
@@ -248,12 +304,13 @@ export class LearningAccountAuth {
     const basic = { authenticated: false, enabled: this.enabled, account: null, csrf: null, expires_at: null,
       sign_in_url: this.enabled ? PREFIX + '/oauth/start' : null,
       ...(this.guestEnabled ? { guest_sign_in: { grant_url: PREFIX + '/guest/grant', challenge_url: PREFIX + '/guest/challenge', session_url: PREFIX + '/guest/session',
-        bootstrap_url: this.identity + '/play/provisional', audience: this.base } } : {}) };
+        bootstrap_url: this.identity + '/play/provisional', audience: this.base } } : {}),
+      ...(this.generalGuestEnabled ? { general_guest_sign_in: { start_url: GENERAL_GUEST_START_PATH } } : {}) };
     if (!this.enabled || !cookie(req, COOKIE)) return basic;
     try {
       const p = await this.resolve(req, { allowGuest: true }), s = this.sessionFor(req, p);
       return { ...basic, authenticated: true, account: { id: p.subject, userId: p.userId, webId: p.webId }, csrf: s.csrf, expires_at: new Date(p.expiresAt).toISOString(),
-        ...(p.guest ? { guest: true } : {}) };
+        ...(p.guest ? { guest: true } : {}), ...(s.general ? { general_guest: true, ...(s.general.linked ? { linked_account: true } : {}) } : {}) };
     } catch (error) { if (error instanceof LearningAuthError && error.status === 401) return basic; throw error; }
   }
   private sessionFor(req: Request, p: LearningPrincipal): Session {
@@ -399,11 +456,92 @@ export class LearningAccountAuth {
     catch (error) { if (error instanceof LearningAuthError && error.status === 401) refuse(401, 'learning_account_invalid'); throw error; }
     if (this.sessions.size >= this.maxSessions && !(priorHash && this.sessions.has(priorHash))) refuse(429, 'learning_sign_in_busy');
     if (priorHash) this.drop(priorHash);
-    const value = opaque(), sessionKey = hash(value), expiresAt = Math.min(account.expiresAt, this.now() + 3600_000);
+    const value = opaque(), sessionKey = hash(value), expiresAt = Math.min(account.expiresAt, this.now() + GUEST_SESSION_MS);
     const principal: LearningPrincipal = { subject: account.subject, userId: account.userId, webId: account.webId, podUrl: account.podUrl, sessionId: opaque(), expiresAt, signal: lifetime.signal, guest: true };
     this.sessions.set(sessionKey, { hash: sessionKey, principal, account, token: '', csrf: opaque(), lifetime, timer: this.expire(sessionKey, expiresAt),
       guest: { attestation, challenge, proof, checkedAt: this.now() } });
     setCookie(res, COOKIE, value, expiresAt - this.now()); secure(res); res.json({ signed_in: true, guest: true });
+  }
+  private door(): GeneralGuestEntry {
+    this.ready(); this.sweep();
+    if (!this.generalGuest) refuse(503, 'learning_guest_unavailable');
+    return this.generalGuest;
+  }
+  /**
+   * Identity's general guest door, step 1: send this browser to it. The visit is bound to the
+   * browser by an HttpOnly cookie holding the door's binding (no credential), and the grant rides
+   * in the door address's fragment, which no server sees.
+   */
+  async generalGuestStart(req: Request, res: Response): Promise<void> {
+    const door = this.door();
+    // Each start has the service agent sign a grant through the relay, so it is limited as the workbench's own guest grant is.
+    this.admit('general-start:' + (req.ip ?? 'unknown'), 5); this.admit('general-starts', 30);
+    if (req.get('Origin') && req.get('Origin') !== this.base) refuse(400, 'learning_sign_in_input_invalid');
+    const next = learnerReturnPath(req.query.next);
+    if (Object.keys(req.query).some(key => key !== 'next') || (req.query.next !== undefined && !next)) refuse(400, 'learning_sign_in_input_invalid');
+    if (this.doorVisits.size >= this.maxPending) refuse(429, 'learning_sign_in_busy');
+    let visit: { url: string; binding: string };
+    try { visit = await door.start(); }
+    catch (error) { const busy = (error as { status?: unknown } | null)?.status === 429; refuse(busy ? 429 : 503, busy ? 'learning_sign_in_busy' : 'learning_guest_unavailable'); }
+    if (typeof visit.binding !== 'string' || !/^[A-Za-z0-9_-]{43}$/.test(visit.binding) || typeof visit.url !== 'string') refuse(503, 'learning_guest_unavailable');
+    this.doorVisits.set(hash(visit.binding), { next, expires: this.now() + DOOR_VISIT_MS });
+    setCookie(res, DOOR_COOKIE, visit.binding, DOOR_VISIT_MS); secure(res); res.redirect(302, visit.url);
+  }
+  /**
+   * Step 2: the browser is back from the door with a code. It is exchanged here, server to server,
+   * and the learner session is the same opaque HttpOnly cookie every other sign-in sets, so the
+   * address the browser is left on carries neither the code nor any bearer.
+   *
+   * A return without this browser's door cookie, or with another browser's, is refused and spends
+   * nothing: the visit and its cookie stay as they were for the browser that started it.
+   *
+   * The session acts as the guest's CANONICAL subject: the registered account identity states the
+   * guest is linked to, else the guest itself. Either way it is a guest session (`guest: true`),
+   * with the workbench's guest operations and nothing an owner has. Identity's token for the guest
+   * is not kept.
+   */
+  async generalGuestReturn(req: Request, res: Response): Promise<void> {
+    const door = this.door(); this.admit('general-returns', 100);
+    const binding = doorBinding(req), key = binding ? hash(binding) : null, visit = key ? this.doorVisits.get(key) : undefined;
+    const { code, state } = req.query;
+    if (!binding || !key || !visit || visit.expires <= this.now() || Object.keys(req.query).some(k => !['code', 'state'].includes(k))
+      || typeof code !== 'string' || !/^[\x21-\x7e]{1,2048}$/.test(code) || typeof state !== 'string' || !/^[A-Za-z0-9_-]{20,128}$/.test(state)) refuse(400, 'learning_sign_in_state_invalid');
+    const prior = cookie(req, COOKIE), priorHash = prior ? hash(prior) : null;
+    if (this.sessions.size >= this.maxSessions && !(priorHash && this.sessions.has(priorHash))) refuse(429, 'learning_sign_in_busy');
+    let guest: GeneralGuestSession;
+    try { guest = await door.finish({ code, state, binding }); }
+    catch (error) {
+      const status = (error as { status?: unknown } | null)?.status, reason = (error as { code?: unknown } | null)?.code;
+      // The door refused the return itself (not this browser's visit): nothing was spent, so nothing is cleared.
+      if (reason === 'guest_door_return_invalid') refuse(400, 'learning_sign_in_state_invalid');
+      this.doorVisits.delete(key); setCookie(res, DOOR_COOKIE, '', 0);
+      if (status === 403) refuse(403, 'learning_guest_refused');
+      refuse(status === 401 ? 401 : 503, status === 401 ? 'learning_account_invalid' : 'learning_guest_unavailable');
+    }
+    // The door spent the visit: this browser's binding finishes nothing again.
+    this.doorVisits.delete(key); setCookie(res, DOOR_COOKIE, '', 0);
+    // Every canonical field is checked again here against this deployment's own origins, as for the workbench's own guest.
+    const host = new URL(this.identity).host.replace(/:/g, '%3A'), users = `did:web:${host}:users:`, agents = `did:web:${host}:agents:`;
+    const id = guest.userId;
+    if (typeof id !== 'string' || !/^u-try-guest-[0-9a-f]{32}$/.test(id) || guest.ownerDid !== users + id
+      || guest.webId !== `${this.identity}/users/${id}/profile#me` || guest.podUrl !== `${this.pod}/${id}/`
+      || typeof guest.agentDid !== 'string' || !guest.agentDid.startsWith(agents) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(guest.agentDid.slice(agents.length))) refuse(401, 'learning_account_invalid');
+    let standing;
+    try { standing = guestSessionStanding(guest, this.now(), GUEST_SESSION_MS); } catch { refuse(401, 'learning_account_invalid'); }
+    // A linked guest is the account identity named: a registered owner of THIS identity, never the
+    // guest itself and never a subject of another authority. Its WebID and pod are that account's
+    // canonical ones, the same a sign-in as the account is required to carry.
+    const subjectId = standing.linked && standing.subject.startsWith(users) ? standing.subject.slice(users.length) : id;
+    if (standing.linked && (!standing.subject.startsWith(users) || !/^[A-Za-z0-9][A-Za-z0-9._-]{0,255}$/.test(subjectId) || subjectId === id)) refuse(401, 'learning_account_invalid');
+    if (this.sessions.size >= this.maxSessions && !(priorHash && this.sessions.has(priorHash))) refuse(429, 'learning_sign_in_busy');
+    if (priorHash) this.drop(priorHash);
+    const value = opaque(), sessionKey = hash(value), lifetime = new AbortController(), expiresAt = standing.expiresAt;
+    const account: Account = { subject: users + subjectId, userId: subjectId, webId: `${this.identity}/users/${subjectId}/profile#me`, podUrl: `${this.pod}/${subjectId}/`,
+      agentId: guest.agentDid, clientId: 'interego-general-guest', expiresAt };
+    const principal: LearningPrincipal = { subject: account.subject, userId: account.userId, webId: account.webId, podUrl: account.podUrl, sessionId: opaque(), expiresAt, signal: lifetime.signal, guest: true };
+    this.sessions.set(sessionKey, { hash: sessionKey, principal, account, token: '', csrf: opaque(), lifetime, timer: this.expire(sessionKey, expiresAt), general: { linked: standing.linked } });
+    setCookie(res, COOKIE, value, expiresAt - this.now()); secure(res);
+    res.redirect(303, visit.next ? this.base + visit.next : this.base + '/i2idlx/#ask');
   }
   async signOut(req: Request, res: Response): Promise<void> {
     const principal = await this.resolve(req, { allowGuest: true }); this.assertMutation(req, principal);
@@ -424,4 +562,10 @@ export function attachLearningAccountRoutes(app: Express, auth: LearningAccountA
   app.post(PREFIX + '/guest/grant', guestBody, route((req, res) => auth.guestGrantFor(req, res)));
   app.post(PREFIX + '/guest/challenge', guestBody, route((req, res) => auth.guestChallenge(req, res)));
   app.post(PREFIX + '/guest/session', guestBody, route((req, res) => auth.guestSession(req, res)));
+  // Identity's general guest door. Not attached unless configured, so with it off these two paths
+  // are answered as any path this application never had.
+  if (auth.generalGuestEnabled) {
+    app.get(GENERAL_GUEST_START_PATH, route((req, res) => auth.generalGuestStart(req, res)));
+    app.get(GENERAL_GUEST_RETURN_PATH, route((req, res) => auth.generalGuestReturn(req, res)));
+  }
 }

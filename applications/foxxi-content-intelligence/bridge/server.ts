@@ -130,6 +130,7 @@ import { affordancesManifestTurtle, type Affordance } from '../../_shared/afford
 import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 import { frontDoor, frontDoorHtml } from '../src/front-door.js';
 import { PlayGrantError, PlayGrantService, learnerGuestGrantConfig, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
+import { GENERAL_GUEST_RETURN_PATH, learnerGeneralGuestDoor, learnerGeneralGuestSettings } from '../src/i2idlx-general-guest.js';
 import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
@@ -11490,6 +11491,11 @@ const playGrants = playGrantSettings ? new PlayGrantService(playGrantSettings) :
 // FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY is set; the workbench's guest routes are its only caller.
 const learnerGuestSettings = learnerGuestGrantConfig(process.env, bridgeBaseUrl);
 const learnerGuestGrants = learnerGuestSettings ? new PlayGrantService(learnerGuestSettings) : null;
+// Identity's general guest door for the same application (src/i2idlx-general-guest.ts). Off unless
+// FOXXI_I2IDLX_GENERAL_GUEST=1; with it unset nothing below is built, attached or reported.
+const learnerGeneralGuest = learnerGeneralGuestSettings(process.env, learnerGuestSettings);
+const learnerGeneralDoor = learnerGeneralGuest && learnerGuestGrants
+  ? learnerGeneralGuestDoor(learnerGeneralGuest, request => learnerGuestGrants.generalGuestGrant(request)) : null;
 const playGrantRateLimit = rateLimit({
   windowMs: 3_600_000, limit: 10, ipv6Subnet: 56, identifier: 'play-grant',
   standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
@@ -11522,7 +11528,8 @@ app.get('/play/status', playStatusRateLimit, async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
     res.json({ ...(playGrants ? await playGrants.status() : { enabled: false }),
-      ...(learnerGuestGrants ? { learnerWorkbench: await learnerGuestGrants.status() } : {}) });
+      ...(learnerGuestGrants ? { learnerWorkbench: { ...await learnerGuestGrants.status(),
+        ...(learnerGeneralGuest ? { generalGuest: { enabled: true, returnPath: GENERAL_GUEST_RETURN_PATH, doorOrigin: learnerGeneralGuest.doorOrigin ?? learnerGeneralGuest.identityUrl } } : {}) } } : {}) });
   } catch { res.status(503).json({ enabled: !!playGrants, ready: false, problem: 'status unavailable' }); }
 });
 
@@ -13297,6 +13304,7 @@ attachWorkbenchRoutes(app, {
     podOrigin: (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })(),
     // The workbench names the browser key and the challenge; the service signs for its own configured origin.
     ...(learnerGuestGrants ? { guestGrant: async request => (await learnerGuestGrants.grant({ publicKeyThumbprint: request.publicKeyThumbprint, challenge: request.challenge })).playGrant } : {}),
+    ...(learnerGeneralDoor ? { generalGuest: learnerGeneralDoor } : {}),
     repository: (() => {
       try { return createLearningRepository({ baseUrl: bridgeBaseUrl, podUrl: tenantPodUrl,
         privateKey: process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '', fetch: guardedFetchFn(globalThis.fetch) as typeof fetch }); }
