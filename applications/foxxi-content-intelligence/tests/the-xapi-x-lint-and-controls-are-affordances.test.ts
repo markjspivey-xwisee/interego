@@ -35,6 +35,7 @@ const describeAffordance = (iri: string) => { const a = served(iri); return a ? 
 
 let server: ProfileServer, http: Server, origin: string;
 let glossaryUp = true;
+let lookupsAsked = 0;
 const post = async (path: string, body: unknown) => { const r = await fetch(`${origin}/xapi/profiles${path}`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(body) }); return { status: r.status, body: await r.json() as Json }; };
 const get = async (path: string) => { const r = await fetch(`${origin}/xapi/profiles${path}`); return { status: r.status, body: await r.json() as Json }; };
 
@@ -44,7 +45,7 @@ beforeAll(async () => {
   app.use(express.json({ limit: '2mb' }));
   mountXapixRoutes(app, server, {
     base: BASE,
-    links: async () => ({ ...(glossaryUp ? { designIdea: (iri: string) => iri === DESIGN_IDEA } : {}), affordance: (iri: string) => served(iri) !== undefined }),
+    links: async () => { lookupsAsked++; return { ...(glossaryUp ? { designIdea: (iri: string) => iri === DESIGN_IDEA } : {}), affordance: (iri: string) => served(iri) !== undefined }; },
     describeAffordance,
   });
   http = app.listen(0, '127.0.0.1');
@@ -77,8 +78,12 @@ const failedLesson = (): Json => ({
 
 describe('POST /xapi/profiles/lint_decorations, over statements', () => {
   it('finds nothing in a well-formed projection, and says what it judged', async () => {
+    const asked = lookupsAsked;
     const r = await post('/lint_decorations', { statements: [projection()] });
     expect(r.status).toBe(200);
+    // Statements have no links to look up, so the lookups (a glossary read, on the bridge) are not asked for.
+    expect(lookupsAsked).toBe(asked);
+    expect(r.body.linksChecked).toBeUndefined();
     expect(r.body).toMatchObject({ ok: true, findings: [], clean: true, checked: { statements: 1, declaredBy: [XAPIX_PROFILE_ID] } });
   });
 

@@ -324,7 +324,7 @@ xAPI's own signed statements (a JWS attachment) attest one statement's content. 
 
 ### Lint rules
 
-Each is code in `src/xapix/lint.ts`: `lintXapixStatements(statements, profiles)` for X1 to X8 and `lintXapixProfile(profile, examples, resolvers)` for X9 and X10, both returning the profile lint's findings. Both are reached as one affordance, `foxxi.xapi_profile_lint_decorations` (`POST /xapi/profiles/lint_decorations`), which reads and keeps nothing and asks for no signature. Its answer says what was judged and whether each X9 lookup was available. The last column says what the code can and cannot see.
+Each is code in `src/xapix/lint.ts`: `lintXapixStatements(statements, profiles)` for X1 to X8 and `lintXapixProfile(profile, examples, resolvers)` for X9 and X10, both returning the profile lint's findings. Both are reached as one affordance, `foxxi.xapi_profile_lint_decorations` (`POST /xapi/profiles/lint_decorations`), which reads and keeps nothing and asks for no signature. Its answer says what was judged and, for a profile, whether each X9 lookup was available; the lookups are made only when a profile is checked. The last column says what the code can and cannot see.
 
 | | Rule | In code |
 |---|---|---|
