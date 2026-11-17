@@ -132,6 +132,8 @@ import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 import { frontDoor, frontDoorHtml } from '../src/front-door.js';
 import { PlayGrantError, PlayGrantService, learnerGuestGrantConfig, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
 import { GENERAL_GUEST_RETURN_PATH, learnerGeneralGuestDoor, learnerGeneralGuestSettings } from '../src/i2idlx-general-guest.js';
+import { DashboardGeneralGuest, DashboardGuestError, attachDashboardGeneralGuestRoutes, dashboardGeneralGuestDoor, dashboardGeneralGuestSettings, dashboardGuestIdentityHost, type DashboardGuestPorts } from '../src/dashboard-general-guest.js';
+import { GuestLearningRecordStore } from '../src/guest-learning-record.js';
 import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
@@ -231,7 +233,7 @@ import { mintSessionToken, deriveUserWallet } from '../src/auth.js';
 import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
-import { decideCallerPrincipal, directSubject, type CallerDecision, type CallerPrincipalOptions, type DelegationChecks } from '../src/caller-principal.js';
+import { decideCallerPrincipal, directSubject, type CallerDecision, type CallerPrincipalOptions, type DelegationChecks, type GuestCallerPrincipal } from '../src/caller-principal.js';
 import { acceptSessionKeys, sessionKeyPolicy, sessionKeyPolicyFor, SESSION_KEY_CHAIN_ID } from '../src/session-key.js';
 import { deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -565,7 +567,7 @@ import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js'
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator, callerUserIdOf } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
-import { resolveSubjectPodUrlPure, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
+import { resolveSubjectPodUrlGuarded, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
 import { configureStoreSpelling } from '../src/store-origins.js';
 import { resolveReadTarget, type ReadTargetDecision } from '../src/read-target.js';
 import { retireRow, activeRows, isRetired } from '../src/enrolment-register.js';
@@ -579,6 +581,12 @@ import type {
 } from '@interego/core';
 
 const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
+/**
+ * The identity host a general guest's DID is written under, for the pod resolver
+ * (resolveSubjectPodUrl). Undefined where the dashboard's general guest is off
+ * (FOXXI_PLAY_GENERAL_GUEST is not `1`), and then the resolver answers as it always has.
+ */
+const guestIdentityHost = dashboardGuestIdentityHost(process.env);
 
 /** The env-internal spelling, named once so the two readers below cannot disagree about it. */
 const cssInternalPodUrl = process.env.FOXXI_CSS_INTERNAL_URL ?? 'http://css.railway.internal:3456/';
@@ -1777,7 +1785,13 @@ function resolveSubjectPodUrl(didOrWebId: string | undefined, explicit?: string)
   // and write touches, and it was private to this file — so nothing could unit-test the branch that
   // silently returned the SHARED tenant pod for an identity form it did not recognize. See
   // src/subject-pod-url.ts for the measured failure that moved it.
-  return resolveSubjectPodUrlPure({ tenantPodUrl, identity: didOrWebId, explicit, safeUrl: safePublicUrlOrUndefined });
+  //
+  // A GENERAL GUEST'S DID (`…:users:u-try-guest-<32 hex>`) is resolved with the identity host and
+  // then guarded: it lands on the guest's OWN pod or this throws `SubjectPodRefusedError` (403).
+  // It never falls through to the tenant pod. That rule is on only where the dashboard's general
+  // guest is (FOXXI_PLAY_GENERAL_GUEST=1); with it off `guestIdentityHost` is undefined and every
+  // identity, a guest's DID included, resolves exactly as it did before the rule existed.
+  return resolveSubjectPodUrlGuarded({ tenantPodUrl, identity: didOrWebId, explicit, safeUrl: safePublicUrlOrUndefined, guestIdentityHost });
 }
 
 const MESH_PROJECT_INTERVAL_MS = pollingInterval(process.env.FOXXI_MESH_PROJECT_INTERVAL_MS);
@@ -2019,8 +2033,14 @@ const signedCallerDelegationChecks: DelegationChecks = {
 };
 
 function resolveSignedPrincipal(body: unknown, opts: CallerPrincipalOptions): Promise<CallerDecision> {
-  return decideCallerPrincipal(recoverSignedRequest(body), signedCallerDelegationChecks, opts);
+  return decideCallerPrincipal(recoverSignedRequest(body), signedCallerDelegationChecks, { ...opts, guestKey: signer => dashboardGuestKeys?.(signer) ?? false });
 }
+/**
+ * Is this address a tab key admitted as a dashboard general guest? Set where that is switched on
+ * (below, beside the guest's own routes); undefined otherwise, and then no key is one. Such a key
+ * is refused on every signed /agent/* route: a guest calls the guest operations and nothing else.
+ */
+let dashboardGuestKeys: ((signer: string) => boolean) | undefined;
 
 /**
  * ── ★★ agent_id IS CALLER TEXT, AND IN DELEGATED MODE IT BECOMES callerDid ──────────────────
@@ -12366,6 +12386,105 @@ app.post('/agent/content/next', async (req, res) => {
     }, bridgeBaseUrl, outcome.done ? 'Composition completed' : 'Next step', outcome.done ? [] : activeAffordances.filter(a => a.toolName === 'foxxi.content_next'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
+
+// ── The dashboard's general guest (src/dashboard-general-guest.ts) ──────────────────────────
+// Off unless FOXXI_PLAY_GENERAL_GUEST=1; with it unset nothing below is built or attached.
+//
+// A guest is a caller of its own kind. It reaches the bridge at ONE route, with one of the
+// operation names in src/guest-operations.ts (default-deny), and each handler below is given the
+// guest PRINCIPAL: whose record it is and which pod it touches come from `principal.guest`, never
+// from a request. A guest's record is one plain document on the guest's own pod
+// (src/guest-learning-record.ts). Nothing here writes a lens, a lattice, the efficacy tally, a
+// forwarding target or anything else on the tenant pod on a guest's behalf.
+const dashboardGeneralGuest = dashboardGeneralGuestSettings(process.env, playGrantSettings);
+if (dashboardGeneralGuest && playGrants) {
+  if (!guestIdentityHost || new URL(dashboardGeneralGuest.identityUrl).host.toLowerCase() !== guestIdentityHost) {
+    throw new Error('FOXXI_PLAY_GENERAL_GUEST=1: the identity host the pod resolver was given is not the one the door answers for');
+  }
+  if (!tenantPodUrl) throw new Error('FOXXI_PLAY_GENERAL_GUEST=1 needs FOXXI_TENANT_POD_URL: a guest\'s pod is placed on the tenant pod\'s origin');
+  const guestRecords = new GuestLearningRecordStore({
+    tenantPodUrl, identityHost: guestIdentityHost,
+    // The bridge's own fetch: it attaches the operator bearer to a write on the pod origin and to nothing else.
+    fetch: (url, init) => (globalThis.fetch as typeof fetch)(url, init),
+  });
+  /** A composition resolved for a guest from the guest's own record. No admission is read or taken: a guest keeps none. */
+  const resolveForGuest = async (principal: GuestCallerPrincipal, args: Record<string, unknown>) => {
+    const iri = args.composition;
+    const root = typeof iri === 'string' && iri.length <= 2048 ? await contentStore.fetch(iri) : undefined;
+    if (!root || !isCompositionItem(root)) throw new DashboardGuestError(404, 'general_guest_no_such_composition');
+    const { missing } = await contentStore.gather(root);
+    const kept = await guestRecords.read(principal.guest);
+    const elr = await assembleEnterpriseLearnerRecord({
+      learnerDid: principal.subject, learnerPodUrl: principal.guest.podUrl, subjectKind: 'human',
+      publicPodUrl: canonicalPublicPodUrl(principal.guest.podUrl),
+      tenantDid: tenantProfileDid, lrsEndpoint: bridgeBaseUrl,
+      statements: kept.statements.map(statement => ({ id: String(statement.id), statement, stored: kept.updatedAt, voided: false })),
+    });
+    await ensureEfficacy();
+    try {
+      const resolution = resolveComposition({
+        composition: root, learner: { id: principal.subject, kind: 'human' }, record: elr.competencies, lookup: lookupIri => contentStore.get(lookupIri),
+        efficacy: (competency, fragment, level) => fragmentEfficacy.counts(competency, fragment, level),
+      });
+      return { root, resolution, missing };
+    } catch (e) {
+      if (e instanceof ContentError) throw new DashboardGuestError(400, 'general_guest_composition_refused', { detail: e.message });
+      throw e;
+    }
+  };
+  const guestPorts: DashboardGuestPorts = {
+    'record.read': async (principal) => {
+      const kept = await guestRecords.read(principal.guest);
+      return { ok: true, subject: kept.subject, updatedAt: kept.updatedAt, count: kept.statements.length, statements: kept.statements };
+    },
+    'course.resolve': async (principal, args) => {
+      const r = await resolveForGuest(principal, args);
+      return {
+        ok: true, ...r.resolution, learnerKind: 'human', missing: r.missing,
+        steps: r.resolution.steps.map(step => ({ ...step, fragment: fragmentForLearner(step.fragment) })),
+      };
+    },
+    'course.launch': async (principal, args) => {
+      const r = await resolveForGuest(principal, args);
+      const play = startPlay(r.resolution, r.root.title, { id: principal.subject, kind: 'human' }, { session: randomUUID(), registration: randomUUID() }, new Date().toISOString());
+      const about = { skipped: r.resolution.skipped, unmet: r.resolution.unmet, refused: r.resolution.refused, trace: r.resolution.trace, missing: r.missing };
+      if (!play) return { ok: true, done: true, nothingToPlay: true, composition: r.root['@id'], learnerKind: 'human', ...about };
+      keepPlay(play, wayInBy('human'));
+      return { ok: true, sessionId: play.id, registration: play.registration, composition: r.root['@id'], title: r.root.title, learnerKind: 'human', step: currentView(play), ...about };
+    },
+    'course.next': async (principal, args) => {
+      const entry = typeof args.session_id === 'string' ? contentPlays.get(args.session_id) : undefined;
+      if (!entry || entry.expiresAt < Date.now()) throw new DashboardGuestError(404, 'general_guest_no_such_play');
+      // A play is its learner's: a guest answers only the play it launched as itself.
+      if (entry.play.learner.id !== principal.subject) throw new DashboardGuestError(403, 'general_guest_not_your_play');
+      const expected = args.expected_step;
+      if (expected !== undefined && (typeof expected !== 'number' || !Number.isSafeInteger(expected) || expected < 1)) throw new DashboardGuestError(400, 'general_guest_input_invalid');
+      // The step counts only once its statements are kept in the guest's own record, on the guest's own pod.
+      const taken = await takeStep(entry, args.answers, {
+        actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: principal.subject } },
+        now: new Date().toISOString(), newId: randomUUID, platform: 'Foxxi',
+        ...(expected !== undefined ? { expectedStep: expected } : {}),
+      }, statements => guestRecords.append(principal.guest, statements), markIfGraded);
+      if (!taken.ok) throw new DashboardGuestError(taken.status, 'general_guest_step_refused', { detail: taken.error, ...(taken.validationErrors ? { validationErrors: taken.validationErrors } : {}) });
+      const outcome = taken.step;
+      if (outcome.done && expected === undefined) contentPlays.delete(entry.play.id);
+      return {
+        ok: true, sessionId: entry.play.id, recorded: taken.recorded, done: outcome.done, ...(taken.resumed ? { keptEarlierAnswers: true } : {}),
+        ...(taken.replayed ? { replayedReceipt: true } : {}),
+        ...(outcome.graded ? { graded: outcome.graded } : {}),
+        ...(outcome.done ? { summary: { steps: entry.play.steps.length, graded: entry.play.graded } } : { step: currentView(entry.play) }),
+      };
+    },
+  };
+  const dashboardGeneralGuests = new DashboardGeneralGuest({
+    door: dashboardGeneralGuestDoor(dashboardGeneralGuest, request => playGrants.generalGuestGrant(request)),
+    ports: guestPorts,
+    // The one resolver: for a guest's DID it is given the identity host and refuses the tenant pod.
+    podFor: guestDid => resolveSubjectPodUrl(guestDid),
+  });
+  dashboardGuestKeys = signer => dashboardGeneralGuests.holds(signer);
+  attachDashboardGeneralGuestRoutes(app, dashboardGeneralGuests);
+}
 
 // A fragment's IRI dereferences to its public form: no salt, verifier or explanation, and still
 // checkable against the IRI (publicFragmentIsIntact). Markdown on request, for an agent reading

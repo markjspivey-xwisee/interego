@@ -6,7 +6,7 @@ import { readFileSync } from 'node:fs';
 import { randomBytes, randomUUID } from 'node:crypto';
 import { compileFunction } from 'node:vm';
 import ts from 'typescript';
-import { resolveSubjectPodUrlPure } from '../src/subject-pod-url.js';
+import { resolveSubjectPodUrlGuarded } from '../src/subject-pod-url.js';
 import { safePublicUrlOrUndefined } from '../src/ssrf-guard.js';
 import { actorForPod } from '../src/mesh-event-projector.js';
 import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
@@ -36,7 +36,8 @@ function fixture({ authenticated = true, persisted = true } = {}) {
   class CaptureError extends Error { status = 500; }
   const ports = {
     tenantPodUrl: 'https://gate.example/foxxi/', SAME_STORE_ORIGINS: new Set(['https://gate.example', 'http://css.internal:3456']),
-    resolveSubjectPodUrlPure, safePublicUrlOrUndefined, actorForPod, MESH_ACTOR_LABELS: {}, readSelfXapi, writeSelfXapi, persistStatementWithUsage,
+    // The resolver as the bridge calls it, with the general-guest rule off (no identity host): the default.
+    resolveSubjectPodUrlGuarded, guestIdentityHost: undefined, safePublicUrlOrUndefined, actorForPod, MESH_ACTOR_LABELS: {}, readSelfXapi, writeSelfXapi, persistStatementWithUsage,
     bindSignedCaller: async (payload: Record<string, unknown>) => authenticated
       ? { ok: true, callerDid: did, payload } : { ok: false, status: 401, error: 'invalid signature' },
     checkAgenticRateLimit: () => ({ ok: true }), telemetryCaptureStore: () => ({}), randomUUID, randomBytes,

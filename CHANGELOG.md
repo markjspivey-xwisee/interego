@@ -25,6 +25,42 @@ From the xapi-x list of what was only designed.
 states no `xapix:evidences`: each is a proposal about someone else's concept
 and wants review first. An `i2x:` target is taken by its namespace.
 
+## 2026-11-17 — Foxxi: the dashboard's general guest is a caller on the bridge (switched off)
+
+Third step toward a dashboard general guest being a real caller. Bridge side
+only, behind `FOXXI_PLAY_GENERAL_GUEST=1`, which defaults off. With it unset no
+route is attached and the pod resolver answers as before.
+
+- **The door round trip, without a cookie.** `POST /play/general/start` gives
+  the dashboard's page a door address and a binding; identity returns the
+  browser to the dashboard; the page makes a key for its tab and signs
+  `{code, state, binding}` to `POST /play/general/finish`. The bridge
+  exchanges the code and admits that key as the guest, for an hour at most.
+- **The caller is the guest.** A request the key signs at
+  `POST /play/general/act` has the guest's DID as its subject
+  (`generalGuestPrincipal`). The key itself is refused on every signed
+  `/agent/*` route while admitted, and no `/agent/*` route accepts a request
+  signed or delegated in a guest's name (403, before any pod is read).
+- **Default-deny operations** (`src/guest-operations.ts`): `guest.standing`,
+  `guest.sign_out`, `record.read`, `course.resolve`, `course.launch`,
+  `course.next`. Any other name is refused. A request carrying `acting_as`,
+  a subject, a pod URL or any other claim of identity or authority is refused.
+- **The guest's own pod.** With the switch on, the bridge's pod resolver gives
+  a general guest's DID the identity host and guards the answer: its own pod,
+  or a refusal, never the tenant pod. A guest's record is one plain JSON
+  document there (`foxxi-dashboard/learning-record.json`), written with the
+  operator bearer. A `410` from the gate ends every session of that guest and
+  is not retried; `409`, `503`, `413` and `507` are answered as refusals.
+- **Limits per guest:** 120 operations and 30 writes a minute, four tabs, and
+  256 pod writes of at most 256 KiB per bridge process.
+
+**Not done.** The dashboard page has no button. A guest linked to an account
+is refused. The round trip has been run in no browser and against no live
+gate. A guest's play does not count toward the efficacy tally. The guest's
+record is not sealed, and pod reads are anonymous. With the switch on, the
+resolver's guest rule also applies to the learner workbench's general guests
+wherever the bridge resolves their DID, which has not been exercised.
+
 ## 2026-11-17 — mcp-server: the local Solid server fallback starts
 
 When its home pod is on localhost and nothing answers there,
