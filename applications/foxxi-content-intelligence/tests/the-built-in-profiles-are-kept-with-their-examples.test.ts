@@ -6,8 +6,9 @@
  * Foxxi's profile declares only Foxxi's own terms. The ADL and cmi5 terms its statements use are
  * named as external, by IRI and type, and are not concepts of the profile.
  *
- * Foxxi's projector writes the `iep:` keys the xapi-x profile declares, beside its own, and what
- * it writes follows Foxxi's profile and version 1 of the xapi-x profile.
+ * Foxxi's projector writes the `iep:` keys the xapi-x profile declares, beside its own, with the
+ * projection category and what the statement supersedes, and what it writes follows Foxxi's
+ * profile and the current version of the xapi-x profile.
  */
 import { describe, it, expect, beforeAll, afterAll } from 'vitest';
 import express from 'express';
@@ -20,9 +21,10 @@ import { builtInProfiles, builtInKept } from '../src/xapi-profile-server/built-i
 import { validates, type Json } from '../src/xapi-profile-server/processor.js';
 import { buildFoxxiProfileDoc, FOXXI_EXTERNAL_TERMS, FOXXI_NS, FOXXI_PROFILE_ID, FOXXI_PROFILE_PARTS, verbIsDeclared } from '../src/xapi-profile.js';
 import { PROFILE_GENERATED_AT } from '../src/xapi-lrs.js';
-import { projectMeshEntry, type MeshDiscoverEntry } from '../src/mesh-event-projector.js';
-import { buildXapixProfileDocV1, XAPIX_PROFILE_V1_ID, XAPIX_PROFILE_VERSION_ID } from '../src/xapix/profile.js';
-import { IEP_DECORATIONS, XAPIX_PROFILE_ID } from '../src/xapix/namespace.js';
+import { projectMeshEntry, deterministicUuid, type MeshDiscoverEntry } from '../src/mesh-event-projector.js';
+import { buildXapixProfileDoc, XAPIX_PROFILE_V1_ID, XAPIX_PROFILE_VERSION_ID, XAPIX_PROJECTION_TEMPLATE_ID } from '../src/xapix/profile.js';
+import { IEP_DECORATIONS, XAPIX_PROFILE_ID, xapix as term } from '../src/xapix/namespace.js';
+import { lintXapixStatements } from '../src/xapix/lint.js';
 
 type Obj = Record<string, unknown>;
 const BASE = 'https://bridge.example/xapi/profiles';
@@ -132,9 +134,12 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     conformsTo: ['https://example.org/types/RefundDecision'], ...more });
   const project = (more: Partial<MeshDiscoverEntry> = {}) => projectMeshEntry(entry(more), 'https://pod.example/fictional-agent/')!.statement as Json;
   const decorations = (statement: Json) => ((statement.result as Json | undefined)?.extensions ?? {}) as Json;
-  // Version 1 of the xapi-x profile: the keys. The current version also selects on the projection
-  // category, which this projector does not write yet.
-  const xapix = (buildXapixProfileDocV1() as { templates: Json[] }).templates;
+  // The current version of the xapi-x profile, without the deprecated template every statement
+  // matches: what is left selects on the projection category, which the projector writes.
+  const xapixDoc = buildXapixProfileDoc() as Json & { templates: Json[] };
+  const xapix = xapixDoc.templates.filter(t => t.deprecated !== true);
+  const context = (statement: Json) => statement.context as Json;
+  const D0 = 'https://pod.example/fictional-agent/context-graphs/1789999990000.ttl', DM1 = 'https://pod.example/fictional-agent/context-graphs/1789999980000.ttl';
   const followsFoxxi = (statement: Json) => server.validateTemplates(statement, FOXXI_PROFILE_ID);
 
   it.each([
@@ -152,10 +157,50 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     });
     // Its own key is still written, and names the same descriptor.
     expect(((statement.context as Json).extensions as Json)[`${FOXXI_NS}substrateDescriptorIri`]).toBe(decorations(statement)[IEP_DECORATIONS.sourceDescriptor]);
-    expect(validates(statement, xapix)).toMatchObject({ outcome: 'success', findings: [] });
+    expect(validates(statement, xapix)).toMatchObject({ outcome: 'success', findings: [], templates: [XAPIX_PROJECTION_TEMPLATE_ID] });
     const judged = await followsFoxxi(statement);
     expect(judged.comments).toEqual([]);
     expect(judged.templates.length).toBeGreaterThan(0);
+  });
+
+  it('carries the projection category, so the xapi-x template selects it; without it no xapi-x template does', () => {
+    const statement = project();
+    const categories = (context(statement).contextActivities as Json).category as Json[];
+    expect(categories.map(c => (c.definition as Json).type)).toContain(term('Projection'));
+    const without = { ...statement, context: { ...context(statement), contextActivities: { category: categories.filter(c => (c.definition as Json).type !== term('Projection')) } } };
+    expect(validates(without, xapix).templates).toEqual([]);
+  });
+
+  it('names the statements it supersedes, most recent first, and refers a plain LRS to the first', async () => {
+    const statement = project({ supersedes: [D0, DM1] });
+    expect((context(statement).extensions as Json)[term('supersedesStatement')]).toEqual([deterministicUuid(D0), deterministicUuid(DM1)]);
+    expect(context(statement).statement).toEqual({ objectType: 'StatementRef', id: deterministicUuid(D0) });
+    // The id it names is the id the superseded descriptor's own projection has.
+    expect(project({ descriptorUrl: D0 }).id).toBe(deterministicUuid(D0));
+    // Foxxi's own key is still written, and it voids nothing.
+    expect((context(statement).extensions as Json)[`${FOXXI_NS}supersededDescriptor`]).toBe(D0);
+    expect((statement.verb as Json).id).not.toBe('http://adlnet.gov/expapi/verbs/voided');
+    expect((await followsFoxxi(statement)).comments).toEqual([]);
+    expect(validates(statement, xapix)).toMatchObject({ outcome: 'success', findings: [] });
+    // One that supersedes nothing says nothing about it.
+    expect(context(project()).statement).toBeUndefined();
+    expect((context(project()).extensions as Json)[term('supersedesStatement')]).toBeUndefined();
+  });
+
+  it.each(['Hypothetical', 'Counterfactual'] as const)('leaves the outcome the envelope carried off a %s projection', async (modalStatus) => {
+    const statement = project({ modalStatus, success: true, scoreScaled: 0.9 });
+    expect(Object.keys(statement.result as Json)).toEqual(['extensions']);
+    expect((await followsFoxxi(statement)).comments).toEqual([]);
+    expect(projectMeshEntry(entry({ modalStatus, success: true }), 'https://pod.example/fictional-agent/')!.step.result).toBeUndefined();
+  });
+
+  it('passes the xapi-x statement rules, except for a Quoted descriptor, which still projects with an outcome verb', () => {
+    const profiles = [xapixDoc, foxxi as Json];
+    const options = { outcomeVerbs: ['http://adlnet.gov/expapi/verbs/completed', 'http://adlnet.gov/expapi/verbs/failed'] };
+    const clean = [project(), project({ success: false, scoreScaled: 0.2 }), project({ modalStatus: 'Hypothetical', success: true }),
+      project({ modalStatus: 'Counterfactual', scoreScaled: 0.9 }), project({ supersedes: [D0, DM1] })];
+    expect(lintXapixStatements(clean, profiles, options)).toEqual([]);
+    expect([...new Set(lintXapixStatements([project({ modalStatus: 'Quoted' })], profiles, options).map(f => f.code))]).toEqual(['xapix-outcome-not-asserted']);
   });
 
   it.each([
@@ -185,10 +230,14 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     expect(project({ success: false, scoreScaled: 0.2 }).result).toMatchObject({ success: false, score: { scaled: 0.2 } });
   });
 
-  it('a retraction is a voiding statement and states no modal status', () => {
-    const voiding = project({ modalStatus: 'Retracted' });
+  it('a retraction is a voiding statement: it states no modal status, is not a projection, and supersedes nothing', () => {
+    const voiding = project({ modalStatus: 'Retracted', supersedes: [D0] });
     expect((voiding.verb as Json).id).toBe('http://adlnet.gov/expapi/verbs/voided');
     expect(voiding.result).toBeUndefined();
+    expect(voiding.object).toEqual({ objectType: 'StatementRef', id: deterministicUuid(D0) });
+    expect(((context(voiding).contextActivities as Json).category as Json[]).map(c => (c.definition as Json).type)).not.toContain(term('Projection'));
+    expect((context(voiding).extensions as Json)[term('supersedesStatement')]).toBeUndefined();
+    expect(context(voiding).statement).toBeUndefined();
   });
 
   it('a projection stored before the keys were written still follows Foxxi\'s profile', async () => {

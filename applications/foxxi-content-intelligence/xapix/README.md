@@ -48,9 +48,9 @@ A decoration never changes what a standard member means. `verb`, `object`, `resu
 
 | Decoration | Written by | Judged by |
 |---|---|---|
-| `xapix:Projection` category | lrs-adapter | profile template (determining property) |
+| `xapix:Projection` category | lrs-adapter, Foxxi's projector | profile template (determining property) |
 | `descriptorDigest` | lrs-adapter, when its caller holds the descriptor's bytes | lint (form) |
-| `supersedesStatement`, `context.statement` | lrs-adapter, from its caller | lint X7 |
+| `supersedesStatement`, `context.statement` | lrs-adapter, from its caller; Foxxi's projector, from `iep:supersedes` | lint X7 |
 | `previous`, `previousDigest` | no emitter; `chained()` builds them | `orderBasis`, lint |
 | `orderAttestation`, `controls` | nothing | profile declares them; `orderBasis` takes an attestation its reader verified |
 | `evidences`, `offers` | no profile yet | lint X9 |
@@ -121,7 +121,7 @@ It may conclude that someone proposed the claim (Hypothetical) or reasoned about
 **A plain LRS will conclude all of those things anyway.** It cannot read the extension. So the emitter carries the burden:
 
 - A non-asserted statement carries no `result.success`, `result.completion` or `result.score`.
-- It does not use a verb its profile marks as an outcome. Foxxi's projector does this for two statuses: a Hypothetical descriptor is projected with Foxxi's `intended` verb and a Counterfactual with `considered`. It does not do it for Quoted (finding 6).
+- It does not use a verb its profile marks as an outcome. Foxxi's projector does this for two statuses: a Hypothetical descriptor is projected with Foxxi's `intended` verb and a Counterfactual with `considered`, and on those two it leaves off any `success` or score the envelope carried. It does not do it for Quoted (finding 6).
 - An emitter that takes its verb from a caller cannot know the verb is not an outcome, so for it projecting a non-asserted descriptor is off unless the caller opts in. The lrs-adapter does this for Hypothetical and never projects a Counterfactual, which is stricter and allowed. An emitter that chooses the verb itself, as Foxxi's projector does, may project every status.
 
 ```json
@@ -154,7 +154,7 @@ They are different acts, and xapi-x keeps them different.
 
 So:
 
-The lrs-adapter writes the revision form from what its caller states in `supersedesStatements`. Foxxi's projector does not yet: a statement's id there is a function of its descriptor's IRI, so the ids it supersedes are known without a lookup.
+The lrs-adapter writes the revision form from what its caller states in `supersedesStatements`. Foxxi's projector writes it for every descriptor that supersedes another: a statement's id there is a function of its descriptor's IRI, so the ids it supersedes are known without a lookup. It cannot tell a correction from a revision, so it never voids on supersession.
 
 - **A revision** (the account changed; the earlier one was a fair record at the time). Emit the new statement with `XAPIX#supersedesStatement` naming the earlier statement ids, and `context.statement` as a StatementRef to the most recent of them. Void nothing. An xapi-x consumer reads the newest; a plain LRS shows both, which is the loss.
 - **A correction** (the earlier statement was wrong and is being counted). Emit the new statement as above, and also a standard voiding statement for the earlier one. Voiding is done with xAPI's own verb and StatementRef, unchanged.
@@ -362,4 +362,4 @@ The owner was asked eleven questions and answered: decide them, "you know what m
 - **`xapix:controls`.** Declared and linted. It needs a document to link to, served by the bridge for a statement that has no descriptor, and no such route exists.
 - **`xapix:evidences` and `xapix:offers` on a real profile.** The lint checks them; Foxxi's profile states none, because each evidence link is a proposal that wants review before it is published.
 - **The lint as an affordance** on the profile server, and the two lookups for X9 (the pinned I2IDL release; an affordance that dereferences) wired to real sources.
-- **Foxxi's projector**: the second half of decision 6 (it stops writing `foxxi:substrateDescriptorIri`, Foxxi's templates stop requiring it, and the readers of that key, `learner-record.ts` and `content-delivery.ts`, move to `sourceDescriptor` first); then the projection category, supersession and no outcome on a statement that is not Asserted; and a verb for a Quoted descriptor (finding 6).
+- **Foxxi's projector**: the second half of decision 6 (it stops writing `foxxi:substrateDescriptorIri`, Foxxi's templates stop requiring it, and the readers of that key, `learner-record.ts` and `content-delivery.ts`, move to `sourceDescriptor` first); and a verb for a Quoted descriptor (finding 6), which until then keeps an outcome verb and the outcome its envelope carried.

@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-11-17 — xapi-x: Foxxi's projector writes the projection category and what a statement supersedes
+
+Foxxi's projector (`mesh-event-projector.ts`) already wrote the `iep#` keys.
+It now writes the rest of what the xapi-x profile's current version asks of a
+projection, so its statements follow version 2's template and not only
+version 1's.
+
+- **Category.** Every projection carries the `xapix:Projection` category
+  beside Foxxi's own descriptor-projection category.
+- **Supersession.** A descriptor that supersedes others is projected with
+  `xapix:supersedesStatement`, the ids of the statements projected from them,
+  most recent first, and `context.statement` refers to the first. Foxxi's own
+  `supersededDescriptor` key is still written. Nothing is voided by this.
+- **Outcome.** A Hypothetical or Counterfactual projection no longer carries a
+  `success` or a score the envelope held, and neither does its trajectory
+  step. **This changes what the projector sends** for those two statuses.
+
+A voiding statement (a Retracted descriptor) is unchanged: it is not a
+projection and supersedes nothing.
+
+**Not done.** A Quoted descriptor still projects with an outcome verb and the
+outcome its envelope carried, which rule X4 finds; it needs a verb Foxxi's
+profile does not have. The projector still writes Foxxi's own keys beside the
+shared ones.
+
 ## 2026-11-17 — xapi-x: version 2 of the profile is published on the pod
 
 The owner said to publish it. The profile's IRI,

@@ -115,9 +115,10 @@ describe('what is not a descriptor projection', () => {
       const marked = performanceCategoriesFor(type).length > 0;
       expect(marked, String(type)).toBe(!isLearningActivityType(type));
     }
-    // A descriptor typed as a course and projected as an outcome carries the descriptor marker only.
+    // A descriptor typed as a course and projected as an outcome carries the two projection markers
+    // (Foxxi's and xapi-x's) and no performance category.
     const cats = ((projected({ success: true, conformsTo: [`${ADL}/activities/course`] }).context as { contextActivities: { category: Array<{ definition: { type: string } }> } }).contextActivities.category).map(c => c.definition.type);
-    expect(cats).toEqual([descriptorProjectionCategory().definition.type]);
+    expect(cats).toEqual([descriptorProjectionCategory().definition.type, 'https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix#Projection']);
   });
 
   it('what record_performance builds follows the profile, for every kind of thing a performance is recorded against', () => {

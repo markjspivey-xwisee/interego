@@ -36,6 +36,7 @@ import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { verbRequiresObjectType, verbIsDeclared, modalStatusesVerbCanSay, descriptorProjectionCategory, performanceCategoriesFor, SUPERSEDED_DESCRIPTOR_TYPE } from './xapi-profile.js';
 import { IEP_DECORATIONS, MODAL_STATUSES } from './xapix/namespace.js';
+import { projectionCategory, supersession } from './xapix/statement.js';
 import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from '../../agentic-performance-practice/src/agent-trajectory.js';
 
@@ -240,7 +241,14 @@ export function projectMeshEntry(
   // Task outcome — ONLY when the envelope actually carries it (honest; the
   // protocol envelope normally does not, so this stays absent for bare
   // descriptors). Never derived from modal status / trust / ground-truth.
-  const outcome = (typeof entry.success === 'boolean' || typeof entry.scoreScaled === 'number')
+  //
+  // And only when the claim is one that says something happened. A Hypothetical or Counterfactual
+  // descriptor is projected with `intended` or `considered`; a success or a score beside either
+  // would be counted by a reader that sums results without reading the verb, so the envelope's
+  // outcome is left in the descriptor, which the statement names (xapix/README.md, section 2).
+  // A Quoted descriptor is not covered: it still projects with an outcome verb (finding 6 there).
+  const saysItHappened = mode.stepVerb === 'asserted';
+  const outcome = saysItHappened && (typeof entry.success === 'boolean' || typeof entry.scoreScaled === 'number')
     ? {
         ...(typeof entry.success === 'boolean' ? { success: entry.success } : {}),
         ...(typeof entry.scoreScaled === 'number' ? { score: { scaled: entry.scoreScaled } } : {}),
@@ -263,6 +271,11 @@ export function projectMeshEntry(
     },
   };
 
+  // What this statement replaces as the current account: the statements projected from the
+  // descriptors this one supersedes. A statement's id is a function of its descriptor's IRI, so
+  // those ids are known without a lookup. It voids none of them; only a Retracted descriptor voids.
+  const replaces = supersession((entry.supersedes ?? []).filter(Boolean).map(deterministicUuid));
+
   // Context extensions — all envelope-derived, none fabricated.
   const extensions: Record<string, unknown> = {
     [PERF_EXT.observedBy]: agent,
@@ -278,6 +291,8 @@ export function projectMeshEntry(
     ...(typeof entry.groundTruth === 'boolean' ? { [`${FOXXI_NS}groundTruth`]: entry.groundTruth } : {}),
     ...(mode.endorsed === false ? { [`${FOXXI_NS}endorsed`]: false } : {}),
   };
+  // The voiding statement keeps the extensions it had: it replaces nothing, it voids.
+  const projectionExtensions = { ...extensions, ...replaces.extensions };
 
   const actor = { objectType: 'Agent', account: { homePage: FOXXI_NS, name: agent } };
   const id = deterministicUuid(entry.descriptorUrl);
@@ -305,12 +320,14 @@ export function projectMeshEntry(
           definition: { name: { en: label }, type: objectType },
         },
         context: {
-          extensions,
-          // What kind of statement this is, for the profile's templates to select on
-          // (xapi-profile.ts): a descriptor projection always, and a performance record when
-          // the verb is an outcome.
+          extensions: projectionExtensions,
+          // A plain LRS reads the most recent statement this one replaces from here.
+          ...(replaces.statement ? { statement: replaces.statement } : {}),
+          // What kind of statement this is, for the profiles' templates to select on: a
+          // descriptor projection in Foxxi's profile (xapi-profile.ts) and in xapi-x's
+          // (xapix/profile.ts) always, and a performance record when the verb is an outcome.
           contextActivities: {
-            category: [descriptorProjectionCategory(), ...(verb.id === ADL_COMPLETED || verb.id === ADL_FAILED ? performanceCategoriesFor(objectType) : [])],
+            category: [descriptorProjectionCategory(), projectionCategory(), ...(verb.id === ADL_COMPLETED || verb.id === ADL_FAILED ? performanceCategoriesFor(objectType) : [])],
             ...(superseded ? { other: [{ id: superseded, objectType: 'Activity', definition: { type: SUPERSEDED_DESCRIPTOR_TYPE } }] } : {}),
           },
         },
