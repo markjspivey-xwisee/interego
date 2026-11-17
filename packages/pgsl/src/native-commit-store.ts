@@ -2,7 +2,7 @@
  * Native encrypted PGSL commits. The canonical head atomically publishes a bounded
  * persistent index; application indexes are disposable views of committed holons.
  */
-import { createHash } from 'node:crypto';
+import { createHash, createPrivateKey, createPublicKey, sign as signBytes, verify as verifyBytes } from 'node:crypto';
 import { createEncryptedEnvelope, openEncryptedEnvelope, mintNodeId, isPgslNodeId,
   type EncryptionKeyPair, type EncryptedEnvelope, type IRI } from '@interego/core';
 import { createPGSL, ingest, mintAtom } from './lattice.js';
@@ -19,6 +19,9 @@ const HEAD = PREFIX + 'head', ENTRY = PREFIX + 'entry', LEAF = PREFIX + 'leaf';
 const BRANCH = PREFIX + 'branch', EMPTY = PREFIX + 'empty', PREVIOUS = PREFIX + 'previous';
 const REFERENCE = PREFIX + 'reference', OPERATION = PREFIX + 'operation', BYTES = PREFIX + 'bytes';
 const ATOMIC = PREFIX + 'atomic-checkpoint';
+const HEAD_SIGNATURE = PREFIX + 'head-signature';
+// DER wrappers of a raw Ed25519 seed and a raw Ed25519 public key (RFC 8410).
+const ED25519_PKCS8 = Buffer.from('302e020100300506032b657004220420', 'hex'), ED25519_SPKI = Buffer.from('302a300506032b6570032100', 'hex');
 /** Media type of a compact index node's payload: canonical JSON inside a byte holon. */
 const INDEX_NODE_TYPE = 'application/vnd.interego.native-index-node+json';
 const REVISION = /^sha256:[a-f0-9]{64}$/;
@@ -230,9 +233,59 @@ export interface NativeCommitStoreOptions {
    * removed, or a head being put back to an earlier one, by whoever can write the pod.
    */
   readonly trustedSenderPublicKeys?: readonly string[];
+  /**
+   * Signs every head this client commits. The signature travels on the head's envelope as
+   * `headSignature` and is over the rest of that envelope and the head's own address.
+   *
+   * Why the head, and only the head. Everything a head refers to is named by the digest of its
+   * stored bytes: the index root, each index node, each record, the commit before it. So a head
+   * that is known to be a writer's fixes every byte beneath it, and nothing beneath it needs a
+   * signature of its own, including what was stored before heads were signed.
+   *
+   * What it adds to `trustedSenderPublicKeys`. That check keeps out whoever is not a recipient. A
+   * recipient holds the content key of what it reads and can seal other content under a wrapped key
+   * copied from a genuine artifact, so a reader of the store with write access to the pod could
+   * still write a head. A recipient does not hold the signer's key.
+   */
+  readonly headSigner?: NativeHeadSigner;
+  /**
+   * The signers whose heads this client takes. Given, a head that carries a signature is read only
+   * when the signature is one of theirs and is over that head; it must include this client's own
+   * signer when it has one. A head with no signature is still read unless `requireSignedHead`.
+   */
+  readonly trustedHeadSignerPublicKeys?: readonly string[];
+  /**
+   * Refuse a current head that carries no signature. Off by default because a store written before
+   * heads were signed has an unsigned head until its next commit: turn it on once that commit has
+   * happened. Until it is on, whoever could write an unsigned head before can still write one, by
+   * leaving the signature off. It needs `headSigner` and `trustedHeadSignerPublicKeys`.
+   *
+   * It covers the current head. A commit reached from a verified head, by its `previous` link or by
+   * the operation index, is bound by digest and is read whether or not it was signed in its day.
+   * It does not stop whoever can write the pod from putting back an earlier signed head, or from
+   * removing what a head refers to.
+   */
+  readonly requireSignedHead?: boolean;
   /** CSS's native storage domain is "css"; this is not the logical owner pod URL. */
   readonly storageDomain?: string;
   readonly maxArtifactBytes?: number;
+}
+/** Signs heads. `publicKey` is the raw 32-byte Ed25519 public key, base64. */
+export interface NativeHeadSigner { readonly publicKey: string; sign(message: Uint8Array): Uint8Array; }
+/** A head signer from a 32-byte seed. The same seed gives the same key. */
+export function createNativeHeadSigner(seed: Uint8Array): NativeHeadSigner {
+  if (!(seed instanceof Uint8Array) || seed.length !== 32) fail('A native head signer needs a 32-byte seed.', 400);
+  const key = createPrivateKey({ key: Buffer.concat([ED25519_PKCS8, Buffer.from(seed)]), format: 'der', type: 'pkcs8' });
+  const spki = createPublicKey(key).export({ format: 'der', type: 'spki' });
+  const held = Buffer.from(spki).subarray(ED25519_SPKI.length).toString('base64');
+  return Object.freeze({ publicKey: held, sign: (message: Uint8Array): Uint8Array => signBytes(null, message, key) });
+}
+function headSignatureHolds(signer: string, message: Uint8Array, value: string): boolean {
+  try {
+    const signature = Buffer.from(value, 'base64');
+    if (signature.length !== 64 || signature.toString('base64') !== value) return false;
+    return verifyBytes(null, message, createPublicKey({ key: Buffer.concat([ED25519_SPKI, Buffer.from(signer, 'base64')]), format: 'der', type: 'spki' }), signature);
+  } catch { return false; }
 }
 export interface NativeAtomicCheckpoint {
   readonly revision: string | null;
@@ -406,6 +459,7 @@ export class NativeCommitStore implements NativeCommitClient {
   private readonly scope: NativeCommitScope;
   private readonly recipients: readonly string[];
   private readonly trustedSenders: ReadonlySet<string> | undefined;
+  private readonly trustedHeadSigners: ReadonlySet<string> | undefined;
   private readonly limit: number;
   private readonly artifactCacheNamespace = {};
   private readonly indexReadConcurrency: number;
@@ -442,6 +496,18 @@ export class NativeCommitStore implements NativeCommitClient {
       const trusted = new Set(options.trustedSenderPublicKeys);
       if (trusted.size === 0 || [...trusted].some(k => !publicKey(k)) || !trusted.has(options.senderKeyPair.publicKey)) fail('Trusted native writers must be public keys and include this client\'s own.', 400);
       this.trustedSenders = trusted;
+    }
+    if (options.headSigner !== undefined && !publicKey(options.headSigner.publicKey)) fail('A native head signer must state its public key.', 400);
+    if (options.trustedHeadSignerPublicKeys !== undefined) {
+      const signers = new Set(options.trustedHeadSignerPublicKeys);
+      if (signers.size === 0 || [...signers].some(k => !publicKey(k)) || (options.headSigner !== undefined && !signers.has(options.headSigner.publicKey))) {
+        fail('Trusted native head signers must be public keys and include this client\'s own signer.', 400);
+      }
+      this.trustedHeadSigners = signers;
+    }
+    // A client that must read signed heads and cannot sign one would refuse what it had just written.
+    if (options.requireSignedHead === true && (options.headSigner === undefined || this.trustedHeadSigners === undefined)) {
+      fail('Requiring signed native heads needs a head signer and the signers to trust.', 400);
     }
     this.limit = options.maxArtifactBytes ?? DEFAULT_LIMIT;
     if (!Number.isSafeInteger(this.limit) || this.limit < 1024 || this.limit > DEFAULT_LIMIT) fail('Invalid native capacity.', 400);
@@ -501,6 +567,42 @@ export class NativeCommitStore implements NativeCommitClient {
     const bytes = Buffer.from(JSON.stringify(createEncryptedEnvelope(Buffer.from(plaintext).toString('utf8'), this.recipients, this.options.senderKeyPair)));
     if (bytes.length > this.limit) fail('Encrypted native artifact exceeds capacity.', 413);
     return bytes;
+  }
+  /** What a head signature is over: this store's head address, and the envelope without the signature. */
+  private headSignatureMessage(envelope: Record<string, unknown>): Uint8Array {
+    return Buffer.from(HEAD_SIGNATURE + '\n' + this.scope.headUrl + '\n' + digest(canonical(envelope)));
+  }
+  /** A head's bytes: the encrypted artifact, signed when this client has a signer. */
+  private encryptHead(artifact: NativeArtifact): Uint8Array {
+    const signer = this.options.headSigner;
+    if (!signer) return this.encrypt(artifact);
+    const envelope = JSON.parse(JSON.stringify(createEncryptedEnvelope(Buffer.from(serializeArtifact(artifact)).toString('utf8'),
+      this.recipients, this.options.senderKeyPair))) as Record<string, unknown>;
+    const value = Buffer.from(signer.sign(this.headSignatureMessage(envelope))).toString('base64');
+    const bytes = Buffer.from(JSON.stringify({ ...envelope, headSignature: { algorithm: 'Ed25519', publicKey: signer.publicKey, value } }));
+    if (bytes.length > this.limit) fail('Encrypted native artifact exceeds capacity.', 413);
+    return bytes;
+  }
+  /**
+   * Whose head this is, before anything in it is opened. Without trusted signers nothing is asked,
+   * as before. With them: a signature has to be a trusted signer's over these bytes, and a head
+   * with none is refused only when signed heads are required.
+   */
+  private checkHeadSignature(bytes: Uint8Array): void {
+    if (!this.trustedHeadSigners) return;
+    let envelope: unknown;
+    try { envelope = JSON.parse(Buffer.from(bytes).toString('utf8')); } catch { return fail('Native ciphertext is malformed.'); }
+    if (!object(envelope)) return fail('Native ciphertext is malformed.');
+    const { headSignature, ...rest } = envelope;
+    if (headSignature === undefined) {
+      if (this.options.requireSignedHead === true) fail('Native head is not signed.');
+      return;
+    }
+    if (!object(headSignature) || headSignature['algorithm'] !== 'Ed25519' || typeof headSignature['publicKey'] !== 'string'
+      || typeof headSignature['value'] !== 'string' || !this.trustedHeadSigners.has(headSignature['publicKey'])
+      || !headSignatureHolds(headSignature['publicKey'], this.headSignatureMessage(rest), headSignature['value'])) {
+      fail('Native head signature is not a trusted writer\'s over this head.');
+    }
   }
   private decrypt(bytes: Uint8Array, expectedTop?: IRI): NativeArtifact {
     let envelope: EncryptedEnvelope;
@@ -921,6 +1023,7 @@ export class NativeCommitStore implements NativeCommitClient {
   private async current(): Promise<DecodedHead> {
     const stored = await this.readRepresentation(this.scope.headUrl);
     if (!stored) return this.empty();
+    this.checkHeadSignature(stored.bytes);
     const head = this.decodeHead(stored.bytes, stored.revision);
     const archived = await this.archived(head.reference!);
     if (archived.logicalDigest !== head.logicalDigest || archived.operationId !== head.operationId) fail('Native head is not backed by its immutable commit.');
@@ -1136,7 +1239,7 @@ export class NativeCommitStore implements NativeCommitClient {
     const indexTuple = index ? this.referenceTuple(pgsl, REFERENCE, 'index', index) : literal(pgsl, EMPTY);
     const topUri = ingest(pgsl, [literal(pgsl, HEAD), literal(pgsl, this.scope.pod), literal(pgsl, this.scope.owner), literal(pgsl, this.scope.headUrl),
       literal(pgsl, request.operationId), literal(pgsl, logicalDigest), literal(pgsl, createdAt), previous, indexTuple]);
-    const bytes = this.encrypt({ topUri, nodes: pgsl.nodes }), commitUrl = this.resourceUrl('commit', digest(bytes));
+    const bytes = this.encryptHead({ topUri, nodes: pgsl.nodes }), commitUrl = this.resourceUrl('commit', digest(bytes));
     await this.stage(commitUrl, bytes, topUri, plan);
     // Nothing below runs until every representation this head refers to is confirmed staged.
     if (plan?.batched) await this.flushStaged(plan);
