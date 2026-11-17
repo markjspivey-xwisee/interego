@@ -23,9 +23,14 @@ count is given back. A guard refusal at read-back time alone still leaves the
 write in doubt: it says the pod cannot be read now, not that nothing was
 written (review finding).
 
+The decision is `profilePodStore` in `src/xapi-profile-server/pod-store.ts`,
+which the bridge hands its pod, key, guard, write and read-back to, so
+`tests/a-profile-write-never-sent-is-not-in-doubt.test.ts` (7 tests) runs it
+without the bridge. The bridge's own handing-over of those parts is still
+covered by the typecheck and by the run below, not by a test.
+
 Checked on the running bridge, before and after, with no key and with a
-loopback pod. There is no test: the change is in `bridge/server.ts`, which no
-test starts. With a key and a stand-in pod the bridge was also run through
+loopback pod. With a key and a stand-in pod the bridge was also run through
 add, remove and publish, each with the pod's answer lost and with the pod
 down; each settled to what the pod had within five seconds of the pod coming
 back, and a restarted bridge held the same versions under the same owners.

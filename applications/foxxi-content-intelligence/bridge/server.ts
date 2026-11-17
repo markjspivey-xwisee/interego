@@ -59,6 +59,7 @@ import { telemetryView, captureView } from '../../llm-telemetry/view.js';
 import { mountTelemetryClientSetup } from '../../llm-telemetry/client-setup-routes.js';
 import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, createTelemetryRateLimit, CaptureError, type CaptureStore } from '../../llm-telemetry/capture.js';
 import { latticeReadWhole, persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
+import { profilePodStore } from '../src/xapi-profile-server/pod-store.js';
 import { recordNotReadWhole, servedInPart } from '../src/whole-record-gate.js';
 import express, { type RequestHandler } from 'express';
 
@@ -10979,28 +10980,14 @@ const XAPI_PROFILES_RESOURCE = 'xapi-profiles';
 const XAPI_PROFILE_RECORD = 'xapi:ProfileRecord';
 const xapiProfileServerBase = `${bridgeBaseUrl}/xapi/profiles`;
 
-/** Ids of profile records whose write was refused before it was sent; each is read once by `confirm`. */
-const xapiProfileRecordsNeverSent = new Set<string>();
-const xapiProfileServer = new ProfileServer({
-  // Foxxi's own profile and the xapi-x profile: both are this deployment's, served from its code.
-  builtIn: () => builtInProfiles() as never,
-  builtInKept,
-  isOperator: did => adminWebId !== '' && did === adminWebId,
-  hydrate: async () => {
-    if (!XAPI_PROFILES_POD) return [];
-    await ensureResident(XAPI_PROFILES_POD, XAPI_PROFILES_POD, XAPI_PROFILES_LABEL, undefined, XAPI_PROFILES_RESOURCE);
-    markLatticePublic(XAPI_PROFILES_LABEL);
-    const records = latticeArtifacts(XAPI_PROFILES_LABEL, XAPI_PROFILE_RECORD).map(a => a.content as ProfileRecord).filter(r => r && typeof r.at === 'string');
-    bridgeLog(`[foxxi-bridge][xapi-profiles] ${records.length} profile record(s) read back from the lattice`);
-    return records;
-  },
-  persist: async (record, held) => {
-    if (!XAPI_PROFILES_POD) return { persisted: false };
-    // A pod address the fetch guard refuses (a loopback or private one) is refused here, before
-    // anything is composed or sent, and the record is remembered as never sent. Only that makes
-    // it "not kept" in `confirm`: a refusal at read-back time says nothing about the write.
-    try { await assertSafeFetchTarget(XAPI_PROFILES_POD); }
-    catch { if (record.id) xapiProfileRecordsNeverSent.add(record.id); return { persisted: false }; }
+// Where profile records go and how the bridge says afterwards whether one is there
+// (src/xapi-profile-server/pod-store.ts). The pod's own copy is read, not the lattice in this
+// process: a record is in that from the moment it is composed, whether or not the write landed.
+const xapiProfilePodStore = profilePodStore({
+  pod: XAPI_PROFILES_POD,
+  hasKey: () => bridgeEncryptionKeypair() !== null,
+  guard: assertSafeFetchTarget,
+  write: async (record, held) => {
     // The spine is the profile and its version; the document is the holon's content, and its
     // triples are projected from that when the bridge starts. Composing every triple into the
     // lattice was measured first: a 19 KB profile of 545 triples became 7,398 nodes and an
@@ -11015,19 +11002,26 @@ const xapiProfileServer = new ProfileServer({
     });
     return { ...(sl?.holonUri ? { holonUri: sl.holonUri } : {}), persisted: sl?.persisted === true };
   },
-  // Read from the pod's own copy, not from the lattice in this process: the record is in that
-  // from the moment it is composed, whether or not the write landed.
-  confirm: async record => {
-    if (!XAPI_PROFILES_POD) return false;
-    // With no key this bridge writes no lattice at all (composeIntoSharedLattice returns before
-    // it sends anything), so the record cannot be on the pod. Reading the pod's copy also needs
-    // the key and would answer "cannot be read", which would leave every write in doubt for good.
-    if (!bridgeEncryptionKeypair()) return false;
-    // A record `persist` refused before sending anything is not on the pod either.
-    if (record.id && xapiProfileRecordsNeverSent.delete(record.id)) return false;
+  readBack: async () => {
     const onPod = await persistedLatticeArtifacts(XAPI_PROFILES_POD, XAPI_PROFILE_RECORD, XAPI_PROFILES_RESOURCE);
-    return onPod === null ? undefined : onPod.some(a => (a.content as ProfileRecord | null)?.id === record.id);
+    return onPod === null ? null : onPod.map(a => a.content as ProfileRecord);
   },
+});
+const xapiProfileServer = new ProfileServer({
+  // Foxxi's own profile and the xapi-x profile: both are this deployment's, served from its code.
+  builtIn: () => builtInProfiles() as never,
+  builtInKept,
+  isOperator: did => adminWebId !== '' && did === adminWebId,
+  hydrate: async () => {
+    if (!XAPI_PROFILES_POD) return [];
+    await ensureResident(XAPI_PROFILES_POD, XAPI_PROFILES_POD, XAPI_PROFILES_LABEL, undefined, XAPI_PROFILES_RESOURCE);
+    markLatticePublic(XAPI_PROFILES_LABEL);
+    const records = latticeArtifacts(XAPI_PROFILES_LABEL, XAPI_PROFILE_RECORD).map(a => a.content as ProfileRecord).filter(r => r && typeof r.at === 'string');
+    bridgeLog(`[foxxi-bridge][xapi-profiles] ${records.length} profile record(s) read back from the lattice`);
+    return records;
+  },
+  persist: xapiProfilePodStore.persist,
+  confirm: xapiProfilePodStore.confirm,
 });
 
 mountProfileServerReads(app, xapiProfileServer, {
