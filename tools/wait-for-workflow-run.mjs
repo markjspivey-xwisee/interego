@@ -15,7 +15,7 @@
  * pull requests merged automatically over it. The selection is the fast gate; the suite is the
  * slow truth, and a merge that does not wait for the truth is a merge that ships a red suite.
  *
- * So the judge job runs this before its decision: poll the runs listed for the head sha until
+ * So the decide job runs this before its decision: poll the runs listed for the head sha until
  * the suite workflow has concluded, and hand the decision one word. The words, and what the
  * decision does with each (applications/jev-harness/src/auto-merge.ts):
  *
@@ -162,8 +162,8 @@
  * The deadline is the suite's (SUITE_WAIT_MS from the start of this step), not a second one:
  * the checks get no time the suite does not. Mutation Gate runs on every pull request; on
  * 2026-10-26 and 27 its 63 successful runs (of 66) took 18 to 47 minutes from the push,
- * median 29, so jev-harness.yml sets SUITE_WAIT_MS to fifty minutes (and the job's
- * timeout-minutes to 70). A check still running at the deadline means no merge; the next push
+ * median 29, so jev-harness.yml sets SUITE_WAIT_MS to fifty minutes (and the decide job's
+ * timeout-minutes to 65). A check still running at the deadline means no merge; the next push
  * decides again, and Mutation Gate starts over with it. CHECKS_GATE=false (the repository variable
  * JEV_MERGE_WAITS_FOR_CHECKS=false) gives the checks no wait of their own: what they say once
  * the suite's word is in, or that GitHub could not list them then, is printed, not gated on.

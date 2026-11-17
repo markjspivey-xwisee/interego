@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-11-17 — CI: the merge decision no longer holds a runner while it waits
+
+The gated auto-merge waits for the whole suite and every other check on a pull
+request's head before it decides. That wait was the last step but one of
+jev-harness's judge job, so it held a runner for as long as it polled: 27.6
+minutes on average over 20 runs, almost all of it for Mutation Gate, a
+31-minute job that runs on every pull request. In a burst of pushes that is one
+runner per open pull request doing nothing, while the checks it waits for
+queue behind it. On 2026-11-17 between 05:00Z and 09:00Z a job waited a median
+of 19 to 35 minutes for a runner.
+
+The wait and the decision are now their own job, `decide`, which names a
+GitHub environment, `merge-wait`, that carries a 20-minute wait timer. GitHub
+holds such a job without a runner and starts it when the timer ends. It then
+reads the suite and the checks with the same tool and the same fifty-minute
+deadline as before, and decides. The judge job (selection, gate, comments,
+artifact) ends as soon as the gate has answered; the decision reads the gate's
+verdict from the judge's artifact and the selection's outcome from a job
+output.
+
+No merge is later for this: nothing merges before Mutation Gate concludes, and
+that is never under twenty minutes from the push. When Mutation Gate gets
+shorter, the timer should come down with it.
+
+**The environment is a repository setting, not a file.** `merge-wait` was
+created on 2026-11-17 with `wait_timer: 20` (Settings → Environments). If it
+is deleted, GitHub creates it again without a timer the first time the job
+runs, and the job polls from the start as the judge job used to: slower, not
+wrong. Each decision also records a deployment to `merge-wait` on the pull
+request, which is noise in its timeline and nothing else.
+
+**Why not start the decision from the checks' completion events.** A
+`workflow_run` or dispatched run is filed under master's head, not the pull
+request's. `tools/ci-green-for-sha.mjs`, the auto-deploy gate, reads one page
+of 100 runs for master's head, of any event. Ten completions a head and
+seventy heads a day would push ESLint off that page, and the gate would read
+the listing as too few and refuse the deploy.
+
+**Not verified here.** The split cannot run before it is on a pull request:
+this pull request's own jev-harness run is its first. The wait timer's effect
+on runner-minutes is not measured yet.
+
 ## 2026-11-17 — Foxxi: a profile write the bridge never sent is not kept, not in doubt
 
 Found by starting the bridge and sending it signed requests, which #933 had
