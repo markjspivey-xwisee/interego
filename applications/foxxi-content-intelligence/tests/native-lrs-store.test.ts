@@ -1,3 +1,4 @@
+import { readFileSync } from 'node:fs';
 import { createHash, randomUUID } from 'node:crypto';
 import { Writable } from 'node:stream';
 import { afterAll, afterEach, beforeAll, describe, expect, it, vi } from 'vitest';
@@ -1068,6 +1069,25 @@ describe('native LRS slow-query diagnostics', () => {
     expect(written).toMatchObject({ outcome: 0, attempts: 1 });
     for (const line of lines) for (const value of [capability, privateKey, owner, scope.pod, row.id, 'private-tenant-sentinel']) expect(line).not.toContain(value);
     expect(vi.getTimerCount()).toBe(0); await db.close();
+  });
+  it('builds the configured store to sign its heads, and to require signed heads only when told to', async () => {
+    const privateKey = '0x' + '22'.repeat(32);
+    vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected transport request'));
+    const env = { NODE_ENV: 'production', FOXXI_LRS_BACKEND: 'interego',
+      FOXXI_LRS_NATIVE_POD_URL: scope.pod, FOXXI_LRS_NATIVE_OWNER: owner, FOXXI_LRS_NATIVE_CAPABILITY: 'private-synthetic-capability-sentinel',
+      FOXXI_LRS_NATIVE_PRIVATE_KEY: privateKey, FOXXI_LRS_NATIVE_OWNER_PUBLIC_KEY: deriveEncryptionKeyPair(privateKey, owner).publicKey,
+      FOXXI_LRS_NATIVE_HEAD_URL: scope.headUrl, FOXXI_LRS_NATIVE_ARTIFACT_CONTAINER: scope.artifactContainer };
+    // The store refuses to be built requiring what it cannot sign, or trusting signers that leave
+    // out its own, so being built at all under each setting says the three options agree.
+    for (const required of [undefined, '0', '1']) {
+      const db = createConfiguredNativeLrsDatabase({ ...env, ...(required === undefined ? {} : { FOXXI_LRS_NATIVE_REQUIRE_SIGNED_HEAD: required }) });
+      await db.close();
+    }
+    const source = readFileSync(new URL('../src/statement-store.ts', import.meta.url), 'utf8');
+    expect(source).toContain('headSigner, trustedHeadSignerPublicKeys: [headSigner.publicKey],');
+    expect(source).toContain("requireSignedHead: env.FOXXI_LRS_NATIVE_REQUIRE_SIGNED_HEAD === '1' });");
+    // The signing key is the bridge's own, under a label of its own, for this owner.
+    expect(source).toContain(':interego-native-head-signing-v1:${config.scope.owner}');
   });
   it('isolates asynchronous errors from the configured logger captured writable', async () => {
     const privateKey = '0x' + '22'.repeat(32), fetch = vi.spyOn(globalThis, 'fetch').mockRejectedValue(new Error('unexpected transport request'));
