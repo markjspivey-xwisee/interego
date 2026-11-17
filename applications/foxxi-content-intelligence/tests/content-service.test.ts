@@ -242,7 +242,7 @@ describe('the bridge authors, dereferences and resolves content through these', 
     expect(deref).not.toMatch(/JSON\.stringify\(item/);
     // Resolve goes through the one path launch shares, which reads the caller's own record.
     const resolve = route("app.post('/agent/content/resolve'");
-    expect(resolve).toMatch(/resolveForCaller\(auth\.callerDid, auth\.signer, auth\.payload\)/);
+    expect(resolve).toMatch(/resolveForCaller\(auth\.principal, auth\.payload\)/);
     expect(resolve).toMatch(/fragment: fragmentForLearner\(s\.fragment\)/);
     const shared = route('async function resolveForCaller');
     expect(shared).toMatch(/contentStore\.gather\(root\)/);
