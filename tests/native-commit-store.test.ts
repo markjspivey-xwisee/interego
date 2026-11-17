@@ -3,6 +3,7 @@ import { beforeAll, describe, expect, it, vi } from 'vitest';
 import { createEncryptedEnvelope, deriveEncryptionKeyPair, mintNodeId, openEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair, type IRI } from '@interego/core';
 import {
   NativeCommitStore, NativeCommitConflictError, NATIVE_COMMIT_MEDIA_TYPE, NATIVE_STAGE_MEDIA_TYPE,
+  createNativeHeadSigner,
   createNativeByteArtifact, readNativeByteArtifact, validateNativeArtifact,
   type NativeArtifactInput, type NativeArtifactReference, type NativeCommitScope, type NativeSnapshotReference,
   type NativeHeadReadDiagnostic, type NativeCommitDiagnostic,
@@ -1600,5 +1601,146 @@ describe('numeric commit diagnostics', () => {
         expect(() => trusting(transport, keys)).toThrow('Trusted native writers');
       }
     });
+  });
+});
+
+describe('whose head it reads', () => {
+  const readers = [owner.publicKey, bridge.publicKey];
+  const signer = createNativeHeadSigner(createHash('sha256').update('the bridge signs heads').digest());
+  const stranger = createNativeHeadSigner(createHash('sha256').update('somebody else signs heads').digest());
+  /** The store as Foxxi's LRS builds it: both readers may have sealed, only the bridge signs. */
+  const signing = (transport: NativeTransport, more: Partial<ConstructorParameters<typeof NativeCommitStore>[0]> = {}) =>
+    transport.client({ trustedSenderPublicKeys: readers, headSigner: signer, trustedHeadSignerPublicKeys: [signer.publicKey], ...more });
+  const requiring = (transport: NativeTransport) => signing(transport, { requireSignedHead: true });
+  const write = async (client: NativeCommitStore, id: string) =>
+    client.commit({ operationId: id, expected: await client.readHead(), changes: [{ key: 'statement:' + id, artifact: artifact(id) }] });
+  const headOf = (transport: NativeTransport): Record<string, unknown> =>
+    JSON.parse(Buffer.from(transport.rows.get(scope.headUrl)!.bytes).toString('utf8')) as Record<string, unknown>;
+  /** Puts `bytes` where a writer of the pod would: the head, and the commit object the head stands for. */
+  const plant = (transport: NativeTransport, bytes: Buffer): void => {
+    transport.rows.set(scope.headUrl, { bytes, revision: sha('planted-head:' + sha(bytes)) });
+    transport.rows.set(scope.artifactContainer + 'commit-' + sha(bytes).slice(7) + '.json', { bytes, revision: sha('planted-commit:' + sha(bytes)) });
+  };
+  /** The head's plaintext sealed again by the owner, a recipient: same content, a wrapped key of the owner's own. */
+  const ownerSeals = (transport: NativeTransport): Record<string, unknown> => {
+    const plaintext = openEncryptedEnvelope(headOf(transport) as unknown as EncryptedEnvelope, owner);
+    expect(typeof plaintext).toBe('string');
+    return JSON.parse(JSON.stringify(createEncryptedEnvelope(plaintext as string, readers, owner))) as Record<string, unknown>;
+  };
+
+  it('signs the head it commits, and the commit object is those same signed bytes', async () => {
+    const transport = new NativeTransport();
+    await write(signing(transport), 'first');
+    const head = headOf(transport), signature = head['headSignature'] as Record<string, unknown>;
+    expect(signature).toMatchObject({ algorithm: 'Ed25519', publicKey: signer.publicKey });
+    expect(Buffer.from(String(signature['value']), 'base64')).toHaveLength(64);
+    const bytes = transport.rows.get(scope.headUrl)!.bytes;
+    expect(Buffer.from(transport.rows.get(scope.artifactContainer + 'commit-' + sha(bytes).slice(7) + '.json')!.bytes).equals(Buffer.from(bytes))).toBe(true);
+    expect((await requiring(transport).readHead()).records.size).toBe(1);
+    // A client told nothing about signers reads it as it always did: the signature is one more field.
+    expect((await transport.client().readHead()).records.size).toBe(1);
+  });
+
+  it('shows what the sender check leaves open, and closes it: a recipient cannot write a head', async () => {
+    const transport = new NativeTransport();
+    await write(signing(transport), 'kept');
+    // The owner reads the store, so the owner can seal. Its sealing names a trusted sender.
+    plant(transport, Buffer.from(JSON.stringify(ownerSeals(transport))));
+    expect((await transport.client({ trustedSenderPublicKeys: readers }).readHead()).records.size).toBe(1);
+    // Signed heads not yet required: an unsigned head is still read. This is the downgrade.
+    expect((await signing(transport).readHead()).records.size).toBe(1);
+    await expect(requiring(transport).readHead()).rejects.toThrow('Native head is not signed.');
+  });
+
+  it('refuses a head whose signature was taken off, once signed heads are required', async () => {
+    const transport = new NativeTransport();
+    await write(signing(transport), 'kept');
+    const { headSignature: _dropped, ...unsigned } = headOf(transport);
+    plant(transport, Buffer.from(JSON.stringify(unsigned)));
+    expect((await signing(transport).readHead()).records.size).toBe(1);
+    await expect(requiring(transport).readHead()).rejects.toThrow('Native head is not signed.');
+  });
+
+  it('refuses a signature that is over other bytes, required or not', async () => {
+    const transport = new NativeTransport();
+    await write(signing(transport), 'kept');
+    const genuine = headOf(transport)['headSignature'];
+    // Other content, with the genuine head's signature carried over.
+    plant(transport, Buffer.from(JSON.stringify({ ...ownerSeals(transport), headSignature: genuine })));
+    await expect(signing(transport).readHead()).rejects.toThrow('not a trusted writer\'s over this head');
+    await expect(requiring(transport).readHead()).rejects.toThrow('not a trusted writer\'s over this head');
+  });
+
+  it('refuses a head somebody else signed, and a signature that is not one', async () => {
+    const transport = new NativeTransport();
+    await write(signing(transport), 'kept');
+    // A whole head of a stranger's own signing: correctly signed, by nobody this store takes.
+    // It cannot be written through this store, whose head the stranger does not take either, so it
+    // is made in a store of the stranger's own and put here as a writer of the pod would put it.
+    const own = new NativeTransport();
+    await write(own.client({ trustedSenderPublicKeys: readers, headSigner: stranger, trustedHeadSignerPublicKeys: [stranger.publicKey] }), 'theirs');
+    plant(transport, Buffer.from(own.rows.get(scope.headUrl)!.bytes));
+    await expect(signing(transport).readHead()).rejects.toThrow('not a trusted writer\'s over this head');
+    const { headSignature, ...rest } = headOf(transport);
+    for (const forged of [
+      { ...(headSignature as object), publicKey: signer.publicKey },
+      { ...(headSignature as object), algorithm: 'none' },
+      { algorithm: 'Ed25519', publicKey: signer.publicKey, value: Buffer.alloc(64).toString('base64') },
+      { algorithm: 'Ed25519', publicKey: signer.publicKey, value: 'not base64' },
+      'signed, honest',
+      null,
+    ]) {
+      plant(transport, Buffer.from(JSON.stringify({ ...rest, headSignature: forged })));
+      await expect(signing(transport).readHead(), JSON.stringify(forged)).rejects.toThrow('not a trusted writer\'s over this head');
+    }
+  });
+
+  it('does not take a head signed for another store\'s address', async () => {
+    const transport = new NativeTransport();
+    await write(signing(transport), 'kept');
+    const { headSignature: _own, ...rest } = headOf(transport);
+    // The same signer, the same envelope, signed as the head of a store somewhere else.
+    const elsewhere = Buffer.from('urn:interego:native-commit:v1:head-signature\n' + scope.headUrl + '-elsewhere\n'
+      + sha((() => { const keys = Object.keys(rest).sort(); return '{' + keys.map(k => JSON.stringify(k) + ':' + JSON.stringify(rest[k])).join(',') + '}'; })()));
+    plant(transport, Buffer.from(JSON.stringify({ ...rest, headSignature: { algorithm: 'Ed25519', publicKey: signer.publicKey, value: Buffer.from(signer.sign(elsewhere)).toString('base64') } })));
+    await expect(signing(transport).readHead()).rejects.toThrow('not a trusted writer\'s over this head');
+  });
+
+  it('takes over a store from before heads were signed: reads it, signs the next head, and keeps what was there', async () => {
+    const transport = new NativeTransport();
+    await put(transport, 'before');
+    expect(headOf(transport)['headSignature']).toBeUndefined();
+    // A bridge that required signatures at once could not read the head it inherits.
+    await expect(requiring(transport).readHead()).rejects.toThrow('Native head is not signed.');
+    const client = signing(transport);
+    expect((await client.readHead()).records.size).toBe(1);
+    await write(client, 'after');
+    // From here signed heads can be required. The record stored before is beneath the signed head,
+    // named by its digest, and is read without a signature of its own.
+    const strict = requiring(transport), head = await strict.readHead();
+    expect([...head.records.keys()].sort()).toEqual(['statement:after', 'statement:before']);
+    expect(Buffer.from(readNativeByteArtifact(await strict.readArtifact(head.records.get('statement:before')!)).bytes).toString()).toBe('before');
+    // And it goes on committing under the rule.
+    await write(strict, 'later');
+    expect((await requiring(transport).readHead()).records.size).toBe(3);
+  });
+
+  it('is not built with signers that leave out its own, are empty or are no keys, or to require what it cannot sign', () => {
+    const transport = new NativeTransport();
+    for (const keys of [[], [stranger.publicKey], [signer.publicKey, 'not-a-key']]) {
+      expect(() => transport.client({ headSigner: signer, trustedHeadSignerPublicKeys: keys })).toThrow('Trusted native head signers');
+    }
+    expect(() => transport.client({ requireSignedHead: true })).toThrow('Requiring signed native heads');
+    expect(() => transport.client({ requireSignedHead: true, headSigner: signer })).toThrow('Requiring signed native heads');
+    expect(() => transport.client({ requireSignedHead: true, trustedHeadSignerPublicKeys: [signer.publicKey] })).toThrow('Requiring signed native heads');
+    expect(() => transport.client({ headSigner: { publicKey: 'short', sign: () => new Uint8Array(64) } })).toThrow('must state its public key');
+    expect(() => createNativeHeadSigner(new Uint8Array(31))).toThrow('32-byte seed');
+  });
+
+  it('gives the same signer for the same seed, and another for another', () => {
+    const seed = createHash('sha256').update('the bridge signs heads').digest();
+    expect(createNativeHeadSigner(seed).publicKey).toBe(signer.publicKey);
+    expect(stranger.publicKey).not.toBe(signer.publicKey);
+    expect(Buffer.from(signer.publicKey, 'base64')).toHaveLength(32);
   });
 });

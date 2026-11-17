@@ -324,6 +324,61 @@ renewal after it starts; css-gate gives up on it at 60 to 90 s, near the
 The first commit of this change says the css image stays on 7.2.0. The next
 one moved it to 7.3.0, which is what ships.
 
+## 2026-11-16 — jev-harness: a test selection can replace an earlier one
+
+A selection could only be superseded by an outcome, and an outcome is a score:
+it enters the calibration record. The selections recorded for #899, #901 and
+#905 after they merged read an empty range and said "no changed files were
+given"; replacing them needed a correction, not a score.
+
+- `select-tests` takes `supersedes`, the graph IRI of an earlier test
+  selection. The new selection is published as the next version of that
+  graph, compare-and-swapped on its head, and stays Hypothetical. No outcome
+  is recorded. It carries that graph's IRI, so it can be scored or replaced
+  again in its turn.
+- The selection being replaced is read from the pod's current head where a
+  pod is configured; a copy in the bridge's own store is not taken as current.
+- Refused before any model call: a `supersedes` that is not an IRI (400), a
+  graph the store and the pod hold nothing readable for (404), a judgment of
+  another kind, and a selection an outcome has already scored (409).
+- Without `supersedes` nothing changes.
+
+## 2026-11-17 — Native store: a head is signed by its writer
+
+`trustedSenderPublicKeys` keeps out whoever is not a recipient of the store. A
+recipient holds the content key of what it reads, and can seal other content
+under a wrapped key copied from a genuine artifact. For Foxxi's LRS the store
+owner is a recipient, so a holder of the owner's key who could write the pod
+could still write statements, the LMS's own included.
+
+`NativeCommitStore` takes `headSigner`, `trustedHeadSignerPublicKeys` and
+`requireSignedHead`. A signing client puts an Ed25519 signature on every head
+it commits, over the head's envelope and its address. Everything a head refers
+to is named by the digest of its stored bytes, so the one signature covers every
+record beneath it, including those stored before heads were signed.
+
+Foxxi's LRS signs with a key derived from the bridge's own and takes a signed
+head only under that key. `FOXXI_LRS_NATIVE_REQUIRE_SIGNED_HEAD=1` then refuses
+an unsigned head. It is off by default: a store from before has an unsigned head
+until its next commit, and a bridge that refused it could not start. Until it is
+on, a head with the signature left off is still read.
+
+Not covered: putting an earlier signed head back, and removing what a head
+refers to. Without the options nothing changes.
+
+## 2026-11-17 — xapi-x: version 2 of the profile is published on the pod
+
+The owner said to publish it. The profile's IRI,
+`https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix-profile`, now
+serves version 2: 123 triples, the ones `xapixProfileTurtle()` returns on
+master. The publish was conditional on version 1 still being the head, and its
+descriptor supersedes version 1's. Fetched back as Turtle and compared triple
+for triple: none missing, none extra. `…/xapix-profile/v/2` and
+`…/xapix-profile/templates/projection` resolve.
+
+Only the xapi-x README changes in the repository: it said the pod served
+version 1 and listed this as left to do.
+
 ## 2026-11-17 — Foxxi: a test takes a guest learner all the way to a course
 
 The guest-learner tests stopped at a guest with no links. One new case in
