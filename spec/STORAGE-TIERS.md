@@ -58,25 +58,28 @@ const verify = await verifyDescriptorSignature(signed, turtle);
 
 ## Tier 1 — Local single-machine pod (default)
 
-**The MCP server auto-spawns Community Solid Server (CSS) the first time you publish.**
+**The MCP server auto-spawns Community Solid Server (CSS) the first time a tool needs the pod.**
 
-Just run the MCP. No pre-flight setup:
+Run the MCP from a checkout of this repository, after `npm ci && npm run build`. No other setup:
 
 ```bash
-npx @interego/mcp
+npx tsx mcp-server/server.ts      # or, compiled: node mcp-server/dist/server.js
 ```
 
-On first `publish_context` call, the MCP:
-1. Checks if a Solid pod is reachable at `CG_BASE_URL` (default `http://localhost:3456/`)
-2. If not, spawns CSS locally (`mcp-server/server.ts:321-345`) using `examples/multi-agent/css-config.json`
-3. CSS writes to disk, file-backed, at `--rootFilePath` (default: a temp dir; configurable via env)
+On the first tool call that needs the pod (`publish_context`, `get_pod_status`, …), the MCP:
+1. Checks if a Solid pod is reachable at its home pod (default `http://localhost:3456/agent/`)
+2. If not, and the home pod is on `localhost`, starts CSS in a child process (`mcp-server/local-solid-server.ts`) using `examples/multi-agent/css-config.json`
+3. CSS writes to disk, file-backed, under `CG_CSS_ROOT_FILE_PATH` (default: `interego-mcp-css-<port>` in the OS temp directory, which the OS may clear; set it to keep pods across reboots)
+
+The local CSS is the `@solid/community-server` the workspace installs, loaded with only its own Components.js modules and the `css-internal-listing/` module the config imports, and it stops when the MCP does. `@interego/mcp` installed on its own carries neither the config nor CSS; there the fallback says so at once (`Local CSS config not found`) and the MCP needs a pod it can reach (Tier 2 or 3).
 
 Configuration (all optional):
 
 | Env var | Default | What it does |
 |---|---|---|
 | `CG_BASE_URL` | `http://localhost:3456/` | URL of your local pod |
-| `CG_POD_NAME` | `markj` | Slug for your pod path |
+| `CG_POD_NAME` | `agent` | Slug for your pod path |
+| `CG_CSS_ROOT_FILE_PATH` | `interego-mcp-css-<port>` in the OS temp directory | Where the local CSS keeps its pods |
 | `CG_IPFS_PROVIDER` | `local` | CIDs are computed but not pinned to any network |
 | `CG_DID` | `did:web:<pod>.local` | Your identity (local-mode synthetic) |
 
