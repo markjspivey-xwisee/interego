@@ -1,0 +1,31 @@
+{
+  "@context": [
+    "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+    { "icil": "https://linkedsoftwaredependencies.org/bundles/npm/interego-css-internal-listing/^1.0.0/components/components.jsonld#" }
+  ],
+  "@id": "npmd:interego-css-internal-listing",
+  "@type": "Module",
+  "requireName": "interego-css-internal-listing",
+  "components": [
+    {
+      "@id": "icil:BufferedListingStore",
+      "@type": "Class",
+      "requireElement": "BufferedListingStore",
+      "extends": [
+        "css:dist/storage/ResourceStore.jsonld#ResourceStore"
+      ],
+      "comment": "A ResourceStore for CSS's internal value storage: a container is read as internal quads, to the end, and handed on in a stream `for await` can read. Everything else passes through to the source store. Written by hand, as componentsjs-generator would describe index.cjs, with no context of its own: the configs name this component by its full IRI, so nothing refers to an IRI Components.js would fetch.",
+      "parameters": [
+        {
+          "@id": "icil:BufferedListingStore_source",
+          "range": "css:dist/storage/ResourceStore.jsonld#ResourceStore"
+        }
+      ],
+      "constructorArguments": [
+        {
+          "@id": "icil:BufferedListingStore_source"
+        }
+      ]
+    }
+  ]
+}

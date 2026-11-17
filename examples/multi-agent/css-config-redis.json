@@ -30,11 +30,12 @@
     "css:config/util/index/default.json",
     "css:config/util/logging/winston.json",
     "css:config/util/representation-conversion/default.json",
-    "css:config/util/variables/default.json"
+    "css:config/util/variables/default.json",
+    "./css-internal-listing/config/internal-listing.json"
   ],
   "@graph": [
     {
-      "comment": "Multi-replica, file-backed Solid server: identical to css-config.json EXCEPT the resource locker is a SHARED Redis locker (urn:solid-server:default:RedisLocker) instead of the process-local memory locker, so multiple CSS replicas sharing the AzureFile volume serialize their writes through one Redis. This is the documented CSS path to running multiple instances. The Redis instance is the interego-redis Container App (internal TCP, ephemeral locks only). Content privacy stays at the Interego client-side JWE layer; CSS access control remains allow-all."
+      "comment": "Multi-replica, file-backed Solid server: identical to css-config.json EXCEPT the resource locker is a SHARED Redis locker (urn:solid-server:default:RedisLocker) instead of the process-local memory locker (so it has none of the memory locker's reader counts, which css-config.json keeps in memory), so multiple CSS replicas sharing the AzureFile volume serialize their writes through one Redis. This is the documented CSS path to running multiple instances. The Redis instance is the interego-redis Container App (internal TCP, ephemeral locks only). Content privacy stays at the Interego client-side JWE layer; CSS access control remains allow-all."
     },
     {
       "comment": "Shared Redis read-write/resource locker. redisClient is the internal Container Apps FQDN of interego-redis on its TCP port. Locks are process-safe across replicas (Lua-scripted, atomic).",

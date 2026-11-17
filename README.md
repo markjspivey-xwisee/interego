@@ -773,10 +773,11 @@ PORT=5001 npx tsx examples/pgsl-browser/server.ts
 ## Multi-Agent Demos
 
 Run these from the repository root after `npm install && npm run build`. The TLA and team demos,
-and `npm start` in `examples/multi-agent`, start a local Community Solid Server with
-`npx @solid/community-server@7`. They run it from a folder under your temp directory, outside the
-repository, where its configuration loader cannot pick up the repository's newer query libraries.
-The first run downloads the server.
+and `npm start` in `examples/multi-agent`, start a local Community Solid Server 7.3.0 with npx,
+together with `examples/multi-agent/css-internal-listing`, a small module both server configs
+import so that the server's hourly expired-entry sweep does not crash it. They run it from a folder
+under your temp directory, outside the repository, where its configuration loader cannot pick up
+the repository's newer query libraries. The first run downloads the server.
 
 ### TLA / xAPI / IEEE LERS Demo
 
