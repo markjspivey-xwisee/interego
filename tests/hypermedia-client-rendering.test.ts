@@ -25,8 +25,8 @@ import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES,
-  fetchRoutes, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LINK_CASES, LISTED, sharedDescriptors,
-  sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
+  fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
+  LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -349,23 +349,41 @@ function respond(text: string, type: string, status = 200): Response {
 
 // Addresses whose answer depends on the format asked for; hmc.py's test serves the same.
 const ROUTED = fetchRoutes(HOST);
+// The headers fetch drops from a request it turns into a GET with no body (its request-body-header names).
+const BODY_HEADERS = ['content-encoding', 'content-language', 'content-location', 'content-type'];
+/** The headers a request carries, by lower-case name, as fetch's Headers holds an init's. */
+function initHeaders(init: RequestInit): Record<string, string> {
+  return Object.fromEntries([...new Headers(init.headers).entries()]);
+}
+/**
+ * The HOP_HEADERS a host receives with a request fetch sends: its headers, and a Content-Length
+ * for a body, or 0 for a POST or PUT with none, as fetch writes it.
+ */
+function sentHeaders(method: string, headers: Record<string, string>, body: string | null): HopHeaders {
+  const length = body != null ? String(Buffer.byteLength(body)) : method === 'POST' || method === 'PUT' ? '0' : null;
+  return hopHeaders(length == null ? headers : { ...headers, 'content-length': length });
+}
 /**
  * A ROUTED address's answer as a browser's fetch gives it: no answer rejects, as a network error
  * does. With `redirect: "manual"` a redirect is an opaque redirect, a response of type
  * "opaqueredirect" whose status is 0 and whose headers, body and url are empty. Otherwise it is
- * followed, at most 20 times and only to https, which the page's connect-src allows, as fetch
- * follows one: a 301 or 302 turns a POST into a GET, and a 303 anything but a GET or HEAD, with no
- * body; any other keeps the method and body. Then the response's url is where it landed, written
- * without its fragment, as fetch's Response.url is. A
- * redirect with an empty Location is none, as Chromium reads it: its 3xx is the answer, followed or
- * not. Each request a host receives, the first and each one a redirect leads to, goes in `hops`.
+ * followed, at most 20 times and only to https, which the page's connect-src allows, as fetch's
+ * HTTP-redirect fetch follows one: a 301 or 302 turns a POST into a GET, and a 303 anything but a
+ * GET or HEAD, with no body and none of the headers that describe one; any other keeps the method,
+ * the body and the headers, so a GET or HEAD is the same request on every hop, but for
+ * Authorization, which goes when the redirect leaves the origin. Then the response's url is where it
+ * landed, written without its fragment, as fetch's Response.url is, and an answer to a HEAD has no
+ * body, whatever the host sends. A redirect with an empty Location is none, as Chromium reads it:
+ * its 3xx is the answer, followed or not. Each request a host receives, the first and each one a
+ * redirect leads to, goes in `hops`, with its method and the HOP_HEADERS it carries.
  */
 function routed(asked: URL, init: RequestInit, hops: Loaded['hops']): Response {
   let at = asked;
   let method = String(init.method || 'GET').toUpperCase();
   let body = init.body == null ? null : String(init.body);
+  let headers = initHeaders(init);
   for (let followed = 0; ; followed++) {
-    hops.push({ url: at.href, method, body });
+    hops.push({ url: at.href, method, body, headers: sentHeaders(method, headers, body) });
     const route = at.origin === HOST && Object.prototype.hasOwnProperty.call(ROUTED, at.pathname) ? ROUTED[at.pathname] : undefined;
     const answer = route ? route(at.searchParams.get('format')) : { status: 404, type: 'text/plain', body: 'missing' };
     if (answer === 'no answer') throw new TypeError('Failed to fetch');
@@ -381,12 +399,15 @@ function routed(asked: URL, init: RequestInit, hops: Loaded['hops']): Response {
       if (((status === 301 || status === 302) && method === 'POST') || (status === 303 && method !== 'GET' && method !== 'HEAD')) {
         method = 'GET';
         body = null;
+        headers = Object.fromEntries(Object.entries(headers).filter(([name]) => !BODY_HEADERS.includes(name)));
       }
+      if (next.origin !== at.origin) headers = Object.fromEntries(Object.entries(headers).filter(([name]) => name !== 'authorization'));
       at = next;
       continue;
     }
     const types = typeof answer.type === 'string' ? [answer.type] : answer.type;
-    const res = new Response(answer.body, { status: answer.status || 200, headers: types.map(type => ['content-type', type] as [string, string]) });
+    const res = new Response(method === 'HEAD' ? null : answer.body, { status: answer.status || 200,
+      headers: types.map(type => ['content-type', type] as [string, string]) });
     const landed = new URL(at.href);
     landed.hash = '';
     return at === asked ? res : Object.defineProperties(res, { url: { value: landed.href }, redirected: { value: true } });
@@ -394,7 +415,7 @@ function routed(asked: URL, init: RequestInit, hops: Loaded['hops']): Response {
 }
 
 interface Loaded { dom: JSDOM; document: Document; calls: Array<{ url: string; method: string }>; sent: Array<{ url: string; body: string }>;
-  hops: Array<{ url: string; method: string; body: string | null }>; pwned: string[]; errors: string[] }
+  hops: Array<{ url: string; method: string; body: string | null; headers: HopHeaders }>; pwned: string[]; errors: string[] }
 
 function load(query: string, extra: Record<string, { type: string; text: string }> = {}): Loaded {
   const calls: Loaded['calls'] = []; const sent: Loaded['sent'] = []; const hops: Loaded['hops'] = []; const pwned: string[] = []; const errors: string[] = [];
@@ -411,7 +432,8 @@ function load(query: string, extra: Record<string, { type: string; text: string 
         if (u.origin !== HOST) return respond('not here', 'text/plain', 404);
         // An answer without CORS headers, a redirect included: the host receives the request, and fetch rejects.
         if (u.pathname === '/no-cors') {
-          hops.push({ url: u.href, method: String(init.method || 'GET').toUpperCase(), body: init.body == null ? null : String(init.body) });
+          const method = String(init.method || 'GET').toUpperCase(); const body = init.body == null ? null : String(init.body);
+          hops.push({ url: u.href, method, body, headers: sentHeaders(method, initHeaders(init), body) });
           throw new TypeError('Failed to fetch');
         }
         if (Object.prototype.hasOwnProperty.call(ROUTED, u.pathname)) return routed(u, init, hops);
@@ -698,13 +720,16 @@ describe('hypermedia client: an invoke goes only where its dry run says, and onl
       for (const [title, , method, url, end, reached] of invokeOutcomes(HOST)) {
         const before = t.hops.length;
         const result = await press(t, title, 'live');
-        // The host receives the request once, at the address shown; a GET or HEAD also where it is redirected.
-        // The page's browser follows a Location with a backslash, read as a slash, where hmc.py refuses it.
+        // The host receives the request once, at the address shown; a GET or HEAD also where it is
+        // redirected, as the same method, asking for the same type, and with nothing else. The page's
+        // browser follows a Location with a backslash, read as a slash, where hmc.py refuses it.
         const landedAt = 'backslash' in end ? new URL(end.landed, HOST) : null;
-        expect(t.hops.slice(before).map(h => `${h.method} ${new URL(h.url).origin === HOST ? new URL(h.url).pathname : h.url}`), title)
+        const sent = t.hops.slice(before);
+        expect(sent.map(h => `${h.method} ${new URL(h.url).origin === HOST ? new URL(h.url).pathname : h.url}`), title)
           .toEqual(landedAt ? [...reached, `${method} ${landedAt.origin === HOST ? landedAt.pathname : landedAt.href}`] : reached);
+        if (method === 'GET' || method === 'HEAD') expect(sent.map(h => h.headers), title).toEqual(sent.map(() => OUTCOME_READ_HEADERS));
         const status = t.document.getElementById('status')!.textContent;
-        if ('refused' in end) {
+        if ('refused' in end || 'loop' in end) {
           expect([result.textContent, status], title).toEqual([expect.stringContaining('Failed to fetch'), 'Invoke failed: Failed to fetch']);
           expect(result.querySelector('.ok'), title).toBeNull();
           continue;
@@ -718,6 +743,10 @@ describe('hypermedia client: an invoke goes only where its dry run says, and onl
         expect([result.querySelector(done ? '.ok' : '.warn')?.textContent, status], title).toEqual([outcome, outcome]);
         // Nothing on screen reads as a success when the invoke is not one, nor as a warning when it is.
         expect(result.querySelector(done ? '.warn' : '.ok'), title).toBeNull();
+        // A HEAD's answer has no body, however the host answers it; a GET that lands at /landing shows it.
+        const body = [...result.querySelectorAll('pre')].filter(pre => pre.textContent === LANDING_BODY);
+        if (method === 'HEAD') expect(body, title).toEqual([]);
+        else if (!landedAt && 'landed' in end && end.landed && end.landed.startsWith('/landing')) expect(body, title).toHaveLength(1);
       }
       assertInert(t, 'outcomes');
     } finally { t.dom.window.close(); }
@@ -792,6 +821,8 @@ describe('hypermedia client: a load whose requests fail, as hmc.py\'s', () => {
       const requests = t.calls.map(c => new URL(c.url)).filter(u => u.pathname === path);
       const asked = [...new Set(requests.map(u => u.searchParams.get('format')))];
       expect(asked, status()).toEqual(outcome.asked);
+      // Every request of a load, at each address a redirect leads it to, is a GET with the load's Accept.
+      expect(t.hops.map(h => [h.method, h.headers]), status()).toEqual(t.hops.map(() => ['GET', LOAD_HEADERS]));
       if (outcome.requests !== undefined) expect(requests, status()).toHaveLength(outcome.requests);
       if (!('titles' in outcome)) {
         expect(document.documentElement.dataset['ready']).toBe('error');

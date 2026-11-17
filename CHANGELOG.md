@@ -541,6 +541,21 @@ second `<SCRIPT>` added to the page, the hash test now fails, where the
 pattern would have let it pass. An `onclick` and a `JavaScript:` link added to
 the markup still fail their test.
 
+A ninth review found that `hmc.py` sent a followed HEAD on as a GET: `urllib`
+before Python 3.13 (Ubuntu 24.04's `python3` is 3.12) rewrites it at every
+redirect, so the landing host was asked for, and sent, a body the HEAD did not
+want, where the page's `fetch` keeps the HEAD. `hmc.py` now sends each hop as `fetch` does,
+the same method on every redirect status, with the same `Accept` and no body.
+The same sweep found it read a redirect's own body before following it, so one
+that never ended held the request until it timed out, and behind an HTTP proxy
+named in its environment it copied the proxy's `Proxy-Authorization` onto a hop
+to a host it reaches directly. Both are gone. Both tests' hosts now record each
+hop's method and headers; of the new shared cases (HEAD and GET on each status,
+a chain, a loop of 21, a HEAD answered with a body, a redirect that never ends)
+and the proxy cases, 12 failed in `hmc.py` before under Python 3.12 and 3 under
+3.13. The page needed no change; its test's `fetch` now gives a HEAD's answer no
+body, as `fetch` does.
+
 ## 2026-11-17 — Foxxi: a profile write reported as not kept stays not kept, and costs its signer nothing
 
 Three things were left open when profile additions, removals and publications

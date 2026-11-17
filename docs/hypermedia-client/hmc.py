@@ -3229,7 +3229,8 @@ def _require_web_url(url: str, refused: str = "nothing was sent to") -> None:
 # The answers fetch and urllib take as a redirect.
 REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
 # The methods an invoke follows a redirect with, when its control is safe: a
-# redirect keeps either as it is, in fetch and urllib alike. Any other request,
+# redirect keeps either as it is in fetch, and _WebOnlyRedirects keeps it so
+# where urllib before Python 3.13 would not (a HEAD). Any other request,
 # and every one a control listed with the writes sends, goes only to the address
 # its dry run shows; urllib would turn a POST into a GET on a 301, 302 or 303,
 # and fetch would also re-send a write, body and all, on a 307 or 308. The
@@ -3272,7 +3273,9 @@ class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
     """Follows a GET's or HEAD's redirect only to another http or https URL,
     to the address fetch would send it to (see _redirect_url), and no more
     than fetch follows, and notes where a 303 See Other was answered from. Any
-    other method's redirect is the answer: nothing is sent to its Location."""
+    other method's redirect is the answer: nothing is sent to its Location.
+    Each hop is the request fetch's HTTP-redirect fetch sends for a GET or
+    HEAD (see redirect_request), sent once the redirect's headers are in."""
 
     max_repeats = max_redirections = _REDIRECT_LIMIT
 
@@ -3302,9 +3305,28 @@ class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
         new = self.redirect_request(req, fp, code, msg, headers, newurl)
         if new is None:
             return None
-        fp.read()
+        # A redirect's own body is not the answer, and fetch follows a redirect
+        # on its headers. urllib reads that body first, which waits as long as
+        # the host takes to send it, or until the request times out.
         fp.close()
         return self.parent.open(new, timeout=req.timeout)
+
+    def redirect_request(self, req, fp, code, msg, headers, newurl):  # type: ignore[no-untyped-def]
+        # The same request on every hop, on a 301, 302, 303, 307 or 308 alike,
+        # as fetch sends a GET or HEAD it follows: urllib before Python 3.13
+        # sends a HEAD on as a GET, which asks for, and downloads, a body the
+        # HEAD did not. The headers go with it (a GET or HEAD from hmc.py has
+        # no body, content header, Authorization or Cookie), but not
+        # Proxy-Authorization: urllib's ProxyHandler writes the proxy's
+        # credentials into them, and writes them again for a hop through the
+        # proxy, so a hop to a host the proxy is bypassed for would hand that
+        # host the proxy's password. A browser never sends one to a host.
+        method = req.get_method()
+        if method not in FOLLOWED_METHODS:
+            return None
+        kept = {name: value for name, value in req.headers.items() if name.lower() != "proxy-authorization"}
+        return urllib.request.Request(newurl, headers=kept, method=method,
+                                      origin_req_host=req.origin_req_host, unverifiable=True)
 
     http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 

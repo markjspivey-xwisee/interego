@@ -16,8 +16,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES, fetchRoutes,
-  invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LINK_CASES, LISTED, sharedDescriptors, sharedMarkdown,
-  UNSAFE_CONTROLS, VALUE_CASES, BODY_TEXTS } from './hypermedia-client-fixtures.js';
+  hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED, LOAD_HEADERS,
+  OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, BODY_TEXTS, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -33,6 +33,15 @@ let base = '';
 const seen: string[] = [];
 // Each request as the server received it, with its body and content type.
 const received: Array<{ line: string; body: string; type: string }> = [];
+// Each request as it arrived, in order, with the headers a followed request keeps or must not
+// carry, and whether it came through a proxy (its target written in absolute form).
+const hops: Array<{ line: string; headers: HopHeaders; proxied: boolean }> = [];
+// An HTTP proxy hmc.py is given in its environment, which this server also plays: its
+// credentials, and the Proxy-Authorization urllib sends it with them.
+const PROXY_LOGIN = 'hmc-test:proxy-pass';
+const PROXY_AUTHORIZATION = `Basic ${Buffer.from(PROXY_LOGIN).toString('base64')}`;
+// A host only the proxy reaches: hmc.py sends to it through the proxy, and to 127.0.0.1 directly.
+const PROXIED = 'http://proxied.test';
 // Terminal control sequences: a window title (OSC 0), colour (CSI), a clipboard write (OSC 52),
 // a carriage return that would overwrite the line, and a C1 control.
 const ESC = '\x1b]0;PWNED-TITLE\x07\x1b[31mRED\x1b[0m\x1b]52;c;cHduZWQ=\x07\r\x9b2J';
@@ -64,6 +73,13 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       [{ '@id': `${base}/long-name#S`, '@type': 'sh:NodeShape', 'sh:property': [{ 'sh:path': `${base}/p`, 'sh:name': LONG_NAME },
         { 'sh:path': `${base}/p2`, 'sh:name': 'rest-param-query-limit' }] }])),
     '/ok': () => ({ type: 'text/plain', body: 'fine' }),
+    // A HEAD and a GET to a host reached through the proxy, which redirects to this host, reached
+    // directly, which redirects back to the proxied host.
+    '/via-proxy': json(descriptor('via-proxy', ['HEAD', 'GET'].map(method => ({ '@id': `${base}/via-proxy#${method}`,
+      '@type': 'iep:Affordance', 'iep:action': `urn:via-proxy:${method}`, 'hydra:method': method, 'hydra:title': `Proxied ${method}`,
+      'hydra:target': `${PROXIED}/answer/to-direct`, 'http://www.w3.org/ns/dcat#mediaType': 'text/plain' })))),
+    '/answer/to-direct': () => ({ status: 302, headers: { location: `${base}/answer/to-proxied` } }),
+    '/answer/to-proxied': () => ({ status: 302, headers: { location: `${PROXIED}/landing` } }),
     '/schemes': json(descriptor('schemes', [
       ...[['file', secretUrl], ['data', `data:text/plain;base64,${Buffer.from(SECRET).toString('base64')}`], ['ftp', 'ftp://127.0.0.1:9/x']].map(([name, template]) => ({
         '@id': `${base}/schemes#${name}`, '@type': 'iep:Affordance', 'iep:action': `urn:${name}`, 'hydra:method': 'GET',
@@ -202,12 +218,15 @@ const relOp = (id: string, title: string, target: unknown) => ({ '@id': `#${id}`
   'iep:action': `urn:rel-${id}`, 'hydra:method': 'GET', 'hydra:title': title, 'hydra:target': target });
 
 interface Run { code: number | null; stdout: string; stderr: string; ms: number; timedOut: boolean }
-/** Run hmc.py without blocking this process, which is also the server it talks to. */
-function hmc(args: string[], timeoutMs = 30_000): Promise<Run> {
+/**
+ * Run hmc.py without blocking this process, which is also the server it talks to. Its environment
+ * is minimal, with no proxy variables, so requests to 127.0.0.1 go straight there, unless `env`
+ * gives some.
+ */
+function hmc(args: string[], timeoutMs = 30_000, env: Record<string, string> = {}): Promise<Run> {
   return new Promise(resolve => {
     const started = Date.now();
-    // A minimal environment: no proxy variables, so requests to 127.0.0.1 go straight there.
-    const child = spawn(PYTHON, ['-I', HMC, ...args], { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*' } });
+    const child = spawn(PYTHON, ['-I', HMC, ...args], { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*', ...env } });
     let stdout = ''; let stderr = ''; let timedOut = false;
     child.stdout.setEncoding('utf8').on('data', d => { stdout += d; });
     child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
@@ -229,13 +248,25 @@ beforeAll(async () => {
     const url = new URL(req.url || '/', base);
     const line = `${req.method} ${url.pathname}${url.search}`;
     seen.push(line);
+    hops.push({ line, headers: hopHeaders(req.headers), proxied: /^https?:/i.test(req.url || '') });
     const chunks: Buffer[] = [];
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       received.push({ line, body: Buffer.concat(chunks).toString('utf8'), type: String(req.headers['content-type'] || '') });
       const fetched = Object.prototype.hasOwnProperty.call(fetchRoutes(base), url.pathname) ? fetchRoutes(base)[url.pathname]!(url.searchParams.get('format')) : undefined;
       if (fetched === 'no answer') { req.socket.destroy(); return; }
+      // A redirect that promises a body and sends one byte of it, then nothing, until the client closes.
+      if (fetched && 'redirect' in fetched && fetched.unending) {
+        res.writeHead(fetched.status || 302, { location: fetched.redirect, 'content-length': '1048576' }).write('x');
+        return;
+      }
       if (fetched && 'redirect' in fetched) { res.writeHead(fetched.status || 302, { location: fetched.redirect }).end(); return; }
+      // Node writes no body in answer to a HEAD, so a host that does writes the answer itself.
+      if (fetched && fetched.headBody && req.method === 'HEAD' && typeof fetched.type === 'string') {
+        req.socket.end(`HTTP/1.1 ${fetched.status || 200} OK\r\ncontent-type: ${fetched.type}\r\n` +
+          `content-length: ${Buffer.byteLength(fetched.body)}\r\nconnection: close\r\n\r\n${fetched.body}`);
+        return;
+      }
       // A list of types is that many Content-Type headers.
       if (fetched) { res.setHeader('content-type', fetched.type); res.writeHead(fetched.status || 200).end(fetched.body); return; }
       const route = Object.prototype.hasOwnProperty.call(routes(), url.pathname) ? routes()[url.pathname] : undefined;
@@ -293,7 +324,12 @@ describe('hmc.py: a load whose requests fail, as the page\'s', () => {
 
   it.each(FETCH_CASES)('loads %s', async (address, outcome) => {
     const before = seen.length;
+    const hopsBefore = hops.length;
     const r = await hmc(['list', `${base}${address}`, '--json']);
+    // Every request of a load, at each address a redirect leads it to, is a GET with the load's Accept.
+    const sent = hops.slice(hopsBefore);
+    expect(sent.map(hop => [hop.line.slice(0, hop.line.indexOf(' ')), hop.proxied, hop.headers]), r.stderr)
+      .toEqual(sent.map(() => ['GET', false, LOAD_HEADERS]));
     const path = address.split('?')[0]!;
     const requests = seen.slice(before).map(line => new URL(line.slice(line.indexOf(' ') + 1), base)).filter(u => u.pathname === path);
     const asked = [...new Set(requests.map(u => u.searchParams.get('format')))];
@@ -373,11 +409,21 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
   it.each(invokeOutcomes('').map(([title]) => [title] as const))('ends %s as the page does, in text and --json alike', async title => {
     const [, rel, method, url, end, reached] = invokeOutcomes(base).find(row => row[0] === title)!;
     for (const mode of [[], ['--json']]) {
-      const before = seen.length;
+      const before = hops.length;
       const r = await hmc(['invoke', `${base}/outcomes`, rel, '--confirm', ...mode]);
       const where = `${title} ${mode.join('')}: ${r.stdout}${r.stderr}`;
-      // The host receives the request once, at the address shown; a GET or HEAD also where it is redirected.
-      expect(seen.slice(before).filter(line => / \/(answer\/|landing)/.test(line)), where).toEqual(reached);
+      // The host receives the request once, at the address shown; a GET or HEAD also where it is
+      // redirected, as the same method, asking for the same type, and with nothing else.
+      const sent = hops.slice(before).filter(hop => / \/(answer\/|landing)/.test(hop.line));
+      expect(sent.map(hop => hop.line), where).toEqual(reached);
+      if (method === 'GET' || method === 'HEAD') {
+        expect(sent.map(hop => [hop.headers, hop.proxied]), where).toEqual(sent.map(() => [OUTCOME_READ_HEADERS, false]));
+      }
+      if ('loop' in end) {
+        expect([r.code, r.stdout, r.stderr.trim()], where)
+          .toEqual([1, '', `error: ${url} was redirected more than 20 times, more than fetch follows, so the request failed`]);
+        continue;
+      }
       if ('refused' in end) {
         expect([r.code, r.stdout, r.stderr.trim()], where)
           .toEqual([1, '', `error: hmc.py sends requests to http and https URLs only; refused a redirect to ${end.refused}`]);
@@ -395,12 +441,20 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
       const outcome = 'redirect' in end ? invokeNotFollowed(method, url, end.redirect, location)
         : (done ? invokeDone : invokeNotSuccess)(url, end.answer, landed);
       expect(r.code, where).toBe(done ? 0 : 4);
+      // A HEAD's answer has no body, however the host answers it; a GET that lands at /landing reads it.
+      const landedBody = 'landed' in end && end.landed && end.landed.startsWith('/landing');
       if (mode.length) {
-        const out = JSON.parse(r.stdout) as { done: boolean; outcome: string; redirect?: unknown; response: { status: number; landed: string } };
-        expect([out.done, out.outcome, out.redirect ?? null, out.response.status], where)
-          .toEqual([done, outcome, 'redirect' in end ? { status: end.redirect, location } : null, 'redirect' in end ? end.redirect : end.answer]);
+        const out = JSON.parse(r.stdout) as { done: boolean; outcome: string; redirect?: unknown;
+          response: { status: number; landed: string; bodyText: string } };
+        expect([out.done, out.outcome, out.redirect ?? null, out.response.status, out.response.landed], where)
+          .toEqual([done, outcome, 'redirect' in end ? { status: end.redirect, location } : null, 'redirect' in end ? end.redirect : end.answer,
+            'redirect' in end ? url : landed]);
+        if (method === 'HEAD') expect(out.response.bodyText, where).toBe('');
+        else if (landedBody) expect(out.response.bodyText, where).toBe(LANDING_BODY);
       } else {
         expect(r.stdout.split('\n'), where).toContain(outcome);
+        if (method === 'HEAD') expect(r.stdout.split('\n'), where).not.toContain(LANDING_BODY);
+        else if (landedBody) expect(r.stdout.split('\n'), where).toContain(LANDING_BODY);
       }
     }
   });
@@ -414,6 +468,26 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
     expect(json.code, json.stderr).toBe(3);
     expect((JSON.parse(json.stdout) as { done: boolean; blocked: string })).toMatchObject({ done: false, blocked: 'mcp-required' });
     expect(seen.slice(before).filter(line => !line.startsWith('GET /defined-terms'))).toEqual([]);
+  });
+});
+
+describe('hmc.py: through an HTTP proxy its environment names', () => {
+  // urllib writes the proxy's credentials into a request's headers, so a redirect that copied them
+  // would hand them to the next host. A browser never sends Proxy-Authorization to a host.
+  it.each(['HEAD', 'GET'])('sends a %s\'s Proxy-Authorization only on each hop that goes through the proxy, never to a host', async method => {
+    const before = hops.length;
+    const proxy = { http_proxy: `http://${PROXY_LOGIN}@${base.slice('http://'.length)}`, no_proxy: '127.0.0.1', NO_PROXY: '127.0.0.1' };
+    const r = await hmc(['invoke', `${base}/via-proxy`, `urn:via-proxy:${method}`, '--json'], 30_000, proxy);
+    expect(r.code, r.stderr).toBe(0);
+    const out = JSON.parse(r.stdout) as { outcome: string; response: { landed: string; bodyText: string } };
+    expect([out.outcome, out.response.landed, out.response.bodyText])
+      .toEqual([invokeDone(`${PROXIED}/answer/to-direct`, 200, `${PROXIED}/landing`), `${PROXIED}/landing`, method === 'HEAD' ? '' : LANDING_BODY]);
+    const proxied = { ...OUTCOME_READ_HEADERS, 'proxy-authorization': PROXY_AUTHORIZATION };
+    expect(hops.slice(before).map(hop => [hop.line, hop.proxied, hop.headers])).toEqual([
+      ['GET /via-proxy', false, LOAD_HEADERS],
+      [`${method} /answer/to-direct`, true, proxied],
+      [`${method} /answer/to-proxied`, false, OUTCOME_READ_HEADERS],
+      [`${method} /landing`, true, proxied]]);
   });
 });
 
