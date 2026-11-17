@@ -191,7 +191,9 @@ describe('the affordances', () => {
     const targets = xapiProfileServerAffordances.map(a => a.targetTemplate);
     expect(targets).toEqual(['{base}/agent/xapi-profiles/add', '{base}/agent/xapi-profiles/remove',
       '{base}/agent/xapi-profiles/draft', '{base}/agent/xapi-profiles/lint', '{base}/agent/xapi-profiles/publish', '{base}/xapi/profiles/resource',
-      '{base}/xapi/profiles/sparql', '{base}/xapi/profiles/validate_templates', '{base}/xapi/profiles/validate_patterns']);
-    expect(new Set(xapiProfileServerAffordances.map(a => a.toolName)).size).toBe(9);
+      '{base}/xapi/profiles/sparql', '{base}/xapi/profiles/validate_templates', '{base}/xapi/profiles/validate_patterns',
+      // The xapi-x rules and the controls document (src/xapix/http.ts).
+      '{base}/xapi/profiles/lint_decorations', '{base}/xapi/profiles/controls']);
+    expect(new Set(xapiProfileServerAffordances.map(a => a.toolName)).size).toBe(11);
   });
 });

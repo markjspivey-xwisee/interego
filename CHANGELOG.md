@@ -1,5 +1,30 @@
 # Changelog
 
+## 2026-11-17 — xapi-x: the lint and the controls document are affordances, and Foxxi's profile states what it offers
+
+From the xapi-x list of what was only designed.
+
+- **`foxxi.xapi_profile_lint_decorations`** (`POST /xapi/profiles/lint_decorations`)
+  runs rules X1 to X10 over statements, a profile, or both. It reads the
+  profiles held, keeps nothing and asks for no signature. Its answer says what
+  was judged and whether each lookup for rule X9 was available.
+- **The two X9 lookups have real sources on the bridge.** A design idea is a
+  concept of the I2IDL release the bridge already reads; an affordance is an
+  action of the manifest the bridge serves.
+- **`foxxi.xapi_profile_controls`** (`GET /xapi/profiles/controls?template=...`)
+  serves the document an `xapix:controls` link points at: what a template
+  offers, each affordance with the target, method and inputs served today.
+  The document is of a template, not of a statement, so it says nothing a
+  statement says. `POST` with a statement finds the templates it follows.
+- **Foxxi's profile states offers.** Its `lesson-failed` and `course-failed`
+  templates offer asking the course a question, reading the passages that bear
+  on one, and taking the lesson. `xapix:offers` is a property a plain profile
+  processor ignores; the same statements follow the templates as before.
+
+**Not done.** No statement links to a controls document. Foxxi's profile
+states no `xapix:evidences`: each is a proposal about someone else's concept
+and wants review first. An `i2x:` target is taken by its namespace.
+
 ## 2026-11-17 — mcp-server: the local Solid server fallback starts
 
 When its home pod is on localhost and nothing answers there,
