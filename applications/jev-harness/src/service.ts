@@ -121,9 +121,20 @@ export class Harness {
     return this.finish(j, { verb: 'navigated', objectName: input.task.slice(0, 120) });
   }
 
-  async selectTests(input: SelectTestsInput & { readonly baseRef?: string; readonly headRef?: string }): Promise<JudgmentResponse<TestSelectionJudgment>> {
+  async selectTests(input: SelectTestsInput & { readonly baseRef?: string; readonly headRef?: string; readonly supersedes?: string }): Promise<JudgmentResponse<TestSelectionJudgment>> {
     if (this.repositorySource && !input.changedFiles.length && input.baseRef) {
       throw new HarnessError(400, 'Supply changed_files when using the hosted repository snapshot.');
+    }
+    // A selection made to replace an earlier one (it read the wrong range, say) is published as
+    // the next version of that selection's graph. It is a correction and not a score: the only
+    // other way to supersede a selection is an outcome, which enters the calibration record.
+    // The earlier one is resolved before anything is judged, so a refusal costs no model call.
+    // judgmentFromPod already refuses a graph whose head is an outcome.
+    let replaced: Published | undefined;
+    if (input.supersedes !== undefined) {
+      if (!isIri(input.supersedes)) throw new HarnessError(400, 'supersedes must be an absolute IRI without whitespace or <>"{}|^`\\');
+      replaced = this.store.findByGraphIri(input.supersedes) ?? await this.judgmentFromPod(input.supersedes);
+      if (replaced.kind !== 'test-selection') throw new HarnessError(409, `a test selection supersedes only a test selection, and ${input.supersedes} is a ${replaced.kind}`);
     }
     const { changed, j } = await this.readRepository(async (root) => {
       const changed = input.changedFiles.length > 0
@@ -139,7 +150,7 @@ export class Harness {
       const j = await selectTests(this.jev, this.inventory(undefined, root), { changedFiles: changed, ...(input.task ? { task: input.task } : {}) });
       return { changed, j };
     });
-    return this.finish(j, { verb: 'selected-tests', objectName: `${changed.length} changed files -> ${j.mode}` });
+    return this.finish(j, { verb: 'selected-tests', objectName: `${changed.length} changed files -> ${j.mode}` }, replaced ? [replaced] : []);
   }
 
   async triage(input: TriageInput): Promise<JudgmentResponse<FailureTriageJudgment>> {

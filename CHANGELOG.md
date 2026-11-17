@@ -1,5 +1,21 @@
 # Changelog
 
+## 2026-11-16 — jev-harness: a test selection can replace an earlier one
+
+A selection could only be superseded by an outcome, and an outcome is a score:
+it enters the calibration record. The selections recorded for #899, #901 and
+#905 after they merged read an empty range and said "no changed files were
+given"; replacing them needed a correction, not a score.
+
+- `select-tests` takes `supersedes`, the graph IRI of an earlier test
+  selection. The new selection is published as the next version of that
+  graph, compare-and-swapped on its head, and stays Hypothetical. No outcome
+  is recorded.
+- Refused before any model call: a `supersedes` that is not an IRI (400), a
+  graph the store and the pod hold nothing readable for (404), a judgment of
+  another kind, and a selection an outcome has already scored (409).
+- Without `supersedes` nothing changes.
+
 ## 2026-11-16 — Dependencies: minimatch 11.0.8 under typescript-eslint and electron-builder
 
 `npm audit` lists one advisory against minimatch from 7.0.0 up to 11.0.1,

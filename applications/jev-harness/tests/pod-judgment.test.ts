@@ -148,4 +148,46 @@ describe('scoring a judgment the bridge did not make', () => {
     const noRelay = new Harness({ jev: new FakeJevClient(() => ({})), repoRoot: mkdtempSync(join(tmpdir(), 'jev-pod-')), base: 'http://localhost:1', relay: null });
     await expect(noRelay.recordOutcome({ judgmentIri: verdict.graphIri, humanDecision: 'approved' })).rejects.toBeInstanceOf(HarnessError);
   });
+
+  it('★ a selection that replaces an earlier one is the next version of that selection\'s graph, and scores nothing', async () => {
+    const h = harness();
+    state.content = asPodContent(selection);
+    const before = state.publishes.length;
+    const r = await h.selectTests({ changedFiles: ['src/ledger.ts'], supersedes: selection.graphIri });
+    expect(r.judgment.kind).toBe('test-selection');
+    expect(r.judgment.graphIri, 'the new selection keeps its own IRI').not.toBe(selection.graphIri);
+    expect(r.publish.status).toBe('published');
+    expect(state.publishes.length).toBe(before + 1);
+    const p = state.publishes[state.publishes.length - 1]!;
+    expect(p['graph_iri']).toBe(selection.graphIri);
+    expect(p['if_match']).toBe('http://css/u-pk-x/context-graphs/1.ttl');
+    expect(p['modal_status'], 'a replacement is still a Hypothetical judgment, not an Asserted outcome').toBe('Hypothetical');
+    expect(h.store.artifact(r.judgment.id, 'trig')).toContain('http://css/u-pk-x/context-graphs/1.ttl');
+    expect(h.store.outcomes(), 'superseding a selection records no outcome').toEqual([]);
+
+    // Without supersedes the selection is published under its own graph, as before.
+    const own = await h.selectTests({ changedFiles: ['src/ledger.ts'] });
+    const q = state.publishes[state.publishes.length - 1]!;
+    expect(q['graph_iri']).toBe(own.judgment.graphIri);
+    expect(q['if_match']).toBeUndefined();
+    state.content = asPodContent(verdict);
+  });
+
+  it('★ refuses to supersede anything but a test selection still at the head of its graph, and publishes nothing', async () => {
+    const h = harness();
+    const before = state.publishes.length;
+    // A review verdict is not a selection.
+    state.content = asPodContent(verdict);
+    await expect(h.selectTests({ changedFiles: ['src/ledger.ts'], supersedes: verdict.graphIri })).rejects.toMatchObject({ status: 409 });
+    // A selection an outcome has already scored.
+    state.content = asPodContent(recordOutcome(selection, { judgmentIri: selection.graphIri, testsFailed: [] }) as unknown as AnyJudgment);
+    await expect(h.selectTests({ changedFiles: ['src/ledger.ts'], supersedes: selection.graphIri })).rejects.toMatchObject({ status: 409 });
+    // A graph the pod holds nothing readable for, and a value that is not an IRI.
+    state.content = 'not a judgment at all';
+    await expect(h.selectTests({ changedFiles: ['src/ledger.ts'], supersedes: selection.graphIri })).rejects.toMatchObject({ status: 404 });
+    await expect(h.selectTests({ changedFiles: ['src/ledger.ts'], supersedes: 'not an iri <>' })).rejects.toMatchObject({ status: 400 });
+    expect(state.publishes.length).toBe(before);
+    expect(h.store.index()).toEqual([]);
+    state.content = asPodContent(verdict);
+  });
 });
