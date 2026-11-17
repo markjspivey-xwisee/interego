@@ -16,8 +16,12 @@ two cases where it had sent nothing at all:
 In both, every add, remove and publish answered 503 `inDoubt`, and the
 profile was then refused to everyone (409) until the bridge restarted,
 because the doubt could never settle. The bridge's `confirm` now answers
-"not kept" in those two cases, so the request gets the plain 503 with
-`retry`, nothing is reserved and the signer's count is given back.
+"not kept" when there is no key, and for a record whose write `persist`
+itself refused at the guard before composing or sending anything. So the
+request gets the plain 503 with `retry`, nothing is reserved and the signer's
+count is given back. A guard refusal at read-back time alone still leaves the
+write in doubt: it says the pod cannot be read now, not that nothing was
+written (review finding).
 
 Checked on the running bridge, before and after, with no key and with a
 loopback pod. There is no test: the change is in `bridge/server.ts`, which no
