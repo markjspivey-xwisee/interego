@@ -21,14 +21,14 @@ A decoration never changes what a standard member means. `verb`, `object`, `resu
 ## Where it lives, and why
 
 - **Layer: vertical (application over L3), under Foxxi**, at `applications/foxxi-content-intelligence/xapix/` with code in `src/xapix/`. The transplant test in `spec/LAYERS.md` settles the layer: every claim here names xAPI, so none of it survives being moved to another stack, and none of it is L1 or L2. It sits under Foxxi because i2idl-x does, because the profile processor it is checked with is Foxxi's (`src/xapi-profile-server/processor.ts`), and because section 4 links profiles to i2idl-x concepts. Other verticals (lrs-adapter, coached-world, llm-telemetry, agp) use it the way coached-world's tests already use Foxxi's processor: by import, with no protocol change.
-- **Namespace: `xapix:` = `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix#`.** The same root as `i2x:`, so it is published the same way: a signed graph on the owner's pod, dereferenced by the relay. It is outside every protocol namespace. **It is published** (2026-11-15, public, authorship signed by the relay) and resolves as Turtle and JSON-LD:
+- **Namespace: `xapix:` = `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix#`.** The same root as `i2x:`, so it is published the same way: a signed graph on the owner's pod, dereferenced by the relay. It is outside every protocol namespace. **It is published** (the ontology and version 1 of the profile on 2026-11-15, version 2 of the profile on 2026-11-17; public, authorship signed by the relay) and resolves as Turtle and JSON-LD:
 
   | Graph | IRI | Triples |
   |---|---|---|
   | Ontology | `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix` | 58 |
-  | Profile | `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix-profile` | 51 |
+  | Profile | `https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix-profile` | 123 (version 2; version 1 was 51) |
 
-  The profile's version (`…/xapix-profile/v/1`) and its template (`…/xapix-profile/templates/descriptor-projection`) are subjects in the profile graph and resolve to it. Both graphs were fetched back and compared triple for triple with `xapix.ttl` and with what `src/xapix/publication.ts` returns. A public graph cannot be unpublished; a change is a new publish that supersedes this one.
+  The profile's versions (`…/xapix-profile/v/1`, `…/v/2`) and its templates (`…/xapix-profile/templates/projection`, and the deprecated `…/templates/descriptor-projection`) are subjects in the profile graph and resolve to it. Both graphs were fetched back and compared triple for triple with `xapix.ttl` and with what `src/xapix/publication.ts` returns. A public graph cannot be unpublished; a change is a new publish that supersedes the one before, which is how version 2 was published: its descriptor supersedes version 1's, and the profile's IRI now serves version 2's triples.
 - **Ontology: [xapix.ttl](xapix.ttl)**, 15 terms, every one with a label and a comment. `src/xapix/namespace.ts` lists the same 15 and a test fails when the two differ. The repository's ontology lint does not check a vertical's own prefix, so that test is the only thing that would notice an undeclared `xapix:` term.
 
 ### What is in code now
@@ -357,7 +357,6 @@ The owner was asked eleven questions and answered: decide them, "you know what m
 
 ## Left to do
 
-- **Publish version 2 of the profile on the pod.** The pod serves version 1. A public graph cannot be unpublished, so it is the owner's go-ahead.
 - **An emitter that chains.** `chained()` and `orderBasis` exist and no emitter calls them. The first should be one whose statements share a registration (llm-telemetry or coached-world), and it is that vertical's change.
 - **An order attestation that is written and verified.** The term is declared and `orderBasis` accepts one its reader verified. Nothing publishes the signed descriptor that lists the digests, and nothing verifies one.
 - **`xapix:controls`.** Declared and linted. It needs a document to link to, served by the bridge for a statement that has no descriptor, and no such route exists.
