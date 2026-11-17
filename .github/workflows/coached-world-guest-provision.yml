@@ -14,7 +14,7 @@ concurrency:
 jobs:
   register:
     if: github.repository == 'markjspivey-xwisee/interego' && github.ref == 'refs/heads/codex/worldcraft-guest-registration'
-    runs-on: ubuntu-latest
+    runs-on: ubuntu-slim
     timeout-minutes: 10
     steps:
       - uses: actions/checkout@v6
@@ -30,7 +30,11 @@ jobs:
       - name: Register the WorldCraft meetup origin
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
-          APPLY: ${{ inputs.apply }}
+          REQUEST_APPLY: ${{ inputs.apply }}
           WORLDCRAFT_AGENT_DID: 'did:web:identity.interego.xwisee.com:agents:mcp-client-u-eth-0cf912ece9d9'
           WORLDCRAFT_POD_URL: 'https://gate.interego.xwisee.com/u-eth-0cf912ece9d9/'
-        run: node tools/worldcraft-guest-registration.mjs
+        run: |
+          APPLY=false node tools/worldcraft-guest-registration.mjs
+          if [ "$REQUEST_APPLY" = true ]; then
+            APPLY=true node tools/worldcraft-guest-registration.mjs
+          fi
