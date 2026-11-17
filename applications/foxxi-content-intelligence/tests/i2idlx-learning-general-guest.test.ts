@@ -279,6 +279,13 @@ describe('the learner workbench and identity\'s general guest', () => {
     const answers: number[] = [];
     for (let i = 0; i < 7; i++) answers.push((await f.browser().send(GENERAL_GUEST_START_PATH)).status);
     assert.deepEqual(answers, [302, 302, 302, 302, 302, 429, 429]);
+    // Behind the bridge's proxy every request arrives from the proxy's address. The limit is kept
+    // per visitor by the forwarded header's last hop, so one visitor's starts do not shut out another.
+    f.advance(61_000);
+    const from = async (address: string) => (await f.browser().send(GENERAL_GUEST_START_PATH, { headers: { 'X-Forwarded-For': `203.0.113.9, ${address}` } })).status;
+    const first: number[] = []; for (let i = 0; i < 6; i++) first.push(await from('198.51.100.7'));
+    assert.deepEqual(first, [302, 302, 302, 302, 302, 429]);
+    assert.equal(await from('198.51.100.8'), 302, 'another visitor behind the same proxy is not counted with the first');
   });
 
   it('lets nobody in whom identity does not vouch for, or whom this application\'s policy does not permit', async () => {

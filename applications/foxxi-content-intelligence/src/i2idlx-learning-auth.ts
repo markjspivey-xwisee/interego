@@ -4,6 +4,7 @@ import { createHash, randomBytes, timingSafeEqual } from 'node:crypto';
 import type { Express, Request, Response } from 'express';
 import { routeJson } from './route-json.js';
 import { guardedFetchFn } from './ssrf-guard.js';
+import { requestAddress } from './revocable-registry.js';
 import type { GeneralGuestSession } from '../../_shared/guest-access/door.js';
 import { guestSessionStanding } from '../../_shared/guest-access/session.js';
 
@@ -482,7 +483,9 @@ export class LearningAccountAuth {
   async generalGuestStart(req: Request, res: Response): Promise<void> {
     const door = this.door();
     // Each start has the service agent sign a grant through the relay, so it is limited as the workbench's own guest grant is.
-    this.admit('general-start:' + (req.ip ?? 'unknown'), 5); this.admit('general-starts', 30);
+    // A GET has no body for the bridge to stamp the caller's address on, and behind the bridge's
+    // proxy `req.ip` is the proxy's: the address is the bridge's own reading of the forwarded header.
+    this.admit('general-start:' + requestAddress(req), 5); this.admit('general-starts', 30);
     if (req.get('Origin') && req.get('Origin') !== this.base) refuse(400, 'learning_sign_in_input_invalid');
     const next = learnerReturnPath(req.query.next);
     if (Object.keys(req.query).some(key => key !== 'next') || (req.query.next !== undefined && !next)) refuse(400, 'learning_sign_in_input_invalid');
