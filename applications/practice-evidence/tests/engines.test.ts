@@ -1425,7 +1425,9 @@ describe('statements', () => {
     const [passed, completed] = ss as [Record<string, unknown>, Record<string, unknown>];
     expect(passed['actor']).toEqual({ objectType: 'Agent', account: LAUNCH.actor });
     expect((passed['object'] as Record<string, unknown>)['id']).toBe(LAUNCH.activityId);
-    expect(passed['timestamp']).toBe(gate.reviews[0]!.reviewedAt);
+    // No timestamp of this bridge's: the unit stamps the statement in the session it sends it in.
+    // The review was made before that session began, so its time is kept beside, not as the timestamp.
+    expect(ss.every((x) => !('timestamp' in (x as Record<string, unknown>)))).toBe(true);
     expect(passed['result']).toMatchObject({ success: true, score: { scaled: 1, min: 0 } });
     expect((passed['result'] as Record<string, unknown>)['completion']).toBeUndefined();
     expect(completed['result']).toMatchObject({ completion: true });
@@ -1436,6 +1438,7 @@ describe('statements', () => {
     // Sent in a later session of the same registration; the session of the conversation is kept beside it.
     expect(cext[CMI5_SESSION_EXT]).toBe(LATER.sessionId);
     expect(cext[`${PEV_NS}lmsSessionId`]).toBe(LAUNCH.sessionId);
+    expect(cext[`${PEV_NS}reviewedAt`]).toBe(gate.reviews[0]!.reviewedAt);
     expect(cext[PRACTICE_MARKER]).toBe(true);
     expect(cext['https://lms.example/ext/tenant']).toBe('north');
     const ca = ctx['contextActivities'] as Record<string, unknown>;
@@ -1516,7 +1519,10 @@ describe('statements', () => {
     expect(one((s) => { (s['result'] as Record<string, unknown>)['success'] = false; })).toEqual(['passed needs result.success true']);
     expect(one((s) => { delete (s['result'] as Record<string, unknown>)['duration']; })).toEqual(['a cmi5 defined statement needs result.duration as PT<seconds>S']);
     expect(one((s) => { (s['verb'] as Record<string, unknown>)['id'] = 'http://adlnet.gov/expapi/verbs/attempted'; })).toEqual(['verb must be passed, failed or completed']);
-    expect(one((s) => { s['timestamp'] = 'yesterday'; })).toEqual(['timestamp must be ISO 8601 with an offset']);
+    // Any timestamp at all: the time of the review is before the session, and this bridge's clock is not the unit's.
+    for (const stamp of ['yesterday', '2026-10-22T09:03:20.000Z']) {
+      expect(one((s) => { s['timestamp'] = stamp; })).toEqual(['timestamp must be left to the unit that sends the statement, inside its own session']);
+    }
   });
 
   it('says what is wrong with a launch before an attempt may carry it', () => {

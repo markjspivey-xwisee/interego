@@ -19,6 +19,35 @@ and projects as executed work.
 beside the `iep#` ones. Stopping needs a new version of Foxxi's profile, whose
 templates require those keys; the xapi-x README says what depends on them.
 
+## 2026-11-17 — Practice Evidence: a reviewed result is timestamped in the session it is sent in
+
+Found on the first end-to-end run against the deployed bridges. The passed or
+failed and the completed that a unit sends after a review carried the time of
+the review as their timestamp. The unit sends them in a later session, and cmi5
+orders a session's statements by timestamp with initialized first and terminated
+last (9.3). So they were dated before the initialized of their own session: on
+the run, 15:00:34Z against a session that began at 16:04:39Z. The LRS took them
+and the result was right; the order was not.
+
+The statements Practice Evidence hands out now carry no timestamp. The unit
+stamps each one the first time it sends it, after its own initialized, on the
+clock that stamps its initialized and terminated, and keeps that stamp for a
+retry. When the review was made is in each context as `pev:reviewedAt`. The
+role-play player does this, and compares a statement the LRS already holds
+without the timestamp it set itself. A statement fixed before this change, for a
+session that ended unsent, loses its review-time timestamp when it is fixed again
+for another session.
+
+The player also reads what the learning record holds of its session before it
+opens a visit. A session the LMS continues is opened by a fresh load of the page,
+which used to send a second initialized. It now sends none when the session has
+one, starts its clock after the session's latest statement, and sends nothing at
+all when the record cannot be read. It follows the record's own link to further
+pages, five at most and only on the record's own origin.
+
+Not changed: a unit other than this player has to stamp the statements itself;
+the instructions handed out with them now say so.
+
 ## 2026-11-17 — Foxxi: whether an unsent profile write is kept or in doubt has a test
 
 #945 fixed the bridge answering "in doubt" for a profile write it had never
@@ -64,6 +93,42 @@ From the xapi-x list of what was only designed.
 **Not done.** No statement links to a controls document. Foxxi's profile
 states no `xapix:evidences`: each is a proposal about someone else's concept
 and wants review first. An `i2x:` target is taken by its namespace.
+
+## 2026-11-17 — Foxxi: the dashboard's general guest is a caller on the bridge (switched off)
+
+Third step toward a dashboard general guest being a real caller. Bridge side
+only, behind `FOXXI_PLAY_GENERAL_GUEST=1`, which defaults off. With it unset no
+route is attached and the pod resolver answers as before.
+
+- **The door round trip, without a cookie.** `POST /play/general/start` gives
+  the dashboard's page a door address and a binding; identity returns the
+  browser to the dashboard; the page makes a key for its tab and signs
+  `{code, state, binding}` to `POST /play/general/finish`. The bridge
+  exchanges the code and admits that key as the guest, for an hour at most.
+- **The caller is the guest.** A request the key signs at
+  `POST /play/general/act` has the guest's DID as its subject
+  (`generalGuestPrincipal`). The key itself is refused on every signed
+  `/agent/*` route while admitted, and no `/agent/*` route accepts a request
+  signed or delegated in a guest's name (403, before any pod is read).
+- **Default-deny operations** (`src/guest-operations.ts`): `guest.standing`,
+  `guest.sign_out`, `record.read`, `course.resolve`, `course.launch`,
+  `course.next`. Any other name is refused. A request carrying `acting_as`,
+  a subject, a pod URL or any other claim of identity or authority is refused.
+- **The guest's own pod.** With the switch on, the bridge's pod resolver gives
+  a general guest's DID the identity host and guards the answer: its own pod,
+  or a refusal, never the tenant pod. A guest's record is one plain JSON
+  document there (`foxxi-dashboard/learning-record.json`), written with the
+  operator bearer. A `410` from the gate ends every session of that guest and
+  is not retried; `409`, `503`, `413` and `507` are answered as refusals.
+- **Limits per guest:** 120 operations and 30 writes a minute, four tabs, and
+  256 pod writes of at most 256 KiB per bridge process.
+
+**Not done.** The dashboard page has no button. A guest linked to an account
+is refused. The round trip has been run in no browser and against no live
+gate. A guest's play does not count toward the efficacy tally. The guest's
+record is not sealed, and pod reads are anonymous. With the switch on, the
+resolver's guest rule also applies to the learner workbench's general guests
+wherever the bridge resolves their DID, which has not been exercised.
 
 
 ## 2026-11-17 — mcp-server: the local Solid server fallback starts
@@ -167,6 +232,51 @@ chain and an order attestation and no emitter that used them.
 
 **Not done.** The attestation is not written to a pod. The world attests its
 own emissions only. llm-telemetry does not chain.
+
+## 2026-11-17 — css-gate: the operator bearer no longer writes into a guest's pod once the guest is closed or expired
+
+The gate's operator bearer wrote any path of any pod, and every check on a
+guest's pod (`u-try-play-`, `u-try-guest-`) was on the guest's own token. An
+application's bridge holds that bearer (it is the one secret the gate knows),
+so a bridge that keeps a guest's records in the guest's pod could go on
+writing there after the guest's deadline, and after identity had closed the
+account and purged the pod.
+
+- **Closed or expired: refused.** For `PUT`, `POST` and `PATCH` with the
+  operator bearer into a guest's pod, the gate now reads the pod's sign-in
+  record from the store at every write. A tombstone is `410 guest_pod_closed`;
+  an unclaimed guest past its anchor's deadline is `410 guest_pod_expired`,
+  whether the janitor has closed it yet or not; no record, or no anchor that
+  names the pod, is `409 guest_pod_not_open`; a record that cannot be read is
+  `503 guest_pod_state_unavailable` and nothing is let through unread.
+- **A guest's sign-in record and write budget are not written through the
+  gate** (`403 guest_pod_private_document`). Identity writes the first past
+  the gate and the gate writes the second itself; a write over a tombstone
+  would have re-opened a closed guest.
+- **A bound for a live guest's pod.** At most `GUEST_POD_OPERATOR_WRITES`
+  operator writes (default 4096) and `GUEST_POD_OPERATOR_BYTES` declared bytes
+  (default 128 MiB), each at most `GUEST_POD_OPERATOR_RESOURCE_BYTES` (default
+  8 MiB): `507` and `413` past them. Counted in the gate's process, so a
+  restart starts it again: a ceiling on a runaway writer, not a ledger.
+  `/healthz` states it (`guestPodOperatorWrites`).
+- **Unchanged:** `DELETE` (operator tooling removes what a closed pod holds),
+  reads, every pod that is not a guest's, a guest that was claimed (a
+  registered account in the same pod: no deadline, no bound), and a guest's
+  own token. Identity's provisioning and cleanup, and the relay's writes, do
+  not come through the gate (they reach the store at their `CSS_URL`), so
+  nothing here can refuse them; a test holds `deploy/railway/services.json`
+  to that.
+
+- **Shadow until switched on.** Only `GUEST_POD_OPERATOR_MODE=enforce`
+  refuses. Any other value, and the default, decides the same way, logs what
+  it would have refused (once per pod and reason) and writes as before, so the
+  rule can be watched against the real store before a live guest's writes
+  depend on it. `/healthz` names the mode.
+
+Once enforcing, a bridge gets a `410` where it used to get a `201` for a guest that has
+ended; it should treat that as the guest being gone. The gate cannot tell one
+holder of the operator bearer from another. A write let through just before a
+closure can still land after it; the rule holds from the next write on.
 
 ## 2026-11-17 — identity: a guest pod larger than one cleanup pass lists is closed and purged all the same
 

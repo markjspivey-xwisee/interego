@@ -21,7 +21,11 @@
  *
  *     (a) Operator bearer — equals WRITE_SECRET. Trusted infra path
  *         (seeders, the relay's own service identity, deploy-time
- *         tooling). Allowed to write to ANY path on the pod.
+ *         tooling). Allowed to write to ANY path on the pod, with one
+ *         exception: PUT / POST / PATCH into a GUEST's pod
+ *         (`u-try-play-…`, `u-try-guest-…`) are let through only while
+ *         the guest's account is open and unexpired, and up to a
+ *         bound; see "Operator-bearer writes into a guest's pod" below.
  *
  *     (b) Per-user bearer — verified against the identity server's
  *         POST /tokens/verify endpoint. The gate extracts `userId`
@@ -58,6 +62,14 @@
  *                      Unset works only while identity runs open
  *                      (ALLOW_OPEN_INTROSPECTION=1). See
  *                      deploy/identity/AUTH-ARCHITECTURE.md.
+ *   GUEST_POD_OPERATOR_WRITES / GUEST_POD_OPERATOR_BYTES /
+ *   GUEST_POD_OPERATOR_RESOURCE_BYTES — how many PUT / POST / PATCH the
+ *                      operator bearer may send into one live guest's pod
+ *                      (default 4096), their declared bytes in all
+ *                      (default 128 MiB) and each (default 8 MiB),
+ *                      counted in this process.
+ *   GUEST_POD_OPERATOR_MODE — `enforce` refuses such a write; any other value
+ *                      (the default) is shadow: decided and logged, written anyway.
  *   CSS_INTERNAL_URL — upstream CSS.
  *   CSS_HOST_HEADER  — Host header to forward to CSS.
  *   USER_BEARER_CACHE_TTL_MS — verified-token cache TTL (default 60000).
@@ -855,6 +867,180 @@ function provisionalBudgetStorage() {
   };
 }
 
+// ── Operator-bearer writes into a guest's pod ───────────────────────────────
+//
+// ★ THE OPERATOR BEARER USED TO WRITE A GUEST'S POD WHATEVER HAD BECOME OF THE GUEST.
+//
+// A guest (identity's provisional owner: `u-try-play-<32 hex>`, `u-try-guest-<32 hex>`) has a pod
+// until its deadline; identity then closes its account (a tombstone in its sign-in record) and
+// purges the pod. Every check on a guest's pod below was on the guest's OWN token. A write with
+// the operator bearer skipped all of them, and an application's bridge holds that bearer (it is
+// the one secret this gate knows: a bridge that writes a learner's records into the learner's pod
+// writes a guest's the same way). So a bridge could go on writing into a guest's pod after the
+// guest's deadline and after identity had closed and purged it: records of a person whose
+// account no longer exists, in a pod nothing visits again.
+//
+// Who writes a guest's pod with the operator bearer THROUGH THIS GATE: application bridges, and
+// operator tooling. Not identity (it creates the pod's sign-in record, closes it and purges the pod
+// over the private network, straight to the store at its CSS_URL, with no bearer at all), not the
+// relay (the same), and not this gate's own write budget (written upstream from here). So nothing
+// below can refuse identity's provisioning or its cleanup: they never arrive here.
+//
+// The rule, for PUT / POST / PATCH with the operator bearer into a guest's pod:
+//   - the pod's sign-in record is read from the store first, at every such write (never cached: a
+//     closure counts from the write after it);
+//   - a record that is a tombstone (`deletedAt`): refused, 410 `guest_pod_closed`;
+//   - an unclaimed guest whose deadline (its anchor's `expiresAt`) has passed: refused, 410
+//     `guest_pod_expired`, whether or not identity's janitor has closed it yet;
+//   - no record, or a record with no anchor naming this pod: refused, 409 (nothing would ever
+//     clean such a pod up: identity's janitor walks accounts, not containers);
+//   - a record that cannot be read or parsed: refused, 503 (retry), never let through;
+//   - the pod's private documents (its sign-in record and its write budget) are not written
+//     through this gate at all: 403;
+//   - a guest that was CLAIMED (its record holds a wallet, passkey or DID) is a registered
+//     account in a pod that keeps its name: written as any other pod is;
+//   - a live guest's pod takes at most GUEST_POD_OPERATOR_WRITES such writes and
+//     GUEST_POD_OPERATOR_BYTES declared bytes, each write at most
+//     GUEST_POD_OPERATOR_RESOURCE_BYTES: 507 / 413 past that. Counted in this process (see
+//     operatorGuestWrites), so that a guest's pod stays within what its cleanup purges in a few
+//     passes and a runaway bridge stops somewhere.
+// DELETE is never refused here: the operator's tooling removes what is left in a closed pod with it.
+// The legacy evaluation ids (`u-try-<12 hex>`) have no anchor and no deadline this gate can read:
+// only their tombstone refuses a write.
+
+const GUEST_POD = /^u-try-(?:play|guest)-[a-f0-9]{32}$/;
+const LEGACY_TRY_POD = /^u-try-[a-f0-9]{12}$/;
+const GUEST_ANCHOR = /^ipa1_([A-Za-z0-9_-]{1,8192})\.[A-Za-z0-9_-]+$/;
+
+function operatorGuestLimits(env = process.env) {
+  const bounded = (value, fallback, maximum) => {
+    const parsed = Number(value ?? fallback);
+    if (!Number.isSafeInteger(parsed) || parsed < 1 || parsed > maximum) throw new Error('invalid guest pod operator write limit');
+    return parsed;
+  };
+  return Object.freeze({
+    writes: bounded(env.GUEST_POD_OPERATOR_WRITES, 4096, 65_536),
+    bytes: bounded(env.GUEST_POD_OPERATOR_BYTES, 128 * 1024 * 1024, 1024 * 1024 * 1024),
+    resourceBytes: bounded(env.GUEST_POD_OPERATOR_RESOURCE_BYTES, 8 * 1024 * 1024, 64 * 1024 * 1024),
+  });
+}
+const OPERATOR_GUEST_LIMITS = operatorGuestLimits();
+/**
+ * Only the exact value `enforce` refuses. Anything else is SHADOW: the same decision is made and
+ * counted, a refusal is logged (once per pod and reason), and the write goes on as it did before.
+ * The rule reads each guest's sign-in record from the store on every such write, and a store that
+ * answered that read differently from the fixtures would refuse every bridge write into a live
+ * guest's pod; shadow shows what it WOULD refuse on the real store before anything depends on it.
+ */
+const OPERATOR_GUEST_ENFORCE = process.env.GUEST_POD_OPERATOR_MODE === 'enforce';
+const operatorGuestShadowLogged = new Set();
+function operatorGuestShadow(pod, refused) {
+  const key = `${pod} ${refused.error}`;
+  if (operatorGuestShadowLogged.has(key)) return;
+  if (operatorGuestShadowLogged.size >= 2048) operatorGuestShadowLogged.clear();
+  operatorGuestShadowLogged.add(key);
+  process.stderr.write(`[css-gate][guest-pod-operator][shadow] would refuse ${refused.status} ${refused.error} for pod ${pod}; written anyway (GUEST_POD_OPERATOR_MODE is not "enforce")\n`);
+}
+
+/**
+ * What the operator bearer has written into each live guest's pod since this process started:
+ * `{ writes, bytes }` by pod. Not durable and not shared between replicas: a restart starts every
+ * guest again, and two replicas each allow the whole bound. The durable ledger a guest's own saves
+ * are charged to (play-budget.json) is bound to the guest's token, which an operator write does
+ * not carry, and charging a bridge's writes to it would spend the guest's own saves. Bytes are
+ * the request's Content-Length; a write sent without one (chunked) counts as a write and no bytes.
+ * At most OPERATOR_GUEST_TRACKED pods are held; past that the one written longest ago is forgotten.
+ */
+const operatorGuestWrites = new Map();
+const OPERATOR_GUEST_TRACKED = 4096;
+
+/** The guest pod a forwarded path is in, read as leniently as a private document's is; null for any other pod. */
+function guestPodOf({ parts }) {
+  const pod = parts[0];
+  return typeof pod === 'string' && (GUEST_POD.test(pod) || LEGACY_TRY_POD.test(pod)) ? pod : null;
+}
+
+/**
+ * The standing of a guest's pod, from its sign-in record as the store holds it now: 'closed' (a
+ * tombstone), 'claimed' (it holds a credential), 'expired' or 'live' (unclaimed, by its anchor's
+ * deadline), 'unanchored' (unclaimed, and no anchor that names this pod), 'absent' (no record) or
+ * 'unavailable' (not read). The anchor's signature is identity's to check, with a key this gate
+ * does not hold; it is read here from the one document only identity writes.
+ */
+async function guestPodStanding(pod, now = Date.now()) {
+  const pool = _getUpstreamPool(CSS_INTERNAL_URL);
+  const host = CSS_HOST_HEADER ?? new URL(CSS_INTERNAL_URL).host;
+  let record;
+  try {
+    const response = await pool.request({ method: 'GET', path: `/${pod}/auth-methods.jsonld`,
+      // No preferred type, as the identity server reads it: the record as it was written.
+      headers: { host, accept: '*/*' },
+      signal: AbortSignal.timeout(10_000), maxRedirections: 0 });
+    if (response.statusCode === 404) { await response.body.dump(); return { standing: 'absent' }; }
+    if (response.statusCode !== 200) { await response.body.dump(); return { standing: 'unavailable' }; }
+    const chunks = []; let size = 0;
+    for await (const chunk of response.body) {
+      size += chunk.length;
+      if (size > 1024 * 1024) return { standing: 'unavailable' };
+      chunks.push(Buffer.from(chunk));
+    }
+    record = JSON.parse(Buffer.concat(chunks).toString('utf8'));
+  } catch { return { standing: 'unavailable' }; }
+  if (!record || typeof record !== 'object' || Array.isArray(record)) return { standing: 'unavailable' };
+  if (typeof record.deletedAt === 'string') return { standing: 'closed' };
+  if (['walletAddresses', 'webAuthnCredentials', 'didKeys'].some(k => Array.isArray(record[k]) && record[k].length > 0)) return { standing: 'claimed' };
+  let claims;
+  try {
+    const encoded = GUEST_ANCHOR.exec(typeof record.provisionalPlayAnchor === 'string' ? record.provisionalPlayAnchor : '')?.[1];
+    claims = encoded ? JSON.parse(Buffer.from(encoded, 'base64url').toString('utf8')) : null;
+  } catch { claims = null; }
+  if (!claims || claims.userId !== pod || !Number.isSafeInteger(claims.expiresAt)) return { standing: 'unanchored' };
+  return { standing: claims.expiresAt * 1000 <= now ? 'expired' : 'live', expiresAt: claims.expiresAt };
+}
+
+/**
+ * Why an operator-bearer PUT / POST / PATCH into the guest pod `pod` is refused (`{ status, error,
+ * detail }`), or null when it goes on. A write that goes on into a live guest's pod is counted.
+ */
+async function operatorGuestWriteRefusal(pod, privateWrite, contentLength) {
+  if (privateWrite) {
+    return { status: 403, error: 'guest_pod_private_document',
+      detail: `pod "${pod}" is a guest's: its sign-in record and its write budget are written by the identity server and by this gate, never through it` };
+  }
+  const { standing, expiresAt } = await guestPodStanding(pod);
+  if (standing === 'unavailable') {
+    return { status: 503, error: 'guest_pod_state_unavailable', retryAfter: '2',
+      detail: `pod "${pod}" is a guest's, and whether its account is still open could not be read; nothing was written, retry` };
+  }
+  if (standing === 'closed' || standing === 'expired') {
+    operatorGuestWrites.delete(pod);
+    return { status: 410, error: standing === 'closed' ? 'guest_pod_closed' : 'guest_pod_expired',
+      detail: standing === 'closed'
+        ? `pod "${pod}" is a guest's whose account is closed; nothing is written into it any more (DELETE still removes what it holds)`
+        : `pod "${pod}" is a guest's whose standing ended at ${new Date(expiresAt * 1000).toISOString()}; nothing is written into it any more, and the identity server's cleanup removes it` };
+  }
+  if (standing === 'claimed') { operatorGuestWrites.delete(pod); return null; }
+  if (LEGACY_TRY_POD.test(pod)) return null;
+  if (standing !== 'live') {
+    return { status: 409, error: 'guest_pod_not_open',
+      detail: `pod "${pod}" is a guest's with ${standing === 'absent' ? 'no sign-in record' : 'no anchor in its sign-in record'}: no account stands behind it, so nothing would ever clean up what is written there` };
+  }
+  const declared = contentLength === undefined ? 0 : Number(contentLength);
+  if (!Number.isSafeInteger(declared) || declared < 0 || declared > OPERATOR_GUEST_LIMITS.resourceBytes) {
+    return { status: 413, error: 'guest_pod_operator_resource_limit',
+      detail: `a write into a guest's pod with the operator bearer is at most ${OPERATOR_GUEST_LIMITS.resourceBytes} bytes` };
+  }
+  const spent = operatorGuestWrites.get(pod) ?? { writes: 0, bytes: 0 };
+  if (spent.writes + 1 > OPERATOR_GUEST_LIMITS.writes || spent.bytes + declared > OPERATOR_GUEST_LIMITS.bytes) {
+    return { status: 507, error: 'guest_pod_operator_write_limit',
+      detail: `pod "${pod}" is a guest's, and the operator bearer has written all it may into it (${OPERATOR_GUEST_LIMITS.writes} writes, ${OPERATOR_GUEST_LIMITS.bytes} bytes); a guest who is kept (claimed) has no such bound` };
+  }
+  operatorGuestWrites.delete(pod);
+  operatorGuestWrites.set(pod, { writes: spent.writes + 1, bytes: spent.bytes + declared });
+  if (operatorGuestWrites.size > OPERATOR_GUEST_TRACKED) operatorGuestWrites.delete(operatorGuestWrites.keys().next().value);
+  return null;
+}
+
 function provisionalRemainingHeaders(res, remaining) {
   if (!remaining) return;
   res.setHeader('Interego-Provisional-Bytes-Remaining', String(remaining.bytesRemaining));
@@ -1044,6 +1230,8 @@ const server = createServer(async (req, res) => {
       identityVerifyResults: { ...identityVerifyResults },
       provisionalPlay: { ...PROVISIONAL_LIMITS, accounting: 'durable-lifetime-before-write',
         budgetDocument: PROVISIONAL_BUDGET_DOCUMENT, conditionalNativeCommit: true },
+      // What the operator bearer may write into one live guest's pod (operatorGuestWriteRefusal).
+      guestPodOperatorWrites: { ...OPERATOR_GUEST_LIMITS, accounting: 'per-process', mode: OPERATOR_GUEST_ENFORCE ? 'enforce' : 'shadow' },
       // The git sha baked into the image, and the only field here that can distinguish one
       // deployment from another — everything above is derived from env vars that survive a
       // redeploy unchanged. ★ That is not hypothetical for this service: its HSTS fix sat
@@ -1187,6 +1375,18 @@ const server = createServer(async (req, res) => {
         }
       }
       // Authorized per-user request. Fall through to strip + proxy.
+    } else if (isWrite && method !== 'DELETE') {
+      // The operator bearer writes any pod, a guest's only while the guest's account is open
+      // (see "Operator-bearer writes into a guest's pod").
+      const guestPod = guestPodOf(target);
+      const refused = guestPod && await operatorGuestWriteRefusal(guestPod, privateWrite, req.headers['content-length']);
+      if (refused && !OPERATOR_GUEST_ENFORCE) operatorGuestShadow(guestPod, refused);
+      if (refused && OPERATOR_GUEST_ENFORCE) {
+        res.writeHead(refused.status, { 'Content-Type': 'application/json',
+          ...(refused.retryAfter ? { 'Retry-After': refused.retryAfter } : {}), ...corsHeaders });
+        res.end(JSON.stringify({ error: refused.error, detail: refused.detail }));
+        return;
+      }
     }
 
     // Strip the bearer before forwarding so CSS doesn't try to parse it
