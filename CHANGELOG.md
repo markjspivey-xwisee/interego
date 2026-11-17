@@ -459,6 +459,22 @@ also followed a 3xx with an empty `Location` back to the same address up to 20
 times; a browser does not follow it, and now neither does `hmc.py`. 7 of the 38
 shared-fixture tests failed before; the CSP script hash is updated.
 
+A seventh review found that a confirmed write did not always go only where its
+dry run said. `hmc.py` sent a POST answered 301, 302 or 303 on to the `Location`
+as a GET, and reported a 307 or 308, or any redirect of a PUT, PATCH or DELETE,
+as success with exit 0 though nothing reached the destination; the page let
+`fetch` re-send the write, body and all, on a 307 or 308 and turn it into a GET
+on the others. Now neither client follows a redirect for a write, or for any
+request but a GET or HEAD: `hmc.py` sends it with no redirect handler and the
+page with `redirect: "manual"`, and the redirect is reported as not done, with
+its status and `Location` where the client can see them, saying the request was
+not re-sent and that whether the address acted on it is not known. Only a 2xx is
+a success: both clients say `Done:` or `Not a success:`, and `hmc.py` exits 4 for
+any other answer and 3 when nothing could be sent, in `--json` mode as in text.
+Through a proxy the page's dry run shows the address it sends to as `via`. 27 of
+28 shared invoke cases failed before in each client, 13 of them on the page by
+re-sending or redirecting the request; the CSP script hash is updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

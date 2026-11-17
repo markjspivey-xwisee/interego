@@ -16,7 +16,8 @@ import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES, fetchRoutes,
-  jsonldPlans, jsonldRefusals, LINK_CASES, LISTED, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, BODY_TEXTS } from './hypermedia-client-fixtures.js';
+  invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LINK_CASES, LISTED, sharedDescriptors, sharedMarkdown,
+  UNSAFE_CONTROLS, VALUE_CASES, BODY_TEXTS } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -234,7 +235,7 @@ beforeAll(async () => {
       received.push({ line, body: Buffer.concat(chunks).toString('utf8'), type: String(req.headers['content-type'] || '') });
       const fetched = Object.prototype.hasOwnProperty.call(fetchRoutes(base), url.pathname) ? fetchRoutes(base)[url.pathname]!(url.searchParams.get('format')) : undefined;
       if (fetched === 'no answer') { req.socket.destroy(); return; }
-      if (fetched && 'redirect' in fetched) { res.writeHead(302, { location: fetched.redirect }).end(); return; }
+      if (fetched && 'redirect' in fetched) { res.writeHead(fetched.status || 302, { location: fetched.redirect }).end(); return; }
       // A list of types is that many Content-Type headers.
       if (fetched) { res.setHeader('content-type', fetched.type); res.writeHead(fetched.status || 200).end(fetched.body); return; }
       const route = Object.prototype.hasOwnProperty.call(routes(), url.pathname) ? routes()[url.pathname] : undefined;
@@ -364,6 +365,49 @@ describe('hmc.py: http and https only', () => {
     expect(r.code).not.toBe(0);
     expect(r.stdout + r.stderr).not.toContain(SECRET);
     expect(r.stderr).toMatch(REFUSED);
+  });
+});
+
+describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is done', () => {
+  // The table is read again once the server's address is known.
+  it.each(invokeOutcomes('').map(([title]) => [title] as const))('ends %s as the page does, in text and --json alike', async title => {
+    const [, rel, method, url, end, reached] = invokeOutcomes(base).find(row => row[0] === title)!;
+    for (const mode of [[], ['--json']]) {
+      const before = seen.length;
+      const r = await hmc(['invoke', `${base}/outcomes`, rel, '--confirm', ...mode]);
+      const where = `${title} ${mode.join('')}: ${r.stdout}${r.stderr}`;
+      // The host receives the request once, at the address shown; a GET or HEAD also where it is redirected.
+      expect(seen.slice(before).filter(line => / \/(answer\/|landing)/.test(line)), where).toEqual(reached);
+      if ('refused' in end) {
+        expect([r.code, r.stdout, r.stderr.trim()], where)
+          .toEqual([1, '', `error: hmc.py sends requests to http and https URLs only; refused a redirect to ${end.refused}`]);
+        continue;
+      }
+      const location = 'redirect' in end && end.location !== null ? new URL(end.location, url).href : null;
+      const done = 'answer' in end && end.answer >= 200 && end.answer < 300;
+      const landed = 'answer' in end && end.landed ? `${base}${end.landed}` : url;
+      const outcome = 'redirect' in end ? invokeNotFollowed(method, url, end.redirect, location)
+        : (done ? invokeDone : invokeNotSuccess)(url, end.answer, landed);
+      expect(r.code, where).toBe(done ? 0 : 4);
+      if (mode.length) {
+        const out = JSON.parse(r.stdout) as { done: boolean; outcome: string; redirect?: unknown; response: { status: number; landed: string } };
+        expect([out.done, out.outcome, out.redirect ?? null, out.response.status], where)
+          .toEqual([done, outcome, 'redirect' in end ? { status: end.redirect, location } : null, 'redirect' in end ? end.redirect : end.answer]);
+      } else {
+        expect(r.stdout.split('\n'), where).toContain(outcome);
+      }
+    }
+  });
+
+  it('says nothing was sent, and exits 3 in text and --json alike, for a write with no plain-HTTP transport', async () => {
+    const before = seen.length;
+    const text = await hmc(['invoke', `${base}/defined-terms`, 'urn:defined:target', '--confirm']);
+    expect([text.code, text.stdout.split('\n')], text.stderr).toEqual([3, expect.arrayContaining([
+      'No plain-HTTP transport is available for this control, so nothing was sent. Use the Interego relay MCP call documented in request.mcp.'])]);
+    const json = await hmc(['invoke', `${base}/defined-terms`, 'urn:defined:target', '--confirm', '--json']);
+    expect(json.code, json.stderr).toBe(3);
+    expect((JSON.parse(json.stdout) as { done: boolean; blocked: string })).toMatchObject({ done: false, blocked: 'mcp-required' });
+    expect(seen.slice(before).filter(line => !line.startsWith('GET /defined-terms'))).toEqual([]);
   });
 });
 

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-gSNp0cJCCPLBW/coWMgy3LmLHEwpyBSDrHRkgqKUdqQ='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-W++i/cbD77+ilspy0o12ReA8oPkAFiBgk80nvCfkxIg='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -3255,6 +3255,34 @@ function showResult(html) {
   const box = document.getElementById("result");
   if (box) box.innerHTML = html;
 }
+// The answers fetch takes as a redirect.
+const REDIRECTS = new Set([301, 302, 303, 307, 308]);
+// The methods an invoke follows a redirect with, when its control is safe: a
+// redirect keeps either as it is. Any other request, and every one a control
+// listed with the writes sends, goes with redirect: "manual", only to the
+// address its dry run shows; fetch would turn a POST into a GET on a 301 or
+// 302, anything but a GET or HEAD into one on a 303, and re-send any other
+// write, body and all, on a 307 or 308. hmc.py's FOLLOWED_METHODS is the same.
+const FOLLOWED = new Set(["GET", "HEAD"]);
+// Whether an invoke that got an answer is done, and what to say of it: only a
+// 2xx is done, and any other answer, a 3xx included, is not a success. hmc.py's
+// invoke_done says the same.
+function answerOutcome(url, status, landed) {
+  const via = landed === url ? "" : "was redirected to " + landed + ", which ";
+  if (status >= 200 && status < 300) return { done: true, message: "Done: " + url + " " + via + "answered " + status + "." };
+  return { done: false, message: "Not a success: " + url + " " + via + "answered " + status + "; only a 2xx answer is a success." };
+}
+// What to say when the address a request was sent to answered with a redirect
+// the request does not follow. A browser shows neither the status nor the
+// Location of an opaque redirect (status null here); hmc.py's
+// invoke_not_followed, which sees both, says the same of them.
+function notFollowed(method, url, status, location) {
+  const answered = status == null ? "answered with a redirect, whose status and Location the browser does not show"
+    : location ? "answered " + status + ", a redirect to " + location : "answered " + status + ", a redirect with no Location";
+  const asGet = !FOLLOWED.has(method) && (status == null || status === 301 || status === 302 || status === 303);
+  return "Not done: " + url + " " + answered + ". The " + method + " was not re-sent" + (asGet ? ", or turned into a GET" : "") +
+    ": a request goes only to the address its dry run shows. Whether " + url + " acted on it is not known.";
+}
 // A form invokes only the control it was built for, and only while it is the
 // one selected; the confirmation it carries is read from that same form.
 async function runInvoke(forceDry, formControl) {
@@ -3279,8 +3307,13 @@ async function runInvoke(forceDry, formControl) {
     return;
   }
   const dry = forceDry || (control.unsafe && !(document.getElementById("confirmUnsafe") && document.getElementById("confirmUnsafe").checked));
+  // Through a proxy the request goes to the proxy's address, which the dry run
+  // shows as `via`, and which is the address sent. One the proxy may not be
+  // handed is not shown; sending it is refused below, naming why.
+  let via = null;
+  if (proxyBase() && plan.transport === "http" && plan.url) { try { via = viaProxy(plan.url); } catch {} }
   let html = `<details ${dry ? "open" : ""}><summary>Request (${esc(plan.method)} ${esc(plan.transport)})</summary><pre>${linkify(JSON.stringify({
-    method: plan.method, transport: plan.transport, url: plan.url, headers: plan.headers,
+    method: plan.method, transport: plan.transport, url: plan.url, ...(via ? { via } : {}), headers: plan.headers,
     body: plan.body, notes: plan.notes, mcp: plan.mcp, dryRun: dry
   }, null, 2))}</pre></details>`;
   if (dry) {
@@ -3292,7 +3325,7 @@ async function runInvoke(forceDry, formControl) {
     return;
   }
   if (plan.transport !== "http" || !plan.url) {
-    showResult(html + `<div class="warn">No plain-HTTP transport. Use the Interego relay MCP <code>invoke_affordance</code> / <code>act</code> call shown above.</div>`);
+    showResult(html + `<div class="warn">No plain-HTTP transport, so nothing was sent. Use the Interego relay MCP <code>invoke_affordance</code> / <code>act</code> call shown above.</div>`);
     return;
   }
   // The host the form named next to its buttons is the host the request goes to, or nothing is sent.
@@ -3305,16 +3338,36 @@ async function runInvoke(forceDry, formControl) {
   }
   setStatus("Invoking " + shortRel(control.rel) + " …");
   try {
-    const init = { method: plan.method, headers: plan.headers };
+    const follow = !control.unsafe && FOLLOWED.has(plan.method);
+    const init = { method: plan.method, headers: plan.headers, redirect: follow ? "follow" : "manual" };
     if (!SAFE.has(plan.method) && plan.bodyText != null) init.body = plan.bodyText;
-    const res = await fetch(viaProxy(plan.url), init);
+    const res = await fetch(via || viaProxy(plan.url), init);
+    if (!follow && (res.type === "opaqueredirect" || REDIRECTS.has(res.status))) {
+      // An opaque redirect shows no status and no Location. A redirect status
+      // the browser did not read as one (an empty Location, in Chromium) does,
+      // and a Location with something in it is named, resolved against the address.
+      const status = res.type === "opaqueredirect" ? null : res.status;
+      const given = status == null ? "" : (res.headers.get("location") || "").replace(/^[ \t]+|[ \t]+$/g, "");
+      let location = null;
+      if (given) { try { location = new URL(given, plan.url).href; } catch { location = given; } }
+      const message = notFollowed(plan.method, plan.url, status, location);
+      state.lastResponse = null;
+      showResult(html + `<h3 class="resp-title">Not done</h3><div class="warn">${esc(message)}</div>`);
+      setStatus(message);
+      document.documentElement.dataset.ready = "1";
+      return;
+    }
     const text = await res.text();
     let parsed = null;
     try { parsed = JSON.parse(text); } catch {}
-    state.lastResponse = { status: res.status, contentType: res.headers.get("content-type") || "", text, parsed, url: plan.url };
-    html += `<h3 class="resp-title">Response HTTP ${esc(res.status)} · ${esc(state.lastResponse.contentType)}</h3>` + renderBody(state.lastResponse.contentType, text, parsed);
+    // A GET or HEAD that followed a redirect got its answer where it landed.
+    const landed = res.redirected && typeof res.url === "string" && res.url ? res.url : plan.url;
+    const outcome = answerOutcome(plan.url, res.status, landed);
+    state.lastResponse = { status: res.status, contentType: res.headers.get("content-type") || "", text, parsed, url: landed };
+    html += `<div class="${outcome.done ? "ok" : "warn"}">${esc(outcome.message)}</div>` +
+      `<h3 class="resp-title">Response HTTP ${esc(res.status)} · ${esc(state.lastResponse.contentType)}</h3>` + renderBody(state.lastResponse.contentType, text, parsed);
     showResult(html);
-    setStatus("HTTP " + res.status + " from " + plan.url);
+    setStatus(outcome.message);
     document.title = "Hypermedia Client — " + desc.title;
     document.documentElement.dataset.ready = "1";
   } catch (err) {

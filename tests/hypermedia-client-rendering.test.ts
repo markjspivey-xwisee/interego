@@ -25,7 +25,8 @@ import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES,
-  fetchRoutes, jsonldPlans, jsonldRefusals, LINK_CASES, LISTED, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
+  fetchRoutes, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LINK_CASES, LISTED, sharedDescriptors,
+  sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -350,34 +351,50 @@ function respond(text: string, type: string, status = 200): Response {
 const ROUTED = fetchRoutes(HOST);
 /**
  * A ROUTED address's answer as a browser's fetch gives it: no answer rejects, as a network error
- * does, and a redirect is followed, at most 20 times and only to https, which the page's connect-src
- * allows; then the response's url is where it landed. A redirect with an empty Location is none, as
- * Chromium reads it: the 302 is the answer.
+ * does. With `redirect: "manual"` a redirect is an opaque redirect, a response of type
+ * "opaqueredirect" whose status is 0 and whose headers, body and url are empty. Otherwise it is
+ * followed, at most 20 times and only to https, which the page's connect-src allows, as fetch
+ * follows one: a 301 or 302 turns a POST into a GET, and a 303 anything but a GET or HEAD, with no
+ * body; any other keeps the method and body. Then the response's url is where it landed. A
+ * redirect with an empty Location is none, as Chromium reads it: its 3xx is the answer, followed or
+ * not. Each request a host receives, the first and each one a redirect leads to, goes in `hops`.
  */
-function routed(asked: URL): Response {
+function routed(asked: URL, init: RequestInit, hops: Loaded['hops']): Response {
   let at = asked;
+  let method = String(init.method || 'GET').toUpperCase();
+  let body = init.body == null ? null : String(init.body);
   for (let followed = 0; ; followed++) {
+    hops.push({ url: at.href, method, body });
     const route = at.origin === HOST && Object.prototype.hasOwnProperty.call(ROUTED, at.pathname) ? ROUTED[at.pathname] : undefined;
     const answer = route ? route(at.searchParams.get('format')) : { status: 404, type: 'text/plain', body: 'missing' };
     if (answer === 'no answer') throw new TypeError('Failed to fetch');
-    if ('redirect' in answer && !answer.redirect.trim()) return new Response('', { status: 302, headers: { location: answer.redirect } });
+    if ('redirect' in answer && !answer.redirect.trim()) return new Response('', { status: answer.status || 302, headers: { location: answer.redirect } });
     if ('redirect' in answer) {
+      if (init.redirect === 'manual') {
+        return Object.defineProperties(new Response(null), { type: { value: 'opaqueredirect' }, status: { value: 0 }, ok: { value: false },
+          statusText: { value: '' }, url: { value: '' }, redirected: { value: false }, headers: { value: new Headers() } });
+      }
+      const status = answer.status || 302;
       const next = new URL(answer.redirect, at);
       if (followed >= 20 || next.protocol !== 'https:') throw new TypeError('Failed to fetch');
+      if (((status === 301 || status === 302) && method === 'POST') || (status === 303 && method !== 'GET' && method !== 'HEAD')) {
+        method = 'GET';
+        body = null;
+      }
       at = next;
       continue;
     }
     const types = typeof answer.type === 'string' ? [answer.type] : answer.type;
     const res = new Response(answer.body, { status: answer.status || 200, headers: types.map(type => ['content-type', type] as [string, string]) });
-    return at === asked ? res : Object.defineProperty(res, 'url', { value: at.href });
+    return at === asked ? res : Object.defineProperties(res, { url: { value: at.href }, redirected: { value: true } });
   }
 }
 
 interface Loaded { dom: JSDOM; document: Document; calls: Array<{ url: string; method: string }>; sent: Array<{ url: string; body: string }>;
-  pwned: string[]; errors: string[] }
+  hops: Array<{ url: string; method: string; body: string | null }>; pwned: string[]; errors: string[] }
 
 function load(query: string, extra: Record<string, { type: string; text: string }> = {}): Loaded {
-  const calls: Loaded['calls'] = []; const sent: Loaded['sent'] = []; const pwned: string[] = []; const errors: string[] = [];
+  const calls: Loaded['calls'] = []; const sent: Loaded['sent'] = []; const hops: Loaded['hops'] = []; const pwned: string[] = []; const errors: string[] = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', e => errors.push(String(e && (e.stack || e.message) || e)));
   const dom = new JSDOM(HTML, { url: PAGE + query, runScripts: 'dangerously', virtualConsole, beforeParse(window) {
@@ -389,7 +406,7 @@ function load(query: string, extra: Record<string, { type: string; text: string 
         const asked = new URL(url);
         const u = asked.origin === PROXY ? new URL(asked.searchParams.get('url') || 'about:blank') : asked;
         if (u.origin !== HOST) return respond('not here', 'text/plain', 404);
-        if (Object.prototype.hasOwnProperty.call(ROUTED, u.pathname)) return routed(u);
+        if (Object.prototype.hasOwnProperty.call(ROUTED, u.pathname)) return routed(u, init, hops);
         if (u.pathname === '/desc') return respond(JSON.stringify(descriptor), 'application/ld+json');
         if (u.pathname === '/hm') return respond(hyperMarkdown, 'text/markdown');
         if (u.pathname === '/ttl') {
@@ -409,7 +426,7 @@ function load(query: string, extra: Record<string, { type: string; text: string 
       },
     });
   } });
-  return { dom, document: dom.window.document, calls, sent, pwned, errors };
+  return { dom, document: dom.window.document, calls, sent, hops, pwned, errors };
 }
 
 const STYLE = (/<style>([\s\S]*?)<\/style>/.exec(HTML) || [])[1] || '';
@@ -649,6 +666,77 @@ describe('hypermedia client: requests', () => {
         expect(document.querySelector('#meta strong')!.textContent, `proxy: ${viaProxy}`).toBe('From JSON-LD');
       } finally { t.dom.window.close(); }
     }
+  });
+});
+
+describe('hypermedia client: an invoke goes only where its dry run says, and only a 2xx is done', () => {
+  /** Open `title`, confirm it if it is a write, press `mode`, and return what the result shows once it shows an end. */
+  async function press(t: Loaded, title: string, mode: 'dry' | 'live') {
+    click(t, card(t.document, title)!);
+    const box = t.document.getElementById('confirmUnsafe') as HTMLInputElement | null;
+    if (box) {
+      box.checked = true;
+      box.dispatchEvent(new t.dom.window.Event('change', { bubbles: true }));
+    }
+    const result = t.document.getElementById('result')!;
+    click(t, button(t.document, mode));
+    await vi.waitFor(() => expect(result.textContent, title).toMatch(/Dry run — nothing was sent\.|Response HTTP|Not done: |Failed to fetch|No plain-HTTP transport/));
+    return result;
+  }
+
+  it('ends each /outcomes invoke as hmc.py does', async () => {
+    const t = await loaded('/outcomes');
+    try {
+      for (const [title, , method, url, end, reached] of invokeOutcomes(HOST)) {
+        const before = t.hops.length;
+        const result = await press(t, title, 'live');
+        // The host receives the request once, at the address shown; a GET or HEAD also where it is redirected.
+        expect(t.hops.slice(before).map(h => `${h.method} ${new URL(h.url).pathname}`), title).toEqual(reached);
+        const status = t.document.getElementById('status')!.textContent;
+        if ('refused' in end) {
+          expect([result.textContent, status], title).toEqual([expect.stringContaining('Failed to fetch'), 'Invoke failed: Failed to fetch']);
+          expect(result.querySelector('.ok'), title).toBeNull();
+          continue;
+        }
+        // The page sees an opaque redirect, which shows neither status nor Location, except where the
+        // Location is empty, which Chromium does not read as a redirect.
+        const outcome = 'redirect' in end ? invokeNotFollowed(method, url, end.location === null ? end.redirect : null, null)
+          : (end.answer >= 200 && end.answer < 300 ? invokeDone : invokeNotSuccess)(url, end.answer, end.landed ? `${HOST}${end.landed}` : url);
+        const done = 'answer' in end && end.answer >= 200 && end.answer < 300;
+        expect([result.querySelector(done ? '.ok' : '.warn')?.textContent, status], title).toEqual([outcome, outcome]);
+        if (done) expect(result.querySelector('.warn'), title).toBeNull();
+      }
+      assertInert(t, 'outcomes');
+    } finally { t.dom.window.close(); }
+  });
+
+  it('through a proxy, shows the proxy address it sends to and does not follow a redirect for a write', async () => {
+    const t = load('');
+    try {
+      const { document } = t;
+      (document.getElementById('proxy') as HTMLInputElement).value = PROXY + '/';
+      (document.getElementById('url') as HTMLInputElement).value = HOST + '/outcomes';
+      click(t, document.getElementById('loadBtn')!);
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+      const via = `${PROXY}/?url=${encodeURIComponent(`${HOST}/answer/307`)}`;
+      await press(t, 'POST 307', 'dry');
+      expect((JSON.parse(document.querySelector('#result pre')!.textContent!) as { url: string; via: string })).toMatchObject({ url: `${HOST}/answer/307`, via });
+      const before = t.hops.length;
+      const result = await press(t, 'POST 307', 'live');
+      expect(result.querySelector('.warn')!.textContent).toBe(invokeNotFollowed('POST', `${HOST}/answer/307`, null, null));
+      expect(t.calls[t.calls.length - 1]).toEqual({ url: via, method: 'POST' });
+      expect(t.hops.slice(before).map(h => `${h.method} ${new URL(h.url).pathname}`)).toEqual(['POST /answer/307']);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('says nothing was sent for a write with no plain-HTTP transport', async () => {
+    const t = await loaded('/defined-terms');
+    try {
+      const before = t.calls.length;
+      const result = await press(t, 'Audience note', 'live');
+      expect(result.querySelector('.warn')!.textContent).toMatch(/^No plain-HTTP transport, so nothing was sent\. /);
+      expect(t.calls.slice(before)).toEqual([]);
+    } finally { t.dom.window.close(); }
   });
 });
 

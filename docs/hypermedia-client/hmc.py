@@ -3226,6 +3226,17 @@ def _require_web_url(url: str, refused: str = "nothing was sent to") -> None:
         raise RuntimeError(f"hmc.py sends requests to http and https URLs only; {refused} {url}")
 
 
+# The answers fetch and urllib take as a redirect.
+REDIRECT_STATUSES = frozenset({301, 302, 303, 307, 308})
+# The methods an invoke follows a redirect with, when its control is safe: a
+# redirect keeps either as it is, in fetch and urllib alike. Any other request,
+# and every one a control listed with the writes sends, goes only to the address
+# its dry run shows; urllib would turn a POST into a GET on a 301, 302 or 303,
+# and fetch would also re-send a write, body and all, on a 307 or 308. The
+# page's FOLLOWED is the same.
+FOLLOWED_METHODS = frozenset({"GET", "HEAD"})
+
+
 # fetch follows at most 20 redirects and fails on the next, as it fails at the
 # network. urllib's own limits (ten, and four to one address) would instead
 # answer with the last redirect, whose body a client could read as a document.
@@ -3233,8 +3244,10 @@ _REDIRECT_LIMIT = 20
 
 
 class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
-    """Follows a redirect only to another http or https URL, and no more than
-    fetch follows, and notes where a 303 See Other was answered from."""
+    """Follows a GET's or HEAD's redirect only to another http or https URL,
+    and no more than fetch follows, and notes where a 303 See Other was
+    answered from. Any other method's redirect is the answer: nothing is sent
+    to its Location."""
 
     max_repeats = max_redirections = _REDIRECT_LIMIT
 
@@ -3246,9 +3259,11 @@ class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
     def http_error_302(self, req, fp, code, msg, headers):  # type: ignore[no-untyped-def]
         # Only a Location with something in it redirects, as a browser reads
         # one; urllib would also follow an empty one, to the address itself, and
-        # a URI header. Without one the 3xx is the answer, which is not 2xx.
+        # a URI header. Without one the 3xx is the answer, which is not 2xx. And
+        # only a GET or HEAD is sent on: urllib would send a POST's 301, 302 or
+        # 303 on as a GET, so any other method's 3xx is the answer too.
         location = (headers.get("location") or "").strip(" \t")
-        if not location:
+        if not location or req.get_method() not in FOLLOWED_METHODS:
             return None
         _require_web_url(urllib.parse.urljoin(req.full_url, location), "refused a redirect to")
         if self.followed >= _REDIRECT_LIMIT:
@@ -3262,9 +3277,10 @@ class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
     http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
 
-def _web_opener(redirects: _WebOnlyRedirects) -> urllib.request.OpenerDirector:
+def _web_opener(redirects: _WebOnlyRedirects | None) -> urllib.request.OpenerDirector:
     """urlopen's handlers without the file, ftp and data ones; a URL of another
-    scheme reaches UnknownHandler and fails."""
+    scheme reaches UnknownHandler and fails. With no redirect handler a
+    redirect is not followed: it is the answer."""
     opener = urllib.request.OpenerDirector()
     for handler in (
         urllib.request.ProxyHandler(), urllib.request.UnknownHandler(),
@@ -3272,8 +3288,46 @@ def _web_opener(redirects: _WebOnlyRedirects) -> urllib.request.OpenerDirector:
         urllib.request.HTTPDefaultErrorHandler(), redirects,
         urllib.request.HTTPErrorProcessor(),
     ):
-        opener.add_handler(handler)
+        if handler is not None:
+            opener.add_handler(handler)
     return opener
+
+
+@dataclass
+class Exchange:
+    """A request's answer: its status, headers and body; `base`, the address
+    the answer is the document at (see http_request); and `landed`, the address
+    that gave it, after any redirects followed."""
+    status: int
+    headers: dict[str, str]
+    body: bytes
+    base: str
+    landed: str
+
+
+def http_exchange(url: str, method: str = "GET", headers: dict[str, str] | None = None,
+                  data: bytes | None = None, timeout: int = 60, follow: bool = True) -> Exchange:
+    """Sends one request to the URL exactly as _request_url writes it. With
+    `follow`, a GET's or HEAD's redirect is followed as fetch follows one (see
+    _WebOnlyRedirects); without it, and for any other method, a redirect is
+    the answer, and nothing is sent to its Location."""
+    _require_web_url(url)
+    url = _request_url(url)
+    req_headers = {"User-Agent": USER_AGENT}
+    if headers:
+        req_headers.update(headers)
+    request = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
+    redirects = _WebOnlyRedirects() if follow else None
+    try:
+        with _web_opener(redirects).open(request, timeout=timeout) as resp:
+            landed = resp.geturl() or url
+            see_other = redirects.see_other_from if redirects else None
+            return Exchange(resp.getcode() or 200, _header_values(resp.headers.items()), resp.read(), see_other or landed, landed)
+    except urllib.error.HTTPError as exc:
+        body = exc.read() if exc.fp else b""
+        landed = exc.geturl() or url
+        see_other = redirects.see_other_from if redirects else None
+        return Exchange(exc.code, _header_values(exc.headers.items() if exc.headers else []), body, see_other or landed, landed)
 
 
 def http_request(url: str, method: str = "GET", headers: dict[str, str] | None = None,
@@ -3282,21 +3336,30 @@ def http_request(url: str, method: str = "GET", headers: dict[str, str] | None =
     is the document at: the URL after any redirects, as JSON-LD takes a
     document's base from, except that a 303 See Other leaves it at the URL that
     answered 303. The URL is sent exactly as _request_url writes it."""
-    _require_web_url(url)
-    url = _request_url(url)
-    req_headers = {"User-Agent": USER_AGENT}
-    if headers:
-        req_headers.update(headers)
-    request = urllib.request.Request(url, data=data, headers=req_headers, method=method.upper())
-    redirects = _WebOnlyRedirects()
-    try:
-        with _web_opener(redirects).open(request, timeout=timeout) as resp:
-            final = redirects.see_other_from or resp.geturl() or url
-            return resp.getcode() or 200, _header_values(resp.headers.items()), resp.read(), final
-    except urllib.error.HTTPError as exc:
-        body = exc.read() if exc.fp else b""
-        final = redirects.see_other_from or exc.geturl() or url
-        return exc.code, _header_values(exc.headers.items() if exc.headers else []), body, final
+    answer = http_exchange(url, method, headers, data, timeout)
+    return answer.status, answer.headers, answer.body, answer.base
+
+
+def invoke_done(url: str, status: int, landed: str) -> tuple[bool, str]:
+    """Whether an invoke that got an answer is done, and what to say of it:
+    only a 2xx is done, and any other answer, a 3xx included, is not a
+    success. The page's answerOutcome says the same."""
+    via = "" if landed == url else f"was redirected to {landed}, which "
+    if 200 <= status < 300:
+        return True, f"Done: {url} {via}answered {status}."
+    return False, f"Not a success: {url} {via}answered {status}; only a 2xx answer is a success."
+
+
+def invoke_not_followed(method: str, url: str, status: int, location: str | None) -> str:
+    """What to say when the address a request was sent to answered with a
+    redirect the request does not follow. The page's notFollowed says the
+    same, and, since a browser shows it neither, without the status and the
+    Location of an opaque redirect."""
+    answered = (f"answered {status}, a redirect to {location}" if location
+                else f"answered {status}, a redirect with no Location")
+    as_get = method not in FOLLOWED_METHODS and status in (301, 302, 303)
+    return (f"Not done: {url} {answered}. The {method} was not re-sent{', or turned into a GET' if as_get else ''}: "
+            f"a request goes only to the address its dry run shows. Whether {url} acted on it is not known.")
 
 
 def _header_values(items: Any) -> dict[str, str]:
@@ -4298,10 +4361,16 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
 
 
 def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | None = None) -> dict[str, Any]:
+    """Sends a plan's request, or shows it, and says how it ended. `done` is
+    true only for a 2xx answer, and `outcome` says what happened in words, as
+    the page shows it. A request goes only to the address its dry run shows:
+    one a safe control sends with GET or HEAD follows a redirect as a
+    descriptor load does, and any other is sent without following one, so a
+    redirect it is answered with is not done, and `redirect` names it."""
     unsafe = plan.control.unsafe
     if dry_run is None:
         dry_run = unsafe and not confirm
-    result: dict[str, Any] = {"dryRun": dry_run, "unsafe": unsafe, "request": plan.to_public()}
+    result: dict[str, Any] = {"dryRun": dry_run, "unsafe": unsafe, "done": False, "request": plan.to_public()}
     if dry_run:
         result["message"] = "Dry run. Unsafe operations default to showing the exact request without sending it. Pass --confirm to execute."
         return result
@@ -4310,7 +4379,8 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
     if plan.url:
         _require_web_url(plan.url)
     if plan.transport != "http" or not plan.url:
-        result["message"] = "No plain-HTTP transport is available for this control. Use the Interego relay MCP call documented in request.mcp."
+        result["message"] = ("No plain-HTTP transport is available for this control, so nothing was sent. "
+                             "Use the Interego relay MCP call documented in request.mcp.")
         result["blocked"] = "mcp-required"
         return result
     data = None
@@ -4319,9 +4389,10 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
             data = plan.body_text.encode("utf-8")
         elif plan.body is not None and not isinstance(plan.body, (str, bytes)):
             data = _request_json(plan.body).encode("utf-8")
-    status, headers, body, _ = http_request(plan.url, method=plan.method, headers=plan.headers, data=data)
-    content_type = headers.get("content-type", "")
-    text = _body_text(body)
+    follow = not unsafe and plan.method in FOLLOWED_METHODS
+    answer = http_exchange(plan.url, method=plan.method, headers=plan.headers, data=data, follow=follow)
+    content_type = answer.headers.get("content-type", "")
+    text = _body_text(answer.body)
     parsed = None
     if "json" in content_type or text.lstrip()[:1] in "{[":
         # Shown, never sent, so read as leniently as the page's JSON.parse
@@ -4331,8 +4402,17 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
             parsed = _page_json(text)
         except ValueError:
             parsed = None
-    result["response"] = {"status": status, "headers": headers, "contentType": content_type,
-                          "bodyText": text, "body": parsed, "url": plan.url}
+    result["response"] = {"status": answer.status, "headers": answer.headers, "contentType": content_type,
+                          "bodyText": text, "body": parsed, "url": plan.url, "landed": answer.landed}
+    if not follow and answer.status in REDIRECT_STATUSES:
+        # Only a Location with something in it is one, as _WebOnlyRedirects
+        # reads it; it is named as resolved against the address it came from.
+        given = (answer.headers.get("location") or "").strip(" \t")
+        location = urllib.parse.urljoin(plan.url, given) if given else None
+        result["redirect"] = {"status": answer.status, "location": location}
+        result["outcome"] = invoke_not_followed(plan.method, plan.url, answer.status, location)
+    else:
+        result["done"], result["outcome"] = invoke_done(plan.url, answer.status, answer.landed)
     return result
 
 
@@ -4457,9 +4537,12 @@ def cmd_invoke(args: argparse.Namespace) -> int:
         for err in errors:
             say("  - " + err, file=sys.stderr)
         return 2
+    # The same exit in text and --json mode: 0 for a dry run or a 2xx answer, 3
+    # when nothing could be sent over HTTP, and 4 for any other answer.
+    code = 0 if result.get("dryRun") or result.get("done") else 3 if result.get("blocked") else 4
     if args.json:
         print(_json_out(result))
-        return 0
+        return code
     req = result["request"]
     say(f"{req['method']} {req.get('url') or '(no HTTP URL)'}")
     say(f"transport: {req['transport']}")
@@ -4479,6 +4562,10 @@ def cmd_invoke(args: argparse.Namespace) -> int:
         return 3
     resp = result.get("response") or {}
     say(f"HTTP {resp.get('status')}  {resp.get('contentType')}")
+    say(result["outcome"])
+    if result.get("redirect"):
+        # A redirect's body is not the answer to the request, as the page shows none.
+        return code
     body = resp.get("body")
     text = resp.get("bodyText") or ""
     if isinstance(body, (dict, list)):
@@ -4486,7 +4573,7 @@ def cmd_invoke(args: argparse.Namespace) -> int:
         say(pretty if len(pretty) < 8000 else pretty[:8000] + "\n…")
     else:
         say(text if len(text) < 8000 else text[:8000] + "\n…")
-    return 0 if (resp.get("status") or 500) < 400 else 4
+    return code
 
 
 def build_parser() -> argparse.ArgumentParser:
