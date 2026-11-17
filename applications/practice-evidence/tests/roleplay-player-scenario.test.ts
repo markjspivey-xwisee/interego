@@ -308,7 +308,7 @@ describe('how the player opens a visit in a session that may already be open', (
     expect(initializedIn(lrs)).toBe(1);
     // The outcome the earlier load sent is found recorded; the one it did not reach is sent, after it.
     expect(await v.postReviewed(outcome('failed'))).toBe('already');
-    const completed = { ...outcome('completed'), result: { completion: true } };
+    const completed: St = { ...outcome('completed'), result: { completion: true } };
     expect(await v.postReviewed(completed)).toBe('sent');
     expect(Date.parse(String(completed['timestamp']))).toBeGreaterThan(Date.parse(later));
     expect(Date.parse(v.nextTs())).toBeGreaterThan(Date.parse(String(completed['timestamp'])));
