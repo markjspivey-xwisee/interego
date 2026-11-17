@@ -36,7 +36,8 @@ import { createHash } from 'node:crypto';
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { verbRequiresObjectType, verbIsDeclared, modalStatusesVerbCanSay, descriptorProjectionCategory, performanceCategoriesFor, SUPERSEDED_DESCRIPTOR_TYPE } from './xapi-profile.js';
 import { IEP_DECORATIONS, MODAL_STATUSES } from './xapix/namespace.js';
-import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
+import { projectionCategory, supersession } from './xapix/statement.js';
+import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, QUOTED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from '../../agentic-performance-practice/src/agent-trajectory.js';
 
 /** xAPI core voiding verb (ADL) — the protocol-native mapping for a Retracted descriptor. */
@@ -127,6 +128,13 @@ function timestampFromDescriptor(url: string): string | undefined {
   try { return new Date(n).toISOString(); } catch { return undefined; }
 }
 
+/** Descriptor IRIs, newest first by the time each IRI carries; those that carry none keep their
+ *  order, after the ones that do. Stable, so equal times keep the order they came in. */
+function mostRecentFirst(descriptors: readonly string[]): string[] {
+  const at = (iri: string) => { const t = timestampFromDescriptor(iri); return t ? Date.parse(t) : Number.NEGATIVE_INFINITY; };
+  return descriptors.map((iri, i) => ({ iri, i, t: at(iri) })).sort((a, b) => (b.t - a.t) || (a.i - b.i)).map(d => d.iri);
+}
+
 const tail = (iri: string) => iri.split(/[:/#]/).filter(Boolean).pop() ?? iri;
 const humanLabel = (iri: string) => tail(iri).replace(/[-_]+/g, ' ').trim() || iri;
 
@@ -181,10 +189,19 @@ function resolveVerb(entry: MeshDiscoverEntry, mode: ReturnType<typeof modalMode
     // on an Asserted descriptor, or `performed` on a Hypothetical one, is a statement the profile
     // rejects. The envelope's modal status is the protocol's; the verb is the source's label. When
     // the two disagree the status stands and the verb is the structural one for it.
+    //
+    // A verb whose templates hold it to no status is kept for an Asserted descriptor only. On
+    // any other, such a verb (`completed`, say) would say something happened that the descriptor
+    // does not assert, and nothing in the profile would catch it.
     const sayable = modalStatusesVerbCanSay(id);
-    if (verbIsDeclared(id) && !verbRequiresObjectType(id) && (!sayable || sayable.includes(statedModalStatus(entry))))
+    const status = statedModalStatus(entry);
+    if (verbIsDeclared(id) && !verbRequiresObjectType(id) && (sayable ? sayable.includes(status) : status === 'Asserted'))
       return { id, display: { en: humanLabel(id) } };
   }
+  // A Quoted descriptor repeats someone else's claim without endorsing it. It is given the
+  // verb that says so, never `completed` or `failed`: those say an outcome, and a reader that
+  // counts outcomes by verb would count a claim nobody here made (xapix/README.md, finding 6).
+  if (!mode.endorsed) return { id: QUOTED_VERB, display: { en: 'quoted' } };
   switch (mode.stepVerb) {
     case 'intended':   return { id: INTENDED_VERB, display: { en: 'intended' } };
     case 'considered': return { id: CONSIDERED_VERB, display: { en: 'considered' } };
@@ -240,7 +257,14 @@ export function projectMeshEntry(
   // Task outcome — ONLY when the envelope actually carries it (honest; the
   // protocol envelope normally does not, so this stays absent for bare
   // descriptors). Never derived from modal status / trust / ground-truth.
-  const outcome = (typeof entry.success === 'boolean' || typeof entry.scoreScaled === 'number')
+  //
+  // And only when the claim is one that says something happened. A Hypothetical, Counterfactual
+  // or Quoted descriptor is projected with `intended`, `considered` or `quoted`; a success or a
+  // score beside any of them would be counted by a reader that sums results without reading the
+  // verb, so the envelope's outcome is left in the descriptor, which the statement names
+  // (xapix/README.md, section 2).
+  const saysItHappened = mode.stepVerb === 'asserted' && mode.endorsed;
+  const outcome = saysItHappened && (typeof entry.success === 'boolean' || typeof entry.scoreScaled === 'number')
     ? {
         ...(typeof entry.success === 'boolean' ? { success: entry.success } : {}),
         ...(typeof entry.scoreScaled === 'number' ? { score: { scaled: entry.scoreScaled } } : {}),
@@ -263,6 +287,18 @@ export function projectMeshEntry(
     },
   };
 
+  // What this statement replaces as the current account: the statements projected from the
+  // descriptors this one supersedes. A statement's id is a function of its descriptor's IRI, so
+  // those ids are known without a lookup. It voids none of them; only a Retracted descriptor voids.
+  //
+  // The envelope lists what it supersedes in no promised order (the discover parser appends the
+  // triples as the document has them), and the decoration is most recent first with
+  // `context.statement` naming the first. So the order is made here, from the time each
+  // descriptor's own IRI carries: newest first, and one whose IRI carries no time after those
+  // that do, in the order the envelope gave. With no time on any of them the envelope's order is
+  // all there is, and it is kept.
+  const replaces = supersession(mostRecentFirst((entry.supersedes ?? []).filter(Boolean)).map(deterministicUuid));
+
   // Context extensions — all envelope-derived, none fabricated.
   const extensions: Record<string, unknown> = {
     [PERF_EXT.observedBy]: agent,
@@ -278,6 +314,8 @@ export function projectMeshEntry(
     ...(typeof entry.groundTruth === 'boolean' ? { [`${FOXXI_NS}groundTruth`]: entry.groundTruth } : {}),
     ...(mode.endorsed === false ? { [`${FOXXI_NS}endorsed`]: false } : {}),
   };
+  // The voiding statement keeps the extensions it had: it replaces nothing, it voids.
+  const projectionExtensions = { ...extensions, ...replaces.extensions };
 
   const actor = { objectType: 'Agent', account: { homePage: FOXXI_NS, name: agent } };
   const id = deterministicUuid(entry.descriptorUrl);
@@ -305,12 +343,14 @@ export function projectMeshEntry(
           definition: { name: { en: label }, type: objectType },
         },
         context: {
-          extensions,
-          // What kind of statement this is, for the profile's templates to select on
-          // (xapi-profile.ts): a descriptor projection always, and a performance record when
-          // the verb is an outcome.
+          extensions: projectionExtensions,
+          // A plain LRS reads the most recent statement this one replaces from here.
+          ...(replaces.statement ? { statement: replaces.statement } : {}),
+          // What kind of statement this is, for the profiles' templates to select on: a
+          // descriptor projection in Foxxi's profile (xapi-profile.ts) and in xapi-x's
+          // (xapix/profile.ts) always, and a performance record when the verb is an outcome.
           contextActivities: {
-            category: [descriptorProjectionCategory(), ...(verb.id === ADL_COMPLETED || verb.id === ADL_FAILED ? performanceCategoriesFor(objectType) : [])],
+            category: [descriptorProjectionCategory(), projectionCategory(), ...(verb.id === ADL_COMPLETED || verb.id === ADL_FAILED ? performanceCategoriesFor(objectType) : [])],
             ...(superseded ? { other: [{ id: superseded, objectType: 'Activity', definition: { type: SUPERSEDED_DESCRIPTOR_TYPE } }] } : {}),
           },
         },

@@ -12,6 +12,55 @@ A store that requires signed heads now refuses a missing head, on read and on
 commit. Requiring is turned on only after a signed head exists, so such a store
 is never empty. A new store is started with the option off, as before.
 
+## 2026-11-17 — Foxxi: a Quoted descriptor is projected as quoted, not as completed or failed
+
+A Quoted descriptor repeats a claim someone else made, without endorsing it.
+Foxxi's projector gave it the verb an Asserted one gets, `completed` or
+`failed`, with the outcome its envelope carried, so a reader that counts
+outcomes counted a claim nobody on that pod made. xapi-x rule X4 found it.
+
+- **Vocabulary 2026.11.1** adds the verb `foxxi:verbs/quoted`. It is backward
+  compatible with 2026.11.0, which stays archived and resolvable.
+- **Foxxi's profile** declares the verb and a `quoted-descriptor` template
+  that excludes `result.success`, `result.completion` and `result.score`. The
+  agent-act pattern takes it as an alternate.
+- **The projector** uses `quoted` for a Quoted descriptor and leaves the
+  envelope's outcome off the statement and off its trajectory step. **This
+  changes what the projector sends** for a Quoted descriptor: it is no longer
+  a performance record. Statements already stored keep their verb.
+- **A source-supplied verb** is now kept on a descriptor that is not Asserted
+  only when the profile says the verb can say that status. Before, a verb the
+  profile held to no status, `completed` among them, was kept on any.
+
+**Not done.** The trajectory step for a Quoted descriptor still reads as an
+asserted step, now without a result: the trajectory's modal statuses have no
+Quoted, and adding one belongs to agentic-performance-practice.
+
+## 2026-11-17 — xapi-x: Foxxi's projector writes the projection category and what a statement supersedes
+
+Foxxi's projector (`mesh-event-projector.ts`) already wrote the `iep#` keys.
+It now writes the rest of what the xapi-x profile's current version asks of a
+projection, so its statements follow version 2's template and not only
+version 1's.
+
+- **Category.** Every projection carries the `xapix:Projection` category
+  beside Foxxi's own descriptor-projection category.
+- **Supersession.** A descriptor that supersedes others is projected with
+  `xapix:supersedesStatement`, the ids of the statements projected from them,
+  most recent first, and `context.statement` refers to the first. Foxxi's own
+  `supersededDescriptor` key is still written. Nothing is voided by this.
+- **Outcome.** A Hypothetical or Counterfactual projection no longer carries a
+  `success` or a score the envelope held, and neither does its trajectory
+  step. **This changes what the projector sends** for those two statuses.
+
+A voiding statement (a Retracted descriptor) is unchanged: it is not a
+projection and supersedes nothing.
+
+**Not done.** A Quoted descriptor still projects with an outcome verb and the
+outcome its envelope carried, which rule X4 finds; it needs a verb Foxxi's
+profile does not have. The projector still writes Foxxi's own keys beside the
+shared ones.
+
 ## 2026-11-17 — Foxxi: a profile write reported as not kept stays not kept, and costs its signer nothing
 
 Three things were left open when profile additions, removals and publications

@@ -113,6 +113,7 @@ export const FOXXI_TERMS: readonly FoxxiTerm[] = [
   { name: 'verbs/asserted', kind: 'Verb', label: 'asserted', definition: 'An agent asserted a settled context descriptor (modal status Asserted; groundTruth true). The work was committed.' },
   { name: 'verbs/intended', kind: 'Verb', label: 'intended', definition: 'An agent recorded a Hypothetical context descriptor — an intention / plan (groundTruth undefined). No completion is claimed.' },
   { name: 'verbs/considered', kind: 'Verb', label: 'considered', definition: 'An agent recorded a Counterfactual (or Retracted) context descriptor — a road not taken / a withdrawn claim.' },
+  { name: 'verbs/quoted', kind: 'Verb', label: 'quoted', definition: 'An agent recorded a Quoted context descriptor: it repeated a claim someone else made, without endorsing it. Nothing is claimed to have happened, and no completion, success or score is stated.' },
 
   // ── Activity / descriptor types ────────────────────────────────────
   { name: 'activities/scene', kind: 'ActivityType', label: 'scene', definition: 'A course scene grouping multiple slides under a sub-theme.' },
@@ -280,7 +281,7 @@ function termLabel(t: FoxxiTerm): string {
 const notationOf = (t: FoxxiTerm): string => t.name.split('/').pop()!;
 
 /** The vocabulary document's version. */
-export const FOXXI_VOCAB_VERSION = '2026.11.0';
+export const FOXXI_VOCAB_VERSION = '2026.11.1';
 
 /** Self-description of the vocabulary document. */
 export function foxxiDocMeta(): DocMeta {
@@ -288,8 +289,8 @@ export function foxxiDocMeta(): DocMeta {
     iri: FOXXI_VOCAB_DOC, ns: FOXXI_NS, prefix: foxxiPrefix('foxxi'),
     title: 'Foxxi Content Intelligence vocabulary',
     description: FOXXI_VOCAB_COMMENT,
-    version: FOXXI_VOCAB_VERSION, created: '2026-05-20', modified: '2026-11-13', issued: '2026-11-13',
-    priorVersion: '2026.10.1', priorCompatibility: 'backward',
+    version: FOXXI_VOCAB_VERSION, created: '2026-05-20', modified: '2026-11-17', issued: '2026-11-17',
+    priorVersion: '2026.11.0', priorCompatibility: 'backward',
     standards: [],
     bodies: ['ADL'],
     notice: `An original vocabulary of the Foxxi vertical, by ${CREATOR} (${PUBLISHER}). It formalizes no standard; its xAPI concepts are typed with classes of ADL's xAPI ontology (https://w3id.org/xapi/ontology), which is not affiliated with or endorsing this vocabulary.`,
