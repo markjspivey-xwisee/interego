@@ -427,6 +427,18 @@ in a number field, blank lines in a list, or a tab or line break in a descriptor
 address are refused. 47 new or tightened tests failed before; the CSP script
 hash is updated.
 
+A fourth review found more. Annotations named by a string, as a term typed `@id`
+or `@vocab` writes a reference, were skipped where hints are read, so such a GET
+was a safe read a link could send; both clients now read the node any string
+names there, and refuse a string naming a node the document does not describe.
+A number default of only spaces and a list default of blank entries are refused
+in both, where the page refused and `hmc.py` sent. The page's form leaves
+validation to its own checks, so a required input whose default it cannot show
+no longer stops Dry run and Invoke without a word. A control where one input's
+path name or template variable is another input's name is refused in both, and
+the page refuses an invoke link carrying a parameter it does not read. 19 new or
+tightened tests failed before; the CSP script hash is updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-AXrj6PMC/RWUAD3hxJl+/AJW/NJWIUKY4IitDZzGqAY='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-n5kteKnkgqrxWIT/0naO5ihwesKpmhGSC5M1hI865bs='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -1603,8 +1603,7 @@ function sharedShapeFields(index, shapeRef) {
   const shape = isJsonSchema(jsonValue(shapeRef)) ? null : index.node(jsonValue(shapeRef));
   const build = () => {
     const { fields, problems } = shapeFields(index, shapeRef);
-    const duplicate = duplicateName(fields);
-    return { fields, problems, duplicate: duplicate == null ? null : duplicateProblem(duplicate) };
+    return { fields, problems, duplicate: duplicateProblem(fields) };
   };
   if (!shape) return build();
   if (!index.shapes.has(shape)) index.shapes.set(shape, build());
@@ -1844,11 +1843,12 @@ const HINTS = [["destructiveHint", "iep:destructiveHint"], ["readOnlyHint", "iep
 // readOnlyHint, about whether it destroys or writes: its own keys, such as a
 // hint under a prefix the context does not define, and the keys of an object
 // written directly inside it (or in a @list in it, or in a JSON literal), such
-// as MCP's "annotations". An object with an @id is read as the node the
-// document describes at that @id, every description of it merged (nodeOf),
-// never as the reference itself, so a hint written on that node anywhere
-// counts; annotations that name a node the document does not describe are a
-// problem. Every value counts, merged descriptions of one @id included: any
+// as MCP's "annotations". An object with an @id, and a string (alone or in a
+// @list), is read as the node the document describes at that @id, every
+// description of it merged (nodeOf), never as the reference itself, so a hint
+// written on that node anywhere counts; annotations that name a node the
+// document does not describe are a problem, whether an object or a string
+// names it. Every value counts, merged descriptions of one @id included: any
 // destructive true or read-only false is destructive or writing, and so is a
 // value that is no boolean (hintValue). True and false both, or a value in a
 // form the reader does not read, is a problem. Read only to fail closed:
@@ -1862,13 +1862,20 @@ function hintFlags(index, node) {
     for (const item of asList(val)) {
       // A JSON literal, such as "annotations" under a term typed "@json": its hints count too.
       if (isMap(item) && own(item, "@value") && item["@type"] === "@json") { for (const x of asList(item["@value"])) if (isMap(x)) objects.push(x); continue; }
-      if (!isMap(item) || own(item, "@value")) continue;
-      const members = own(item, "@list") ? asList(item["@list"]).filter(x => isMap(x) && !own(x, "@value") && !own(x, "@list")) : [item];
+      if (typeof item !== "string" && (!isMap(item) || own(item, "@value"))) continue;
+      const members = isMap(item) && own(item, "@list")
+        ? asList(item["@list"]).filter(x => typeof x === "string" || (isMap(x) && !own(x, "@value") && !own(x, "@list"))) : [item];
       for (const member of members) {
-        const found = index ? nodeOf(index, member) : member;
+        // A string names a node as an object with that @id does: under a term typed
+        // "@id" or "@vocab" JSON-LD reads them alike, and under any other term a
+        // node it names is read too, since more hints can only make a control less safe.
+        const text = typeof member === "string";
+        if (text && !index) continue;
+        const found = text ? (member ? nodeOf(index, member) : null) : (index ? nodeOf(index, member) : member);
+        const ident = text ? member : member["@id"];
         if (found) objects.push(found);
-        else if (names.includes("annotations") && typeof member["@id"] === "string" && !missing.length) {
-          missing.push("this control names " + key + " " + asText(member["@id"]) + ", which this document does not describe, so whether it is safe is not known; it is not invoked");
+        else if (names.includes("annotations") && typeof ident === "string" && !missing.length) {
+          missing.push("this control names " + key + " " + asText(ident) + ", which this document does not describe, so whether it is safe is not known; it is not invoked");
         }
       }
     }
@@ -1902,13 +1909,26 @@ function hintFlags(index, node) {
   const readOnly = r.has(false) || unread.readOnlyHint || why.readOnlyHint != null ? false : (r.size ? true : null);
   return { destructive, readOnly, problems };
 }
-function duplicateName(fields) {
+// The problem that keeps a control's values from being told apart: two fields
+// of one name, or a name one field's value may be given under (aliasesOf) that
+// is another field's too, so which input a value fills is not known. hmc.py's
+// _duplicate_problem is the same.
+function duplicateProblem(fields) {
   const seen = new Set();
-  for (const f of fields) { if (seen.has(f.name)) return f.name; seen.add(f.name); }
+  for (const f of fields) {
+    if (seen.has(f.name)) return "two input fields are both named '" + f.name + "', so their values could not be told apart; this control is not invoked";
+    seen.add(f.name);
+  }
+  const owner = new Map();
+  for (const f of fields) {
+    for (const alias of aliasesOf(f)) {
+      if (!owner.has(alias)) owner.set(alias, f);
+      else if (owner.get(alias) !== f) {
+        return "the input fields '" + owner.get(alias).name + "' and '" + f.name + "' both take a value named '" + alias + "', so which one a value fills is not known; this control is not invoked";
+      }
+    }
+  }
   return null;
-}
-function duplicateProblem(name) {
-  return "two input fields are both named '" + name + "', so their values could not be told apart; this control is not invoked";
 }
 // A control's own "fields" list, as the HyperMarkdown lift writes one, or null.
 // hmc.py's _inline_fields is the same.
@@ -2033,8 +2053,7 @@ function controlInputs(index, node, expectsRaw, expects, mappings) {
   const inline = inlineFields(node);
   if (inline) {
     fields = inline.filter(isMap).map(inlineField);
-    const duplicate = duplicateName(fields);
-    problem = duplicate == null ? null : duplicateProblem(duplicate);
+    problem = duplicateProblem(fields);
   } else if (expectsRaw != null) {
     const shared = sharedShapeFields(index, expectsRaw);
     fields = shared.fields;
@@ -2046,8 +2065,7 @@ function controlInputs(index, node, expectsRaw, expects, mappings) {
   }
   if (mappings.length) {
     fields = mergeMappings(fields, mappings);
-    const duplicate = duplicateName(fields);
-    problem = duplicate == null ? null : duplicateProblem(duplicate);
+    problem = duplicateProblem(fields);
   }
   return { fields, warning, problem };
 }
@@ -2166,8 +2184,8 @@ function parseMarkdown(text, url, contentType) {
     for (const [key, values] of given) if (["destructiveHint", "readOnlyHint"].includes(localName(key))) hints[key] = values;
     const hinted = hintFlags(null, hints);
     problems.push(...hinted.problems);
-    const duplicate = duplicateName(fields);
-    if (duplicate != null) problems.push(duplicateProblem(duplicate));
+    const duplicate = duplicateProblem(fields);
+    if (duplicate != null) problems.push(duplicate);
     const conflict = problems.length ? problems[0] : null;
     // No method is POST here as in a JSON-LD control, as the substrate's HyperMarkdown lift reads it.
     const methods = [...new Set((given.get("method") || []).map(v => unquote(v).toUpperCase()))].filter(x => x);
@@ -2713,7 +2731,11 @@ function validateFields(control, supplied) {
       const given = found != null && !(Array.isArray(found) && !found.length);
       let items = found != null ? multiItems(found) : [];
       if (!items.length && given) { errors.push(field.name + ": was given no values"); continue; }
-      if (!items.length && field.defaultValue != null) items = multiItems(Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue]);
+      if (!items.length && field.defaultValue != null) {
+        items = multiItems(Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue]);
+        // A default is read as a value given is: one with entries that are all blank holds no values.
+        if (!items.length && asList(field.defaultValue).some(x => x != null)) { errors.push(field.name + ": was given no values"); continue; }
+      }
       if (!items.length) { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
       if (field.minCount && items.length < field.minCount) errors.push(field.name + ": needs at least " + field.minCount + " values, got " + items.length);
       if (field.maxCount != null && items.length > field.maxCount) errors.push(field.name + ": takes at most " + field.maxCount + " values, got " + items.length);
@@ -2731,8 +2753,10 @@ function validateFields(control, supplied) {
     }
     // A field that takes one value takes the last one given, as a repeated option does.
     if (Array.isArray(found)) found = found.length ? found[found.length - 1] : null;
+    if ((found == null || found === "") && field.defaultValue != null) found = field.defaultValue;
     // Spaces around a number are not part of it; a number field given only
-    // spaces holds no number, which is refused, not filled with the default.
+    // spaces holds no number, which is refused, not filled with the default,
+    // and a default of only spaces is refused as one given is.
     if (numeric && typeof found === "string") {
       const spaced = found !== "";
       found = trimSpaces(found);
@@ -2741,7 +2765,6 @@ function validateFields(control, supplied) {
         continue;
       }
     }
-    if ((found == null || found === "") && field.defaultValue != null) found = numeric && typeof field.defaultValue === "string" ? trimSpaces(field.defaultValue) : field.defaultValue;
     if (found == null || found === "") { if (required) errors.push("missing required field '" + field.name + "'"); continue; }
     const before = errors.length;
     const value = checkValue(field, found, numeric, errors);
@@ -3187,7 +3210,7 @@ function detailHtml(c, desc) {
   const host = destinationHost(c);
   const dest = transport !== "http" ? "" : host ? `<span class="dest">Sends to <code>${esc(host)}</code></span>`
     : `<span class="dest">The address comes from a template; the dry run shows it.</span>`;
-  html += `<form id="invokeForm">${c.fields.map(fieldControl).join("") || '<div class="empty">No input fields.</div>'}
+  html += `<form id="invokeForm" novalidate>${c.fields.map(fieldControl).join("") || '<div class="empty">No input fields.</div>'}
     <div class="actions">
       ${c.unsafe ? `<button type="submit" class="secondary" data-mode="dry">Dry run</button>
         <label class="confirm"><input type="checkbox" id="confirmUnsafe"> I confirm this write</label>
@@ -3401,6 +3424,8 @@ function start() {
   });
   boot();
 }
+// The parameters a link that invokes may carry, besides field.<name>.
+const LINK_PARAMS = new Set(["url", "invoke", "dry", "query", "autoload"]);
 async function boot() {
   const params = new URLSearchParams(location.search);
   // A link that names two descriptors, or two controls, means neither: nothing
@@ -3420,8 +3445,13 @@ async function boot() {
       await loadDescriptorUrl(params.get("url") || document.getElementById("url").value);
       if (params.get("invoke")) {
         const invokes = params.getAll("invoke");
-        const matches = invokes.length === 1 ? matchControls(state.descriptor, invokes[0]) : [];
-        if (invokes.length > 1) setStatus("This link names more than one control to invoke; nothing was sent.");
+        // A parameter the page does not read, such as "Field.scope", would leave a
+        // value the link means unsent, so a link that carries one sends nothing,
+        // as hmc.py refuses an option it does not know.
+        const unread = [...new Set(params.keys())].filter(k => !LINK_PARAMS.has(k) && !k.startsWith("field."));
+        const matches = invokes.length === 1 && !unread.length ? matchControls(state.descriptor, invokes[0]) : [];
+        if (unread.length) setStatus("This link carries a parameter this page does not read (" + unread.join(", ") + "); nothing was sent.");
+        else if (invokes.length > 1) setStatus("This link names more than one control to invoke; nothing was sent.");
         else if (matches.length > 1) setStatus("More than one control matches " + invokes[0] + " (" + matches.map(c => c.rel).join(", ") + "); nothing was sent.");
         else {
           // A field named twice in the link is a list of values.

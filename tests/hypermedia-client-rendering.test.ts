@@ -392,8 +392,10 @@ const TAGS = new Set(['header', 'main', 'aside', 'section', 'h1', 'h2', 'h3', 'p
   'ul', 'li', 'pre', 'table', 'thead', 'tbody', 'tr', 'th', 'td', 'article', 'details', 'summary', 'form', 'label',
   'input', 'textarea', 'select', 'option', 'button', 'script']);
 // No `pattern`: the browser would run a remote pattern as a regular expression in its own validation.
+// `novalidate` turns that validation off: the page's own checks name each problem, where the browser's
+// would stop the form without a word.
 const ATTRS = new Set(['class', 'id', 'type', 'placeholder', 'spellcheck', 'disabled', 'required', 'value',
-  'selected', 'multiple', 'open', 'data-iri', 'data-rel', 'data-field', 'data-mode', 'aria-label']);
+  'selected', 'multiple', 'open', 'data-iri', 'data-rel', 'data-field', 'data-mode', 'aria-label', 'novalidate']);
 
 /** Everything a hostile document can try to put in the DOM, checked at once. */
 function assertInert(t: Loaded, where: string) {
@@ -1296,6 +1298,10 @@ describe('hypermedia client: every value read, or the control or document refuse
   it.each([
     ['a short name two controls share', `invoke=remove`, 'More than one control matches remove (urn:a:remove, urn:b:remove); nothing was sent.'],
     ['two controls named in one link', `invoke=urn:a:remove&invoke=urn:b:remove`, 'This link names more than one control to invoke; nothing was sent.'],
+    // A value under a parameter the page does not read would be left out of what it sends, as
+    // hmc.py's argparse refuses an option it does not know.
+    ['parameters the page does not read', `invoke=urn:a:remove&Field.scope=mine&fields.scope=mine&Field.scope=all`,
+      'This link carries a parameter this page does not read (Field.scope, fields.scope); nothing was sent.'],
   ])('sends nothing for a link that names %s', async (_what, invoke, status) => {
     const t = load(`?url=${encodeURIComponent(HOST + '/same-names')}&${invoke}`);
     try {

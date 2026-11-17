@@ -576,6 +576,27 @@ export function sharedDescriptors(base: string): Record<string, string> {
         { '@id': '#ring', 'iep:readOnlyHint': true, 'rdfs:seeAlso': [{ '@id': '#ring' }, { '@id': '#cyc' }] },
       ],
     },
+    // Hint containers named by a string, which JSON-LD reads as the same reference an object with
+    // that @id is: under a term typed "@id", one typed "@vocab", in a @list, and under a term with
+    // no type, where each client still reads the node the string names, since reading more hints
+    // can only make a control less safe; and a string naming a node the document does not describe.
+    '/ref-hint-strings': {
+      '@context': { ...CTX, ex: 'urn:ex:', annotations: { '@id': 'https://h.example/vocab#annotations', '@type': '@id' },
+        notes: { '@id': 'https://h.example/other#annotations', '@type': '@vocab' } },
+      '@id': `${base}/ref-hint-strings`,
+      'iep:affordance': [
+        op('typed', 'urn:refstr:typed', 'GET', 'Typed string flags', { ...target('/purge'), annotations: '#ann' }),
+        op('vocab', 'urn:refstr:vocab', 'GET', 'Vocab string flags', { ...target('/purge'), notes: 'ex:vflags' }),
+        op('listed', 'urn:refstr:listed', 'GET', 'Listed string flags', { ...target('/purge'), annotations: { '@list': ['#calm', '#ann'] } }),
+        op('plain', 'urn:refstr:plain', 'GET', 'Plain string flags', { ...target('/purge'), 'rdfs:seeAlso': '#ann' }),
+        op('missing', 'urn:refstr:missing', 'GET', 'Missing string flags', { ...target('/purge'), annotations: '#nowhere' }),
+      ],
+      '@graph': [
+        { '@id': '#ann', 'iep:destructiveHint': true },
+        { '@id': 'ex:vflags', 'iep:readOnlyHint': false },
+        { '@id': '#calm', 'iep:readOnlyHint': true },
+      ],
+    },
     // Inputs and addresses a control names by reference: a template mapping, a shape's property and a
     // class's supported property the document does not describe; a target, a shape and an sh:in
     // list that are blank nodes it does not describe; an inline field and JSON Schema properties
@@ -619,6 +640,26 @@ export function sharedDescriptors(base: string): Record<string, string> {
         { 'sh:path': { '@id': 'urn:p:note' }, 'sh:name': 'note', 'sh:datatype': { '@id': 'xsd:string' }, 'sh:maxCount': 1 },
         { 'sh:path': { '@id': 'urn:p:tags' }, 'sh:name': 'tags', 'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': 'a' },
       ] }] },
+    // Inputs a value can be given to under another input's name: a path whose local name is another
+    // input's name, two paths of one local name, and a template variable that renames the input whose
+    // property it maps to a name that is another input's path's local name.
+    '/crossed-names': { '@context': CTX, '@id': `${base}/crossed-names`, 'iep:affordance': [
+      op('n', 'urn:crossed:name', 'POST', 'Crossed names', { ...target('/num-target'), 'hydra:expects': { '@id': '#N' } }),
+      op('p', 'urn:crossed:path', 'POST', 'Shared path name', { ...target('/num-target'), 'hydra:expects': { '@id': '#P' } }),
+      op('v', 'urn:crossed:variable', 'POST', 'Crossed variable', { 'hydra:expects': { '@id': '#V' }, 'hydra:search': {
+        '@type': 'hydra:IriTemplate', 'hydra:template': '/num-target{?z,b}',
+        'hydra:mapping': { 'hydra:variable': 'z', 'hydra:property': { '@id': 'urn:p:a' } } } }),
+    ], '@graph': [
+      { '@id': '#N', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:b' }, 'sh:name': 'a', 'sh:maxCount': 1 },
+        { 'sh:path': { '@id': 'urn:p:other' }, 'sh:name': 'b', 'sh:defaultValue': '2', 'sh:maxCount': 1 }] },
+      { '@id': '#P', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:x' }, 'sh:name': 'a', 'sh:maxCount': 1 },
+        { 'sh:path': { '@id': 'urn:q:x' }, 'sh:name': 'c', 'sh:maxCount': 1 }] },
+      { '@id': '#V', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:a' }, 'sh:name': 'a', 'sh:maxCount': 1 },
+        { 'sh:path': { '@id': 'urn:p:z' }, 'sh:name': 'b', 'sh:maxCount': 1 }] },
+    ] },
     '/complex-path': { '@context': CTX, '@id': `${base}/complex-path`, 'iep:affordance': [
       op('i', 'urn:path:inverse', 'POST', 'Inverse path', { ...target('/api'), 'hydra:expects': { '@id': '#I' } }),
       op('a', 'urn:path:alternative', 'POST', 'Alternative path', { ...target('/api'), 'hydra:expects': { '@id': '#A' } }),
@@ -711,7 +752,15 @@ export function sharedDescriptors(base: string): Record<string, string> {
       op('l', 'urn:values:length', 'POST', 'Schema lengths', { ...target('/num-target'), 'hydra:expects': { type: 'object',
         properties: { one: { type: 'string', maxLength: 1 }, two: { type: 'string', minLength: 2 } } } }),
       op('s', 'urn:values:shacl-length', 'POST', 'Shape lengths', { ...target('/num-target'), 'hydra:expects': { '@id': '#L' } }),
+      op('sn', 'urn:values:space-number', 'POST', 'Space number default', { ...target('/num-target'), 'hydra:expects': { '@id': '#SN' } }),
+      op('sl', 'urn:values:space-list', 'POST', 'Blank list default', { ...target('/num-target'), 'hydra:expects': { '@id': '#SL' } }),
+      op('rc', 'urn:values:required-crlf', 'POST', 'Required CRLF default', { ...target('/num-target'), 'hydra:expects': { type: 'object',
+        required: ['memo'], properties: { memo: { type: 'string', default: 'a\r\nb' } } } }),
     ], '@graph': [
+      { '@id': '#SN', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:amt' }, 'sh:name': 'amt',
+        'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:defaultValue': '   ', 'sh:maxCount': 1 } },
+      { '@id': '#SL', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:mt' }, 'sh:name': 'mt',
+        'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': '  ' } },
       { '@id': '#J', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:data' }, 'sh:name': 'data',
         'sh:datatype': { '@id': 'rdf:JSON' }, 'sh:maxCount': 1 } },
       { '@id': '#B', '@type': 'sh:NodeShape', 'rdfs:label': 'JSON body', 'sh:datatype': { '@id': 'rdf:JSON' } },
@@ -833,6 +882,11 @@ export const UNSAFE_CONTROLS: ReadonlyArray<readonly [path: string, rel: string 
   ['/ref-hints', 'urn:ref:placed', 'Placed flags', 'GET'],
   ['/ref-hints', 'urn:ref:alias', 'Aliased flags', 'GET'],
   ['/ref-hints', 'urn:ref:listed', 'Listed flags', 'GET'],
+  // The same, named by a string: under a term typed @id or @vocab, in a @list, or with no type.
+  ['/ref-hint-strings', 'urn:refstr:typed', 'Typed string flags', 'GET'],
+  ['/ref-hint-strings', 'urn:refstr:vocab', 'Vocab string flags', 'GET'],
+  ['/ref-hint-strings', 'urn:refstr:listed', 'Listed string flags', 'GET'],
+  ['/ref-hint-strings', 'urn:refstr:plain', 'Plain string flags', 'GET'],
 ];
 
 /**
@@ -1025,6 +1079,17 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
   // never replaced by its default.
   ['/link-values', 'urn:lv:write', 'Linked write', { n: 'abc' }, { error: 'n: not an integer' }],
   ['/link-values', 'urn:lv:write', 'Linked write', { n: ' \t ' }, { error: 'n: not an integer' }],
+  // A default is read as a value given is: a number field's default of only spaces is no number,
+  // and a list's default of only spaces holds no values, so each is refused, given nothing or an
+  // empty value; a value given in its place is read instead.
+  ['/values', 'urn:values:space-number', 'Space number default', {}, { error: 'amt: not a number' }],
+  ['/values', 'urn:values:space-number', 'Space number default', { amt: '' }, { error: 'amt: not a number' }],
+  ['/values', 'urn:values:space-number', 'Space number default', { amt: ' 2 ' }, { body: { amt: 2 } }],
+  ['/values', 'urn:values:space-list', 'Blank list default', {}, { error: 'mt: was given no values' }],
+  ['/values', 'urn:values:space-list', 'Blank list default', { mt: '' }, { error: 'mt: was given no values' }],
+  ['/values', 'urn:values:space-list', 'Blank list default', { mt: 'x' }, { body: { mt: ['x'] } }],
+  // A required input whose default the form cannot hold is left empty, and the default is sent.
+  ['/values', 'urn:values:required-crlf', 'Required CRLF default', {}, { body: { memo: 'a\r\nb' } }],
   // A boolean is trimmed of the spaces a number is, space, tab, CR and LF, and of nothing else.
   ['/values', 'urn:values:flag', 'Flag value', { flag: ' true\t' }, { body: { flag: true } }],
   ['/values', 'urn:values:flag', 'Flag value', { flag: '\u00a0true' }, { error: 'flag must be a boolean' }],
@@ -1052,6 +1117,9 @@ export const BODY_TEXTS: ReadonlyArray<readonly [path: string, action: string, t
     '    "c": 0,\n    "d": []\n  }\n}'],
   ['/values', 'urn:values:json', 'JSON value', { data: '[0.000001,1e21,-1e-7,9007199254740993]' },
     '{\n  "data": [\n    0.000001,\n    1e+21,\n    -1e-7,\n    9007199254740992\n  ]\n}'],
+  // A required input the form leaves empty, since it cannot hold its default, does not stop the
+  // form: the default itself is sent, as hmc.py sends it.
+  ['/values', 'urn:values:required-crlf', 'Required CRLF default', {}, '{\n  "memo": "a\\r\\nb"\n}'],
 ];
 
 /**
@@ -1248,6 +1316,16 @@ export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: stri
       'this control names more than one iep:destructiveHint (false, true), so whether it is safe is not known; it is not invoked'],
     ['/ref-hints', 'urn:ref:missing', 'Missing flags', 'GET',
       `this control names annotations ${base}/ref-hints#nowhere, which this document does not describe, so whether it is safe is not known; it is not invoked`],
+    ['/ref-hint-strings', 'urn:refstr:missing', 'Missing string flags', 'GET',
+      `this control names annotations ${base}/ref-hint-strings#nowhere, which this document does not describe, so whether it is safe is not known; it is not invoked`],
+    // An input whose other name (its path's local name or template variable) is another input's
+    // name or other name: which one a value given under it fills is not known.
+    ['/crossed-names', 'urn:crossed:name', 'Crossed names', 'POST',
+      "the input fields 'a' and 'b' both take a value named 'b', so which one a value fills is not known; this control is not invoked"],
+    ['/crossed-names', 'urn:crossed:path', 'Shared path name', 'POST',
+      "the input fields 'a' and 'c' both take a value named 'x', so which one a value fills is not known; this control is not invoked"],
+    ['/crossed-names', 'urn:crossed:variable', 'Crossed variable', 'POST',
+      "the input fields 'z' and 'b' both take a value named 'z', so which one a value fills is not known; this control is not invoked"],
     ['/ref-inputs', 'urn:refin:mapping', 'Missing mapping', 'GET',
       `this control names a hydra:mapping ${base}/ref-inputs#m-missing, which this document does not describe, so where it sends is not known; it is not invoked`],
     ['/ref-inputs', 'urn:refin:prop', 'Missing property', 'POST',

@@ -2761,11 +2761,12 @@ def _hint_flags(index: NodeIndex | None, node: dict[str, Any]) -> tuple[bool | N
     readOnlyHint, about whether it destroys or writes: its own keys, such as a
     hint under a prefix the context does not define, and the keys of an object
     written directly inside it (or in a @list in it, or in a JSON literal),
-    such as MCP's "annotations". An object with an @id is read as the node
-    the document describes at that @id, every description of it merged
-    (_node_of), never as the reference itself, so a hint written on that node
-    anywhere counts; annotations that name a node the document does not
-    describe are a problem. Every value counts, merged descriptions of one @id
+    such as MCP's "annotations". An object with an @id, and a string (alone
+    or in a @list), is read as the node the document describes at that @id,
+    every description of it merged (_node_of), never as the reference itself,
+    so a hint written on that node anywhere counts; annotations that name a
+    node the document does not describe are a problem, whether an object or a
+    string names it. Every value counts, merged descriptions of one @id
     included: any destructive true or read-only false is destructive or
     writing, and so is a value that is no boolean (_hint_value). True and
     false both, or a value in a form the reader does not read, is a problem.
@@ -2781,15 +2782,26 @@ def _hint_flags(index: NodeIndex | None, node: dict[str, Any]) -> tuple[bool | N
             if isinstance(item, dict) and item.get("@type") == "@json" and "@value" in item:
                 # A JSON literal, such as "annotations" under a term typed "@json": its hints count too.
                 objects.extend(x for x in as_list(item["@value"]) if isinstance(x, dict))
-            elif isinstance(item, dict) and "@value" not in item:
-                members = ([x for x in as_list(item["@list"]) if isinstance(x, dict) and "@value" not in x and "@list" not in x]
-                           if "@list" in item else [item])
+            elif isinstance(item, str) or (isinstance(item, dict) and "@value" not in item):
+                members = ([x for x in as_list(item["@list"])
+                            if isinstance(x, str) or (isinstance(x, dict) and "@value" not in x and "@list" not in x)]
+                           if isinstance(item, dict) and "@list" in item else [item])
                 for member in members:
-                    found = member if index is None else _node_of(index, member)
+                    # A string names a node as an object with that @id does: under a term typed
+                    # "@id" or "@vocab" JSON-LD reads them alike, and under any other term a
+                    # node it names is read too, since more hints can only make a control less safe.
+                    text = isinstance(member, str)
+                    if text and index is None:
+                        continue
+                    if text:
+                        found = _node_of(index, member) if member else None
+                    else:
+                        found = member if index is None else _node_of(index, member)
+                    ident = member if text else member.get("@id")
                     if found is not None:
                         objects.append(found)
-                    elif "annotations" in names and isinstance(member.get("@id"), str) and not missing:
-                        missing.append(f"this control names {key} {_text(member['@id'])}, which this document does not describe, so "
+                    elif "annotations" in names and isinstance(ident, str) and not missing:
+                        missing.append(f"this control names {key} {_text(ident)}, which this document does not describe, so "
                                        "whether it is safe is not known; it is not invoked")
     found: dict[str, set[bool]] = {hint: set() for hint, _ in _HINTS}
     unread = {hint: False for hint, _ in _HINTS}
@@ -2819,12 +2831,30 @@ def _hint_flags(index: NodeIndex | None, node: dict[str, Any]) -> tuple[bool | N
     return destructive_flag, read_only, _hint_problems(found, why) + missing
 
 
-def _duplicate_name(fields: list[Field]) -> str | None:
+def _aliases(fld: Field) -> list[str]:
+    """The names a field's value may be given under: its name, its template
+    variable and its path's local name. The page's aliasesOf is the same."""
+    return list(dict.fromkeys(a for a in (fld.name, fld.variable, local_name(fld.path) if fld.path else None) if a))
+
+
+def _duplicate_problem(fields: list[Field]) -> str | None:
+    """The problem that keeps a control's values from being told apart: two
+    fields of one name, or a name one field's value may be given under
+    (_aliases) that is another field's too, so which input a value fills is
+    not known. The page's duplicateProblem is the same."""
     seen: set[str] = set()
     for fld in fields:
         if fld.name in seen:
-            return fld.name
+            return (f"two input fields are both named '{fld.name}', so their values could not be told apart; "
+                    "this control is not invoked")
         seen.add(fld.name)
+    owner: dict[str, Field] = {}
+    for fld in fields:
+        for alias in _aliases(fld):
+            first = owner.setdefault(alias, fld)
+            if first is not fld:
+                return (f"the input fields '{first.name}' and '{fld.name}' both take a value named '{alias}', so which one a "
+                        "value fills is not known; this control is not invoked")
     return None
 
 
@@ -2960,12 +2990,6 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
     )
     control.__dict__["_build"] = lambda: _control_inputs(index, node, expects_raw, expects, mappings)
     return control
-
-
-def _duplicate_problem(fields: list[Field]) -> str | None:
-    duplicate = _duplicate_name(fields)
-    return (f"two input fields are both named '{duplicate}', so their values could not be told apart; "
-            "this control is not invoked") if duplicate else None
 
 
 def _shared_shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[str], str | None, _FieldIndex | None]:
@@ -3908,7 +3932,7 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
     incoming = dict(supplied)
     known: set[str] = set()
     for fld in control.fields:
-        aliases = list(dict.fromkeys(a for a in (fld.name, fld.variable, local_name(fld.path) if fld.path else None) if a))
+        aliases = _aliases(fld)
         known.update(aliases)
         # A value is given under one of a field's names; values under two of
         # them are a problem, never one of them taken and the other dropped.
@@ -3933,6 +3957,10 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
                 continue
             if not items and fld.default is not None:
                 items = _multi_items(fld.default if isinstance(fld.default, list) else [fld.default])
+                # A default is read as a value given is: one with entries that are all blank holds no values.
+                if not items and any(x is not None for x in as_list(fld.default)):
+                    errors.append(f"{fld.name}: was given no values")
+                    continue
             if not items:
                 if required:
                     errors.append(f"missing required field '{fld.name}'")
@@ -3955,8 +3983,14 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
         if isinstance(found, list):
             # A field that takes one value takes the last one given, as a repeated option does.
             found = found[-1] if found else None
+        if (found is None or found == "") and fld.default is not None and not numeric:
+            # What the page's form holds: a text field's default of 5 is the text "5".
+            found = _form_default(fld)
+        if (found is None or found == "") and fld.default is not None:
+            found = fld.default
         # Spaces around a number are not part of it; a number field given only
-        # spaces holds no number, which is refused, not filled with the default.
+        # spaces holds no number, which is refused, not filled with the default,
+        # and a default of only spaces is refused as one given is.
         if numeric and isinstance(found, str):
             spaced = found != ""
             found = found.strip(_SPACES)
@@ -3966,11 +4000,6 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
                 except ValueError as exc:
                     errors.append(f"{fld.name}: {exc}")
                 continue
-        if (found is None or found == "") and fld.default is not None and not numeric:
-            # What the page's form holds: a text field's default of 5 is the text "5".
-            found = _form_default(fld)
-        if (found is None or found == "") and fld.default is not None:
-            found = fld.default.strip(_SPACES) if numeric and isinstance(fld.default, str) else fld.default
         if found is None or found == "":
             if required:
                 errors.append(f"missing required field '{fld.name}'")

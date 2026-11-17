@@ -668,7 +668,9 @@ describe('hmc.py: scoped contexts, map references and repeated keys as jsonld.js
       expect(r.stderr, title).toContain(problem);
       expect(seen.slice(before).filter(line => !line.startsWith(`GET ${path}`)), title).toEqual([]);
     }
-  });
+    // Two python3 processes for each of some 70 controls, one after another: 17 to 21 s here, so
+    // this test states its own budget rather than the suite's 20 s.
+  }, 60_000);
 
   it('reads a JSON Schema with an "@id" under a "type" alias as JSON Schema, numbers and array counts included', async () => {
     expect((await dry('/schema-alias', 'urn:schema:alias', { n: '3', tags: '["a","b"]' })).request!.body).toEqual({ n: 3, tags: ['a', 'b'] });
