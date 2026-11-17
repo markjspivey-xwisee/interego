@@ -48,12 +48,18 @@ function deepScoped(base: string, path: string, scoped: 'type' | 'property') {
  *     `landed` when a GET or HEAD followed a redirect there;
  *   - `redirect`: the address answered with this redirect, and the request was not sent again,
  *     to its Location (a path on the host, an absolute URL, or null for an empty one) or as a GET;
- *   - `refused`: a GET's redirect to this address, which neither client sends to: no answer.
+ *   - `refused`: a GET's redirect to this address, which neither client sends to: no answer;
+ *   - `backslash`: a GET's redirect whose Location, given here, holds a backslash. hmc.py refuses
+ *     it, as it refuses such an address, and sends nothing there; the page's browser reads the
+ *     backslash as a slash and lands at `landed` (resolved against the host), which answers `answer`.
+ * `landed` is written as fetch writes a response's url: no fragment, and `{`, `}` and the backtick
+ * percent-encoded.
  */
 export type InvokeEnd =
   | { readonly answer: number; readonly landed?: string }
   | { readonly redirect: 301 | 302 | 303 | 307 | 308; readonly location: string | null }
-  | { readonly refused: string };
+  | { readonly refused: string }
+  | { readonly backslash: string; readonly landed: string; readonly answer: number };
 /**
  * The /outcomes controls, as [title, method, the /answer/ address it sends to, how it ends, and
  * whether the document marks it destructive]. A write is confirmed and sends a body; GET and HEAD
@@ -63,6 +69,9 @@ const OUTCOMES: ReadonlyArray<readonly [title: string, method: string, answer: s
   ...(['POST', 'PUT', 'PATCH', 'DELETE'] as const).flatMap(method => ([307, 308] as const).map(status =>
     [`${method} ${status}`, method, `${status}`, { redirect: status, location: '/landing' }] as const)),
   ...([301, 302, 303] as const).map(status => [`POST ${status}`, 'POST', `${status}`, { redirect: status, location: '/landing' }] as const),
+  // fetch turns only a POST into a GET on a 301 or 302, and anything but a GET or HEAD on a 303.
+  ['PUT 302', 'PUT', '302', { redirect: 302, location: '/landing' }],
+  ['DELETE 303', 'DELETE', '303', { redirect: 303, location: '/landing' }],
   ['Destructive GET 302', 'GET', '302', { redirect: 302, location: '/landing' }, true],
   ['OPTIONS 303', 'OPTIONS', '303', { redirect: 303, location: '/landing' }],
   ['POST to ftp', 'POST', 'to-ftp', { redirect: 307, location: 'ftp://127.0.0.1:9/x' }],
@@ -72,6 +81,13 @@ const OUTCOMES: ReadonlyArray<readonly [title: string, method: string, answer: s
   ['HEAD 307', 'HEAD', '307', { answer: 200, landed: '/landing' }],
   ['GET to ftp', 'GET', 'to-ftp', { refused: 'ftp://127.0.0.1:9/x' }],
   ['GET empty Location', 'GET', 'empty', { answer: 307 }],
+  // A Location fetch writes otherwise than its text: a fragment, which a response's url drops, and
+  // characters it percent-encodes; and one with a backslash, which a browser reads as a slash.
+  ['GET fragment Location', 'GET', 'fragment', { answer: 200, landed: '/landing' }],
+  ['HEAD odd Location', 'HEAD', 'odd', { answer: 200, landed: '/landing%7B%60%7D' }],
+  ['GET backslash path', 'GET', 'backslash-path', { backslash: '/landing\\b', landed: '/landing/b', answer: 404 }],
+  ['GET backslash host', 'GET', 'backslash-host', { backslash: '\\\\other.example/x', landed: 'https://other.example/x', answer: 404 }],
+  ['GET 404 HTML', 'GET', '404-html', { answer: 404 }],
   ...(['POST', 'GET'] as const).flatMap(method => [200, 300, 404, 500].map(status => [`${method} ${status}`, method, `${status}`, { answer: status }] as const)),
 ];
 const outcomeSlug = (title: string) => title.toLowerCase().replace(/ /g, '-');
@@ -1458,8 +1474,14 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     ...Object.fromEntries(([301, 302, 303, 307, 308] as const).map(status => [`/answer/${status}`, () => ({ redirect: '/landing', status })])),
     '/answer/to-ftp': () => ({ redirect: 'ftp://127.0.0.1:9/x', status: 307 }),
     '/answer/empty': () => ({ redirect: '', status: 307 }),
+    '/answer/fragment': () => ({ redirect: '/landing#frag', status: 302 }),
+    '/answer/odd': () => ({ redirect: '/landing{`}', status: 302 }),
+    '/answer/backslash-path': () => ({ redirect: '/landing\\b', status: 302 }),
+    '/answer/backslash-host': () => ({ redirect: '\\\\other.example/x', status: 302 }),
+    '/answer/404-html': () => ({ status: 404, type: 'text/html', body: '<p>gone</p>' }),
     ...Object.fromEntries([200, 300, 404, 500].map(status => [`/answer/${status}`, () => ({ status, type: 'text/plain', body: `answered ${status}` })])),
     '/landing': () => ({ type: 'text/plain', body: 'landed' }),
+    '/landing%7B%60%7D': () => ({ type: 'text/plain', body: 'landed' }),
   };
 }
 
@@ -1507,18 +1529,21 @@ export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: Fetc
  * names it, the method, the address it sends to, how it ends, and each request the host receives,
  * as "METHOD /path"]. A write goes only to the address its dry run shows: a redirect is not followed
  * to its Location, re-sent there or turned into a GET, so the host receives it once. A GET or HEAD
- * follows a redirect, and the host receives it at each address in turn.
+ * follows a redirect, and the host receives it at each address in turn. Where the end is
+ * `backslash`, these are hmc.py's requests; the page's browser also sends one to `landed`.
  */
 export function invokeOutcomes(base: string): ReadonlyArray<readonly [title: string, rel: string, method: string, url: string, end: InvokeEnd,
   reached: readonly string[]]> {
   return OUTCOMES.map(([title, method, answer, end]) => [title, outcomeRel(title), method, `${base}/answer/${answer}`, end,
-    [`${method} /answer/${answer}`, ...('landed' in end && end.landed ? [`${method} ${end.landed}`] : [])]] as const);
+    [`${method} /answer/${answer}`, ...(!('backslash' in end) && 'landed' in end && end.landed ? [`${method} ${end.landed}`] : [])]] as const);
 }
 
 /**
- * What each client says of an invoke that got an answer, word for word: a 2xx is done, and any
- * other answer, a 3xx neither follows included, is not a success. `landed` is where a GET or HEAD
- * that followed a redirect got its answer.
+ * What each client says of an invoke that got an answer, word for word: a 2xx is done. A 301, 302,
+ * 303, 307 or 308 that the request did not follow (every write, and every method but GET and HEAD)
+ * is not done, in invokeNotFollowed's words. Any other answer is not a success: a 300 or 304, and a
+ * redirect with an empty Location answered to a safe GET or HEAD, included. `landed` is where a GET
+ * or HEAD that followed a redirect got its answer.
  */
 export const invokeDone = (url: string, status: number, landed = url) =>
   `Done: ${url} ${landed === url ? '' : `was redirected to ${landed}, which `}answered ${status}.`;
@@ -1534,7 +1559,8 @@ export const invokeNotSuccess = (url: string, status: number, landed = url) =>
 export function invokeNotFollowed(method: string, url: string, status: number | null, location: string | null): string {
   const answered = status === null ? 'answered with a redirect, whose status and Location the browser does not show'
     : location ? `answered ${status}, a redirect to ${location}` : `answered ${status}, a redirect with no Location`;
-  const asGet = method !== 'GET' && method !== 'HEAD' && (status === null || status === 301 || status === 302 || status === 303);
+  // fetch would turn a POST into a GET on a 301 or 302, and anything but a GET or HEAD on a 303.
+  const asGet = method !== 'GET' && method !== 'HEAD' && (status === null || status === 303 || (method === 'POST' && (status === 301 || status === 302)));
   return `Not done: ${url} ${answered}. The ${method} was not re-sent${asGet ? ', or turned into a GET' : ''}: ` +
     `a request goes only to the address its dry run shows. Whether ${url} acted on it is not known.`;
 }

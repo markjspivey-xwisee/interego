@@ -355,7 +355,8 @@ const ROUTED = fetchRoutes(HOST);
  * "opaqueredirect" whose status is 0 and whose headers, body and url are empty. Otherwise it is
  * followed, at most 20 times and only to https, which the page's connect-src allows, as fetch
  * follows one: a 301 or 302 turns a POST into a GET, and a 303 anything but a GET or HEAD, with no
- * body; any other keeps the method and body. Then the response's url is where it landed. A
+ * body; any other keeps the method and body. Then the response's url is where it landed, written
+ * without its fragment, as fetch's Response.url is. A
  * redirect with an empty Location is none, as Chromium reads it: its 3xx is the answer, followed or
  * not. Each request a host receives, the first and each one a redirect leads to, goes in `hops`.
  */
@@ -386,7 +387,9 @@ function routed(asked: URL, init: RequestInit, hops: Loaded['hops']): Response {
     }
     const types = typeof answer.type === 'string' ? [answer.type] : answer.type;
     const res = new Response(answer.body, { status: answer.status || 200, headers: types.map(type => ['content-type', type] as [string, string]) });
-    return at === asked ? res : Object.defineProperties(res, { url: { value: at.href }, redirected: { value: true } });
+    const landed = new URL(at.href);
+    landed.hash = '';
+    return at === asked ? res : Object.defineProperties(res, { url: { value: landed.href }, redirected: { value: true } });
   }
 }
 
@@ -406,6 +409,11 @@ function load(query: string, extra: Record<string, { type: string; text: string 
         const asked = new URL(url);
         const u = asked.origin === PROXY ? new URL(asked.searchParams.get('url') || 'about:blank') : asked;
         if (u.origin !== HOST) return respond('not here', 'text/plain', 404);
+        // An answer without CORS headers, a redirect included: the host receives the request, and fetch rejects.
+        if (u.pathname === '/no-cors') {
+          hops.push({ url: u.href, method: String(init.method || 'GET').toUpperCase(), body: init.body == null ? null : String(init.body) });
+          throw new TypeError('Failed to fetch');
+        }
         if (Object.prototype.hasOwnProperty.call(ROUTED, u.pathname)) return routed(u, init, hops);
         if (u.pathname === '/desc') return respond(JSON.stringify(descriptor), 'application/ld+json');
         if (u.pathname === '/hm') return respond(hyperMarkdown, 'text/markdown');
@@ -691,7 +699,10 @@ describe('hypermedia client: an invoke goes only where its dry run says, and onl
         const before = t.hops.length;
         const result = await press(t, title, 'live');
         // The host receives the request once, at the address shown; a GET or HEAD also where it is redirected.
-        expect(t.hops.slice(before).map(h => `${h.method} ${new URL(h.url).pathname}`), title).toEqual(reached);
+        // The page's browser follows a Location with a backslash, read as a slash, where hmc.py refuses it.
+        const landedAt = 'backslash' in end ? new URL(end.landed, HOST) : null;
+        expect(t.hops.slice(before).map(h => `${h.method} ${new URL(h.url).origin === HOST ? new URL(h.url).pathname : h.url}`), title)
+          .toEqual(landedAt ? [...reached, `${method} ${landedAt.origin === HOST ? landedAt.pathname : landedAt.href}`] : reached);
         const status = t.document.getElementById('status')!.textContent;
         if ('refused' in end) {
           expect([result.textContent, status], title).toEqual([expect.stringContaining('Failed to fetch'), 'Invoke failed: Failed to fetch']);
@@ -701,10 +712,12 @@ describe('hypermedia client: an invoke goes only where its dry run says, and onl
         // The page sees an opaque redirect, which shows neither status nor Location, except where the
         // Location is empty, which Chromium does not read as a redirect.
         const outcome = 'redirect' in end ? invokeNotFollowed(method, url, end.location === null ? end.redirect : null, null)
-          : (end.answer >= 200 && end.answer < 300 ? invokeDone : invokeNotSuccess)(url, end.answer, end.landed ? `${HOST}${end.landed}` : url);
+          : (end.answer >= 200 && end.answer < 300 ? invokeDone : invokeNotSuccess)(url, end.answer,
+            landedAt ? landedAt.href : end.landed ? `${HOST}${end.landed}` : url);
         const done = 'answer' in end && end.answer >= 200 && end.answer < 300;
         expect([result.querySelector(done ? '.ok' : '.warn')?.textContent, status], title).toEqual([outcome, outcome]);
-        if (done) expect(result.querySelector('.warn'), title).toBeNull();
+        // Nothing on screen reads as a success when the invoke is not one, nor as a warning when it is.
+        expect(result.querySelector(done ? '.warn' : '.ok'), title).toBeNull();
       }
       assertInert(t, 'outcomes');
     } finally { t.dom.window.close(); }
@@ -726,6 +739,26 @@ describe('hypermedia client: an invoke goes only where its dry run says, and onl
       expect(result.querySelector('.warn')!.textContent).toBe(invokeNotFollowed('POST', `${HOST}/answer/307`, null, null));
       expect(t.calls[t.calls.length - 1]).toEqual({ url: via, method: 'POST' });
       expect(t.hops.slice(before).map(h => `${h.method} ${new URL(h.url).pathname}`)).toEqual(['POST /answer/307']);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('does not call a write refused when no answer it can read came back, since the host may have it', async () => {
+    const t = load('', { '/no-cors-doc': { type: 'application/ld+json', text: JSON.stringify({ '@context': CTX, '@id': `${HOST}/no-cors-doc`,
+      'iep:affordance': [{ '@id': '#w', '@type': 'iep:Affordance', 'iep:action': 'urn:no-cors-write', 'hydra:method': 'POST',
+        'hydra:title': 'Write without CORS', 'hydra:target': `${HOST}/no-cors`,
+        'hydra:expects': { type: 'object', properties: { note: { type: 'string', default: 'once' } } } }] }) } });
+    try {
+      const { document } = t;
+      (document.getElementById('url') as HTMLInputElement).value = HOST + '/no-cors-doc';
+      click(t, document.getElementById('loadBtn')!);
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('list'));
+      const result = await press(t, 'Write without CORS', 'live');
+      const message = `Not done: ${HOST}/no-cors gave no answer the page can read (Failed to fetch). The POST may have reached it: ` +
+        'a redirect, or any answer without CORS headers, reads this way in a browser, as a network error does. ' +
+        `Whether ${HOST}/no-cors acted on it is not known.`;
+      expect([result.querySelector('.warn')?.textContent, document.getElementById('status')!.textContent]).toEqual([message, message]);
+      expect(result.textContent).not.toContain('refused');
+      expect(t.hops.map(h => `${h.method} ${h.url}`)).toEqual([`POST ${HOST}/no-cors`]);
     } finally { t.dom.window.close(); }
   });
 

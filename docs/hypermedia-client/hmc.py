@@ -3243,11 +3243,36 @@ FOLLOWED_METHODS = frozenset({"GET", "HEAD"})
 _REDIRECT_LIMIT = 20
 
 
+def _redirect_url(from_url: str, location: str) -> str:
+    """The address a GET's or HEAD's redirect sends it on to, written as fetch
+    writes it, so the address it lands at is the page's res.url: the Location
+    resolved against the address that answered, with no fragment and the
+    characters a URL parser percent-encodes encoded (see _request_url). A
+    non-ASCII byte in the Location, which http.client reads as ISO-8859-1, is
+    percent-encoded as that byte, as urllib and a browser encode it. A Location
+    that is not http or https, or that a URL parser reads otherwise than its
+    text (a backslash, which a browser reads as a slash, a space or a control
+    character, user information, a host written as a number), is refused, as
+    hmc.py refuses such an address, and nothing is sent there; the page's
+    browser follows it as its parser reads it."""
+    given = "".join(ch if ord(ch) < 0x80 else "".join("%%%02X" % b for b in ch.encode("latin-1" if ord(ch) < 0x100 else "utf-8"))
+                    for ch in location)
+    joined = _resolve_iri(given, from_url)
+    _require_web_url(joined, "refused a redirect to")
+    problem = _request_url_problem(joined)
+    if problem is None:
+        try:
+            return _request_url(joined)
+        except ValueError:
+            problem = "the address is not a URL"
+    raise RuntimeError(f"hmc.py refused the redirect from {from_url} to {location}: {problem}; nothing was sent there")
+
+
 class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
     """Follows a GET's or HEAD's redirect only to another http or https URL,
-    and no more than fetch follows, and notes where a 303 See Other was
-    answered from. Any other method's redirect is the answer: nothing is sent
-    to its Location."""
+    to the address fetch would send it to (see _redirect_url), and no more
+    than fetch follows, and notes where a 303 See Other was answered from. Any
+    other method's redirect is the answer: nothing is sent to its Location."""
 
     max_repeats = max_redirections = _REDIRECT_LIMIT
 
@@ -3265,14 +3290,21 @@ class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
         location = (headers.get("location") or "").strip(" \t")
         if not location or req.get_method() not in FOLLOWED_METHODS:
             return None
-        _require_web_url(urllib.parse.urljoin(req.full_url, location), "refused a redirect to")
+        # urllib would send the Location as it reads it, with a fragment, a
+        # backslash or a brace as written; the request goes where fetch's would.
+        newurl = _redirect_url(req.full_url, location)
         if self.followed >= _REDIRECT_LIMIT:
             raise RuntimeError(f"{req.full_url} was redirected more than {_REDIRECT_LIMIT} times, "
                                "more than fetch follows, so the request failed")
         self.followed += 1
         if code == 303 and self.see_other_from is None:
             self.see_other_from = req.full_url
-        return super().http_error_302(req, fp, code, msg, headers)
+        new = self.redirect_request(req, fp, code, msg, headers, newurl)
+        if new is None:
+            return None
+        fp.read()
+        fp.close()
+        return self.parent.open(new, timeout=req.timeout)
 
     http_error_301 = http_error_303 = http_error_307 = http_error_308 = http_error_302
 
@@ -3357,7 +3389,9 @@ def invoke_not_followed(method: str, url: str, status: int, location: str | None
     Location of an opaque redirect."""
     answered = (f"answered {status}, a redirect to {location}" if location
                 else f"answered {status}, a redirect with no Location")
-    as_get = method not in FOLLOWED_METHODS and status in (301, 302, 303)
+    # fetch would turn a POST into a GET on a 301 or 302, and anything but a
+    # GET or HEAD on a 303; urllib would turn a POST into one on any of them.
+    as_get = method not in FOLLOWED_METHODS and (status == 303 or (method == "POST" and status in (301, 302)))
     return (f"Not done: {url} {answered}. The {method} was not re-sent{', or turned into a GET' if as_get else ''}: "
             f"a request goes only to the address its dry run shows. Whether {url} acted on it is not known.")
 
@@ -4538,7 +4572,8 @@ def cmd_invoke(args: argparse.Namespace) -> int:
             say("  - " + err, file=sys.stderr)
         return 2
     # The same exit in text and --json mode: 0 for a dry run or a 2xx answer, 3
-    # when nothing could be sent over HTTP, and 4 for any other answer.
+    # when the control has no plain-HTTP transport and nothing was sent, and 4
+    # for any other answer. A refused address is 1 and a refused value 2.
     code = 0 if result.get("dryRun") or result.get("done") else 3 if result.get("blocked") else 4
     if args.json:
         print(_json_out(result))

@@ -383,6 +383,12 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
           .toEqual([1, '', `error: hmc.py sends requests to http and https URLs only; refused a redirect to ${end.refused}`]);
         continue;
       }
+      // A Location a URL parser reads otherwise than its text is refused, as such an address is.
+      if ('backslash' in end) {
+        expect([r.code, r.stdout, r.stderr.trim()], where)
+          .toEqual([1, '', `error: hmc.py refused the redirect from ${url} to ${end.backslash}: ${ADDRESS_TEXT_PROBLEM}; nothing was sent there`]);
+        continue;
+      }
       const location = 'redirect' in end && end.location !== null ? new URL(end.location, url).href : null;
       const done = 'answer' in end && end.answer >= 200 && end.answer < 300;
       const landed = 'answer' in end && end.landed ? `${base}${end.landed}` : url;

@@ -469,11 +469,27 @@ request but a GET or HEAD: `hmc.py` sends it with no redirect handler and the
 page with `redirect: "manual"`, and the redirect is reported as not done, with
 its status and `Location` where the client can see them, saying the request was
 not re-sent and that whether the address acted on it is not known. Only a 2xx is
-a success: both clients say `Done:` or `Not a success:`, and `hmc.py` exits 4 for
-any other answer and 3 when nothing could be sent, in `--json` mode as in text.
-Through a proxy the page's dry run shows the address it sends to as `via`. 27 of
-28 shared invoke cases failed before in each client, 13 of them on the page by
-re-sending or redirecting the request; the CSP script hash is updated.
+a success: both clients say `Done:` for a 2xx, `Not done:` for a redirect the
+request did not follow, and `Not a success:` for any other answer; `hmc.py` exits
+4 for any answer but a 2xx, and 3 when the control has no plain-HTTP transport
+and nothing was sent, in `--json` mode as in text. Through a proxy the page's
+dry run shows the address it sends to as `via`. 27 of 28 shared invoke cases
+failed before in each client, 13 of them on the page by re-sending or
+redirecting the request; the CSP script hash is updated.
+
+An eighth review found that a safe GET or HEAD `hmc.py` followed to an unusual
+`Location` went to, or named, another address than the page: it kept a fragment,
+sent `{`, `}` and the backtick as written, and sent a backslash where a browser
+reads a slash (to another host, for `\\other.example/x`). `hmc.py` now sends a
+`Location` as it writes a request URL, so both clients name the same address, and
+refuses one it would refuse as an address, a backslash included, while the
+page's browser follows it, as the README says. A write whose answer had no CORS
+headers, a redirect included, read on the page as refused though the host got
+it; the page now says no answer it can read came back and the write may have
+reached the address. A PUT, PATCH or DELETE answered 301 or 302 no longer says it
+was not turned into a GET, and a body note is no longer green under an answer
+that is not a success. 5 of 7 new shared invoke cases failed before in `hmc.py`,
+and on the page the HTML and CORS cases; the CSP script hash is updated.
 
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
