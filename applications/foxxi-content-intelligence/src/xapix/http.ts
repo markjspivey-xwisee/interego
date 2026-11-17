@@ -39,8 +39,8 @@ export interface DecorationLintAnswer {
   clean: boolean;
   /** What was judged, so an empty list of findings is not read as more than it is. */
   checked: { statements: number; declaredBy: string[]; profile?: string; examples?: number };
-  /** Whether each X9 lookup was available. False: those targets were checked for shape only. */
-  linksChecked: { evidences: boolean; offers: boolean };
+  /** When a profile was judged: whether each X9 lookup was available. False: those targets were checked for shape only. */
+  linksChecked?: { evidences: boolean; offers: boolean };
 }
 
 /** The templates of every current profile held, or of the one named, that judge: not deprecated. */
@@ -74,9 +74,7 @@ export async function lintDecorations(server: ProfileServer, body: unknown, o: P
     checked.declaredBy = named;
   }
 
-  type Links = Pick<XapixProfileOptions, 'designIdea' | 'affordance'>;
-  const none: Links = {};
-  const links: Links = o.links ? await o.links().catch(() => none) : none;
+  let linksChecked: DecorationLintAnswer['linksChecked'];
   if (input.document !== undefined || input.profile !== undefined) {
     if (input.document !== undefined && !isObj(input.document)) throw new ProfileServerError(400, '`document` is a profile document, as a JSON object.');
     if (input.document === undefined && typeof input.profile !== 'string') throw new ProfileServerError(400, 'Name a held profile by its id in `profile`, or send one as `document`.');
@@ -89,13 +87,19 @@ export async function lintDecorations(server: ProfileServer, body: unknown, o: P
       if (!isObj(e) || (e.statements !== undefined && !Array.isArray(e.statements)) || (e.sequences !== undefined && !Array.isArray(e.sequences))) throw new ProfileServerError(400, '`examples` is { statements: [...], sequences: [...] }.');
       examples = { statements: (e.statements ?? []) as ProfileExamples['statements'], sequences: (e.sequences ?? []) as ProfileExamples['sequences'] };
     }
+    // Only a profile has links to look up, so only here are the lookups asked for: on the bridge
+    // that can mean reading the glossary release, which a request about statements never waits on.
+    type Links = Pick<XapixProfileOptions, 'designIdea' | 'affordance'>;
+    const none: Links = {};
+    const links: Links = o.links ? await o.links().catch(() => none) : none;
+    linksChecked = { evidences: links.designIdea !== undefined, offers: links.affordance !== undefined };
     findings.push(...lintXapixProfile(doc, examples, links));
     checked.profile = typeof doc.id === 'string' ? doc.id : '(a document with no id)';
     checked.examples = examples.statements.length;
   }
   if (input.statements === undefined && input.document === undefined && input.profile === undefined)
     throw new ProfileServerError(400, 'Send `statements` (with the ids of the profiles that declare their keys as `profiles`), a profile as `profile` or `document`, or both.');
-  return { findings, clean: findings.length === 0, checked, linksChecked: { evidences: links.designIdea !== undefined, offers: links.affordance !== undefined } };
+  return { findings, clean: findings.length === 0, checked, ...(linksChecked ? { linksChecked } : {}) };
 }
 
 /** The templates a statement follows, across the current profiles held or the one named: matched, with no rule broken. */
