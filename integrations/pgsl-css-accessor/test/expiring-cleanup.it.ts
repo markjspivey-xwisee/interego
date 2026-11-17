@@ -68,7 +68,14 @@ async function main(): Promise<void> {
     await cookies.set('live', { accountId: 'b' }, 60 * 60 * 1000);
     await new Promise((resolve) => setTimeout(resolve, 250));
 
-    for (const storage of sweeps) await storage.removeExpiredEntries();
+    // CSS 7.3 lists /.internal/ with `for await` over the locking store's stream. Unpatched, that
+    // listing waits for the resource lock to expire (90 s in pgsl-server.json) and then crashes the
+    // process; PipedJsonResourceStorage reads it through a pipe. Each sweep here takes milliseconds.
+    for (const storage of sweeps) {
+      const started = Date.now();
+      await storage.removeExpiredEntries();
+      assert.ok(Date.now() - started < 10_000, `a sweep took ${Date.now() - started} ms: it waited for the lock`);
+    }
 
     // Read underneath the expiring wrapper: its own get() deletes on read and would hide the sweep.
     assert.equal(await internal.get('accounts/cookies/expired'), undefined, 'the sweep deleted the expired cookie');

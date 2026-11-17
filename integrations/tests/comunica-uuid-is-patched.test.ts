@@ -4,8 +4,8 @@
  * ★ WHAT THE ADVISORY IS. GHSA-w5hq-g745-h8pq ("Missing buffer bounds check in v3/v5/v6 when
  * buf is provided") covers uuid below 11.1.1. Every Community Solid Server 7 release pulls it in
  * through Comunica 2: @comunica/expression-evaluator 2.10.0 asks for uuid ^9.0.0, and even its
- * latest 3.x still does. npm audit therefore flagged the root lock (local-node's CSS 7.3.0) and
- * integrations/pgsl-css-accessor's lock (the css image's CSS 7.2.0) through that one package.
+ * latest 3.x still does. npm audit therefore flagged the root lock (local-node's CSS) and
+ * integrations/pgsl-css-accessor's lock (the css image's) through that one package.
  *
  * ★ WHY IT WAS NEVER REACHABLE HERE. expression-evaluator 2.10.0 calls uuid in three places,
  * UUID() and STRUUID() in RegularFunctions.js and BNODE() in SpecialFunctions.js, and each is a

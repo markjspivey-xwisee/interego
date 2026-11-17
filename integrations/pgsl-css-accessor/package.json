@@ -29,7 +29,7 @@
     "test:contexts:offline": "node test/components-context-offline.mjs"
   },
   "dependencies": {
-    "@solid/community-server": "^7.1.9"
+    "@solid/community-server": "^7.3.0"
   },
   "devDependencies": {
     "componentsjs-generator": "^4.2.0",

@@ -69,8 +69,8 @@
       "comment": [
         "Resource-lock expiry: 90000 ms instead of css:config/util/resource-locker/memory.json's 6000.",
         "The expiry is a stuck-lock release, not a deadline for the work: when it fires, CSS answers 500",
-        "and the locked operation keeps running without its lock (a write is not renewed while it drains",
-        "its body). Every request here arrives through css-gate, which waits up to 90 s for a response",
+        "and the locked operation keeps running without its lock (CSS 7.3 renews a write's lock as its body",
+        "is read, but nothing renews it while the backend works). Every request here arrives through css-gate, which waits up to 90 s for a response",
         "head (UPSTREAM_QUEUE_TIMEOUT_MS; headersTimeout 60 s once connected), so a slower operation has",
         "nobody waiting for it and 6 s cut off legitimate work the gate would still have delivered: a",
         "cold root listing (2026-10-22) and any large PUT over a slow client. Same-type override, so only",
@@ -99,6 +99,29 @@
             "@id": "urn:solid-server:default:JsonResourceStorage"
           }
         }
+      }
+    },
+    {
+      "comment": [
+        "CSS 7.3 lists a container in the internal value storage by running `for await` over the",
+        "locking ResourceStore's stream, which cannot be read that way: the hourly expired-entry sweep",
+        "waited out the resource lock and then crashed the process. PipedJsonResourceStorage reads the",
+        "listing through a pipe and changes nothing else; source, baseUrl and container are as in",
+        "css:config/storage/key-value/resource-store.json."
+      ],
+      "@type": "Override",
+      "overrideInstance": {
+        "@id": "urn:solid-server:default:JsonResourceStorage"
+      },
+      "overrideParameters": {
+        "@type": "PipedJsonResourceStorage",
+        "source": {
+          "@id": "urn:solid-server:default:ResourceStore"
+        },
+        "baseUrl": {
+          "@id": "urn:solid-server:default:variable:baseUrl"
+        },
+        "container": "/.internal/"
       }
     },
     {

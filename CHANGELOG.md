@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-11-17 — Dependencies: uuid 11.1.1 under Comunica, and the pod server stays on Solid server 7.2.0
+## 2026-11-17 — Dependencies: the pod server moves to Solid server 7.3.0, and uuid 11.1.1 under Comunica
 
 `npm audit` lists one advisory against both Solid server trees,
 GHSA-w5hq-g745-h8pq ("uuid: Missing buffer bounds check in v3/v5/v6 when buf is
@@ -10,50 +10,97 @@ asks for `^9.0.0`, and its latest release, 3.2.1, still does. The root lockfile
 reported it nine times (local-node's CSS 7.3.0), and
 `integrations/pgsl-css-accessor`'s lockfile, which the css image
 (`interego-css-pgsl`) installs with `npm ci`, reported it with the minimatch
-chain of its build tools twelve times. This change clears both. It was also
-meant to move the css image from CSS 7.2.0 to 7.3.0, and does not: under 7.3.0
-the pod server crashes, for the reasons below.
+chain of its build tools twelve times. This change clears both, and moves the
+css image from CSS 7.2.0 to 7.3.0, the newest stable release. As published,
+7.3.0 crashes the pod server. It does so in two places, and one of them also
+has a second fault. The accessor now works around all three.
 
-**Why the pod server stays on 7.2.0.** 7.3.0's locking store now hands every
-write a stream object made with `Object.create` over the request body, whose
-`read()` renews the write lock. 7.2.0 already does the same for reads.
-Node's async iterator, and readable-stream's, accept a `'readable'` event only
-when it is emitted on the object they were given, and the original stream
-emits most of them, so `for await` over the derived object loses its wake-up,
-and when the stream closes it calls an undefined callback: "TypeError: callback is not a function",
-thrown from a stream callback, which ends the process.
+**What 7.3.0 breaks.** 7.3.0's locking store hands every write, as 7.2.0
+already did every read, a stream object made with `Object.create` over the
+real stream, whose `read()` renews the lock. Node's async iterator, and
+readable-stream's, accept a `'readable'` event only when it is emitted on the
+object they were given. The real stream emits them on itself, so `for await`
+over the derived object never wakes. When the lock expires and the stream
+closes, the iterator calls an undefined callback: "TypeError: callback is not
+a function", thrown from a stream callback, which ends the process.
 `src/NativeStageOperationHandler.ts` already reads a locked stream through
-events for this reason. Two places now hit it:
+events for this reason. Two places run `for await` over one:
 
 - The accessor's write path. `PgslDataAccessor.writeDocument` reads every body
-  with `for await`, as does pgsl-store's `writeStream`. In a tree assembled
-  the way `pgsl-css-server.yml` assembles it, `test:server` crashed on 7.3.0
-  before the boot line, and passed on 7.2.0. Piping the body into a
-  `PassThrough` first fixed that in a trial (the lock still renews, since the
-  pipe reads through the derived object): `test:server` and the 23-case
-  contract battery then passed on 7.3.0. That fix is not in this change.
-- CSS's own key-value storage. 7.3.0's `JsonResourceStorage` now lists a
-  container by iterating its body with `for await`, and that body is the read
-  lock's derived stream. The expired-entry sweep, which CSS runs every hour,
-  walks containers this way. `test:expiry` hung until the lock expired (90 s
-  in `pgsl-server.json`) and then crashed the same way; on 7.2.0 it passes.
-  Stock CSS shows the same without PGSL. A sweep over a cookie storage
-  holding two entries crashed after the 6 s lock expiry on 7.3.0 under CSS's
-  own `file.json` config and under local-node's `config/file-pod.json`. On
-  7.2.0 the same sweep finished in 102 ms and 134 ms. This one is in CSS's
-  code. Working around it means replacing a CSS storage class in the
-  accessor's config.
+  with `for await`, as do `readNativeCommitCommand` and pgsl-store's
+  `writeStream`. Unpatched, `test:server` crashed before the boot line, at the
+  first write `initialize-root` makes.
+- CSS's internal value storage. 7.3.0's `JsonResourceStorage` lists a
+  container by running `for await` over its body, which is the read lock's
+  derived stream. Every expiring storage (cookies, forgot-password records,
+  ownership tokens, IdP adapter entries) sweeps once an hour by walking
+  `/.internal/` this way. The listing has a second fault, which the crash
+  hides: it asks for the container with no type preference. The converting
+  store reads "no preference" as "anything but an internal type"
+  (`cleanPreferences`), so the body arrives serialized as Turtle, the loop
+  meets bytes, and it finds no member. 7.2.0 read the members from the
+  container's metadata, which 7.3.0 no longer fills for a plain read.
 
-So the image moves when both are dealt with, in a change of its own. 7.3.0 is
-the newest stable release. The 8.0.0 alphas are not an alternative: nothing
-has been published on that line since 2026-03-13, it needs Node 22 (the
-image and its CI run Node 20), it moves to Components.js 6, and it asks for
-nodemailer `^8.0.2`, which has two high advisories.
+**The fixes.** `src/LockedStream.ts` adds `throughPipe(stream)`, which pipes a
+locked stream into a `PassThrough` of the same mode with CSS's own
+`pipeSafely`. On an error, `pipeSafely` leaves an HTTP request body open, as
+CSS does, instead of destroying the response with it. The pipe reads through
+the derived `read()` when it starts and each time the `PassThrough` drains,
+so the lock is still renewed. Read slowly through CSS's own
+`createExpiringRepresentation`, a 200 KB body renewed it 55 times.
+`writeDocument` reads its body through it, which covers all three readers.
+`src/PipedJsonResourceStorage.ts` is CSS's `JsonResourceStorage` with two
+methods changed: a container is asked for as internal quads, and the listing
+is read through `throughPipe`. Documents are still read and written as CSS
+does. Both configs wire it with an Override of
+`urn:solid-server:default:JsonResourceStorage`, beside the KeyValueStorage
+override that already serves this sweep.
 
-**local-node already runs 7.3.0.** `packages/local-node`, which the pod
-desktop ships, moved to it in the nodemailer change, and its config has the
-same hourly sweep. Whether the desktop ever holds expiring entries for that
-sweep to walk was not checked here. It is the next thing to look at.
+Each piece is needed. In a scratch tree laid out as `pgsl-css-server.yml` lays
+it out, from this lockfile, on the in-memory backend:
+
+- unpatched, `test:server` and `test:expiry` both crashed at boot, 7 s in;
+- with the write fix and CSS's own `JsonResourceStorage`, `test:expiry` waited
+  out the 90 s lock and crashed at 97 s;
+- with the quads request but no pipe, the same, at 97 s;
+- with the pipe but no quads request, the sweep returned at once and deleted
+  nothing: `test:expiry` failed on the expired cookie still being stored;
+- with both, `test:contexts:offline`, `test:server` (the boot line exactly
+  once), the 23-case contract battery and `test:expiry` all passed, and each
+  sweep took milliseconds.
+
+`test:expiry` now also fails if a sweep takes 10 s or more, so a listing that
+waits for the lock fails there by name, not only by crashing the run.
+
+**What else 7.3.0 changes for the pod server.** Between 7.2.0 and 7.3.0, the
+write, delete and condition code of `DataAccessorBasedStore` is unchanged, and
+so are `BasicConditions` and the ETag handler. So the store behaviour that
+identity's code and tests describe as "CSS 7.2 with the PGSL accessor" (ETags,
+`If-Match` on a missing document, refusals) carries over. Those comments name
+the version their probes ran against, and are left as written. A container's
+`ldp:contains` triples now stream in its body instead of sitting in its
+metadata; the contract battery's container cases pass. `ServerInitializer`,
+which prints the boot line the deploy tool waits for, is byte-identical, and
+`tests/build-sha-is-verifiable.test.ts` now pins 7.3.0.
+`WrappedExpiringReadWriteLocker` gains a `maxHoldDuration`, off by default,
+and the 90 s override leaves it off. The `pgsl-server.json` comment on that
+override no longer says a write's lock is not renewed while its body is read.
+And `identity/handler/default.json` gains a "recover WebID" account route,
+which lets a signed-in CSS account regenerate the profile card of a WebID in
+one of its own pods. Allow-all authorization already lets anyone write there,
+so it adds nothing that was not already possible. CSS 7.3.0 asks for
+nodemailer `^10.0.9`, whose floor is below the first fixed release, 10.1.4, so
+the override stays. Its test now checks CSS's own range against that release,
+in place of the `^9.0.1` it pinned.
+
+The 8.0.0 alphas were not an alternative: nothing has been published on that
+line since 2026-03-13, it needs Node 22 (the image and its CI run Node 20), it
+moves to Components.js 6, and it asks for nodemailer `^8.0.2`, which has two
+high advisories.
+
+**local-node already ran 7.3.0.** `packages/local-node`, which the pod
+desktop ships, moved to it in the nodemailer change, and its own hourly sweep
+crashes the same way. It is fixed in its own change.
 
 **uuid.** The advisory needs a caller-supplied buffer. expression-evaluator
 2.10.0 calls uuid three times, for SPARQL's `UUID()`, `STRUUID()` and
@@ -88,15 +135,20 @@ typescript-estree 7.18.0, which loads minimatch but calls it only for a
 project service. The generator parses without one. The accessor's build ran
 here on 11.0.8, generated its components, and passed `test:contexts:offline`.
 
-**Lockfile.** The accessor's lockfile changes in exactly these entries:
+**Lockfile.** The accessor's `package.json` asks for
+`@solid/community-server` `^7.3.0` in place of `^7.1.9`. Its lockfile changes in
+exactly these entries:
+- `@solid/community-server` 7.2.0 to 7.3.0, whose own nodemailer range moves
+  from `^9.0.1` to `^10.0.9`, the only range that differs between the two
+  releases;
 - `uuid` 9.0.1 to 11.1.1;
 - `minimatch` (dev) 9.0.9 to 11.0.8;
 - `@isaacs/nonrecursive-glob-match` 1.1.0 (dev), new;
 - `minimatch/node_modules/brace-expansion` 5.0.13 (dev), new;
 - `minimatch/node_modules/balanced-match` 4.0.4 (dev), new.
 
-`@solid/community-server` stays 7.2.0, nodemailer 10.3.1, componentsjs 5.5.1,
-and the generator's componentsjs 6.4.0. The root lockfile loses the one nested
+nodemailer stays 10.3.1, componentsjs 5.5.1, and the generator's componentsjs
+6.4.0. The new CSS entry is byte for byte the root lockfile's 7.3.0 entry. The root lockfile loses the one nested
 uuid entry, and nothing else changes in it. Each time it ran, npm 10.9.4
 dropped the `libc` fields of the eight Linux packages of the Claude Code CLI
 and the agent SDK and rewrote the flags of the
@@ -104,7 +156,8 @@ and the agent SDK and rewrote the flags of the
 are on master.
 
 **Audit.** `npm audit --package-lock-only`, measured on 2026-11-17: the root
-lockfile goes from 9 moderate to 0, the accessor's from 12 moderate to 0.
+lockfile goes from 9 moderate to 0, the accessor's from 12 moderate to 0, and
+stays at 0 on CSS 7.3.0.
 
 `deploy/Dockerfile.css` is left as it is. Its header says nothing builds it,
 it is not in `deploy/images.json`, and its unpinned global install has no
@@ -115,23 +168,32 @@ lockfile for an override to reach. The same is true of
 push that touches the accessor. Bridge Typecheck's durable-LRS job installs
 the accessor tree. The root suite, Local Pod Windows Installer and Desktop
 Packaging install from the root lockfile. After merge, auto-deploy rebuilds
-`interego-css-pgsl` and rolls the css singleton, now with uuid 11.1.1 under
-its Comunica.
+`interego-css-pgsl` and rolls the css singleton, now on CSS 7.3.0 with uuid
+11.1.1 under its Comunica. The deploy tool waits for the same boot line.
 
 Checks: in a scratch tree laid out as `pgsl-css-server.yml` lays it out, from
-this lockfile, `test:contexts:offline`, `test:server` (the boot line once),
-the contract battery and `test:expiry` passed against the in-memory backend.
-`tests/local-node.test.ts` passed against a scratch install of CSS 7.3.0 with
-uuid 11.1.1. Loaded with npm's own Arborist, neither lockfile has an invalid
-or missing required edge. `npm ls --all --package-lock-only` exits 0 for both;
-with the root override removed, `npm ls uuid` on the root exits 1. The new
-test fails with the root override removed, with the nested uuid 9.0.1 entry
-put back, and with the accessor's lockfile from master.
+this lockfile, on CSS 7.3.0: the accessor built (its `tsc` and the
+Components.js generator, which emits the new class), the generator was
+removed, and `test:contexts:offline`, `test:server` (the boot line exactly
+once), the contract battery (23 of 23) and `test:expiry` passed against the
+in-memory backend. `npm ls --all --package-lock-only` exits 0 for the
+accessor, and a second lockfile-only install leaves its lockfile byte for byte
+as it is. The vitest files that read these manifests, configs and locks pass
+(`tests/build-sha-is-verifiable.test.ts`, the uuid and nodemailer tests, and
+the image, bundle-scope and pod-desktop packaging tests), with the typecheck
+gate clean. From the uuid half of this change: loaded with npm's own
+Arborist, neither lockfile has an invalid or missing required edge; with the
+root override removed, `npm ls uuid` on the root exits 1; and the uuid test
+fails with the root override removed, with the nested uuid 9.0.1 entry put
+back, and with the accessor's lockfile from master.
 
-Not covered: the trials above ran on Node 22.22.0, the only Node here. CI
+Not covered: everything above ran on Node 22.22.0, the only Node here. CI
 and the image run 20. Neither the real PostgreSQL nor the FoundationDB run
-was repeated here; CI runs both. uuid's maintainers expect to deprecate the
-11.x CommonJS line around 2028.
+was repeated here; `pgsl-css-server.yml` runs the server and the contract
+battery on PostgreSQL. `pgsl-server-redis.json` was not booted, since it needs
+a Redis. It carries the same Override as `pgsl-server.json`, against the same
+CSS ids, and the entrypoint picks it only when `REDIS_ADDR` is set. uuid's
+maintainers expect to deprecate the 11.x CommonJS line around 2028.
 
 ## 2026-11-17 — Foxxi: a test takes a guest learner all the way to a course
 
