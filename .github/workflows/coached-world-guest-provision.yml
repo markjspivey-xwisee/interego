@@ -25,10 +25,8 @@ jobs:
           node-version: '20'
       - name: Install the existing Interego validation helper's dependencies
         run: npm ci --ignore-scripts
-      - name: Check the Interego guest configuration validator
-        # This branch runs a WorldCraft-specific job. The master-only assertion
-        # applies to the coached-world job that remains unchanged on master.
-        run: node --test --test-name-pattern='^(?!the workflow is dispatch-only from master)' tests/coached-world-guest-provision.test.mjs
+      - name: Test the WorldCraft merge and its refusal cases
+        run: node --test tests/worldcraft-guest-registration.test.mjs
       - name: Register the WorldCraft meetup origin
         env:
           RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}

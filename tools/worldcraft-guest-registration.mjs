@@ -70,14 +70,14 @@ export async function registerWorldCraft({ gql, agentDid, podUrl, apply = false,
   const current = await readVariables();
   if (!isDeepStrictEqual(current, before)) refuse('the identity configuration changed during this run. Dispatch again.');
   const write = await gql('mutation($input:VariableUpsertInput!){variableUpsert(input:$input)}', {
-    input: { ...scope, name: VARIABLE, value: updated, skipDeploys: false },
+    input: { ...scope, name: VARIABLE, value: updated, skipDeploys: true },
   });
   if (write?.variableUpsert !== true) refuse('Railway did not confirm writing the registration');
   const after = await readVariables();
   if (after.clients !== updated || after.guestEnabled !== before.guestEnabled || after.door !== before.door) {
     refuse('Railway did not return the expected configuration after the write');
   }
-  log('Registration saved and verified. Railway will roll the change out to the identity service.');
+  log('Registration saved and verified. The identity service can now be redeployed.');
   return { changed: true, applied: true };
 }
 
