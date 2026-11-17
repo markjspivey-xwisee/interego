@@ -535,6 +535,7 @@ async function postReviewed(st){
 let sessionOpened = false;
 const visitStart = {};   // this visit's initialized, kept so that trying again sends the same statement
 const CMI5_SESSION = "https://w3id.org/xapi/cmi5/context/extensions/sessionid";
+const SESSION_READ_PAGES = 5;
 /* What the learning record already holds of this session: whether its initialized is there, and the
    latest timestamp in it. null when that could not be read, or could not be read whole. A session
    can be opened more than once: the LMS continues an open session when the course is opened again,
@@ -542,16 +543,30 @@ const CMI5_SESSION = "https://w3id.org/xapi/cmi5/context/extensions/sessionid";
 async function sessionSoFar(){
   const sid = ((cfg.contextTemplate || {}).extensions || {})[CMI5_SESSION];
   if (!sid) return {initialized: false, last: 0};
+  const h = {"X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization};
+  let url = cfg.lrs + "/statements?registration=" + encodeURIComponent(registration) + "&limit=200";
+  let initialized = false, last = 0;
   try {
-    const r = await fetch(cfg.lrs + "/statements?registration=" + encodeURIComponent(registration) + "&limit=200", {headers:{"X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization}});
-    if (!r.ok) return null;
-    const b = await r.json();
-    if (!b || !Array.isArray(b.statements)) return null;
-    const mine = b.statements.filter(s => s && s.context && s.context.extensions && s.context.extensions[CMI5_SESSION] === sid);
-    const initialized = mine.some(s => s.verb && s.verb.id === X.verbs.initialized);
-    // More than one read holds: an initialized not seen here may be on a later page.
-    if (!initialized && b.more) return null;
-    return {initialized: initialized, last: mine.reduce((m, s) => Math.max(m, Date.parse(s.timestamp) || 0), 0)};
+    // The record answers in pages. A registration is one conversation and a result, so one page
+    // is the usual case; a longer one is followed by the link the record gives, a few pages at most.
+    for (let page = 0; page < SESSION_READ_PAGES; page++) {
+      const r = await fetch(url, {headers: h});
+      if (!r.ok) return null;
+      const b = await r.json();
+      if (!b || !Array.isArray(b.statements)) return null;
+      for (const s of b.statements) {
+        if (!(s && s.context && s.context.extensions && s.context.extensions[CMI5_SESSION] === sid)) continue;
+        if (s.verb && s.verb.id === X.verbs.initialized) initialized = true;
+        last = Math.max(last, Date.parse(s.timestamp) || 0);
+      }
+      if (!b.more) return {initialized: initialized, last: last};
+      // The link is the record's own, and is followed only on the record's own origin.
+      const next = new URL(b.more, cfg.lrs);
+      if (next.origin !== new URL(cfg.lrs).origin) return null;
+      url = next.href;
+    }
+    // More than was read: the session's latest statement, or its initialized, may be further on.
+    return null;
   } catch(e) { return null; }
 }
 /* Opens this visit in its session: true once the session's initialized is in the learning record.

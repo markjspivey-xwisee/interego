@@ -23,7 +23,8 @@ The player also reads what the learning record holds of its session before it
 opens a visit. A session the LMS continues is opened by a fresh load of the page,
 which used to send a second initialized. It now sends none when the session has
 one, starts its clock after the session's latest statement, and sends nothing at
-all when the record cannot be read.
+all when the record cannot be read. It follows the record's own link to further
+pages, five at most and only on the record's own origin.
 
 Not changed: a unit other than this player has to stamp the statements itself;
 the instructions handed out with them now say so.

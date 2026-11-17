@@ -246,8 +246,11 @@ describe('how the player opens a visit in a session that may already be open', (
   /** A learning record holding `held`; `read` decides how a read of the registration is answered. */
   class Lrs {
     readonly posts: St[] = [];
+    readonly reads: string[] = [];
     more = '';
     readStatus = 200;
+    /** When set, a read of the registration is answered a page at a time, this many statements each. */
+    pageSize = 0;
     constructor(readonly held: St[]) {}
     readonly fetch = async (url: string, init?: { method?: string; body?: string }): Promise<Response> => {
       if (init?.method === 'POST') {
@@ -262,6 +265,13 @@ describe('how the player opens a visit in a session that may already be open', (
       const id = u.searchParams.get('statementId');
       if (id) { const h = this.held.find((x) => x['id'] === id); return h ? new Response(JSON.stringify(h), { status: 200 }) : new Response('', { status: 404 }); }
       if (this.readStatus !== 200) return new Response('', { status: this.readStatus });
+      this.reads.push(u.pathname + u.search);
+      expect(u.origin).toBe('https://lrs.example');
+      if (this.pageSize > 0) {
+        const from = Number(u.searchParams.get('from') ?? '0'), to = from + this.pageSize;
+        if (from === 0) expect(u.searchParams.get('registration')).toBe(REG);
+        return new Response(JSON.stringify({ statements: this.held.slice(from, to), more: to < this.held.length ? `/xapi/statements?from=${to}` : '' }), { status: 200 });
+      }
       expect(u.searchParams.get('registration')).toBe(REG);
       return new Response(JSON.stringify({ statements: this.held, more: this.more }), { status: 200 });
     };
@@ -333,10 +343,35 @@ describe('how the player opens a visit in a session that may already be open', (
     expect(await v.openVisit()).toBe(true);
     expect(refused.posts).toEqual([]);
 
-    // A first page with no initialized in it, and more pages behind: it may be on one of those.
-    const partial = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z')]);
-    partial.more = '/xapi/statements?cursor=next';
-    expect(await visit(partial).openVisit()).toBe(false);
-    expect(partial.posts).toEqual([]);
+    // A link to more that leads off the record's own origin is not followed.
+    const elsewhere = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z')]);
+    elsewhere.more = 'https://elsewhere.example/xapi/statements?cursor=next';
+    expect(await visit(elsewhere).openVisit()).toBe(false);
+    expect([elsewhere.posts, elsewhere.reads.length]).toEqual([[], 1]);
+  });
+
+  it("follows the record's own link through a long registration, and finds an initialized on a later page", async () => {
+    // Newest first, as a record answers: this session's launch, then older statements, then its initialized.
+    const filler = Array.from({ length: 5 }, (_, i) => stored('answered', `2026-11-17T14:57:0${i}.000Z`, '55555555-5555-4555-8555-555555555555'));
+    const lrs = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z'), ...filler, stored('initialized', '2026-11-17T16:04:43.000Z')]);
+    lrs.pageSize = 3;
+    const v = visit(lrs);
+    expect(await v.openVisit()).toBe(true);
+    expect(lrs.posts).toEqual([]);
+    expect(lrs.reads).toHaveLength(3);
+    // The clock is past the initialized that was on the last page.
+    expect(Date.parse(v.nextTs())).toBeGreaterThan(Date.parse('2026-11-17T16:04:43.000Z'));
+  });
+
+  it('gives up without writing when a registration is longer than it reads, and does so the same way each time', async () => {
+    const lrs = new Lrs(Array.from({ length: 12 }, (_, i) => stored('answered', `2026-11-17T14:57:${String(10 + i)}.000Z`)));
+    lrs.pageSize = 2;
+    const v = visit(lrs);
+    expect(await v.openVisit()).toBe(false);
+    expect(await v.openVisit()).toBe(false);
+    expect(lrs.posts).toEqual([]);
+    // Five pages each time, and no more.
+    expect(lrs.reads).toHaveLength(10);
+    expect(v.why()).toBe('the learning record could not be read');
   });
 });
