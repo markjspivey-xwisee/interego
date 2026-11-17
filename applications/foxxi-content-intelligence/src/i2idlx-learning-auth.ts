@@ -479,6 +479,8 @@ export class LearningAccountAuth {
     if (req.get('Origin') && req.get('Origin') !== this.base) refuse(400, 'learning_sign_in_input_invalid');
     const next = learnerReturnPath(req.query.next);
     if (Object.keys(req.query).some(key => key !== 'next') || (req.query.next !== undefined && !next)) refuse(400, 'learning_sign_in_input_invalid');
+    // A browser starting again gives up the visit it had: one browser holds one place, not one per click.
+    const abandoned = doorBinding(req); if (abandoned) this.doorVisits.delete(hash(abandoned));
     if (this.doorVisits.size >= this.maxPending) refuse(429, 'learning_sign_in_busy');
     let visit: { url: string; binding: string };
     try { visit = await door.start(); }
