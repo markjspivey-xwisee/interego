@@ -1,5 +1,35 @@
 # Changelog
 
+## 2026-11-17 — Foxxi: a profile write the bridge never sent is not kept, not in doubt
+
+Found by starting the bridge and sending it signed requests, which #933 had
+not done. A profile write is "in doubt" when the pod neither acknowledged it
+nor let its own copy be read back. The bridge said "cannot be read back" in
+two cases where it had sent nothing at all:
+
+- no lattice key is configured (`FOXXI_WALLET_SEED` or
+  `FOXXI_ISSUER_KEY_SEED`), so `composeIntoSharedLattice` returns before it
+  writes;
+- the pod's address is one the fetch guard refuses (loopback or private), so
+  the write is refused before it is sent.
+
+In both, every add, remove and publish answered 503 `inDoubt`, and the
+profile was then refused to everyone (409) until the bridge restarted,
+because the doubt could never settle. The bridge's `confirm` now answers
+"not kept" when there is no key, and for a record whose write `persist`
+itself refused at the guard before composing or sending anything. So the
+request gets the plain 503 with `retry`, nothing is reserved and the signer's
+count is given back. A guard refusal at read-back time alone still leaves the
+write in doubt: it says the pod cannot be read now, not that nothing was
+written (review finding).
+
+Checked on the running bridge, before and after, with no key and with a
+loopback pod. There is no test: the change is in `bridge/server.ts`, which no
+test starts. With a key and a stand-in pod the bridge was also run through
+add, remove and publish, each with the pod's answer lost and with the pod
+down; each settled to what the pod had within five seconds of the pod coming
+back, and a restarted bridge held the same versions under the same owners.
+
 ## 2026-11-17 — multi-agent demos: their Solid server no longer crashes an hour after it starts
 
 `examples/multi-agent/css-config.json` and `css-config-redis.json` import the
