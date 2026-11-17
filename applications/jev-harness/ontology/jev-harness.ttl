@@ -227,7 +227,9 @@ jvh:SelectTestsInputShape a sh:NodeShape ;
     sh:property [ sh:path jvh:base_ref ; sh:name "base_ref" ; sh:description "Git ref to diff the working tree or head_ref against, when changed_files is not given." ;
                   sh:datatype xsd:string ; sh:maxCount 1 ] ;
     sh:property [ sh:path jvh:head_ref ; sh:name "head_ref" ; sh:datatype xsd:string ; sh:maxCount 1 ] ;
-    sh:property [ sh:path jvh:task ; sh:name "task" ; sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 2000 ] .
+    sh:property [ sh:path jvh:task ; sh:name "task" ; sh:datatype xsd:string ; sh:maxCount 1 ; sh:maxLength 2000 ] ;
+    sh:property [ sh:path jvh:supersedes ; sh:name "supersedes" ; sh:description "The urn:graph:jev-harness:* IRI of an earlier test selection this one replaces." ;
+                  sh:datatype xsd:string ; sh:maxCount 1 ] .
 
 jvh:TriageInputShape a sh:NodeShape ;
     rdfs:label "triage input"@en ;
