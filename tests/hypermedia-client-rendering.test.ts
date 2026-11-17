@@ -27,7 +27,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES,
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
   LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES,
-  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, type HopHeaders } from './hypermedia-client-fixtures.js';
+  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -1201,7 +1201,7 @@ describe('hypermedia client: compact datatype IRIs', () => {
       assertInert(bad.t, 'compact types');
     } finally { bad.t.dom.window.close(); }
     const good = await linkPlan('/compact-types', 'urn:compact-types',
-      { count: '12', flag: 'yes', data: '{"a":[1,2]}', size: '+7', ratio: '0.5', plain: '3' });
+      { count: '12', flag: '1', data: '{"a":[1,2]}', size: '+7', ratio: '0.5', plain: '3' });
     try {
       expect(good.shown).not.toContain('Validation failed');
       expect(good.plan!.body).toEqual({ count: 12, flag: true, data: { a: [1, 2] }, size: 7, ratio: 0.5, plain: 3 });
@@ -1211,7 +1211,7 @@ describe('hypermedia client: compact datatype IRIs', () => {
 
   it.each([
     ['integer', '1.5', 'body: not an integer', '12', '12'],
-    ['boolean', 'maybe', 'body must be a boolean', 'yes', 'true'],
+    ['boolean', 'yes', 'body must be a boolean', '1', 'true'],
     ['JSON', 'nope', 'body must be JSON', '{"a": 1}', '{"a": 1}'],
   ])('types a node-level shape\'s %s body by its compact datatype', async (kind, wrong, message, right, sent) => {
     const bad = await linkPlan('/compact-types', `urn:${kind}-body`, { body: wrong });
@@ -1993,7 +1993,8 @@ describe('hypermedia client: values a request can carry, and lengths in code poi
         expect(link.plan!.body).toEqual(outcome.body);
       } else {
         expect(link.plan, link.shown).toBeNull();
-        expect(listed(link.t.document), link.shown).toContain(outcome.error);
+        if ('only' in outcome) expect(listed(link.t.document), link.shown).toEqual([outcome.error]);
+        else expect(listed(link.t.document), link.shown).toContain(outcome.error);
       }
     } finally { link.t.dom.window.close(); }
     const t = await loaded(path);
@@ -2019,7 +2020,8 @@ describe('hypermedia client: values a request can carry, and lengths in code poi
           expect((JSON.parse(t.document.querySelector('#result pre')!.textContent!) as { body: unknown }).body, mode).toEqual(outcome.body);
         } else {
           expect(result.textContent, mode).toContain('Validation failed');
-          expect(listed(t.document), mode).toContain(outcome.error);
+          if ('only' in outcome) expect(listed(t.document), mode).toEqual([outcome.error]);
+          else expect(listed(t.document), mode).toContain(outcome.error);
         }
       }
       await new Promise(r => setTimeout(r, 50));
@@ -2152,6 +2154,23 @@ describe('hypermedia client: a document\'s size, not its shape, sets the cost', 
         expect(listed(document)[0]!.startsWith(refused)).toBe(true);
       } else expect(result).toContain('Dry run — nothing was sent.');
     } finally { t.dom.window.close(); }
+  }, 60_000);
+});
+
+describe('hypermedia client: IRIs that expand to far more text than the document holds', () => {
+  it.each(EXPANSION_CASES)('refuses %s whole within the budget, by a link to invoke %s too', async (path, rel) => {
+    for (const query of [`?url=${encodeURIComponent(HOST + path)}&autoload=1`,
+      `?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1`]) {
+      const started = Date.now();
+      const t = load(query);
+      try {
+        const { document } = t;
+        await vi.waitFor(() => expect(document.documentElement.dataset['ready']).toBe('error'), { timeout: 60_000 });
+        expect(Date.now() - started, 'link to refusal').toBeLessThan(3_000);
+        expect(document.getElementById('status')!.textContent).toBe(EXPANSION_PROBLEM);
+        expect(document.querySelectorAll('.card')).toHaveLength(0);
+      } finally { t.dom.window.close(); }
+    }
   }, 60_000);
 });
 

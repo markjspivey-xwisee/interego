@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-g54ayppIQLX41WP90GdGHKrhWKrAZGJ/y5V/DZo1wiE='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-JGNcpMWWtVBwv0AuDGvpnUOEoDlDVM+An9T+BZF3E20='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -535,15 +535,106 @@ function spend(budget, amount) {
   budget.left -= amount;
   if (budget.left < 0) throw new Error("This document's @context entries are too many to read.");
 }
-// A JSON Schema written into a document as plain JSON: an object whose
-// "properties" is an object, with no keyword of its own, or with "@id" or
-// "@type" too when it is a value of hydra:expects. Its keys are JSON Schema's,
-// never terms, so only its own "@id" and "@type" are read as JSON-LD, and
-// nothing under it is renamed or expanded. hmc.py's _json_schema_like is the same.
+// How much text expanding one document's IRIs may produce: a few times its own
+// length, and a fixed amount besides, in UTF-16 code units. While a document is
+// read (Ctx.normalize), each IRI a prefix, a term, @vocab or @base expands to is
+// charged, and so, once, is what its base, a prefix or @vocab would expand each
+// plain string it holds to, which the page looks up as a node later
+// (Ctx.lookup). A document past it is refused. hmc.py's IRI_BUDGET_PER_UNIT,
+// IRI_BUDGET_FIXED and EXPANSION_PROBLEM are the same.
+const IRI_BUDGET_PER_UNIT = 8;
+const IRI_BUDGET_FIXED = 1000000;
+const EXPANSION_PROBLEM = "This document's prefixes, terms, @vocab and @base expand its IRIs to far more text than the document holds, which this client does not read, so it is not read.";
+function newBudget(size) { return { left: CONTEXT_BUDGET, iris: IRI_BUDGET_PER_UNIT * (size || 0) + IRI_BUDGET_FIXED, charging: false }; }
+// An expansion's result, charged while a document is read when it is one: text
+// other than the value expanded. hmc.py's _Budget.charge is the same.
+function charge(budget, value, out) {
+  if (budget.charging && typeof out === "string" && out !== value) {
+    budget.iris -= out.length;
+    if (budget.iris < 0) throw new Error(EXPANSION_PROBLEM);
+  }
+  return out;
+}
+// A JSON Schema written into a document as plain JSON, where hydra:expects
+// names it: an object whose "properties" is an object, or one of JSON Schema's
+// keywords (schemaByKeywords). Its keys are JSON Schema's, never terms, so only
+// its own "@id" and "@type" are read as JSON-LD, and nothing under it is
+// renamed or expanded; what JSON-LD would read in it that this client does not
+// is refused (schemaHides). Anywhere else an object is read as JSON-LD,
+// whatever keys it has, so a node written in it is read. hmc.py's
+// _json_schema_like is the same.
 function jsonSchemaLike(item, expected) {
+  if (!expected) return false;
   const props = own(item, "properties") ? item.properties : null;
-  if (!!props && typeof props === "object" && !Array.isArray(props) && (expected || !Object.keys(item).some(k => k.startsWith("@")))) return true;
-  return !!expected && schemaByKeywords(item);
+  return (!!props && typeof props === "object" && !Array.isArray(props)) || schemaByKeywords(item);
+}
+// JSON Schema's keywords whose value is a schema, a list of schemas, or an
+// object of names and schemas. hmc.py's _SCHEMA_ONE, _SCHEMA_MANY and
+// _SCHEMA_MAPS are the same.
+const SCHEMA_ONE = new Set(["items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames",
+  "additionalItems", "unevaluatedItems", "unevaluatedProperties", "contentSchema"]);
+const SCHEMA_MANY = new Set(["allOf", "anyOf", "oneOf", "prefixItems"]);
+const SCHEMA_MAPS = new Set(["properties", "patternProperties", "$defs", "definitions", "dependentSchemas"]);
+// The JSON-LD keywords an object may hold and still say nothing JSON-LD reads
+// as a node. hmc.py's _LITERAL_KEYWORDS is the same.
+const LITERAL_KEYWORDS = new Set(["@type", "@list", "@set", "@index", "@language", "@direction"]);
+function inSchema(what) {
+  return new Error("This document writes " + what + " in a JSON Schema, which this client does not read as JSON-LD, so it is not read.");
+}
+// Whether a value written in a JSON Schema holds, at any depth, what JSON-LD
+// reads as a node: an object with an @id, with a key the context expands to an
+// IRI, or with a JSON-LD keyword other than LITERAL_KEYWORDS. A value object is
+// a literal. hmc.py's _holds_node is the same.
+function holdsNode(ctx, value) {
+  const stack = [value];
+  while (stack.length) {
+    const item = stack.pop();
+    if (Array.isArray(item)) { stack.push(...item); continue; }
+    if (!item || typeof item !== "object") continue;
+    const keys = Object.keys(item);
+    if (keys.some(k => ctx.keyword(k) === "@value")) continue;
+    for (const key of keys) {
+      const keyword = ctx.keyword(key);
+      if (keyword != null) { if (!LITERAL_KEYWORDS.has(keyword)) return true; }
+      else if (ctx.expandKey(key).includes(":")) return true;
+    }
+    for (const key of keys) stack.push(item[key]);
+  }
+  return false;
+}
+// Refuses, by throwing, a JSON Schema written in place under hydra:expects that
+// holds what JSON-LD reads and this client, which reads it as JSON Schema, does
+// not: at its top, a JSON-LD keyword other than its own @id and @type; in it or
+// any schema inside it, a node (holdsNode) under a key that is no JSON Schema
+// keyword or under a JSON-LD keyword; and, in a schema with an @id, a key the
+// context expands to an IRI, which says something of the node it names.
+// hmc.py's _schema_hides is the same.
+function schemaHides(ctx, root) {
+  const stack = [[root, true]];
+  while (stack.length) {
+    const [schema, top] = stack.pop();
+    if (Array.isArray(schema)) { for (let i = schema.length - 1; i >= 0; i--) stack.push([schema[i], false]); continue; }
+    if (!schema || typeof schema !== "object") continue;
+    const named = Object.keys(schema).some(k => ctx.keyword(k) === "@id");
+    const inside = [];
+    for (const key of Object.keys(schema).sort()) {
+      const value = schema[key];
+      const keyword = ctx.keyword(key);
+      if (keyword != null) {
+        if (top && (keyword === "@id" || keyword === "@type")) continue;
+        if (top || holdsNode(ctx, value)) throw inSchema(keyword);
+        continue;
+      }
+      if (SCHEMA_KEYWORDS.has(key)) {
+        if (SCHEMA_MAPS.has(key) && isMap(value)) { for (const name of Object.keys(value).sort()) inside.push(value[name]); }
+        else if (SCHEMA_ONE.has(key) || SCHEMA_MANY.has(key)) inside.push(value);
+        continue;
+      }
+      if (holdsNode(ctx, value)) throw inSchema("a node under " + JSON.stringify(key));
+      if (named && ctx.expandKey(key).includes(":")) throw inSchema(JSON.stringify(key) + " beside its own @id");
+    }
+    for (let i = inside.length - 1; i >= 0; i--) stack.push([inside[i], false]);
+  }
 }
 // JSON Schema's keywords, and those of them that only describe. Where
 // hydra:expects names it, an object whose keys are all keywords (or @id and
@@ -608,12 +699,20 @@ class Ctx {
     this.prefixes = bare(PREFIXES0); this.terms = bare({}); this.coerce = bare({});
     this.containers = bare({}); this.indexes = bare({}); this.scoped = bare({}); this.aliases = bare({}); this.nulled = bare({});
     this.vocab = null; this.base = base || null; this.documentBase = this.base;
-    this.budget = budget || { left: CONTEXT_BUDGET };
+    this.budget = budget || newBudget(0);
     this.previous = null;
     // The contexts scoped contexts made from this one, each made once (scopedChild).
     this.made = new Map();
     // While wouldKeep absorbs a context, each key's entries before it changed.
     this.journal = null;
+    // Each JSON Schema normalize read in place (jsonSchemaLike).
+    this.schemas = new Set();
+    // Each plain string a document holds, as normalize meets it, and what each
+    // is looked up as (lookup), keyed by vocab and string; and each key's
+    // property IRI, once it is read (expandKey).
+    this.strings = new Set();
+    this.lookups = [new Map(), new Map()];
+    this.keys = new Map();
   }
   tables() { return [this.prefixes, this.terms, this.coerce, this.containers, this.indexes, this.scoped, this.aliases, this.nulled]; }
   // A copy of this context, `previous` included.
@@ -665,9 +764,11 @@ class Ctx {
       });
     }
     this.base = base; this.vocab = vocab; this.made = made;
+    this.keys = new Map();
     return same;
   }
   absorb(ctx) {
+    this.keys = new Map();
     for (const item of asList(ctx)) {
       if (item === null) {
         // A null context empties the active context; the document's own base stays.
@@ -684,7 +785,7 @@ class Ctx {
       if (own(item, "@base")) {
         const b = item["@base"];
         if (b === null) this.base = null;
-        else if (typeof b === "string") this.base = this.base ? resolveIri(b, this.base) : (hasScheme(b) ? b : null);
+        else if (typeof b === "string") this.base = this.base ? charge(this.budget, b, resolveIri(b, this.base)) : (hasScheme(b) ? b : null);
       }
       if (own(item, "@vocab")) {
         const v = item["@vocab"];
@@ -764,20 +865,40 @@ class Ctx {
     if (names.includes("@index") && typeof indexBy === "string" && indexBy && !indexBy.startsWith("@")) this.indexes[key] = indexBy;
     if (own(value, "@context")) this.scoped[key] = value["@context"];
   }
-  // The property IRI a key names, or "" for a term the context set to null.
+  // The property IRI a key names, or "" for a term the context set to null:
+  // charged while a document is read (charge), and kept afterwards, when
+  // reading it looks up the same keys again and again. hmc.py's expand_key is
+  // the same.
   expandKey(key) {
+    if (this.budget.charging) return charge(this.budget, key, this.expandKeyOnce(key));
+    let hit = this.keys.get(key);
+    if (hit === undefined) { hit = this.expandKeyOnce(key); this.keys.set(key, hit); }
+    return hit;
+  }
+  expandKeyOnce(key) {
     if (key.startsWith("@") || key.startsWith("http://") || key.startsWith("https://")) return key;
     if (own(this.nulled, key)) return "";
     if (own(this.terms, key)) return this.terms[key];
-    if (key.includes(":")) return String(this.expandIri(key));
+    if (key.includes(":")) return String(this.expandIriOnce(key));
     if (own(TERMS0, key)) return TERMS0[key];
     return this.vocab != null ? this.vocab + key : key;
+  }
+  // JSON-LD's expansion of a value in an IRI position (expandIriOnce), charged
+  // while a document is read (charge). hmc.py's expand_iri is the same.
+  expandIri(value, opts = {}) { return charge(this.budget, value, this.expandIriOnce(value, opts)); }
+  // What a plain string a document holds is looked up as, a node's IRI perhaps:
+  // expanded against the base, and @vocab and terms where `vocab` applies, once,
+  // as normalize charged it; any other string as it expands. hmc.py's lookup is
+  // the same.
+  lookup(value, vocab = false) {
+    const table = this.lookups[vocab ? 1 : 0];
+    return table.has(value) ? table.get(value) : this.expandIriOnce(value, { vocab, base: true });
   }
   // JSON-LD's expansion of a value in an IRI position: a term the document
   // defined where `vocab` applies; a compact IRI; an absolute IRI or a blank
   // node as it is; then @vocab + the value where `vocab` applies, or the value
-  // resolved against the base where `base` applies. hmc.py's expand_iri is the same.
-  expandIri(value, { vocab = false, base = false } = {}) {
+  // resolved against the base where `base` applies.
+  expandIriOnce(value, { vocab = false, base = false } = {}) {
     if (typeof value !== "string" || value.startsWith("@")) return value;
     if (vocab && own(this.terms, value)) return this.terms[value];
     const colon = value.indexOf(":");
@@ -970,6 +1091,22 @@ class Ctx {
   // time and no call stack. Returns the set of objects that are node objects,
   // which NodeIndex indexes. hmc.py's normalize is the same.
   normalize(document) {
+    this.budget.charging = true;
+    try {
+      const nodes = this.normalizeOnce(document);
+      for (const text of this.strings) {
+        const plain = this.expandIri(text, { base: true });
+        this.lookups[0].set(text, plain);
+        const vocab = this.expandIriOnce(text, { vocab: true, base: true });
+        this.lookups[1].set(text, vocab !== text ? charge(this.budget, plain, vocab) : vocab);
+      }
+      return nodes;
+    } finally { this.budget.charging = false; }
+  }
+  // Keeps each plain string a value holds, alone or in an array, which reading
+  // the document may look up as a node (lookup). hmc.py's _collect is the same.
+  collect(value) { for (const item of Array.isArray(value) ? value : [value]) if (typeof item === "string") this.strings.add(item); }
+  normalizeOnce(document) {
     const root = this;
     const keyed = new Map();
     const nodeObjects = new Set();
@@ -988,6 +1125,8 @@ class Ctx {
       const fromMap = keyed.get(item);
       if (!fromMap && jsonSchemaLike(item, expected)) {
         ctx.renameAliases(item);
+        schemaHides(ctx, item);
+        root.schemas.add(item);
         if (own(item, "@id")) item["@id"] = ctx.expandIri(item["@id"], { base: true });
         if (own(item, "@type")) item["@type"] = ctx.expandTyped(item["@type"], true);
         continue;
@@ -1036,6 +1175,7 @@ class Ctx {
             if (!level) throw new Error(key === "@graph" ? REFUSED.graph : REFUSED.included);
             item[key] = ctx.contents(item[key], false);
           }
+          if (key === "@list" || key === "@set") root.collect(item[key]);
           if (item[key] && typeof item[key] === "object") stack.push([item[key], ctx, false, key === "@list" || key === "@set" ? scoped : undefined, false, graphs]);
           continue;
         }
@@ -1060,6 +1200,7 @@ class Ctx {
         } else if (containers) value = ctx.unmap(key, value, keyed, valueCtx);
         if (kind !== "@json") value = valueCtx.contents(value, member);
         if (kind === "@id" || kind === "@vocab") value = valueCtx.expandTyped(value, kind === "@vocab");
+        else if (kind !== "@json") root.collect(value);
         let name = key;
         if (ctx !== root) {
           const expanded = ctx.expandKey(key);
@@ -1143,8 +1284,8 @@ class NodeIndex {
   // address its text came from, which relative IRIs resolve against;
   // `inexact`, the doubles of the numbers its text writes with digits their
   // doubles drop (changedNumbers), whose every reading may have been rounded.
-  constructor(document, base, fetchedFrom, inexact) {
-    this.ctx = new Ctx(fetchedFrom || base);
+  constructor(document, base, fetchedFrom, inexact, size) {
+    this.ctx = new Ctx(fetchedFrom || base, newBudget(size == null ? JSON.stringify(document).length : size));
     this.inexact = inexact || new Set();
     this.base = base;
     this.nodes = new Map();
@@ -1288,7 +1429,7 @@ class NodeIndex {
     if (iri != null && typeof iri !== "object" && this.nodes.has(String(iri))) return this.nodes.get(String(iri));
     // A plain string naming a node as its "@id" was written before expansion, such as "#S".
     if (typeof ident === "string") {
-      const full = this.ctx.expandIri(ident, { base: true });
+      const full = this.ctx.lookup(ident);
       if (full !== ident && this.nodes.has(full)) return this.nodes.get(full);
     }
     if (ident && typeof ident === "object" && !Array.isArray(ident) && Object.keys(ident).some(k => k !== "@id")) return ident;
@@ -1563,7 +1704,7 @@ function supportedField(index, ref, problems) {
   let iri = null;
   if (isMap(head)) iri = own(head, "@id") ? head["@id"] : null;
   // Hydra's context types hydra:property as @vocab, so a plain "schema:text" names an IRI.
-  else if (typeof head === "string") iri = index.ctx.expandIri(head, { vocab: true, base: true });
+  else if (typeof head === "string") iri = index.ctx.lookup(head, true);
   const named = typeof iri === "string" && !!iri && !iri.startsWith("_:");
   const shownLabel = propNode ? label(index.get(propNode, P.label)) : null;
   const shown = label(index.get(sp, P.shName)) || (named ? localName(iri) : null) || shownLabel;
@@ -1701,6 +1842,15 @@ function shapeFields(index, shapeRef) {
         problems.push("the JSON Schema names " + key + ", which this client does not check, so what it sends is not known; this control is not invoked");
       }
     }
+    // A JSON-LD keyword is no JSON Schema keyword: one written in place may keep
+    // its own @id and @type (normalize refuses any other), and one a JSON literal
+    // holds, which is JSON, keeps none.
+    const inPlace = index.ctx.schemas.has(shapeRef);
+    for (const key of Object.keys(shapeRef).sort()) {
+      if (key.startsWith("@") && !(inPlace && (key === "@id" || key === "@type"))) {
+        problems.push("the JSON Schema names " + key + ", which this client does not check, so what it sends is not known; this control is not invoked");
+      }
+    }
     for (const [name, prop0] of Object.entries(properties)) fields.push(schemaField(name, prop0, required.has(name), problems));
     return { fields, problems };
   }
@@ -1825,7 +1975,7 @@ function sharedShapeFields(index, shapeRef) {
   const shape = isJsonSchema(jsonValue(shapeRef)) ? null : index.node(jsonValue(shapeRef));
   const build = () => {
     const { fields, problems } = shapeFields(index, shapeRef);
-    for (const f of fields) f.roundedDefault = roundedDefault(f, index.inexact);
+    for (const f of fields) { f.inexact = index.inexact; f.roundedDefault = roundedDefault(f, index.inexact); }
     return { fields, problems, duplicate: duplicateProblem(fields) };
   };
   if (!shape) return build();
@@ -1872,7 +2022,7 @@ function addressOf(index, node) {
       const required = one(index.get(mn, P.required), "hydra:required in one hydra:mapping", problems, "which inputs it needs", undefined, undefined, v => String(truthy(v)));
       mappings.push({
         variable: asTextOrNull(variable),
-        property: asTextOrNull(typeof prop === "string" ? index.ctx.expandIri(prop, { vocab: true, base: true }) : prop),
+        property: asTextOrNull(typeof prop === "string" ? index.ctx.lookup(prop, true) : prop),
         required: truthy(required)
       });
     }
@@ -2215,7 +2365,8 @@ function inlineField(item, inexact) {
     description: asText(item.description), required: (minCount || 0) >= 1, enum: [], rawBody: false,
     multi: isMulti(jsonKind, minCount, maxCount, false)
   };
-  field.roundedDefault = roundedDefault(field, inexact);
+  field.inexact = inexact || new Set();
+  field.roundedDefault = roundedDefault(field, field.inexact);
   field.defaultValue = inlineDefault(item.defaultValue);
   return field;
 }
@@ -2408,6 +2559,7 @@ function controlInputs(index, node, expectsRaw, expects, mappings) {
       // as they are.
       const first = fields[given];
       const built = schemaField(first.name, schema.additionalProperties, first.required, extra);
+      built.inexact = index.inexact;
       built.roundedDefault = roundedDefault(built, index.inexact);
       const shared = fields.length - given > 1 ? sharedSchemaProblem(first.name, fields[given + 1].name, schema.additionalProperties) : null;
       if (shared) extra.push(shared);
@@ -2765,7 +2917,7 @@ function parseDescriptor(text, contentType, url, fetchedFrom) {
     const document = JSON.parse(text);
     const repeated = repeatedKey(text);
     if (repeated != null) throw new Error('This document repeats the key "' + repeated + '" in one object, so which value it means is not known, and it is not read.');
-    const index = new NodeIndex(document, url, fetchedFrom, new Set(changedNumbers(text).map(c => c[1])));
+    const index = new NodeIndex(document, url, fetchedFrom, new Set(changedNumbers(text).map(c => c[1])), text.length);
     const root = index.root;
     // Shown, never acted on: the first value of each that reads as one.
     const title = asText(label(index.get(root, P.dcTitle)) || label(index.get(root, P.title)) || label(index.get(root, P.label)) || localName(url) || url);
@@ -2994,9 +3146,10 @@ function coerceNumber(field, kind, value) {
 // however many values they check, so a long constraint costs its length once
 // and not once per value: the sh:hasValue's text, the number it is in a number
 // field, the key of the JSON it holds in an rdf:JSON field (jsonKey), and
-// whether it holds an integer past 2^53 (roundedEntry); and each bound with
-// its number (boundNumber, null for none) and its text. hmc.py's _FieldFacts
-// is the same.
+// whether it holds a number reading JSON may have rounded (roundedEntry); and
+// each bound with its number (boundNumber, null for none), its text, and
+// whether that number may not be the one written (inexactBound). hmc.py's
+// _FieldFacts is the same.
 function fieldFacts(field, numeric) {
   const rdfJson = isRdfJson(field.datatype);
   let hasValue = null;
@@ -3009,7 +3162,7 @@ function fieldFacts(field, numeric) {
   }
   const bounds = [["minInclusive", field.minInclusive], ["maxInclusive", field.maxInclusive],
     ["minExclusive", field.minExclusive], ["maxExclusive", field.maxExclusive]].filter(b => b[1] != null)
-    .map(([kind, bound]) => ({ kind, number: boundNumber(bound), text: asText(bound) }));
+    .map(([kind, bound]) => ({ kind, number: boundNumber(bound), text: asText(bound), inexact: inexactBound(bound, field.inexact) }));
   return { rdfJson, hasValue, bounds };
 }
 // Whether a value of a field a shape gives (SHACL, Hydra, a template or a
@@ -3092,15 +3245,44 @@ function roundedDefault(field, inexact) {
 // hmc.py's _rounded_entry is the same.
 function roundedEntry(field, entry) {
   if (isRdfJson(field.datatype) && typeof entry === "string") {
-    try { return holdsUnsafeInteger(strictJson(entry)); } catch { return false; }
+    let parsed;
+    try { parsed = strictJson(entry); } catch { return null; }
+    if (holdsUnsafeInteger(parsed)) return "integer";
+    return changedNumbers(entry, true).length ? "number" : null;
   }
-  return typeof entry !== "string" && holdsUnsafeInteger(entry);
+  return typeof entry === "string" ? null : roundedKind(entry, field.inexact);
+}
+// Whether a JSON value holds, at any depth, a number reading JSON may have
+// rounded (holdsRounded): "integer" for one that holds an integer past 2^53,
+// "number" for one that holds another (one of `inexact`), or null. hmc.py's
+// _rounded_kind is the same.
+function roundedKind(value, inexact) {
+  if (holdsUnsafeInteger(value)) return "integer";
+  return inexact && inexact.size && holdsRounded(value, inexact) ? "number" : null;
+}
+// Whether a bound's number may not be the one the document writes, so it is not
+// compared: a JSON number that is an integer past 2^53 or one its document
+// writes with digits its double drops (holdsRounded), or text whose double
+// writes another decimal. A bound past every double is an infinity, which
+// bounds as the number written does. hmc.py's _inexact_bound is the same.
+function inexactBound(bound, inexact) {
+  if (typeof bound === "number") return Number.isFinite(bound) && holdsRounded(bound, inexact || new Set());
+  const n = boundNumber(bound);
+  if (n == null || !Number.isFinite(n)) return false;
+  return decimalKey(trimSpaces(bound)) !== decimalKey(String(n));
+}
+// What a value is refused with, after the field's name, when a bound named with
+// its text may not be the number the document writes. hmc.py's
+// _inexact_problem is the same.
+function inexactProblem(name, label, text) {
+  return name + ": its " + label + " " + text + " is a number a double may not hold exactly, which this client does not compare, so it is not sent";
 }
 // What a value is refused with when the only entry it matches holds an integer
 // past 2^53: the entry may not be what the document wrote, so the match is not
 // known to be one. hmc.py's _rounded_problem is the same.
-function roundedProblem(at, entry) {
-  return at + ": matches only " + entry + ", which holds an integer past 2^53 that reading JSON may have rounded, so it is not sent";
+function roundedProblem(at, entry, kind = "integer") {
+  if (kind === "integer") return at + ": matches only " + entry + ", which holds an integer past 2^53 that reading JSON may have rounded, so it is not sent";
+  return at + ": matches only " + entry + ", which holds a number that reading JSON may have rounded, so it is not sent";
 }
 // Whether two JSON values are the same value, as JSON Schema compares an enum's
 // or a const's: arrays item by item in order, objects by the same keys with the
@@ -3255,6 +3437,8 @@ function offers(field, v) {
   if (tooLarge(v)) return false;
   // An integer past 2^53 is the double JSON.parse rounded it to, which may not be the number written.
   if (typeof v === "number" && Number.isInteger(v) && !Number.isSafeInteger(v)) return false;
+  // Nor is a number its document writes with digits its double drops.
+  if (typeof v === "number" && field.inexact && field.inexact.has(v)) return false;
   if (field.schemaTypes && !jsonTypesOf(v).some(t => field.schemaTypes.includes(t))) return false;
   if (numericKind(field) === "integer") return v === null || Number.isSafeInteger(v);
   if (numericKind(field)) return v === null || typeof v === "number";
@@ -3291,16 +3475,17 @@ function schemaChoices(field, problems, subject) {
 // for a whole check: each enum entry's key (jsonKey), apart from those that
 // hold an integer past 2^53 with the first entry of each such key, and the
 // const's key and whether it holds one. hmc.py's _enum_keys is the same.
-function enumKeys(s, enums) {
+function enumKeys(s, enums, inexact) {
   let keyed = enums.get(s);
   if (keyed) return keyed;
   const sure = new Set(); const rounded = new Map();
   for (const entry of Array.isArray(s.enum) ? s.enum : []) {
-    if (holdsUnsafeInteger(entry)) { if (!rounded.has(jsonKey(entry))) rounded.set(jsonKey(entry), entry); }
+    const kind = roundedKind(entry, inexact);
+    if (kind) { if (!rounded.has(jsonKey(entry))) rounded.set(jsonKey(entry), [entry, kind]); }
     else sure.add(jsonKey(entry));
   }
   const hasConst = own(s, "const");
-  keyed = { sure, rounded, constKey: hasConst ? jsonKey(s.const) : null, constRounded: hasConst && holdsUnsafeInteger(s.const) };
+  keyed = { sure, rounded, constKey: hasConst ? jsonKey(s.const) : null, constRounded: hasConst ? roundedKind(s.const, inexact) : null };
   enums.set(s, keyed);
   return keyed;
 }
@@ -3317,7 +3502,7 @@ function enumKeys(s, enums) {
 // an enumeration's entries are named once. Each enum's entries and each const
 // are keyed once (enumKeys), so each part is compared with them at the cost of
 // its own size. A walk with a stack. hmc.py's _check_schema is the same.
-function schemaCheck(schema, value, name, report, enums = new Map()) {
+function schemaCheck(schema, value, name, report, enums = new Map(), inexact = null) {
   const stack = [[schema, value, name]];
   // A name that holds "/" is set apart from the pointer after it: "d/x at /0".
   const step = (at, token) => (at === name && name.includes("/") ? name + " at /" : at + "/") + token;
@@ -3334,15 +3519,15 @@ function schemaCheck(schema, value, name, report, enums = new Map()) {
     // wrote, so it admits no value: one that matches only it is refused naming
     // it. An enum's entries and a const are keyed once for the whole check, so
     // each value is compared with them at the cost of its own size.
-    const keyed = Array.isArray(s.enum) || own(s, "const") ? enumKeys(s, enums) : null;
+    const keyed = Array.isArray(s.enum) || own(s, "const") ? enumKeys(s, enums, inexact) : null;
     const k = keyed ? jsonKey(v) : null;
     if (Array.isArray(s.enum) && !keyed.sure.has(k)) {
-      if (keyed.rounded.has(k)) return report(roundedProblem(at, entryText(keyed.rounded.get(k))));
+      if (keyed.rounded.has(k)) { const [entry, kind] = keyed.rounded.get(k); return report(roundedProblem(at, entryText(entry), kind)); }
       return report(at + ": must be one of " + s.enum.map(entryText).join(", "));
     }
     if (own(s, "const")) {
       if (k !== keyed.constKey) return report(at + ": must be " + entryText(s.const));
-      if (keyed.constRounded) return report(roundedProblem(at, entryText(s.const)));
+      if (keyed.constRounded) return report(roundedProblem(at, entryText(s.const), keyed.constRounded));
     }
     if (typeof v === "string") {
       const n = codePoints(v);
@@ -3355,6 +3540,10 @@ function schemaCheck(schema, value, name, report, enums = new Map()) {
       const high = own(s, "maximum") ? boundNumber(s.maximum) : null;
       const xlow = s.exclusiveMinimum === true ? [low, s.minimum] : (own(s, "exclusiveMinimum") && typeof s.exclusiveMinimum !== "boolean" ? [boundNumber(s.exclusiveMinimum), s.exclusiveMinimum] : null);
       const xhigh = s.exclusiveMaximum === true ? [high, s.maximum] : (own(s, "exclusiveMaximum") && typeof s.exclusiveMaximum !== "boolean" ? [boundNumber(s.exclusiveMaximum), s.exclusiveMaximum] : null);
+      // A bound whose number may not be the one written is not compared.
+      const unsure = ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"]
+        .find(key => own(s, key) && typeof s[key] !== "boolean" && inexactBound(s[key], inexact));
+      if (unsure) return report(inexactProblem(at, unsure, asText(s[unsure])));
       if (low != null && v < low) return report(at + ": below minInclusive " + asText(s.minimum));
       if (high != null && v > high) return report(at + ": above maxInclusive " + asText(s.maximum));
       if (xlow && xlow[0] != null && !(v > xlow[0])) return report(at + ": not above exclusiveMinimum " + asText(xlow[1]));
@@ -3565,10 +3754,11 @@ function coerceValue(field, value) {
   const numeric = numericKind(field);
   if (numeric) return coerceNumber(field, numeric, value);
   if (xsdName(field.datatype) === "boolean") {
-    // Trimmed of space, tab, CR and LF, as a number is, and of nothing else.
-    const t = trimSpaces(String(value)).toLowerCase();
-    if (["true", "1", "yes"].includes(t)) return true;
-    if (["false", "0", "no"].includes(t)) return false;
+    // XSD's four forms, true, false, 1 and 0, trimmed of space, tab, CR and LF, as a number is, and
+    // of nothing else: a value given is read as a default is, so "yes" and "TRUE" are no boolean.
+    const t = trimSpaces(String(value));
+    if (t === "true" || t === "1") return true;
+    if (t === "false" || t === "0") return false;
     throw new Error(field.name + " must be a boolean");
   }
   return value;
@@ -3596,7 +3786,8 @@ function shapeChoices(field, numeric) {
     const found = ["t" + asText(e)];
     if (numeric && (typeof e === "number" || typeof e === "string")) { try { found.push("n" + String(coerceNumber(field, numeric, String(e)))); } catch {} }
     if (rdfJson) { try { found.push("j" + jsonKey(typeof e !== "string" ? e : strictJson(e))); } catch {} }
-    if (roundedEntry(field, e)) { for (const k of found) if (!rounded.has(k)) rounded.set(k, asText(e)); }
+    const kind = roundedEntry(field, e);
+    if (kind) { for (const k of found) if (!rounded.has(k)) rounded.set(k, [asText(e), kind]); }
     else for (const k of found) keys.add(k);
   }
   const problem = field.name + ": must be one of " + enumOptions(field).join(", ");
@@ -3608,7 +3799,7 @@ function shapeChoices(field, numeric) {
     else if (typed !== null && typeof typed === "object") k = null;
     else k = "t" + (typeof typed === "string" ? typed : (typed == null ? "" : String(typed)));
     if (k != null && keys.has(k)) return null;
-    if (k != null && rounded.has(k)) return roundedProblem(field.name, rounded.get(k));
+    if (k != null && rounded.has(k)) return roundedProblem(field.name, ...rounded.get(k));
     return problem;
   };
   return { problem, problemFor };
@@ -3722,7 +3913,7 @@ function checkValue(field, found, numeric, report, choices, fromDefault, enums, 
       report(field.name + ": integer too large to send exactly");
       return null;
     }
-    schemaCheck(field.schema, typed, field.name, report, enums);
+    schemaCheck(field.schema, typed, field.name, report, enums, field.inexact);
     return typed;
   }
   const structured = typed != null && typeof typed === "object";
@@ -3752,7 +3943,7 @@ function checkValue(field, found, numeric, report, choices, fromDefault, enums, 
   if (choiceProblem) report(choiceProblem);
   if (facts.hasValue && !field.multi) {
     if (!hasValueMatches(facts, numeric, typed)) report(field.name + ": must be " + facts.hasValue.text);
-    else if (facts.hasValue.rounded) report(roundedProblem(field.name, facts.hasValue.text));
+    else if (facts.hasValue.rounded) report(roundedProblem(field.name, facts.hasValue.text, facts.hasValue.rounded));
   }
   // A bound is compared with a number: a value that is none (text, or a node) is
   // an error, not a pass, as SHACL has a comparison it cannot make. A bound that
@@ -3764,6 +3955,9 @@ function checkValue(field, found, numeric, report, choices, fromDefault, enums, 
   if (unreadBound) report(field.name + ": its sh:" + unreadBound.kind + " " + unreadBound.text + " is not a number, which this client does not compare, so it is not sent");
   else if (bounds.length && !numeric) {
     report(field.name + ": its sh:" + bounds[0].kind + " " + bounds[0].text + " bounds a field that takes no number, which this client does not compare, so it is not sent");
+  } else if (bounds.some(b => b.inexact)) {
+    const unsure = bounds.find(b => b.inexact);
+    report(inexactProblem(field.name, "sh:" + unsure.kind, unsure.text));
   } else if (bounds.length) {
     const n = structured ? null : lexicalNumber(typed);
     if (n == null) report(field.name + ": not a number");
@@ -3852,7 +4046,7 @@ function fieldValue(field, found, report, enums) {
       const listed = Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue];
       items = multiItems(listed);
       // A default is read as a value given is: one with entries that are all blank holds no values.
-      if (!items.length && listed.some(x => x != null)) { note(field.name + ": was given no values"); return [null, false]; }
+      if (!items.length && listed.some(x => x != null)) { note(field.name + ": its default holds no values, so it is not sent"); return [null, false]; }
       // One with a blank entry among others is sent as the document gives it or not at all: never without it.
       if (items.length !== listed.length) {
         note(field.name + ": its default holds a blank value, which this client neither drops nor sends, so it is not sent");
@@ -3882,7 +4076,7 @@ function fieldValue(field, found, report, enums) {
     // sh:hasValue asks that one of a list's values be the one it names.
     if (facts.hasValue && !stopped) {
       if (!typedItems.some(v => v != null && hasValueMatches(facts, numeric, v))) note(field.name + ": must include " + facts.hasValue.text);
-      else if (facts.hasValue.rounded) note(roundedProblem(field.name, facts.hasValue.text));
+      else if (facts.hasValue.rounded) note(roundedProblem(field.name, facts.hasValue.text, facts.hasValue.rounded));
     }
     return [typedItems, problems === 0];
   }

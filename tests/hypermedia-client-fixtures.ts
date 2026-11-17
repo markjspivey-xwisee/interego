@@ -1233,6 +1233,84 @@ export function sharedDescriptors(base: string): Record<string, string> {
       { '@id': '#LG', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
         'sh:datatype': { '@id': 'xsd:decimal' } } },
     ] },
+    // Values read strictly: an XSD boolean's forms, a list default that holds no value, a list whose
+    // check stops at its first bad value, and a JSON literal schema with JSON-LD keywords at its top.
+    // RULE_CASES read them.
+    '/strict': { '@context': CTX, '@id': `${base}/strict`, 'iep:affordance': [
+      op('bo', 'urn:strict:boolean', 'POST', 'Strict boolean', { ...target('/num-target'), 'hydra:expects': { '@id': '#BO' } }),
+      op('bl', 'urn:strict:blank-list-default', 'POST', 'Blank list default', { ...target('/num-target'), 'hydra:expects': { '@id': '#BL' } }),
+      op('ib', 'urn:strict:inline-blank-list', 'POST', 'Inline blank list default', { ...target('/num-target'),
+        fields: [{ name: 'm', minCount: 2, defaultValue: '' }] }),
+      op('ls', 'urn:strict:list-stop', 'POST', 'List stops', { ...target('/num-target'), 'hydra:expects': { '@id': '#LS' } }),
+      op('lt', 'urn:strict:literal-type', 'POST', 'Literal schema type', { ...target('/num-target'),
+        'hydra:expects': { '@type': '@json', '@value': { '@type': 'x', type: 'object', properties: { m: { type: 'string' } } } } }),
+      op('lc', 'urn:strict:literal-context', 'POST', 'Literal schema context', { ...target('/num-target'),
+        'hydra:expects': { '@type': '@json', '@value': { '@context': { k: 'urn:k' }, type: 'object', properties: { m: { type: 'string' } } } } }),
+    ], '@graph': [
+      { '@id': '#BO', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:b' }, 'sh:name': 'b', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:boolean' } } },
+      { '@id': '#BL', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
+        'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': '' } },
+      { '@id': '#LS', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
+        'sh:datatype': { '@id': 'xsd:integer' }, 'sh:maxInclusive': 5 } },
+    ] },
+    // Bounds and entries whose number may not be what the document writes: text with more digits
+    // than a double keeps, a JSON integer past 2^53, and a JSON number written with more digits than
+    // its double keeps (0.30000000000000000001, read as 0.3). RULE_CASES read them.
+    '/inexact': { '@context': CTX, '@id': `${base}/inexact`, 'iep:affordance': [
+      op('sb', 'urn:inexact:shape', 'POST', 'Inexact shape', { ...target('/num-target'), 'hydra:expects': { '@id': '#SB' } }),
+      op('hv', 'urn:inexact:has-value', 'POST', 'Inexact has value', { ...target('/num-target'), 'hydra:expects': { '@id': '#HV' } }),
+      schemaOp('jb', 'urn:inexact:schema', 'POST', 'Inexact schema', { f: { type: 'number', minimum: 'PAST-SAFE' },
+        g: { type: 'number', minimum: 'POINT-THREE' }, j: { type: 'number', enum: ['POINT-THREE', 1] }, k: { type: 'number', const: 'POINT-THREE' },
+        l: { type: 'number', minimum: 0.5 } }),
+    ], '@graph': [
+      { '@id': '#HV', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:i' }, 'sh:name': 'i', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:hasValue': 'POINT-THREE' } },
+      { '@id': '#SB', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:a' }, 'sh:name': 'a', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:decimal' },
+          'sh:minInclusive': '0.30000000000000000001' },
+        { 'sh:path': { '@id': 'urn:p:b' }, 'sh:name': 'b', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:minInclusive': 'PAST-SAFE' },
+        { 'sh:path': { '@id': 'urn:p:c' }, 'sh:name': 'c', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:double' }, 'sh:minInclusive': 'PAST-SAFE' },
+        { 'sh:path': { '@id': 'urn:p:e' }, 'sh:name': 'e', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:decimal' },
+          'sh:maxInclusive': '0.29999999999999999999' },
+        { 'sh:path': { '@id': 'urn:p:h' }, 'sh:name': 'h', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:decimal' },
+          'sh:in': { '@list': ['POINT-THREE', 1] } },
+        { 'sh:path': { '@id': 'urn:p:n' }, 'sh:name': 'n', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:minInclusive': 'POINT-THREE' },
+        { 'sh:path': { '@id': 'urn:p:o' }, 'sh:name': 'o', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:decimal' },
+          'sh:minInclusive': '0.50000000000000000000' },
+      ] },
+    ] },
+    // Numbers past 2^53 that a decimal or a double field takes: sent as JavaScript writes the double,
+    // in an address, a path and a body alike. dryRuns and BODY_TEXTS read them.
+    '/big-numbers': { '@context': CTX, '@id': `${base}/big-numbers`, 'iep:affordance': [
+      op('q', 'urn:big:query', 'GET', 'Big query', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{?amount}`, 'hydra:mapping': [{ 'hydra:variable': 'amount', 'hydra:property': { '@id': 'urn:p:amount' } }] },
+      'hydra:expects': { '@id': '#AM' } }),
+      op('p', 'urn:big:path', 'GET', 'Big path', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{/m}`, 'hydra:mapping': [{ 'hydra:variable': 'm', 'hydra:property': { '@id': 'urn:p:m' } }] },
+      'hydra:expects': { '@id': '#DB' } }),
+      schemaOp('s', 'urn:big:schema', 'POST', 'Big schema number', { amount: { type: 'number' } }),
+      op('d', 'urn:big:decimal', 'POST', 'Big decimal', { ...target('/num-target'), 'hydra:expects': { '@id': '#AM' } }),
+      op('b', 'urn:big:double-default', 'POST', 'Big double default', { ...target('/num-target'), 'hydra:expects': { '@id': '#DB' } }),
+      op('l', 'urn:big:double-list', 'POST', 'Big double list', { ...target('/num-target'), 'hydra:expects': { '@id': '#DL' } }),
+    ], '@graph': [
+      { '@id': '#AM', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:amount' }, 'sh:name': 'amount', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:decimal' } } },
+      { '@id': '#DB', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:double' }, 'sh:defaultValue': 'BIG-DOUBLE' } },
+      { '@id': '#DL', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
+        'sh:datatype': { '@id': 'xsd:float' }, 'sh:defaultValue': ['BIG-DOUBLE'] } },
+    ] },
+    // A hint on a node written inside an object read as JSON, not JSON-LD: one that is no JSON Schema,
+    // outside hydra:expects, is read as JSON-LD; HIDDEN_NODES are refused whole.
+    '/hidden-meta': { '@context': { hydra: HYDRA, iep: IEP, ex: 'https://ex.example/' }, '@id': `${base}/hidden-meta`,
+      'ex:meta': { properties: {}, 'iep:y': { '@id': '#d', 'iep:destructiveHint': true } },
+      'iep:affordance': [{ '@id': '#d', 'iep:action': { '@id': 'urn:hidden:meta' }, 'hydra:method': 'GET', 'hydra:title': 'Hidden meta',
+        'hydra:target': { '@id': `${base}/purge` } }] },
+    ...Object.fromEntries(HIDDEN_NODES.map(([path, hidden]) => [path, { '@context': CTX, '@id': `${base}${path}`, 'iep:affordance': [
+      op('w', 'urn:hidden:write', 'POST', 'Hiding write', { ...target('/num-target'),
+        'hydra:expects': { type: 'object', properties: { m: { type: 'string' } }, ...hidden } }),
+      op('d', 'urn:hidden:read', 'GET', 'Hidden read', target('/purge'))] }])),
     // One field for each XSD 1.1 date and time datatype, named for it. TEMPORAL_CASES read it.
     '/temporal': { '@context': CTX, '@id': `${base}/temporal`, 'iep:affordance': [
       op('t', 'urn:temporal', 'POST', 'Dates and times', { ...target('/num-target'), 'hydra:expects': { '@id': '#T' } })],
@@ -1257,6 +1335,9 @@ export function sharedDescriptors(base: string): Record<string, string> {
   out['/rules'] = out['/rules']!.split('"NUMBER-PAST-SAFE"').join('9007199254740993');
   // 2^53 + 1, which JSON.parse reads as 2^53, and a fraction JSON.parse reads as 0.3.
   out['/rounding'] = out['/rounding']!.split('"PAST-SAFE"').join('9007199254740993').split('"PAST-DOUBLE"').join('0.30000000000000000001');
+  out['/inexact'] = out['/inexact']!.split('"PAST-SAFE"').join('9007199254740993').split('"POINT-THREE"').join('0.30000000000000000001');
+  // A JSON number past 2^53 that a double field takes as the double nearest it.
+  out['/big-numbers'] = out['/big-numbers']!.split('"BIG-DOUBLE"').join('123456789012345678901');
   // JSON.stringify writes each key once, so a repeated key is put in the text by hand: JSON leaves
   // its meaning open, and a reader that takes the last "hydra:method" takes GET.
   out['/repeated-key'] = JSON.stringify({ '@context': CTX, '@id': `${base}/repeated-key`, 'iep:affordance': [
@@ -1331,8 +1412,28 @@ export const addressTexts = (base: string): readonly string[] =>
   [`${base}/link-\tvalues`, `${base}/link-values\n`, `${base}/link-values\r`, ` ${base}/link-values`];
 export const ADDRESS_TEXT_PROBLEM = 'the address holds a backslash, a space or a control character, which URL parsers read in different ways';
 
+/** What a document whose JSON Schema holds `what`, which JSON-LD would read and neither client reads there, is refused with. */
+const inSchema = (what: string) => `This document writes ${what} in a JSON Schema, which this client does not read as JSON-LD, so it is not read.`;
+/**
+ * Documents whose JSON Schema, written in place under hydra:expects beside a GET, holds what
+ * JSON-LD reads as a node or a keyword: a node under a key that is no JSON Schema keyword, with an
+ * @id or with terms; a JSON-LD keyword other than its own @id and @type; or, beside its own @id, a
+ * key the context expands, which says something of that node. Neither client reads a schema as
+ * JSON-LD, so a hint written there would be passed over: each is refused whole, as
+ * [path, what the schema holds beside its keywords, the problem].
+ */
+export const HIDDEN_NODES: ReadonlyArray<readonly [path: string, hidden: Record<string, unknown>, problem: string]> = [
+  ['/hidden-key', { 'iep:x': { '@id': '#d', 'iep:destructiveHint': true } }, inSchema('a node under "iep:x"')],
+  ['/hidden-blank', { 'iep:x': [{ 'iep:destructiveHint': true }] }, inSchema('a node under "iep:x"')],
+  ['/hidden-own-id', { '@id': '#d', 'iep:destructiveHint': true }, inSchema('"iep:destructiveHint" beside its own @id')],
+  ...([['@included', [{ '@id': '#d', 'iep:destructiveHint': true }]], ['@graph', [{ '@id': '#d', 'iep:destructiveHint': true }]],
+    ['@context', { k: 'iep:destructiveHint' }], ['@language', 'en'], ['@index', 'i'], ['@direction', 'ltr'], ['@foo', 1]] as const)
+    .map(([key, value]) => [`/schema-keyword-${key.slice(1)}`, { [key]: value }, inSchema(key)] as const),
+];
+
 /** Documents each client refuses whole, as [path, the problem it names]; nothing is listed or sent. */
 export const DOCUMENT_REFUSALS: ReadonlyArray<readonly [path: string, problem: string]> = [
+  ...HIDDEN_NODES.map(([path, , problem]) => [path, problem] as const),
   ['/nested-graph', 'This document holds a @graph inside a node, which this client does not read, so it is not read.'],
   ['/nested-included', 'This document holds @included inside a node that is not at its top or in a @graph, which this client does not read, so it is not read.'],
   ['/reverse', 'This document uses @reverse, which this client does not read, so it is not read.'],
@@ -1375,6 +1476,8 @@ export const UNSAFE_CONTROLS: ReadonlyArray<readonly [path: string, rel: string 
   ['/ref-hint-strings', 'urn:refstr:vocab', 'Vocab string flags', 'GET'],
   ['/ref-hint-strings', 'urn:refstr:listed', 'Listed string flags', 'GET'],
   ['/ref-hint-strings', 'urn:refstr:plain', 'Plain string flags', 'GET'],
+  // An object with "properties" outside hydra:expects is no JSON Schema: the node in it is read.
+  ['/hidden-meta', 'urn:hidden:meta', 'Hidden meta', 'GET'],
 ];
 
 /**
@@ -1416,6 +1519,10 @@ export function dryRuns(base: string): ReadonlyArray<readonly [path: string, rel
     // the other makes it required.
     ['/ref-inputs', 'urn:refin:merged', {}, { error: "missing required field 'q'" }],
     ['/ref-inputs', 'urn:refin:merged', { q: '1' }, { url: `${base}/api?q=1`, body: null }],
+    // A decimal or a double past 2^53 is written as JavaScript writes its double, in a query and a path.
+    ['/big-numbers', 'urn:big:query', { amount: '123456789012345680000' }, { url: `${base}/num-target?amount=123456789012345680000`, body: null }],
+    ['/big-numbers', 'urn:big:path', {}, { url: `${base}/num-target/123456789012345680000`, body: null }],
+    ['/big-numbers', 'urn:big:path', { m: '123456789012345678901' }, { url: `${base}/num-target/123456789012345680000`, body: null }],
   ];
 }
 
@@ -1590,8 +1697,8 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
   ['/values', 'urn:values:space-number', 'Space number default', {}, { error: 'amt: not a number' }],
   ['/values', 'urn:values:space-number', 'Space number default', { amt: '' }, { error: 'amt: not a number' }],
   ['/values', 'urn:values:space-number', 'Space number default', { amt: ' 2 ' }, { body: { amt: 2 } }],
-  ['/values', 'urn:values:space-list', 'Blank list default', {}, { error: 'mt: was given no values' }],
-  ['/values', 'urn:values:space-list', 'Blank list default', { mt: '' }, { error: 'mt: was given no values' }],
+  ['/values', 'urn:values:space-list', 'Blank list default', {}, { error: 'mt: its default holds no values, so it is not sent' }],
+  ['/values', 'urn:values:space-list', 'Blank list default', { mt: '' }, { error: 'mt: its default holds no values, so it is not sent' }],
   ['/values', 'urn:values:space-list', 'Blank list default', { mt: 'x' }, { body: { mt: ['x'] } }],
   // A required input whose default the form cannot hold is left empty, and the default is sent.
   ['/values', 'urn:values:required-crlf', 'Required CRLF default', {}, { body: { memo: 'a\r\nb' } }],
@@ -1611,7 +1718,7 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
 ];
 
 type ValueCase = readonly [path: string, action: string, title: string, fields: Record<string, string>,
-  outcome: { readonly body: unknown } | { readonly error: string }];
+  outcome: { readonly body: unknown } | { readonly error: string; readonly only?: true }];
 /** What each client says of a value an address would leave out, after the field's name. */
 const ADDRESS_LEAVES = 'holds a value an address leaves out (null, "", [] or {}, alone or inside it), so it is not sent';
 /** What each client says of a value given for a field with a constraint neither checks, after its name. */
@@ -1820,6 +1927,12 @@ const wrongDefault = (name: string, value: string, kind: string) =>
 /** What a bound on a field that takes no number is refused with. */
 const textBound = (name: string, bound: string) =>
   `${name}: its sh:minInclusive ${bound} bounds a field that takes no number, which this client does not compare, so it is not sent`;
+/** What a value is refused with when its field's bound, `label`, written as `text`, may not be the number the document writes. */
+const inexactBound = (name: string, label: string, text: string) =>
+  `${name}: its ${label} ${text} is a number a double may not hold exactly, which this client does not compare, so it is not sent`;
+/** What a value is refused with when the only entry it matches holds a number reading JSON may have rounded, other than an integer past 2^53. */
+const roundedEntry = (at: string, entry: string) =>
+  `${at}: matches only ${entry}, which holds a number that reading JSON may have rounded, so it is not sent`;
 /** The problem that keeps a control whose field written in place `what` from being invoked. */
 const inlinePlace = (name: string, what: string) => `the input "${name}" ${what}, so what it takes is not known; this control is not invoked`;
 
@@ -2025,6 +2138,43 @@ export const RULE_CASES: ReadonlyArray<ValueCase> = [
   ['/rounding', 'urn:round:json', 'JSON given', { m: '[9007199254740993]' }, { error: changedNumber('m', '9007199254740993') }],
   ['/rounding', 'urn:round:list', 'Decimal list given', { m: '[1, 0.30000000000000000001]' }, { error: changedNumber('m', '0.30000000000000000001') }],
   ['/rounding', 'urn:round:list', 'Decimal list given', { m: '[1, 2.5]' }, { body: { m: [1, 2.5] } }],
+  // An XSD boolean takes its four forms, true, false, 1 and 0, trimmed of space, tab, CR and LF: a
+  // value given is read as a default is, so "yes" and "TRUE" are no boolean.
+  ...['yes', 'no', 'TRUE', 'False', 'on'].map(b => ['/strict', 'urn:strict:boolean', 'Strict boolean', { b }, { error: 'b must be a boolean' }] as const),
+  ['/strict', 'urn:strict:boolean', 'Strict boolean', { b: ' true ' }, { body: { b: true } }],
+  ['/strict', 'urn:strict:boolean', 'Strict boolean', { b: '0' }, { body: { b: false } }],
+  // A list default that holds no value is named as the default's problem, not as a value given.
+  ['/strict', 'urn:strict:blank-list-default', 'Blank list default', {}, { error: 'm: its default holds no values, so it is not sent' }],
+  ['/strict', 'urn:strict:inline-blank-list', 'Inline blank list default', {}, { error: 'm: its default holds no values, so it is not sent' }],
+  ['/strict', 'urn:strict:inline-blank-list', 'Inline blank list default', { m: 'a\nb' }, { body: { m: ['a', 'b'] } }],
+  // A list's check stops at its first bad value, which is the one named, never the next one's too.
+  ['/strict', 'urn:strict:list-stop', 'List stops', { m: 'x\n9' }, { error: 'm: not an integer', only: true }],
+  ['/strict', 'urn:strict:list-stop', 'List stops', { m: '9\nx' }, { error: 'm: above maxInclusive 5', only: true }],
+  ['/strict', 'urn:strict:list-stop', 'List stops', { m: '1\n5' }, { body: { m: [1, 5] } }],
+  // A JSON literal's schema is JSON, so a JSON-LD keyword at its top, @type included, keeps the
+  // control from being invoked.
+  ['/strict', 'urn:strict:literal-type', 'Literal schema type', { m: 'a' }, { error: rootUnchecked('@type') }],
+  ['/strict', 'urn:strict:literal-context', 'Literal schema context', { m: 'a' }, { error: rootUnchecked('@context') }],
+  // A bound whose number may not be the one the document writes (text with more digits than a
+  // double keeps, a JSON integer past 2^53, or a JSON number its document writes with more digits
+  // than its double keeps) is not compared, so a value is refused naming it; an entry of such a
+  // number matches no value. A bound written exactly is compared, trailing zeros and all.
+  ['/inexact', 'urn:inexact:shape', 'Inexact shape', { a: '0.3' }, { error: inexactBound('a', 'sh:minInclusive', '0.30000000000000000001') }],
+  ['/inexact', 'urn:inexact:shape', 'Inexact shape', { b: '9007199254740992' }, { error: inexactBound('b', 'sh:minInclusive', '9007199254740992') }],
+  ['/inexact', 'urn:inexact:shape', 'Inexact shape', { c: '9007199254740992' }, { error: inexactBound('c', 'sh:minInclusive', '9007199254740992') }],
+  ['/inexact', 'urn:inexact:shape', 'Inexact shape', { e: '0.3' }, { error: inexactBound('e', 'sh:maxInclusive', '0.29999999999999999999') }],
+  ['/inexact', 'urn:inexact:shape', 'Inexact shape', { n: '0.4' }, { error: inexactBound('n', 'sh:minInclusive', '0.3') }],
+  ['/inexact', 'urn:inexact:shape', 'Inexact shape', { h: '0.3' }, { error: roundedEntry('h', '0.3') }],
+  ['/inexact', 'urn:inexact:shape', 'Inexact shape', { h: '1' }, { body: { h: 1 } }],
+  ['/inexact', 'urn:inexact:has-value', 'Inexact has value', { i: '0.3' }, { error: roundedEntry('i', '0.3') }],
+  ['/inexact', 'urn:inexact:shape', 'Inexact shape', { o: '0.6' }, { body: { o: 0.6 } }],
+  ['/inexact', 'urn:inexact:shape', 'Inexact shape', { o: '0.4' }, { error: 'o: below minInclusive 0.50000000000000000000' }],
+  ['/inexact', 'urn:inexact:schema', 'Inexact schema', { f: '9007199254740992' }, { error: inexactBound('f', 'minimum', '9007199254740992') }],
+  ['/inexact', 'urn:inexact:schema', 'Inexact schema', { g: '0.3' }, { error: inexactBound('g', 'minimum', '0.3') }],
+  ['/inexact', 'urn:inexact:schema', 'Inexact schema', { j: '0.3' }, { error: roundedEntry('j', '0.3') }],
+  ['/inexact', 'urn:inexact:schema', 'Inexact schema', { j: '1' }, { body: { j: 1 } }],
+  ['/inexact', 'urn:inexact:schema', 'Inexact schema', { k: '0.3' }, { error: roundedEntry('k', '0.3') }],
+  ['/inexact', 'urn:inexact:schema', 'Inexact schema', { l: '0.6' }, { body: { l: 0.6 } }],
 ];
 
 /**
@@ -2105,7 +2255,17 @@ export const BODY_TEXTS: ReadonlyArray<readonly [path: string, action: string, t
   // A required input the form leaves empty, since it cannot hold its default, does not stop the
   // form: the default itself is sent, as hmc.py sends it.
   ['/values', 'urn:values:required-crlf', 'Required CRLF default', {}, '{\n  "memo": "a\\r\\nb"\n}'],
+  // A decimal or a double past 2^53 is sent as JavaScript writes its double, never as the double's
+  // exact integer: given, as a default and as a list default's item alike.
+  ['/big-numbers', 'urn:big:schema', 'Big schema number', { amount: '123456789012345680000' }, '{\n  "amount": 123456789012345680000\n}'],
+  ['/big-numbers', 'urn:big:decimal', 'Big decimal', { amount: '123456789012345680000' }, '{\n  "amount": 123456789012345680000\n}'],
+  ['/big-numbers', 'urn:big:double-default', 'Big double default', {}, '{\n  "m": 123456789012345680000\n}'],
+  ['/big-numbers', 'urn:big:double-default', 'Big double default', { m: '123456789012345678901' }, '{\n  "m": 123456789012345680000\n}'],
+  ['/big-numbers', 'urn:big:double-list', 'Big double list', {}, '{\n  "m": [\n    123456789012345680000\n  ]\n}'],
 ];
+
+/** A field name of 10 KB, so that a problem named once for each bad value of a list would cost its length again and again. */
+const LONG_NAME = 'n'.repeat(10240);
 
 /**
  * Documents of a few hundred kilobytes whose shape once made both clients' work grow as the product
@@ -2133,8 +2293,22 @@ export const BODY_TEXTS: ReadonlyArray<readonly [path: string, action: string, t
  *     each control's copy of the 400 fields they share);
  *   - has-value-list: a decimal list default of 8,000 values and a 300,000-digit sh:hasValue, read
  *     again for each value (9 s in each client), and bound-list and bound-list-refused, 4,000
- *     values and a 150,000-digit bound, read again for each value, and in bound-list-refused named
- *     in a problem for each.
+ *     values and a 150,000-character bound (written exactly, its trailing zeros a double drops), read
+ *     again for each value, and in bound-list-refused named in a problem for each;
+ *   - template-schemas: 1,000 controls, each with a JSON Schema of its own, sharing an IRI template
+ *     of 1,000 mappings, and template-own the same with a property of its own name in each schema:
+ *     each control built and wrote the 1,000 mapping fields again (list --json: 540 MB for 252 KB);
+ *     template-matched and template-typed, the same with a property one mapping matches, or an
+ *     additionalProperties that types the variables, in each, which list builds for so many controls
+ *     as the document's size allows and lists the rest without their fields;
+ *   - property-shared: 1,000 controls whose shapes, written in place, name one property node with a
+ *     100,000-character description and default, and property-shapes the same with 1,000 shapes the
+ *     document describes: list --json wrote the node's field once for each (201 MB for 402 KB);
+ *   - list-shared: 1,000 controls whose shapes, written in place, each have a property whose sh:in is
+ *     one RDF list of 1,000 nodes, which list --json wrote once for each (38 MB for 368 KB);
+ *   - list-stop: a double list default of 10,000 values past 2^53, each matching only the sh:in entry
+ *     it names, of a field with a 10 KB name: a check that named each bad value, not the first,
+ *     would write 100 MB of problems, each naming another entry.
  * A case that names a problem is refused on its dry run, naming it alone; the others' dry runs plan.
  */
 export const COST_CASES: ReadonlyArray<readonly [path: string, rel: string, controls: number, fields: number, refused: string | null]> = [
@@ -2143,7 +2317,33 @@ export const COST_CASES: ReadonlyArray<readonly [path: string, rel: string, cont
   ['/cost/items-refused', 'urn:items', 1, 1, 'm/0: must be one of e0, e1, e2, '], ['/cost/shape-list', 'urn:list', 1, 1, 'm: must be one of e0, e1, e2, '],
   ['/cost/property-named', 'urn:c99', 100, 1, null], ['/cost/property-default', 'urn:c', 1, 1, null],
   ['/cost/has-value-list', 'urn:list', 1, 1, 'm: must include 0.111'], ['/cost/bound-list', 'urn:list', 1, 1, null],
-  ['/cost/bound-list-refused', 'urn:list', 1, 1, 'm: above maxInclusive 0.111'],
+  ['/cost/bound-list-refused', 'urn:list', 1, 1, 'm: above maxInclusive 0.4000'],
+  ['/cost/template-schemas', 'urn:c999', 1000, 1001, null], ['/cost/template-own', 'urn:c999', 1000, 1001, null],
+  ['/cost/template-matched', 'urn:c999', 1000, 1000, null], ['/cost/template-typed', 'urn:c999', 1000, 1001, null],
+  ['/cost/property-shared', 'urn:c999', 1000, 1, null], ['/cost/property-shapes', 'urn:c999', 1000, 1, null],
+  ['/cost/list-shared', 'urn:c999', 1000, 1, null], ['/cost/list-stop', 'urn:list', 1, 1, `${LONG_NAME}: matches only 9007199254740994`],
+];
+
+/** What a document whose IRIs, expanded, come to far more text than the document holds is refused with. */
+export const EXPANSION_PROBLEM = "This document's prefixes, terms, @vocab and @base expand its IRIs to far more text than the document " +
+  'holds, which this client does not read, so it is not read.';
+/**
+ * Documents of a few hundred kilobytes whose prefix, @vocab or @base, written once and long, expands
+ * thousands of short IRIs, as [path, a control's name]: each IRI was its expansion's length, so one
+ * long prefix made a 493 KB document cost hmc.py's list --json 602 MB, and the page its heap. Each
+ * client counts the text that prefixes, terms, @vocab and @base expand to as it reads a document,
+ * and refuses the document whole once that passes a few times the document's own length.
+ *   - prefix-controls: 3,000 controls whose action and target are compact IRIs of one 100,000-
+ *     character prefix;
+ *   - prefix-shape: one control whose shape has 3,000 properties, each with a path of one 100,000-
+ *     character prefix;
+ *   - prefix-keys: one node with 3,000 keys of one 100,000-character prefix;
+ *   - vocab-types: 3,000 nodes typed by a term @vocab, 100,000 characters long, expands;
+ *   - base-ids: 3,000 nodes whose relative @id a 100,000-character @base resolves.
+ */
+export const EXPANSION_CASES: ReadonlyArray<readonly [path: string, rel: string]> = [
+  ['/cost/prefix-controls', 'p:c0'], ['/cost/prefix-shape', 'urn:c'], ['/cost/prefix-keys', 'urn:c'], ['/cost/vocab-types', 'urn:c'],
+  ['/cost/base-ids', 'urn:c'],
 ];
 
 /**
@@ -2207,6 +2407,21 @@ export function costDescriptors(base: string): Record<string, string> {
       'hydra:target': { '@id': `${base}/api` }, 'hydra:expects': { '@id': '#S' } }],
     '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
       'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:defaultValue': range(count).map(() => 0.5), ...constraint } }] });
+  // 1,000 controls whose JSON Schemas each name the property `name(i)` gives, and what `more(i)` adds, sharing one template of 1,000 mappings.
+  const templateSchemas = (path: string, name: (i: number) => string, more: (i: number) => Record<string, unknown> = () => ({})) => ({
+    '@context': CTX, '@id': `${base}${path}`,
+    'iep:affordance': range(1000).map(i => ({ '@id': `#c${i}`, '@type': 'iep:Affordance', ...get(`urn:c${i}`, `C${i}`), 'hydra:target': { '@id': '#T' },
+      'hydra:expects': { type: 'object', properties: { [name(i)]: { type: 'string' } }, ...more(i) } })),
+    '@graph': [{ '@id': '#T', '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/api{?v0}`,
+      'hydra:mapping': range(1000).map(j => ({ 'hydra:variable': `v${j}` })) }] });
+  // 1,000 controls whose shapes name one property node, written in place in each or as 1,000 shapes in the @graph.
+  const propertyShared = (path: string, described: boolean) => ({ '@context': CTX, '@id': `${base}${path}`,
+    'iep:affordance': range(1000).map(i => ({ '@id': `#c${i}`, '@type': 'iep:Affordance', ...get(`urn:c${i}`, `C${i}`),
+      'hydra:expects': described ? { '@id': `#S${i}` } : { '@type': 'sh:NodeShape', 'sh:property': { '@id': '#P' } } })),
+    '@graph': [{ '@id': '#P', 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1, 'sh:description': 'd'.repeat(100000),
+      'sh:defaultValue': 'v'.repeat(100000) }, ...(described ? range(1000).map(i => ({ '@id': `#S${i}`, '@type': 'sh:NodeShape',
+      'sh:property': { '@id': '#P' } })) : [])] });
+  const LONG_IRI = `https://x.example/${'a'.repeat(100000)}/`;
   const items = (defaults: string[]) => ({ '@context': CTX, '@id': `${base}/cost/items`, 'iep:affordance': [{ '@id': '#i', '@type': 'iep:Affordance',
     'iep:action': { '@id': 'urn:items' }, 'hydra:method': 'POST', 'hydra:title': 'Items', 'hydra:target': { '@id': `${base}/api` },
     'hydra:expects': { type: 'object', properties: { m: { type: 'array', items: { enum: range(50000).map(j => `e${j}`) }, default: defaults } } } }] });
@@ -2246,8 +2461,45 @@ export function costDescriptors(base: string): Record<string, string> {
       'sh:defaultValue': 'v'.repeat(10000) }),
     // A list of decimals whose sh:hasValue, or whose bound, is a number written with 300,000 or 150,000 digits.
     '/cost/has-value-list': decimals('/cost/has-value-list', 8000, { 'sh:hasValue': `0.${'1'.repeat(300000)}` }),
-    '/cost/bound-list': decimals('/cost/bound-list', 4000, { 'sh:minInclusive': `0.${'1'.repeat(150000)}` }),
-    '/cost/bound-list-refused': decimals('/cost/bound-list-refused', 4000, { 'sh:maxInclusive': `0.${'1'.repeat(150000)}` }),
+    '/cost/bound-list': decimals('/cost/bound-list', 4000, { 'sh:minInclusive': `0.5${'0'.repeat(150000)}` }),
+    '/cost/bound-list-refused': decimals('/cost/bound-list-refused', 4000, { 'sh:maxInclusive': `0.4${'0'.repeat(150000)}` }),
+    // 1,000 controls, each with a JSON Schema of its own, that share one IRI template of 1,000 mappings.
+    '/cost/template-schemas': templateSchemas('/cost/template-schemas', () => 'x'),
+    '/cost/template-own': templateSchemas('/cost/template-own', i => `x${i}`),
+    // The same, with a property each mapping in turn matches, or an additionalProperties of its own that types the variables.
+    '/cost/template-matched': templateSchemas('/cost/template-matched', i => `v${i}`),
+    '/cost/template-typed': templateSchemas('/cost/template-typed', () => 'x', i => ({ additionalProperties: { type: 'string', maxLength: i } })),
+    // One property node with a 100,000-character description and default, named by 1,000 shapes.
+    '/cost/property-shared': propertyShared('/cost/property-shared', false),
+    '/cost/property-shapes': propertyShared('/cost/property-shapes', true),
+    // 1,000 shapes written in place whose property's sh:in is one RDF list of 1,000 nodes.
+    '/cost/list-shared': { '@context': CTX, '@id': `${base}/cost/list-shared`,
+      'iep:affordance': range(1000).map(i => ({ '@id': `#c${i}`, '@type': 'iep:Affordance', ...get(`urn:c${i}`, `C${i}`),
+        'hydra:expects': { '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+          'sh:in': { '@id': '_:l0' } } } })),
+      '@graph': range(1000).map(j => ({ '@id': `_:l${j}`, 'rdf:first': `e${j}`, 'rdf:rest': { '@id': j === 999 ? 'rdf:nil' : `_:l${j + 1}` } })) },
+    // A double list default of 10,000 values past 2^53 of a field with a 10 KB name, each the one
+    // sh:in entry it matches, which a problem would name, one for each value, but for the stop.
+    '/cost/list-stop': { '@context': CTX, '@id': `${base}/cost/list-stop`, 'iep:affordance': [{ '@id': '#l', '@type': 'iep:Affordance',
+      'iep:action': { '@id': 'urn:list' }, 'hydra:method': 'POST', 'hydra:title': 'List', 'hydra:target': { '@id': `${base}/api` },
+      'hydra:expects': { '@id': '#S' } }],
+    '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': LONG_NAME,
+      'sh:datatype': { '@id': 'xsd:double' }, 'sh:in': { '@list': range(10000).map(k => 2 ** 53 + 2 + 2 * k) },
+      'sh:defaultValue': range(10000).map(k => 2 ** 53 + 2 + 2 * k) } }] },
+    // A prefix, a term @vocab expands or a @base, 100,000 characters long, that 3,000 short IRIs use.
+    '/cost/prefix-controls': { '@context': { ...CTX, p: LONG_IRI }, '@id': `${base}/cost/prefix-controls`,
+      'iep:affordance': range(3000).map(i => ({ '@id': `#c${i}`, 'iep:action': { '@id': `p:c${i}` }, 'hydra:method': 'GET',
+        'hydra:target': { '@id': `p:t${i}` } })) },
+    '/cost/prefix-shape': { '@context': { ...CTX, p: LONG_IRI }, '@id': `${base}/cost/prefix-shape`, 'iep:affordance': [{ '@id': '#c',
+      ...get('urn:c', 'C'), 'hydra:expects': { '@id': '#S' } }],
+    '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': range(3000).map(j =>
+      ({ 'sh:path': { '@id': `p:k${j}` }, 'sh:name': `k${j}`, 'sh:maxCount': 1 })) }] },
+    '/cost/prefix-keys': { '@context': { ...CTX, p: LONG_IRI }, '@id': `${base}/cost/prefix-keys`, 'iep:affordance': [{ '@id': '#c', ...get('urn:c', 'C') }],
+      '@graph': [{ '@id': '#n', ...Object.fromEntries(range(3000).map(j => [`p:k${j}`, 1])) }] },
+    '/cost/vocab-types': { '@context': { ...CTX, '@vocab': LONG_IRI }, '@id': `${base}/cost/vocab-types`,
+      'iep:affordance': [{ '@id': '#c', ...get('urn:c', 'C') }], '@graph': range(3000).map(j => ({ '@id': `#n${j}`, '@type': `T${j}` })) },
+    '/cost/base-ids': { '@context': [CTX, { '@base': LONG_IRI }], '@id': `${base}/cost/base-ids`, 'iep:affordance': [{ '@id': `${base}/c`,
+      ...get('urn:c', 'C') }], '@graph': range(3000).map(j => ({ '@id': `n${j}`, 'rdfs:label': 'n' })) },
     // 300 properties whose sh:in is one RDF list of 300 nodes.
     '/cost/shared-list': listShape('/cost/shared-list', range(300).map(() => ({ '@id': '#L0' })), []),
     // 300 properties each with an RDF list of its own first node, all ending in one tail of 300 nodes.

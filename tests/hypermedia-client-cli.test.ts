@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES, fetchRoutes,
   hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED, LOAD_HEADERS,
   OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, RULE_CASES,
-  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, type HopHeaders } from './hypermedia-client-fixtures.js';
+  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 // What list, list --json and describe may write for a document: a dozen bytes for each of its
@@ -629,14 +629,14 @@ describe('hmc.py: compact datatype IRIs', () => {
     expect(bad.r.code, bad.r.stdout + bad.r.stderr).toBe(2);
     for (const message of ['count: not an integer', 'flag must be a boolean', 'data must be JSON', 'size: not an integer',
       'ratio: not a number', 'plain: not an integer']) expect(problems(bad.r.stderr), message).toContain(message);
-    const good = await plan('urn:compact-types', { count: '12', flag: 'yes', data: '{"a":[1,2]}', size: '+7', ratio: '0.5', plain: '3' });
+    const good = await plan('urn:compact-types', { count: '12', flag: '1', data: '{"a":[1,2]}', size: '+7', ratio: '0.5', plain: '3' });
     expect(good.r.code, good.r.stderr).toBe(0);
     expect(good.request!.body).toEqual({ count: 12, flag: true, data: { a: [1, 2] }, size: 7, ratio: 0.5, plain: 3 });
   });
 
   it.each([
     ['integer', '1.5', 'body: not an integer', '12', '12'],
-    ['boolean', 'maybe', 'body must be a boolean', 'yes', 'true'],
+    ['boolean', 'yes', 'body must be a boolean', '1', 'true'],
     ['JSON', 'nope', 'body must be JSON', '{"a": 1}', '{"a": 1}'],
   ])('types a node-level shape\'s %s body by its compact datatype', async (kind, wrong, message, right, sent) => {
     const bad = await plan(`urn:${kind}-body`, { body: wrong });
@@ -735,17 +735,24 @@ async function dry(path: string, rel: string, fields: Record<string, string | st
   const r = await hmc(['invoke', `${base}${path}`, rel, ...args, '--dry-run', '--json']);
   return { r, request: r.code === 0 ? (JSON.parse(r.stdout) as { request: Request }).request : null };
 }
-// `list --json` writes each list of fields once, in fieldLists, and each control names its list's
-// place there, or null for a control that is not invoked, whose fields are not given.
-type Listed = { title: string; seeAlso: string[]; fieldLists: Array<Array<{ name: string; required: boolean; multi: boolean }>>;
+// `list --json` writes each distinct field once, in fields, each sh:in list once, in inLists, and
+// each list of fields once, in fieldLists, as places in fields; each control names its own list's
+// place as fieldList, or null for a control that is not invoked, whose fields are not given, and,
+// as templateFields, the place of the list of its template's variables that follow its own fields,
+// which the controls that share the template share.
+type ListedField = { name: string; required: boolean; multi: boolean; in: number | null; description: string | null };
+type Listed = { title: string; seeAlso: string[]; fields: ListedField[]; inLists: unknown[][]; fieldLists: number[][];
   controls: Array<{ rel: string; title: string; method: string; unsafe: boolean; target: string | null;
-  warning: string | null; problem: string | null; fieldList: number | null }> };
+  warning: string | null; problem: string | null; fieldList: number | null; templateFields: number | null; unlisted: boolean }> };
 async function listed(path: string): Promise<Listed> {
   const r = await hmc(['list', `${base}${path}`, '--json']);
   expect(r.code, r.stderr).toBe(0);
   return JSON.parse(r.stdout) as Listed;
 }
-const fieldsOf = (doc: Listed, title: string) => doc.fieldLists[doc.controls.find(c => c.title === title)!.fieldList!]!.map(f => [f.name, f.required, f.multi]);
+/** A control's fields as list --json gives them: its own list's, then its template's. */
+const listedFields = (doc: Listed, control: Listed['controls'][number]) =>
+  [...doc.fieldLists[control.fieldList!]!, ...(control.templateFields === null ? [] : doc.fieldLists[control.templateFields]!)].map(i => doc.fields[i]!);
+const fieldsOf = (doc: Listed, title: string) => listedFields(doc, doc.controls.find(c => c.title === title)!).map(f => [f.name, f.required, f.multi]);
 
 describe('hmc.py: JSON-LD read as jsonld.js reads it', () => {
   it('treats a GET the document marks destructive as unsafe, however the mark is written, and sends nothing unconfirmed', async () => {
@@ -1193,7 +1200,8 @@ describe('hmc.py: values a request can carry, and lengths in code points', () =>
       const r = await hmc(['invoke', `${base}${path}`, rel, ...args, mode]);
       expect(r.code, `${mode}: ${r.stdout}${r.stderr}`).toBe(2);
       expect(r.stderr, mode).toContain('Validation failed');
-      expect(problems(r.stderr), mode).toContain(outcome.error);
+      if ('only' in outcome) expect(problems(r.stderr), mode).toEqual([outcome.error]);
+      else expect(problems(r.stderr), mode).toContain(outcome.error);
     }
     expect(sentTo()).toBe(before);
   });
@@ -1341,6 +1349,59 @@ describe('hmc.py: a document\'s size, not its shape, sets the cost', () => {
     expect(doc.fieldLists).toHaveLength(1);
     expect(doc.fieldLists[0]).toHaveLength(400);
     expect(new Set(doc.controls.map(c => c.fieldList))).toEqual(new Set([0]));
+  }, 60_000);
+
+  it('writes once the variables of a template many controls share, a field many shapes name and an sh:in list many fields name', async () => {
+    const variables = Array.from({ length: 1000 }, (_, j) => `v${j}`).join(', ');
+    // Controls whose own fields differ list the template's variables once and name it for the rest.
+    const own = await hmc(['list', `${base}/cost/template-own`]);
+    expect(own.code, own.stderr).toBe(0);
+    const lines = own.stdout.split('\n').filter(line => line.trim().startsWith('fields: '));
+    expect(lines).toHaveLength(1000);
+    expect(lines[0]).toBe(`         fields: x0, ${variables}`);
+    for (const line of lines.slice(1)) expect(line).toMatch(/^ {9}fields: x\d+, and the template's variables as listed for urn:c0$/);
+    const ownJson = await listed('/cost/template-own');
+    expect(new Set(ownJson.controls.map(c => c.templateFields)).size).toBe(1);
+    expect(ownJson.fieldLists[ownJson.controls[0]!.templateFields!]).toHaveLength(1000);
+    expect(ownJson.controls.map(c => ownJson.fieldLists[c.fieldList!]!.length)).toEqual(Array(1000).fill(1));
+    expect(fieldsOf(ownJson, 'C7').map(f => f[0])).toEqual(['x7', ...variables.split(', ')]);
+    // Controls whose fields are the same share them whole.
+    const same = await hmc(['list', `${base}/cost/template-schemas`]);
+    const sameLines = same.stdout.split('\n').filter(line => line.trim().startsWith('fields: '));
+    expect(sameLines[0]).toBe(`         fields: x, ${variables}`);
+    expect(new Set(sameLines.slice(1))).toEqual(new Set(['         fields: as listed for urn:c0']));
+    // A property node 1,000 shapes name is one field, its long description written once.
+    for (const path of ['/cost/property-shared', '/cost/property-shapes']) {
+      const doc = await listed(path);
+      expect(doc.fields.filter(f => f.name === 'm'), path).toHaveLength(1);
+      expect(doc.fields.find(f => f.name === 'm')!.description, path).toHaveLength(100000);
+      expect(new Set(doc.controls.map(c => c.fieldList)).size, path).toBe(1);
+    }
+    // Controls whose own fields a mapping matches, or whose schemas type the variables, each join the
+    // template for themselves: list builds so many as the document's size allows, and lists the rest
+    // without their fields, which describe builds.
+    for (const path of ['/cost/template-matched', '/cost/template-typed']) {
+      const text = await hmc(['list', `${base}${path}`]);
+      const notes = text.stdout.split('\n').filter(line => line.includes("fields: not listed, since listing every control's would cost"));
+      expect(notes.length, path).toBeGreaterThan(900);
+      const doc = await listed(path);
+      expect(doc.controls.filter(c => c.unlisted).map(c => [c.fieldList, c.problem]), path).toEqual(Array(notes.length).fill([null, null]));
+    }
+    // One RDF list that 1,000 fields name as their sh:in is written once.
+    const lists = await listed('/cost/list-shared');
+    expect(lists.inLists).toHaveLength(1);
+    expect(lists.inLists[0]).toHaveLength(1000);
+    expect(new Set(lists.fields.map(f => f.in))).toEqual(new Set([0]));
+  }, 60_000);
+
+  it.each(EXPANSION_CASES)('refuses %s, whose IRIs expand to far more text than it holds, whole and within the budget', async (path, rel) => {
+    for (const args of [['list', `${base}${path}`], ['list', `${base}${path}`, '--json'], ['describe', `${base}${path}`, rel]]) {
+      const r = await hmc(args);
+      expect(r.timedOut, 'killed after 30 s').toBe(false);
+      expect(r.ms, `${args[0]} ${args[2] || ''} run time`).toBeLessThan(3_000);
+      expect([r.code, r.stderr.trim()], args.join(' ')).toEqual([1, `error: ${EXPANSION_PROBLEM}`]);
+      expect(r.stdout).toBe('');
+    }
   }, 60_000);
 
   // What list, list --json and describe write grows with the document, never with the product of

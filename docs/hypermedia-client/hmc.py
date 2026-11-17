@@ -912,29 +912,59 @@ _GEN_DELIMS = ":/?#[]@"
 # context. A document past it is refused, so a crafted one cannot make reading
 # it cost more than linear time. The page's CONTEXT_BUDGET is the same.
 CONTEXT_BUDGET = 200_000
+# How much text expanding one document's IRIs may produce: a few times its own
+# length, and a fixed amount besides, in UTF-16 code units as the page counts
+# them. While a document is read (Context.normalize), each IRI a prefix, a term,
+# @vocab or @base expands to is charged, and so, once, is what its base, a
+# prefix or @vocab would expand each plain string it holds to, which the
+# clients look up as a node later (Context.lookup). A document past it is
+# refused, so a prefix, a @vocab or a @base written once cannot make the IRIs
+# it expands cost far more than the document. The page's IRI_BUDGET_PER_UNIT,
+# IRI_BUDGET_FIXED and EXPANSION_PROBLEM are the same.
+IRI_BUDGET_PER_UNIT = 8
+IRI_BUDGET_FIXED = 1_000_000
+EXPANSION_PROBLEM = ("This document's prefixes, terms, @vocab and @base expand its IRIs to far more text than the document holds, "
+                     "which this client does not read, so it is not read.")
+
+
+def _utf16_length(text: str) -> int:
+    """A string's length as JavaScript counts it, in UTF-16 code units."""
+    return len(text) if text.isascii() else len(text.encode("utf-16-le")) // 2
 
 
 class _Budget:
-    def __init__(self) -> None:
+    def __init__(self, size: int = 0) -> None:
         self.left = CONTEXT_BUDGET
+        self.iris = IRI_BUDGET_PER_UNIT * size + IRI_BUDGET_FIXED
+        # Whether expansions are charged: while a document is read.
+        self.charging = False
 
     def spend(self, amount: int) -> None:
         self.left -= amount
         if self.left < 0:
             raise ValueError("This document's @context entries are too many to read.")
 
+    def charge(self, value: Any, out: Any) -> Any:
+        """An expansion's result, charged when it is one: text other than the value expanded."""
+        if self.charging and isinstance(out, str) and out != value:
+            self.iris -= _utf16_length(out)
+            if self.iris < 0:
+                raise ValueError(EXPANSION_PROBLEM)
+        return out
+
 
 def _json_schema_like(item: dict[str, Any], expected: bool = False) -> bool:
-    """A JSON Schema written into a document as plain JSON: an object whose
-    "properties" is an object, with no keyword of its own, or with "@id" or
-    "@type" too when it is a value of hydra:expects. Its keys are JSON
-    Schema's, never terms, so only its own "@id" and "@type" are read as
-    JSON-LD, and nothing under it is renamed or expanded. Where hydra:expects
-    names it, so is an object of JSON Schema's keywords (_schema_by_keywords).
-    The page's jsonSchemaLike is the same."""
-    if isinstance(item.get("properties"), dict) and (expected or not any(key.startswith("@") for key in item)):
-        return True
-    return expected and _schema_by_keywords(item)
+    """A JSON Schema written into a document as plain JSON, where hydra:expects
+    names it: an object whose "properties" is an object, or one of JSON
+    Schema's keywords (_schema_by_keywords). Its keys are JSON Schema's, never
+    terms, so only its own "@id" and "@type" are read as JSON-LD, and nothing
+    under it is renamed or expanded; what JSON-LD would read in it that this
+    client does not is refused (_schema_hides). Anywhere else an object is read
+    as JSON-LD, whatever keys it has, so a node written in it is read. The
+    page's jsonSchemaLike is the same."""
+    if not expected:
+        return False
+    return isinstance(item.get("properties"), dict) or _schema_by_keywords(item)
 
 
 # JSON Schema's keywords, and those of them that only describe. Where
@@ -954,6 +984,93 @@ _SCHEMA_KEYWORDS = _SCHEMA_NOTES | frozenset({
     "unevaluatedProperties", "minProperties", "maxProperties", "patternProperties", "propertyNames", "dependencies",
     "dependentRequired", "dependentSchemas", "$ref", "$dynamicRef", "$recursiveRef",
 })
+
+
+# JSON Schema's keywords whose value is a schema, a list of schemas, or an
+# object of names and schemas. The page's SCHEMA_ONE, SCHEMA_MANY and
+# SCHEMA_MAPS are the same.
+_SCHEMA_ONE = frozenset({"items", "additionalProperties", "not", "if", "then", "else", "contains", "propertyNames",
+                         "additionalItems", "unevaluatedItems", "unevaluatedProperties", "contentSchema"})
+_SCHEMA_MANY = frozenset({"allOf", "anyOf", "oneOf", "prefixItems"})
+_SCHEMA_MAPS = frozenset({"properties", "patternProperties", "$defs", "definitions", "dependentSchemas"})
+# The JSON-LD keywords an object may hold and still say nothing JSON-LD reads
+# as a node: a type, a list or a set of values, an index, a language or a
+# direction. The page's LITERAL_KEYWORDS is the same.
+_LITERAL_KEYWORDS = frozenset({"@type", "@list", "@set", "@index", "@language", "@direction"})
+
+
+def _in_schema(what: str) -> ValueError:
+    return ValueError(f"This document writes {what} in a JSON Schema, which this client does not read as JSON-LD, so it is not read.")
+
+
+def _holds_node(ctx: "Context", value: Any) -> bool:
+    """Whether a value written in a JSON Schema holds, at any depth, what
+    JSON-LD reads as a node: an object with an @id, with a key the context
+    expands to an IRI (a term, a compact or absolute IRI, @vocab, or one of
+    this client's own names), or with a JSON-LD keyword other than those of
+    _LITERAL_KEYWORDS. A value object is a literal. A walk with a stack. The
+    page's holdsNode is the same."""
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, list):
+            stack.extend(item)
+            continue
+        if not isinstance(item, dict):
+            continue
+        keywords = [(key, ctx._keyword(key)) for key in item]
+        if any(keyword == "@value" for _, keyword in keywords):
+            continue
+        for key, keyword in keywords:
+            if keyword is not None:
+                if keyword not in _LITERAL_KEYWORDS:
+                    return True
+            elif ":" in ctx.expand_key(key):
+                return True
+        stack.extend(item.values())
+    return False
+
+
+def _schema_hides(ctx: "Context", root: dict[str, Any]) -> None:
+    """Refuses, by raising, a JSON Schema written in place under hydra:expects
+    that holds what JSON-LD reads and this client, which reads it as JSON
+    Schema, does not: at its top, a JSON-LD keyword other than its own @id and
+    @type; in it or any schema inside it, a node (_holds_node) under a key that
+    is no JSON Schema keyword or under a JSON-LD keyword; and, in a schema with
+    an @id, a key the context expands to an IRI, which says something of the
+    node it names. A hint written there would otherwise be passed over, as
+    JSON-LD reads it. Each object's keys are taken in sorted order, the schemas
+    inside it after. The page's schemaHides is the same."""
+    stack: list[tuple[Any, bool]] = [(root, True)]
+    while stack:
+        schema, top = stack.pop()
+        if isinstance(schema, list):
+            stack.extend((item, False) for item in reversed(schema))
+            continue
+        if not isinstance(schema, dict):
+            continue
+        named = any(ctx._keyword(key) == "@id" for key in schema)
+        inside: list[Any] = []
+        for key in sorted(schema, key=_utf16_key):
+            value = schema[key]
+            keyword = ctx._keyword(key)
+            if keyword is not None:
+                if top and keyword in ("@id", "@type"):
+                    continue
+                if top or _holds_node(ctx, value):
+                    raise _in_schema(keyword)
+                continue
+            if key in _SCHEMA_KEYWORDS:
+                if key in _SCHEMA_MAPS and isinstance(value, dict):
+                    inside.extend(value[name] for name in sorted(value, key=_utf16_key))
+                elif key in _SCHEMA_ONE or key in _SCHEMA_MANY:
+                    inside.append(value)
+                continue
+            if _holds_node(ctx, value):
+                raise _in_schema(f"a node under {_js_string(key)}")
+            if named and ":" in ctx.expand_key(key):
+                raise _in_schema(f"{_js_string(key)} beside its own @id")
+        stack.extend((item, False) for item in reversed(inside))
 
 
 def _schema_by_keywords(item: dict[str, Any]) -> bool:
@@ -1030,6 +1147,14 @@ class Context:
         self._made: dict[Any, tuple[Any, list[Context | None]]] = {}
         # While would_keep absorbs a context, each key's entries before it changed.
         self._journal: dict[str, tuple[Any, ...]] | None = None
+        # The id() of each JSON Schema normalize read in place (_json_schema_like).
+        self.schemas: set[int] = set()
+        # Each plain string a document holds, as normalize meets it, and what
+        # each is looked up as (lookup), keyed by (string, vocab); and each
+        # key's property IRI, once it is read (expand_key).
+        self._strings: dict[str, None] = {}
+        self._lookups: dict[tuple[str, bool], Any] = {}
+        self._keys: dict[str, str] = {}
 
     def _tables(self) -> tuple[dict[str, Any], ...]:
         return (self.prefixes, self.terms, self.coerce, self.containers, self.indexes, self.scoped, self.aliases)
@@ -1105,9 +1230,11 @@ class Context:
             else:
                 self.nulled.discard(key)
         self.base, self.vocab, self._made = base, vocab, made
+        self._keys = {}
         return same
 
     def absorb(self, ctx: Any) -> None:
+        self._keys = {}
         for item in as_list(ctx):
             if item is None:
                 # A null context empties the active context; the document's own base stays.
@@ -1128,7 +1255,8 @@ class Context:
                 if new_base is None:
                     self.base = None
                 elif isinstance(new_base, str):
-                    self.base = _resolve_iri(new_base, self.base) if self.base else (new_base if _has_scheme(new_base) else None)
+                    self.base = (self.budget.charge(new_base, _resolve_iri(new_base, self.base)) if self.base
+                                 else (new_base if _has_scheme(new_base) else None))
             if "@vocab" in item:
                 vocab = item["@vocab"]
                 if vocab is None:
@@ -1240,7 +1368,18 @@ class Context:
             self.scoped[key] = value["@context"]
 
     def expand_key(self, key: str) -> str:
-        """The property IRI a key names, or "" for a term the context set to null."""
+        """The property IRI a key names, or "" for a term the context set to
+        null: charged while a document is read (_Budget.charge), and kept
+        afterwards, when reading it looks up the same keys again and again.
+        The page's expandKey is the same."""
+        if self.budget.charging:
+            return self.budget.charge(key, self._expand_key(key))
+        hit = self._keys.get(key)
+        if hit is None:
+            hit = self._keys[key] = self._expand_key(key)
+        return hit
+
+    def _expand_key(self, key: str) -> str:
         if key.startswith(("@", "http://", "https://")):
             return key
         if key in self.nulled:
@@ -1248,17 +1387,33 @@ class Context:
         if key in self.terms:
             return self.terms[key]
         if ":" in key:
-            return str(self.expand_iri(key))
+            return str(self._expand_iri(key))
         if key in TERM_FALLBACKS:
             return TERM_FALLBACKS[key]
         return self.vocab + key if self.vocab is not None else key
 
     def expand_iri(self, value: Any, *, vocab: bool = False, document_relative: bool = False) -> Any:
+        """JSON-LD's expansion of a value in an IRI position (_expand_iri),
+        charged while a document is read (_Budget.charge). The page's expandIri
+        is the same."""
+        return self.budget.charge(value, self._expand_iri(value, vocab=vocab, document_relative=document_relative))
+
+    def lookup(self, value: str, vocab: bool = False) -> Any:
+        """What a plain string a document holds is looked up as, a node's IRI
+        perhaps: expanded against the base, and @vocab and terms where `vocab`
+        applies, once, as normalize charged it; any other string as it
+        expands. The page's lookup is the same."""
+        hit = self._lookups.get((value, vocab), _ABSENT)
+        if hit is _ABSENT:
+            hit = self._expand_iri(value, vocab=vocab, document_relative=True)
+        return hit
+
+    def _expand_iri(self, value: Any, *, vocab: bool = False, document_relative: bool = False) -> Any:
         """JSON-LD's expansion of a value in an IRI position: a term the
         document defined where `vocab` applies; a compact IRI; an absolute IRI
         or a blank node as it is; then @vocab + the value where `vocab` applies,
         or the value resolved against the base where `document_relative`
-        applies. The page's expandIri is the same."""
+        applies."""
         if not isinstance(value, str) or value.startswith("@"):
             return value
         if vocab and value in self.terms:
@@ -1467,6 +1622,23 @@ class Context:
         return False
 
     def normalize(self, document: Any) -> set[int]:
+        """_normalize, with each expansion it makes charged (_Budget.charge),
+        and then each plain string the document holds charged once for what it
+        is looked up as (lookup): expanded against the base, and where it
+        differs, against @vocab and terms too. The page's normalize is the
+        same."""
+        self.budget.charging = True
+        try:
+            nodes = self._normalize(document)
+            for text in self._strings:
+                plain = self._lookups[(text, False)] = self.expand_iri(text, document_relative=True)
+                vocab = self._expand_iri(text, vocab=True, document_relative=True)
+                self._lookups[(text, True)] = self.budget.charge(plain, vocab) if vocab != text else vocab
+        finally:
+            self.budget.charging = False
+        return nodes
+
+    def _normalize(self, document: Any) -> set[int]:
         """Every node in a document put in the form the reader reads, in place,
         once, before anything reads it, and the id() of each object that is a
         node object, which NodeIndex indexes. A node's own @context and a term's
@@ -1499,6 +1671,9 @@ class Context:
             (item, self, not isinstance(document, list), unset, False, True) for item in top_items]
         keyed: dict[int, tuple[Any, dict[str, Any]]] = {}
         node_objects: set[int] = set()
+        # The id() of each JSON Schema written in place, which _shape_fields
+        # tells apart from one a JSON literal holds.
+        schemas: set[int] = self.schemas
         while stack:
             item, ctx, top, scoped, expected, level = stack.pop()
             if isinstance(item, list):
@@ -1511,6 +1686,8 @@ class Context:
             from_map = hit[1] if hit is not None and hit[0] is item else None
             if from_map is None and _json_schema_like(item, expected):
                 ctx._rename_aliases(item)
+                _schema_hides(ctx, item)
+                schemas.add(id(item))
                 if "@id" in item:
                     item["@id"] = ctx.expand_iri(item["@id"], document_relative=True)
                 if "@type" in item:
@@ -1572,6 +1749,8 @@ class Context:
                         if not level:
                             raise ValueError(REFUSED["graph" if key == "@graph" else "included"])
                         item[key] = ctx._contents(item[key], False)
+                    if key in ("@list", "@set"):
+                        self._collect(item[key])
                     if isinstance(item[key], (dict, list)):
                         stack.append((item[key], ctx, False, scoped if key in ("@list", "@set") else unset, False, graphs))
                     continue
@@ -1604,6 +1783,8 @@ class Context:
                     value = value_ctx._contents(value, member)
                 if kind in ("@id", "@vocab"):
                     value = value_ctx._expand_typed(value, kind == "@vocab")
+                elif kind != "@json":
+                    self._collect(value)
                 name = key
                 if ctx is not self:
                     expanded = ctx.expand_key(key)
@@ -1617,6 +1798,13 @@ class Context:
                 if kind != "@json" and isinstance(value, (dict, list)):
                     stack.append((value, value_ctx, False, local, pred == P_EXPECTS, False))
         return node_objects
+
+    def _collect(self, value: Any) -> None:
+        """Keeps each plain string a value holds, alone or in an array, which
+        reading the document may look up as a node (lookup)."""
+        for item in value if isinstance(value, list) else [value]:
+            if isinstance(item, str):
+                self._strings[item] = None
 
     def _expand_typed(self, value: Any, vocab: bool) -> Any:
         """A typed term's value: a string, or each string in an array or in a list or set object."""
@@ -1713,8 +1901,11 @@ class Field:
     in_list: Any = None
     closed_out: bool = False
     # Whether its default holds a number reading JSON may have rounded
-    # (_rounded_default), which is refused rather than sent.
+    # (_rounded_default), which is refused rather than sent; and the doubles of
+    # the numbers its document writes with digits their doubles drop, so an
+    # entry or a bound that is one of them is not compared (_holds_rounded).
     rounded_default: bool = False
+    inexact: Any = None
 
     def to_public(self) -> dict[str, Any]:
         return {
@@ -1772,11 +1963,15 @@ class Control:
             return True
         return False
 
-    def to_public(self, with_fields: bool = True) -> dict[str, Any]:
+    def to_public(self, with_fields: bool = True, unlisted: bool = False) -> dict[str, Any]:
         """The control as describe writes it. A control that is not invoked
         has its problem written, not its fields (None), as the page shows it
         no form; with_fields False leaves fields out, for list --json, which
-        writes each list of fields once (Descriptor.to_public)."""
+        writes each list of fields once (Descriptor.to_public), and `unlisted`
+        is a control list did not build (Descriptor.listing), whose problem is
+        only what reading the control itself gave."""
+        problem = self.__dict__.get("conflict") if unlisted else self.problem
+        warning = None if unlisted else self.warning
         public = {
             "id": self.id, "rel": self.rel, "method": self.method,
             "title": self.title, "description": self.description,
@@ -1786,7 +1981,7 @@ class Control:
             "readOnly": self.read_only, "idempotent": self.idempotent,
             "destructive": self.destructive, "unsafe": self.unsafe,
             "types": self.types, "source": self.source,
-            "problem": self.problem, "warning": self.warning,
+            "problem": problem, "warning": warning, "unlisted": unlisted,
         }
         if with_fields:
             public["fields"] = None if self.problem else [f.to_public() for f in self.fields]
@@ -1802,13 +1997,29 @@ class Control:
 _BUILT_ON_READ = ("fields", "problem", "warning")
 
 
+class _Unlisted(Exception):
+    """A control list does not build, as its fields would pass the budget Descriptor.listing sets."""
+
+
+# The fields joining a template to a control's own fields may build while list
+# builds every control's: one for each so many characters of the document, and
+# a fixed number besides (Descriptor.listing).
+_LIST_BYTES_PER_FIELD = 64
+_LIST_FIELDS_FIXED = 128
+
+
 def _built_on_read(name: str) -> property:
     def read(self: Control) -> Any:
         if name == "problem" and self.__dict__.get("conflict"):
             return self.__dict__["conflict"]
         build = self.__dict__.pop("_build", None)
         if build is not None:
-            for key, value in zip(_BUILT_ON_READ, build()):
+            try:
+                built = build()
+            except _Unlisted:
+                self.__dict__["_build"] = build
+                raise
+            for key, value in zip(_BUILT_ON_READ, built):
                 self.__dict__["_built_" + key] = value
         return self.__dict__.get("_built_" + name)
 
@@ -1836,6 +2047,33 @@ class Descriptor:
     # Why what is listed is not read as safe, when it is not: the JSON-LD a
     # retry answered, the authority for this answer, was refused.
     problem: str | None = None
+    index: Any = None
+
+    def listing(self) -> list[bool]:
+        """Builds each control's fields for list and list --json, in the
+        order they are listed, while the fields that joining a template to
+        fields of a control's own builds (_read_control_inputs) stay within a
+        budget the document's length sets; whether each was built. One past
+        it is listed without its fields (and the problems they would give),
+        which describe and invoke build, as the page builds a control's
+        fields only when it is opened: so controls whose own fields a large
+        template's mappings each match, or whose schemas each type its
+        variables, cannot make list cost the product of the two."""
+        index = self.index
+        if index is not None:
+            index.listing = [index.size // _LIST_BYTES_PER_FIELD + _LIST_FIELDS_FIXED]
+        built: list[bool] = []
+        try:
+            for control in self.controls:
+                try:
+                    control.problem
+                    built.append(True)
+                except _Unlisted:
+                    built.append(False)
+        finally:
+            if index is not None:
+                index.listing = None
+        return built
 
     def matches(self, rel: str) -> list[Control]:
         """The controls a name given on the command line names: those it names
@@ -1868,34 +2106,69 @@ class Descriptor:
         return found[0] if len(found) == 1 else None
 
     def to_public(self) -> dict[str, Any]:
-        """The descriptor as list --json writes it. Each list of fields is
-        written once, in fieldLists, however many controls share it, and each
-        control names its list's place there as fieldList, or None for a
-        control that is not invoked, whose fields are not written: what is
-        written grows with the document, never with the product of its
-        controls and the fields they share."""
-        field_lists: list[list[dict[str, Any]]] = []
-        places: dict[int, tuple[list[Field], int]] = {}
+        """The descriptor as list --json writes it. Each field is written
+        once, in fields, however many controls or shapes share it, and each
+        sh:in list once, in inLists, which a field names as "in" by its place;
+        each list of fields once, in fieldLists, as the places of its fields.
+        Each control names its own list's place as fieldList, or None for a
+        control that is not invoked, whose fields are not written, and as
+        templateFields the place of its template's fields, which follow its
+        own and which the controls that share the template share (_Joined), or
+        None. What is written grows with the document, never with the product
+        of its controls and the fields, lists or texts they share."""
+        fields: list[dict[str, Any]] = []
+        field_at: dict[int, tuple[Field, int]] = {}
+        in_lists: list[list[Any]] = []
+        in_at: dict[int, tuple[list[Any], int]] = {}
+        field_lists: list[list[int]] = []
+        list_at: dict[tuple[int, ...], int] = {}
+        listed: dict[int, tuple[Any, int]] = {}
+        built = self.listing()
+
+        def place_of(fld: Field) -> int:
+            hit = field_at.get(id(fld))
+            if hit is None or hit[0] is not fld:
+                public = fld.to_public()
+                choices = fld.enum
+                if choices:
+                    seen = in_at.get(id(choices))
+                    if seen is None or seen[0] is not choices:
+                        seen = in_at[id(choices)] = (choices, len(in_lists))
+                        in_lists.append(choices)
+                    public["in"] = seen[1]
+                else:
+                    public["in"] = None
+                hit = field_at[id(fld)] = (fld, len(fields))
+                fields.append(public)
+            return hit[1]
+
+        def list_of(items: list[Field]) -> int:
+            hit = listed.get(id(items))
+            if hit is None or hit[0] is not items:
+                places = tuple(place_of(fld) for fld in items)
+                if places not in list_at:
+                    list_at[places] = len(field_lists)
+                    field_lists.append(list(places))
+                hit = listed[id(items)] = (items, list_at[places])
+            return hit[1]
         controls = []
-        for control in self.controls:
-            public = control.to_public(with_fields=False)
-            place = None
-            if not control.problem:
-                fields = control.fields
-                # Every empty list is one.
-                key = id(fields) if fields else 0
-                hit = places.get(key)
-                if hit is None or (key and hit[0] is not fields):
-                    hit = places[key] = (fields, len(field_lists))
-                    field_lists.append([f.to_public() for f in fields])
-                place = hit[1]
-            public["fieldList"] = place
+        for control, whole in zip(self.controls, built):
+            public = control.to_public(with_fields=False, unlisted=not whole)
+            own = template = None
+            if whole and not control.problem:
+                built = control.fields
+                if isinstance(built, _Joined):
+                    own, template = list_of(built.own), list_of(built.template.fields)
+                else:
+                    own = list_of(built)
+            public["fieldList"] = own
+            public["templateFields"] = template
             controls.append(public)
         return {
             "url": self.url, "title": self.title, "types": self.types,
             "description": self.description, "contentType": self.content_type,
             "seeAlso": self.see_also, "problem": self.problem,
-            "fieldLists": field_lists, "controls": controls,
+            "fields": fields, "inLists": in_lists, "fieldLists": field_lists, "controls": controls,
         }
 
 
@@ -1957,13 +2230,21 @@ def _node_walk(document: Any) -> list[dict[str, Any]]:
 
 
 class NodeIndex:
-    def __init__(self, document: Any, base: str, fetched_from: str | None = None, inexact: set[Any] | None = None) -> None:
+    def __init__(self, document: Any, base: str, fetched_from: str | None = None, inexact: set[Any] | None = None,
+                 size: int | None = None) -> None:
         # `base` is the descriptor's address; `fetched_from`, when it differs,
         # is the address its text came from, which relative IRIs resolve
         # against; `inexact`, the doubles of the numbers its text writes with
         # digits their doubles drop (_changed_numbers), whose every reading may
-        # have been rounded.
-        self.ctx = Context(fetched_from or base)
+        # have been rounded; `size`, its text's length in UTF-16 code units,
+        # which sets how much text expanding its IRIs may produce (_Budget),
+        # or, for a document handed over without its text, its JSON's.
+        if size is None:
+            size = _utf16_length(json.dumps(document, ensure_ascii=False)) if isinstance(document, (dict, list)) else 0
+        self.size = size
+        # While list builds every control's fields, what is left of its budget (Descriptor.listing).
+        self.listing: list[int] | None = None
+        self.ctx = Context(fetched_from or base, _Budget(size))
         self.inexact: set[Any] = inexact if inexact is not None else set()
         self.base = base
         self.nodes: dict[str, dict[str, Any]] = {}
@@ -1987,6 +2268,12 @@ class NodeIndex:
         # them from the same shape and mappings (_control_inputs), so they share
         # one list of fields; keyed by what they are read from, which is kept.
         self.inputs: dict[tuple[Any, ...], tuple[Any, tuple[list[Field], str | None, str | None]]] = {}
+        # Each property shape's or supported property's field, built once
+        # however many shapes name the node (_cached_field), and each template's
+        # own fields, built once from its mappings alone (_template_fields);
+        # keyed by the node's or the mappings' id(), which is kept.
+        self.fields: dict[int, tuple[Any, Field | None, list[str]]] = {}
+        self.mapped: dict[int, tuple[Any, _TemplateFields]] = {}
         self._ingest_document(document, fetched_from)
 
     def _ingest_document(self, document: Any, fetched_from: str | None) -> None:
@@ -2136,7 +2423,7 @@ class NodeIndex:
                 return found
         # A plain string naming a node as its "@id" was written before expansion, such as "#S".
         if isinstance(ident, str) and ident:
-            full = self.ctx.expand_iri(ident, document_relative=True)
+            full = self.ctx.lookup(ident)
             if full != ident and full in self.nodes:
                 return self.nodes[full]
         if isinstance(ident, dict) and any(k != "@id" for k in ident):
@@ -2584,7 +2871,7 @@ def _supported_field(index: NodeIndex, ref: Any, problems: list[str]) -> Field |
         iri = head.get("@id")
     else:
         # Hydra's context types hydra:property as @vocab, so a plain "schema:text" names an IRI.
-        iri = index.ctx.expand_iri(head, vocab=True, document_relative=True) if isinstance(head, str) else None
+        iri = index.ctx.lookup(head, True) if isinstance(head, str) else None
     named = isinstance(iri, str) and bool(iri) and not iri.startswith("_:")
     shown_label = _label(index.get(prop_node, P_LABEL)) if prop_node else None
     shown = _label(index.get(sp, P_SH_NAME)) or (local_name(iri) if named else None) or shown_label
@@ -2747,6 +3034,14 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
             if key in shape_ref and not (key == "uniqueItems" and shape_ref[key] is False):
                 problems.append(f"the JSON Schema names {key}, which this client does not check, so what it sends is not known; "
                                 "this control is not invoked")
+        # A JSON-LD keyword is no JSON Schema keyword: one written in place may
+        # keep its own @id and @type (normalize refuses any other), and one a
+        # JSON literal holds, which is JSON, keeps none.
+        in_place = id(shape_ref) in index.ctx.schemas
+        for key in sorted(shape_ref, key=_utf16_key):
+            if isinstance(key, str) and key.startswith("@") and not (in_place and key in ("@id", "@type")):
+                problems.append(f"the JSON Schema names {key}, which this client does not check, so what it sends is not known; "
+                                "this control is not invoked")
         for name, prop0 in properties.items():
             fields.append(_schema_field(name, prop0, name in required, problems))
         return fields, problems
@@ -2768,7 +3063,7 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
                             "control is not invoked")
     if not _present(props):
         if _present(supported):
-            built = [f for f in (_supported_field(index, item, problems) for item in _once_each(index, supported)) if f]
+            built = [f for f in (_cached_field(index, item, problems, _supported_field) for item in _once_each(index, supported)) if f]
             shared = _shared_list_problem(built)
             if shared:
                 problems.append(shared)
@@ -2801,45 +3096,70 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
             problems.append(f"the shape names a sh:property {_text(raw_id(pref))}, which this document does not describe, so what it "
                             "takes is not known; this control is not invoked")
             continue
-        facets = _Facets(index, node, problems, _subject(_label(index.get(node, P_SH_NAME)), _label(index.get(node, P_SH_PATH))))
-        path = facets.text(P_SH_PATH, "sh:path") or ""
-        if path and _complex_path(index, path):
-            problems.append(f"{facets.subject} writes sh:path as a complex SHACL path, which this client does not read, so what it "
-                            "takes is not known; this control is not invoked")
-        name = facets.one(P_SH_NAME, "sh:name")
-        enum = facets.enum()
-        min_count = facets.count(P_SH_MIN, "sh:minCount")
-        max_count = facets.count(P_SH_MAX, "sh:maxCount")
-        datatype = facets.text(P_SH_DT, "sh:datatype")
-        extra = facets.extra()
-        json_kind = _shacl_json_kind(index, node, datatype, max_count, extra["node_kind"])
-        multi = _is_multi(json_kind, min_count, max_count, True)
-        # Node values go in one JSON array (or, for one at most, one object), so its length is their count.
-        counted = json_kind in ("array", "object")
-        fields.append(Field(
-            name=_field_name(_text(name) or None, path, None),
-            path=path or None,
-            datatype=datatype,
-            json_kind=json_kind,
-            min_count=min_count, max_count=max_count,
-            min_items=min_count if counted else None, max_items=max_count if counted else None,
-            pattern=facets.text(P_SH_PAT, "sh:pattern"),
-            default=facets.defaults(multi),
-            max_length=facets.count(P_SH_MAXLEN, "sh:maxLength"),
-            min_length=facets.count(P_SH_MINLEN, "sh:minLength"),
-            description=facets.describe(P_SH_DESC, P_COMMENT, P_DESC),
-            enum=enum,
-            min_inclusive=facets.one(P_SH_MINI, "sh:minInclusive"),
-            max_inclusive=facets.one(P_SH_MAXI, "sh:maxInclusive"),
-            min_exclusive=extra["min_exclusive"], max_exclusive=extra["max_exclusive"], has_value=extra["has_value"],
-            node_kind=extra["node_kind"], unchecked=extra["unchecked"],
-            required=(min_count or 0) >= 1 or extra["has_value"] is not None, multi=multi,
-            in_list=index.list_head(index.get(node, P_SH_IN)),
-        ))
+        fld = _cached_field(index, node, problems, _property_field)
+        if fld is not None:
+            fields.append(fld)
     shared = _shared_list_problem(fields)
     if shared:
         problems.append(shared)
     return fields, problems
+
+
+def _cached_field(index: NodeIndex, ref: Any, problems: list[str], build: Any) -> Field | None:
+    """The field a property shape or a hydra:SupportedProperty gives, built
+    once per node however many shapes or classes name it, with the problems
+    reading it gave, added to `problems` each time: many shapes that name one
+    node share one Field, so what is written of it, a long description among
+    the rest, is written once (Descriptor.to_public). The page builds a
+    control's fields only when it is opened, so it needs no such cache."""
+    node = _node_of(index, ref)
+    if node is None:
+        return build(index, ref, problems)
+    hit = index.fields.get(id(node))
+    if hit is None or hit[0] is not node:
+        own: list[str] = []
+        hit = index.fields[id(node)] = (node, build(index, ref, own), own)
+    problems.extend(hit[2])
+    return hit[1]
+
+
+def _property_field(index: NodeIndex, node: dict[str, Any], problems: list[str]) -> Field:
+    """The field one SHACL property shape gives, and the problems reading its facets give. The page's shapeFields reads the same."""
+    facets = _Facets(index, node, problems, _subject(_label(index.get(node, P_SH_NAME)), _label(index.get(node, P_SH_PATH))))
+    path = facets.text(P_SH_PATH, "sh:path") or ""
+    if path and _complex_path(index, path):
+        problems.append(f"{facets.subject} writes sh:path as a complex SHACL path, which this client does not read, so what it "
+                        "takes is not known; this control is not invoked")
+    name = facets.one(P_SH_NAME, "sh:name")
+    enum = facets.enum()
+    min_count = facets.count(P_SH_MIN, "sh:minCount")
+    max_count = facets.count(P_SH_MAX, "sh:maxCount")
+    datatype = facets.text(P_SH_DT, "sh:datatype")
+    extra = facets.extra()
+    json_kind = _shacl_json_kind(index, node, datatype, max_count, extra["node_kind"])
+    multi = _is_multi(json_kind, min_count, max_count, True)
+    # Node values go in one JSON array (or, for one at most, one object), so its length is their count.
+    counted = json_kind in ("array", "object")
+    return Field(
+        name=_field_name(_text(name) or None, path, None),
+        path=path or None,
+        datatype=datatype,
+        json_kind=json_kind,
+        min_count=min_count, max_count=max_count,
+        min_items=min_count if counted else None, max_items=max_count if counted else None,
+        pattern=facets.text(P_SH_PAT, "sh:pattern"),
+        default=facets.defaults(multi),
+        max_length=facets.count(P_SH_MAXLEN, "sh:maxLength"),
+        min_length=facets.count(P_SH_MINLEN, "sh:minLength"),
+        description=facets.describe(P_SH_DESC, P_COMMENT, P_DESC),
+        enum=enum,
+        min_inclusive=facets.one(P_SH_MINI, "sh:minInclusive"),
+        max_inclusive=facets.one(P_SH_MAXI, "sh:maxInclusive"),
+        min_exclusive=extra["min_exclusive"], max_exclusive=extra["max_exclusive"], has_value=extra["has_value"],
+        node_kind=extra["node_kind"], unchecked=extra["unchecked"],
+        required=(min_count or 0) >= 1 or extra["has_value"] is not None, multi=multi,
+        in_list=index.list_head(index.get(node, P_SH_IN)),
+    )
 
 
 def _once_each(index: NodeIndex, values: Any) -> list[Any]:
@@ -2924,7 +3244,7 @@ def _address_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, lis
                             key=lambda v: str(truthy(v)))
             found.append({
                 "variable": _text(variable) or None,
-                "property": _text(index.ctx.expand_iri(prop, vocab=True, document_relative=True) if isinstance(prop, str) else prop) or None,
+                "property": _text(index.ctx.lookup(prop, True) if isinstance(prop, str) else prop) or None,
                 "required": truthy(required),
             })
         return (_text(template) or None), found, problems
@@ -3040,7 +3360,7 @@ class _FieldIndex:
 
 
 def _merge_mapping_fields(fields: list[Field], mappings: list[dict[str, Any]],
-                          base: _FieldIndex | None = None) -> list[Field]:
+                          base: _FieldIndex | None = None, steps: list[tuple[str, Any, int]] | None = None) -> list[Field]:
     """Joins a template's mappings to the fields. Each mapping, in order,
     renames the first field, in field order, whose path is its hydra:property,
     or else the first field now named as its variable, or else the first whose
@@ -3049,8 +3369,9 @@ def _merge_mapping_fields(fields: list[Field], mappings: list[dict[str, Any]],
     gives several controls stay as they are. Positions are looked up in maps
     (`base`, the given fields' _FieldIndex, when it is at hand), and the first
     field of a name, which renames change, in a heap per name, so the work is
-    linear in the mappings beyond copying the list. The page's mergeMappings
-    is the same."""
+    linear in the mappings beyond copying the list. `steps`, when given, gets
+    each mapping's variable, property and how it matched: 1 by path, 2 by
+    name, 3 by local name, 4 none. The page's mergeMappings is the same."""
     if not mappings:
         return fields
     base = base or _FieldIndex(fields)
@@ -3082,10 +3403,13 @@ def _merge_mapping_fields(fields: list[Field], mappings: list[dict[str, Any]],
             continue
         # A mapping with no hydra:property matches by its variable's name only.
         at = base.by_path.get(prop, more_path.get(prop)) if prop else None
+        step = 1
         if at is None:
-            at = first_named(variable)
+            at, step = first_named(variable), 2
         if at is None:
-            at = base.by_local.get(variable, more_local.get(variable))
+            at, step = base.by_local.get(variable, more_local.get(variable)), 3
+        if steps is not None:
+            steps.append((variable, prop, step if at is not None else 4))
         if at is not None:
             match = copy.copy(fields[at])
             match.variable = variable
@@ -3208,6 +3532,15 @@ def _aliases(fld: Field) -> list[str]:
     return list(dict.fromkeys(a for a in (fld.name, fld.variable, local_name(fld.path) if fld.path else None) if a))
 
 
+def _twin_names(name: str) -> str:
+    return f"two input fields are both named '{name}', so their values could not be told apart; this control is not invoked"
+
+
+def _twin_aliases(first: str, second: str, alias: str) -> str:
+    return (f"the input fields '{first}' and '{second}' both take a value named '{alias}', so which one a value fills is not "
+            "known; this control is not invoked")
+
+
 def _duplicate_problem(fields: list[Field]) -> str | None:
     """The problem that keeps a control's values from being told apart: two
     fields of one name, or a name one field's value may be given under
@@ -3216,17 +3549,118 @@ def _duplicate_problem(fields: list[Field]) -> str | None:
     seen: set[str] = set()
     for fld in fields:
         if fld.name in seen:
-            return (f"two input fields are both named '{fld.name}', so their values could not be told apart; "
-                    "this control is not invoked")
+            return _twin_names(fld.name)
         seen.add(fld.name)
     owner: dict[str, Field] = {}
     for fld in fields:
         for alias in _aliases(fld):
             first = owner.setdefault(alias, fld)
             if first is not fld:
-                return (f"the input fields '{first.name}' and '{fld.name}' both take a value named '{alias}', so which one a "
-                        "value fills is not known; this control is not invoked")
+                return _twin_aliases(first.name, fld.name, alias)
     return None
+
+
+class _TemplateFields:
+    """A template's own fields, built once from its mappings alone
+    (_merge_mapping_fields joining them to no field), which every control
+    that shares the template and has no field a mapping would match
+    (_joins_as_is) has after its own, unchanged and by reference (_Joined):
+    the properties its mappings name, and the variables of those that matched
+    none of its own fields by path, or by path or name, decide that. And, so
+    _joined_duplicate_problem costs a control's own fields, not these, where
+    each name and each name a value may be given under (_aliases) first
+    appears in them, and the first problem two of them give alone."""
+
+    def __init__(self, mappings: list[dict[str, Any]]) -> None:
+        steps: list[tuple[str, Any, int]] = []
+        self.fields = _merge_mapping_fields([], mappings, None, steps)
+        self.props = {prop for _, prop, _ in steps if prop}
+        self.unpathed = {variable for variable, _, step in steps if step != 1}
+        self.unnamed = {variable for variable, _, step in steps if step not in (1, 2)}
+        self.first_named: dict[str, int] = {}
+        self.twin_name: int | None = None
+        for at, fld in enumerate(self.fields):
+            if fld.name in self.first_named:
+                if self.twin_name is None:
+                    self.twin_name = at
+            else:
+                self.first_named[fld.name] = at
+        self.first_alias: dict[str, tuple[int, int]] = {}
+        self.twin_alias: tuple[int, int, int, str] | None = None
+        for at, fld in enumerate(self.fields):
+            for rank, alias in enumerate(_aliases(fld)):
+                first = self.first_alias.setdefault(alias, (at, rank))
+                if first[0] != at and self.twin_alias is None:
+                    self.twin_alias = (at, rank, first[0], alias)
+
+
+def _template_fields(index: NodeIndex, mappings: list[dict[str, Any]]) -> _TemplateFields:
+    """A template's _TemplateFields, built once however many controls share its mappings."""
+    hit = index.mapped.get(id(mappings))
+    if hit is None or hit[0] is not mappings:
+        hit = index.mapped[id(mappings)] = (mappings, _TemplateFields(mappings))
+    return hit[1]
+
+
+def _joins_as_is(fields: list[Field], template: _TemplateFields) -> bool:
+    """Whether no mapping of a template matches any of these fields, by path,
+    by name or by its path's local name, so joining its mappings to them
+    (_merge_mapping_fields) gives them unchanged, then the template's own
+    fields: a mapping matches one of these first only where it would match
+    one of the template's own fields no earlier."""
+    for fld in fields:
+        if fld.name in template.unpathed:
+            return False
+        if fld.path and (fld.path in template.props or local_name(fld.path) in template.unnamed):
+            return False
+    return True
+
+
+class _Joined(list):  # type: ignore[type-arg]
+    """A control's own fields, then its template's (_TemplateFields), as one
+    list: list and list --json name the template's for each control that
+    shares them, and write them once."""
+
+    def __init__(self, own: list[Field], template: _TemplateFields) -> None:
+        super().__init__(own)
+        self.extend(template.fields)
+        self.own = own
+        self.template = template
+
+
+def _joined_duplicate_problem(own: list[Field], template: _TemplateFields) -> str | None:
+    """_duplicate_problem of a control's own fields and then its template's,
+    found at the cost of its own fields: the first of the template's that
+    takes a name or an alias of its own, or the first two of the template's
+    that give one alone, whichever comes first."""
+    shared = template.fields
+    seen: set[str] = set()
+    for fld in own:
+        if fld.name in seen:
+            return _twin_names(fld.name)
+        seen.add(fld.name)
+    first = template.twin_name
+    for name in seen:
+        at = template.first_named.get(name)
+        if at is not None and (first is None or at < first):
+            first = at
+    if first is not None:
+        return _twin_names(shared[first].name)
+    owner: dict[str, Field] = {}
+    for fld in own:
+        for alias in _aliases(fld):
+            held = owner.setdefault(alias, fld)
+            if held is not fld:
+                return _twin_aliases(held.name, fld.name, alias)
+    found: tuple[int, int, str, str] | None = None
+    if template.twin_alias is not None:
+        at, rank, held_at, alias = template.twin_alias
+        found = (at, rank, shared[held_at].name, alias)
+    for alias, fld in owner.items():
+        hit = template.first_alias.get(alias)
+        if hit is not None and (found is None or hit < found[:2]):
+            found = (hit[0], hit[1], fld.name, alias)
+    return _twin_aliases(found[2], shared[found[0]].name, found[3]) if found is not None else None
 
 
 def _inline_fields(node: dict[str, Any]) -> list[Any] | None:
@@ -3305,7 +3739,8 @@ def _inline_field(item: dict[str, Any], inexact: set[Any] | None = None) -> Fiel
         description=_text(item.get("description")), required=(min_count or 0) >= 1,
         multi=_is_multi(json_kind, min_count, max_count, False),
     )
-    fld.rounded_default = _rounded_default(fld, inexact if inexact is not None else set())
+    fld.inexact = inexact if inexact is not None else set()
+    fld.rounded_default = _rounded_default(fld, fld.inexact)
     fld.default = _inline_default(item.get("defaultValue"))
     return fld
 
@@ -3497,6 +3932,7 @@ def _shared_shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field],
     def build() -> tuple[list[Field], list[str]]:
         fields, problems = _shape_fields(index, shape_ref)
         for fld in fields:
+            fld.inexact = index.inexact
             fld.rounded_default = _rounded_default(fld, index.inexact)
         return fields, problems
     if shape is None:
@@ -3531,14 +3967,19 @@ def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, ex
     if inline is not None:
         return _read_control_inputs(index, node, expects_raw, expects, mappings)
     raw = _json_value(expects_raw)
-    described = None if expects_raw is None or _is_json_schema(raw) else index.node(raw)
-    source: Any = raw if expects_raw is not None and _is_json_schema(raw) else described
+    if expects_raw is not None and _is_json_schema(raw):
+        # A JSON Schema written in place is its text: controls whose schemas
+        # read alike, each written in its own control, share one result.
+        kept: Any = None
+        source: Any = ("schema", id(raw) in index.ctx.schemas, json.dumps(raw, ensure_ascii=False))
+    else:
+        kept = None if expects_raw is None else index.node(raw)
+        source = id(kept) if kept is not None else None
     # The name hydra:expects is shown by goes in a warning, so it is part of the key.
-    key: tuple[Any, ...] = (id(source) if source is not None else None, expects_raw is not None, _text(expects),
-                            id(mappings) if mappings else None)
+    key: tuple[Any, ...] = (source, expects_raw is not None, _text(expects), id(mappings) if mappings else None)
     hit = index.inputs.get(key)
-    if hit is None or hit[0][0] is not source or (mappings and hit[0][1] is not mappings):
-        hit = index.inputs[key] = ((source, mappings), _read_control_inputs(index, node, expects_raw, expects, mappings))
+    if hit is None or hit[0][0] is not kept or (mappings and hit[0][1] is not mappings):
+        hit = index.inputs[key] = ((kept, mappings), _read_control_inputs(index, node, expects_raw, expects, mappings))
     return hit[1]
 
 
@@ -3569,9 +4010,23 @@ def _read_control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: An
     if expects_raw is not None and (shape is None or (not fields and not as_schema)):
         warning = _expects_warning(expects, inline is not None and bool(items), shape is not None)
     if mappings:
+        schema = _json_value(expects_raw) if shape is not None else None
+        # A template's own fields, joined to fields no mapping matches, are its
+        # fields by reference (_Joined), unless additionalProperties types them
+        # or a closed shape refuses them, which each control does for itself.
+        template = _template_fields(index, mappings)
+        typed = _is_json_schema(schema) and "additionalProperties" in schema and schema["additionalProperties"] is not True
+        shaped = None if shape is None or _is_json_schema(schema) else index.node(_json_value(expects_raw))
+        if (template.fields and not typed and not (shaped is not None and _present(index.get(shaped, SHACL + "closed")))
+                and _joins_as_is(fields, template)):
+            return _Joined(fields, template), inline_problem or _joined_duplicate_problem(fields, template), warning
+        if index.listing is not None:
+            # While list builds every control's, each field this builds is charged (Descriptor.listing).
+            index.listing[0] -= len(fields) + len(mappings)
+            if index.listing[0] < 0:
+                raise _Unlisted()
         given = len(fields)
         fields = _merge_mapping_fields(fields, mappings, base)
-        schema = _json_value(expects_raw) if shape is not None else None
         extra: list[str] = []
         if (len(fields) > given and _is_json_schema(schema) and "additionalProperties" in schema
                 and schema["additionalProperties"] is not True):
@@ -3581,6 +4036,7 @@ def _read_control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: An
             # variables are left as they are.
             first = fields[given]
             built = _schema_field(first.name, schema["additionalProperties"], first.required, extra)
+            built.inexact = index.inexact
             built.rounded_default = _rounded_default(built, index.inexact)
             shared = (_shared_schema_problem(first.name, fields[given + 1].name, schema["additionalProperties"])
                       if len(fields) - given > 1 else None)
@@ -4215,12 +4671,12 @@ def parse_descriptor(text: str, content_type: str, url: str, fetched_from: str |
     kind = classify_payload(text, content_type)
     if kind == "jsonld":
         document = _strict_json(text)
-        index = NodeIndex(document, url, fetched_from, {number for _, number in _changed_numbers(text)})
+        index = NodeIndex(document, url, fetched_from, {number for _, number in _changed_numbers(text)}, _utf16_length(text))
         title, types, description, see_also = descriptor_meta(index, url, content_type)
         return Descriptor(
             url=url, title=title, types=types, description=description,
             content_type=content_type, controls=extract_controls(index, url),
-            see_also=see_also, raw=document, context=index.ctx,
+            see_also=see_also, raw=document, context=index.ctx, index=index,
         )
     if kind == "turtle":
         return parse_descriptor(json.dumps(parse_turtle_via_rdflib(text, fetched_from or url)), "application/ld+json", url, fetched_from)
@@ -4534,8 +4990,10 @@ def _coerce_number(kind: str, value: Any) -> int | float:
         raise ValueError("not a finite number")
     if kind == "decimal" and _decimal_key(text) != _decimal_key(repr(number)):
         raise ValueError("decimal cannot be sent exactly")
-    # A whole number is sent as JavaScript sends it, 2 and not 2.0, in a URL and in JSON alike.
-    return int(number) if number.is_integer() and abs(number) < 1e21 else number
+    # A whole number is sent as JavaScript sends it, 2 and not 2.0, in a URL and in JSON alike. Past
+    # 2^53 - 1 it stays the double, which _js_number_text writes as the page does
+    # (123456789012345680000), never as the double's exact integer (123456789012345683968).
+    return int(number) if number.is_integer() and abs(number) <= _MAX_SAFE_INTEGER else number
 
 
 def _is_number(value: Any) -> bool:
@@ -4547,9 +5005,10 @@ class _FieldFacts:
     however many values they check, so a long constraint costs its length once
     and not once per value: the sh:hasValue's text, the number it is in a
     number field, the key of the JSON it holds in an rdf:JSON field
-    (_json_key), and whether it holds an integer past 2^53 (_rounded_entry);
-    and each bound as (kind, its number or None for none, its text). The
-    page's fieldFacts is the same."""
+    (_json_key), and whether it holds a number reading JSON may have rounded
+    (_rounded_entry); and each bound as (kind, its number or None for none,
+    its text, whether that number may not be the one written: _inexact_bound).
+    The page's fieldFacts is the same."""
 
     def __init__(self, fld: Field, numeric: str | None) -> None:
         self.rdf_json = _is_rdf_json(fld.datatype)
@@ -4570,7 +5029,7 @@ class _FieldFacts:
                 except ValueError:
                     pass
             self.has_value = (_text(entry), number, key, _rounded_entry(fld, entry))
-        self.bounds = [(kind, _bound_number(bound), _scalar_text(bound))
+        self.bounds = [(kind, _bound_number(bound), _scalar_text(bound), _inexact_bound(bound, fld.inexact))
                        for kind, bound in (("minInclusive", fld.min_inclusive), ("maxInclusive", fld.max_inclusive),
                                            ("minExclusive", fld.min_exclusive), ("maxExclusive", fld.max_exclusive))
                        if bound is not None]
@@ -4695,24 +5154,65 @@ def _rounded_default(fld: Field, inexact: set[Any]) -> bool:
 _ROUNDED_DEFAULT = ": its default holds a number that reading JSON may have rounded, so it is not sent"
 
 
-def _rounded_entry(fld: Field, entry: Any) -> bool:
-    """Whether a shape's sh:in entry or sh:hasValue holds an integer past 2^53
-    as a JSON number, which reading it may have rounded: a number entry, or in
-    an rdf:JSON field the JSON an entry's text holds. Text is read as written.
+def _rounded_kind(value: Any, inexact: Any) -> str | None:
+    """Whether a JSON value holds, at any depth, a number reading JSON may have
+    rounded (_holds_rounded): "integer" for one that holds an integer past 2^53,
+    "number" for one that holds another (one of `inexact`), or None."""
+    if _holds_unsafe_integer(value):
+        return "integer"
+    return "number" if inexact and _holds_rounded(value, inexact) else None
+
+
+def _rounded_entry(fld: Field, entry: Any) -> str | None:
+    """Whether a shape's sh:in entry or sh:hasValue holds a number reading it
+    may have rounded (_rounded_kind's kind, or None): a JSON number that is an
+    integer past 2^53 or one its document writes with digits its double drops,
+    or in an rdf:JSON field a number the JSON an entry's text holds whose
+    double would change it (_changed_numbers). Other text is read as written.
     The page's roundedEntry is the same."""
     if _is_rdf_json(fld.datatype) and isinstance(entry, str):
         try:
-            return _holds_unsafe_integer(_strict_json(entry))
+            parsed = _strict_json(entry)
         except ValueError:
-            return False
-    return not isinstance(entry, str) and _holds_unsafe_integer(entry)
+            return None
+        if _holds_unsafe_integer(parsed):
+            return "integer"
+        return "number" if _changed_numbers(entry, True) else None
+    return None if isinstance(entry, str) else _rounded_kind(entry, fld.inexact)
 
 
-def _rounded_problem(at: str, entry: str) -> str:
-    """What a value is refused with when the only entry it matches holds an
-    integer past 2^53: the entry may not be what the document wrote, so the
-    match is not known to be one."""
-    return f"{at}: matches only {entry}, which holds an integer past 2^53 that reading JSON may have rounded, so it is not sent"
+def _rounded_problem(at: str, entry: str, kind: str | None = "integer") -> str:
+    """What a value is refused with when the only entry it matches holds a
+    number reading JSON may have rounded: the entry may not be what the
+    document wrote, so the match is not known to be one."""
+    if kind == "integer":
+        return f"{at}: matches only {entry}, which holds an integer past 2^53 that reading JSON may have rounded, so it is not sent"
+    return f"{at}: matches only {entry}, which holds a number that reading JSON may have rounded, so it is not sent"
+
+
+def _inexact_bound(bound: Any, inexact: Any) -> bool:
+    """Whether a bound's number may not be the one the document writes, so it
+    is not compared: a JSON number that is an integer past 2^53 or one its
+    document writes with digits its double drops (_holds_rounded), or text
+    whose double writes another decimal (more digits than a double keeps, as
+    0.30000000000000000001 has). A bound past every double is an infinity,
+    which bounds as the number written does. The page's inexactBound is the
+    same."""
+    if isinstance(bound, bool):
+        return False
+    if isinstance(bound, (int, float)):
+        return math.isfinite(bound) and _holds_rounded(bound, inexact or ())
+    number = _bound_number(bound)
+    if number is None or not math.isfinite(number):
+        return False
+    return _decimal_key(bound.strip(_SPACES)) != _decimal_key(repr(number))
+
+
+# What a value is refused with, after the field's name, when a bound named
+# with its text may not be the number the document writes (_inexact_bound).
+def _inexact_problem(name: str, label: str, text: str) -> str:
+    return (f"{name}: its {label} {text} is a number a double may not hold exactly, which this client does not compare, so it is "
+            "not sent")
 
 
 def _same_json(a: Any, b: Any) -> bool:
@@ -4945,6 +5445,10 @@ def _offers(fld: Field, value: Any) -> bool:
         return False
     if _is_number(value) and float(value).is_integer() and abs(value) > _MAX_SAFE_INTEGER:
         return False
+    # Nor is a number its document writes with digits its double drops, which
+    # reading JSON gave this client in place of the number written.
+    if _is_number(value) and fld.inexact and value in fld.inexact:
+        return False
     if fld.schema_types is not None and not any(t in fld.schema_types for t in _json_types_of(value)):
         return False
     if _numeric_kind(fld) == "integer":
@@ -5002,7 +5506,7 @@ class _ShapeChoices:
         self.numeric = numeric
         self.rdf_json = _is_rdf_json(fld.datatype)
         self.keys: set[str] = set()
-        self.rounded: dict[str, str] = {}
+        self.rounded: dict[str, tuple[str, str]] = {}
         for entry in entries:
             keys = ["t" + _text(entry)]
             if numeric and (_is_number(entry) or isinstance(entry, str)):
@@ -5015,9 +5519,10 @@ class _ShapeChoices:
                     keys.append("j" + _json_key(entry if not isinstance(entry, str) else _strict_json(entry)))
                 except ValueError:
                     pass
-            if _rounded_entry(fld, entry):
+            kind = _rounded_entry(fld, entry)
+            if kind:
                 for key in keys:
-                    self.rounded.setdefault(key, _text(entry))
+                    self.rounded.setdefault(key, (_text(entry), kind))
             else:
                 self.keys.update(keys)
         self.problem = f"{fld.name}: must be one of {', '.join(text for text, _ in _choices_of(fld))}"
@@ -5035,7 +5540,7 @@ class _ShapeChoices:
         if key is not None and key in self.keys:
             return None
         if key is not None and key in self.rounded:
-            return _rounded_problem(self.name, self.rounded[key])
+            return _rounded_problem(self.name, *self.rounded[key])
         return self.problem
 
 
@@ -5056,11 +5561,12 @@ def _choices_of(fld: Field) -> list[tuple[str, Any]]:
     return [(_text(entry), entry) for entry in fld.enum if entry is not None]
 
 
-def _enum_keys(sch: dict[str, Any], enums: dict[int, Any]) -> dict[str, Any]:
+def _enum_keys(sch: dict[str, Any], enums: dict[int, Any], inexact: Any = None) -> dict[str, Any]:
     """A schema's enum and const as a check compares them, keyed once per
     schema for a whole check: each enum entry's key (_json_key), apart from
-    those that hold an integer past 2^53 with the first entry of each such
-    key, and the const's key and whether it holds one. The page's enumKeys is
+    those that hold a number reading JSON may have rounded (_rounded_kind),
+    with the first entry of each such key and its kind, and the const's key
+    and the kind of rounded number it holds, if any. The page's enumKeys is
     the same."""
     hit = enums.get(id(sch))
     if hit is not None and hit[0] is sch:
@@ -5068,18 +5574,20 @@ def _enum_keys(sch: dict[str, Any], enums: dict[int, Any]) -> dict[str, Any]:
     sure: set[str] = set()
     rounded: dict[str, Any] = {}
     for entry in sch["enum"] if isinstance(sch.get("enum"), list) else []:
-        if _holds_unsafe_integer(entry):
-            rounded.setdefault(_json_key(entry), entry)
+        kind = _rounded_kind(entry, inexact)
+        if kind:
+            rounded.setdefault(_json_key(entry), (entry, kind))
         else:
             sure.add(_json_key(entry))
     has_const = "const" in sch
     keyed = {"sure": sure, "rounded": rounded, "const_key": _json_key(sch["const"]) if has_const else None,
-             "const_rounded": has_const and _holds_unsafe_integer(sch["const"])}
+             "const_rounded": _rounded_kind(sch["const"], inexact) if has_const else None}
     enums[id(sch)] = (sch, keyed)
     return keyed
 
 
-def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[int, Any] | None = None) -> None:
+def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[int, Any] | None = None,
+                  inexact: Any = None) -> None:
     """Checks a JSON Schema field's value against its schema, and each part of
     it against the schema inside (items, properties, additionalProperties),
     applying each keyword to the kinds of value JSON Schema applies it to: a
@@ -5120,11 +5628,12 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
         # wrote, so it admits no value: one that matches only it is refused
         # naming it. An enum's entries and a const are keyed once for the whole
         # check, so each value is compared with them at the cost of its own size.
-        keyed = _enum_keys(sch, enums) if isinstance(sch.get("enum"), list) or "const" in sch else None
+        keyed = _enum_keys(sch, enums, inexact) if isinstance(sch.get("enum"), list) or "const" in sch else None
         key = _json_key(val) if keyed is not None else None
         if keyed is not None and isinstance(sch.get("enum"), list) and key not in keyed["sure"]:
             if key in keyed["rounded"]:
-                report(_rounded_problem(at, _entry_text(keyed["rounded"][key])))
+                entry, kind = keyed["rounded"][key]
+                report(_rounded_problem(at, _entry_text(entry), kind))
             else:
                 report(f"{at}: must be one of {', '.join(_entry_text(entry) for entry in sch['enum'])}")
             return
@@ -5133,7 +5642,7 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
                 report(f"{at}: must be {_entry_text(sch['const'])}")
                 return
             if keyed["const_rounded"]:
-                report(_rounded_problem(at, _entry_text(sch["const"])))
+                report(_rounded_problem(at, _entry_text(sch["const"]), keyed["const_rounded"]))
                 return
         problem = None
         if isinstance(val, str):
@@ -5151,7 +5660,12 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
                 (_bound_number(xmin), xmin) if "exclusiveMinimum" in sch and not isinstance(xmin, bool) else None)
             xhigh = (high, sch.get("maximum")) if xmax is True else (
                 (_bound_number(xmax), xmax) if "exclusiveMaximum" in sch and not isinstance(xmax, bool) else None)
-            if low is not None and val < low:
+            # A bound whose number may not be the one written is not compared.
+            unsure = next((key for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
+                           if key in sch and not isinstance(sch[key], bool) and _inexact_bound(sch[key], inexact)), None)
+            if unsure is not None:
+                problem = _inexact_problem(at, unsure, _scalar_text(sch[unsure]))
+            elif low is not None and val < low:
                 problem = f"{at}: below minInclusive {_scalar_text(sch['minimum'])}"
             elif high is not None and val > high:
                 problem = f"{at}: above maxInclusive {_scalar_text(sch['maximum'])}"
@@ -5457,11 +5971,12 @@ def coerce_value(fld: Field, value: Any) -> Any:
         except ValueError as exc:
             raise ValueError(f"{fld.name}: {exc}") from exc
     if _xsd_name(fld.datatype) == "boolean":
-        # Trimmed of space, tab, CR and LF, as a number is, and of nothing else.
-        text = (value if isinstance(value, str) else _scalar_text(value)).strip(_SPACES).lower()
-        if text in {"true", "1", "yes"}:
+        # XSD's four forms, true, false, 1 and 0, trimmed of space, tab, CR and LF, as a number is, and
+        # of nothing else: a value given is read as a default is, so "yes" and "TRUE" are no boolean.
+        text = (value if isinstance(value, str) else _scalar_text(value)).strip(_SPACES)
+        if text in {"true", "1"}:
             return True
-        if text in {"false", "0", "no"}:
+        if text in {"false", "0"}:
             return False
         raise ValueError(f"{fld.name} must be a boolean")
     return value
@@ -5602,7 +6117,7 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
                 and isinstance(fld.schema, dict) and ("enum" in fld.schema or "const" in fld.schema)):
             report(f"{fld.name}: integer too large to send exactly")
             return None
-        _check_schema(fld.schema, typed, fld.name, report, enums)
+        _check_schema(fld.schema, typed, fld.name, report, enums, fld.inexact)
         return typed
     structured = isinstance(typed, (dict, list))
     # A JSON array holds as many values as it has items, and a field that takes
@@ -5649,7 +6164,7 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
         if not _has_value_matches(facts, numeric, typed):
             report(f"{fld.name}: must be {facts.has_value[0]}")
         elif facts.has_value[3]:
-            report(_rounded_problem(fld.name, facts.has_value[0]))
+            report(_rounded_problem(fld.name, facts.has_value[0], facts.has_value[3]))
     # A bound is compared with a number: a value that is none (text, or a node)
     # is an error, not a pass, as SHACL has a comparison it cannot make. A bound
     # that is no number, such as a date, is not compared, so a value is refused;
@@ -5664,12 +6179,15 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     elif bounds and not numeric:
         report(f"{fld.name}: its sh:{bounds[0][0]} {bounds[0][2]} bounds a field that takes no number, which this client "
                "does not compare, so it is not sent")
+    elif any(b[3] for b in bounds):
+        unsure = next(b for b in bounds if b[3])
+        report(_inexact_problem(fld.name, "sh:" + unsure[0], unsure[2]))
     elif bounds:
         number = None if structured else _lexical_number(typed)
         if number is None:
             report(f"{fld.name}: not a number")
         else:
-            for kind, limit, text in bounds:
+            for kind, limit, text, _ in bounds:
                 if kind == "minInclusive" and number < limit:
                     report(f"{fld.name}: below minInclusive {text}")
                 if kind == "maxInclusive" and number > limit:
@@ -5760,9 +6278,10 @@ def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, Any]) -> 
         if from_default:
             listed = fld.default if isinstance(fld.default, list) else [fld.default]
             items = _multi_items(listed)
-            # A default is read as a value given is: one with entries that are all blank holds no values.
+            # A default is read as a value given is: one with entries that are all blank holds no values,
+            # which is the default's problem, not a value given.
             if not items and any(x is not None for x in listed):
-                note(f"{fld.name}: was given no values")
+                note(f"{fld.name}: its default holds no values, so it is not sent")
                 return None, False
             # One with a blank entry among others is sent as the document gives it or not at all: never without it.
             if len(items) != len(listed):
@@ -5805,7 +6324,7 @@ def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, Any]) -> 
             if not any(v is not None and _has_value_matches(facts, numeric, v) for v in typed_items):
                 note(f"{fld.name}: must include {facts.has_value[0]}")
             elif facts.has_value[3]:
-                note(_rounded_problem(fld.name, facts.has_value[0]))
+                note(_rounded_problem(fld.name, facts.has_value[0], facts.has_value[3]))
         return typed_items, problems == 0
     if isinstance(found, list):
         found = found[-1] if found else None
@@ -6153,12 +6672,26 @@ def print_control_table(descriptor: Descriptor) -> None:
     if descriptor.problem:
         say(f"note: {descriptor.problem}")
     say()
+    built = {id(control): whole for control, whole in zip(descriptor.controls, descriptor.listing())}
     safe = [c for c in descriptor.controls if not c.unsafe]
     unsafe = [c for c in descriptor.controls if c.unsafe]
     # The names of a field list several controls share are written once, with
-    # the first control that has it; each other names that control. A control
-    # that is not invoked has its problem written, not its fields.
-    first_with: dict[int, tuple[list[Field], str]] = {}
+    # the first control that has it, and so are a template's fields; each other
+    # names that control. A control that is not invoked has its problem
+    # written, not its fields.
+    first_with: dict[tuple[int, ...], str] = {}
+    keyed: dict[int, tuple[Any, tuple[int, ...]]] = {}
+
+    def key_of(items: list[Field]) -> tuple[int, ...]:
+        hit = keyed.get(id(items))
+        if hit is None or hit[0] is not items:
+            hit = keyed[id(items)] = (items, tuple(id(fld) for fld in items))
+        return hit[1]
+
+    def names(items: list[Field]) -> str:
+        # * marks a required field, [] one that takes a list of values.
+        return ", ".join(("*" if f.required or (f.min_count or 0) >= 1 else "") + f.name + ("[]" if f.multi else "") for f in items)
+    tied: list[Any] = []
     for label, group in (("Safe (GET / read)", safe), ("Unsafe (writes and non-GET)", unsafe)):
         say(f"== {label} ({len(group)}) ==")
         if not group:
@@ -6173,16 +6706,30 @@ def print_control_table(descriptor: Descriptor) -> None:
                 say(f"         target: {target}")
             if control.media_type:
                 say(f"         media: {control.media_type}")
+            if not built[id(control)]:
+                say("         fields: not listed, since listing every control's would cost more than the document's size; "
+                    "describe it to see them")
+                if control.__dict__.get("conflict"):
+                    say(f"         note: {control.__dict__['conflict']}")
+                continue
             fields = None if control.problem else control.fields
             if fields:
-                hit = first_with.get(id(fields))
-                if hit is None or hit[0] is not fields:
-                    first_with[id(fields)] = (fields, control.rel)
-                    # * marks a required field, [] one that takes a list of values.
-                    say("         fields: " + ", ".join(
-                        ("*" if f.required or (f.min_count or 0) >= 1 else "") + f.name + ("[]" if f.multi else "") for f in fields))
+                own = fields.own if isinstance(fields, _Joined) else fields
+                shared = fields.template.fields if isinstance(fields, _Joined) else None
+                key = key_of(own) + ((-1,) + key_of(shared) if shared is not None else ())
+                hit = first_with.get(key)
+                tied.append(fields)
+                if hit is not None:
+                    say(f"         fields: as listed for {hit}")
+                elif shared is not None and (-2,) + key_of(shared) in first_with:
+                    first_with[key] = control.rel
+                    lead = names(own) + ", and the" if own else "the"
+                    say(f"         fields: {lead} template's variables as listed for {first_with[(-2,) + key_of(shared)]}")
                 else:
-                    say(f"         fields: as listed for {hit[1]}")
+                    first_with[key] = control.rel
+                    if shared is not None:
+                        first_with[(-2,) + key_of(shared)] = control.rel
+                    say("         fields: " + names(fields))
             for note in (control.problem, control.warning):
                 if note:
                     say(f"         note: {note}")

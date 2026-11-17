@@ -642,6 +642,21 @@ are refused; keywords such as `@set` inside a schema are named and refused; and
 both clients refuse an integer past 2^53 - 1. Of 40 new shared rows, 32 failed
 in `hmc.py` and 28 on the page before. The CSP hash moves.
 
+A sixteenth review found `hmc.py`'s `list --json` writing a template's
+variables, a property node's field and an `sh:in` list once for each control
+that shares them (540 MB for 252 KB), one long prefix or `@base` costing either
+client gigabytes, a hint inside a JSON Schema passed over, a decimal past 2^53
+sent as another number, and bounds and entries compared as doubles. Now `list`
+writes each shared field, list and template once and builds per-control joins
+within a budget; both clients refuse a document whose IRIs expand to far more
+than it holds, or whose JSON Schema holds a node or a JSON-LD keyword, and read
+an object outside `hydra:expects` as JSON-LD; a bound or an entry whose number
+may not be the one written is not compared; a boolean takes only XSD's four
+forms; and a blank list default is named as the default's. Of 63 new shared
+rows, 50 failed in `hmc.py` and 35 on the page before; the rows that pin a
+list's stop at its first bad value fail in both once the stop is removed. The
+CSP hash moves.
+
 ## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
 
 From review of #934. With `requireSignedHead` on, a head with no signature was
