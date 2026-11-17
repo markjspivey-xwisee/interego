@@ -1,6 +1,5 @@
 # Changelog
 
-
 ## 2026-11-17 — Foxxi: a Quoted descriptor is projected as quoted, not as completed or failed
 
 A Quoted descriptor repeats a claim someone else made, without endorsing it.
