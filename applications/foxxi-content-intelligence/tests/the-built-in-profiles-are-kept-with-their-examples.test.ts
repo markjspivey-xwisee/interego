@@ -226,7 +226,11 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
       const judged = await followsFoxxi(statement);
       expect(judged.comments).toEqual([]);
       expect(judged.templates).toEqual([`${FOXXI_PROFILE_ID}/templates/quoted-descriptor`]);
-      expect(projectMeshEntry(entry({ modalStatus: 'Quoted', ...more }), 'https://pod.example/fictional-agent/')!.step.result).toBeUndefined();
+      // Its trajectory step is a Quoted step, not an asserted one, and carries no outcome.
+      const projected = projectMeshEntry(entry({ modalStatus: 'Quoted', ...more }), 'https://pod.example/fictional-agent/')!;
+      expect(projected.step.result).toBeUndefined();
+      expect(projected.step).toMatchObject({ modalStatus: 'Quoted', verb: 'quoted' });
+      expect(projected.mode).toBe('quoted');
     }
     // The template refuses an outcome beside the verb.
     const withOutcome = { ...project({ modalStatus: 'Quoted' }) } as Json;

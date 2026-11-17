@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
+
+A Quoted descriptor repeats someone else's claim without endorsing it. The
+trajectory had three modal statuses and no Quoted, so Foxxi's projector
+recorded such a step as Asserted, which is the status the trajectory counts
+and projects as executed work.
+
+- **agentic-performance-practice:** `TrajectoryModalStatus` gains `Quoted`.
+  The step's descriptor states it, `trajectoryShape` counts it apart, and
+  `projectTrajectoryToXapi` drops it with the intentions and rejected
+  branches, reported under `modalStepsDropped`.
+- **Foxxi's projector** gives a Quoted descriptor a `quoted` step with status
+  `Quoted`, and reports its mode as `quoted`. **This changes what a caller of
+  `projectMeshEntry` reads** for a Quoted descriptor: `mode` was `asserted`.
+
+**Not done.** Foxxi's projector still writes its own `foxxi:` descriptor keys
+beside the `iep#` ones. Stopping needs a new version of Foxxi's profile, whose
+templates require those keys; the xapi-x README says what depends on them.
+
 ## 2026-11-17 — xapi-x: the lint and the controls document are affordances, and Foxxi's profile states what it offers
 
 From the xapi-x list of what was only designed.
