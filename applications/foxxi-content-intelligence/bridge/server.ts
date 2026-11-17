@@ -11012,6 +11012,13 @@ const xapiProfileServer = new ProfileServer({
   // from the moment it is composed, whether or not the write landed.
   confirm: async record => {
     if (!XAPI_PROFILES_POD) return false;
+    // With no key this bridge writes no lattice at all (composeIntoSharedLattice returns before
+    // it sends anything), so the record cannot be on the pod. Reading the pod's copy also needs
+    // the key and would answer "cannot be read", which would leave every write in doubt for good.
+    if (!bridgeEncryptionKeypair()) return false;
+    // The same holds for a pod address the fetch guard refuses (a loopback or private one):
+    // the write is refused before it is sent, and so is the read.
+    try { await assertSafeFetchTarget(XAPI_PROFILES_POD); } catch { return false; }
     const onPod = await persistedLatticeArtifacts(XAPI_PROFILES_POD, XAPI_PROFILE_RECORD, XAPI_PROFILES_RESOURCE);
     return onPod === null ? undefined : onPod.some(a => (a.content as ProfileRecord | null)?.id === record.id);
   },
