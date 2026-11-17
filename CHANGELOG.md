@@ -10,7 +10,10 @@ given"; replacing them needed a correction, not a score.
 - `select-tests` takes `supersedes`, the graph IRI of an earlier test
   selection. The new selection is published as the next version of that
   graph, compare-and-swapped on its head, and stays Hypothetical. No outcome
-  is recorded.
+  is recorded. It carries that graph's IRI, so it can be scored or replaced
+  again in its turn.
+- The selection being replaced is read from the pod's current head where a
+  pod is configured; a copy in the bridge's own store is not taken as current.
 - Refused before any model call: a `supersedes` that is not an IRI (400), a
   graph the store and the pod hold nothing readable for (404), a judgment of
   another kind, and a selection an outcome has already scored (409).
