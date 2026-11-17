@@ -16,6 +16,7 @@
  * Examples are not part of xAPI Profiles 1.0, which has no place for them. They are kept beside
  * the document and published with the version.
  */
+import { extensionValues } from './extension-schema.js';
 import { apply_jsonpath, elementsOf, follows, inOrder, matches, validates, type Json, type Judged } from './processor.js';
 
 const isObject = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v);
@@ -265,7 +266,10 @@ export function lintProfile(doc: unknown, examples: ProfileExamples = emptyExamp
     if (extra.length) say('example-follows-another', at, `${path}.follows`, `The statement also follows ${extra.join(', ')}, which the example does not claim.`,
       'If a statement of this kind is meant to follow both, add the other to "follows". If it is not, give one template a determining property the other lacks.');
     if (missing.length) say('example-does-not-follow', at, path, `The statement does not match ${missing.join(', ')}: it lacks a determining property the template states.`, 'Give the statement what the template states, or take the template out of "follows".');
-    if (!extra.length && !missing.length) for (const t of result.templates) followed.add(t);
+    // The algorithm reads no concept, so an example whose extension is of the wrong kind follows its template. It is still wrong.
+    const values = extensionValues(example.statement, concepts.filter(isObject)).findings;
+    for (const v of values) say('example-extension-value', at, `${path}.statement`, `At ${v.location}, ${v.reason}, which the inlineSchema of ${v.extension} does not allow.`, 'Change the value in the example, or the inlineSchema, until they agree.');
+    if (!extra.length && !missing.length && !values.length) for (const t of result.templates) followed.add(t);
   }
   for (const template of liveTemplates) {
     if (!followed.has(String(template.id))) say('template-example', String(template.id), where.get(template)!, 'No example statement follows this template.',

@@ -22,6 +22,7 @@ import { rateLimit, type Options as RateLimitOptions } from 'express-rate-limit'
 import { turtleIriRef } from '@interego/core';
 import { ProfileDataset, SparqlRefused, type HeldProfile } from './dataset.js';
 import { follows, validates, type Json as PJson } from './processor.js';
+import { extensionValues, type ExtensionFinding } from './extension-schema.js';
 import { toRdfTerm, versionsOf, type Json } from './rdf.js';
 import type { ExternalTerm, ProfileExamples } from './lint.js';
 
@@ -536,7 +537,7 @@ export class ProfileServer {
   owner(profileId: string): string | undefined { return this.builtInIds.has(profileId) ? undefined : this.owners.get(profileId); }
   isBuiltIn(profileId: string): boolean { return this.builtInIds.has(profileId); }
 
-  private parts(profile: unknown): { held: HeldProfile; templates: PJson[]; patterns: PJson[] } {
+  private parts(profile: unknown): { held: HeldProfile; templates: PJson[]; patterns: PJson[]; concepts: PJson[] } {
     if (typeof profile !== 'string' || profile === '') throw new ProfileServerError(400, 'Name the profile by its id in `profile`.');
     const held = this.dataset.get(profile);
     if (!held) throw new ProfileServerError(400, `No profile with id ${profile} is on this server. GET the server root for the ones that are, or add it.`);
@@ -544,37 +545,48 @@ export class ProfileServer {
     const list = (v: Json | undefined) => (Array.isArray(v) ? v.filter(isObj) : []) as unknown as PJson[];
     // A deprecated template or pattern stays in the document so its IRI resolves, and judges nothing.
     const live = (all: PJson[]) => all.filter(p => p.deprecated !== true);
-    return { held, templates: live(list(doc.templates)), patterns: live(list(doc.patterns)) };
+    return { held, templates: live(list(doc.templates)), patterns: live(list(doc.patterns)), concepts: live(list(doc.concepts)) };
   }
 
-  /** The specification's /validate_templates: no comments means the statement validates. */
+  /**
+   * The specification's /validate_templates: no comments means the statement validates.
+   *
+   * Beside the algorithm, a statement that matches a template is held to the schema of each
+   * extension the profile declares (./extension-schema.ts). The algorithm reads no concept, so
+   * without this a value of the wrong kind follows the profile.
+   */
   async validateTemplates(statement: unknown, profile: unknown): Promise<{ comments: string[]; templates: string[]; skipped: string[] }> {
     await this.ready();
-    const { templates } = this.parts(profile);
+    const { templates, concepts } = this.parts(profile);
     const one = parsed(statement, 'statement');
     if (!isObj(one)) throw new ProfileServerError(400, '`statement` is one xAPI Statement, as a JSON object.');
     let r;
     try { r = validates(one as unknown as PJson, templates, { ...(this.options.statementById ? { statementById: this.options.statementById } : {}) }); }
     catch (e) { return { comments: [(e as Error).message], templates: [], skipped: [] }; }
-    const comments = r.outcome === 'success' ? []
-      : r.outcome === 'unmatched' ? ['The statement matches no statement template of this profile: no template\'s determining properties (verb, object activity type, context activity types, attachment usage types) all match it.']
-        : r.findings.map(f => `${f.template}: ${f.location ? `rule at ${f.location}: ` : ''}${f.reason}`);
-    return { comments, templates: r.templates, skipped: r.skipped };
+    if (r.outcome === 'unmatched') return { comments: ['The statement matches no statement template of this profile: no template\'s determining properties (verb, object activity type, context activity types, attachment usage types) all match it.'], templates: r.templates, skipped: r.skipped };
+    const values = extensionValues(one as unknown as PJson, concepts);
+    const comments = [...r.findings.map(f => `${f.template}: ${f.location ? `rule at ${f.location}: ` : ''}${f.reason}`), ...values.findings.map(extensionComment)];
+    return { comments, templates: r.templates, skipped: [...r.skipped, ...values.unchecked] };
   }
 
-  /** The specification's /validate_patterns. */
+  /** The specification's /validate_patterns, with each statement's declared extensions held to their schemas. */
   async validatePatterns(statements: unknown, profile: unknown): Promise<{ comments: string[]; pattern?: string }> {
     await this.ready();
-    const { templates, patterns } = this.parts(profile);
+    const { templates, patterns, concepts } = this.parts(profile);
     const many = parsed(statements, 'statements');
     if (!Array.isArray(many) || !many.every(isObj)) throw new ProfileServerError(400, '`statements` is an array of xAPI Statements.');
     if (many.length > MAX_PATTERN_STATEMENTS) throw new ProfileServerError(413, `Up to ${MAX_PATTERN_STATEMENTS} statements are checked in one request.`);
     let r;
     try { r = follows(many as unknown as PJson[], templates, patterns, { ...(this.options.statementById ? { statementById: this.options.statementById } : {}) }); }
     catch (e) { return { comments: [(e as Error).message] }; }
-    return r.follows ? { comments: [], ...(r.pattern ? { pattern: r.pattern } : {}) } : { comments: r.reasons };
+    if (!r.follows) return { comments: r.reasons };
+    const values = (many as unknown as PJson[]).flatMap((statement, index) => extensionValues(statement, concepts).findings
+      .map(f => `statement ${typeof statement.id === 'string' ? statement.id : `at position ${index}`}: ${extensionComment(f)}`));
+    return values.length ? { comments: values } : { comments: [], ...(r.pattern ? { pattern: r.pattern } : {}) };
   }
 }
+
+const extensionComment = (f: ExtensionFinding): string => `${f.extension}: at ${f.location}, ${f.reason}. The profile declares what this extension's value is, and the statement is held to it.`;
 
 /** What `resolve` found for an IRI. */
 export interface Resolved {
