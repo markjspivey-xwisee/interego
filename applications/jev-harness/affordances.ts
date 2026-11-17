@@ -67,6 +67,7 @@ export const jevHarnessAffordances: ReadonlyArray<Affordance> = [
       { name: 'base_ref', type: 'string', required: false, description: 'Git ref to diff against on a locally configured checkout. For the hosted snapshot, supply changed_files.' },
       { name: 'head_ref', type: 'string', required: false, description: 'Git ref of the change; defaults to the working tree.' },
       { name: 'task', type: 'string', required: false, description: 'Optional task sentence for context.' },
+      { name: 'supersedes', type: 'string', required: false, description: 'The urn:graph:jev-harness:* IRI of an earlier test selection this one replaces. The new selection is published as the next version of that graph. No outcome is recorded.' },
     ],
     reads: [REPO_READ],
   },
