@@ -80,7 +80,7 @@ describe('.github/workflows: a pull request run is cancelled by the next push to
       const block = topLevelBlock(readFileSync(join(WORKFLOW_DIR, file), 'utf8'), 'concurrency');
       expect(block, `${file} is started by pull requests and declares no top-level concurrency group, so a superseded head runs to its end in front of the new one`).toBeDefined();
       const text = (block ?? []).filter((l) => !/^\s*#/.test(l)).join('\n');
-      expect(text, `${file}: the group must name the pull request, or two pull requests cancel each other`).toMatch(/^ {2}group:.*github\.event\.pull_request\.number/m);
+      expect(text, `${file}: the group must name the pull request, or two pull requests cancel each other`).toMatch(/^ {2}group:.*github\.(event\.pull_request\.number|ref\b|head_ref\b)/m);
       // `true`, or an expression that is true for pull requests.
       expect(text, `${file}: a group that does not cancel only queues the new head behind the old one`).toMatch(/^ {2}cancel-in-progress:\s*(true\s*$|\$\{\{.*pull_request.*\}\})/m);
     });
