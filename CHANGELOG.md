@@ -69,8 +69,9 @@ first case. `tests/local-node.test.ts` gains a `Forwarded` case, which got 500
 before the gateway change.
 
 The new test file takes the linted scope to 717, one past the floor's slack,
-so `MIN_FILES` in `tools/lint-gate.mjs` moves to 682, the number the gate
-named.
+so `MIN_FILES` in `tools/lint-gate.mjs` moved to 682, the number the gate
+named. With master's own new files merged in, the scope is 719 and the gate
+named 684, which is the value this change leaves.
 
 Checks: `tests/local-node-expired-sweep.test.ts` (4 tests),
 `tests/local-node.test.ts` (9) and pod-desktop's `local-federation.test.ts`,

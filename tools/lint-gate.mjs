@@ -732,7 +732,8 @@ const BASELINE = {};
 // tests/abac-portable.test.ts bring it to 712; the gate named 678.
 // 2026-11-15: tools/coached-world-guest-provision.mjs, its declarations and its test bring it to 715; the gate named 681.
 // 2026-11-17: tests/local-node-expired-sweep.test.ts brings it to 717; the gate named 682.
-export const MIN_FILES = 683;
+// 2026-11-17: merged with master's 683, the scope is 719; the gate named 684.
+export const MIN_FILES = 684;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
