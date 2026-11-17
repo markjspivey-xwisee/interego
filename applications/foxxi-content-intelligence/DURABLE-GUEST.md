@@ -49,6 +49,38 @@ guest does. If any step of keeping fails, the person is still signed in as a tab
   relay's guest tools are not used.
 - Only one guest is kept per browser profile; keeping a new one replaces the record of the old.
 
+## The general guest
+
+Identity's **general guest** (one guest per browser across Interego applications, admitted at
+identity's own door and linkable to a registered account: `deploy/identity/PROVISIONAL-PLAY.md`,
+"General guest") is offered by Foxxi's I2IDL-X learner workbench and its course player when
+`FOXXI_I2IDLX_GENERAL_GUEST=1` (`i2idlx/LEARNING-CONNECTIONS.md`, "The general guest").
+
+**The dashboard does not offer it**, and nothing on this page changes. Two things stand in the way,
+and neither is a setting:
+
+1. *The dashboard has no session with the bridge to give a general guest.* A dashboard guest **is**
+   a key: the tab makes a secp256k1 wallet, and the bridge authenticates each `/agent/*` request by
+   recovering its signer, who is the caller (`did:ethr:<address>`). A general guest's key is a
+   P-256 key that never leaves identity's door origin, so in the dashboard it has nothing to sign
+   with. Admitting it needs either a bearer session accepted wherever the bridge now requires a
+   signature, or a rule that a tab key's requests count as another subject's (for a linked guest, a
+   registered account's). Both change what every ownership and attribution check in the bridge
+   reads as "the caller". That is a change to the bridge's authentication as a whole, to be
+   designed and reviewed on its own, not added beside it.
+2. *The dashboard is a static site on another origin.* Identity returns the browser to a path on
+   the application's registered origin, and the code must be exchanged, and the visit's cookie
+   checked, by a server. The dashboard's origin has none (nginx serving files). Either that host
+   proxies the return path to the bridge, or the bridge's origin is the audience and the finished
+   session is handed to a page on another origin. The second cannot use the HttpOnly cookie that
+   binds the visit (to the dashboard's page it is a cross-origin cookie, and a third-party one
+   wherever the two hosts are not the same site); a hand-over without it (the dashboard starts the
+   visit with a form post the bridge accepts only from the dashboard's `Origin`, and collects the
+   session once with a secret only its tab holds) is possible but has been run in no browser.
+
+Until both are settled, a dashboard guest is what this page describes: a wallet the tab makes,
+optionally kept in a per-application provisional pod.
+
 ## The three routes
 
 | Route | What it answers |

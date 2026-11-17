@@ -42,6 +42,19 @@ function sameOriginPath(raw, origin, path) {
   return url.href;
 }
 
+/**
+ * Validates the `general_guest_sign_in` block of the learning session status: where this
+ * workbench sends a browser to enter as its Interego general guest (one guest per browser across
+ * Interego applications, admitted at the identity service's own door). Null when it is not offered.
+ * The address is this workbench's own start path and nothing else; it is followed as a top-level
+ * navigation, and the session that comes back is the workbench's ordinary HttpOnly cookie.
+ */
+export function learningGeneralGuestSignIn(value, origin) {
+  if (value === undefined || value === null) return null;
+  if (!object(value)) throw fail('The workbench returned an unsupported guest configuration.');
+  return { start_url: sameOriginPath(value.start_url, origin, '/i2idlx/learning/guest/general/start') };
+}
+
 /** Validates the `guest_sign_in` block of the learning session status. Null when guests are not offered. */
 export function learningGuestSignIn(value, origin) {
   if (value === undefined || value === null) return null;

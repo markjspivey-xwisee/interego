@@ -16,7 +16,7 @@ import { afterEach, describe, expect, it, vi } from 'vitest';
 import { RATE_RULES } from '../src/rate-limit.js';
 import { start, GENERAL_GUEST_RETURN_PATH, LINKED_SESSION_MS } from '../src/server.js';
 import { generalGuestUserId, playKeyThumbprint, publicPlayKey } from '../../../deploy/identity/provisional-play.js';
-import { RETURN_PATH, WORLD, agent, cookieOf, identity, newKey } from './general-guest-identity.js';
+import { RETURN_PATH, WORLD, agent, cookieOf, identity, newKey } from '../../_shared/tests/general-guest-identity.js';
 import { CoachedWorld } from '../src/world.js';
 import { FoxxiCourseLauncher } from '../src/course-launch.js';
 import { CMI5_CATEGORY, HttpLrs, parseLmsAuthority, SATISFIED, type LrsQuery, type LrsReader } from '../src/lrs.js';
