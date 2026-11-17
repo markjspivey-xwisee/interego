@@ -203,13 +203,41 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     expect(projectMeshEntry(entry({ modalStatus, success: true }), 'https://pod.example/fictional-agent/')!.step.result).toBeUndefined();
   });
 
-  it('passes the xapi-x statement rules, except for a Quoted descriptor, which still projects with an outcome verb', () => {
+  it('passes the xapi-x statement rules for every modal status', () => {
     const profiles = [xapixDoc, foxxi as Json];
     const options = { outcomeVerbs: ['http://adlnet.gov/expapi/verbs/completed', 'http://adlnet.gov/expapi/verbs/failed'] };
     const clean = [project(), project({ success: false, scoreScaled: 0.2 }), project({ modalStatus: 'Hypothetical', success: true }),
-      project({ modalStatus: 'Counterfactual', scoreScaled: 0.9 }), project({ supersedes: [D0, DM1] })];
+      project({ modalStatus: 'Counterfactual', scoreScaled: 0.9 }), project({ supersedes: [D0, DM1] }),
+      project({ modalStatus: 'Quoted' }), project({ modalStatus: 'Quoted', success: false, scoreScaled: 0.1 })];
     expect(lintXapixStatements(clean, profiles, options)).toEqual([]);
-    expect([...new Set(lintXapixStatements([project({ modalStatus: 'Quoted' })], profiles, options).map(f => f.code))]).toEqual(['xapix-outcome-not-asserted']);
+    // The rule is live: the statement a Quoted descriptor used to get is found.
+    const before = { ...project({ modalStatus: 'Quoted' }), verb: { id: 'http://adlnet.gov/expapi/verbs/completed' } };
+    expect([...new Set(lintXapixStatements([before], profiles, options).map(f => f.code))]).toEqual(['xapix-outcome-not-asserted']);
+  });
+
+  it('a Quoted descriptor is projected as quoted: no outcome verb, no outcome, and marked as not endorsed', async () => {
+    for (const more of [{}, { success: true }, { success: false, scoreScaled: 0.1 }] as Array<Partial<MeshDiscoverEntry>>) {
+      const statement = project({ modalStatus: 'Quoted', ...more });
+      expect((statement.verb as Json).id).toBe(`${FOXXI_NS}verbs/quoted`);
+      expect(Object.keys(statement.result as Json)).toEqual(['extensions']);
+      expect((context(statement).extensions as Json)[`${FOXXI_NS}endorsed`]).toBe(false);
+      // Not a performance record: no performance category beside the two projection markers.
+      expect(((context(statement).contextActivities as Json).category as Json[]).length).toBe(2);
+      const judged = await followsFoxxi(statement);
+      expect(judged.comments).toEqual([]);
+      expect(judged.templates).toEqual([`${FOXXI_PROFILE_ID}/templates/quoted-descriptor`]);
+      expect(projectMeshEntry(entry({ modalStatus: 'Quoted', ...more }), 'https://pod.example/fictional-agent/')!.step.result).toBeUndefined();
+    }
+    // The template refuses an outcome beside the verb.
+    const withOutcome = { ...project({ modalStatus: 'Quoted' }) } as Json;
+    withOutcome.result = { ...(withOutcome.result as Json), success: true };
+    expect((await followsFoxxi(withOutcome)).comments.join('\n')).toContain('result.success');
+  });
+
+  it.each(['Hypothetical', 'Counterfactual', 'Quoted'] as const)('a source verb that says an outcome is not kept on a %s descriptor', (modalStatus) => {
+    const structural = { Hypothetical: 'verbs/intended', Counterfactual: 'verbs/considered', Quoted: 'verbs/quoted' }[modalStatus];
+    for (const verb of ['http://adlnet.gov/expapi/verbs/completed', 'http://adlnet.gov/expapi/verbs/failed', 'asked'])
+      expect((project({ verb, modalStatus }).verb as Json).id, verb).toBe(`${FOXXI_NS}${structural}`);
   });
 
   it.each([
@@ -218,12 +246,15 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     [`${FOXXI_NS}performed`, 'Quoted', `${FOXXI_NS}performed`],
     ['intended', 'Hypothetical', `${FOXXI_NS}verbs/intended`],
     ['considered', 'Counterfactual', `${FOXXI_NS}verbs/considered`],
+    ['quoted', 'Quoted', `${FOXXI_NS}verbs/quoted`],
     // ...and gives way to the structural verb for that status when it cannot.
     ['intended', undefined, 'http://adlnet.gov/expapi/verbs/completed'],
     ['considered', 'Asserted', 'http://adlnet.gov/expapi/verbs/completed'],
     [`${FOXXI_NS}performed`, 'Hypothetical', `${FOXXI_NS}verbs/intended`],
     [`${FOXXI_NS}performed`, 'Counterfactual', `${FOXXI_NS}verbs/considered`],
     ['intended', 'Counterfactual', `${FOXXI_NS}verbs/considered`],
+    ['quoted', 'Asserted', 'http://adlnet.gov/expapi/verbs/completed'],
+    ['intended', 'Quoted', `${FOXXI_NS}verbs/quoted`],
   ] as const)('a source that says %s of a %s descriptor is projected as %s, and the statement follows both profiles', async (verb, modalStatus, projectedAs) => {
     const statement = project({ verb, ...(modalStatus ? { modalStatus } : {}) });
     expect((statement.verb as Json).id).toBe(projectedAs);

@@ -37,7 +37,7 @@ import { FOXXI_NS } from './foxxi-vocab.js';
 import { verbRequiresObjectType, verbIsDeclared, modalStatusesVerbCanSay, descriptorProjectionCategory, performanceCategoriesFor, SUPERSEDED_DESCRIPTOR_TYPE } from './xapi-profile.js';
 import { IEP_DECORATIONS, MODAL_STATUSES } from './xapix/namespace.js';
 import { projectionCategory, supersession } from './xapix/statement.js';
-import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
+import { PERFORMED_VERB, INTENDED_VERB, CONSIDERED_VERB, QUOTED_VERB, PERF_EXT, isDomainActivityType } from './learner-record.js';
 import type { TrajectoryStepInput, TrajectoryModalStatus } from '../../agentic-performance-practice/src/agent-trajectory.js';
 
 /** xAPI core voiding verb (ADL) — the protocol-native mapping for a Retracted descriptor. */
@@ -189,10 +189,19 @@ function resolveVerb(entry: MeshDiscoverEntry, mode: ReturnType<typeof modalMode
     // on an Asserted descriptor, or `performed` on a Hypothetical one, is a statement the profile
     // rejects. The envelope's modal status is the protocol's; the verb is the source's label. When
     // the two disagree the status stands and the verb is the structural one for it.
+    //
+    // A verb whose templates hold it to no status is kept for an Asserted descriptor only. On
+    // any other, such a verb (`completed`, say) would say something happened that the descriptor
+    // does not assert, and nothing in the profile would catch it.
     const sayable = modalStatusesVerbCanSay(id);
-    if (verbIsDeclared(id) && !verbRequiresObjectType(id) && (!sayable || sayable.includes(statedModalStatus(entry))))
+    const status = statedModalStatus(entry);
+    if (verbIsDeclared(id) && !verbRequiresObjectType(id) && (sayable ? sayable.includes(status) : status === 'Asserted'))
       return { id, display: { en: humanLabel(id) } };
   }
+  // A Quoted descriptor repeats someone else's claim without endorsing it. It is given the
+  // verb that says so, never `completed` or `failed`: those say an outcome, and a reader that
+  // counts outcomes by verb would count a claim nobody here made (xapix/README.md, finding 6).
+  if (!mode.endorsed) return { id: QUOTED_VERB, display: { en: 'quoted' } };
   switch (mode.stepVerb) {
     case 'intended':   return { id: INTENDED_VERB, display: { en: 'intended' } };
     case 'considered': return { id: CONSIDERED_VERB, display: { en: 'considered' } };
@@ -249,12 +258,12 @@ export function projectMeshEntry(
   // protocol envelope normally does not, so this stays absent for bare
   // descriptors). Never derived from modal status / trust / ground-truth.
   //
-  // And only when the claim is one that says something happened. A Hypothetical or Counterfactual
-  // descriptor is projected with `intended` or `considered`; a success or a score beside either
-  // would be counted by a reader that sums results without reading the verb, so the envelope's
-  // outcome is left in the descriptor, which the statement names (xapix/README.md, section 2).
-  // A Quoted descriptor is not covered: it still projects with an outcome verb (finding 6 there).
-  const saysItHappened = mode.stepVerb === 'asserted';
+  // And only when the claim is one that says something happened. A Hypothetical, Counterfactual
+  // or Quoted descriptor is projected with `intended`, `considered` or `quoted`; a success or a
+  // score beside any of them would be counted by a reader that sums results without reading the
+  // verb, so the envelope's outcome is left in the descriptor, which the statement names
+  // (xapix/README.md, section 2).
+  const saysItHappened = mode.stepVerb === 'asserted' && mode.endorsed;
   const outcome = saysItHappened && (typeof entry.success === 'boolean' || typeof entry.scoreScaled === 'number')
     ? {
         ...(typeof entry.success === 'boolean' ? { success: entry.success } : {}),
