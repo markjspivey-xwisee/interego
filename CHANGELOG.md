@@ -19,6 +19,12 @@ without the timestamp it set itself. A statement fixed before this change, for a
 session that ended unsent, loses its review-time timestamp when it is fixed again
 for another session.
 
+The player also reads what the learning record holds of its session before it
+opens a visit. A session the LMS continues is opened by a fresh load of the page,
+which used to send a second initialized. It now sends none when the session has
+one, starts its clock after the session's latest statement, and sends nothing at
+all when the record cannot be read.
+
 Not changed: a unit other than this player has to stamp the statements itself;
 the instructions handed out with them now say so.
 

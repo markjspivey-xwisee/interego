@@ -534,14 +534,46 @@ async function postReviewed(st){
 }
 let sessionOpened = false;
 const visitStart = {};   // this visit's initialized, kept so that trying again sends the same statement
+const CMI5_SESSION = "https://w3id.org/xapi/cmi5/context/extensions/sessionid";
+/* What the learning record already holds of this session: whether its initialized is there, and the
+   latest timestamp in it. null when that could not be read, or could not be read whole. A session
+   can be opened more than once: the LMS continues an open session when the course is opened again,
+   and this page then loads afresh, knowing nothing of what its earlier load sent. */
+async function sessionSoFar(){
+  const sid = ((cfg.contextTemplate || {}).extensions || {})[CMI5_SESSION];
+  if (!sid) return {initialized: false, last: 0};
+  try {
+    const r = await fetch(cfg.lrs + "/statements?registration=" + encodeURIComponent(registration) + "&limit=200", {headers:{"X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization}});
+    if (!r.ok) return null;
+    const b = await r.json();
+    if (!b || !Array.isArray(b.statements)) return null;
+    const mine = b.statements.filter(s => s && s.context && s.context.extensions && s.context.extensions[CMI5_SESSION] === sid);
+    const initialized = mine.some(s => s.verb && s.verb.id === X.verbs.initialized);
+    // More than one read holds: an initialized not seen here may be on a later page.
+    if (!initialized && b.more) return null;
+    return {initialized: initialized, last: mine.reduce((m, s) => Math.max(m, Date.parse(s.timestamp) || 0), 0)};
+  } catch(e) { return null; }
+}
+/* Opens this visit in its session: true once the session's initialized is in the learning record.
+   cmi5 has one initialized in a session, first. If an earlier load of this page already sent it, it
+   is not sent again, and this visit's clock starts after the latest statement of the session, so
+   what is stamped now sorts after what was sent then. If the record cannot be read, nothing is
+   sent: a second initialized would be worse than a visit that has to be tried again. */
+async function openVisit(){
+  if (sessionOpened) return true;
+  const so = await sessionSoFar();
+  if (so === null) { trackErr = "the learning record could not be read"; return false; }
+  if (so.initialized) { if (so.last > lastTs) lastTs = so.last; sessionOpened = true; return true; }
+  if (so.last > lastTs) lastTs = so.last;
+  chain = Promise.resolve(); trackErr = null;   // a send that failed earlier does not hold up this one
+  sessionOpened = (await send("initialized", "initialized", scenarioAct(), null, true, false, visitStart)) !== null;
+  return sessionOpened;
+}
 async function recordReviewed(got, again){
   show("s-reviewed");
-  // cmi5 has initialized come first in a session. Nothing reviewed is sent until the LRS has taken
-  // it: a passed in a session with no initialized is not a session's statement.
-  if (!sessionOpened) {
-    chain = Promise.resolve(); trackErr = null;   // a send that failed earlier does not hold up this one
-    sessionOpened = (await send("initialized", "initialized", scenarioAct(), null, true, false, visitStart)) !== null;
-  }
+  // cmi5 has initialized come first in a session. Nothing reviewed is sent until the LRS holds it:
+  // a passed in a session with no initialized is not a session's statement.
+  await openVisit();
   if (!sessionOpened) {
     $("rvtitle").textContent = "This visit could not be started";
     $("rvmsg").textContent = "The learning record did not take the start of this visit" + (trackErr ? " (" + trackErr + ")" : "") + ", so nothing else was sent. Try again in a moment.";

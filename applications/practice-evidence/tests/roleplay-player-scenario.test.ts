@@ -227,3 +227,116 @@ describe('how the player sends a reviewed result', () => {
     expect(await player(lrs).postReviewed({ ...issued('completed'), timestamp: '2026-11-17T15:00:35.000Z' })).toBe('differs');
   });
 });
+
+describe('how the player opens a visit in a session that may already be open', () => {
+  const page = read('index.html');
+  const cut = (from: string, to: string): string => {
+    const a = page.indexOf(from), b = page.indexOf(to, a);
+    if (a < 0 || b < 0) throw new Error(`the player page no longer holds: ${a < 0 ? from : to}`);
+    return page.slice(a, b);
+  };
+  const SESSION_EXT = 'https://w3id.org/xapi/cmi5/context/extensions/sessionid';
+  const INITIALIZED = 'http://adlnet.gov/expapi/verbs/initialized';
+  const REG = '33333333-3333-4333-8333-333333333333', SESSION = '44444444-4444-4444-8444-444444444444';
+  type St = Record<string, unknown>;
+  const stored = (verb: string, timestamp: string, session = SESSION, more: St = {}): St => ({
+    id: `id-${verb}-${timestamp}`, verb: { id: `http://adlnet.gov/expapi/verbs/${verb}` }, timestamp,
+    context: { registration: REG, extensions: { [SESSION_EXT]: session } }, ...more,
+  });
+  /** A learning record holding `held`; `read` decides how a read of the registration is answered. */
+  class Lrs {
+    readonly posts: St[] = [];
+    more = '';
+    readStatus = 200;
+    constructor(readonly held: St[]) {}
+    readonly fetch = async (url: string, init?: { method?: string; body?: string }): Promise<Response> => {
+      if (init?.method === 'POST') {
+        const st = JSON.parse(String(init.body)) as St;
+        this.posts.push(st);
+        const same = this.held.find((h) => h['id'] === st['id']);
+        if (same) return new Response('', { status: 409 });
+        this.held.push(st);
+        return new Response('[]', { status: 200 });
+      }
+      const u = new URL(url);
+      const id = u.searchParams.get('statementId');
+      if (id) { const h = this.held.find((x) => x['id'] === id); return h ? new Response(JSON.stringify(h), { status: 200 }) : new Response('', { status: 404 }); }
+      if (this.readStatus !== 200) return new Response('', { status: this.readStatus });
+      expect(u.searchParams.get('registration')).toBe(REG);
+      return new Response(JSON.stringify({ statements: this.held, more: this.more }), { status: 200 });
+    };
+  }
+  /** The page's own clock, comparison, sending and opening code, with the page's `send` stood in for by one that posts. */
+  const visit = (lrs: Lrs) => new Function('fetch', 'cfg', 'registration', 'X', 'scenarioAct', `
+    let chain = Promise.resolve(), trackErr = null;
+    ${cut('let lastTs = 0;', '/* `keep`, when given')}
+    const send = async (verbKey, verbLabel, object, result, cmi5, parent, keep) => {
+      const st = (keep && keep.st) || { id: 'id-' + verbKey + '-' + Math.random(), verb: { id: X.verbs[verbKey] }, timestamp: nextTs(), context: { registration, extensions: cfg.contextTemplate.extensions } };
+      if (keep) keep.st = st;
+      const r = await fetch(cfg.lrs + '/statements', { method: 'POST', body: JSON.stringify(st) });
+      return r.ok ? st.id : null;
+    };
+    ${cut('function holds(stored, issued){', 'async function recordReviewed(got, again){')}
+    return { openVisit, postReviewed, nextTs, why: () => trackErr };
+  `)(lrs.fetch, { lrs: 'https://lrs.example/xapi', authorization: 'Basic token', contextTemplate: { extensions: { [SESSION_EXT]: SESSION } } },
+    REG, { verbs: { initialized: INITIALIZED } }, () => ({ objectType: 'Activity', id: 'https://lms.example/au' })) as {
+      openVisit(): Promise<boolean>; postReviewed(st: St): Promise<string>; nextTs(): string; why(): string | null;
+    };
+  const outcome = (verb: string): St => ({ id: `id-outcome-${verb}`, verb: { id: `http://adlnet.gov/expapi/verbs/${verb}` }, result: { success: verb === 'passed' }, context: { registration: REG } });
+  const initializedIn = (lrs: Lrs, session = SESSION): number =>
+    lrs.held.filter((s) => (s['verb'] as { id: string }).id === INITIALIZED && ((s['context'] as { extensions: St }).extensions)[SESSION_EXT] === session).length;
+
+  it('sends initialized once in a session the record holds nothing of but the launch', async () => {
+    const lrs = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z')]);
+    const v = visit(lrs);
+    expect(await v.openVisit()).toBe(true);
+    expect(await v.openVisit()).toBe(true);
+    expect(initializedIn(lrs)).toBe(1);
+    // After the launch the LMS recorded, though that was stamped on another clock.
+    expect(Date.parse(String(lrs.posts[0]!['timestamp']))).toBeGreaterThan(Date.parse('2026-11-17T16:04:39.000Z'));
+  });
+
+  it('opens the same session again without a second initialized, and carries on after what it sent before', async () => {
+    // An earlier load of the page sent initialized and the first outcome, then the page was closed.
+    // The record's times are ahead of this machine's clock, as another clock's can be.
+    const ahead = new Date(Date.now() + 10 * 60_000).toISOString(), later = new Date(Date.now() + 10 * 60_000 + 500).toISOString();
+    const lrs = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z'), stored('initialized', ahead), { ...outcome('failed'), timestamp: later, context: { registration: REG, extensions: { [SESSION_EXT]: SESSION } } }]);
+    const v = visit(lrs);
+    expect(await v.openVisit()).toBe(true);
+    // Nothing was sent to open it: the session has its initialized.
+    expect(lrs.posts).toEqual([]);
+    expect(initializedIn(lrs)).toBe(1);
+    // The outcome the earlier load sent is found recorded; the one it did not reach is sent, after it.
+    expect(await v.postReviewed(outcome('failed'))).toBe('already');
+    const completed = { ...outcome('completed'), result: { completion: true } };
+    expect(await v.postReviewed(completed)).toBe('sent');
+    expect(Date.parse(String(completed['timestamp']))).toBeGreaterThan(Date.parse(later));
+    expect(Date.parse(v.nextTs())).toBeGreaterThan(Date.parse(String(completed['timestamp'])));
+  });
+
+  it('does not count another session of the registration as this one', async () => {
+    const earlier = '55555555-5555-4555-8555-555555555555';
+    const lrs = new Lrs([stored('initialized', '2026-11-17T14:56:57.000Z', earlier), stored('terminated', '2026-11-17T14:57:33.000Z', earlier), stored('launched', '2026-11-17T16:04:39.000Z')]);
+    expect(await visit(lrs).openVisit()).toBe(true);
+    expect([initializedIn(lrs), initializedIn(lrs, earlier)]).toEqual([1, 1]);
+  });
+
+  it('sends nothing when the record cannot be read, or cannot be read whole', async () => {
+    const refused = new Lrs([stored('initialized', '2026-11-17T16:04:43.000Z')]);
+    refused.readStatus = 503;
+    const v = visit(refused);
+    expect(await v.openVisit()).toBe(false);
+    expect(refused.posts).toEqual([]);
+    expect(v.why()).toBe('the learning record could not be read');
+    // Read again once it answers: the initialized is there, and none is sent.
+    refused.readStatus = 200;
+    expect(await v.openVisit()).toBe(true);
+    expect(refused.posts).toEqual([]);
+
+    // A first page with no initialized in it, and more pages behind: it may be on one of those.
+    const partial = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z')]);
+    partial.more = '/xapi/statements?cursor=next';
+    expect(await visit(partial).openVisit()).toBe(false);
+    expect(partial.posts).toEqual([]);
+  });
+});
