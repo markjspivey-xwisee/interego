@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 97 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 99 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 97
+  affordances: 99
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -44,6 +44,8 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.xapi_profile_sparql` | Ask a SPARQL SELECT or ASK query of the profiles held. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/sparql` *(HTTP only)* |
 | `foxxi.xapi_profile_validate_templates` | Run the specification's statement template validation (Part Three, 2.1) for one xAPI Statement against a profile on the server, named by its id. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_templates` *(HTTP only)* |
 | `foxxi.xapi_profile_validate_patterns` | Run the specification's pattern validation (Part Three, 2.2) for an array of xAPI Statements against a profile on the server, named by its id. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_patterns` *(HTTP only)* |
+| `foxxi.xapi_profile_lint_decorations` | Run the xapi-x rules over xAPI Statements, over a profile, or both. | `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/lint_decorations` *(HTTP only)* |
+| `foxxi.xapi_profile_controls` | Read the controls a statement template offers: the affordances its profile states under xapix:offers, each described as this deployment serves it now (target,… | `GET https://foxxi-bridge.interego.xwisee.com/xapi/profiles/controls` *(HTTP only)* |
 | `foxxi.i2idlx_capabilities` | Inspect optional pod storage and the workbench signed session/read/write links. | `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/capabilities` *(HTTP only)* |
 | `foxxi.i2idlx_challenge` | Get a server-issued nonce bound to this bridge. | `GET https://foxxi-bridge.interego.xwisee.com/i2idlx/challenge` *(HTTP only)* |
 | `foxxi.i2idlx_session` | Signature/delegation-verify the calling actor on their own existing pod, consume the one-use server nonce, and return a derived account identifier plus actual… | `POST https://foxxi-bridge.interego.xwisee.com/i2idlx/api/session` *(HTTP only)* |

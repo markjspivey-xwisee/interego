@@ -107,10 +107,15 @@ export async function templatesFollowed(server: ProfileServer, statement: Json, 
   await server.ready();
   if (profile !== undefined && !server.dataset.get(profile)) throw new ProfileServerError(400, `No profile with id ${profile} is on this server.`);
   const templates = liveTemplates(server, profile);
-  let r;
-  try { r = validates(statement, templates); } catch (e) { throw new ProfileServerError(400, (e as Error).message); }
-  const followed = new Set(r.templates.filter(t => !r.findings.some(f => f.template === t)));
-  return templates.filter(t => typeof t.id === 'string' && followed.has(t.id));
+  // Each template is judged on its own. Asked of them all at once, `validates` answers with the
+  // failing templates alone as soon as one matched template is not followed, so a rule broken in
+  // one profile would hide a template the statement does follow in another.
+  return templates.filter(t => {
+    if (typeof t.id !== 'string') return false;
+    let r;
+    try { r = validates(statement, [t]); } catch (e) { throw new ProfileServerError(400, (e as Error).message); }
+    return r.outcome === 'success';
+  });
 }
 
 export function mountXapixRoutes(app: Express, server: ProfileServer, o: XapixRouteOptions): void {
