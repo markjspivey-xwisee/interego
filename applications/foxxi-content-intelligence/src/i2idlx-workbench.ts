@@ -19,7 +19,7 @@ import { attachUserCourseRoutes } from './i2idlx-user-courses.js';
 import { attachLearningRoutes } from './i2idlx-learning-routes.js';
 import { bindCoursePlayerAuth } from './cmi5-player.js';
 import type { LearningRepository } from './i2idlx-learning-connections.js';
-import type { GuestGrantSigner } from './i2idlx-learning-auth.js';
+import type { GeneralGuestEntry, GuestGrantSigner } from './i2idlx-learning-auth.js';
 import type { LearningContextService } from './i2idlx-learning-context.js';
 import { attachSemanticTaskRoutes } from './i2idlx-semantic-tasks.js';
 import { semanticCheckOperations } from './i2idlx-semantic-affordances.js';
@@ -57,8 +57,9 @@ export interface WorkbenchConfig {
   appDataFile?: string;
   /** Deployment-owned human authority origins; provider accounts stay dynamic. */
   /** `guestGrant`: signs provisional-guest grants as this application's registered service agent.
-   * Absent (as in the bridge today) means learner sign-in offers no guest. */
-  learning?: { relayOrigin: string; identityOrigin: string; podOrigin: string; repository?: LearningRepository; guestGrant?: GuestGrantSigner };
+   * Absent (as in the bridge today) means learner sign-in offers no guest.
+   * `generalGuest`: identity's general guest door, offered beside it. Absent means it is not offered. */
+  learning?: { relayOrigin: string; identityOrigin: string; podOrigin: string; repository?: LearningRepository; guestGrant?: GuestGrantSigner; generalGuest?: GeneralGuestEntry };
 }
 const MAX_STORED_ENVELOPE_BYTES = 6_000_000;
 const hex = (s: string) => createHash('sha256').update(s, 'utf8').digest('hex');
@@ -343,7 +344,7 @@ export function attachWorkbenchRoutes(app: Express, config: WorkbenchConfig): vo
   });
   const learning = attachLearningRoutes(app, {
     baseUrl: base, relayOrigin: config.learning?.relayOrigin ?? '', identityOrigin: config.learning?.identityOrigin ?? '',
-    podOrigin: config.learning?.podOrigin ?? '', repository: config.learning?.repository, guestGrant: config.learning?.guestGrant,
+    podOrigin: config.learning?.podOrigin ?? '', repository: config.learning?.repository, guestGrant: config.learning?.guestGrant, generalGuest: config.learning?.generalGuest,
     sessions: agentSessions, taskConfig: { baseUrl: base, appDataFile: config.appDataFile, checkOperations }, fetch: config.fetch,
   });
   bindCoursePlayerAuth(learning.auth);

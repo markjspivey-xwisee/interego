@@ -265,6 +265,12 @@ describe('the course player', () => {
       expect(launched.statements.filter(rec => (rec.statement.verb as { id?: string }).id?.endsWith('#claimed'))).toHaveLength(1);
       const owner = { account: { homePage: SOURCE, name: OWNER } };
       expect(matchesFilter({ id: original.id, statement: original, stored: new Date().toISOString(), voided: false }, { agent: owner, alsoAgents: actorAliases(owner) })).toBe(true);
+      // A general guest linked to this account acts as it, but may not delete the account's record.
+      launched.setWho({ ...learner(OWNER, true), actsForLinkedAccount: true });
+      const refused = await fetch(`${launched.base}/learn/forget`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
+      expect(refused.status).toBe(403);
+      expect(launched.statements.every(rec => !rec.voided)).toBe(true);
+      launched.setWho(learner(OWNER, false));
       const forgotten = await fetch(`${launched.base}/learn/forget`, { method: 'POST', headers: { 'Content-Type': 'application/json' }, body: '{}' });
       expect((await forgotten.json() as { forgotten: number }).forgotten).toBeGreaterThan(0);
       expect(launched.statements[0]!.voided).toBe(true);

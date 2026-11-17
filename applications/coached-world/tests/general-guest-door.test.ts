@@ -1,13 +1,13 @@
 /**
  * The general guest door client (applications/_shared/guest-access/door.ts) against identity's real
- * provider run in process (general-guest-identity.ts). The world's own routes for it are covered in
+ * provider run in process (applications/_shared/tests/general-guest-identity.ts). The world's own routes for it are covered in
  * shared-world.test.ts, beside the other tests that start a world.
  */
 import { describe, expect, it } from 'vitest';
 import { GeneralGuestDoor, GuestDoorError } from '../../_shared/guest-access/door.js';
 import { ACTIONS, provisionalSubjectPolicies } from '@interego/abac/portable';
 import { generalGuestUserId, playKeyThumbprint, publicPlayKey } from '../../../deploy/identity/provisional-play.js';
-import { ISSUER, OTHER, RETURN_PATH, WORLD, agent, identity, newKey, otherAgent } from './general-guest-identity.js';
+import { ISSUER, OTHER, RETURN_PATH, WORLD, agent, identity, newKey, otherAgent } from '../../_shared/tests/general-guest-identity.js';
 
 describe('the general guest door client', () => {
   it('finishes only the visit this browser started, once, and answers the guest identity vouches for', async () => {

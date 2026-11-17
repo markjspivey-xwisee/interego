@@ -260,6 +260,9 @@ export interface NativeCommitStoreOptions {
    * happened. Until it is on, whoever could write an unsigned head before can still write one, by
    * leaving the signature off. It needs `headSigner` and `trustedHeadSignerPublicKeys`.
    *
+   * With it on, a store with no head at all is refused too, not read as empty: a store that has
+   * been signed has a head, so a missing one was removed. A new store is started with this off.
+   *
    * It covers the current head. A commit reached from a verified head, by its `previous` link or by
    * the operation index, is bound by digest and is read whether or not it was signed in its day.
    * It does not stop whoever can write the pod from putting back an earlier signed head, or from
@@ -1022,7 +1025,10 @@ export class NativeCommitStore implements NativeCommitClient {
   }
   private async current(): Promise<DecodedHead> {
     const stored = await this.readRepresentation(this.scope.headUrl);
-    if (!stored) return this.empty();
+    // A store that requires signed heads has one: requiring is turned on only after a signed head
+    // exists. So no head there is a head that was removed, and reading it as an empty store would
+    // let whoever can delete one resource start the store again from nothing.
+    if (!stored) return this.options.requireSignedHead === true ? fail('Native head is missing; a store that requires signed heads is never empty.') : this.empty();
     this.checkHeadSignature(stored.bytes);
     const head = this.decodeHead(stored.bytes, stored.revision);
     const archived = await this.archived(head.reference!);

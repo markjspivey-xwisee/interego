@@ -135,6 +135,7 @@ const verbs = [
   { id: `${FOXXI_NS}verbs/asserted`,   prefLabel: { en: 'asserted' },   definition: { en: 'An agent asserted a settled context descriptor (modal status Asserted).' } },
   { id: `${FOXXI_NS}verbs/intended`,   prefLabel: { en: 'intended' },   definition: { en: 'An agent recorded a Hypothetical context descriptor — an intention/plan.' } },
   { id: `${FOXXI_NS}verbs/considered`, prefLabel: { en: 'considered' }, definition: { en: 'An agent recorded a Counterfactual/Retracted context descriptor — a road not taken / withdrawn claim.' } },
+  { id: `${FOXXI_NS}verbs/quoted`,     prefLabel: { en: 'quoted' },     definition: { en: 'An agent recorded a Quoted context descriptor: it repeated a claim someone else made, without endorsing it. Nothing is claimed to have happened.' } },
 ] as const;
 
 const activityTypes = [
@@ -449,6 +450,20 @@ const templates = [
     ],
   },
   {
+    id: `${FOXXI_PROFILE_ID}/templates/quoted-descriptor`,
+    prefLabel: { en: 'quoted-descriptor' },
+    definition: { en: 'A Quoted context descriptor projects as a `quoted` act: the agent repeated a claim someone else made and did not endorse it. The verb is the structural modal verb derived from iep:modalStatus. It says no outcome, so the statement carries no success, completion or score.' },
+    verb: `${FOXXI_NS}verbs/quoted`,
+    rules: [
+      { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
+      { location: 'context.extensions["' + FOXXI_NS + 'endorsed"]', any: [false] },
+      { location: 'result.success', presence: 'excluded' },
+      { location: 'result.completion', presence: 'excluded' },
+      { location: 'result.score', presence: 'excluded' },
+      ...projectionDecorationRules(['Quoted']),
+    ],
+  },
+  {
     id: `${FOXXI_PROFILE_ID}/templates/superseding-descriptor`,
     prefLabel: { en: 'superseding-descriptor' },
     definition: { en: 'A performed-descriptor that revises/closes a prior one — carries the iep:supersedes link as supersededDescriptor + contextActivities.other. Domain-agnostic: a code-review revision, a contract amendment, a resolution closing a finding, a game state superseding the prior — all the same structural arc.' },
@@ -736,12 +751,13 @@ const patterns = [
   {
     id: `${FOXXI_PROFILE_ID}/patterns/agent-act`,
     prefLabel: { en: 'agent-act' },
-    definition: { en: 'One context-descriptor act by an agent: performed, intended, considered or voided.' },
+    definition: { en: 'One context-descriptor act by an agent: performed, intended, considered, quoted or voided.' },
     primary: false,
     alternates: [
       `${FOXXI_PROFILE_ID}/templates/performed-descriptor`,
       `${FOXXI_PROFILE_ID}/templates/intended-descriptor`,
       `${FOXXI_PROFILE_ID}/templates/considered-descriptor`,
+      `${FOXXI_PROFILE_ID}/templates/quoted-descriptor`,
       `${FOXXI_PROFILE_ID}/templates/voided-descriptor`,
     ],
   },

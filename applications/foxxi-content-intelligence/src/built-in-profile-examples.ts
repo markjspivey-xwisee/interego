@@ -82,6 +82,7 @@ export function foxxiProfileExamples(): ProfileExamples {
     'performed-descriptor': projected({ verb: `${FOXXI_NS}performed` }),
     'intended-descriptor': projected({ modalStatus: 'Hypothetical' }),
     'considered-descriptor': projected({ modalStatus: 'Counterfactual' }),
+    'quoted-descriptor': projected({ modalStatus: 'Quoted' }),
     'production-performance-completed': projected({ success: true }),
     'production-performance-failed': projected({ success: false }),
     'performed-production': run,
@@ -101,7 +102,7 @@ export function foxxiProfileExamples(): ProfileExamples {
     sequence('course-session', 'launched', 'initialized', 'slide-viewed', 'asked', 'retrieved', 'scene-completed', 'slide-viewed', 'passed', 'terminated'),
     sequence('composition-attempt', 'question-answered', 'fragment-experienced', 'fragment-experienced', 'composition-completed'),
     sequence('credentialing', 'passed', 'credentialed'),
-    sequence('agent-performance-stream', 'performed-descriptor', 'intended-descriptor', 'considered-descriptor'),
+    sequence('agent-performance-stream', 'performed-descriptor', 'intended-descriptor', 'considered-descriptor', 'quoted-descriptor'),
     sequence('revision-arc', 'performed-descriptor', 'superseding-descriptor'),
   ];
   return { statements, sequences };
