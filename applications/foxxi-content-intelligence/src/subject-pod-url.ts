@@ -51,6 +51,83 @@ export interface SubjectPodUrlOptions {
   /** A caller-supplied pod URL. Honoured only when it is a safe public target. */
   explicit?: string | undefined;
   safeUrl: SafeUrlFn;
+  /**
+   * The identity service's host (`identity.example`, or `identity.example:8443`), from config.
+   * When given, a subject `did:web:<this host>:users:<id>` that `ownPodSegment` does not recognise
+   * and whose `<id>` is one of identity's own user id shapes resolves to `<pod origin>/<id>/`
+   * (see `identityUserIdOf`). Absent, the resolver answers exactly as it did before this option
+   * existed. No caller passes it yet.
+   */
+  identityHost?: string | undefined;
+}
+
+/**
+ * The user ids the identity service mints, and nothing else:
+ *
+ *   u-pk-<12 hex>, u-eth-<12 hex>, u-did-<12 hex>   deploy/identity/derive-userid.ts
+ *   u-try-<12 hex>                                  deploy/identity/server.ts (`/try` evaluation account)
+ *   u-try-play-<32 hex>, u-try-guest-<32 hex>       deploy/identity/provisional-play.ts
+ *
+ * Lowercase hex only, as identity writes them. A seeded legacy id (a display alias such as a
+ * name) is deliberately NOT here: it has no shape to check, and the tenant pod's own segment
+ * would be one.
+ */
+const IDENTITY_USER_ID = /^(?:u-(?:pk|eth|did)-[0-9a-f]{12}|u-try-[0-9a-f]{12}|u-try-(?:play|guest)-[0-9a-f]{32})$/;
+/** A general guest's DID by shape, under any did:web host (deploy/identity/provisional-play.ts). */
+const GENERAL_GUEST_DID = /^did:web:[^\s/?#]+:users:u-try-guest-[0-9a-f]{32}$/i;
+/** A configured identity host: a DNS name, optionally with a port. No trailing dot, no IPv6 literal. */
+const IDENTITY_HOST = /^[a-z0-9](?:[a-z0-9.-]*[a-z0-9])?(?::[0-9]{1,5})?$/;
+/** Longer than any DID identity issues; a longer subject is not parsed at all. */
+export const IDENTITY_SUBJECT_MAX_LENGTH = 512;
+
+/**
+ * The prefixes `did:web:<host>:users:` a configured identity host is written with, lowercased.
+ *
+ * Two spellings of a host that has a port, because both are in use: the identity service writes
+ * `new URL(BASE_URL).host` as it is (deploy/identity/server.ts), and Foxxi's learning sign-in
+ * writes the did:web form with the colon percent-encoded (src/i2idlx-learning-auth.ts). A host
+ * without a port has one spelling. An unusable configured host yields none, which turns the rule off.
+ */
+function identityUserPrefixes(identityHost: string | undefined): string[] {
+  const host = (identityHost ?? '').trim().toLowerCase();
+  if (!host || !IDENTITY_HOST.test(host)) return [];
+  return [...new Set([host, host.replace(':', '%3a')])].map(h => `did:web:${h}:users:`);
+}
+
+/** What follows `did:web:<configured host>:users:` in `subject`, or undefined when it is not that. */
+function identityUserTail(subject: string, identityHost: string | undefined): string | undefined {
+  if (typeof subject !== 'string' || subject.length > IDENTITY_SUBJECT_MAX_LENGTH || hasControlChars(subject)) return undefined;
+  // The method and the `:users:` label are exact; only the host is compared case-insensitively.
+  if (!subject.startsWith('did:web:')) return undefined;
+  for (const prefix of identityUserPrefixes(identityHost)) {
+    if (subject.length <= prefix.length || subject.slice(0, prefix.length).toLowerCase() !== prefix) continue;
+    if (subject.slice(prefix.length - ':users:'.length, prefix.length) !== ':users:') continue;
+    return subject.slice(prefix.length);
+  }
+  return undefined;
+}
+
+/**
+ * The user id of `did:web:<configured identity host>:users:<id>`, or undefined.
+ *
+ * Strict on both halves. The host must be the configured one exactly (case-insensitive; a
+ * look-alike, a longer name ending in it, a trailing dot or another port is a different host).
+ * The id must be one of identity's own shapes in full, so it holds no slash, dot, colon, percent
+ * escape, uppercase letter or control character, and is at most 44 characters.
+ */
+export function identityUserIdOf(subject: string, identityHost: string | undefined): string | undefined {
+  const tail = identityUserTail(subject, identityHost);
+  return tail !== undefined && IDENTITY_USER_ID.test(tail) ? tail : undefined;
+}
+
+/** Is `subject` a DID under the configured identity host's `:users:`, whatever follows it? */
+export function isIdentityUserDid(subject: string, identityHost: string | undefined): boolean {
+  return identityUserTail(subject, identityHost) !== undefined;
+}
+
+/** Is `subject` shaped as a general guest's DID (`…:users:u-try-guest-<32 hex>`), under any host? */
+export function isGeneralGuestDid(subject: string): boolean {
+  return typeof subject === 'string' && subject.length <= IDENTITY_SUBJECT_MAX_LENGTH && !hasControlChars(subject) && GENERAL_GUEST_DID.test(subject);
 }
 
 /**
@@ -87,10 +164,11 @@ export function explicitPodRoot(explicit: string, safeUrl: SafeUrlFn): string | 
  * Resolve the pod that IS this identity's own.
  *
  * Precedence: a safe explicit override (canonicalized to a single-segment pod root) → an embedded
- * agent pod id → a WebID/URL account root → a did:ethr (or bare) address → the tenant pod.
+ * agent pod id → a WebID/URL account root → a did:ethr (or bare) address → (only with
+ * `identityHost`) an identity user DID's `<pod origin>/<userId>/` → the tenant pod.
  */
 export function resolveSubjectPodUrlPure(opts: SubjectPodUrlOptions): string {
-  const { tenantPodUrl, identity, explicit, safeUrl } = opts;
+  const { tenantPodUrl, identity, explicit, safeUrl, identityHost } = opts;
   // The SSRF choke point and the pod-root collapse both live in explicitPodRoot; an override it
   // cannot vouch for is IGNORED here and the pod is derived from the identity instead. NOTE that
   // "ignored" is the right answer for a resolver whose job is "whose pod is this identity's" and the
@@ -122,6 +200,11 @@ export function resolveSubjectPodUrlPure(opts: SubjectPodUrlOptions): string {
    */
   const seg = ownPodSegment(id);
   if (seg && tenantOrigin) return `${tenantOrigin}/${seg}/`;
+  // An identity user DID `ownPodSegment` has no rule for (a guest's `u-try-…` id): its pod is
+  // `<pod origin>/<userId>/`, where the identity service creates it and the css-gate scopes that
+  // user's bearer. Only with a configured identity host; without one this line is never reached.
+  const userId = identityHost ? identityUserIdOf(id, identityHost) : undefined;
+  if (userId && tenantOrigin) return `${tenantOrigin}/${userId}/`;
   if (/^https?:\/\//.test(id)) {
     try {
       const u = new URL(id);
@@ -130,4 +213,65 @@ export function resolveSubjectPodUrlPure(opts: SubjectPodUrlOptions): string {
     } catch { /* fall through */ }
   }
   return tenantPodUrl;
+}
+
+/** `<origin>/<first path segment>`, decoded and lowercased, for comparing two pod roots; undefined when not a URL. */
+function podRootKey(podUrl: string): string | undefined {
+  try {
+    const u = new URL(podUrl);
+    if (u.protocol !== 'http:' && u.protocol !== 'https:') return undefined;
+    const first = u.pathname.split('/').filter(Boolean)[0] ?? '';
+    let seg = first;
+    try { seg = decodeURIComponent(first); } catch { /* compared as written */ }
+    return `${u.origin}/${seg.toLowerCase()}`;
+  } catch { return undefined; }
+}
+
+export interface SubjectPodGuardInput {
+  /** The principal's subject, as the caller decision produced it. */
+  subject: string;
+  /** The pod that subject resolved to. */
+  podUrl: string;
+  tenantPodUrl: string;
+  /** The identity service's host, as given to the resolver. */
+  identityHost?: string | undefined;
+}
+
+export type SubjectPodGuardRefusal =
+  | 'pod-unreadable'
+  | 'shared-tenant-pod'
+  | 'not-own-pod';
+
+export type SubjectPodGuardDecision = { ok: true } | { ok: false; reason: SubjectPodGuardRefusal; error: string };
+
+/**
+ * May this subject's records be kept on this pod?
+ *
+ * Refuses a general guest (by shape, under any host) and any DID under the configured identity
+ * host's `:users:` whose resolved pod is the shared tenant pod: that is the resolver's fallback,
+ * and for these subjects it would put one person's records where everyone else's fallback lands.
+ * It also refuses one of identity's own user ids whose pod is not `<tenant pod origin>/<that id>/`,
+ * and any pod URL it cannot read. Every other subject is answered `ok`: this is not a general
+ * authorization check, and a wallet or agent subject keeps the checks it already has.
+ *
+ * Pure, and not called by any route yet.
+ */
+export function guardSubjectPod(input: SubjectPodGuardInput): SubjectPodGuardDecision {
+  const { subject, podUrl, tenantPodUrl, identityHost } = input;
+  if (!isGeneralGuestDid(subject) && !isIdentityUserDid(subject, identityHost)) return { ok: true };
+  const pod = podRootKey(podUrl), tenant = podRootKey(tenantPodUrl);
+  if (!pod) return { ok: false, reason: 'pod-unreadable', error: 'the pod resolved for this identity is not a pod URL' };
+  // An unreadable tenant pod is what the resolver hands back when it has nothing else, so a pod
+  // equal to it as written is the fallback too.
+  if (pod === tenant || podUrl === tenantPodUrl) {
+    return { ok: false, reason: 'shared-tenant-pod', error: 'this identity has no pod of its own here: it resolved to the shared tenant pod, which is not used for a guest or an identity account' };
+  }
+  const userId = identityUserIdOf(subject, identityHost);
+  if (userId) {
+    const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
+    if (!tenantOrigin || pod !== `${tenantOrigin}/${userId}`) {
+      return { ok: false, reason: 'not-own-pod', error: `the pod resolved for this identity is not its own (${userId})` };
+    }
+  }
+  return { ok: true };
 }
