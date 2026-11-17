@@ -29,6 +29,8 @@
  *   CG_KNOWN_PODS    — Comma-separated pod URLs for auto-discovery
  *   CG_DIRECTORY_URL  — URL of a PodDirectory graph to auto-load
  *   CG_PORT          — CSS port for local startup (default 3456)
+ *   CG_CSS_ROOT_FILE_PATH — where a locally started CSS keeps its pods
+ *                      (default: interego-mcp-css-<port> in the OS temp dir)
  */
 
 import { Server } from '@modelcontextprotocol/server';
@@ -41,10 +43,11 @@ import type {
   Tool,
 } from '@modelcontextprotocol/server';
 
-import { spawn, type ChildProcess } from 'node:child_process';
+import type { ChildProcess } from 'node:child_process';
+import { tmpdir } from 'node:os';
 import { resolve, dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
-import { existsSync, readFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync } from 'node:fs';
 import { readFile as readFileAsync } from 'node:fs/promises';
 import { WebSocket } from 'ws';
 
@@ -166,6 +169,7 @@ import {
 import type { PersistedComplianceWallet } from '@interego/compliance';
 
 import { PodRegistry, type KnownPod } from './pod-registry.js';
+import { findLocalSolidServerConfig, findLocalSolidServerPackage, forkLocalSolidServer } from './local-solid-server.js';
 import { resolveStdioConfig } from './deployment-config.js';
 
 // ── Config ──────────────────────────────────────────────────
@@ -206,26 +210,23 @@ function isToolEnabled(toolName: string): boolean {
   return true; // unknown tier = all
 }
 
-const CSS_CONFIG = resolve(__dirname, '..', 'examples', 'multi-agent', 'css-config.json');
-// __dirname resolves to either mcp-server/ (when run via tsx on source) or
-// mcp-server/dist/ (when run as compiled JS). Probe both locations and pick
-// whichever actually has the binary. Env override wins if set.
-const CSS_BIN = (() => {
-  if (process.env.CG_CSS_BIN) return process.env.CG_CSS_BIN;
-  const candidates = [
-    resolve(__dirname, 'node_modules', '.bin', 'community-solid-server'),
-    resolve(__dirname, '..', 'node_modules', '.bin', 'community-solid-server'),
-  ];
-  for (const p of candidates) {
-    if (existsSync(p) || existsSync(p + '.cmd')) return p;
-  }
-  return candidates[1]; // default to sibling-of-dist path; detected later
-})();
+// The local CSS started when the home pod is on localhost and nothing answers there:
+// examples/multi-agent/css-config.json, from mcp-server/ under tsx or mcp-server/dist/
+// compiled, run by local-solid-server.ts. Its pods stay outside the directory the MCP
+// client started this server in, which is often the user's own project.
+const CSS_CONFIG = findLocalSolidServerConfig(__dirname);
+const CSS_ROOT_FILE_PATH = process.env['CG_CSS_ROOT_FILE_PATH'] || join(tmpdir(), `interego-mcp-css-${CSS_PORT}`);
+const CSS_STARTUP_TIMEOUT_MS = 30_000;
 
 // ── State ───────────────────────────────────────────────────
 
 const podRegistry = new PodRegistry();
 let cssProcess: ChildProcess | null = null;
+// Settles when the local CSS in cssProcess listens, or exits first. A caller that stops
+// waiting for it leaves it starting, and the next call waits on the same process.
+let cssListening: Promise<void> | null = null;
+// The connection in progress, shared, so concurrent tool calls start one CSS, not one each.
+let cssConnecting: Promise<void> | null = null;
 let cssReady = false;
 // Sticky flag: once CSS has proven unreachable in this session, stop retrying.
 // Reset only on explicit user action (there is none currently). Prevents every
@@ -398,6 +399,11 @@ const solidFetch: FetchFn = async (url, init) => {
 
 async function ensureCSS(): Promise<void> {
   if (cssReady) return;
+  cssConnecting ??= connectCSS().finally(() => { cssConnecting = null; });
+  return cssConnecting;
+}
+
+async function connectCSS(): Promise<void> {
   // cssUnavailable was previously a one-way latch — once set, the whole
   // MCP session was poisoned even if CSS recovered. That masked cold
   // starts and transient network blips. Now it's advisory: we retry on
@@ -435,30 +441,79 @@ async function ensureCSS(): Promise<void> {
     throw new Error(`Cannot reach CSS at ${homePod.url} — ${detail}`);
   }
 
-  // If the local CSS binary isn't present, skip immediately instead of
-  // waiting 30s for the poll to time out on a spawn that will never start.
-  if (!existsSync(CSS_BIN) && !existsSync(CSS_BIN + '.cmd')) {
+  // If there is nothing to start, say so at once instead of waiting out the
+  // startup timeout. An install of this package on its own has neither: the
+  // config lives in the repository's examples/, and CSS is installed at the
+  // repository root (packages/local-node asks for it).
+  if (!CSS_CONFIG) {
     cssUnavailable = true;
-    throw new Error(`Local CSS binary not found at ${CSS_BIN}`);
+    throw new Error(`Local CSS config not found: no examples/multi-agent/css-config.json above ${__dirname}`);
+  }
+  if (!findLocalSolidServerPackage()) {
+    cssUnavailable = true;
+    throw new Error(`Local CSS not installed: @solid/community-server does not resolve from ${__dirname}`);
   }
 
-  log(`Starting local CSS on port ${CSS_PORT}...`);
+  if (!cssProcess || !cssListening) {
+    log(`Starting local CSS on port ${CSS_PORT} (pods in ${CSS_ROOT_FILE_PATH})...`);
+    cssListening = startLocalCSS(CSS_CONFIG);
+  }
+  let timer: NodeJS.Timeout | undefined;
+  try {
+    await Promise.race([cssListening, new Promise<never>((_, rej) => {
+      timer = setTimeout(() => rej(new Error(`CSS startup timeout (${CSS_STARTUP_TIMEOUT_MS / 1000}s)`)), CSS_STARTUP_TIMEOUT_MS);
+    })]);
+  } catch (err) {
+    cssUnavailable = true;
+    throw err;
+  } finally {
+    clearTimeout(timer);
+  }
+  cssReady = true;
+  log(`CSS ready at ${homePod.url}`);
+  await ensurePod();
+}
 
-  return new Promise((res, rej) => {
-    const proc = spawn(CSS_BIN, [
-      '-c', CSS_CONFIG,
-      '-p', String(CSS_PORT),
-      '-l', 'warn',
-      '--baseUrl', BASE_URL,
-    ], { stdio: ['ignore', 'pipe', 'pipe'], shell: true });
+/**
+ * Fork the local CSS (local-solid-server.ts) and settle when it listens, or reject
+ * when it exits first, with the end of what it wrote.
+ */
+function startLocalCSS(configPath: string): Promise<void> {
+  // The default folder is in the shared temp directory: created here, it is the
+  // owner's alone. An existing folder, and its permissions, are left as they are.
+  mkdirSync(CSS_ROOT_FILE_PATH, { recursive: true, mode: 0o700 });
+  const proc = forkLocalSolidServer({
+    config: configPath,
+    port: CSS_PORT,
+    baseUrl: BASE_URL,
+    rootFilePath: CSS_ROOT_FILE_PATH,
+    loggingLevel: 'warn',
+  });
+  cssProcess = proc;
+  // The child must not keep this process alive once its MCP client has gone:
+  // when this process exits, stopCSS() and the closed IPC channel stop it too.
+  proc.unref();
+  proc.channel?.unref();
 
-    cssProcess = proc;
-    let started = false;
+  // Both streams are read: CSS logs to stdout, and an unread pipe that fills
+  // stalls the child. Neither may reach this process's stdout, the MCP stream.
+  let output = '';
+  const relay = (d: Buffer): void => {
+    const text = d.toString().trim();
+    if (!text) return;
+    output = `${output}\n${text}`.slice(-4000);
+    log(`[css] ${text}`);
+  };
+  for (const stream of [proc.stdout, proc.stderr]) {
+    stream?.on('data', relay);
+    (stream as { unref?: () => void } | null)?.unref?.();
+  }
 
-    proc.stderr?.on('data', (d: Buffer) => {
-      const text = d.toString().trim();
-      if (text) log(`[css] ${text}`);
+  const listening = new Promise<void>((res, rej) => {
+    proc.on('message', (message) => {
+      if ((message as { type?: unknown } | null)?.type === 'listening') res();
     });
+    proc.on('error', rej);
 
     // Observability: if CSS exits unexpectedly after we declared it
     // ready, mark our session degraded so subsequent tool calls don't
@@ -466,7 +521,7 @@ async function ensureCSS(): Promise<void> {
     // tools fail with cryptic connection errors after CSS crashes;
     // with it, the next tool call surfaces the actual root cause
     // ("CSS exited with code N after running for Xs").
-    let cssStartedAtMs = Date.now();
+    const cssStartedAtMs = Date.now();
     proc.on('exit', (code, signal) => {
       const upMs = Date.now() - cssStartedAtMs;
       cssReady = false;
@@ -474,29 +529,17 @@ async function ensureCSS(): Promise<void> {
       log(`[css] process exited (code=${code ?? 'null'} signal=${signal ?? 'null'}) after ${upMs}ms uptime — tools will retry on next call.`);
       // Clear the cssProcess handle so a later ensureCSS() invocation
       // doesn't think it's still running.
-      if (cssProcess === proc) cssProcess = null;
+      if (cssProcess === proc) {
+        cssProcess = null;
+        cssListening = null;
+      }
+      // A no-op once it has listened.
+      rej(new Error(`Local CSS exited before it listened (code=${code ?? 'null'} signal=${signal ?? 'null'}):${output.split('\n').slice(-12).join('\n')}`));
     });
-
-    const poll = setInterval(async () => {
-      if (started) { clearInterval(poll); return; }
-      try {
-        const resp = await fetch(homePod.url, { signal: AbortSignal.timeout(2000) });
-        if (resp.ok || resp.status < 500) {
-          clearInterval(poll);
-          started = true;
-          cssReady = true;
-          log(`CSS ready at ${homePod.url}`);
-          await ensurePod();
-          res();
-        }
-      } catch { /* not ready */ }
-    }, 400);
-
-    setTimeout(() => {
-      clearInterval(poll);
-      if (!started) { cssUnavailable = true; rej(new Error('CSS startup timeout')); }
-    }, 30_000);
   });
+  // Callers race this against a timeout; one that gave up must not leave it unhandled.
+  listening.catch(() => undefined);
+  return listening;
 }
 
 async function ensurePod(): Promise<void> {
@@ -601,6 +644,7 @@ function stopCSS(): void {
   if (cssProcess) {
     cssProcess.kill('SIGTERM');
     cssProcess = null;
+    cssListening = null;
     cssReady = false;
   }
 }

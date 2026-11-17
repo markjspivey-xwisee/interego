@@ -1,5 +1,79 @@
 # Changelog
 
+## 2026-11-17 — mcp-server: the local Solid server fallback starts
+
+When its home pod is on localhost and nothing answers there,
+`mcp-server/server.ts` starts a Community Solid Server
+(`spec/STORAGE-TIERS.md`, Tier 1). It never did. It ran the root's
+`node_modules/.bin/community-solid-server` with
+`examples/multi-agent/css-config.json`, and Components.js, walking up from
+that CSS into the root's `node_modules`, found the root's `@comunica` 5 beside
+CSS's own `@comunica` 2 and refused the config ("Could not build the config
+files … `ActorDereference` … is not a valid component"). The tool call that
+needed the pod then waited out the 30 s startup timeout and failed. The
+compiled server failed sooner: from `mcp-server/dist/` it looked for the
+binary in `mcp-server/node_modules/.bin/` and the config in
+`mcp-server/examples/`, neither of which exists.
+
+**The fix.** `mcp-server/local-solid-server.ts` builds the server the way
+`packages/local-node` and `integrations/tests/multi-agent-css-expired-sweep.test.ts`
+do: Components.js is handed CSS's own component graph, the Components.js
+context CSS was built against, and the local modules the config imports (it
+reads them from the config, which names `css-internal-listing/`), and each of
+those is required from its own folder. It runs in a child process that
+`server.ts` forks, with its own execArgv, so it works from source under tsx
+and compiled from `dist/`; the config is found from either.
+
+**Why not the demos' npx launcher.** `examples/multi-agent/solid-server.ts`
+already solves both problems, by running a CSS that npx installs outside the
+repository. mcp-server cannot use it. `tools/base-neutrality-lint.mjs` holds
+the base, mcp-server included, to no imports from `examples/`, and `tsc` would
+not compile one into `dist/` (it is outside `rootDir`). npx also needs the
+network on the first run and downloads a second CSS. `@interego/mcp` publishes
+`dist/` only, so `examples/` is not there at run time either way (the package
+is not on the npm registry today). The fallback keeps running the CSS this
+workspace installs, as it always meant to.
+
+**Why a child process, not in-process as local-node does.** CSS logs through
+winston's Console transport, which writes to stdout, and mcp-server's stdout
+is the MCP stream. The child's stdout and stderr are pipes that `server.ts`
+reads and copies to its stderr. The old spawn read only stderr, so a full
+stdout pipe would have stalled the server. A CSS crash now ends CSS, not the
+MCP session. The child stops when mcp-server does, on SIGTERM or when the IPC
+channel closes. The old `shell: true` spawn signalled the shell, not
+necessarily CSS. Its SIGTERM handler is registered with `on`, not `once`:
+`proper-lockfile`'s `signal-exit` re-raises a signal on a process left with
+only its own handler, and a `once` handler is removed before the next one
+runs, so the child died by the signal instead of stopping.
+
+**Where the pods go.** The old spawn passed no `--rootFilePath`, so CSS would
+have written the pods and `.internal/` into the current directory, which an
+MCP client sets to the user's project. They now go under
+`CG_CSS_ROOT_FILE_PATH`, by default `interego-mcp-css-<port>` in the OS temp
+directory, which `spec/STORAGE-TIERS.md` already promised. The folder is
+created owner-only (0700) when it does not exist.
+
+**Smaller changes in `ensureCSS`.** Concurrent tool calls share one startup
+instead of forking one CSS each, the second of which would fail on the port. A CSS
+that exits before it listens fails the call at once, with the end of its
+output, instead of after 30 s. A call that times out leaves the CSS starting,
+and the next call waits on that same process. Readiness is the child's
+"listening" message, and the pod is provisioned outside the startup promise,
+so a provisioning error reaches the caller instead of being an unhandled
+rejection inside a `setInterval`. The undocumented `CG_CSS_BIN` override is
+gone: there is no binary to point at.
+
+**The test.** `integrations/tests/mcp-server-local-solid-server.test.ts` starts
+mcp-server over stdio as an MCP client does, from source under tsx and compiled
+from `dist/`, with a home pod on a free localhost port that nothing answers.
+It calls `get_pod_status`, and checks that CSS built its config, answers HTTP,
+holds the provisioned home pod, keeps its files under `CG_CSS_ROOT_FILE_PATH`
+and not in the directory mcp-server was started in, and stops when mcp-server
+does. On the previous `server.ts`, the source run fails with the two lines
+above, and the compiled run fails at once. It lives in `integrations/tests/`
+because the server it boots reads `examples/`, which the base-without-verticals
+job deletes.
+
 ## 2026-11-17 — multi-agent demos: their Solid server no longer crashes an hour after it starts
 
 `examples/multi-agent/css-config.json` and `css-config-redis.json` import the
