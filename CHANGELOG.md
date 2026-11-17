@@ -1,5 +1,67 @@
 # Changelog
 
+## 2026-11-17 — local-node: the desktop pod server no longer crashes an hour after it starts
+
+`packages/local-node`, which the pod desktop ships, moved to Community Solid
+Server 7.3.0 in the nodemailer change, and on 7.3.0 its hourly expired-entry
+sweep crashed the process. Every expiring storage CSS builds (cookies,
+forgot-password records, ownership tokens, IdP adapter entries) sweeps once an
+hour by walking `/.internal/`, and 7.3.0 cannot list a container there (the
+entry below has the mechanism). The review that asked for this expected a
+crash an hour after someone signs in. It came sooner than that. Nobody can
+sign in, because the loopback gateway forwards only requests under the pod's
+own path. But CSS writes `/.internal/` itself at boot, so the walk always has a
+container to list. local-node's own source and `config/file-pod.json`, run
+against CSS 7.3.0 with the sweep called once, waited out the 6 s resource lock
+and crashed with "callback is not a function", both straight after a fresh
+start and with two cookies stored.
+
+**The fix is config only.** `config/file-pod.json` now points the internal
+value storage, `urn:solid-server:default:JsonResourceStorage`, at
+`urn:solid-server:default:ResourceStore_Backend`, the file backend, instead of
+the full ResourceStore. The backend answers a container with its quads, not
+wrapped, which is how CSS's own `BackendKeyValueStorage` reads the same
+container. With it, the same sweep returned in 13 ms after a fresh start and
+in 28 ms with two cookies stored, deleting the expired one and keeping the
+live one.
+
+The css image's class was not reused here. local-node gives Components.js
+only CSS's own component graph (`isolatedCssModules`, so no ancestor
+`node_modules` reaches the loader), and it is an ES module, which
+Components.js's CommonJS loader cannot `require()`. Wiring
+`PipedJsonResourceStorage` in would mean shipping a hand-made component module
+and a CommonJS build of the class inside the desktop app. The backend route
+uses only CSS's own classes. What it gives up is the resource lock on
+`/.internal/` documents. That lock orders request-driven writers, and here
+there are none. CSS's account and OIDC routes, the only request-driven writers
+under `/.internal/`, are outside the pod's path, so the gateway answers 404
+before CSS sees them. What is left is CSS's own setup at boot and the sweep.
+If the gateway ever forwards those routes, this storage needs the lock back
+and a listing fix of its own, and the comment beside the override says so.
+
+**The test.** `tests/local-node-expired-sweep.test.ts` boots a real local
+node and captures the components manager that `startLocalNode`'s AppRunner
+creates. It checks that the gateway answers 404 itself for `/.account/`,
+`/.oidc/`, `/.internal/` and the OpenID configuration. Then it runs the
+cookie, forgot-password and ownership-token sweeps directly, once on a fresh
+start and once with an expired and a live cookie stored. Each sweep must
+return within 3 s, half the lock. The expired cookie must be gone from the
+storage under the wrapper, the live one kept, and the pod must still answer a
+`GET`. With `config/file-pod.json` from master, both sweep cases fail on
+vitest's timeout, and vitest reports the uncaught "callback is not a function"
+twice.
+
+The new test file takes the linted scope to 717, one past the floor's slack,
+so `MIN_FILES` in `tools/lint-gate.mjs` moves to 682, the number the gate
+named.
+
+Checks: `tests/local-node-expired-sweep.test.ts` (3 tests),
+`tests/local-node.test.ts` (8) and pod-desktop's `local-federation.test.ts`,
+which also starts a local node, pass with the typecheck gate clean. They ran
+against CSS 7.3.0 from the accessor's lockfile, the same tarball as the root
+lockfile's, through a scratch `node_modules`. Not the root lockfile's exact
+tree. Node 22.22.0. The desktop app itself was not started.
+
 ## 2026-11-17 — Dependencies: the pod server moves to Solid server 7.3.0, and uuid 11.1.1 under Comunica
 
 `npm audit` lists one advisory against both Solid server trees,
@@ -100,7 +162,7 @@ high advisories.
 
 **local-node already ran 7.3.0.** `packages/local-node`, which the pod
 desktop ships, moved to it in the nodemailer change, and its own hourly sweep
-crashes the same way. It is fixed in its own change.
+crashed the same way. The entry above fixes it.
 
 **uuid.** The advisory needs a caller-supplied buffer. expression-evaluator
 2.10.0 calls uuid three times, for SPARQL's `UUID()`, `STRUUID()` and

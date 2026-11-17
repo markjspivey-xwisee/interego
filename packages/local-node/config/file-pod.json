@@ -35,5 +35,22 @@
   ],
   "@graph": [{
     "comment": "Private backend, reachable only through a runtime-owned IPC socket. The outer loopback gateway authenticates every read and write. Private content is encrypted by the Interego publisher; this backend does not encrypt arbitrary plaintext resources. Notifications and federation transports are not enabled by this profile."
+  }, {
+    "comment": [
+      "The internal value storage reads /.internal/ from the file backend, not through the full ResourceStore.",
+      "CSS 7.3 lists a container there by running `for await` over the container's body. Through the full store",
+      "that body is Turtle, in which it finds no member, inside the locking store's wrapper, which `for await`",
+      "cannot read: the hourly expired-entry sweep waited out the 6 s resource lock and crashed the process,",
+      "about an hour after every start. The backend answers with the quads themselves. This is how CSS's own",
+      "urn:solid-server:default:BackendKeyValueStorage reads the same container. Without the lock, nothing",
+      "else may write /.internal/ at the same time: the gateway forwards only requests under the pod's own",
+      "path, so CSS's account and OIDC routes, the only request-driven writers there, are never reached."
+    ],
+    "@type": "Override",
+    "overrideInstance": { "@id": "urn:solid-server:default:JsonResourceStorage" },
+    "overrideParameters": {
+      "@type": "JsonResourceStorage",
+      "source": { "@id": "urn:solid-server:default:ResourceStore_Backend" }
+    }
   }]
 }
