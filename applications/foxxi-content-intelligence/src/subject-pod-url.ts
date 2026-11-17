@@ -91,7 +91,7 @@ export const IDENTITY_SUBJECT_MAX_LENGTH = 512;
 function identityUserPrefixes(identityHost: string | undefined): string[] {
   const host = (identityHost ?? '').trim().toLowerCase();
   if (!host || !IDENTITY_HOST.test(host)) return [];
-  return [...new Set([host, host.replace(':', '%3a')])].map(h => `did:web:${h}:users:`);
+  return [...new Set([host, host.replace(/:/g, '%3a')])].map(h => `did:web:${h}:users:`);
 }
 
 /** What follows `did:web:<configured host>:users:` in `subject`, or undefined when it is not that. */

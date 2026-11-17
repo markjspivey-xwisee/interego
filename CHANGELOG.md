@@ -68,6 +68,9 @@ budget and after its account is closed. Identity's cleanup lists at most 128
 resources of a guest pod and keeps the whole pod when there are more. Neither
 is changed here.
 
+The port spelling of the identity host is rewritten with a global replace; a
+validated host has at most one colon, so the result is the same.
+
 ## 2026-11-17 — Foxxi: a profile write the bridge never sent is not kept, not in doubt
 
 Found by starting the bridge and sending it signed requests, which #933 had

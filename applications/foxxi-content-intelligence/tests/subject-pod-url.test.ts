@@ -311,7 +311,7 @@ describe('identity user DIDs — none resolves to the tenant pod, over many gene
     const seen = new Set<string>();
     for (let i = 0; i < 500; i++) for (const [prefix, length] of kinds) {
       const id = prefix + hex(`${prefix}${i}`, length), host = hosts[i % 2]!;
-      const subject = i % 3 === 0 && host.includes(':') ? `did:web:${host.replace(':', '%3A')}:users:${id}` : userDid(id, host);
+      const subject = i % 3 === 0 && host.includes(':') ? `did:web:${host.replace(/:/g, '%3A')}:users:${id}` : userDid(id, host);
       const pod = withHost(subject, undefined, host);
       expect(pod, subject).toBe(`${ORIGIN}/${id}/`);
       expect(pod).not.toBe(TENANT);
