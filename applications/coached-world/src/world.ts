@@ -7,9 +7,10 @@ import { Wallet } from 'ethers';
 import { WorldError } from './errors.js';
 import { MAX_AGENT_LESSONS, MAX_AGENT_SCORES, MAX_CONSULTANTS, MAX_PUBLISHED_GRAPHS, trim } from './bounded.js';
 import {
-  agentGraph, factionGraph, interventionGraph, observationGraph, pactGraph, territoryGraph,
+  agentGraph, factionGraph, interventionGraph, observationGraph, orderAttestationGraph, orderAttestationIri, pactGraph, territoryGraph,
   type GraphBundle,
 } from './graphs.js';
+import { statementDigest } from '../../foxxi-content-intelligence/src/xapix/statement.js';
 import { StatementLog, SATISFIED, type LmsAuthority, type LrsReader } from './lrs.js';
 import type { CourseLauncher, CourseLaunchResult } from './course-launch.js';
 import {
@@ -400,7 +401,7 @@ export class CoachedWorld {
     if (!kept) return this.workFellBack(consultantId, registration, 'the connected agent sent nothing to keep');
     const statement = buildWorkStatement({
       pack: this.pack, homePage: this.base, actorDid: agent.did, missionId: mission.id, missionTitle: mission.title,
-      response: kept, timestamp: this.now(), registration,
+      response: kept, timestamp: this.now(), registration, after: live.statements.at(-1),
     });
     this.log.add([statement], 'world');
     live.statements.push(statement);
@@ -463,8 +464,15 @@ export class CoachedWorld {
       missionTitle: mission.title, missionObject: mission.object, symptoms: [], herring: undefined,
       progressed: result.matched ? 2 : 0, measured: { raw: result.after, success: result.matched },
       timestamp: at, registration: live.registration,
+      // These close the registration: they follow what was already emitted under it, and name
+      // the signed list of the whole run, which is written just below.
+      after: live.statements.at(-1), orderAttestation: orderAttestationIri(this.base, live.registration),
     });
     this.log.add(measured.statements, 'world');
+    await this.publish(orderAttestationGraph({
+      base: this.base, registration: live.registration, writerDid: this.did('world'), at,
+      digests: [...live.statements, ...measured.statements].map(s => statementDigest(s as unknown as Record<string, unknown>)),
+    }), 'order-attestation');
     const observation = observationGraph({ base: this.base, registration: live.registration, agentDid: agent.did, at });
     await this.publish(observation, 'observation');
     await this.publish(interventionGraph({
