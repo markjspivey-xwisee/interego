@@ -6,6 +6,9 @@
  *
  * Not checked here: the page running in a browser. That was done by hand against a loopback
  * stand-in LMS when the player was changed, and is not repeated by this suite.
+ *
+ * One part of the page is run: the code that sends a reviewed result. It is cut from the page's own
+ * script, with the page's clock and comparison, and run against a stand-in learning record.
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
@@ -122,5 +125,105 @@ describe('the published role-play player page', () => {
     expect(page).not.toContain('that ended before it was recorded');
     // It never writes a verb cmi5 keeps for the LMS.
     for (const verb of ['verbs/launched', 'verbs/abandoned', 'verbs/waived', 'verbs/satisfied']) expect(page).not.toContain(verb);
+  });
+});
+
+describe('how the player sends a reviewed result', () => {
+  const page = read('index.html');
+  const cut = (from: string, to: string): string => {
+    const a = page.indexOf(from), b = page.indexOf(to, a);
+    if (a < 0 || b < 0) throw new Error(`the player page no longer holds: ${a < 0 ? from : to}`);
+    return page.slice(a, b);
+  };
+  /** The player's own clock, comparison and sending code, run against a stand-in learning record. */
+  const player = (lrs: Lrs) => new Function('fetch', 'cfg',
+    cut('let lastTs = 0;', '/* `keep`, when given') + cut('function holds(stored, issued){', 'let sessionOpened = false;')
+    + '; return { postReviewed, nextTs };')(lrs.fetch, { lrs: 'https://lrs.example/xapi', authorization: 'Basic token' }) as {
+      postReviewed(st: Record<string, unknown>): Promise<string>; nextTs(): string;
+    };
+  /** Stores a statement by id; a second, different one under the same id is a 409, as in xAPI. */
+  class Lrs {
+    readonly held = new Map<string, Record<string, unknown>>();
+    readonly posts: Record<string, unknown>[] = [];
+    loseNextAnswer = false;
+    readonly fetch = async (url: string, init?: { method?: string; body?: string }): Promise<Response> => {
+      if (init?.method === 'POST') {
+        const st = JSON.parse(String(init.body)) as Record<string, unknown>;
+        this.posts.push(st);
+        const id = String(st['id']), held = this.held.get(id);
+        if (held) return JSON.stringify(held) === JSON.stringify(st) ? new Response(null, { status: 204 }) : new Response('', { status: 409 });
+        this.held.set(id, st);
+        if (this.loseNextAnswer) { this.loseNextAnswer = false; throw new Error('connection reset'); }
+        return new Response('["' + id + '"]', { status: 200 });
+      }
+      const id = new URL(url).searchParams.get('statementId') ?? '';
+      const held = this.held.get(id);
+      return held ? new Response(JSON.stringify({ ...held, stored: '2026-11-17T16:05:00.000Z', authority: { objectType: 'Agent' } }), { status: 200 }) : new Response('', { status: 404 });
+    };
+  }
+  const issued = (verb: string): Record<string, unknown> => ({
+    id: verb === 'completed' ? '11111111-1111-4111-8111-111111111111' : '22222222-2222-4222-8222-222222222222',
+    verb: { id: `http://adlnet.gov/expapi/verbs/${verb}` }, result: verb === 'completed' ? { completion: true } : { success: verb === 'passed' },
+    context: { registration: '33333333-3333-4333-8333-333333333333' },
+  });
+
+  it('stamps each statement after the visit\'s initialized, in order, for failed and completed and for passed and completed', async () => {
+    for (const outcome of ['failed', 'passed']) {
+      const lrs = new Lrs(), p = player(lrs);
+      const initialized = p.nextTs();
+      const first = issued(outcome), second = issued('completed');
+      expect(await p.postReviewed(first)).toBe('sent');
+      expect(await p.postReviewed(second)).toBe('sent');
+      const terminated = p.nextTs();
+      const times = [initialized, lrs.posts[0]!['timestamp'], lrs.posts[1]!['timestamp'], terminated].map((t) => Date.parse(String(t)));
+      expect(times.every((t) => Number.isFinite(t))).toBe(true);
+      // Strictly after initialized and strictly before terminated, on the one clock that stamps all four.
+      expect(times[0]!).toBeLessThan(times[1]!);
+      expect(times[1]!).toBeLessThan(times[2]!);
+      expect(times[2]!).toBeLessThan(times[3]!);
+    }
+  });
+
+  it('sends the same document on a retry, and takes one the record already holds as recorded', async () => {
+    const lrs = new Lrs(), p = player(lrs);
+    const st = issued('failed');
+    // The record stored it and the answer was lost.
+    lrs.loseNextAnswer = true;
+    await expect(p.postReviewed(st)).rejects.toThrow('connection reset');
+    const stamp = st['timestamp'];
+    expect(typeof stamp).toBe('string');
+    // Trying again sends the very same statement, stamp included, and the record has it.
+    expect(await p.postReviewed(st)).toBe('sent');
+    expect(lrs.posts.map((x) => x['timestamp'])).toEqual([stamp, stamp]);
+    expect(lrs.held.size).toBe(1);
+  });
+
+  it('takes a statement an earlier visit of the session sent, at its own moment, as this result recorded', async () => {
+    const lrs = new Lrs();
+    const earlier = player(lrs), fetched = issued('failed');
+    expect(await earlier.postReviewed(fetched)).toBe('sent');
+    // The page is opened again in the same session and fetches the result again: same id, no timestamp.
+    await new Promise((r) => setTimeout(r, 5));
+    const again = player(lrs), refetched = issued('failed');
+    expect(await again.postReviewed(refetched)).toBe('already');
+    expect(refetched['timestamp']).not.toBe(fetched['timestamp']);
+    expect(lrs.held.get(String(fetched['id']))!['timestamp']).toBe(fetched['timestamp']);
+  });
+
+  it('does not take a different result under the same id as this one', async () => {
+    const lrs = new Lrs(), p = player(lrs);
+    expect(await p.postReviewed(issued('failed'))).toBe('sent');
+    await new Promise((r) => setTimeout(r, 5));
+    const other = { ...issued('failed'), result: { success: true } };
+    expect(await player(lrs).postReviewed(other)).toBe('differs');
+  });
+
+  it('sends a statement that comes with a timestamp as it came, and compares it whole', async () => {
+    const lrs = new Lrs(), p = player(lrs);
+    const dated = { ...issued('completed'), timestamp: '2026-11-17T15:00:34.854Z' };
+    expect(await p.postReviewed(dated)).toBe('sent');
+    expect(lrs.posts[0]!['timestamp']).toBe('2026-11-17T15:00:34.854Z');
+    // The same id held with another timestamp is then a different statement.
+    expect(await player(lrs).postReviewed({ ...issued('completed'), timestamp: '2026-11-17T15:00:35.000Z' })).toBe('differs');
   });
 });

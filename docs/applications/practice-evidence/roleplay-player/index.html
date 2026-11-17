@@ -506,15 +506,28 @@ function sameStatement(stored, issued){
   const {timestamp: ti, ...restIssued} = issued, {timestamp: ts} = stored;
   return holds(stored, restIssued) && (ti === undefined || sameInstant(ts, ti));
 }
-/* Sends the reviewed statements exactly as given, in order. An id the LRS already holds is read back:
-   only an equal statement is this result recorded. */
+/* A reviewed statement comes with no timestamp: when it is sent is this session's to say. cmi5 orders
+   a session's statements by timestamp, initialized first and terminated last, and both of those are
+   stamped here, on this clock. So each reviewed statement is stamped here too, once, the first time
+   it is sent, after this visit's initialized, and a retry sends that same stamp. One that does come
+   with a timestamp (an earlier review service gave the time of the review) is sent as it came. */
+const stampedHere = new WeakSet();
+function stampReviewed(st){
+  if (st.timestamp === undefined) { st.timestamp = nextTs(); stampedHere.add(st); }
+  return st;
+}
+/* Sends the reviewed statements as given, in order. An id the LRS already holds is read back: only an
+   equal statement is this result recorded. A timestamp set here is not part of that comparison: an
+   earlier visit of this session may have sent the same statement at its own moment. */
 async function postReviewed(st){
   const h = {"Content-Type":"application/json","X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization};
+  stampReviewed(st);
   const r = await fetch(cfg.lrs + "/statements", {method:"POST", headers:h, body: JSON.stringify(st)});
   if (r.ok) return "sent";
   if (r.status === 409) {
     const g = await fetch(cfg.lrs + "/statements?statementId=" + encodeURIComponent(st.id), {headers:h});
-    if (g.ok && sameStatement(await g.json(), st)) return "already";
+    const issued = stampedHere.has(st) ? (({timestamp, ...rest}) => rest)(st) : st;
+    if (g.ok && sameStatement(await g.json(), issued)) return "already";
     return "differs";
   }
   return "refused " + r.status;

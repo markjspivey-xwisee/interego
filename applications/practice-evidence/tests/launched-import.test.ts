@@ -533,6 +533,11 @@ describe('pev.import_launched_attempt', () => {
     ] } });
     const first = ok(await ask(A));
     const statements = first['statements'] as Out[];
+    // None is stamped here: the unit stamps each in the session it sends it in. The review's own time is kept beside.
+    expect(statements.every((st) => !('timestamp' in st))).toBe(true);
+    expect(statements.map((st) => ((st['context'] as { extensions: Out }).extensions)['https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#reviewedAt'])
+      .every((t) => typeof t === 'string' && Number.isFinite(Date.parse(t as string)))).toBe(true);
+    expect(String((first['forUnit'] as Out)['send'])).toContain('The statements carry no timestamp');
     expect(statements.map((x) => (x['verb'] as Out)['id'])).toEqual([VERB_PASSED, VERB_COMPLETED]);
     expect([first['again'], first['recorded'], first['sessionId'], first['usableInSession']]).toEqual([false, true, A, true]);
     expect((first['forUnit'] as Out)['registration']).toBe(REG);
@@ -629,6 +634,7 @@ describe('pev.import_launched_attempt', () => {
     const again = ok(await ask(B));
     expect([again['again'], again['fixedAgain'], again['recorded'], again['earlierSession'], again['usableInSession'], again['usableOnlyIn']]).toEqual([false, true, true, A, true, B]);
     const now = again['statements'] as Out[];
+    expect(now.every((st) => !('timestamp' in st))).toBe(true);
     const strip = (x: Out): Out => {
       const c = x['context'] as { extensions: Out };
       const { [SESSION_EXT]: _session, ...extensions } = c.extensions;
