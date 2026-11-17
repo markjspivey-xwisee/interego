@@ -130,6 +130,8 @@ describe('the part of JSON Schema that is read', () => {
     [[], { minItems: 1 }, 'has 0 items, and the schema asks for at least 1'], [[1, 2], { maxItems: 1 }, 'has 2 items, and the schema asks for at most 1'],
     [{ n: 1 }, { required: ['n'], properties: { n: { type: 'number' } } }, null], [{}, { required: ['n'] }, 'has no "n", which the schema requires'],
     [{ n: 'x' }, { properties: { n: { type: 'number' } } }, '"n" is a string, and the schema asks for number'],
+    [{ b: 2, a: 1 }, { const: { a: 1, b: 2 } }, null], [{ b: [2, 1], a: 1 }, { enum: [{ a: 1, b: [1, 2] }] }, 'is not one of [{"a":1,"b":[1,2]}]'],
+    [{}, { required: ['constructor'] }, 'has no "constructor", which the schema requires'], [{}, { properties: { constructor: { type: 'string' }, toString: { type: 'number' } } }, null],
     ['anything', true, null], ['anything', false, 'is not allowed: the schema allows no value'],
   ] as Array<[unknown, unknown, string | null]>)('%j against %j', (value, schema, expected) => {
     expect(fails(value, schema)).toBe(expected);
@@ -152,10 +154,10 @@ describe('the part of JSON Schema that is read', () => {
 });
 
 describe('a pattern is run only when it cannot run away', () => {
-  it.each(['^[0-9a-f]{8}-[0-9a-f]{4}$', '^sha256:[a-f0-9]{64}$', '^[a-f0-9]{64}$', '^a?b{1,3}$', '^[+*()]{2}$', 'yes|no'])('runs %s', pattern => {
+  it.each(['^[0-9a-f]{8}-[0-9a-f]{4}$', '^sha256:[a-f0-9]{64}$', '^[a-f0-9]{64}$', '^ab{1,3}$', '^colou?r$', '^[+*()?]{2}$', 'yes|no'])('runs %s', pattern => {
     expect(isPlainPattern(pattern)).toBe(true);
   });
-  it.each(['^(a+)+$', 'a*', 'a+', '(a|aa){2}', 'a{2,}', 'a{1,5000}', '(.)\\1', '[unclosed', 'x'.repeat(600)])('does not run %s', pattern => {
+  it.each(['^(a+)+$', 'a*', 'a+', '(a|aa){2}', 'a{2,}', 'a{1,5000}', '(.)\\1', '[unclosed', 'x'.repeat(600), '^a?b{1,3}$', 'a?a?', '^' + 'a{0,100}'.repeat(20) + 'b$'])('does not run %s', pattern => {
     expect(isPlainPattern(pattern)).toBe(false);
   });
 
@@ -169,6 +171,18 @@ describe('a pattern is run only when it cannot run away', () => {
     const r = checkValue('a'.repeat(40) + '!', { pattern: '^(a+)+$' });
     expect(Date.now() - started).toBeLessThan(500);
     expect(r).toEqual({ failure: null, unchecked: ['the pattern ^(a+)+$, which this server does not run'] });
+  });
+
+  it('★ answers at once for bounded repetitions that overlap, which a review of this change found still stalled it', () => {
+    const started = Date.now();
+    const r = checkValue('a'.repeat(100) + '!', { pattern: '^' + 'a{0,100}'.repeat(20) + 'b$' });
+    expect(Date.now() - started).toBeLessThan(500);
+    expect(r.failure).toBeNull();
+    expect(r.unchecked).toHaveLength(1);
+    // And the one varying count that is allowed, at its largest, against the longest value that is read.
+    const worst = Date.now();
+    expect(checkValue('a'.repeat(4096), { pattern: '^[ab]{0,1000}c$' }).failure).toBe('does not match ^[ab]{0,1000}c$');
+    expect(Date.now() - worst).toBeLessThan(500);
   });
 
   it('does not run even a plain pattern over a very long value', () => {

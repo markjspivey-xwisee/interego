@@ -20,14 +20,24 @@
  *
  * ★ A PATTERN IS RUN ONLY WHEN IT CANNOT RUN AWAY. A regular expression from a stranger's profile,
  * applied to a stranger's statement, is the textbook way to stall a server. A pattern is run when
- * it has no group, no `*`, no `+`, no backreference and no open-ended `{n,}`, and the value is
- * short: what is left repeats a bounded number of times. Any other pattern is named in `unchecked`.
+ * it has no group, no `*`, no `+`, no backreference, no open-ended `{n,}` and at most one
+ * repetition of a varying count (`?` or `{n,m}`), and the value is short: exact counts do not
+ * backtrack, and one varying count is bounded by itself. Any other pattern is named in `unchecked`.
  */
 import type { Json } from './processor.js';
 
 const isObject = (v: unknown): v is Json => !!v && typeof v === 'object' && !Array.isArray(v);
 const isIri = (v: unknown): v is string => typeof v === 'string' && /^[a-z][a-z0-9+.-]*:[^\s<>"{}|\\^`]+$/i.test(v);
-const same = (a: unknown, b: unknown): boolean => JSON.stringify(a) === JSON.stringify(b);
+/** JSON equality: an object's members in any order, an array's in the order given. */
+function same(a: unknown, b: unknown): boolean {
+  if (a === b) return true;
+  if (Array.isArray(a) || Array.isArray(b)) return Array.isArray(a) && Array.isArray(b) && a.length === b.length && a.every((x, i) => same(x, b[i]));
+  if (!isObject(a) || !isObject(b)) return false;
+  const keys = Object.keys(a);
+  return keys.length === Object.keys(b).length && keys.every(k => has(b, k) && same(a[k], b[k]));
+}
+/** A member the JSON document has, not one every object inherits (`constructor`, `toString`). */
+const has = (o: Json, name: string): boolean => Object.prototype.hasOwnProperty.call(o, name);
 
 /** Keywords that describe a schema and ask nothing of a value. */
 const ANNOTATIONS = new Set(['$schema', '$id', '$comment', 'title', 'description', 'default', 'examples', 'deprecated', 'readOnly', 'writeOnly']);
@@ -53,11 +63,17 @@ export function isPlainPattern(pattern: string): boolean {
     bare += ch;
   }
   if (/[()*+]/.test(bare)) return false;
+  // A repetition of a varying count (`?`, `{n,m}`) is where backtracking starts, and several of
+  // them over the same characters multiply: twenty `a{0,100}` in a row do not finish. One is
+  // allowed, which is bounded by its own count; exact counts (`{8}`) never backtrack.
+  let varying = (bare.match(/\?/g) ?? []).length;
   for (const bound of bare.matchAll(/\{(\d*)(,?)(\d*)\}/g)) {
     const [, low, comma, high] = bound;
     if (comma && high === '') return false;
     if (Number(high || low) > 1000) return false;
+    if (comma) varying++;
   }
+  if (varying > 1) return false;
   try { new RegExp(pattern); return true; } catch { return false; }
 }
 
@@ -79,7 +95,7 @@ function check(value: unknown, schema: unknown, unchecked: Set<string>, depth: n
   for (const key of Object.keys(schema)) if (!READ.has(key) && !ANNOTATIONS.has(key)) unchecked.add(`the keyword "${key}"`);
 
   if (Array.isArray(schema.enum) && !schema.enum.some(e => same(e, value))) return `is not one of ${JSON.stringify(schema.enum)}`;
-  if ('const' in schema && !same(schema.const, value)) return `is not ${JSON.stringify(schema.const)}`;
+  if (has(schema, 'const') && !same(schema.const, value)) return `is not ${JSON.stringify(schema.const)}`;
   const types = typeof schema.type === 'string' ? [schema.type] : Array.isArray(schema.type) ? schema.type : [];
   if (types.length && !types.some(t => isType(value, t))) return `is ${article(kindOf(value))}, and the schema asks for ${types.join(' or ')}`;
 
@@ -110,9 +126,9 @@ function check(value: unknown, schema: unknown, unchecked: Set<string>, depth: n
     }
   }
   if (isObject(value)) {
-    for (const name of Array.isArray(schema.required) ? schema.required : []) if (typeof name === 'string' && !(name in value)) return `has no "${name}", which the schema requires`;
+    for (const name of Array.isArray(schema.required) ? schema.required : []) if (typeof name === 'string' && !has(value, name)) return `has no "${name}", which the schema requires`;
     if (isObject(schema.properties)) for (const [name, inner] of Object.entries(schema.properties)) {
-      if (!(name in value)) continue;
+      if (!has(value, name)) continue;
       const why = check(value[name], inner, unchecked, depth + 1);
       if (why) return `"${name}" ${why}`;
     }

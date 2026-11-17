@@ -36,7 +36,9 @@ and plain patterns. Anything else in a schema is named in the answer's
 which is not fetched.
 
 A pattern is run only when nothing in it repeats without a bound: no group, no
-`*`, no `+`, no backreference, no `{n,}`. A profile is someone else's document
+`*`, no `+`, no backreference, no `{n,}`, and at most one repetition of a
+varying count (`?` or `{n,m}`), since several of those over the same
+characters multiply. A profile is someone else's document
 and these routes are open, and a pattern such as `^(a+)+$` stalls a server on
 forty characters. Every pattern the built-in profiles declare is a plain one,
 and a test fails if that stops being so.
