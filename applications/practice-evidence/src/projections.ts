@@ -264,11 +264,18 @@ const LAUNCHED_VERB_IRI: Readonly<Record<LaunchedVerb, string>> = { passed: VERB
 /**
  * The session the statements will be sent in. It may be a later session of the same registration
  * than the conversation's. Nothing else about the sending enters a statement: its id is fixed by
- * the attempt, the registration and the verb, and its timestamp is the time of the review, so a
- * retry in the same session is the same document, and an LRS that already holds a passed or a
- * completed for this registration refuses a second, different one under the same id. cmi5 allows
- * one passed and one completed per registration; a caller that sends these still has to keep what
- * it sent and confirm each delivery, which nothing here does.
+ * the attempt, the registration and the verb, so a retry is the same statement, and an LRS that
+ * already holds a passed or a completed for this registration refuses a second, different one
+ * under the same id. cmi5 allows one passed and one completed per registration; a caller that
+ * sends these still has to keep what it sent and confirm each delivery, which nothing here does.
+ *
+ * A statement built here carries no timestamp. cmi5 orders a session's statements by timestamp,
+ * with initialized first and terminated last (9.3), and those two are stamped by the unit, on the
+ * unit's clock. The review happened before the session these are sent in began, often days
+ * before, and this bridge's clock is not the unit's. So the unit stamps each statement when it
+ * first sends it, after its initialized, and keeps that stamp for a retry. Until 2026-11-17 the
+ * timestamp was the time of the review, which put a passed or failed before the initialized of
+ * its own session. When the review was made is kept, as `pev:reviewedAt` in the context.
  */
 export interface SendingSession { readonly sessionId: string }
 
@@ -342,6 +349,7 @@ export function buildLaunchedStatements(i: ProjectionInput, sendIn: SendingSessi
     [ext('judgeRoute')]: primary.route,
     [ext('reviewer')]: review.reviewer.did,
     [ext('reviewOutcome')]: review.outcome,
+    [ext('reviewedAt')]: review.reviewedAt,
     [ext('rubricRatifiedBy')]: i.ratifiedBy,
     [ext('scenario')]: a.scenario.scenarioIri,
     [ext('assessmentUse')]: spec.assessmentUse,
@@ -358,7 +366,6 @@ export function buildLaunchedStatements(i: ProjectionInput, sendIn: SendingSessi
     object: { objectType: 'Activity', id: l.activityId, ...(l.activityDefinition ? { definition: l.activityDefinition } : {}) },
     result,
     context,
-    timestamp: review.reviewedAt,
   });
   const out: Record<string, unknown>[] = [];
   if (x.use === 'pass-gate') {
@@ -409,7 +416,7 @@ export function launchedStatementProblems(stmt: unknown, l: LmsLaunch, sendIn: S
       }
     }
   }
-  if (typeof stmt['timestamp'] !== 'string' || !ISO_WITH_OFFSET.test(stmt['timestamp'])) p.push('timestamp must be ISO 8601 with an offset');
+  if (stmt['timestamp'] !== undefined) p.push('timestamp must be left to the unit that sends the statement, inside its own session');
   const ctx = stmt['context'];
   if (!isObj(ctx)) p.push('context is required');
   else {

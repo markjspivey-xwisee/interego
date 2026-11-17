@@ -49,6 +49,35 @@ remove: the checks it waited for were themselves queued for a runner that
 afternoon, so they ended later than twenty minutes after the push. One run is
 not a measurement of the average.
 
+## 2026-11-17 — Practice Evidence: a reviewed result is timestamped in the session it is sent in
+
+Found on the first end-to-end run against the deployed bridges. The passed or
+failed and the completed that a unit sends after a review carried the time of
+the review as their timestamp. The unit sends them in a later session, and cmi5
+orders a session's statements by timestamp with initialized first and terminated
+last (9.3). So they were dated before the initialized of their own session: on
+the run, 15:00:34Z against a session that began at 16:04:39Z. The LRS took them
+and the result was right; the order was not.
+
+The statements Practice Evidence hands out now carry no timestamp. The unit
+stamps each one the first time it sends it, after its own initialized, on the
+clock that stamps its initialized and terminated, and keeps that stamp for a
+retry. When the review was made is in each context as `pev:reviewedAt`. The
+role-play player does this, and compares a statement the LRS already holds
+without the timestamp it set itself. A statement fixed before this change, for a
+session that ended unsent, loses its review-time timestamp when it is fixed again
+for another session.
+
+The player also reads what the learning record holds of its session before it
+opens a visit. A session the LMS continues is opened by a fresh load of the page,
+which used to send a second initialized. It now sends none when the session has
+one, starts its clock after the session's latest statement, and sends nothing at
+all when the record cannot be read. It follows the record's own link to further
+pages, five at most and only on the record's own origin.
+
+Not changed: a unit other than this player has to stamp the statements itself;
+the instructions handed out with them now say so.
+
 ## 2026-11-17 — Foxxi: whether an unsent profile write is kept or in doubt has a test
 
 #945 fixed the bridge answering "in doubt" for a profile write it had never
