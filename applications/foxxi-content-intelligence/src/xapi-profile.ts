@@ -1,5 +1,5 @@
 import { FOXXI_NS } from './foxxi-vocab.js';
-import { IEP_DECORATIONS, MODAL_STATUSES } from './xapix/namespace.js';
+import { IEP_DECORATIONS, MODAL_STATUSES, xapix } from './xapix/namespace.js';
 
 // ── What tells one kind of Foxxi statement from another ───────────────────────────────────────
 //
@@ -93,6 +93,19 @@ export { FOXXI_NS } from './foxxi-vocab.js';
 export const FOXXI_PROFILE_ID = 'https://foxxi-bridge.interego.xwisee.com/xapi/profile';
 
 const ADL = 'http://adlnet.gov/expapi';
+
+/**
+ * What Foxxi offers a learner after a failed attempt at a lesson or a course: ask the course a
+ * question, read the passages that bear on one, take the lesson. Each is an affordance of this
+ * bridge, named by its action IRI, which is how the bridge's manifest names it. `xapix:offers`
+ * is a property a plain profile processor ignores (xapix/README.md, section 5).
+ */
+export const OFFERED_AFTER_A_FAILED_ATTEMPT = [
+  'urn:iep:action:foxxi:ask-course-question',
+  'urn:iep:action:foxxi:retrieve-course-context',
+  'urn:iep:action:foxxi:consume-lesson',
+] as const;
+const AFTER_A_FAILED_ATTEMPT = { [xapix('offers')]: OFFERED_AFTER_A_FAILED_ATTEMPT.map(action => ({ '@id': action })) };
 const CMI5 = 'https://w3id.org/xapi/cmi5';
 // The cmi5-defined verbs satisfied/abandoned/waived are canonically at
 // https://w3id.org/xapi/adl/verbs/* — the SAME IRIs the cmi5 emitters use. Declaring
@@ -532,6 +545,9 @@ const templates = [
     verb: `${ADL}/verbs/failed`,
     objectActivityType: `${ADL}/activities/course`,
     rules: [{ location: 'result.success', presence: 'recommended', any: [false] }],
+    // What a learner may do next (xapi-x, section 5). Facts about this kind of statement, so they
+    // are on the template; the profile server's controls document describes each as served now.
+    ...AFTER_A_FAILED_ATTEMPT,
   },
   {
     id: `${FOXXI_PROFILE_ID}/templates/lesson-completed`,
@@ -566,6 +582,9 @@ const templates = [
       // cmi5 §9.5.2 has a failed statement state success false.
       { location: 'result.success', presence: 'included', any: [false] },
     ],
+    // What a learner may do next (xapi-x, section 5). Facts about this kind of statement, so they
+    // are on the template; the profile server's controls document describes each as served now.
+    ...AFTER_A_FAILED_ATTEMPT,
   },
 
   // ── Templates for the remaining declared+emitted verbs ──────────────

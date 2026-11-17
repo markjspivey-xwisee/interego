@@ -46,6 +46,7 @@ import { buildFoxxiProfileDoc as ownXapiProfileDoc, FOXXI_PROFILE_ID as OWN_XAPI
 import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
 import { builtInProfiles, builtInKept } from '../src/xapi-profile-server/built-in.js';
 import { mountProfileAuthoring, mountProfileHosting } from '../src/xapi-profile-server/authoring-http.js';
+import { mountXapixRoutes } from '../src/xapix/http.js';
 import { PROFILE_GENERATED_AT as OWN_XAPI_PROFILE_GENERATED_AT } from '../src/xapi-lrs.js';
 import { createOwnLtiReconciliation, validateRecoveryEntry, type RecoveryEntry } from '../src/lti-own-reconciliation.js';
 import { createOwnLtiReconciliationStore } from '../src/lti-own-reconciliation-store.js';
@@ -493,7 +494,7 @@ import { LtiPlatformReadiness, isPlatformSnapshot } from '../src/lti-platform-re
 import { ScopedLtiConnection } from '../src/lti-scoped-connection.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
 import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, registryWriter, type DispatchEngine } from '../src/scorm-dispatch.js';
-import { glossaryLoader } from '../src/i2idl-glossary.js';
+import { glossaryLoader, I2IDLX_NS } from '../src/i2idl-glossary.js';
 import { askCourse } from '../src/course-ask.js';
 import { attachDecorationRoutes } from '../src/decorations/routes.js';
 import { attachWorkbenchRoutes, workbenchEncryptionKeypair, workbenchOwnerAnchors } from '../src/i2idlx-workbench.js';
@@ -11064,6 +11065,27 @@ mountProfileHosting(app, xapiProfileServer, {
   // The deployment's own profile is served at /xapi/profile; its version, templates and patterns
   // have IRIs beneath that, which answered nothing.
   own: OWN_XAPI_PROFILE_ID.startsWith(`${bridgeBaseUrl}/`) ? [{ path: new URL(OWN_XAPI_PROFILE_ID).pathname, iri: OWN_XAPI_PROFILE_ID }] : [],
+});
+
+// The xapi-x rules and the controls document (src/xapix/http.ts). Read-only and unsigned. The
+// lint fetches nothing itself: whether an IRI is a design idea is asked of the I2IDL release this
+// bridge already reads for "Ask your course" (cached a day), and whether one is an affordance is
+// asked of the manifest this bridge serves.
+const servedAffordance = (iri: string) => activeAffordances.find(a => a.action === iri);
+mountXapixRoutes(app, xapiProfileServer, {
+  base: xapiProfileServerBase,
+  links: async () => {
+    const sources = await i2idlGlossary().catch(() => null);
+    return {
+      // An i2x: concept is taken by its namespace: the ontology's term list is not read here.
+      ...(sources ? { designIdea: (iri: string) => sources.glossary.byIri.has(iri) || iri.startsWith(I2IDLX_NS) } : {}),
+      affordance: (iri: string) => servedAffordance(iri) !== undefined,
+    };
+  },
+  describeAffordance: iri => {
+    const a = servedAffordance(iri);
+    return a ? { title: a.title, description: a.description, method: a.method, target: a.targetTemplate.replace('{base}', bridgeBaseUrl), mediaType: a.mediaType, inputs: a.inputs as never } : undefined;
+  },
 });
 
 // ── Credentials through any signed connection ─────────────────────────────────────────────────
