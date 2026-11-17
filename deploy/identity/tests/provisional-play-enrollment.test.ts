@@ -351,12 +351,12 @@ function fixture(options: { pod?: Record<string, 'native' | 'plain'> } = {}) {
   );
   const purgePlayOwner = new Function('withIdentityPodMutex', 'purgeProvisionalPlayPod', 'CSS_URL', 'deleteUserCompletely',
     'playOwnerPurgeable', 'unfinishedPlayPurges', 'finishPlayPurge', 'log', 'awaitsGuestRetry', 'playPurgesInFlight',
-    'reopenedByBackfill', 'playGameDataResidue', 'reopenFinishedPlayPurge', 'playResidueOutside',
+    'reopenedByBackfill', 'playGameDataResidue', 'reopenFinishedPlayPurge', 'playResidueOutside', 'playPurgeProgress',
     `${productionFunction('purgePlayOwner')}; return purgePlayOwner;`)(
     withIdentityPodMutex, (o: Parameters<typeof purgeProvisionalPlayPod>[0]) => purgeProvisionalPlayPod({ ...o, fetcher }),
     'https://css.test/', deleteUserCompletely, playOwnerPurgeable, unfinishedPlayPurges, finishPlayPurge,
     janitorLine, awaitsGuestRetry, playPurgesInFlight,
-    reopenedByBackfill, playGameDataResidue, reopenFinishedPlayPurge, playResidueOutside,
+    reopenedByBackfill, playGameDataResidue, reopenFinishedPlayPurge, playResidueOutside, new Map(),
   ) as (owner: string, reopen?: Reopen) => Promise<string>;
   const cleanup = () => purgePlayOwner(userId);
   /** The backfill's turn for the owner, its guest deadline `ago` ms ago (purgePlayOwner with `reopen`), over the run `run`. */
@@ -1146,4 +1146,52 @@ test('backfill: an owner queued after the run chose its owners (an on-demand loa
   assert.equal(await g.cleanup(), 'closed');
   assert.deepEqual(g.deletions, [`https://css.test/${userId}/agents`], 'its agent registry is deleted, and nothing else');
   assert.equal(g.unfinishedPlayPurges.size + g.unconfirmedPlayDeletions.size, 0);
+});
+
+// ── A pod that holds more than one cleanup pass lists (provisional-play-cleanup.ts PlayPurgeProgress) ──
+
+/** A guest pod an application filled past what one pass lists: 400 records ten levels down, a registry and the game data. */
+const filledPod = (): Record<string, 'native' | 'plain'> => ({ agents: 'plain', [save]: 'native', [budget]: 'native',
+  ...Object.fromEntries(Array.from({ length: 400 }, (_, i) => [`records/a/b/c/d/e/f/g/h/i/${String(i).padStart(4, '0')}.json`, 'plain' as const])) });
+
+test('a guest pod larger than a pass lists is closed at its deadline all the same, stays marked and queued while its passes go on, and is finished by the last', async () => {
+  const f = fixture({ pod: filledPod() });
+  f.now = 20;
+  // It used to be listed, found past the bound and kept, at every pass: never closed, never purged.
+  assert.equal(await f.cleanup(), 'partial');
+  assert.equal(typeof f.document!.deletedAt, 'string', 'the account is closed at the first pass');
+  assert.equal(f.document!.provisionalPlayPurgePending, true, 'its tombstone says the purge is unfinished, for a restart');
+  assert.deepEqual([...f.unfinishedPlayPurges], [userId], 'and the janitor comes back to it at its next pass');
+  assert.match(f.janitorLog.at(-1)!, /the purge of u-try-play-1+ goes on at the next pass, its account closed: its pod holds more than one pass lists \(\d+ resource\(s\) deleted in this one\)/);
+  assert.doesNotMatch(f.janitorLog.join('\n'), /kept|forgot/);
+  const puts = f.puts;
+  const outcomes: string[] = [];
+  for (let pass = 2; pass <= 8 && outcomes.at(-1) !== 'purged'; pass++) outcomes.push(await f.cleanup());
+  assert.deepEqual(outcomes, ['partial', 'partial', 'purged']);
+  assert.equal(f.puts, puts + 1, 'the account is not closed again: only the mark is cleared, at the end');
+  assert.equal(f.document!.provisionalPlayPurgePending, undefined);
+  assert.equal(f.unfinishedPlayPurges.size, 0);
+  assert.equal(f.pod.has('records/') || f.pod.has('agents') || f.pod.has(save) || f.pod.has(budget), false);
+  assert.ok(f.janitorLog.includes(`Janitor: finished the purge of ${userId}`));
+});
+
+test('a guest that was claimed keeps a pod of any size: the janitor closes nothing and deletes nothing', async () => {
+  const f = fixture({ pod: filledPod() });
+  await f.commit(userId, 'webauthn-register', enroll);
+  f.now = 20;
+  assert.equal(await f.cleanup(), 'kept:account');
+  assert.equal(f.document!.deletedAt, undefined);
+  assert.deepEqual(f.pod.changes().filter(e => !e.startsWith('PUT auth-methods.jsonld')), [], 'nothing of the pod is deleted');
+  assert.equal(f.unfinishedPlayPurges.size, 0);
+  assert.ok(f.pod.has('records/') && f.pod.has(save));
+});
+
+test('backfill: a finished purge whose pod holds more than a pass lists is left as it finds it, whatever the part listed names', async () => {
+  const f = fixture({ pod: filledPod() });
+  f.document = finishedPurge();
+  const { outcome, reopen } = await f.backfill(2 * HOUR);
+  assert.equal(outcome, 'kept:outside: its pod holds more than one cleanup pass lists');
+  assert.equal(reopen.purging, undefined);
+  assert.deepEqual(f.pod.changes(), [], 'nothing is written or deleted');
+  assert.equal(f.unfinishedPlayPurges.size + f.reopenedByBackfill.size, 0);
 });

@@ -198,6 +198,97 @@ chain and an order attestation and no emitter that used them.
 **Not done.** The attestation is not written to a pod. The world attests its
 own emissions only. llm-telemetry does not chain.
 
+## 2026-11-17 — css-gate: the operator bearer no longer writes into a guest's pod once the guest is closed or expired
+
+The gate's operator bearer wrote any path of any pod, and every check on a
+guest's pod (`u-try-play-`, `u-try-guest-`) was on the guest's own token. An
+application's bridge holds that bearer (it is the one secret the gate knows),
+so a bridge that keeps a guest's records in the guest's pod could go on
+writing there after the guest's deadline, and after identity had closed the
+account and purged the pod.
+
+- **Closed or expired: refused.** For `PUT`, `POST` and `PATCH` with the
+  operator bearer into a guest's pod, the gate now reads the pod's sign-in
+  record from the store at every write. A tombstone is `410 guest_pod_closed`;
+  an unclaimed guest past its anchor's deadline is `410 guest_pod_expired`,
+  whether the janitor has closed it yet or not; no record, or no anchor that
+  names the pod, is `409 guest_pod_not_open`; a record that cannot be read is
+  `503 guest_pod_state_unavailable` and nothing is let through unread.
+- **A guest's sign-in record and write budget are not written through the
+  gate** (`403 guest_pod_private_document`). Identity writes the first past
+  the gate and the gate writes the second itself; a write over a tombstone
+  would have re-opened a closed guest.
+- **A bound for a live guest's pod.** At most `GUEST_POD_OPERATOR_WRITES`
+  operator writes (default 4096) and `GUEST_POD_OPERATOR_BYTES` declared bytes
+  (default 128 MiB), each at most `GUEST_POD_OPERATOR_RESOURCE_BYTES` (default
+  8 MiB): `507` and `413` past them. Counted in the gate's process, so a
+  restart starts it again: a ceiling on a runaway writer, not a ledger.
+  `/healthz` states it (`guestPodOperatorWrites`).
+- **Unchanged:** `DELETE` (operator tooling removes what a closed pod holds),
+  reads, every pod that is not a guest's, a guest that was claimed (a
+  registered account in the same pod: no deadline, no bound), and a guest's
+  own token. Identity's provisioning and cleanup, and the relay's writes, do
+  not come through the gate (they reach the store at their `CSS_URL`), so
+  nothing here can refuse them; a test holds `deploy/railway/services.json`
+  to that.
+
+- **Shadow until switched on.** Only `GUEST_POD_OPERATOR_MODE=enforce`
+  refuses. Any other value, and the default, decides the same way, logs what
+  it would have refused (once per pod and reason) and writes as before, so the
+  rule can be watched against the real store before a live guest's writes
+  depend on it. `/healthz` names the mode.
+
+Once enforcing, a bridge gets a `410` where it used to get a `201` for a guest that has
+ended; it should treat that as the guest being gone. The gate cannot tell one
+holder of the operator bearer from another. A write let through just before a
+closure can still land after it; the rule holds from the next write on.
+
+## 2026-11-17 — identity: a guest pod larger than one cleanup pass lists is closed and purged all the same
+
+The janitor's cleanup of a guest (`u-try-play-`, `u-try-guest-`) listed the
+whole pod before it closed the account, and threw past 128 resources or eight
+levels (`Provisional cleanup traversal limit`). A guest pod something had
+filled beyond that (an application writing a guest's records into it with the
+operator bearer) was therefore never closed and never purged: every pass
+listed it, threw, logged `provisional cleanup kept <id>` and left the account
+open and the data in place, for good.
+
+- **Closed at the deadline, whatever the pod holds.** A pass now lists at most
+  128 resources (`PASS_RESOURCES`), depth first, and stops there instead of
+  throwing. The account is closed in that same pass (its tombstone, marked
+  `provisionalPlayPurgePending`), the resources the pass listed are deleted,
+  and the purge returns `partial`: the owner stays in the janitor's queue and
+  each later pass deletes the next 128, until one lists the whole of what is
+  left and finishes as a purge always has (closure fence, mark cleared). The
+  eight-level limit is gone: depth was never work, only the count is.
+- **A pass is bounded.** At most 128 container listings, each read up to 4 MiB
+  (`LISTING_BYTES`; a longer one is cut and the names read before the cut are
+  used), and at most 128 deletions.
+- **Progress is read from the pod.** What is deleted is no longer listed, so an
+  interrupted pass or a restart loses nothing. A process also remembers, per
+  unfinished purge, the documents the store refused to delete and the
+  container a pass stopped in without anything to delete (a chain of
+  containers deeper than a pass lists). Both only save requests.
+- **Nothing outside the guest's own segment is requested.** Every URL listed,
+  and the container a pass resumes in, is checked against
+  `<pod origin>/<userId>/` first, as before.
+- **A pod within the bound is cleaned up exactly as before**, in one pass.
+  A claimed guest (one that holds a credential) and one whose deadline has
+  not passed are still kept whole, at any size: nothing is closed or deleted.
+- **Documents answered `409` on `DELETE`** (native heads outside the game
+  data) are still kept, with the containers that hold them, and logged once
+  when the purge finishes. No plain request deletes one, and the cleanup sends
+  the store's native delete only to a guest's game data, so holding the purge
+  open for them would retry without end. They no longer stop a large pod
+  either: a later pass neither counts nor requests them again.
+- The game-data backfill leaves a finished purge whose pod holds more than a
+  pass lists as it finds it (it re-opens a purge for game data alone).
+
+One case is still never finished, each pass of it bounded: a single container
+whose listing is longer than 4 MiB and begins with nothing but documents the
+store refuses to delete. `purgeProvisionalPlayPod`'s `close` is given a second
+argument (`whole`), and its result may be `partial`.
+
 ## 2026-11-17 — Foxxi: the pod resolver can place an identity guest on its own pod (not switched on)
 
 Second step toward a dashboard general guest being a real caller. Nothing is
