@@ -134,7 +134,7 @@ jobs:
       # `packages/pgsl-store/dist` straight out of the context instead of compiling
       # it in a build stage, because the accessor has to be assembled in a tree with
       # no monorepo root above it: the repo-root node_modules carries componentsjs@6
-      # (via @comunica) and CSS 7.1.9 needs componentsjs@5, so a build stage that ran
+      # (via @comunica) and CSS 7 needs componentsjs@5, so a build stage that ran
       # `npm ci` at the repo root inside the image would load the wrong one at
       # runtime. `dist` is gitignored, so a fresh checkout does not have it.
       #

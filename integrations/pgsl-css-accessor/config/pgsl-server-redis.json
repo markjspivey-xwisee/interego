@@ -265,8 +265,9 @@
       "comment": [
         "Shared Redis read-write/resource locker across replicas (ephemeral, atomic).",
         "expiration 90000 ms, not 6000, for the reason given on the ResourceLocker override in",
-        "pgsl-server.json: css-gate waits up to 90 s for a response head, and an expiry that fires",
-        "first answers 500 while the operation carries on without its lock."
+        "pgsl-server.json: css-gate waits up to 90 s for a response head. An expiry that fires while a",
+        "write's body is still arriving destroys the request (nothing is stored); one that fires after",
+        "the body is read answers 500 while the operation carries on without its lock."
       ],
       "@id": "urn:solid-server:default:ResourceLocker",
       "@type": "WrappedExpiringReadWriteLocker",

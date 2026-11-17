@@ -20,6 +20,12 @@ import { throughPipe } from './LockedStream.js';
  * WrappedExpiringStorage's hourly sweep walks /.internal/ this way, so on an unpatched 7.3 it
  * crashes the process, and with only the pipe it would delete nothing. Documents are still read
  * and written as CSS does.
+ *
+ * A listing is also read to the end before any member is visited. CSS 7.3 walks each member's
+ * sub-tree from inside the loop over its parent's listing, so the parent's read lock stays held,
+ * and is renewed only when the listing is read, for as long as that sub-tree takes. On a slow
+ * backend that outlasted the lock, which destroyed the listing and failed the sweep. 7.2 never
+ * held a listing open across the walk, and neither does this.
  */
 export class PipedJsonResourceStorage<T> extends JsonResourceStorage<T> {
   public constructor(source: ResourceStore, baseUrl: string, container: string) {
@@ -37,13 +43,16 @@ export class PipedJsonResourceStorage<T> extends JsonResourceStorage<T> {
     }
   }
 
-  protected override getContainedResourceIdentifiers(
+  protected override async *getContainedResourceIdentifiers(
     identifier: ResourceIdentifier,
     representation: Representation,
   ): AsyncIterableIterator<ResourceIdentifier> {
+    const members: ResourceIdentifier[] = [];
     // isEmpty is a getter on BasicRepresentation's prototype, so the spread alone would drop it.
-    return super.getContainedResourceIdentifiers(identifier, {
+    for await (const member of super.getContainedResourceIdentifiers(identifier, {
       ...representation, data: throughPipe(representation.data), isEmpty: representation.isEmpty,
-    });
+    })) members.push(member);
+    // The listing has ended, and its lock is released, before the caller visits any member.
+    yield* members;
   }
 }

@@ -1,6 +1,7 @@
 /**
- * The css image runs nodemailer 10 under a Community Solid Server whose own range is ^9, and
- * that is safe for one reason this file pins: the deployed config never sends mail.
+ * The css image runs nodemailer 10.3.1 under a Community Solid Server whose own range, ^10.0.9,
+ * still admits the vulnerable 10.0.9 to 10.1.3, so an override holds it, and that is safe for one
+ * reason this file pins: the deployed config never sends mail.
  *
  * ★ WHY AN OVERRIDE AND NOT AN UPGRADE. npm audit reports nine advisories against nodemailer
  * 9.1.1. The two HIGH ones (quadratic denial of service in addressparser) are fixed in 10.0.5
@@ -13,7 +14,8 @@
  * ^10.0.9: the right major, but that floor still admits 10.0.9 to 10.1.3, below 10.1.4. The
  * 8.0.0 alphas ask for other majors, move to Components.js 6 (the accessor builds against 5)
  * and, from alpha.1, need Node 22 (the image runs 20). So integrations/pgsl-css-accessor/package.json
- * overrides it, as the root does for the local-node package, which moved to 7.3.0 first.
+ * overrides it. The root has no override: its lockfile resolves 10.3.1 for the local-node package
+ * through CSS 7.3.0's own ^10.0.9, and nothing there holds the floor at 10.1.4.
  *
  * ★ WHY 10.x UNDER CSS 7 IS SAFE HERE. CSS calls nodemailer from one class, BaseEmailSender,
  * through createTransport(options) and transporter.sendMail({ from, to, subject, text, html }).
