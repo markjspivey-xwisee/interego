@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-RAJB8eaMH2hyGFSgtaakjSqJpVC90nER9BnL67nWE3I='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-g54ayppIQLX41WP90GdGHKrhWKrAZGJ/y5V/DZo1wiE='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -1140,9 +1140,12 @@ function nodeWalk(document) {
 
 class NodeIndex {
   // `base` is the descriptor's address; `fetchedFrom`, when it differs, is the
-  // address its text came from, which relative IRIs resolve against.
-  constructor(document, base, fetchedFrom) {
+  // address its text came from, which relative IRIs resolve against;
+  // `inexact`, the doubles of the numbers its text writes with digits their
+  // doubles drop (changedNumbers), whose every reading may have been rounded.
+  constructor(document, base, fetchedFrom, inexact) {
     this.ctx = new Ctx(fetchedFrom || base);
+    this.inexact = inexact || new Set();
     this.base = base;
     this.nodes = new Map();
     this.order = [];
@@ -1716,7 +1719,7 @@ function shapeFields(index, shapeRef) {
   }
   if (!present(props)) {
     if (present(supported)) {
-      const built = asList(supported).map(item => supportedField(index, item, problems)).filter(Boolean);
+      const built = onceEach(index, supported).map(item => supportedField(index, item, problems)).filter(Boolean);
       const shared = sharedListProblem(built);
       if (shared) problems.push(shared);
       return { fields: built, problems };
@@ -1740,8 +1743,7 @@ function shapeFields(index, shapeRef) {
     }
     return { fields, problems };
   }
-  for (const pref of asList(props)) {
-    if (pref == null) continue;
+  for (const pref of onceEach(index, props)) {
     const node = nodeOf(index, pref);
     if (!node) {
       problems.push("the shape names a sh:property " + asText(rawId(pref)) + ", which this document does not describe, so what it takes is not known; this control is not invoked");
@@ -1780,6 +1782,24 @@ function shapeFields(index, shapeRef) {
   if (shared) problems.push(shared);
   return { fields, problems };
 }
+// The values of a shape's sh:property or a class's hydra:supportedProperty,
+// each node they name once: RDF reads a value given twice as one, so a node
+// named many times is one input, never one for each time it is named, which
+// would cost the product of the two. A value that names no node the document
+// describes is kept once by its text, so the problem it gives is named once.
+// hmc.py's _once_each is the same.
+function onceEach(index, values) {
+  const seen = new Set(); const out = [];
+  for (const value of asList(values)) {
+    if (value == null) continue;
+    const node = nodeOf(index, value);
+    const key = node || "\u0000" + asText(rawId(value));
+    if (seen.has(key)) continue;
+    seen.add(key);
+    out.push(value);
+  }
+  return out;
+}
 // One RDF list that is the sh:in of two inputs would be offered, and named in
 // a problem, once for each, so a document could make that cost the product of
 // the inputs and the list's length: the control is not invoked. hmc.py's
@@ -1805,6 +1825,7 @@ function sharedShapeFields(index, shapeRef) {
   const shape = isJsonSchema(jsonValue(shapeRef)) ? null : index.node(jsonValue(shapeRef));
   const build = () => {
     const { fields, problems } = shapeFields(index, shapeRef);
+    for (const f of fields) f.roundedDefault = roundedDefault(f, index.inexact);
     return { fields, problems, duplicate: duplicateProblem(fields) };
   };
   if (!shape) return build();
@@ -2176,22 +2197,27 @@ function inlineKeyProblem(items) {
 // block's, each text facet read as text, as the substrate's HyperMarkdown lift
 // reads one into a property shape: a default that is a number or a boolean is
 // its text, an rdf:JSON datatype takes JSON, and a minCount or a maxCount above
-// 1 makes a list, as they do for a hydra:supportedProperty. hmc.py's
-// _inline_default and _inline_field are the same.
+// 1 makes a list, as they do for a hydra:supportedProperty. A default that
+// holds a number reading JSON may have rounded, of `inexact` (changedNumbers)
+// or an integer past 2^53, is refused, its text never sent in its place.
+// hmc.py's _inline_default and _inline_field are the same.
 function inlineDefault(v) { return typeof v === "number" || typeof v === "boolean" ? String(v) : v; }
-function inlineField(item) {
+function inlineField(item, inexact) {
   const minCount = inty(item.minCount);
   const maxCount = inty(item.maxCount);
   const path = asTextOrNull(item.path);
   const datatype = asTextOrNull(item.datatype);
   const jsonKind = isRdfJson(datatype) ? "json" : null;
-  return {
+  const field = {
     name: fieldName(item.name, path, null), path, datatype, jsonKind,
     minCount, maxCount, pattern: asTextOrNull(item.pattern),
-    defaultValue: inlineDefault(item.defaultValue), maxLength: inty(item.maxLength), minLength: inty(item.minLength),
+    defaultValue: item.defaultValue, maxLength: inty(item.maxLength), minLength: inty(item.minLength),
     description: asText(item.description), required: (minCount || 0) >= 1, enum: [], rawBody: false,
     multi: isMulti(jsonKind, minCount, maxCount, false)
   };
+  field.roundedDefault = roundedDefault(field, inexact);
+  field.defaultValue = inlineDefault(item.defaultValue);
+  return field;
 }
 // Where a control writes its fields in place beside a shape hydra:expects names
 // that the document describes, the shape's fields are its inputs, and each
@@ -2363,10 +2389,10 @@ function controlInputs(index, node, expectsRaw, expects, mappings) {
   if (shape && !shape.fields.length && !asSchema && !nodeOf(index, jsonValue(expectsRaw))) shape = null;
   if (shape) {
     fields = shape.fields;
-    if (inline) inlineProblem = duplicateProblem(items.map(inlineField)) || inlineDisagreement(items, fields);
+    if (inline) inlineProblem = duplicateProblem(items.map(item => inlineField(item, index.inexact))) || inlineDisagreement(items, fields);
     problem = shape.duplicate || inlineProblem;
   } else if (inline) {
-    fields = items.map(inlineField);
+    fields = items.map(item => inlineField(item, index.inexact));
     problem = duplicateProblem(fields);
   }
   if (expectsRaw != null && (!shape || (!fields.length && !asSchema))) warning = expectsWarning(expects, !!inline && items.length > 0, !!shape);
@@ -2382,6 +2408,7 @@ function controlInputs(index, node, expectsRaw, expects, mappings) {
       // as they are.
       const first = fields[given];
       const built = schemaField(first.name, schema.additionalProperties, first.required, extra);
+      built.roundedDefault = roundedDefault(built, index.inexact);
       const shared = fields.length - given > 1 ? sharedSchemaProblem(first.name, fields[given + 1].name, schema.additionalProperties) : null;
       if (shared) extra.push(shared);
       for (let i = given; i < (shared ? given : fields.length); i++) {
@@ -2483,6 +2510,8 @@ const MD_TEXT = ["rel", "method", "target", "expects", "mediaType"];
 // scan skips strings by their escapes and counts brackets, so it is linear.
 // hmc.py's _JSON_DEPTH, _json_too_deep and _TooDeep are the same.
 const JSON_DEPTH = 256;
+// What a default that holds a number reading JSON may have rounded (roundedDefault) is refused with, after the field's name.
+const ROUNDED_DEFAULT = ": its default holds a number that reading JSON may have rounded, so it is not sent";
 function jsonTooDeep(text) {
   let depth = 0;
   for (let i = 0; i < text.length; i++) {
@@ -2566,7 +2595,8 @@ function parseMarkdown(text, url, contentType) {
           : "this control block writes fields as text that is not JSON, so what it sends is not known; it is not invoked");
       }
       else if (Array.isArray(listed) && listed.every(isMap)) {
-        fields = listed.map(inlineField);
+        const inexact = new Set(changedNumbers(written[written.length - 1]).map(c => c[1]));
+        fields = listed.map(item => inlineField(item, inexact));
         const unreadKey = inlineKeyProblem(listed);
         if (unreadKey != null) problems.push(unreadKey);
       }
@@ -2735,7 +2765,7 @@ function parseDescriptor(text, contentType, url, fetchedFrom) {
     const document = JSON.parse(text);
     const repeated = repeatedKey(text);
     if (repeated != null) throw new Error('This document repeats the key "' + repeated + '" in one object, so which value it means is not known, and it is not read.');
-    const index = new NodeIndex(document, url, fetchedFrom);
+    const index = new NodeIndex(document, url, fetchedFrom, new Set(changedNumbers(text).map(c => c[1])));
     const root = index.root;
     // Shown, never acted on: the first value of each that reads as one.
     const title = asText(label(index.get(root, P.dcTitle)) || label(index.get(root, P.title)) || label(index.get(root, P.label)) || localName(url) || url);
@@ -2960,26 +2990,43 @@ function coerceNumber(field, kind, value) {
   if (kind === "decimal" && decimalKey(t) !== decimalKey(String(n))) throw new Error(field.name + ": decimal cannot be sent exactly");
   return n;
 }
+// What a field's checks read of its sh:hasValue and its bounds, read once
+// however many values they check, so a long constraint costs its length once
+// and not once per value: the sh:hasValue's text, the number it is in a number
+// field, the key of the JSON it holds in an rdf:JSON field (jsonKey), and
+// whether it holds an integer past 2^53 (roundedEntry); and each bound with
+// its number (boundNumber, null for none) and its text. hmc.py's _FieldFacts
+// is the same.
+function fieldFacts(field, numeric) {
+  const rdfJson = isRdfJson(field.datatype);
+  let hasValue = null;
+  const hv = field.hasValue;
+  if (hv != null) {
+    let number = null; let key = null;
+    if (numeric && (typeof hv === "number" || typeof hv === "string")) { try { number = coerceNumber(field, numeric, String(hv)); } catch {} }
+    if (rdfJson) { try { key = jsonKey(typeof hv !== "string" ? hv : strictJson(hv)); } catch {} }
+    hasValue = { text: asText(hv), number, key, rounded: roundedEntry(field, hv) };
+  }
+  const bounds = [["minInclusive", field.minInclusive], ["maxInclusive", field.maxInclusive],
+    ["minExclusive", field.minExclusive], ["maxExclusive", field.maxExclusive]].filter(b => b[1] != null)
+    .map(([kind, bound]) => ({ kind, number: boundNumber(bound), text: asText(bound) }));
+  return { rdfJson, hasValue, bounds };
+}
 // Whether a value of a field a shape gives (SHACL, Hydra, a template or a
-// HyperMarkdown block) is a sh:in entry or its sh:hasValue. An entry is an RDF
-// term, read as its text (a typed literal's datatype is not kept): a number
-// field's value is the entry that, read as a number of the field's type, is the
-// same number, so "1.0"^^xsd:decimal admits 1 and "+1" admits 1 in a long field;
-// an rdf:JSON field's value is the entry whose text is the same JSON value; a
-// node value (a JSON object or array) is no entry, since no IRI or literal is a
-// node; and any other value is the entry whose text is its text. The select
-// offers each entry as it is written. hmc.py's _shape_entry_matches is the same.
-function shapeEntryMatches(field, numeric, typed, entry) {
-  if (numeric && typeof typed === "number") {
-    if (typeof entry !== "number" && typeof entry !== "string") return false;
-    try { return coerceNumber(field, numeric, String(entry)) === typed; } catch { return false; }
-  }
-  if (isRdfJson(field.datatype)) {
-    if (typeof entry !== "string") return sameJson(entry, typed);
-    try { return sameJson(strictJson(entry), typed); } catch { return false; }
-  }
+// HyperMarkdown block) is its sh:hasValue, an RDF term read as its text (a
+// typed literal's datatype is not kept): a number field's value is the entry
+// that, read as a number of the field's type, is the same number, so
+// "1.0"^^xsd:decimal admits 1 and "+1" admits 1 in a long field; an rdf:JSON
+// field's value is the entry whose text is the same JSON value; a node value
+// (a JSON object or array) is no entry, since no IRI or literal is a node; and
+// any other value is the entry whose text is its text, as shapeChoices reads a
+// sh:in entry. hmc.py's _has_value_matches is the same.
+function hasValueMatches(facts, numeric, typed) {
+  const hv = facts.hasValue;
+  if (numeric && typeof typed === "number") return hv.number != null && hv.number === typed;
+  if (facts.rdfJson) return hv.key != null && hv.key === jsonKey(typed);
   if (typed !== null && typeof typed === "object") return false;
-  return asText(entry) === (typeof typed === "string" ? typed : (typed == null ? "" : String(typed)));
+  return hv.text === (typeof typed === "string" ? typed : (typed == null ? "" : String(typed)));
 }
 // Whether a JSON value holds, at any depth, a number that is an integer past
 // 2^53, which JSON.parse may have rounded: the document may have written
@@ -2992,6 +3039,52 @@ function holdsUnsafeInteger(value) {
     else if (item != null && typeof item === "object") for (const key of Object.keys(item)) stack.push(item[key]);
   }
   return false;
+}
+// A number of a JSON text, found by passing over each string by its escapes.
+// hmc.py's _NUMBER_TOKEN is the same.
+const NUMBER_TOKEN = /"(?:[^"\\]+|\\.)*"?|-?[0-9][0-9.eE+-]*/g;
+// The numbers a JSON text writes whose double, the number reading the text
+// gives, writes another number (an integer past 2^53, or a fraction with more
+// digits than a double keeps, such as 0.30000000000000000001), each as
+// [the number written, its double], in the order written, or the first alone
+// when `first` is set. A number past every double is left to tooLarge. The
+// text has been read as JSON. hmc.py's _changed_numbers is the same.
+function changedNumbers(text, first) {
+  const out = [];
+  for (const m of text.matchAll(NUMBER_TOKEN)) {
+    const written = m[0];
+    if (written[0] === '"') continue;
+    const n = Number(written);
+    if (Number.isFinite(n) && decimalKey(written) !== decimalKey(String(n))) {
+      out.push([written, n]);
+      if (first) break;
+    }
+  }
+  return out;
+}
+// What JSON text given for a field, or written as its default, is refused with
+// when it holds a number its double would change: the number as written.
+function changedProblem(name, written) { return name + ": holds " + written + ", which a JSON number would change, so it is not sent"; }
+// Whether a value holds, at any depth, a number reading JSON may have rounded:
+// an integer past 2^53, or one of `inexact`, the doubles of the numbers its
+// document writes with digits their doubles drop (changedNumbers). A walk with
+// a stack. hmc.py's _holds_rounded is the same.
+function holdsRounded(value, inexact) {
+  const stack = [value];
+  while (stack.length) {
+    const item = stack.pop();
+    if (typeof item === "number") {
+      if (Number.isFinite(item) && ((Number.isInteger(item) && !Number.isSafeInteger(item)) || inexact.has(item))) return true;
+    } else if (item != null && typeof item === "object") for (const key of Object.keys(item)) stack.push(item[key]);
+  }
+  return false;
+}
+// Whether a field's default holds a number reading JSON may have rounded: then
+// it is not surely what the document wrote, so it is refused rather than sent.
+// A double or a float field takes the double nearest what was written, so
+// its default is that double. hmc.py's _rounded_default is the same.
+function roundedDefault(field, inexact) {
+  return field.defaultValue != null && numericKind(field) !== "double" && holdsRounded(field.defaultValue, inexact);
 }
 // Whether a shape's sh:in entry or sh:hasValue holds an integer past 2^53 as a
 // JSON number, which reading it may have rounded: a number entry, or in an
@@ -3097,8 +3190,9 @@ const COUNT_KEYWORDS = ["minLength", "maxLength", "minItems", "maxItems"];
 // form JSON Schema does not allow (a length or a bound written as text, which
 // JSON Schema writes as a number, among them) is a problem, and the control is not invoked;
 // a keyword it does not check (UNCHECKED_KEYWORDS, items written as a list, or
-// an "@id" that makes a schema a reference to a node) is named in `unchecked`,
-// where it is, so a value given is refused. Keywords
+// a JSON-LD keyword, such as an "@id" that makes a schema a reference to a node
+// or a "@set" that wraps one) is named in `unchecked`, where it is, so a value
+// given is refused. Keywords
 // that only describe (title, description, default, examples, format, a
 // pattern, which neither client runs) and keywords JSON Schema does not define
 // are passed over, as JSON Schema passes over them. A walk with a stack, in the
@@ -3126,9 +3220,12 @@ function readSchema(prop, subject) {
     }
     if (own(s, "readOnly") && typeof s.readOnly !== "boolean") bad(where("readOnly"), "a boolean");
     for (const key of UNCHECKED_KEYWORDS) if (own(s, key) && !(key === "uniqueItems" && s[key] === false)) unchecked.push(where(key));
-    // A schema written as a reference to a node, as $ref is to a schema, is not
-    // read: what the node holds is not this object's keys.
-    if (own(s, "@id")) unchecked.push(where("@id"));
+    // A JSON-LD keyword is no JSON Schema keyword: a schema written as a
+    // reference to a node ("@id"), as $ref is to a schema, is not read, since
+    // what the node holds is not this object's keys, and one that wraps what it
+    // holds ("@set", "@list", "@graph", a "@value" and its "@type", and every
+    // other) is not read as what it holds, so each is named where it is.
+    for (const key of Object.keys(s)) if (key.startsWith("@")) unchecked.push(where(key));
     const nested = [];
     if (own(s, "items")) {
       if (Array.isArray(s.items)) unchecked.push(where("items"));
@@ -3190,6 +3287,23 @@ function schemaChoices(field, problems, subject) {
   }
   return out;
 }
+// A schema's enum and const as a check compares them, keyed once per schema
+// for a whole check: each enum entry's key (jsonKey), apart from those that
+// hold an integer past 2^53 with the first entry of each such key, and the
+// const's key and whether it holds one. hmc.py's _enum_keys is the same.
+function enumKeys(s, enums) {
+  let keyed = enums.get(s);
+  if (keyed) return keyed;
+  const sure = new Set(); const rounded = new Map();
+  for (const entry of Array.isArray(s.enum) ? s.enum : []) {
+    if (holdsUnsafeInteger(entry)) { if (!rounded.has(jsonKey(entry))) rounded.set(jsonKey(entry), entry); }
+    else sure.add(jsonKey(entry));
+  }
+  const hasConst = own(s, "const");
+  keyed = { sure, rounded, constKey: hasConst ? jsonKey(s.const) : null, constRounded: hasConst && holdsUnsafeInteger(s.const) };
+  enums.set(s, keyed);
+  return keyed;
+}
 // Checks a JSON Schema field's value against its schema, and each part of it
 // against the schema inside (items, properties, additionalProperties), applying
 // each keyword to the kinds of value JSON Schema applies it to: a type, an enum
@@ -3200,9 +3314,9 @@ function schemaChoices(field, problems, subject) {
 // does. A problem names where in the value it is, as a JSON Pointer after the
 // field's name, and the first problem found is the one reported: the walk
 // stops there, so a value with many bad parts costs no more than its size, and
-// an enumeration's entries are named once. Each enum's entries are keyed once
-// (jsonKey), so each part is looked up in them at the cost of its own size. A
-// walk with a stack. hmc.py's _check_schema is the same.
+// an enumeration's entries are named once. Each enum's entries and each const
+// are keyed once (enumKeys), so each part is compared with them at the cost of
+// its own size. A walk with a stack. hmc.py's _check_schema is the same.
 function schemaCheck(schema, value, name, report, enums = new Map()) {
   const stack = [[schema, value, name]];
   // A name that holds "/" is set apart from the pointer after it: "d/x at /0".
@@ -3217,26 +3331,18 @@ function schemaCheck(schema, value, name, report, enums = new Map()) {
       if (!jsonTypesOf(v).some(t => types.includes(t))) return report(at + ": must be a JSON " + types.join(" or "));
     }
     // An entry that holds an integer past 2^53 may not be what the document
-    // wrote, so it admits no value: one that matches only it is refused naming it.
-    if (Array.isArray(s.enum)) {
-      if (!enums.has(s)) {
-        const sure = new Set(); const rounded = new Map();
-        for (const entry of s.enum) {
-          if (holdsUnsafeInteger(entry)) { if (!rounded.has(jsonKey(entry))) rounded.set(jsonKey(entry), entry); }
-          else sure.add(jsonKey(entry));
-        }
-        enums.set(s, [sure, rounded]);
-      }
-      const [sure, rounded] = enums.get(s);
-      const k = jsonKey(v);
-      if (!sure.has(k)) {
-        if (rounded.has(k)) return report(roundedProblem(at, entryText(rounded.get(k))));
-        return report(at + ": must be one of " + s.enum.map(entryText).join(", "));
-      }
+    // wrote, so it admits no value: one that matches only it is refused naming
+    // it. An enum's entries and a const are keyed once for the whole check, so
+    // each value is compared with them at the cost of its own size.
+    const keyed = Array.isArray(s.enum) || own(s, "const") ? enumKeys(s, enums) : null;
+    const k = keyed ? jsonKey(v) : null;
+    if (Array.isArray(s.enum) && !keyed.sure.has(k)) {
+      if (keyed.rounded.has(k)) return report(roundedProblem(at, entryText(keyed.rounded.get(k))));
+      return report(at + ": must be one of " + s.enum.map(entryText).join(", "));
     }
     if (own(s, "const")) {
-      if (!sameJson(s.const, v)) return report(at + ": must be " + entryText(s.const));
-      if (holdsUnsafeInteger(s.const)) return report(roundedProblem(at, entryText(s.const)));
+      if (k !== keyed.constKey) return report(at + ": must be " + entryText(s.const));
+      if (keyed.constRounded) return report(roundedProblem(at, entryText(s.const)));
     }
     if (typeof v === "string") {
       const n = codePoints(v);
@@ -3426,8 +3532,11 @@ function addressLeaves(v, inTemplate) {
   if (isMap(v)) return inTemplate && (!templateDefined(v) || Object.values(v).some(item => !templateDefined(item)));
   return false;
 }
+// A value given is never empty text here, which is no value; a default of
+// empty text is a value, and is read as one: as text, or refused by name where
+// the field reads no value in it (a number, a boolean or JSON).
 function coerceValue(field, value) {
-  if (value == null || value === "") return null;
+  if (value == null) return null;
   const kind = field.jsonKind || null;
   if (kind) {
     let parsed = value;
@@ -3440,6 +3549,10 @@ function coerceValue(field, value) {
       catch { throw new Error(field.name + " must be JSON"); }
       const repeated = repeatedKey(text);
       if (repeated != null) throw new Error(field.name + ' repeats the key "' + repeated + '" in one object, so which value it means is not known');
+      // A number the double reading it gives would change is refused, never sent
+      // changed; a body sent whole is sent as written, so its numbers are not.
+      const changed = field.rawBody ? [] : changedNumbers(text, true);
+      if (changed.length) throw new Error(changedProblem(field.name, changed[0][0]));
     }
     // A JSON Schema whose type names null takes it, whatever else it takes.
     if (parsed === null && field.nullable) return null;
@@ -3470,8 +3583,8 @@ function choicesOf(field) {
 function enumOptions(field) { return choicesOf(field).map(c => c[0]); }
 // A shape field's sh:in, read once per field however many values it checks:
 // the problem a value that is no entry gives, and whether a typed value is
-// one, as shapeEntryMatches has it, looked up by each entry's number, JSON key
-// or text. An entry that holds an integer past 2^53 as a JSON number
+// one, as hasValueMatches reads a sh:hasValue, looked up by each entry's
+// number, JSON key or text. An entry that holds an integer past 2^53 as a JSON number
 // (roundedEntry) admits no value: one it alone would admit is refused naming
 // it. null for a field with no sh:in. hmc.py's _shape_choices is the same.
 function shapeChoices(field, numeric) {
@@ -3502,7 +3615,9 @@ function shapeChoices(field, numeric) {
 }
 // A list field's values: a list as given (the options chosen in a multiple
 // select, or the defaults), or text, read as a JSON array when it is one and
-// otherwise as one value per line, with blank values and lines dropped.
+// otherwise as one value per line, with blank values and lines dropped. A
+// JSON array that holds a number its double would change is refused, the
+// number named (an error whose `changed` is it), never read as that double.
 // hmc.py's _multi_items is the same.
 function multiItems(value) {
   const kept = (item) => item != null && !(typeof item === "string" && trimSpaces(item) === "");
@@ -3511,7 +3626,11 @@ function multiItems(value) {
   if (trimSpaces(text).startsWith("[")) {
     let parsed = null;
     try { parsed = parseJson(text); } catch (err) { if (err && err.deep) throw err; }
-    if (Array.isArray(parsed)) return parsed.filter(kept);
+    if (Array.isArray(parsed)) {
+      const changed = changedNumbers(text, true);
+      if (changed.length) throw Object.assign(new Error("changed"), { changed: changed[0][0] });
+      return parsed.filter(kept);
+    }
   }
   return text.replace(/\r\n?/g, "\n").split("\n").filter(line => trimSpaces(line) !== "");
 }
@@ -3567,8 +3686,10 @@ function codePoints(text) {
 // default is first checked to be of the kind its field takes, and a JSON Schema
 // field's default is the value the document gives, never trimmed, read as a
 // number or a boolean, or parsed as JSON: its schema checks it as it is.
-// `enums` keys each enum once for a whole check. hmc.py's _check_value is the same.
-function checkValue(field, found, numeric, report, choices, fromDefault, enums) {
+// `enums` keys each enum once for a whole check, and `facts` (fieldFacts) holds
+// the field's sh:hasValue and bounds, read once for all its values. hmc.py's
+// _check_value is the same.
+function checkValue(field, found, numeric, report, choices, fromDefault, enums, facts) {
   if (field.unchecked && field.unchecked.length) {
     report(field.name + ": has a constraint this client does not check (" + field.unchecked.join(", ") + "), so it is not sent");
     return null;
@@ -3585,11 +3706,8 @@ function checkValue(field, found, numeric, report, choices, fromDefault, enums) 
   let typed;
   const choice = field.jsonSchema && !fromDefault && typeof found === "string" ? choicesOf(field).find(c => c[0] === found) : null;
   if (choice) typed = choice[1];
-  else if (asGiven) {
-    // An integer field's default past 2^53 is the double JSON.parse gave, not surely the integer written.
-    if (numeric === "integer" && typeof found === "number" && holdsUnsafeInteger(found)) { report(field.name + ": integer too large to send exactly"); return null; }
-    typed = found;
-  } else {
+  else if (asGiven) typed = found;
+  else {
     try { typed = coerceValue(field, found); } catch (err) { report(String(err.message || err)); return null; }
   }
   // A number no double holds cannot be sent. A number field's value is checked
@@ -3632,31 +3750,29 @@ function checkValue(field, found, numeric, report, choices, fromDefault, enums) 
   }
   const choiceProblem = choices ? choices.problemFor(typed) : null;
   if (choiceProblem) report(choiceProblem);
-  if (field.hasValue != null && !field.multi) {
-    if (!shapeEntryMatches(field, numeric, typed, field.hasValue)) report(field.name + ": must be " + asText(field.hasValue));
-    else if (roundedEntry(field, field.hasValue)) report(roundedProblem(field.name, asText(field.hasValue)));
+  if (facts.hasValue && !field.multi) {
+    if (!hasValueMatches(facts, numeric, typed)) report(field.name + ": must be " + facts.hasValue.text);
+    else if (facts.hasValue.rounded) report(roundedProblem(field.name, facts.hasValue.text));
   }
   // A bound is compared with a number: a value that is none (text, or a node) is
   // an error, not a pass, as SHACL has a comparison it cannot make. A bound that
   // is no number, such as a date, is not compared, so a value is refused; nor is
   // one on a field that takes no number (text, a date, JSON), which SHACL would
   // compare with the value's own datatype, never with the number it reads as.
-  const bounds = [["minInclusive", field.minInclusive], ["maxInclusive", field.maxInclusive],
-    ["minExclusive", field.minExclusive], ["maxExclusive", field.maxExclusive]].filter(b => b[1] != null);
-  const unreadBound = bounds.find(b => boundNumber(b[1]) == null);
-  if (unreadBound) report(field.name + ": its sh:" + unreadBound[0] + " " + asText(unreadBound[1]) + " is not a number, which this client does not compare, so it is not sent");
+  const bounds = facts.bounds;
+  const unreadBound = bounds.find(b => b.number == null);
+  if (unreadBound) report(field.name + ": its sh:" + unreadBound.kind + " " + unreadBound.text + " is not a number, which this client does not compare, so it is not sent");
   else if (bounds.length && !numeric) {
-    report(field.name + ": its sh:" + bounds[0][0] + " " + asText(bounds[0][1]) + " bounds a field that takes no number, which this client does not compare, so it is not sent");
+    report(field.name + ": its sh:" + bounds[0].kind + " " + bounds[0].text + " bounds a field that takes no number, which this client does not compare, so it is not sent");
   } else if (bounds.length) {
     const n = structured ? null : lexicalNumber(typed);
     if (n == null) report(field.name + ": not a number");
     else {
-      for (const [kind, bound] of bounds) {
-        const b = boundNumber(bound);
-        if (kind === "minInclusive" && n < b) report(field.name + ": below minInclusive " + asText(bound));
-        if (kind === "maxInclusive" && n > b) report(field.name + ": above maxInclusive " + asText(bound));
-        if (kind === "minExclusive" && !(n > b)) report(field.name + ": not above minExclusive " + asText(bound));
-        if (kind === "maxExclusive" && !(n < b)) report(field.name + ": not below maxExclusive " + asText(bound));
+      for (const { kind, number: b, text } of bounds) {
+        if (kind === "minInclusive" && n < b) report(field.name + ": below minInclusive " + text);
+        if (kind === "maxInclusive" && n > b) report(field.name + ": above maxInclusive " + text);
+        if (kind === "minExclusive" && !(n > b)) report(field.name + ": not above minExclusive " + text);
+        if (kind === "maxExclusive" && !(n < b)) report(field.name + ": not below maxExclusive " + text);
       }
     }
   }
@@ -3702,7 +3818,8 @@ function defaultKindProblem(field, v) {
   // a value a form may take, never a default.
   if (typeof v === "string" && !(kind === "boolean" && !["true", "false", "1", "0"].includes(trimSpaces(v)))) return null;
   if (kind && typeof v === kind) return null;
-  return field.name + ": its default " + entryText(v) + " is not " + (kind === "number" ? "a number" : kind === "boolean" ? "a boolean" : "text") +
+  // Empty text is named as its JSON, "", so the problem shows it.
+  return field.name + ": its default " + (v === "" ? '""' : entryText(v)) + " is not " + (kind === "number" ? "a number" : kind === "boolean" ? "a boolean" : "text") +
     ", which this field takes, so it is not sent";
 }
 // One field's value from what was given for it, typed and checked, as
@@ -3722,11 +3839,13 @@ function fieldValue(field, found, report, enums) {
   const note = (message) => { problems++; report(message); };
   const numeric = numericKind(field);
   const required = field.required || (field.minCount || 0) >= 1;
+  const facts = fieldFacts(field, numeric);
   if (found === "") found = null;
   if (field.multi) {
     const given = found != null && !(Array.isArray(found) && !found.length);
     let items;
-    try { items = found != null ? multiItems(found) : []; } catch { note(field.name + DEEP_VALUE); return [null, false]; }
+    try { items = found != null ? multiItems(found) : []; }
+    catch (err) { note(err && err.changed != null ? changedProblem(field.name, err.changed) : field.name + DEEP_VALUE); return [null, false]; }
     if (!items.length && given) { note(field.name + ": was given no values"); return [null, false]; }
     const fromDefault = !items.length && field.defaultValue != null;
     if (fromDefault) {
@@ -3739,25 +3858,31 @@ function fieldValue(field, found, report, enums) {
         note(field.name + ": its default holds a blank value, which this client neither drops nor sends, so it is not sent");
         return [null, false];
       }
+      if (field.roundedDefault) { note(field.name + ROUNDED_DEFAULT); return [null, false]; }
     }
     if (!items.length) { if (required) note("missing required field '" + field.name + "'"); return [null, false]; }
     if (field.minCount && items.length < field.minCount) note(field.name + ": needs at least " + field.minCount + " values, got " + items.length);
     if (field.maxCount != null && items.length > field.maxCount) note(field.name + ": takes at most " + field.maxCount + " values, got " + items.length);
+    // The values are checked in order, and the check stops at the first one
+    // with a problem, which is the one named: a long list with many bad values
+    // costs its length once, and names one problem of them.
     const typedItems = [];
     const choices = shapeChoices(field, numeric);
+    let stopped = false;
     for (const item of items) {
-      if (item != null && typeof item === "object") {
-        note(field.name + ": each value is one " + (localName(field.datatype) || "text") + " value, not JSON");
-        continue;
+      const before = problems;
+      if (item != null && typeof item === "object") note(field.name + ": each value is one " + (localName(field.datatype) || "text") + " value, not JSON");
+      else {
+        const wrongKind = fromDefault ? defaultKindProblem(field, item) : null;
+        if (wrongKind) note(wrongKind);
+        else typedItems.push(checkValue(field, typeof item === "string" ? item : String(item), numeric, note, choices, false, enums, facts));
       }
-      const wrongKind = fromDefault ? defaultKindProblem(field, item) : null;
-      if (wrongKind) { note(wrongKind); continue; }
-      typedItems.push(checkValue(field, typeof item === "string" ? item : String(item), numeric, note, choices, false, enums));
+      if (problems > before) { stopped = true; break; }
     }
     // sh:hasValue asks that one of a list's values be the one it names.
-    if (field.hasValue != null) {
-      if (!typedItems.some(v => v != null && shapeEntryMatches(field, numeric, v, field.hasValue))) note(field.name + ": must include " + asText(field.hasValue));
-      else if (roundedEntry(field, field.hasValue)) note(roundedProblem(field.name, asText(field.hasValue)));
+    if (facts.hasValue && !stopped) {
+      if (!typedItems.some(v => v != null && hasValueMatches(facts, numeric, v))) note(field.name + ": must include " + facts.hasValue.text);
+      else if (facts.hasValue.rounded) note(roundedProblem(field.name, facts.hasValue.text));
     }
     return [typedItems, problems === 0];
   }
@@ -3768,6 +3893,7 @@ function fieldValue(field, found, report, enums) {
     found = field.defaultValue == null ? null : field.defaultValue;
     fromDefault = true;
   }
+  if (fromDefault && field.roundedDefault) { note(field.name + ROUNDED_DEFAULT); return [null, false]; }
   // Spaces around a number are not part of it; a number field given only
   // spaces holds no number, which is refused, not filled with the default,
   // and a default of only spaces is refused as one given is. A JSON Schema
@@ -3780,8 +3906,12 @@ function fieldValue(field, found, report, enums) {
       return [null, false];
     }
   }
-  if ((found == null || found === "") && !(fromDefault && field.nullDefault)) { if (required) note("missing required field '" + field.name + "'"); return [null, false]; }
-  const value = checkValue(field, found, numeric, note, field.jsonSchema ? null : shapeChoices(field, numeric), fromDefault, enums);
+  // A default of empty text is a value, sent as the document gives it or refused by name; empty text given is none.
+  if ((found == null || (found === "" && !fromDefault)) && !(fromDefault && field.nullDefault)) {
+    if (required) note("missing required field '" + field.name + "'");
+    return [null, false];
+  }
+  const value = checkValue(field, found, numeric, note, field.jsonSchema ? null : shapeChoices(field, numeric), fromDefault, enums, facts);
   return [value, problems === 0];
 }
 function validateFields(control, supplied) {
@@ -4543,7 +4673,9 @@ function showGiven(at, field, given) {
   let el = formInputs()[at];
   if (!el) return;
   if (el.multiple) {
-    const items = new Set(multiItems(given).map(asText));
+    // A value the page refuses as it reads it (JSON nested too deep, or a number its double would change) selects nothing.
+    let items = new Set();
+    try { items = new Set(multiItems(given).map(asText)); } catch {}
     for (const o of optionsOf(el)) o.selected = items.has(o.value);
     return;
   }

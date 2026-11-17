@@ -2142,6 +2142,9 @@ describe('hypermedia client: a document\'s size, not its shape, sets the cost', 
       expect(Date.now() - started, 'link to dry run').toBeLessThan(3_000);
       expect(document.querySelectorAll('.card').length).toBe(controls);
       expect(formFields(document).length).toBe(fields);
+      // What the page shows grows with the document, never with the product of two of its sizes:
+      // the page itself, and a few bytes for each of the document's.
+      expect(document.body.innerHTML.length, 'page shown').toBeLessThan(HTML.length + 8 * COST[path]!.length);
       const result = document.getElementById('result')!.textContent!;
       if (refused) {
         expect(result.slice(0, 200)).toContain('Validation failed');

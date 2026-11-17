@@ -628,6 +628,20 @@ negative count are refused; and an entry past 2^53 matches no value at any
 depth. Of 44 new shared rows, 34 failed in each client before. The CSP hash
 moves.
 
+A fifteenth review found `hmc.py`'s `list --json` writing a shared field list
+once per control (168 MB for a 34 KB document), a list's `sh:hasValue` and
+bounds read again for each value (9 s in each client), an empty-text default
+dropped, numbers sent rounded inside JSON values and defaults, JSON-LD keywords
+inside a schema passed over, and integers past 2^53 refused only on the page.
+Now a node a shape names many times is one input; `list` and `list --json` write
+a shared field list once and no fields for a refused control; constraints are
+read once per field and a list's check stops at its first bad value; an
+empty-text default is sent, or refused by name; a default holding a number
+reading JSON may have rounded, and JSON text holding one a double would change,
+are refused; keywords such as `@set` inside a schema are named and refused; and
+both clients refuse an integer past 2^53 - 1. Of 40 new shared rows, 32 failed
+in `hmc.py` and 28 on the page before. The CSP hash moves.
+
 ## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
 
 From review of #934. With `requireSignedHead` on, a head with no signature was

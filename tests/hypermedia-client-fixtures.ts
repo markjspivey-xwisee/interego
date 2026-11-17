@@ -1114,7 +1114,39 @@ export function sharedDescriptors(base: string): Record<string, string> {
         'hydra:target': { '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/num-target{?q}`,
           'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] },
         scopedExpects: { type: 'object', additionalProperties: false } }),
+      // A default of empty text is a value: sent as it is in a body, and refused by name where an
+      // address would leave it out or the field reads no value in it.
+      schemaOp('xs', 'urn:rules:empty-text-schema', 'POST', 'Empty text schema default', { m: { type: 'string', default: '' } }),
+      op('xh', 'urn:rules:empty-text-shape', 'POST', 'Empty text shape default', { ...target('/num-target'), 'hydra:expects': { '@id': '#XT' } }),
+      op('xi', 'urn:rules:empty-text-inline', 'POST', 'Empty text inline default', { ...target('/num-target'), fields: [{ name: 'm', defaultValue: '' }] }),
+      op('xr', 'urn:rules:empty-text-read', 'GET', 'Empty text read default', { ...target('/num-target'), 'hydra:expects': { '@id': '#XT' } }),
+      op('xn', 'urn:rules:empty-text-number', 'POST', 'Empty text number default', { ...target('/num-target'), 'hydra:expects': { '@id': '#XN' } }),
+      op('xb', 'urn:rules:empty-text-boolean', 'POST', 'Empty text boolean default', { ...target('/num-target'), 'hydra:expects': { '@id': '#XB' } }),
+      // JSON-LD keywords inside a schema written in place are no JSON Schema keyword this client
+      // checks: each is named where it is, and a value given is refused.
+      schemaOp('kw', 'urn:rules:keyword-schema', 'POST', 'JSON-LD keywords in a schema', {
+        a: { type: 'array', items: { '@set': [{ type: 'integer' }] } }, s: { '@set': [{ type: 'integer' }] },
+        l: { type: 'array', items: { '@list': [{ type: 'integer' }] } }, g: { type: 'object', properties: { k: { '@graph': [{ type: 'integer' }] } } },
+        v: { type: 'array', items: { '@value': { type: 'integer' }, '@type': '@json' } },
+        x: { type: 'object', additionalProperties: { '@set': [{ type: 'integer' }] } } }),
+      // A list's sh:hasValue that is an integer past 2^53, and a JSON Schema number's default of only spaces.
+      op('rv', 'urn:rules:rounded-has-value-list', 'POST', 'Rounded has value list', { ...target('/num-target'), 'hydra:expects': { '@id': '#RL' } }),
+      schemaOp('sp', 'urn:rules:space-number-schema', 'POST', 'Schema number space default', { m: { type: 'number', default: '  ' } }),
+      // An integer field's value past 2^53, which a JSON number cannot carry exactly, in either client.
+      op('ip', 'urn:rules:integer-past-safe', 'POST', 'Integers past 2^53', { ...target('/num-target'), 'hydra:expects': { '@id': '#IP' } }),
     ], '@graph': [
+      { '@id': '#XT', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:defaultValue': '' } },
+      { '@id': '#XN', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:integer' }, 'sh:defaultValue': '' } },
+      { '@id': '#XB', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:boolean' }, 'sh:defaultValue': '' } },
+      { '@id': '#RL', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:r' }, 'sh:name': 'r',
+        'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:hasValue': 'NUMBER-PAST-SAFE' } },
+      { '@id': '#IP', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:l' }, 'sh:name': 'l', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:long' } },
+        { 'sh:path': { '@id': 'urn:p:i' }, 'sh:name': 'i', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:int' } },
+        { 'sh:path': { '@id': 'urn:p:g' }, 'sh:name': 'g', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:integer' }, 'sh:maxInclusive': 2.5 }] },
       { '@id': '#SD', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
         'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': 5 } },
       { '@id': '#SU', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
@@ -1170,6 +1202,37 @@ export function sharedDescriptors(base: string): Record<string, string> {
       { '@id': '#LB', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
         'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': ['a', ''] } },
     ] },
+    // Numbers a double may not hold exactly: defaults that hold an integer past 2^53 at any depth, or a
+    // number this document writes with digits its double drops (0.30000000000000000001, read as
+    // 0.3), and JSON given or written as text that holds one. RULE_CASES read them.
+    '/rounding': { '@context': CTX, '@id': `${base}/rounding`, 'iep:affordance': [
+      schemaOp('nd', 'urn:round:number-default', 'POST', 'Number default past 2^53', { m: { type: 'number', default: 'PAST-SAFE' } }),
+      schemaOp('id', 'urn:round:integer-default', 'POST', 'Integer default past 2^53', { m: { type: 'integer', default: 'PAST-SAFE' } }),
+      schemaOp('ad', 'urn:round:array-default', 'POST', 'Array default past 2^53', { m: { type: 'array', items: { type: 'integer' }, default: ['PAST-SAFE'] } }),
+      schemaOp('od', 'urn:round:object-default', 'POST', 'Untyped default past 2^53', { m: { default: { a: 'PAST-SAFE' } } }),
+      schemaOp('fd', 'urn:round:fraction-default', 'POST', 'Number default past a double', { m: { type: 'number', default: 'PAST-DOUBLE' } }),
+      op('sd', 'urn:round:decimal-default', 'POST', 'Decimal default past 2^53', { ...target('/num-target'), 'hydra:expects': { '@id': '#DD' } }),
+      op('sl', 'urn:round:decimal-list-default', 'POST', 'Decimal list default past 2^53', { ...target('/num-target'), 'hydra:expects': { '@id': '#DL' } }),
+      op('sb', 'urn:round:double-default', 'POST', 'Double default past 2^53', { ...target('/num-target'), 'hydra:expects': { '@id': '#DB' } }),
+      op('sj', 'urn:round:json-text-default', 'POST', 'JSON text default past 2^53', { ...target('/num-target'), 'hydra:expects': { '@id': '#JD' } }),
+      op('si', 'urn:round:inline-default', 'POST', 'Inline default past 2^53', { ...target('/num-target'), fields: [{ name: 'm', defaultValue: 'PAST-SAFE' }] }),
+      schemaOp('og', 'urn:round:object', 'POST', 'Object given', { m: { type: 'object' } }),
+      op('jg', 'urn:round:json', 'POST', 'JSON given', { ...target('/num-target'), 'hydra:expects': { '@id': '#JG' } }),
+      op('lg', 'urn:round:list', 'POST', 'Decimal list given', { ...target('/num-target'), 'hydra:expects': { '@id': '#LG' } }),
+    ], '@graph': [
+      { '@id': '#DD', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:defaultValue': 'PAST-SAFE' } },
+      { '@id': '#DL', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
+        'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:defaultValue': [1, 'PAST-SAFE'] } },
+      { '@id': '#DB', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:double' }, 'sh:defaultValue': 'PAST-SAFE' } },
+      { '@id': '#JD', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'rdf:JSON' }, 'sh:defaultValue': '{"a":9007199254740993}' } },
+      { '@id': '#JG', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'rdf:JSON' } } },
+      { '@id': '#LG', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
+        'sh:datatype': { '@id': 'xsd:decimal' } } },
+    ] },
     // One field for each XSD 1.1 date and time datatype, named for it. TEMPORAL_CASES read it.
     '/temporal': { '@context': CTX, '@id': `${base}/temporal`, 'iep:affordance': [
       op('t', 'urn:temporal', 'POST', 'Dates and times', { ...target('/num-target'), 'hydra:expects': { '@id': '#T' } })],
@@ -1192,6 +1255,8 @@ export function sharedDescriptors(base: string): Record<string, string> {
   out['/sweep'] = out['/sweep']!.split('"INFINITE-ENTRY"').join('1e400');
   // An entry 2^53 + 1, which JSON.parse reads as 2^53.
   out['/rules'] = out['/rules']!.split('"NUMBER-PAST-SAFE"').join('9007199254740993');
+  // 2^53 + 1, which JSON.parse reads as 2^53, and a fraction JSON.parse reads as 0.3.
+  out['/rounding'] = out['/rounding']!.split('"PAST-SAFE"').join('9007199254740993').split('"PAST-DOUBLE"').join('0.30000000000000000001');
   // JSON.stringify writes each key once, so a repeated key is put in the text by hand: JSON leaves
   // its meaning open, and a reader that takes the last "hydra:method" takes GET.
   out['/repeated-key'] = JSON.stringify({ '@context': CTX, '@id': `${base}/repeated-key`, 'iep:affordance': [
@@ -1332,11 +1397,15 @@ export function dryRuns(base: string): ReadonlyArray<readonly [path: string, rel
     // and an object's array-index keys first, in numeric order, as JavaScript keeps them.
     ['/values', 'urn:values:query', { filter: '{"b":1.0,"a":1e-7,"c":-0.0,"2":[1E2],"1":true}' },
       { url: `${base}/num-target?${new URLSearchParams({ filter: '{"1":true,"2":[100],"b":1,"a":1e-7,"c":0}' })}`, body: null }],
-    // A JSON integer past 2^53 is the double nearest it, as JSON.parse reads it, in an object and in
-    // a list alike; the double is written as JavaScript writes it.
+    // A JSON number its double would change is refused, in an object and in a list alike; one its
+    // double holds is written as JavaScript writes the double.
     ['/values', 'urn:values:query', { filter: '{"c":12345678901234567890}' },
+      { error: 'filter: holds 12345678901234567890, which a JSON number would change, so it is not sent' }],
+    ['/values', 'urn:values:query', { filter: '{"c":12345678901234567000}' },
       { url: `${base}/num-target?${new URLSearchParams({ filter: '{"c":12345678901234567000}' })}`, body: null }],
     ['/values', 'urn:values:list', { tags: '[1000000000000000000000000000000, 9007199254740993]' },
+      { error: 'tags: holds 9007199254740993, which a JSON number would change, so it is not sent' }],
+    ['/values', 'urn:values:list', { tags: '[1000000000000000000000000000000, 9007199254740992]' },
       { url: `${base}/num-target?tags=1e%2B30&tags=9007199254740992`, body: null }],
     ['/values', 'urn:values:list', { short: `[1${'0'.repeat(30)}]` }, { url: `${base}/num-target?short=1e%2B30`, body: null }],
     ['/values', 'urn:values:list', { counts: '[1.0, 2]' }, { url: `${base}/num-target?counts=1&counts=2`, body: null }],
@@ -1415,6 +1484,10 @@ export function countCases(base: string): ReadonlyArray<readonly [path: string, 
 const SMILE = '\u{1F600}';
 /** What each client reports for a value holding an unpaired surrogate, after the field's name. */
 const UNPAIRED = 'holds an unpaired surrogate, which is not Unicode text';
+/** What a default that holds a number reading JSON may have rounded is refused with. */
+const roundedDefault = (name: string) => `${name}: its default holds a number that reading JSON may have rounded, so it is not sent`;
+/** What JSON text that holds a number its double would change is refused with, naming the number as written. */
+const changedNumber = (name: string, written: string) => `${name}: holds ${written}, which a JSON number would change, so it is not sent`;
 /** "e" and U+0301, a combining acute accent: two code points, shown as one letter. */
 const COMBINED = 'e\u0301';
 /**
@@ -1481,18 +1554,19 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
   ['/values', 'urn:values:body', 'JSON body', { body: '["\\udfff"]' }, { error: `body: ${UNPAIRED}` }],
   ['/values', 'urn:values:surrogate-default', 'Surrogate default', {}, { error: `a: ${UNPAIRED}` }],
   ['/values-md', 'hm-surrogate-default', 'Surrogate text default', {}, { error: `a: ${UNPAIRED}` }],
-  // A text field's default that is not a string is its text, as the form holds it; a JSON integer
-  // past 2^53 is the double nearest it; an integer field's default of 2.0 is 2, and one past 2^53
-  // cannot be sent exactly; a bound no double holds is an infinity, which every number a field
-  // takes is below, and a list's number past a double is not a number.
+  // A JSON Schema string field's default that is not a string is refused, and so is a default
+  // that holds an integer past 2^53, which reading JSON may have rounded, in a field written in
+  // place too; an integer field's default of 2.0 is 2; a bound no double holds is an infinity,
+  // which every number a field takes is below, and a list's number past a double is not a number.
   ['/values', 'urn:values:text-default', 'Text defaults', {}, { error: 'small: must be a JSON string' }],
   ['/values', 'urn:values:text-default', 'Text defaults', {}, { error: 'object: must be a JSON string' }],
-  ['/values-md', 'hm-big-default', 'Big text default', {}, { body: { a: '1e+30' } }],
+  ['/values-md', 'hm-big-default', 'Big text default', {}, { error: roundedDefault('a') }],
   ['/values', 'urn:values:whole-default', 'Whole default', {}, { body: { n: 2 } }],
-  ['/values', 'urn:values:unsafe-default', 'Past 2^53 default', {}, { error: 'n: integer too large to send exactly' }],
+  ['/values', 'urn:values:unsafe-default', 'Past 2^53 default', {}, { error: roundedDefault('n') }],
   ['/values', 'urn:values:bound', 'Large bound', { amount: '5' }, { error: 'amount: below minInclusive Infinity' }],
   ['/values', 'urn:values:list', 'List values', { nums: `[1${'0'.repeat(400)}]` }, { error: 'nums: not a number' }],
-  ['/values', 'urn:values:list', 'List values', { counts: '[1, 9007199254740993]' }, { error: 'counts: integer too large to send exactly' }],
+  ['/values', 'urn:values:list', 'List values', { counts: '[1, 9007199254740992]' }, { error: 'counts: integer too large to send exactly' }],
+  ['/values', 'urn:values:list', 'List values', { counts: '[1, 9007199254740993]' }, { error: changedNumber('counts', '9007199254740993') }],
   // A list's defaults are what the form holds, one per line or the options a multiple choice
   // selects, when it holds them as they are; when it cannot (a value with a line break in it, or
   // choices out of the options' order), the defaults themselves, and a default that is no choice
@@ -1563,7 +1637,8 @@ const inlineUnread = (name: string, key: string) =>
  * holds JSON values of any kind, and a value is one of them when it is the same JSON value: arrays
  * item by item in order, objects by the same keys with the same values in any order, numbers by
  * value (1.0 is 1, and 2^53 + 1 is the 2^53 JSON.parse reads, so an entry that holds one matches
- * no value, and one that would match only it is refused naming it), and a string, a boolean or
+ * no value, and one that would match only it is refused naming it; a value written 2^53 + 1 is
+ * refused itself, since a JSON number would change it), and a string, a boolean or
  * null only the same of its kind ("1" is not 1, true is not 1). A choice in a field whose type leaves its
  * kind open is sent as the entry it names, an array, an object, a number, a boolean or null, never
  * as the text that names it; null is offered as a choice of its own, and refused where an address
@@ -1596,7 +1671,8 @@ export const CHOICE_CASES: ReadonlyArray<ValueCase> = [
   ['/choices', 'urn:choice:null-array', 'Null array choice', { list: '["b"]' }, { error: 'list: must be one of null, ["a"]' }],
   ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[1,{"n":2}]' }, { body: { pair: [1, { n: 2 }] } }],
   ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[1.0,{"n":2.00}]' }, { body: { pair: [1, { n: 2 }] } }],
-  ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[9007199254740993]' }, { error: rounded('pair', '[9007199254740992]') }],
+  ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[9007199254740992]' }, { error: rounded('pair', '[9007199254740992]') }],
+  ['/choices', 'urn:choice:numbers', 'Number choice', { pair: '[9007199254740993]' }, { error: changedNumber('pair', '9007199254740993') }],
   ...['[1,{"n":2.5}]', '[true,{"n":2}]', '["1",{"n":2}]', '[1,{"n":"2"}]'].map(pair =>
     ['/choices', 'urn:choice:numbers', 'Number choice', { pair }, { error: 'pair: must be one of [1,{"n":2}], [9007199254740992]' }] as const),
   ['/choices', 'urn:choice:list', 'List choice', { tags: '["a","c"]' }, { error: 'tags: must be one of a, b' }],
@@ -1784,7 +1860,17 @@ const inlinePlace = (name: string, what: string) => `the input "${name}" ${what}
  *   - a list default with a blank value is refused, never sent without it; a JSON Schema default of
  *     null is sent as null where its schema allows null, and refused where it does not;
  *   - a body schema of keywords alone is read as JSON Schema under a scoped context that maps a
- *     keyword to an IRI.
+ *     keyword to an IRI;
+ *   - a default of empty text is a value, sent as it is in a body, and refused where an address
+ *     would leave it out or a number field reads no number in it;
+ *   - a JSON-LD keyword inside a schema written in place (@set, @list, @graph, @value) is named
+ *     where it is, and a value given is refused, as a reference (@id) is;
+ *   - a list's values are checked against a sh:hasValue past 2^53 as a single value is;
+ *   - an integer field's value past 2^53 - 1 is refused alike in both clients;
+ *   - a default that holds a number reading JSON may have rounded (an integer past 2^53, or the
+ *     double of a number the document writes with more digits than it keeps) is refused at any
+ *     depth, but in a double field, and JSON text given or written as a default that holds a
+ *     number its double would change is refused naming the number.
  */
 export const RULE_CASES: ReadonlyArray<ValueCase> = [
   ['/rules', 'urn:rules:schema-default', 'String default 1', {}, { error: 'm: must be a JSON string' }],
@@ -1877,7 +1963,7 @@ export const RULE_CASES: ReadonlyArray<ValueCase> = [
   ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { u: '9007199254740992' }, { error: rounded('u', '9007199254740992') }],
   ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { u: '1' }, { body: { u: '1' } }],
   ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { d: '9007199254740992' }, { error: rounded('d', '9007199254740992') }],
-  ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { j: '{"a":9007199254740993}' }, { error: rounded('j', '{"a":9007199254740993}') }],
+  ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { j: '{"a":9007199254740992}' }, { error: rounded('j', '{"a":9007199254740993}') }],
   ['/rules', 'urn:rules:rounded-in', 'Rounded entries', { j: '{"a":1}' }, { body: { j: { a: 1 } } }],
   ['/rules', 'urn:rules:rounded-has-value', 'Rounded has value', { h: '9007199254740992' }, { error: rounded('h', '9007199254740992') }],
   ['/rules', 'urn:rules:rounded-has-value', 'Rounded has value', { h: '1' }, { error: 'h: must be 9007199254740992' }],
@@ -1894,6 +1980,51 @@ export const RULE_CASES: ReadonlyArray<ValueCase> = [
   ['/rules', 'urn:rules:nullable-default', 'Nullable default', {}, { body: { m: null } }],
   ['/rules', 'urn:rules:null-not-allowed', 'Null default not allowed', {}, { error: 'm: must be a JSON string' }],
   ['/rules', 'urn:rules:scoped-schema', 'Schema under a scoped context', { q: 'y' }, { error: 'q: is not allowed by its schema' }],
+  // A default of empty text is sent as it is, in a JSON Schema, a shape and a field written in
+  // place alike; an address would leave it out, and a number field reads no number in it.
+  ['/rules', 'urn:rules:empty-text-schema', 'Empty text schema default', {}, { body: { m: '' } }],
+  ['/rules', 'urn:rules:empty-text-schema', 'Empty text schema default', { m: '' }, { body: { m: '' } }],
+  ['/rules', 'urn:rules:empty-text-schema', 'Empty text schema default', { m: 'a' }, { body: { m: 'a' } }],
+  ['/rules', 'urn:rules:empty-text-shape', 'Empty text shape default', {}, { body: { m: '' } }],
+  ['/rules', 'urn:rules:empty-text-inline', 'Empty text inline default', {}, { body: { m: '' } }],
+  ['/rules', 'urn:rules:empty-text-read', 'Empty text read default', {}, { error: `m: ${ADDRESS_LEAVES}` }],
+  ['/rules', 'urn:rules:empty-text-number', 'Empty text number default', {}, { error: 'm: not an integer' }],
+  ['/rules', 'urn:rules:empty-text-boolean', 'Empty text boolean default', {}, { error: wrongDefault('m', '""', 'a boolean') }],
+  // A JSON-LD keyword inside a schema written in place is named where it is, and refuses a value.
+  ['/rules', 'urn:rules:keyword-schema', 'JSON-LD keywords in a schema', { a: '["x"]' }, { error: `a: ${unchecked('items/@set')}` }],
+  ['/rules', 'urn:rules:keyword-schema', 'JSON-LD keywords in a schema', { s: 'x' }, { error: `s: ${unchecked('@set')}` }],
+  ['/rules', 'urn:rules:keyword-schema', 'JSON-LD keywords in a schema', { l: '["x"]' }, { error: `l: ${unchecked('items/@list')}` }],
+  ['/rules', 'urn:rules:keyword-schema', 'JSON-LD keywords in a schema', { g: '{"k":"x"}' }, { error: `g: ${unchecked('properties/k/@graph')}` }],
+  ['/rules', 'urn:rules:keyword-schema', 'JSON-LD keywords in a schema', { v: '["x"]' }, { error: `v: ${unchecked('items/@value, items/@type')}` }],
+  ['/rules', 'urn:rules:keyword-schema', 'JSON-LD keywords in a schema', { x: '{"k":"x"}' }, { error: `x: ${unchecked('additionalProperties/@set')}` }],
+  // A list that holds the value a sh:hasValue past 2^53 names is refused naming it, and a JSON
+  // Schema number's default of only spaces is checked as the text it is, never trimmed.
+  ['/rules', 'urn:rules:rounded-has-value-list', 'Rounded has value list', { r: '9007199254740992\n1' }, { error: rounded('r', '9007199254740992') }],
+  ['/rules', 'urn:rules:rounded-has-value-list', 'Rounded has value list', { r: '1' }, { error: 'r: must include 9007199254740992' }],
+  ['/rules', 'urn:rules:space-number-schema', 'Schema number space default', {}, { error: 'm: must be a JSON number' }],
+  // An integer field's value past 2^53 is refused alike, whatever its type's range or its bounds.
+  ['/rules', 'urn:rules:integer-past-safe', 'Integers past 2^53', { l: '9007199254740993' }, { error: 'l: integer too large to send exactly' }],
+  ['/rules', 'urn:rules:integer-past-safe', 'Integers past 2^53', { l: '+1234567890123456789' }, { error: 'l: integer too large to send exactly' }],
+  ['/rules', 'urn:rules:integer-past-safe', 'Integers past 2^53', { i: '9007199254740993' }, { error: 'i: integer too large to send exactly' }],
+  ['/rules', 'urn:rules:integer-past-safe', 'Integers past 2^53', { g: '9007199254740993' }, { error: 'g: integer too large to send exactly' }],
+  ['/rules', 'urn:rules:integer-past-safe', 'Integers past 2^53', { l: '-9007199254740991', g: '2' }, { body: { l: -9007199254740991, g: 2 } }],
+  // A default that holds a number reading JSON may have rounded is refused, at any depth and in any
+  // field but a double's, which takes the double nearest; JSON given or written as text that holds
+  // a number its double would change is refused naming it, and one it holds exactly is sent.
+  ...([['number-default', 'Number default past 2^53'], ['integer-default', 'Integer default past 2^53'],
+    ['array-default', 'Array default past 2^53'], ['object-default', 'Untyped default past 2^53'], ['fraction-default', 'Number default past a double'],
+    ['decimal-default', 'Decimal default past 2^53'], ['decimal-list-default', 'Decimal list default past 2^53'],
+    ['inline-default', 'Inline default past 2^53']] as const).map(([rel, title]) =>
+    ['/rounding', `urn:round:${rel}`, title, {}, { error: roundedDefault('m') }] as const),
+  ['/rounding', 'urn:round:double-default', 'Double default past 2^53', {}, { body: { m: 9007199254740992 } }],
+  ['/rounding', 'urn:round:json-text-default', 'JSON text default past 2^53', {}, { error: changedNumber('m', '9007199254740993') }],
+  ['/rounding', 'urn:round:object', 'Object given', { m: '{"a":9007199254740993}' }, { error: changedNumber('m', '9007199254740993') }],
+  ['/rounding', 'urn:round:object', 'Object given', { m: '{"a":[0.30000000000000000001]}' }, { error: changedNumber('m', '0.30000000000000000001') }],
+  ['/rounding', 'urn:round:object', 'Object given', { m: '{"a":9007199254740992,"b":1.0,"c":-1e-7,"d":1e21}' },
+    { body: { m: { a: 9007199254740992, b: 1, c: -1e-7, d: 1e21 } } }],
+  ['/rounding', 'urn:round:json', 'JSON given', { m: '[9007199254740993]' }, { error: changedNumber('m', '9007199254740993') }],
+  ['/rounding', 'urn:round:list', 'Decimal list given', { m: '[1, 0.30000000000000000001]' }, { error: changedNumber('m', '0.30000000000000000001') }],
+  ['/rounding', 'urn:round:list', 'Decimal list given', { m: '[1, 2.5]' }, { body: { m: [1, 2.5] } }],
 ];
 
 /**
@@ -1961,14 +2092,15 @@ export const TEMPORAL_CASES: ReadonlyArray<readonly [type: (typeof TEMPORAL_TYPE
 /**
  * Confirmed writes whose body each client sends as the page's JSON.stringify(values, null, 2) writes
  * it, byte for byte, as [path, action, title, fields, the body sent]: each number as JavaScript
- * writes it (1.0 as 1, 1e-7 and 0.000001 as they are, -0 as 0, 2^53 + 1 and a 20-digit integer as
- * the double nearest each) and an object's array-index keys first, in numeric order.
+ * writes it (1.0 as 1, 1e-7 and 0.000001 as they are, -0 as 0, and 2^53 and a 20-digit integer its
+ * double holds as each double's shortest text) and an object's array-index keys first, in numeric
+ * order. A number its double would change is refused rather than sent (RULE_CASES).
  */
 export const BODY_TEXTS: ReadonlyArray<readonly [path: string, action: string, title: string, fields: Record<string, string>, body: string]> = [
-  ['/values', 'urn:values:object', 'Object value', { document: '{"b":1.0,"a":1e-7,"c":-0.0,"2":[1E2,{}],"1":12345678901234567890,"d":[]}' },
+  ['/values', 'urn:values:object', 'Object value', { document: '{"b":1.0,"a":1e-7,"c":-0.0,"2":[1E2,{}],"1":12345678901234567000,"d":[]}' },
     '{\n  "document": {\n    "1": 12345678901234567000,\n    "2": [\n      100,\n      {}\n    ],\n    "b": 1,\n    "a": 1e-7,\n' +
     '    "c": 0,\n    "d": []\n  }\n}'],
-  ['/values', 'urn:values:json', 'JSON value', { data: '[0.000001,1e21,-1e-7,9007199254740993]' },
+  ['/values', 'urn:values:json', 'JSON value', { data: '[0.000001,1e21,-1e-7,9007199254740992]' },
     '{\n  "data": [\n    0.000001,\n    1e+21,\n    -1e-7,\n    9007199254740992\n  ]\n}'],
   // A required input the form leaves empty, since it cannot hold its default, does not stop the
   // form: the default itself is sent, as hmc.py sends it.
@@ -1992,13 +2124,26 @@ export const BODY_TEXTS: ReadonlyArray<readonly [path: string, action: string, t
  *   - items: a list default of 50,000 values each checked against an items enum of 50,000 entries,
  *     each value compared with every entry, and items-refused, the same with no value an entry,
  *     whose problems each named every entry; and shape-list, a SHACL list default of 5,000 values
- *     checked against an sh:in of 5,000, whose choices were rebuilt for every value.
+ *     checked against an sh:in of 5,000, whose choices were rebuilt for every value;
+ *   - property-named: 100 controls whose shape names one property node 1,000 times, with a
+ *     100-character name and a 1,000-character description: each name was read as its own field,
+ *     and hmc.py's list --json wrote 168 MB for 34 KB; property-default, one control whose shape
+ *     names one node 2,000 times, with a 10 KB description and default: describe wrote 41 MB, of a
+ *     control refused for two fields of one name (shape, above, is the third: list --json wrote
+ *     each control's copy of the 400 fields they share);
+ *   - has-value-list: a decimal list default of 8,000 values and a 300,000-digit sh:hasValue, read
+ *     again for each value (9 s in each client), and bound-list and bound-list-refused, 4,000
+ *     values and a 150,000-digit bound, read again for each value, and in bound-list-refused named
+ *     in a problem for each.
  * A case that names a problem is refused on its dry run, naming it alone; the others' dry runs plan.
  */
 export const COST_CASES: ReadonlyArray<readonly [path: string, rel: string, controls: number, fields: number, refused: string | null]> = [
   ['/cost/harvest', 'urn:op5', 1501, 0, null], ['/cost/shape', 'urn:c399', 400, 400, null], ['/cost/template', 'urn:c399', 400, 400, null],
   ['/cost/mappings', 'urn:c', 1, 8000, null], ['/cost/class', 'urn:op5', 1500, 0, null], ['/cost/items', 'urn:items', 1, 1, null],
   ['/cost/items-refused', 'urn:items', 1, 1, 'm/0: must be one of e0, e1, e2, '], ['/cost/shape-list', 'urn:list', 1, 1, 'm: must be one of e0, e1, e2, '],
+  ['/cost/property-named', 'urn:c99', 100, 1, null], ['/cost/property-default', 'urn:c', 1, 1, null],
+  ['/cost/has-value-list', 'urn:list', 1, 1, 'm: must include 0.111'], ['/cost/bound-list', 'urn:list', 1, 1, null],
+  ['/cost/bound-list-refused', 'urn:list', 1, 1, 'm: above maxInclusive 0.111'],
 ];
 
 /**
@@ -2050,6 +2195,18 @@ export function costDescriptors(base: string): Record<string, string> {
         'hydra:template': `${base}/api{?${range(400).map(j => `v${j}`).join(',')}}`, 'hydra:mapping': range(400).map(j => ({ 'hydra:variable': `v${j}` })) },
       'hydra:expects': { type: 'object', properties: { a: { type: 'string' } }, additionalProperties: additional } }] });
   // A write whose one input takes a list, each of whose values is one of 50,000 entries, with a default of 50,000 values.
+  // Controls whose shape names one property node `times` times.
+  const named = (path: string, controls: number, times: number, property: Record<string, unknown>) => ({ '@context': CTX, '@id': `${base}${path}`,
+    'iep:affordance': range(controls).map(i => ({ '@id': `#c${i}`, '@type': 'iep:Affordance', ...get(controls === 1 ? 'urn:c' : `urn:c${i}`, `C${i}`),
+      'hydra:expects': { '@id': '#S' } })),
+    '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': range(times).map(() => ({ '@id': '#P' })) },
+      { '@id': '#P', 'sh:path': { '@id': 'urn:p:m' }, ...property }] });
+  // A write whose one input is a list of decimals with `count` defaults of 0.5 and the constraint given.
+  const decimals = (path: string, count: number, constraint: Record<string, unknown>) => ({ '@context': CTX, '@id': `${base}${path}`,
+    'iep:affordance': [{ '@id': '#l', '@type': 'iep:Affordance', 'iep:action': { '@id': 'urn:list' }, 'hydra:method': 'POST', 'hydra:title': 'List',
+      'hydra:target': { '@id': `${base}/api` }, 'hydra:expects': { '@id': '#S' } }],
+    '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
+      'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:defaultValue': range(count).map(() => 0.5), ...constraint } }] });
   const items = (defaults: string[]) => ({ '@context': CTX, '@id': `${base}/cost/items`, 'iep:affordance': [{ '@id': '#i', '@type': 'iep:Affordance',
     'iep:action': { '@id': 'urn:items' }, 'hydra:method': 'POST', 'hydra:title': 'Items', 'hydra:target': { '@id': `${base}/api` },
     'hydra:expects': { type: 'object', properties: { m: { type: 'array', items: { enum: range(50000).map(j => `e${j}`) }, default: defaults } } } }] });
@@ -2083,6 +2240,14 @@ export function costDescriptors(base: string): Record<string, string> {
     '/cost/shared-default': sharedSchema('/cost/shared-default', { type: 'string', default: 'x'.repeat(10000) }),
     '/cost/shared-description': sharedSchema('/cost/shared-description', { type: 'string', description: 'x'.repeat(10000) }),
     '/cost/shared-pattern': sharedSchema('/cost/shared-pattern', { type: 'string', pattern: 'x'.repeat(10000) }),
+    // One property node named 1,000 times by a shape 100 controls share, and 2,000 times by one control's.
+    '/cost/property-named': named('/cost/property-named', 100, 1000, { 'sh:name': `m${'x'.repeat(99)}`, 'sh:description': 'd'.repeat(1000) }),
+    '/cost/property-default': named('/cost/property-default', 1, 2000, { 'sh:name': 'm', 'sh:maxCount': 1, 'sh:description': 'd'.repeat(10000),
+      'sh:defaultValue': 'v'.repeat(10000) }),
+    // A list of decimals whose sh:hasValue, or whose bound, is a number written with 300,000 or 150,000 digits.
+    '/cost/has-value-list': decimals('/cost/has-value-list', 8000, { 'sh:hasValue': `0.${'1'.repeat(300000)}` }),
+    '/cost/bound-list': decimals('/cost/bound-list', 4000, { 'sh:minInclusive': `0.${'1'.repeat(150000)}` }),
+    '/cost/bound-list-refused': decimals('/cost/bound-list-refused', 4000, { 'sh:maxInclusive': `0.${'1'.repeat(150000)}` }),
     // 300 properties whose sh:in is one RDF list of 300 nodes.
     '/cost/shared-list': listShape('/cost/shared-list', range(300).map(() => ({ '@id': '#L0' })), []),
     // 300 properties each with an RDF list of its own first node, all ending in one tail of 300 nodes.

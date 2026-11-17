@@ -21,6 +21,12 @@ import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDe
   WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
+// What list, list --json and describe may write for a document: a dozen bytes for each of its
+// bytes (a field written out takes some 500 bytes, and a template mapping that makes one some 60),
+// and a fixed amount besides, however its controls share what they name. Before a list shared
+// by many controls was written once, list --json wrote 900 to 5,000 bytes for each.
+const OUTPUT_PER_BYTE = 12;
+const OUTPUT_SLACK = 64_000;
 const PYTHON = process.env['PYTHON'] || 'python3';
 
 // About twice as slow per extra character when the pattern runs; 27 took far over the budget.
@@ -534,6 +540,10 @@ describe('hmc.py: numeric fields', () => {
     ['price', '9007199254740993', 'price: decimal cannot be sent exactly'],
     ['price', '0.10000000000000001', 'price: decimal cannot be sent exactly'],
     ['price', '1e-400', 'price: decimal cannot be sent exactly'],
+    // A JSON number cannot carry an integer past 2^53 exactly, so hmc.py refuses it as the page does.
+    ['size', '9007199254740993', 'size: integer too large to send exactly'],
+    ['size', '+1234567890123456789', 'size: integer too large to send exactly'],
+    ['size', '9'.repeat(5000), 'size: integer too large to send exactly'],
   ])('refuses %s=%j with a confirmed write, and sends nothing', async (name, value, message) => {
     const before = sent();
     const r = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount=2', '--field', `${name}=${value}`, '--confirm']);
@@ -543,17 +553,16 @@ describe('hmc.py: numeric fields', () => {
     expect(sent()).toBe(before);
   });
 
-  it('sends numbers written as numbers as numbers, an integer past 2^53 exactly', async () => {
-    // A double is the double nearest its text, the value XSD gives that text. The long is past
-    // 2^53, which a double does not hold, and within xsd:long's range, so it is sent as written.
+  it('sends numbers written as numbers as numbers, an integer up to 2^53 - 1 exactly', async () => {
+    // A double is the double nearest its text, the value XSD gives that text. The long is the
+    // largest integer a double holds exactly, so it is sent as written.
     const dry = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount= 2.5 ', '--field', 'count=-3',
-      '--field', 'size=+1234567890123456789', '--field', 'price=\t2.50\r\n',
+      '--field', 'size=+9007199254740991', '--field', 'price=\t2.50\r\n',
       '--field', 'ratio=0.10000000000000001', '--dry-run', '--json']);
     expect(dry.code, dry.stderr).toBe(0);
-    // JSON.parse would round the long integer, so its text is checked as printed.
-    expect(dry.stdout).toContain('"size": 1234567890123456789');
+    expect(dry.stdout).toContain('"size": 9007199254740991');
     const body = (JSON.parse(dry.stdout) as { request: { body: Record<string, unknown> } }).request.body;
-    expect({ ...body, size: null }).toEqual({ amount: 2.5, count: -3, size: null, price: 2.5, ratio: 0.1 });
+    expect(body).toEqual({ amount: 2.5, count: -3, size: 9007199254740991, price: 2.5, ratio: 0.1 });
     const before = sent();
     const live = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount=2.5', '--confirm']);
     expect(live.code, live.stderr).toBe(0);
@@ -726,14 +735,17 @@ async function dry(path: string, rel: string, fields: Record<string, string | st
   const r = await hmc(['invoke', `${base}${path}`, rel, ...args, '--dry-run', '--json']);
   return { r, request: r.code === 0 ? (JSON.parse(r.stdout) as { request: Request }).request : null };
 }
-type Listed = { title: string; seeAlso: string[]; controls: Array<{ rel: string; title: string; method: string; unsafe: boolean; target: string | null;
-  warning: string | null; problem: string | null; fields: Array<{ name: string; required: boolean; multi: boolean }> }> };
+// `list --json` writes each list of fields once, in fieldLists, and each control names its list's
+// place there, or null for a control that is not invoked, whose fields are not given.
+type Listed = { title: string; seeAlso: string[]; fieldLists: Array<Array<{ name: string; required: boolean; multi: boolean }>>;
+  controls: Array<{ rel: string; title: string; method: string; unsafe: boolean; target: string | null;
+  warning: string | null; problem: string | null; fieldList: number | null }> };
 async function listed(path: string): Promise<Listed> {
   const r = await hmc(['list', `${base}${path}`, '--json']);
   expect(r.code, r.stderr).toBe(0);
   return JSON.parse(r.stdout) as Listed;
 }
-const fieldsOf = (doc: Listed, title: string) => doc.controls.find(c => c.title === title)!.fields.map(f => [f.name, f.required, f.multi]);
+const fieldsOf = (doc: Listed, title: string) => doc.fieldLists[doc.controls.find(c => c.title === title)!.fieldList!]!.map(f => [f.name, f.required, f.multi]);
 
 describe('hmc.py: JSON-LD read as jsonld.js reads it', () => {
   it('treats a GET the document marks destructive as unsafe, however the mark is written, and sends nothing unconfirmed', async () => {
@@ -1314,14 +1326,46 @@ describe('hmc.py: a document\'s size, not its shape, sets the cost', () => {
     expect(problems(run.stderr)).toEqual([problem]);
   }, 60_000);
 
-  it('lists every control of a document whose controls share one shape within the budget', async () => {
+  it('lists every control of a document whose controls share one shape within the budget, writing the shape\'s fields once', async () => {
     const r = await hmc(['list', `${base}/cost/shape`]);
     expect(r.timedOut, 'killed after 30 s').toBe(false);
     expect(r.ms, 'run time').toBeLessThan(3_000);
     expect(r.code, r.stderr).toBe(0);
     const lines = r.stdout.split('\n').filter(line => line.trim().startsWith('fields: '));
     expect(lines).toHaveLength(400);
-    expect(new Set(lines).size).toBe(1);
     expect(lines[0]).toContain('fields: p0, p1, p2');
+    expect(new Set(lines.slice(1))).toEqual(new Set(['         fields: as listed for urn:c0']));
+    const json = await hmc(['list', `${base}/cost/shape`, '--json']);
+    expect(json.code, json.stderr).toBe(0);
+    const doc = JSON.parse(json.stdout) as Listed;
+    expect(doc.fieldLists).toHaveLength(1);
+    expect(doc.fieldLists[0]).toHaveLength(400);
+    expect(new Set(doc.controls.map(c => c.fieldList))).toEqual(new Set([0]));
+  }, 60_000);
+
+  // What list, list --json and describe write grows with the document, never with the product of
+  // two of its sizes: a field list many controls share is written once, a node a shape names many
+  // times is one input, and a control that is not invoked has its problem written, not its fields.
+  it.each(COST_CASES)('writes what it lists and describes of %s within a few times the document\'s size', async (path, rel) => {
+    const size = Buffer.byteLength(cost[path]!);
+    for (const args of [['list', `${base}${path}`], ['list', `${base}${path}`, '--json'], ['describe', `${base}${path}`, rel]]) {
+      const r = await hmc(args);
+      expect(r.timedOut, 'killed after 30 s').toBe(false);
+      expect(r.ms, `${args[0]} ${args[2] || ''} run time`).toBeLessThan(3_000);
+      expect(r.code, r.stderr).toBe(0);
+      expect(Buffer.byteLength(r.stdout), `${args[0]} ${args[2] || ''} output`).toBeLessThan(OUTPUT_PER_BYTE * size + OUTPUT_SLACK);
+    }
+  }, 60_000);
+
+  it('gives no fields for a control that is not invoked, in list --json and describe', async () => {
+    const doc = await listed('/cost/shared-default');
+    expect(doc.controls).toHaveLength(1);
+    expect(doc.controls[0]!.problem).not.toBeNull();
+    expect(doc.controls[0]!.fieldList).toBeNull();
+    const d = await hmc(['describe', `${base}/cost/shared-default`, 'urn:shared-schema']);
+    expect(d.code, d.stderr).toBe(0);
+    expect((JSON.parse(d.stdout) as { fields: unknown }).fields).toBeNull();
+    const text = await hmc(['list', `${base}/cost/shared-default`]);
+    expect(text.stdout).not.toContain('fields: ');
   }, 60_000);
 });
