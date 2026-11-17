@@ -42,6 +42,83 @@ old one, which is worth that lane's second look.
 it needs a day of runs after it lands. The three steps that hold a runner
 while waiting for other workflows (jev-harness 27.6 minutes on average, the
 auto-deploy gate 17.7, the I2IDL-X UI oracle 12.1) are untouched.
+## 2026-11-17 — mcp-server: the local Solid server fallback starts
+
+When its home pod is on localhost and nothing answers there,
+`mcp-server/server.ts` starts a Community Solid Server
+(`spec/STORAGE-TIERS.md`, Tier 1). It never did. It ran the root's
+`node_modules/.bin/community-solid-server` with
+`examples/multi-agent/css-config.json`, and Components.js, walking up from
+that CSS into the root's `node_modules`, found the root's `@comunica` 5 beside
+CSS's own `@comunica` 2 and refused the config ("Could not build the config
+files … `ActorDereference` … is not a valid component"). The tool call that
+needed the pod then waited out the 30 s startup timeout and failed. The
+compiled server failed sooner: from `mcp-server/dist/` it looked for the
+binary in `mcp-server/node_modules/.bin/` and the config in
+`mcp-server/examples/`, neither of which exists.
+
+**The fix.** `mcp-server/local-solid-server.ts` builds the server the way
+`packages/local-node` and `integrations/tests/multi-agent-css-expired-sweep.test.ts`
+do: Components.js is handed CSS's own component graph, the Components.js
+context CSS was built against, and the local modules the config imports (it
+reads them from the config, which names `css-internal-listing/`), and each of
+those is required from its own folder. It runs in a child process that
+`server.ts` forks, with its own execArgv, so it works from source under tsx
+and compiled from `dist/`; the config is found from either.
+
+**Why not the demos' npx launcher.** `examples/multi-agent/solid-server.ts`
+already solves both problems, by running a CSS that npx installs outside the
+repository. mcp-server cannot use it. `tools/base-neutrality-lint.mjs` holds
+the base, mcp-server included, to no imports from `examples/`, and `tsc` would
+not compile one into `dist/` (it is outside `rootDir`). npx also needs the
+network on the first run and downloads a second CSS. `@interego/mcp` publishes
+`dist/` only, so `examples/` is not there at run time either way (the package
+is not on the npm registry today). The fallback keeps running the CSS this
+workspace installs, as it always meant to.
+
+**Why a child process, not in-process as local-node does.** CSS logs through
+winston's Console transport, which writes to stdout, and mcp-server's stdout
+is the MCP stream. The child's stdout and stderr are pipes that `server.ts`
+reads and copies to its stderr. The old spawn read only stderr, so a full
+stdout pipe would have stalled the server. A CSS crash now ends CSS, not the
+MCP session. The child stops when mcp-server does, on SIGTERM or when the IPC
+channel closes. The old `shell: true` spawn signalled the shell, not
+necessarily CSS. Its SIGTERM handler is registered with `on`, not `once`:
+`proper-lockfile`'s `signal-exit` re-raises a signal on a process left with
+only its own handler, and a `once` handler is removed before the next one
+runs, so the child died by the signal instead of stopping.
+
+**Where the pods go.** The old spawn passed no `--rootFilePath`, so CSS would
+have written the pods and `.internal/` into the current directory, which an
+MCP client sets to the user's project. They now go under
+`CG_CSS_ROOT_FILE_PATH`, by default `interego-mcp-css-<port>` in the OS temp
+directory, which `spec/STORAGE-TIERS.md` already promised. The folder is
+created owner-only (0700) when it does not exist.
+
+**Smaller changes in `ensureCSS`.** Concurrent tool calls share one startup
+instead of forking one CSS each, the second of which would fail on the port. A CSS
+that exits before it listens fails the call at once, with the end of its
+output, instead of after 30 s. A call that times out leaves the CSS starting,
+and the next call waits on that same process. Readiness is the child's
+"listening" message, and the pod is provisioned outside the startup promise,
+so a provisioning error reaches the caller instead of being an unhandled
+rejection inside a `setInterval`. The undocumented `CG_CSS_BIN` override is
+gone: there is no binary to point at.
+
+**The test.** `integrations/tests/mcp-server-local-solid-server.test.ts` starts
+mcp-server over stdio as an MCP client does, from source under tsx and compiled
+from `dist/`, with a home pod on a free localhost port that nothing answers.
+It calls `get_pod_status`, and checks that CSS built its config, answers HTTP,
+holds the provisioned home pod, keeps its files under `CG_CSS_ROOT_FILE_PATH`
+and not in the directory mcp-server was started in, and stops when mcp-server
+does. On the previous `server.ts`, the source run fails with the two lines
+above, and the compiled run fails at once. It lives in `integrations/tests/`
+because the server it boots reads `examples/`, which the base-without-verticals
+job deletes. `jev-harness.yml` now builds the stdio server before it runs the
+tests it selects, as `bridge-typecheck.yml`'s suite already did: its build cache
+holds `packages/*/dist` only, so on a hit `mcp-server/dist/` was never built and
+the compiled run found no server.
+
 ## 2026-11-17 — coached-world: a registration's statements are chained, and the world signs their order
 
 Every statement of a mission's opening carries one timestamp, so nothing but
@@ -222,6 +299,69 @@ tracked tree ran again with them staged; they pass with the floor at 710.
 `npm run lint` (719 files, 0 errors) and every other `lint:all` step pass,
 `lint:changelog` on the full history. The advertised demos still compile
 (`tsconfig.advertised.json`).
+
+## 2026-11-17 — Foxxi bridge: who is calling a signed route is decided in one place
+
+A refactor. No route answers differently.
+
+`applications/foxxi-content-intelligence/bridge/server.ts` decided who signed
+an `/agent/*` request three times: in `verifyDelegatedCaller`, in
+`bindSignedCaller`, and inline in `/agent/issue-credential`. All three
+applied one rule. A caller whose signed `agent_id` carries the recovered
+signer address is that wallet, `did:ethr:<signer>`. Any other `agent_id` is
+accepted only when that agent's delegation, read from its own derived pod, is
+CryptographicallyVerified and the request signer is the key that anchors it.
+A fourth site, `resolveForCaller`, worked out afterwards whether the caller
+had been direct by rebuilding `did:ethr:<signer>` and comparing strings.
+
+The rule is now in `src/caller-principal.ts`, which does no I/O: the pod
+derivation, the delegation check and the anchor read are passed in. It
+returns a `CallerPrincipal` (`subject`, `key`, `authMode`, `kind`, `payload`)
+or a refusal with a status, the message, and a reason code.
+`resolveSignedPrincipal` in server.ts is its one caller. The three former
+copies are shims over it and return what they returned before.
+
+The copies differed in three ways. Each is an option the shim sets, so each
+call site keeps what it did:
+
+- `bindSignedCaller` refuses, with 400, an `agent_id` that contains a control
+  character or is longer than 512 characters, and does so before it looks at
+  whether the caller is direct. The other two do not check
+  (`agentIdBounds`).
+- `bindSignedCaller` ends its "request signer is not the delegation anchor
+  key" refusal with "only the key that anchors the agent's delegation may
+  sign for them". The other two stop after the anchor address
+  (`anchorRefusalExplains`).
+- On a request with no valid signature, `bindSignedCaller` sends the hint its
+  call site gave it, `/agent/issue-credential` always sends its own, and
+  `verifyDelegatedCaller` sends none (`unsignedHint`).
+
+`resolveForCaller` keeps its arguments and compares the caller against
+`directSubject(signer)`, the module's one place a signer address becomes a
+caller DID, where it used to rebuild that string itself. The comparison is
+the same. The handlers of `/agent/content/resolve` and
+`/agent/content/launch` are not edited, and `verifyDelegatedCaller` returns
+the same fields as before, since four modules take it as a dependency.
+
+Not changed: `resolveCaller` (the directory and role resolver),
+`mergeSignedEnvelope`, and the sites that recover a signed request to ask
+about a wallet and not about an agent.
+
+`tests/the-caller-is-decided-in-one-place.test.ts` reads server.ts as text.
+It fails on a `did:ethr:${…signer}` template, a mention of
+`recoverSignedRequest`, or a `mergeSignedEnvelope(` call anywhere but the
+resolver and fifteen named sites, each listed with its reason; a listed site
+that no longer matches fails too. `tests/caller-principal.test.ts` covers the
+rule: direct, delegated, each refusal's status and wording, each option, and
+that `authMode` is direct exactly when the subject is `did:ethr:<signer>`.
+No existing test is edited.
+
+Checks: the nine existing Foxxi test modules of signed callers (110 cases)
+pass unchanged. All of `applications/foxxi-content-intelligence/tests`, run
+together with the 67 root test modules that read a `server.ts`, passes: 294
+files, 4,672 cases, 11 skipped. `tsc --noEmit` is clean on
+`tsconfig.check.json` and on the bridge's own `tsconfig.json`, and
+`npm run lint:all` passes with the new files staged.
 
 ## 2026-11-17 — local-node: the desktop pod server no longer crashes an hour after it starts
 
@@ -3254,8 +3394,6 @@ server, several small transactions each.
 
 `POST /agent/cmi5/launch` returns one launch URL. Its fetch token is single-use and expires after 30 minutes, so a trainee who bookmarks it cannot get back into the activity. A signed caller can now mint `GET /cmi5/go/<token>` (`POST /agent/cmi5/go`) for themselves and one course. The token is 32 random bytes and the URL does not carry the learner. Each open builds a fresh cmi5 launch and redirects to the AU: a new fetch token every time, the same registration and session while that session has not been terminated, abandoned or waived, and a new registration afterwards (Review when the activity is already satisfied). `POST /agent/cmi5/go/revoke` withdraws it. Opens are rate-limited per address and per token. Links expire in 90 days unless `expires_in_days` says otherwise, and they are kept on the tenant pod at `foxxi-lattice/cmi5-personal-links.json`. A read of that file that fails is not followed by a write, so a pod that cannot be read is not replaced by this process's copy. Withdrawn and expired links stay recorded and do not count toward the learner's limit. Mint and revoke are also limited on the route, before the signature is checked. The link is not tied to one course or one person: the course is whichever published course the request names, the actor is whoever signed, and the activity's moveOn and mastery are that course's own structure. Withdrawal, expiry and the per-address limit are the same ones a SCORM dispatch uses, and both registries refuse to overwrite the pod when a read fails.
 
-
-
 ## 2026-11-13 — Foxxi is an xAPI Profile Server
 
 The bridge served one profile, its own, and checked a statement against a
@@ -3473,7 +3611,6 @@ other key a caller adds is still refused, and neither value reaches what the
 relay signs. A test reproduces the refusal with the body as routed, and another
 fails if the middleware starts adding a name the helper does not know.
 
-
 ## 2026-11-12 — Native commits: a write reads the head once and skips three repeat requests (opt-in)
 
 After batched staging, a single-statement LRS write still made eight sequential
@@ -3646,7 +3783,6 @@ calls neither identity nor the relay.
 
 `MIN_FILES` in `tools/lint-gate.mjs` goes from 670 to 673, the number the gate
 named when the new files took the linted count past its slack.
-
 
 ## 2026-11-11 — Native commits: a commit's immutable representations are staged in one receipted request
 
@@ -8090,7 +8226,6 @@ Since 20:49 UTC every identity-server start logged `Account index: 0 loaded, 360
 ## 2026-10-23 — Play guests can follow their own native descriptor heads
 
 Provisional descriptor reads now recognize only this deployment's configured internal/public store alias before applying the same exact guest-pod and resource-path checks. Both the early REST/MCP gate and the durable tool guard receive that configuration, so an internal descriptor URL returned by get_current_head can be read by its owner. Foreign origins, foreign pods, credentials, query/fragment additions, encoded separators and traversal spellings remain refused; mutation policy and quotas are unchanged. Focused tests drive native head-to-descriptor following and refusal cases.
-
 
 ## 2026-10-23 — Identity: forgotten surface agents are served again, and nobody can register another user's
 
