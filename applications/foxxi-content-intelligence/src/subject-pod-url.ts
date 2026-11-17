@@ -56,7 +56,7 @@ export interface SubjectPodUrlOptions {
    * When given, a subject `did:web:<this host>:users:<id>` that `ownPodSegment` does not recognise
    * and whose `<id>` is one of identity's own user id shapes resolves to `<pod origin>/<id>/`
    * (see `identityUserIdOf`). Absent, the resolver answers exactly as it did before this option
-   * existed. No caller passes it yet.
+   * existed. `resolveSubjectPodUrlGuarded` passes it, for a general guest's DID only.
    */
   identityHost?: string | undefined;
 }
@@ -254,7 +254,7 @@ export type SubjectPodGuardDecision = { ok: true } | { ok: false; reason: Subjec
  * and any pod URL it cannot read. Every other subject is answered `ok`: this is not a general
  * authorization check, and a wallet or agent subject keeps the checks it already has.
  *
- * Pure, and not called by any route yet.
+ * Pure. Called by `resolveSubjectPodUrlGuarded`.
  */
 export function guardSubjectPod(input: SubjectPodGuardInput): SubjectPodGuardDecision {
   const { subject, podUrl, tenantPodUrl, identityHost } = input;
@@ -274,4 +274,30 @@ export function guardSubjectPod(input: SubjectPodGuardInput): SubjectPodGuardDec
     }
   }
   return { ok: true };
+}
+
+/** A subject's pod was refused by `guardSubjectPod`. Carries the HTTP status a route answers it with. */
+export class SubjectPodRefusedError extends Error {
+  readonly status = 403;
+  constructor(readonly reason: SubjectPodGuardRefusal, message: string) { super(message); this.name = 'SubjectPodRefusedError'; }
+}
+
+/**
+ * `resolveSubjectPodUrlPure`, with the guest rule applied when `guestIdentityHost` is given.
+ *
+ * Without `guestIdentityHost` this is `resolveSubjectPodUrlPure` exactly, for every identity.
+ * With it, an identity shaped as a general guest's DID (and no other identity) is resolved with
+ * that host as `identityHost`, and the answer is checked by `guardSubjectPod`: a guest whose pod
+ * would be the shared tenant pod (another host's guest, an explicit override naming the tenant
+ * pod), or a pod that is not the guest's own, throws `SubjectPodRefusedError` instead of being
+ * answered. Every other identity is resolved as before and is not guarded.
+ */
+export function resolveSubjectPodUrlGuarded(opts: SubjectPodUrlOptions & { guestIdentityHost?: string | undefined }): string {
+  const { guestIdentityHost, ...rest } = opts;
+  const subject = (rest.identity ?? '').trim();
+  if (!guestIdentityHost || !isGeneralGuestDid(subject)) return resolveSubjectPodUrlPure(rest);
+  const podUrl = resolveSubjectPodUrlPure({ ...rest, identityHost: guestIdentityHost });
+  const guard = guardSubjectPod({ subject, podUrl, tenantPodUrl: rest.tenantPodUrl, identityHost: guestIdentityHost });
+  if (!guard.ok) throw new SubjectPodRefusedError(guard.reason, guard.error);
+  return podUrl;
 }

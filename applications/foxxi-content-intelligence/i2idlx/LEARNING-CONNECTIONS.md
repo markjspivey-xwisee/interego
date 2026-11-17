@@ -214,7 +214,7 @@ Interego guest" beside what they already offer, only where the session answer ca
 is at identity's door, where it is kept or linked: `<door>/guest/door#claim`, `#link`), and
 deleting a recording does not ask identity to close the guest.
 
-**The dashboard does not use the door.** See `DURABLE-GUEST.md`, "The general guest".
+**The dashboard's page does not offer the door yet.** The bridge's side of it is behind `FOXXI_PLAY_GENERAL_GUEST=1`, off by default. See `DURABLE-GUEST.md`, "The general guest".
 
 The course player opts in too. Its `/learn` routes take the same guest session, so a guest can
 launch and play a published or hosted course there with no connection and no administrator
