@@ -1,5 +1,18 @@
 # Changelog
 
+## 2026-11-17 — xapi-x: version 2 of the profile is published on the pod
+
+The owner said to publish it. The profile's IRI,
+`https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix-profile`, now
+serves version 2: 123 triples, the ones `xapixProfileTurtle()` returns on
+master. The publish was conditional on version 1 still being the head, and its
+descriptor supersedes version 1's. Fetched back as Turtle and compared triple
+for triple: none missing, none extra. `…/xapix-profile/v/2` and
+`…/xapix-profile/templates/projection` resolve.
+
+Only the xapi-x README changes in the repository: it said the pod served
+version 1 and listed this as left to do.
+
 ## 2026-11-16 — Dependencies: minimatch 11.0.8 under typescript-eslint and electron-builder
 
 `npm audit` lists one advisory against minimatch from 7.0.0 up to 11.0.1,
