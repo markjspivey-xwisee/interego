@@ -260,7 +260,7 @@ beforeAll(async () => {
         res.writeHead(fetched.status || 302, { location: fetched.redirect, 'content-length': '1048576' }).write('x');
         return;
       }
-      if (fetched && 'redirect' in fetched) { res.writeHead(fetched.status || 302, { location: fetched.redirect }).end(); return; }
+      if (fetched && 'redirect' in fetched) { res.writeHead(fetched.status || 302, { location: fetched.redirect }).end(fetched.body); return; }
       // Node writes no body in answer to a HEAD, so a host that does writes the answer itself.
       if (fetched && fetched.headBody && req.method === 'HEAD' && typeof fetched.type === 'string') {
         req.socket.end(`HTTP/1.1 ${fetched.status || 200} OK\r\ncontent-type: ${fetched.type}\r\n` +
@@ -442,6 +442,7 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
         : (done ? invokeDone : invokeNotSuccess)(url, end.answer, landed);
       expect(r.code, where).toBe(done ? 0 : 4);
       // A HEAD's answer has no body, however the host answers it; a GET that lands at /landing reads it.
+      // A redirect not followed is read only to its headers, as the page's opaque redirect has no body.
       const landedBody = 'landed' in end && end.landed && end.landed.startsWith('/landing');
       if (mode.length) {
         const out = JSON.parse(r.stdout) as { done: boolean; outcome: string; redirect?: unknown;
@@ -449,7 +450,7 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
         expect([out.done, out.outcome, out.redirect ?? null, out.response.status, out.response.landed], where)
           .toEqual([done, outcome, 'redirect' in end ? { status: end.redirect, location } : null, 'redirect' in end ? end.redirect : end.answer,
             'redirect' in end ? url : landed]);
-        if (method === 'HEAD') expect(out.response.bodyText, where).toBe('');
+        if (method === 'HEAD' || 'redirect' in end) expect(out.response.bodyText, where).toBe('');
         else if (landedBody) expect(out.response.bodyText, where).toBe(LANDING_BODY);
       } else {
         expect(r.stdout.split('\n'), where).toContain(outcome);

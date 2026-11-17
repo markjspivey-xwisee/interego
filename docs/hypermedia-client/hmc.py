@@ -3283,8 +3283,12 @@ class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
         super().__init__()
         self.see_other_from: str | None = None
         self.followed = 0
+        self.started: str | None = None
 
     def http_error_302(self, req, fp, code, msg, headers):  # type: ignore[no-untyped-def]
+        # The address the request was sent to, which a limit passed is named by:
+        # by the 21st request `req` is the last hop's.
+        self.started = self.started or req.full_url
         # Only a Location with something in it redirects, as a browser reads
         # one; urllib would also follow an empty one, to the address itself, and
         # a URI header. Without one the 3xx is the answer, which is not 2xx. And
@@ -3297,7 +3301,7 @@ class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
         # backslash or a brace as written; the request goes where fetch's would.
         newurl = _redirect_url(req.full_url, location)
         if self.followed >= _REDIRECT_LIMIT:
-            raise RuntimeError(f"{req.full_url} was redirected more than {_REDIRECT_LIMIT} times, "
+            raise RuntimeError(f"{self.started} was redirected more than {_REDIRECT_LIMIT} times, "
                                "more than fetch follows, so the request failed")
         self.followed += 1
         if code == 303 and self.see_other_from is None:
@@ -3364,7 +3368,8 @@ def http_exchange(url: str, method: str = "GET", headers: dict[str, str] | None 
     """Sends one request to the URL exactly as _request_url writes it. With
     `follow`, a GET's or HEAD's redirect is followed as fetch follows one (see
     _WebOnlyRedirects); without it, and for any other method, a redirect is
-    the answer, and nothing is sent to its Location."""
+    the answer, on its headers: nothing is sent to its Location, and its body
+    is not read, so the answer's body is empty."""
     _require_web_url(url)
     url = _request_url(url)
     req_headers = {"User-Agent": USER_AGENT}
@@ -3378,7 +3383,15 @@ def http_exchange(url: str, method: str = "GET", headers: dict[str, str] | None 
             see_other = redirects.see_other_from if redirects else None
             return Exchange(resp.getcode() or 200, _header_values(resp.headers.items()), resp.read(), see_other or landed, landed)
     except urllib.error.HTTPError as exc:
-        body = exc.read() if exc.fp else b""
+        if not follow and exc.code in REDIRECT_STATUSES:
+            # A redirect not followed is the answer on its headers: the page's
+            # fetch, with redirect: "manual", gets an opaque redirect, which
+            # has no body. Its body is not read, so one that never ends does
+            # not hold the request until it times out.
+            exc.close()
+            body = b""
+        else:
+            body = exc.read() if exc.fp else b""
         landed = exc.geturl() or url
         see_other = redirects.see_other_from if redirects else None
         return Exchange(exc.code, _header_values(exc.headers.items() if exc.headers else []), body, see_other or landed, landed)

@@ -556,6 +556,18 @@ and the proxy cases, 12 failed in `hmc.py` before under Python 3.12 and 3 under
 3.13. The page needed no change; its test's `fetch` now gives a HEAD's answer no
 body, as `fetch` does.
 
+A tenth review found that `hmc.py` still read the body of a redirect it does not
+follow (a write's, a destructive GET's, an OPTIONS'), so a write answered with a
+redirect whose body never ends waited out the 60 s timeout and exited 1 with no
+outcome, where the page's opaque redirect has no body and is reported not done at
+once. `hmc.py` now reads only its headers, and `--json` gives `bodyText` as `""`.
+A chain past 20 redirects is named by the address the invoke was sent to, not its
+last hop; the loop rows now enter a loop of two other addresses, so the two
+differ. The paragraph above miscounted: of the cases it lists, 11 failed in
+`hmc.py` before under Python 3.12 (12 with the existing HEAD odd Location row)
+and 3 under 3.13, and its "redirect that never ends" is a redirect whose body
+never ends. The page needed no change; no CSP hash moves.
+
 ## 2026-11-17 — Foxxi: a profile write reported as not kept stays not kept, and costs its signer nothing
 
 Three things were left open when profile additions, removals and publications

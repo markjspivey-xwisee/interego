@@ -52,7 +52,7 @@ function deepScoped(base: string, path: string, scoped: 'type' | 'property') {
  *   - `backslash`: a GET's redirect whose Location, given here, holds a backslash. hmc.py refuses
  *     it, as it refuses such an address, and sends nothing there; the page's browser reads the
  *     backslash as a slash and lands at `landed` (resolved against the host), which answers `answer`;
- *   - `loop`: a GET's or HEAD's redirect to the address itself. The host receives the request this
+ *   - `loop`: a GET's or HEAD's redirect into a loop, along LOOP. The host receives the request this
  *     many times, 20 redirects followed and the 21st not, as fetch follows them: no answer.
  * `landed` is written as fetch writes a response's url: no fragment, and `{`, `}` and the backtick
  * percent-encoded.
@@ -63,6 +63,11 @@ export type InvokeEnd =
   | { readonly refused: string }
   | { readonly backslash: string; readonly landed: string; readonly answer: number }
   | { readonly loop: number };
+/**
+ * Where a loop row's request goes: the address it is sent to redirects to the second, and the second
+ * and the third each to the other, so the 21st request goes to another address than the first.
+ */
+const LOOP = ['/answer/loop', '/answer/loop-a', '/answer/loop-b'] as const;
 /**
  * The /outcomes controls, as [title, method, the /answer/ address it sends to, how it ends, and
  * whether the document marks it destructive]. A write is confirmed and sends a body; GET and HEAD
@@ -91,6 +96,10 @@ const OUTCOMES: ReadonlyArray<readonly [title: string, method: string, answer: s
   ['HEAD body anyway', 'HEAD', 'to-body', { answer: 200, landed: '/landing-body' }],
   // A redirect whose own body never ends is followed on its headers, as fetch follows it.
   ['GET unending redirect', 'GET', 'unending', { answer: 200, landed: '/landing' }],
+  // Nor is the body of a redirect a request does not follow read: it is the answer, on its headers.
+  ['POST unending redirect', 'POST', 'unending', { redirect: 302, location: '/landing' }],
+  ['OPTIONS unending redirect', 'OPTIONS', 'unending', { redirect: 302, location: '/landing' }],
+  ['Destructive GET unending redirect', 'GET', 'unending', { redirect: 302, location: '/landing' }, true],
   ['GET to ftp', 'GET', 'to-ftp', { refused: 'ftp://127.0.0.1:9/x' }],
   ['GET empty Location', 'GET', 'empty', { answer: 307 }],
   // A Location fetch writes otherwise than its text: a fragment, which a response's url drops, and
@@ -1421,12 +1430,13 @@ export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: stri
 /**
  * What a host does with one request: answers it (a `type` given as a list is that many Content-Type
  * headers; with `headBody`, it writes the body even in answer to a HEAD, which HTTP forbids), sends
- * it to another address (with a 302 unless `status` names another redirect; with `unending`, the
- * redirect promises a body it never finishes), or closes the connection without answering.
+ * it to another address (with a 302 unless `status` names another redirect; with `body`, the
+ * redirect carries that body, which neither client reads; with `unending`, it promises a body it
+ * never finishes), or closes the connection without answering.
  */
 export type HostAnswer =
   | { readonly status?: number; readonly type: string | readonly string[]; readonly body: string; readonly headBody?: true }
-  | { readonly redirect: string; readonly status?: 301 | 302 | 303 | 307 | 308; readonly unending?: true }
+  | { readonly redirect: string; readonly status?: 301 | 302 | 303 | 307 | 308; readonly body?: string; readonly unending?: true }
   | 'no answer';
 
 /** The body /landing answers with, which a GET that lands there reads and a HEAD never does. */
@@ -1518,9 +1528,11 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     // Where /outcomes' controls send, whatever the method: each redirect status to /landing, a
     // redirect to an address neither client sends to, one with an empty Location, and answers of
     // each kind that is not a redirect.
-    ...Object.fromEntries(([301, 302, 303, 307, 308] as const).map(status => [`/answer/${status}`, () => ({ redirect: '/landing', status })])),
+    ...Object.fromEntries(([301, 302, 303, 307, 308] as const).map(status => [`/answer/${status}`, () => ({ redirect: '/landing', status, body: 'moved' })])),
     '/answer/chain': () => ({ redirect: '/answer/307', status: 302 }),
-    '/answer/loop': () => ({ redirect: '/answer/loop', status: 302 }),
+    [LOOP[0]]: () => ({ redirect: LOOP[1], status: 302 }),
+    [LOOP[1]]: () => ({ redirect: LOOP[2], status: 302 }),
+    [LOOP[2]]: () => ({ redirect: LOOP[1], status: 302 }),
     '/answer/to-body': () => ({ redirect: '/landing-body', status: 302 }),
     '/answer/unending': () => ({ redirect: '/landing', status: 302, unending: true }),
     '/answer/to-ftp': () => ({ redirect: 'ftp://127.0.0.1:9/x', status: 307 }),
@@ -1588,7 +1600,7 @@ export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: Fetc
 export function invokeOutcomes(base: string): ReadonlyArray<readonly [title: string, rel: string, method: string, url: string, end: InvokeEnd,
   reached: readonly string[]]> {
   return OUTCOMES.map(([title, method, answer, end]) => [title, outcomeRel(title), method, `${base}/answer/${answer}`, end,
-    'loop' in end ? Array.from({ length: end.loop }, () => `${method} /answer/${answer}`)
+    'loop' in end ? Array.from({ length: end.loop }, (_, i) => `${method} ${LOOP[i === 0 ? 0 : 2 - (i % 2)]}`)
       : [`${method} /answer/${answer}`, ...('via' in end && end.via ? end.via : []).map(path => `${method} ${path}`),
         ...(!('backslash' in end) && 'landed' in end && end.landed ? [`${method} ${end.landed}`] : [])]] as const);
 }
