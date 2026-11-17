@@ -1,0 +1,26 @@
+name: General guest opt-in fixture
+on:
+  pull_request:
+    paths:
+      - 'tools/general-guest-opt-in.mjs'
+      - 'tools/coached-world-guest-provision.mjs'
+      - 'tools/vertical-bridges-provision.mjs'
+      - 'tests/general-guest-opt-in.test.mjs'
+      - '.github/workflows/general-guest-opt-in.yml'
+      - '.github/workflows/general-guest-opt-in-test.yml'
+permissions:
+  contents: read
+concurrency:
+  group: ${{ github.workflow }}-${{ github.ref }}
+  cancel-in-progress: true
+jobs:
+  opt-in-fixture:
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - run: npm ci --ignore-scripts
+      - run: node --test tests/general-guest-opt-in.test.mjs

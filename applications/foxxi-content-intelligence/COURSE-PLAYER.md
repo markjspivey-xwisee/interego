@@ -111,6 +111,9 @@ There is no separate hook that pretends to send a code.
 No new required setting. Guest start is the workbench's guest, so it is off until that is on
 (`i2idlx/LEARNING-CONNECTIONS.md`, "Guest learners"): `FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY`,
 the service account, and this bridge's origin in identity's `PROVISIONAL_PLAY_CLIENTS`.
+With `FOXXI_I2IDLX_GENERAL_GUEST=1` the page also offers "Continue as your Interego guest":
+identity's general guest, through the workbench's door (`i2idlx/LEARNING-CONNECTIONS.md`,
+"The general guest"). A guest linked to an account launches, and is recorded, as that account.
 Signing in with an existing account needs the learning account's identity, relay and pod
 origins, which that same setup already names. The player book is written on first use when
 `FOXXI_TENANT_POD_URL` is set.

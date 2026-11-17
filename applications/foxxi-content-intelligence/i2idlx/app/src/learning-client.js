@@ -1,5 +1,5 @@
 // Cookie-authenticated learning controls. Credentials and CSRF stay in memory.
-import { learningGuestSignIn, guestLearningSignIn } from './learning-guest.js';
+import { learningGuestSignIn, learningGeneralGuestSignIn, guestLearningSignIn } from './learning-guest.js';
 const object = value => value !== null && typeof value === 'object' && !Array.isArray(value);
 const bounded = (value, max = 512) => typeof value === 'string' && !!value.trim() && value.length <= max && !/[\u0000-\u001f\u007f]/.test(value);
 const validVersion = value => Number.isSafeInteger(value) && value >= 0 || bounded(value, 256);
@@ -22,10 +22,14 @@ export function learningSession(value, origin) {
   const result = { enabled: value.enabled, authenticated: value.authenticated, account: null,
     sign_in_url: value.sign_in_url ? learningSignInUrl(value.sign_in_url, origin) : null,
     guest_sign_in: value.enabled ? learningGuestSignIn(value.guest_sign_in, origin) : null, guest: false };
+  // Present only where the workbench offers identity's general guest door, so a workbench without it reads as before.
+  const general = value.enabled ? learningGeneralGuestSignIn(value.general_guest_sign_in, origin) : null;
+  if (general) result.general_guest_sign_in = general;
   if (value.authenticated) {
     if (!value.enabled || !object(value.account) || !bounded(value.csrf, 512) || !date(value.expires_at)) invalid();
     result.account = { id: id(value.account.id), userId: id(value.account.userId), webId: id(value.account.webId) };
     result.expires_at = value.expires_at; result.guest = value.guest === true;
+    if (value.general_guest === true) { result.general_guest = true; if (value.linked_account === true) result.linked_account = true; }
   }
   return result;
 }

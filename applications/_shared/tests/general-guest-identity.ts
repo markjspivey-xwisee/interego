@@ -1,19 +1,19 @@
 /**
- * Identity for the general guest tests: the real provider
+ * Identity for the general guest tests of any application: the real provider
  * (deploy/identity/provisional-play-provider.ts) run in process over fake conditional storage, with
  * a service key generated here, and the door page played by a generated P-256 key. No identity,
  * relay or pod is called. Not a test module, and it imports nothing that reads the environment.
  */
 import { createHash, generateKeyPairSync, sign as signWith, type KeyObject } from 'node:crypto';
 import { verifyMessage, Wallet } from 'ethers';
-import { GeneralGuestDoor, type DoorFetch } from '../../_shared/guest-access/door.js';
+import { GeneralGuestDoor, type DoorFetch } from '../guest-access/door.js';
 import { createProvisionalPlayProvider } from '../../../deploy/identity/provisional-play-provider.js';
 import { PlayError, type PlayClaims } from '../../../deploy/identity/provisional-play.js';
 import { doorProofPayload } from '../../../deploy/identity/provisional-general-guest.js';
 import { linkPreviewPayload, linkProofPayload } from '../../../deploy/identity/provisional-guest-link.js';
-import { playKeyThumbprint, publicPlayKey } from '../../../deploy/identity/provisional-play.js';
+import { generalGuestUserId, playKeyThumbprint, publicPlayKey } from '../../../deploy/identity/provisional-play.js';
 
-/** The world's registered return path (src/server.ts GENERAL_GUEST_RETURN_PATH; shared-world.test.ts holds the two equal). */
+/** The coached world's registered return path (its src/server.ts GENERAL_GUEST_RETURN_PATH; shared-world.test.ts holds the two equal). */
 export const RETURN_PATH = '/play/general/return';
 export const ISSUER = 'https://identity.example';
 export const WORLD = 'https://world.example';
@@ -21,15 +21,23 @@ export const OTHER = 'https://other.example';
 export const agent = { agentDid: 'did:web:identity.example:agents:world-service', podUrl: 'https://pods.example/world/' };
 export const otherAgent = { agentDid: 'did:web:identity.example:agents:other-service', podUrl: 'https://pods.example/other/' };
 
-/** Identity, with the general guest door on for the world and for one other application. */
-export function identity() {
+/** One application as identity's PROVISIONAL_PLAY_CLIENTS names it for the door. */
+export interface DoorApplication { readonly agentDid: string; readonly podUrl: string; readonly returnPath: string }
+/** The two applications the coached world's tests use. */
+export const DEFAULT_APPLICATIONS: Readonly<Record<string, DoorApplication>> = {
+  [WORLD]: { ...agent, returnPath: RETURN_PATH },
+  [OTHER]: { ...otherAgent, returnPath: '/return' },
+};
+
+/** Identity, with the general guest door on for each of `applications` (by default the world and one other). */
+export function identity(applications: Readonly<Record<string, DoorApplication>> = DEFAULT_APPLICATIONS) {
   const service = Wallet.createRandom();
   const documents = new Map<string, { body: string; revision: number }>();
   const play = createProvisionalPlayProvider({
     issuer: ISSUER, cssUrl: 'https://css.internal.example/', publicPodBase: 'https://pods.example/', relayUrl: 'https://relay.example',
     signingKey: Buffer.alloc(32, 7), stableSigningKey: true, generalGuest: true,
-    clientsJson: JSON.stringify({ [WORLD]: { ...agent, generalGuest: true, generalGuestReturnPath: RETURN_PATH },
-      [OTHER]: { ...otherAgent, generalGuest: true, generalGuestReturnPath: '/return' } }),
+    clientsJson: JSON.stringify(Object.fromEntries(Object.entries(applications).map(([origin, app]) => [origin,
+      { agentDid: app.agentDid, podUrl: app.podUrl, generalGuest: true, generalGuestReturnPath: app.returnPath }]))),
     withOwnerLock: <T>(_userId: string, work: () => Promise<T>) => work(),
     empty: (c: PlayClaims) => ({ userId: c.userId, agentId: c.authenticatedAgentId }), committed: () => {},
     issueCredential: async () => ({ token: 'unused' }),
@@ -99,7 +107,11 @@ export function identity() {
       proof: proof(linkProofPayload(ISSUER, thumbprint, code, expiresAt, shown.account.did)) }, ISSUER);
     return shown.account.did;
   };
-  return { general, doorFor, page, exchanges, account, linkGuest };
+  /** The account's owner unlinks the guest `key` holds (identity has verified their fresh credential proof by then). */
+  const unlinkGuest = async (key: { publicKey: KeyObject }, ownerId: string): Promise<void> => {
+    await general.link.unlink(ownerId, generalGuestUserId(playKeyThumbprint(publicPlayKey(key.publicKey.export({ format: 'jwk' })))));
+  };
+  return { general, doorFor, page, exchanges, account, linkGuest, unlinkGuest };
 }
 export const newKey = () => generateKeyPairSync('ec', { namedCurve: 'prime256v1' });
 export const cookieOf = (response: Response) => (response.headers.get('set-cookie') ?? '').split(';')[0]!;
