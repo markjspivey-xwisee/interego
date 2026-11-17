@@ -21,6 +21,15 @@ function op(id: string, action: string, method: string | null, title: string, ex
     ...(method ? { 'hydra:method': method } : {}), 'hydra:title': title, ...extra };
 }
 const target = (path: string) => ({ 'hydra:target': { '@id': path } });
+/** Arrays nested `depth` deep: [] is 1, [[]] is 2. */
+export function nested(depth: number): unknown[] {
+  let value: unknown[] = [];
+  for (let i = 1; i < depth; i++) value = [value];
+  return value;
+}
+/** The XSD 1.1 date and time datatypes each client checks, by local name. */
+export const TEMPORAL_TYPES = ['date', 'dateTime', 'dateTimeStamp', 'time', 'gYear', 'gYearMonth', 'gMonth', 'gDay', 'gMonthDay',
+  'duration', 'yearMonthDuration', 'dayTimeDuration'] as const;
 /** An affordance that sends to /num-target and expects a JSON Schema object with these properties. */
 const schemaOp = (id: string, action: string, method: string, title: string, properties: Record<string, unknown>) =>
   op(id, action, method, title, { ...target('/num-target'), 'hydra:expects': { type: 'object', properties } });
@@ -1001,6 +1010,100 @@ export function sharedDescriptors(base: string): Record<string, string> {
         { 'hydra:property': { '@id': 'urn:p:name' } },
       ] },
     ] },
+    // Constraints both clients read but once passed over, and defaults read as the document gives
+    // them: defaults of another kind than their field's, a SHACL count of 0, fields written in place
+    // with counts and rdf:JSON, alone and beside a shape the document describes or does not, a body
+    // schema with no properties, a closed shape with a template variable, bounds on fields that take
+    // no number, dates and times, a property name with "/", readOnly on the body and on a property
+    // with a default, a property not written with a default, and number entries past 2^53.
+    // RULE_CASES and WARNING_CASES read them.
+    '/rules': { '@context': CTX, '@id': `${base}/rules`, 'iep:affordance': [
+      schemaOp('ds', 'urn:rules:schema-default', 'POST', 'String default 1', { m: { type: 'string', default: 1 } }),
+      schemaOp('du', 'urn:rules:untyped-default', 'POST', 'Untyped object default', { m: { default: { k: 1 } } }),
+      op('sd', 'urn:rules:shape-default', 'POST', 'Shape number default', { ...target('/num-target'), 'hydra:expects': { '@id': '#SD' } }),
+      op('su', 'urn:rules:shape-untyped', 'POST', 'Untyped shape number default', { ...target('/num-target'), 'hydra:expects': { '@id': '#SU' } }),
+      op('sl', 'urn:rules:list-default', 'POST', 'List number default', { ...target('/num-target'), 'hydra:expects': { '@id': '#SL' } }),
+      op('sb', 'urn:rules:bool-default', 'POST', 'Boolean number default', { ...target('/num-target'), 'hydra:expects': { '@id': '#SB' } }),
+      op('sn', 'urn:rules:number-text-default', 'POST', 'Number text default', { ...target('/num-target'), 'hydra:expects': { '@id': '#SN' } }),
+      op('zc', 'urn:rules:zero', 'POST', 'No value', { ...target('/num-target'), 'hydra:expects': { '@id': '#ZC' } }),
+      op('zd', 'urn:rules:zero-default', 'POST', 'No value, with a default', { ...target('/num-target'), 'hydra:expects': { '@id': '#ZD' } }),
+      op('im', 'urn:rules:inline-min', 'POST', 'Inline two or more', { ...target('/num-target'), fields: [{ name: 'x', path: 'urn:x', minCount: 2 }] }),
+      op('ix', 'urn:rules:inline-max', 'POST', 'Inline three or fewer', { ...target('/num-target'), fields: [{ name: 'x', path: 'urn:x', maxCount: 3 }] }),
+      op('iz', 'urn:rules:inline-zero', 'POST', 'Inline none', { ...target('/num-target'), fields: [{ name: 'x', path: 'urn:x', maxCount: 0 }] }),
+      op('ij', 'urn:rules:inline-json', 'POST', 'Inline JSON', { ...target('/num-target'), fields: [{ name: 'x', path: 'urn:x', datatype: 'rdf:JSON' }] }),
+      op('is', 'urn:rules:inline-schema', 'POST', 'Inline beside a schema', { ...target('/num-target'), fields: [{ name: 'x' }],
+        'hydra:expects': { type: 'object', properties: { x: { type: 'string', enum: ['a'] } } } }),
+      op('ih', 'urn:rules:inline-shape', 'POST', 'Inline beside a shape', { ...target('/num-target'), fields: [{ name: 'x' }],
+        'hydra:expects': { '@id': '#IS' } }),
+      op('id', 'urn:rules:inline-disagree', 'POST', 'Inline that disagrees', { ...target('/num-target'),
+        fields: [{ name: 'x', datatype: 'xsd:integer' }], 'hydra:expects': { type: 'object', properties: { x: { type: 'string' } } } }),
+      op('ie', 'urn:rules:inline-extra', 'POST', 'Inline the shape lacks', { ...target('/num-target'),
+        fields: [{ name: 'y' }], 'hydra:expects': { type: 'object', properties: { x: { type: 'string' } } } }),
+      op('io', 'urn:rules:inline-outside', 'POST', 'Inline beside an outside shape', { ...target('/num-target'),
+        fields: [{ name: 'x' }], 'hydra:expects': { '@id': 'https://vocab.example/Outside' } }),
+      op('nf', 'urn:rules:no-props-false', 'POST', 'Body of no properties', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] },
+      'hydra:expects': { type: 'object', additionalProperties: false } }),
+      op('nr', 'urn:rules:no-props-required', 'POST', 'Body requiring what it lacks', { ...target('/num-target'),
+        'hydra:expects': { type: 'object', required: ['x'] } }),
+      op('cv', 'urn:rules:closed-var', 'POST', 'Closed shape variable', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] },
+      'hydra:expects': { '@id': '#CS' } }),
+      op('ci', 'urn:rules:closed-ignored', 'POST', 'Closed shape ignoring the variable', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] },
+      'hydra:expects': { '@id': '#CI' } }),
+      op('bt', 'urn:rules:text-bounds', 'POST', 'Bounds on text', { ...target('/num-target'), 'hydra:expects': { '@id': '#BT' } }),
+      schemaOp('sn2', 'urn:rules:slash-name', 'POST', 'Slash name', { 'd/x': { type: 'array', items: { type: 'integer' } } }),
+      op('rr', 'urn:rules:root-read-only', 'POST', 'Read-only body', { ...target('/num-target'),
+        'hydra:expects': { type: 'object', readOnly: true, properties: { a: { type: 'string' } } } }),
+      schemaOp('rd', 'urn:rules:read-only-default', 'POST', 'Read-only default', { id: { type: 'string', readOnly: true, default: 'x' },
+        name: { type: 'string' } }),
+      op('wd', 'urn:rules:unwritable-default', 'POST', 'Unwritable default', { ...target('/num-target'), 'hydra:expects': { '@id': '#WD' } }),
+      schemaOp('np', 'urn:rules:number-past-safe', 'POST', 'Number entry past 2^53', { n: { type: 'number', enum: ['NUMBER-PAST-SAFE'] } }),
+      schemaOp('up', 'urn:rules:untyped-past-safe', 'POST', 'Untyped entry past 2^53', { m: { enum: ['NUMBER-PAST-SAFE', 'a'] } }),
+      op('ee', 'urn:rules:empty-entry', 'POST', 'Empty entry', { ...target('/num-target'), 'hydra:expects': { '@id': '#EE' } }),
+    ], '@graph': [
+      { '@id': '#SD', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': 5 } },
+      { '@id': '#SU', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
+        'sh:defaultValue': 5 } },
+      { '@id': '#SL', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
+        'sh:datatype': { '@id': 'xsd:string' }, 'sh:defaultValue': [1, 'a'] } },
+      { '@id': '#SB', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:b' }, 'sh:name': 'b', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:boolean' }, 'sh:defaultValue': 1 } },
+      { '@id': '#SN', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:n' }, 'sh:name': 'n', 'sh:maxCount': 1,
+        'sh:datatype': { '@id': 'xsd:integer' }, 'sh:defaultValue': '7' } },
+      { '@id': '#ZC', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 0 } },
+      { '@id': '#ZD', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 0,
+        'sh:defaultValue': 'd' } },
+      { '@id': '#IS', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:x' }, 'sh:name': 'x', 'sh:maxCount': 1,
+        'sh:in': ['a'] } },
+      { '@id': '#CS', '@type': 'sh:NodeShape', 'sh:closed': true,
+        'sh:property': { 'sh:path': { '@id': 'urn:p:a' }, 'sh:name': 'a', 'sh:maxCount': 1 } },
+      { '@id': '#CI', '@type': 'sh:NodeShape', 'sh:closed': true, 'sh:ignoredProperties': { '@list': [{ '@id': 'urn:p:q' }] },
+        'sh:property': { 'sh:path': { '@id': 'urn:p:a' }, 'sh:name': 'a', 'sh:maxCount': 1 } },
+      { '@id': '#BT', '@type': 'sh:NodeShape', 'sh:property': [
+        { 'sh:path': { '@id': 'urn:p:tb' }, 'sh:name': 'tb', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:string' }, 'sh:minInclusive': 3 },
+        { 'sh:path': { '@id': 'urn:p:ub' }, 'sh:name': 'ub', 'sh:maxCount': 1, 'sh:minInclusive': 3 },
+        { 'sh:path': { '@id': 'urn:p:since' }, 'sh:name': 'since', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:date' },
+          'sh:minInclusive': '2020-01-01' },
+        { 'sh:path': { '@id': 'urn:p:when' }, 'sh:name': 'when', 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:dateTimeStamp' } },
+        { 'sh:path': { '@id': 'urn:p:span' }, 'sh:name': 'span', 'sh:datatype': { '@id': 'xsd:dayTimeDuration' } },
+      ] },
+      { '@id': '#WD', '@type': 'hydra:Class', 'hydra:supportedProperty': [
+        { 'hydra:property': { '@id': 'urn:p:id' }, 'hydra:writable': false, 'sh:defaultValue': 'x' },
+        { 'hydra:property': { '@id': 'urn:p:name' } },
+      ] },
+      { '@id': '#EE', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:c' }, 'sh:name': 'c', 'sh:maxCount': 1,
+        'sh:in': ['', 'a'] } },
+    ] },
+    // One field for each XSD 1.1 date and time datatype, named for it. TEMPORAL_CASES read it.
+    '/temporal': { '@context': CTX, '@id': `${base}/temporal`, 'iep:affordance': [
+      op('t', 'urn:temporal', 'POST', 'Dates and times', { ...target('/num-target'), 'hydra:expects': { '@id': '#T' } })],
+    '@graph': [{ '@id': '#T', '@type': 'sh:NodeShape', 'sh:property': TEMPORAL_TYPES.map(type =>
+      ({ 'sh:path': { '@id': `urn:p:${type}` }, 'sh:name': type, 'sh:maxCount': 1, 'sh:datatype': { '@id': `xsd:${type}` } })) }] },
+    // A document nested deeper than either client reads.
+    '/deep-document': { '@context': CTX, '@id': `${base}/deep-document`, 'rdfs:comment': nested(300) },
   };
   // JSON.stringify writes 1.0 as 1, so the 1.0 is put in the text by hand.
   const out = Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"ONE-POINT-ZERO"', '1.0')
@@ -1014,6 +1117,8 @@ export function sharedDescriptors(base: string): Record<string, string> {
     .replace('"INTEGER-PAST-SAFE"', '9007199254740993').replace('"CONST-PAST-SAFE"', '9007199254740993');
   // An entry no double holds, 1e400, which JSON.parse reads as an infinity.
   out['/sweep'] = out['/sweep']!.split('"INFINITE-ENTRY"').join('1e400');
+  // An entry 2^53 + 1, which JSON.parse reads as 2^53.
+  out['/rules'] = out['/rules']!.split('"NUMBER-PAST-SAFE"').join('9007199254740993');
   // JSON.stringify writes each key once, so a repeated key is put in the text by hand: JSON leaves
   // its meaning open, and a reader that takes the last "hydra:method" takes GET.
   out['/repeated-key'] = JSON.stringify({ '@context': CTX, '@id': `${base}/repeated-key`, 'iep:affordance': [
@@ -1060,6 +1165,17 @@ export function sharedMarkdown(base: string): Record<string, string> {
       'fields: [{"name": "a", "defaultValue": "\\ud800"}]', ':::', '',
       ':::control hm-unread-key', 'title: Unread field key', 'method: POST', `target: ${base}/num-target`,
       'fields: [{"name": "x", "datatype": "xsd:integer", "minInclusive": 5}]', ':::', ''].join('\n'),
+    // A block's fields counted as a property shape's are, a block that expects a shape it cannot
+    // describe, with and without fields, and fields nested deeper than either client reads.
+    '/rules-md': ['# Rules', '',
+      ':::control hm-inline-min', 'title: Block two or more', 'method: POST', `target: ${base}/num-target`,
+      'fields: [{"name": "x", "minCount": 2}]', ':::', '',
+      ':::control hm-expects', 'title: Block expects', 'method: POST', `target: ${base}/num-target`, 'expects: urn:shape:Outside',
+      'fields: [{"name": "x"}]', ':::', '',
+      ':::control hm-expects-none', 'title: Block expects, no fields', 'method: POST', `target: ${base}/num-target`,
+      'expects: urn:shape:Outside', ':::', '',
+      ':::control hm-deep-fields', 'title: Block nested too deep', 'method: POST', `target: ${base}/num-target`,
+      `fields: ${JSON.stringify(nested(300))}`, ':::', ''].join('\n'),
   };
 }
 
@@ -1083,6 +1199,7 @@ export const DOCUMENT_REFUSALS: ReadonlyArray<readonly [path: string, problem: s
   ['/colliding', 'This document gives one node @id twice, which JSON-LD does not allow, so it is not read.'],
   ['/nest-id', 'This document gives one node @id twice, which JSON-LD does not allow, so it is not read.'],
   ['/repeated-key', 'This document repeats the key "hydra:method" in one object, so which value it means is not known, and it is not read.'],
+  ['/deep-document', 'This document nests JSON deeper than 256 levels, which this client does not read, so it is not read.'],
   ['/graph-container', 'This document holds a @graph inside a node, which this client does not read, so it is not read.'],
   ['/import-context', "This document's @context uses @import, which this client does not fetch, so it is not read."],
   ['/set-context', 'This document has a @set object inside a @list or with a @context of its own, which this client does not read, so it is not read.'],
@@ -1263,6 +1380,13 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
   ['/values', 'urn:values:json', 'JSON value', { data: '[1,NaN]' }, { error: 'data must be JSON' }],
   ['/values', 'urn:values:json', 'JSON value', { data: '-1e400' }, { error: 'data: holds a number too large to send' }],
   ['/values', 'urn:values:json', 'JSON value', { data: '[1,2.5]' }, { body: { data: [1, 2.5] } }],
+  // JSON nested deeper than 256 levels is refused by name before it is read, in a value and in a
+  // list's JSON array alike; 256 levels are read.
+  ['/values', 'urn:values:json', 'JSON value', { data: JSON.stringify(nested(257)) },
+    { error: 'data: nests JSON deeper than 256 levels, which this client does not read, so it is not sent' }],
+  ['/values', 'urn:values:json', 'JSON value', { data: JSON.stringify(nested(256)) }, { body: { data: nested(256) } }],
+  ['/values', 'urn:values:list', 'List values', { tags: JSON.stringify(nested(300)) },
+    { error: 'tags: nests JSON deeper than 256 levels, which this client does not read, so it is not sent' }],
   ['/values', 'urn:values:body', 'JSON body', { body: '{"score":NaN}' }, { error: 'body must be JSON' }],
   ['/values', 'urn:values:body', 'JSON body', { body: '{"score":Infinity}' }, { error: 'body must be JSON' }],
   ['/values', 'urn:values:body', 'JSON body', { body: '[1e400]' }, { error: 'body: holds a number too large to send' }],
@@ -1285,7 +1409,8 @@ export const VALUE_CASES: ReadonlyArray<readonly [path: string, action: string, 
   // past 2^53 is the double nearest it; an integer field's default of 2.0 is 2, and one past 2^53
   // cannot be sent exactly; a bound no double holds is an infinity, which every number a field
   // takes is below, and a list's number past a double is not a number.
-  ['/values', 'urn:values:text-default', 'Text defaults', {}, { body: { big: '1e+30', small: '5', flag: 'true', object: '{"a":[1]}' } }],
+  ['/values', 'urn:values:text-default', 'Text defaults', {}, { error: 'small: must be a JSON string' }],
+  ['/values', 'urn:values:text-default', 'Text defaults', {}, { error: 'object: must be a JSON string' }],
   ['/values-md', 'hm-big-default', 'Big text default', {}, { body: { a: '1e+30' } }],
   ['/values', 'urn:values:whole-default', 'Whole default', {}, { body: { n: 2 } }],
   ['/values', 'urn:values:unsafe-default', 'Past 2^53 default', {}, { error: 'n: integer too large to send exactly' }],
@@ -1451,8 +1576,8 @@ export const SWEEP_CASES: ReadonlyArray<ValueCase> = [
   ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { ex: '0' }, { error: 'ex: not above minExclusive 0' }],
   ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { ex: '10' }, { error: 'ex: not below maxExclusive 10' }],
   ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { ex: '5' }, { body: { ex: 5 } }],
-  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { day: '2024-01-01' },
-    { error: 'day: takes xsd:date, whose form this client does not check, so it is not sent' }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { day: '2024-01-01' }, { body: { day: '2024-01-01' } }],
+  ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { day: '2024-02-30' }, { error: 'day: not an xsd:date' }],
   ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { when: '2024-02-01' },
     { error: 'when: its sh:minInclusive 2024-01-01 is not a number, which this client does not compare, so it is not sent' }],
   ['/sweep', 'urn:sweep:shacl', 'Shape constraints', { pos: '0' }, { error: 'pos: out of the range of xsd:positiveInteger' }],
@@ -1533,6 +1658,160 @@ export const SWEEP_CASES: ReadonlyArray<ValueCase> = [
   ['/sweep', 'urn:sweep:read-only', 'Read-only', { name: 'n', doc: '{}' }, { body: { name: 'n', doc: {} } }],
 ];
 
+/** What a default of another kind than its field takes is refused with. */
+const wrongDefault = (name: string, value: string, kind: string) =>
+  `${name}: its default ${value} is not ${kind}, which this field takes, so it is not sent`;
+/** What a bound on a field that takes no number is refused with. */
+const textBound = (name: string, bound: string) =>
+  `${name}: its sh:minInclusive ${bound} bounds a field that takes no number, which this client does not compare, so it is not sent`;
+/** The problem that keeps a control whose field written in place `what` from being invoked. */
+const inlinePlace = (name: string, what: string) => `the input "${name}" ${what}, so what it takes is not known; this control is not invoked`;
+
+/**
+ * Rules on /rules and /rules-md, read alike by both clients as SWEEP_CASES are:
+ *   - a value given empty (a link's field.m=, an empty --field m=, a cleared input) and none given
+ *     (an untouched form) both take the default as the document gives it, checked as it is: a
+ *     JSON Schema string field's default of 1 is refused, never sent as "1"; an untyped property's
+ *     object default is sent as the object; and a shape's default of another kind than its
+ *     datatype takes (a number for text, 1 for a boolean, an item of a list) is refused by name,
+ *     while a number field's default written as text is that number;
+ *   - sh:maxCount 0 takes no value, a value given and a default alike;
+ *   - a field written in place counts its values and reads rdf:JSON as a property shape does, and,
+ *     beside a shape the document describes, is checked against it: the shape's constraints are
+ *     the field's, and a field the shape lacks or that disagrees with it keeps the control from
+ *     being invoked;
+ *   - a body schema with no properties is a JSON Schema, so additionalProperties false refuses a
+ *     template variable and a required name it lacks keeps the control from being invoked; a closed
+ *     shape refuses a template variable sh:ignoredProperties does not name;
+ *   - a bound on text, an untyped field or a date is not compared, and a date is checked as XSD 1.1
+ *     writes one;
+ *   - a field name holding "/" is set apart from the pointer after it;
+ *   - readOnly on the body schema keeps the control from being invoked, and a property that is
+ *     readOnly or not writable is never given its default;
+ *   - an entry past 2^53 is not offered, and a number that names it is refused.
+ */
+export const RULE_CASES: ReadonlyArray<ValueCase> = [
+  ['/rules', 'urn:rules:schema-default', 'String default 1', {}, { error: 'm: must be a JSON string' }],
+  ['/rules', 'urn:rules:schema-default', 'String default 1', { m: '' }, { error: 'm: must be a JSON string' }],
+  ['/rules', 'urn:rules:schema-default', 'String default 1', { m: '1' }, { body: { m: '1' } }],
+  ['/rules', 'urn:rules:untyped-default', 'Untyped object default', {}, { body: { m: { k: 1 } } }],
+  ['/rules', 'urn:rules:untyped-default', 'Untyped object default', { m: '' }, { body: { m: { k: 1 } } }],
+  ['/rules', 'urn:rules:untyped-default', 'Untyped object default', { m: '{"k":1}' }, { body: { m: '{"k":1}' } }],
+  ['/rules', 'urn:rules:shape-default', 'Shape number default', {}, { error: wrongDefault('m', '5', 'text') }],
+  ['/rules', 'urn:rules:shape-default', 'Shape number default', { m: '' }, { error: wrongDefault('m', '5', 'text') }],
+  ['/rules', 'urn:rules:shape-default', 'Shape number default', { m: '5' }, { body: { m: '5' } }],
+  ['/rules', 'urn:rules:shape-untyped', 'Untyped shape number default', {}, { error: wrongDefault('m', '5', 'text') }],
+  ['/rules', 'urn:rules:list-default', 'List number default', {}, { error: wrongDefault('m', '1', 'text') }],
+  ['/rules', 'urn:rules:list-default', 'List number default', { m: 'b' }, { body: { m: ['b'] } }],
+  ['/rules', 'urn:rules:bool-default', 'Boolean number default', {}, { error: wrongDefault('b', '1', 'a boolean') }],
+  ['/rules', 'urn:rules:number-text-default', 'Number text default', {}, { body: { n: 7 } }],
+  ['/rules', 'urn:rules:number-text-default', 'Number text default', { n: '' }, { body: { n: 7 } }],
+  ['/rules', 'urn:rules:zero', 'No value', { m: 'x' }, { error: 'm: takes at most 0 values, got 1' }],
+  ['/rules', 'urn:rules:zero', 'No value', {}, { body: {} }],
+  ['/rules', 'urn:rules:zero-default', 'No value, with a default', {}, { error: 'm: takes at most 0 values, got 1' }],
+  ['/rules', 'urn:rules:inline-min', 'Inline two or more', { x: 'a' }, { error: 'x: needs at least 2 values, got 1' }],
+  ['/rules', 'urn:rules:inline-min', 'Inline two or more', { x: 'a\nb' }, { body: { x: ['a', 'b'] } }],
+  ['/rules', 'urn:rules:inline-max', 'Inline three or fewer', { x: 'a\nb\nc\nd' }, { error: 'x: takes at most 3 values, got 4' }],
+  ['/rules', 'urn:rules:inline-max', 'Inline three or fewer', { x: '["a","b"]' }, { body: { x: ['a', 'b'] } }],
+  ['/rules', 'urn:rules:inline-zero', 'Inline none', { x: 'a' }, { error: 'x: takes at most 0 values, got 1' }],
+  ['/rules', 'urn:rules:inline-json', 'Inline JSON', { x: '{bad' }, { error: 'x must be JSON' }],
+  ['/rules', 'urn:rules:inline-json', 'Inline JSON', { x: '{"a":1}' }, { body: { x: { a: 1 } } }],
+  ['/rules-md', 'hm-inline-min', 'Block two or more', { x: 'a' }, { error: 'x: needs at least 2 values, got 1' }],
+  ['/rules', 'urn:rules:inline-schema', 'Inline beside a schema', { x: 'zzz' }, { error: 'x: must be one of a' }],
+  ['/rules', 'urn:rules:inline-schema', 'Inline beside a schema', { x: 'a' }, { body: { x: 'a' } }],
+  ['/rules', 'urn:rules:inline-shape', 'Inline beside a shape', { x: 'zzz' }, { error: 'x: must be one of a' }],
+  ['/rules', 'urn:rules:inline-disagree', 'Inline that disagrees', { x: '1' },
+    { error: inlinePlace('x', 'written in place disagrees with the shape hydra:expects names on its datatype') }],
+  ['/rules', 'urn:rules:inline-extra', 'Inline the shape lacks', { y: '1' },
+    { error: inlinePlace('y', 'is written in place but is not in the shape hydra:expects names') }],
+  ['/rules', 'urn:rules:inline-outside', 'Inline beside an outside shape', { x: 'v' }, { body: { x: 'v' } }],
+  ['/rules-md', 'hm-expects', 'Block expects', { x: 'v' }, { body: { x: 'v' } }],
+  ['/rules-md', 'hm-deep-fields', 'Block nested too deep', {},
+    { error: 'this control block writes fields as JSON nested deeper than 256 levels, which this client does not read, so what it sends is not known; it is not invoked' }],
+  ['/rules', 'urn:rules:no-props-false', 'Body of no properties', { q: 'y' }, { error: 'q: is not allowed by its schema' }],
+  ['/rules', 'urn:rules:no-props-false', 'Body of no properties', {}, { body: null }],
+  ['/rules', 'urn:rules:no-props-required', 'Body requiring what it lacks', {},
+    { error: 'the JSON Schema requires "x", which it does not describe, so what it sends is not known; this control is not invoked' }],
+  ['/rules', 'urn:rules:closed-var', 'Closed shape variable', { a: 'x', q: 'y' },
+    { error: 'q: is not allowed by its shape, which is closed (sh:closed true), so it is not sent' }],
+  ['/rules', 'urn:rules:closed-var', 'Closed shape variable', { a: 'x' }, { body: { a: 'x' } }],
+  ['/rules', 'urn:rules:closed-ignored', 'Closed shape ignoring the variable', { a: 'x', q: 'y' }, { body: { a: 'x', q: 'y' } }],
+  ['/rules', 'urn:rules:text-bounds', 'Bounds on text', { tb: '5' }, { error: textBound('tb', '3') }],
+  ['/rules', 'urn:rules:text-bounds', 'Bounds on text', { ub: '5' }, { error: textBound('ub', '3') }],
+  ['/rules', 'urn:rules:text-bounds', 'Bounds on text', { since: '2024-01-01' },
+    { error: 'since: its sh:minInclusive 2020-01-01 is not a number, which this client does not compare, so it is not sent' }],
+  ['/rules', 'urn:rules:text-bounds', 'Bounds on text', { when: '2024-01-01T00:00:00' }, { error: 'when: not an xsd:dateTimeStamp' }],
+  ['/rules', 'urn:rules:text-bounds', 'Bounds on text', { when: '2024-01-01T00:00:00Z' }, { body: { when: '2024-01-01T00:00:00Z' } }],
+  ['/rules', 'urn:rules:text-bounds', 'Bounds on text', { span: 'P1D\nPT36H' }, { body: { span: ['P1D', 'PT36H'] } }],
+  ['/rules', 'urn:rules:text-bounds', 'Bounds on text', { span: 'P1D\nP1M' }, { error: 'span: not an xsd:dayTimeDuration' }],
+  ['/rules', 'urn:rules:slash-name', 'Slash name', { 'd/x': '["a"]' }, { error: 'd/x at /0: must be a JSON integer' }],
+  ['/rules', 'urn:rules:slash-name', 'Slash name', { 'd/x': '[1]' }, { body: { 'd/x': [1] } }],
+  ['/rules', 'urn:rules:root-read-only', 'Read-only body', { a: 'x' },
+    { error: 'the JSON Schema of the body is read-only (readOnly true), so nothing is written to it; this control is not invoked' }],
+  ['/rules', 'urn:rules:read-only-default', 'Read-only default', { name: 'n' }, { body: { name: 'n' } }],
+  ['/rules', 'urn:rules:unwritable-default', 'Unwritable default', { name: 'n' }, { body: { name: 'n' } }],
+  ['/rules', 'urn:rules:number-past-safe', 'Number entry past 2^53', { n: '9007199254740992' }, { error: 'n: integer too large to send exactly' }],
+  ['/rules', 'urn:rules:untyped-past-safe', 'Untyped entry past 2^53', { m: 'a' }, { body: { m: 'a' } }],
+  ['/rules', 'urn:rules:untyped-past-safe', 'Untyped entry past 2^53', { m: '9007199254740992' }, { error: 'm: must be one of 9007199254740992, a' }],
+];
+
+/**
+ * Controls each client shows a warning with, as [path, the name that invokes it, title, the
+ * warning]: hydra:expects names a shape the document does not describe, so the fields written in
+ * place, if any, are all that is known of what the server expects.
+ */
+export const WARNING_CASES: ReadonlyArray<readonly [path: string, rel: string, title: string, warning: string]> = [
+  ['/rules', 'urn:rules:inline-outside', 'Inline beside an outside shape', 'hydra:expects names https://vocab.example/Outside, which this ' +
+    'document does not describe, so only the input fields written in place were built: what else the server expects is not known here.'],
+  ['/rules-md', 'hm-expects', 'Block expects', 'hydra:expects names urn:shape:Outside, which this document does not describe, so only the ' +
+    'input fields written in place were built: what else the server expects is not known here.'],
+  ['/rules-md', 'hm-expects-none', 'Block expects, no fields', 'hydra:expects names urn:shape:Outside, which this document does not ' +
+    'describe, so no input fields were built: what the server expects is not known here.'],
+];
+
+/**
+ * Texts for each XSD 1.1 date and time datatype on /temporal, as [datatype, text, whether it is a
+ * value of it], read alike by both clients: a value is sent as typed, and any other text is refused
+ * as "<datatype>: not an xsd:<datatype>". Leap days by the proleptic Gregorian rule (2000 and 0000
+ * are leap years, 1900 is not), 24:00:00 and nothing past it, timezones to 14:00, years of four
+ * digits or more, ASCII digits only, and durations with their parts in order.
+ */
+export const TEMPORAL_CASES: ReadonlyArray<readonly [type: (typeof TEMPORAL_TYPES)[number], text: string, ok: boolean]> = [
+  ...([['2024-02-29', true], ['2023-02-29', false], ['1900-02-29', false], ['2000-02-29', true], ['0000-02-29', true], ['-0001-01-01', true],
+    ['12024-01-01', true], ['02024-01-01', false], ['024-01-01', false], ['2024-1-01', false], ['2024-13-01', false], ['2024-00-10', false],
+    ['2024-04-31', false], ['2024-04-30', true], ['2024-01-01Z', true], ['2024-01-01+14:00', true], ['2024-01-01+14:01', false],
+    ['2024-01-01-13:59', true], ['2024-01-01+15:00', false], ['2024-01-01+05:60', false], ['2024-01-01 ', false], [' 2024-01-01', false],
+    ['2024-01-01T00:00:00', false], ['+2024-01-01', false], ['2024-01-01z', false], ['\uff12\uff10\uff12\uff14-01-01', false],
+    ['2024-01-01+0100', false], ['', false]] as const).map(([text, ok]) => ['date', text, ok] as const),
+  ...([['2024-01-01T00:00:00', true], ['2024-01-01T24:00:00', true], ['2024-01-01T24:00:00.000', true], ['2024-01-01T24:00:01', false],
+    ['2024-01-01T24:00:00.1', false], ['2024-01-01T23:59:60', false], ['2024-01-01T23:59:59.999999999Z', true], ['2024-01-01T12:00:00.', false],
+    ['2024-01-01T12:00', false], ['2024-01-01t12:00:00', false], ['2024-02-30T00:00:00', false], ['2024-01-01T25:00:00', false],
+    ['2024-01-01T12:60:00', false], ['2024-01-01T12:00:00-14:00', true], ['2024-01-01T1:00:00', false]] as const)
+    .map(([text, ok]) => ['dateTime', text, ok] as const),
+  ...([['2024-01-01T00:00:00Z', true], ['2024-01-01T00:00:00', false], ['2024-01-01T00:00:00+01:00', true]] as const)
+    .map(([text, ok]) => ['dateTimeStamp', text, ok] as const),
+  ...([['00:00:00', true], ['24:00:00', true], ['23:59:59.5+01:00', true], ['24:30:00', false], ['1:00:00', false], ['12:00:00Z', true],
+    ['12:00:00+14:30', false], ['12:00:00.5.5', false]] as const).map(([text, ok]) => ['time', text, ok] as const),
+  ...([['2024', true], ['-2024', true], ['0000', true], ['24', false], ['2024Z', true], ['02024', false], ['20240', true], ['2024-', false]] as const)
+    .map(([text, ok]) => ['gYear', text, ok] as const),
+  ...([['2024-02', true], ['2024-13', false], ['2024-2', false], ['2024-02Z', true], ['-0044-03', true]] as const)
+    .map(([text, ok]) => ['gYearMonth', text, ok] as const),
+  ...([['--02', true], ['--13', false], ['--02--', false], ['--00', false], ['--12Z', true], ['---02', false]] as const)
+    .map(([text, ok]) => ['gMonth', text, ok] as const),
+  ...([['---31', true], ['---32', false], ['---00', false], ['---01+01:00', true], ['--31', false]] as const)
+    .map(([text, ok]) => ['gDay', text, ok] as const),
+  ...([['--02-29', true], ['--02-30', false], ['--04-31', false], ['--04-30', true], ['--12-31Z', true], ['--1-01', false]] as const)
+    .map(([text, ok]) => ['gMonthDay', text, ok] as const),
+  ...([['P1Y', true], ['P1Y2M3DT4H5M6.7S', true], ['-P1D', true], ['PT1H', true], ['P', false], ['PT', false], ['P1DT', false],
+    ['P1S', false], ['PT1.5S', true], ['PT1.S', false], ['PT.5S', false], ['P1.5Y', false], ['P1M1Y', false], ['P1Y1Y', false],
+    ['p1Y', false], ['+P1D', false], ['PT1M', true], ['P1M', true], ['P0Y', true], ['PT36H', true], ['P1W', false], ['P1DT1H1M1S1H', false],
+    ['PT1H1D', false]] as const).map(([text, ok]) => ['duration', text, ok] as const),
+  ...([['P1Y2M', true], ['P1Y', true], ['P2M', true], ['P1D', false], ['P1YT1H', false], ['-P1Y', true]] as const)
+    .map(([text, ok]) => ['yearMonthDuration', text, ok] as const),
+  ...([['P1D', true], ['PT1H', true], ['P1DT2H3M4.5S', true], ['P1Y', false], ['P1M', false], ['P1M1D', false], ['-PT1S', true]] as const)
+    .map(([text, ok]) => ['dayTimeDuration', text, ok] as const),
+];
+
 /**
  * Confirmed writes whose body each client sends as the page's JSON.stringify(values, null, 2) writes
  * it, byte for byte, as [path, action, title, fields, the body sent]: each number as JavaScript
@@ -1576,12 +1855,37 @@ export const COST_CASES: ReadonlyArray<readonly [path: string, rel: string, cont
   ['/cost/items-refused', 'urn:items', 1, 1, 'm/0: must be one of e0, e1, e2, '], ['/cost/shape-list', 'urn:list', 1, 1, 'm: must be one of e0, e1, e2, '],
 ];
 
+/**
+ * Documents of a few dozen kilobytes in which one list of choices serves many inputs, which the form
+ * would offer and a check would name once for each, as [path, the control's name, the problem that
+ * keeps it from being invoked]. Before, 400 inputs sharing an enum of 400 entries took the page 7 s
+ * to select, and 300 sharing an RDF list of 300 4 s; each is now refused within the tests' budget.
+ *   - shared-schema: 400 template variables that additionalProperties types, with an enum of 400;
+ *   - shared-list: 300 properties whose sh:in is one RDF list of 300 nodes;
+ *   - shared-tail: 300 RDF lists that each share a tail of 300 nodes, read as their own.
+ */
+export const SHARED_COST_CASES: ReadonlyArray<readonly [path: string, rel: string, problem: string]> = [
+  ['/cost/shared-schema', 'urn:shared-schema', 'the inputs "v0" and "v1" share the choices of additionalProperties, which this client would ' +
+    "show and check once for each, at a cost the document's size does not bound; this control is not invoked"],
+  ['/cost/shared-list', 'urn:shared-list', 'the inputs "p0" and "p1" share one sh:in list, which this client would show and check once for ' +
+    "each, at a cost the document's size does not bound; this control is not invoked"],
+  ['/cost/shared-tail', 'urn:shared-list', 'the input "p1" writes sh:in as an RDF list that shares nodes with another list, which this ' +
+    'client does not read, so what it takes is not known; this control is not invoked'],
+];
+
 /** Each COST_CASES path's document as the text served; build it once per test file. */
 export function costDescriptors(base: string): Record<string, string> {
   const get = (rel: string, title: string, extra: Record<string, unknown> = {}) =>
     ({ 'iep:action': { '@id': rel }, 'hydra:method': 'GET', 'hydra:title': title, 'hydra:target': { '@id': `${base}/api` }, ...extra });
   const range = (n: number) => Array.from({ length: n }, (_, i) => i);
   const props = (n: number) => range(n).map(j => ({ 'sh:path': { '@id': `urn:p${j}` }, 'sh:name': `p${j}`, 'sh:maxCount': 1 }));
+  // A write whose shape's properties take the sh:in each of `heads` names, beside an RDF list of 300 nodes, #L0 to #L299.
+  const listShape = (path: string, heads: unknown[], more: unknown[]) => ({ '@context': CTX, '@id': `${base}${path}`,
+    'iep:affordance': [{ '@id': '#l', '@type': 'iep:Affordance', 'iep:action': { '@id': 'urn:shared-list' }, 'hydra:method': 'POST',
+      'hydra:title': 'Shared list', 'hydra:target': { '@id': `${base}/api` }, 'hydra:expects': { '@id': '#S' } }],
+    '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': heads.map((head, j) =>
+      ({ 'sh:path': { '@id': `urn:p${j}` }, 'sh:name': `p${j}`, 'sh:maxCount': 1, 'sh:in': head, 'sh:defaultValue': 'zz' })) },
+    ...range(300).map(j => ({ '@id': `#L${j}`, 'rdf:first': `e${j}`, 'rdf:rest': { '@id': j === 299 ? 'rdf:nil' : `#L${j + 1}` } })), ...more] });
   // A write whose one input takes a list, each of whose values is one of 50,000 entries, with a default of 50,000 values.
   const items = (defaults: string[]) => ({ '@context': CTX, '@id': `${base}/cost/items`, 'iep:affordance': [{ '@id': '#i', '@type': 'iep:Affordance',
     'iep:action': { '@id': 'urn:items' }, 'hydra:method': 'POST', 'hydra:title': 'Items', 'hydra:target': { '@id': `${base}/api` },
@@ -1610,6 +1914,18 @@ export function costDescriptors(base: string): Record<string, string> {
       'hydra:expects': { '@id': '#S' } }],
     '@graph': [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm',
       'sh:in': { '@list': range(5000).map(j => `e${j}`) }, 'sh:defaultValue': range(5000).map(j => `x${j}`) } }] },
+    // 400 template variables, none a property, that all take the enum of 400 entries additionalProperties names.
+    '/cost/shared-schema': { '@context': CTX, '@id': `${base}/cost/shared-schema`, 'iep:affordance': [{ '@id': '#s', '@type': 'iep:Affordance',
+      'iep:action': { '@id': 'urn:shared-schema' }, 'hydra:method': 'POST', 'hydra:title': 'Shared schema',
+      'hydra:target': { '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/api{?${range(400).map(j => `v${j}`).join(',')}}`,
+        'hydra:mapping': range(400).map(j => ({ 'hydra:variable': `v${j}` })) },
+      'hydra:expects': { type: 'object', properties: { a: { type: 'string' } },
+        additionalProperties: { enum: range(400).map(j => `e${j}`), default: 'zz' } } }] },
+    // 300 properties whose sh:in is one RDF list of 300 nodes.
+    '/cost/shared-list': listShape('/cost/shared-list', range(300).map(() => ({ '@id': '#L0' })), []),
+    // 300 properties each with an RDF list of its own first node, all ending in one tail of 300 nodes.
+    '/cost/shared-tail': listShape('/cost/shared-tail', range(300).map(i => ({ '@id': `#H${i}` })),
+      range(300).map(i => ({ '@id': `#H${i}`, 'rdf:first': `h${i}`, 'rdf:rest': { '@id': '#L0' } }))),
   };
   return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc)]));
 }

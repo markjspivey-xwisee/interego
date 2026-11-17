@@ -186,10 +186,48 @@ def _json_int(digits: str) -> int | float:
     return float(digits)
 
 
+# JSON nested deeper than _JSON_DEPTH arrays and objects is not read, whether a
+# document, a value given or a response: json.loads would run out of call stack
+# where the page's JSON.parse does not, and a request body's indentation grows
+# with depth, so each client refuses it alike before it is parsed. The scan
+# skips strings by their escapes and counts brackets, so it is linear. The
+# page's JSON_DEPTH, jsonTooDeep and parseJson are the same.
+_JSON_DEPTH = 256
+_JSON_TOKEN = re.compile(r'"(?:[^"\\]+|\\.)*"?|[\[\]{}]', re.DOTALL)
+# What a value nested past _JSON_DEPTH is refused with, after the field's name.
+_DEEP_VALUE = f": nests JSON deeper than {_JSON_DEPTH} levels, which this client does not read, so it is not sent"
+
+
+class _TooDeep(ValueError):
+    """JSON nested past _JSON_DEPTH, refused before it is parsed."""
+
+    def __init__(self) -> None:
+        super().__init__(f"This document nests JSON deeper than {_JSON_DEPTH} levels, which this client does not read, so it is not "
+                         "read.")
+
+
+def _json_too_deep(text: str) -> bool:
+    depth = 0
+    for match in _JSON_TOKEN.finditer(text):
+        token = match.group()
+        if token[0] == '"':
+            continue
+        if token in "[{":
+            depth += 1
+            if depth > _JSON_DEPTH:
+                return True
+        else:
+            depth -= 1
+    return False
+
+
 def _page_json(text: str) -> Any:
     """JSON as the page's JSON.parse reads it: NaN and Infinity refused (a
     ValueError), and a repeated key taking its last value. For what is only
-    looked at, never sent: whether a payload is JSON, and a response."""
+    looked at, never sent: whether a payload is JSON, and a response. JSON
+    nested past _JSON_DEPTH is refused first (_TooDeep)."""
+    if _json_too_deep(text):
+        raise _TooDeep()
     return json.loads(text, parse_constant=_not_json, parse_int=_json_int)
 
 
@@ -888,9 +926,37 @@ def _json_schema_like(item: dict[str, Any], expected: bool = False) -> bool:
     "properties" is an object, with no keyword of its own, or with "@id" or
     "@type" too when it is a value of hydra:expects. Its keys are JSON
     Schema's, never terms, so only its own "@id" and "@type" are read as
-    JSON-LD, and nothing under it is renamed or expanded. The page's
-    jsonSchemaLike is the same."""
-    return isinstance(item.get("properties"), dict) and (expected or not any(key.startswith("@") for key in item))
+    JSON-LD, and nothing under it is renamed or expanded. Where hydra:expects
+    names it, so is an object of JSON Schema's keywords (_schema_by_keywords).
+    The page's jsonSchemaLike is the same."""
+    if isinstance(item.get("properties"), dict) and (expected or not any(key.startswith("@") for key in item)):
+        return True
+    return expected and _schema_by_keywords(item)
+
+
+# JSON Schema's keywords, and those of them that only describe. Where
+# hydra:expects names it, an object whose keys are all keywords (or @id and
+# @type), one or more of which constrains, is a JSON Schema though it has no
+# "properties": {"type": "object", "additionalProperties": false} is the schema
+# of a body of no properties, not a node the document does not describe. The
+# page's SCHEMA_NOTES, SCHEMA_KEYWORDS and schemaByKeywords are the same.
+_SCHEMA_NOTES = frozenset({
+    "$schema", "$id", "$anchor", "$dynamicAnchor", "$recursiveAnchor", "$vocabulary", "$comment", "$defs", "definitions", "title",
+    "description", "default", "deprecated", "examples", "format", "contentEncoding", "contentMediaType", "contentSchema", "writeOnly",
+})
+_SCHEMA_KEYWORDS = _SCHEMA_NOTES | frozenset({
+    "type", "enum", "const", "properties", "additionalProperties", "required", "items", "minItems", "maxItems", "minLength", "maxLength",
+    "pattern", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "readOnly", "allOf", "anyOf", "oneOf", "not", "if", "then",
+    "else", "multipleOf", "uniqueItems", "contains", "minContains", "maxContains", "prefixItems", "additionalItems", "unevaluatedItems",
+    "unevaluatedProperties", "minProperties", "maxProperties", "patternProperties", "propertyNames", "dependencies",
+    "dependentRequired", "dependentSchemas", "$ref", "$dynamicRef", "$recursiveRef",
+})
+
+
+def _schema_by_keywords(item: dict[str, Any]) -> bool:
+    # A key with no value (None or []) is absent, as JSON-LD drops it.
+    keys = [key for key in item if key not in ("@id", "@type") and _present(item[key])]
+    return bool(keys) and all(key in _SCHEMA_KEYWORDS for key in keys) and any(key not in _SCHEMA_NOTES for key in keys)
 
 
 def _propagates(local: Any, fallback: bool) -> bool:
@@ -1635,6 +1701,11 @@ class Field:
     schema_types: list[str] | None = None
     nullable: bool = False
     choices: list[tuple[str, Any]] | None = None
+    # The first node of the RDF list that is its sh:in, which no other field
+    # of its shape may share (_shared_list_problem); and whether it is a
+    # template variable a closed shape does not name, which takes no value.
+    in_list: Any = None
+    closed_out: bool = False
 
     def to_public(self) -> dict[str, Any]:
         return {
@@ -1865,6 +1936,11 @@ class NodeIndex:
         # node kept so the id stays its own.
         self.templates: dict[int, tuple[Any, tuple[str | None, list[dict[str, Any]], list[str]]]] = {}
         self.shapes: dict[int, tuple[Any, list[Field], list[str], str | None, Any]] = {}
+        # Each RDF list's members, read once, keyed by its first node's id()
+        # with the node kept; and the id() of the first node of the list each
+        # list node was read in (rdf_list).
+        self.lists: dict[int, tuple[Any, tuple[list[Any], str | None]]] = {}
+        self.list_owners: dict[int, int] = {}
         self._ingest_document(document, fetched_from)
 
     def _ingest_document(self, document: Any, fetched_from: str | None) -> None:
@@ -2037,15 +2113,30 @@ class NodeIndex:
     def rdf_list(self, head: Any) -> tuple[list[Any], str | None]:
         """The members of an RDF list of rdf:first / rdf:rest nodes, and why it
         could not be read: a node with other than one rdf:first and one
-        rdf:rest, a rest that is no list node, a cycle, or a member this reader
-        does not read as one value."""
+        rdf:rest, a rest that is no list node, a cycle, a member this reader
+        does not read as one value, or a node of another list (two lists that
+        share their tail). A list is read once however many values name it,
+        so lists cost their size once. The page's rdfList is the same."""
+        first = self._list_node(head)
+        if first is None:
+            return [], None
+        hit = self.lists.get(id(first))
+        if hit is None or hit[0] is not first:
+            hit = self.lists[id(first)] = (first, self._walk_list(first))
+        return hit[1]
+
+    def _walk_list(self, first: dict[str, Any]) -> tuple[list[Any], str | None]:
         out: list[Any] = []
         seen: set[int] = set()
-        node = self._list_node(head)
+        node: dict[str, Any] | None = first
         while node is not None:
             if id(node) in seen:
                 return out, "a malformed RDF list"
             seen.add(id(node))
+            owner = self.list_owners.get(id(node))
+            if owner is not None and owner != id(first):
+                return out, "an RDF list that shares nodes with another list"
+            self.list_owners[id(node)] = id(first)
             firsts = [x for x in as_list(self.get(node, P_FIRST)) if x is not None]
             rests = [x for x in as_list(self.get(node, P_REST)) if x is not None]
             if len(firsts) != 1 or len(rests) != 1:
@@ -2062,6 +2153,12 @@ class NodeIndex:
             if node is None:
                 return out, "a malformed RDF list"
         return out, None
+
+    def list_head(self, raw: Any) -> dict[str, Any] | None:
+        """The first node of the one RDF list a value such as sh:in's names, or
+        None. The page's listHead is the same."""
+        items = [item for item in as_list(raw) if item is not None]
+        return self._list_node(items[0]) if len(items) == 1 else None
 
     def list_values(self, raw: Any) -> tuple[list[Any], str | None, bool]:
         """The members of a list value such as sh:in's: a JSON-LD list object
@@ -2196,8 +2293,9 @@ def _json_value(value: Any) -> Any:
 
 def _is_json_schema(value: Any) -> bool:
     """A JSON Schema written in place: an object whose "properties" is an
-    object. The page's isJsonSchema is the same."""
-    return isinstance(value, dict) and isinstance(value.get("properties"), dict) and P_SH_PROP not in value
+    object, or whose keys are JSON Schema's (_schema_by_keywords). The page's
+    isJsonSchema is the same."""
+    return isinstance(value, dict) and P_SH_PROP not in value and (isinstance(value.get("properties"), dict) or _schema_by_keywords(value))
 
 
 _REST_PARAM = "rest-param-"
@@ -2472,7 +2570,7 @@ def _supported_field(index: NodeIndex, ref: Any, problems: list[str]) -> Field |
     enum = facets.enum()
     description = facets.describe(P_SH_DESC, P_COMMENT, P_DESC) or (
         _Facets(index, prop_node, problems, facets.subject).describe(P_COMMENT) if prop_node else None)
-    return Field(
+    fld = Field(
         name=_field_name(name, iri if named else None, None), path=iri if named else None,
         datatype=datatype, json_kind=json_kind,
         min_count=min_count if min_count is not None else (1 if required else None), max_count=max_count,
@@ -2484,8 +2582,12 @@ def _supported_field(index: NodeIndex, ref: Any, problems: list[str]) -> Field |
         min_inclusive=facets.one(P_SH_MINI, "sh:minInclusive"), max_inclusive=facets.one(P_SH_MAXI, "sh:maxInclusive"),
         min_exclusive=extra["min_exclusive"], max_exclusive=extra["max_exclusive"], has_value=extra["has_value"],
         node_kind=extra["node_kind"], unchecked=extra["unchecked"], not_writable=writable is not None and truthy(writable) is not True,
-        required=required, multi=multi,
+        required=required, multi=multi, in_list=index.list_head(index.get(sp, P_SH_IN)),
     )
+    # A property that is not written is never given its default either.
+    if fld.not_writable:
+        fld.default = None
+    return fld
 
 
 _PATH_KEYS = (SHACL + "inversePath", SHACL + "alternativePath", SHACL + "zeroOrMorePath", SHACL + "oneOrMorePath",
@@ -2541,7 +2643,8 @@ def _schema_field(name: str, prop0: Any, required: bool, problems: list[str]) ->
         min_count=1 if required else 0, max_count=1,
         min_items=_inty(prop.get("minItems")) if items else None,
         max_items=_inty(prop.get("maxItems")) if items else None,
-        pattern=_text(prop.get("pattern")) or None, default=prop.get("default"),
+        # A readOnly property is not the client's to write, so it is never given its default.
+        pattern=_text(prop.get("pattern")) or None, default=None if prop.get("readOnly") is True else prop.get("default"),
         max_length=_inty(prop.get("maxLength")), min_length=_inty(prop.get("minLength")),
         description=prop.get("description"), enum=list(enum) if isinstance(enum, list) else [],
         min_inclusive=prop.get("minimum"), max_inclusive=prop.get("maximum"),
@@ -2569,7 +2672,17 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
             problems.append("the JSON Schema writes required as something other than a list of names, which this client does not "
                             "read, so which inputs it needs is not known; this control is not invoked")
         required = {name for name in named if isinstance(name, str)}
-        properties = shape_ref.get("properties")
+        properties = shape_ref["properties"] if isinstance(shape_ref.get("properties"), dict) else {}
+        if "properties" in shape_ref and not isinstance(shape_ref["properties"], dict):
+            problems.append("the JSON Schema writes properties as something other than an object, which this client does not read, so "
+                            "what it sends is not known; this control is not invoked")
+        # readOnly on the body's schema says the body is not the client's to write.
+        if shape_ref.get("readOnly") is True:
+            problems.append("the JSON Schema of the body is read-only (readOnly true), so nothing is written to it; this control is "
+                            "not invoked")
+        elif "readOnly" in shape_ref and not isinstance(shape_ref["readOnly"], bool):
+            problems.append("the JSON Schema writes readOnly as something other than a boolean, which this client does not read, so "
+                            "what it sends is not known; this control is not invoked")
         # The schema of the whole body: it describes an object, each name it
         # requires is one of its properties, and it has no keyword this client
         # does not check, an enum and a const among them, which constrain the
@@ -2588,7 +2701,7 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
             if key in shape_ref and not (key == "uniqueItems" and shape_ref[key] is False):
                 problems.append(f"the JSON Schema names {key}, which this client does not check, so what it sends is not known; "
                                 "this control is not invoked")
-        for name, prop0 in (properties.items() if isinstance(properties, dict) else []):
+        for name, prop0 in properties.items():
             fields.append(_schema_field(name, prop0, name in required, problems))
         return fields, problems
     shape = index.node(shape_ref)
@@ -2609,7 +2722,11 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
                             "control is not invoked")
     if not _present(props):
         if _present(supported):
-            return [f for f in (_supported_field(index, item, problems) for item in as_list(supported)) if f], problems
+            built = [f for f in (_supported_field(index, item, problems) for item in as_list(supported)) if f]
+            shared = _shared_list_problem(built)
+            if shared:
+                problems.append(shared)
+            return built, problems
         if valued:
             # The body sent whole, checked against the shape's own facets as an input is against its property's.
             facets = _Facets(index, shape, problems, "the request body")
@@ -2673,8 +2790,29 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
             min_exclusive=extra["min_exclusive"], max_exclusive=extra["max_exclusive"], has_value=extra["has_value"],
             node_kind=extra["node_kind"], unchecked=extra["unchecked"],
             required=(min_count or 0) >= 1 or extra["has_value"] is not None, multi=multi,
+            in_list=index.list_head(index.get(node, P_SH_IN)),
         ))
+    shared = _shared_list_problem(fields)
+    if shared:
+        problems.append(shared)
     return fields, problems
+
+
+def _shared_list_problem(fields: list[Field]) -> str | None:
+    """One RDF list that is the sh:in of two inputs would be offered, and
+    named in a problem, once for each, so a document could make that cost the
+    product of the inputs and the list's length: the control is not invoked.
+    The page's sharedListProblem is the same."""
+    owner: dict[int, Field] = {}
+    for fld in fields:
+        if fld.in_list is None:
+            continue
+        first = owner.get(id(fld.in_list))
+        if first is not None:
+            return (f'the inputs "{first.name}" and "{fld.name}" share one sh:in list, which this client would show and check once '
+                    "for each, at a cost the document's size does not bound; this control is not invoked")
+        owner[id(fld.in_list)] = fld
+    return None
 
 
 def _address_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, list[dict[str, Any]], bool, str | None, list[str]]:
@@ -3058,19 +3196,92 @@ def _inline_key_problem(items: list[Any]) -> str | None:
     return None
 
 
+def _inline_default(value: Any) -> Any:
+    """A default written in place as the substrate's lift reads one: a number
+    or a boolean as its text, as JavaScript writes it."""
+    return _scalar_text(value) if isinstance(value, (bool, int, float)) else value
+
+
 def _inline_field(item: dict[str, Any]) -> Field:
     """A field from one entry of a control's own "fields" list or a
-    HyperMarkdown block's, each text facet read as text. The page's
-    inlineField is the same."""
+    HyperMarkdown block's, each text facet read as text, as the substrate's
+    HyperMarkdown lift reads one into a property shape: a default that is a
+    number or a boolean is its text, an rdf:JSON datatype takes JSON, and a
+    minCount or a maxCount above 1 makes a list, as they do for a
+    hydra:supportedProperty. The page's inlineDefault and inlineField are the
+    same."""
     min_count = _inty(item.get("minCount"))
+    max_count = _inty(item.get("maxCount"))
     path = _text(item.get("path")) or None
+    datatype = _text(item.get("datatype")) or None
+    json_kind = "json" if _is_rdf_json(datatype) else None
     return Field(
-        name=_field_name(item.get("name"), path, None), path=path, datatype=_text(item.get("datatype")) or None,
-        min_count=min_count, max_count=_inty(item.get("maxCount")),
-        pattern=_text(item.get("pattern")) or None, default=item.get("defaultValue"),
+        name=_field_name(item.get("name"), path, None), path=path, datatype=datatype, json_kind=json_kind,
+        min_count=min_count, max_count=max_count,
+        pattern=_text(item.get("pattern")) or None, default=_inline_default(item.get("defaultValue")),
         max_length=_inty(item.get("maxLength")), min_length=_inty(item.get("minLength")),
         description=_text(item.get("description")), required=(min_count or 0) >= 1,
+        multi=_is_multi(json_kind, min_count, max_count, False),
     )
+
+
+# Where a control writes its fields in place beside a shape hydra:expects names
+# that the document describes, the shape's fields are its inputs, and each
+# field written in place must be one of them and agree with it on each of these
+# that it gives; otherwise which of the two says what the input takes is not
+# known. The page's INLINE_COMPARED and inlineDisagreement are the same.
+_INLINE_COMPARED = ("datatype", "minCount", "maxCount", "minLength", "maxLength", "pattern", "defaultValue")
+_INLINE_FIELD_KEYS = {"minCount": "min_count", "maxCount": "max_count", "minLength": "min_length", "maxLength": "max_length"}
+
+
+def _datatype_iri(datatype: Any) -> str:
+    text = _text(datatype)
+    return XSD + text[4:] if text.startswith("xsd:") else (RDF_JSON if text == "rdf:JSON" else text)
+
+
+def _default_key(value: Any) -> str:
+    while isinstance(value, list) and len(value) == 1:
+        value = value[0]
+    return _json_key(None if value is None else _inline_default(value))
+
+
+def _inline_disagreement(items: list[dict[str, Any]], fields: list[Field]) -> str | None:
+    by_name: dict[str, Field] = {}
+    for fld in fields:
+        by_name.setdefault(fld.name, fld)
+    for item in items:
+        subject = _subject(item.get("name"), item.get("path"))
+        fld = by_name.get(_field_name(item.get("name"), _text(item.get("path")) or None, None))
+        if fld is None:
+            return (f"{subject} is written in place but is not in the shape hydra:expects names, so what it takes is not known; this "
+                    "control is not invoked")
+        for key in _INLINE_COMPARED:
+            value = item.get(key)
+            if value is None:
+                continue
+            if key == "datatype":
+                agree = _datatype_iri(value) == _datatype_iri(fld.datatype)
+            elif key == "pattern":
+                agree = _text(value) == _text(fld.pattern)
+            elif key == "defaultValue":
+                agree = _default_key(value) == _default_key(fld.default)
+            elif key == "minCount":
+                agree = (_inty(value) or 0) == (fld.min_count or 0)
+            else:
+                agree = _inty(value) == getattr(fld, _INLINE_FIELD_KEYS[key])
+            if not agree:
+                return (f"{subject} written in place disagrees with the shape hydra:expects names on its {key}, so what it takes is not "
+                        "known; this control is not invoked")
+    return None
+
+
+def _expects_warning(expects: Any, inline: bool) -> str:
+    """The warning a control shows when hydra:expects names a shape the
+    document does not describe: only its fields written in place, if any, are
+    known. The page's expectsWarning is the same."""
+    rest = ("only the input fields written in place were built: what else the server expects is not known here." if inline
+            else "no input fields were built: what the server expects is not known here.")
+    return f"hydra:expects names {_text(expects) or 'a shape'}, which this document does not describe, so {rest}"
 
 
 def _expects_of(index: NodeIndex, node: dict[str, Any], problems: list[str]) -> tuple[Any, Any]:
@@ -3162,8 +3373,9 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
     if media is None or media == "":
         media = _one(index.get(node, P_MEDIA), "dcat:mediaType", problems, "what it returns")
     # A shape's facets are read now, once per shape (_shared_shape_fields), so
-    # an input that names two datatypes or two counts is a problem here too.
-    if _inline_fields(node) is None and expects_raw is not None:
+    # an input that names two datatypes or two counts is a problem here too,
+    # and so are they where the control also writes its fields in place.
+    if expects_raw is not None:
         problems.extend(_shared_shape_fields(index, expects_raw)[1])
     title = _label(index.get(node, P_TITLE)) or _label(index.get(node, P_DCTITLE)) or _label(index.get(node, P_LABEL)) or short_rel(str(rel))
     description = _label(index.get(node, P_DESC)) or _label(index.get(node, P_DCDESC)) or _label(index.get(node, P_COMMENT)) or ""
@@ -3203,39 +3415,86 @@ def _shared_shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field],
 
 def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, expects: Any,
                     mappings: list[dict[str, Any]]) -> tuple[list[Field], str | None, str | None]:
-    """A control's input fields, from its inline fields or the shape
-    hydra:expects names, joined to its template's mappings; the problem that
-    keeps it from being invoked, if any; and a warning to show with it. A
-    template's variable that is no input's is sent in the body too, so where
-    the body is a JSON Schema's that names additionalProperties, that is its
-    schema: false refuses a value for it, and a schema types and checks it as
-    a property's. The page's controlInputs is the same."""
+    """A control's input fields, from the shape hydra:expects names when the
+    document describes it (a JSON Schema, or a shape that gives fields),
+    checked against any fields the control writes in place, or else from
+    those, joined to its template's mappings; the problem that keeps it from
+    being invoked, if any; and a warning to show with it. A template's
+    variable that is no input's is sent in the body too, so where the body is
+    a JSON Schema's that names additionalProperties, that is its schema: false
+    refuses a value for it, and a schema types and checks it as a property's;
+    it is read once for all such variables, and choices in it that two of
+    them would share are a problem. Where the body is a closed SHACL shape's,
+    such a variable is refused unless sh:ignoredProperties names its property.
+    The page's controlInputs is the same."""
     fields: list[Field] = []
     inline = _inline_fields(node)
+    items = [item for item in inline if isinstance(item, dict)] if inline is not None else []
     warning = None
     problem = None
+    inline_problem = None
     base: _FieldIndex | None = None
-    if inline is not None:
-        fields = [_inline_field(item) for item in inline if isinstance(item, dict)]
+    shape = _shared_shape_fields(index, expects_raw) if expects_raw is not None else None
+    if shape is not None and not shape[0] and not _is_json_schema(expects_raw):
+        shape = None
+    if shape is not None:
+        fields, _, problem, base = shape
+        if inline is not None:
+            inline_problem = _duplicate_problem([_inline_field(item) for item in items]) or _inline_disagreement(items, fields)
+        problem = problem or inline_problem
+    elif inline is not None:
+        fields = [_inline_field(item) for item in items]
         problem = _duplicate_problem(fields)
-    elif expects_raw is not None:
-        fields, _, problem, base = _shared_shape_fields(index, expects_raw)
-        if not fields and not _is_json_schema(expects_raw):
-            warning = (f"hydra:expects names {_text(expects) or 'a shape'}, which this document does not describe, so no "
-                       "input fields were built: what the server expects is not known here.")
+    if expects_raw is not None and shape is None:
+        warning = _expects_warning(expects, inline is not None and bool(items))
     if mappings:
         given = len(fields)
         fields = _merge_mapping_fields(fields, mappings, base)
-        schema = _json_value(expects_raw) if inline is None and expects_raw is not None else None
+        schema = _json_value(expects_raw) if shape is not None else None
         extra: list[str] = []
-        if _is_json_schema(schema) and "additionalProperties" in schema and schema["additionalProperties"] is not True:
+        if (len(fields) > given and _is_json_schema(schema) and "additionalProperties" in schema
+                and schema["additionalProperties"] is not True):
+            # Built once, for the first such variable, and copied for each.
+            first = fields[given]
+            built = _schema_field(first.name, schema["additionalProperties"], first.required, extra)
+            if len(fields) - given > 1 and _names_choices(schema["additionalProperties"]):
+                extra.append(f'the inputs "{first.name}" and "{fields[given + 1].name}" share the choices of additionalProperties, which '
+                             "this client would show and check once for each, at a cost the document's size does not bound; this "
+                             "control is not invoked")
             for i in range(given, len(fields)):
                 added = fields[i]
-                built = _schema_field(added.name, schema["additionalProperties"], added.required, extra)
-                built.path, built.variable = added.path, added.variable
-                fields[i] = built
-        problem = _duplicate_problem(fields) or (extra[0] if extra else None)
+                one = copy.copy(built)
+                one.name, one.path, one.variable = added.name, added.path, added.variable
+                one.required, one.min_count = added.required, 1 if added.required else 0
+                fields[i] = one
+        closed = index.node(_json_value(expects_raw)) if len(fields) > given and shape is not None and not _is_json_schema(schema) else None
+        if closed is not None and any(v is not None and truthy(_label(v)) is not False for v in as_list(index.get(closed, SHACL + "closed"))):
+            ignored, why, several = index.list_values(index.get(closed, SHACL + "ignoredProperties"))
+            if several or why is not None:
+                extra.append(f"the shape writes sh:ignoredProperties as {'more than one list' if several else why}, which this client does "
+                             "not read, so what it sends is not known; this control is not invoked")
+            kept = {_text(item) for item in ignored}
+            for i in range(given, len(fields)):
+                if not fields[i].path or fields[i].path not in kept:
+                    fields[i] = copy.copy(fields[i])
+                    fields[i].closed_out = True
+        problem = inline_problem or _duplicate_problem(fields) or (extra[0] if extra else None)
     return fields, problem, warning
+
+
+def _names_choices(schema: Any) -> bool:
+    """Whether a JSON Schema names choices anywhere in it: an enum or a const
+    at any depth. The page's namesChoices is the same."""
+    stack = [schema]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, list):
+            stack.extend(item)
+        elif isinstance(item, dict):
+            if "enum" in item or "const" in item:
+                return True
+            stack.extend(item.values())
+    return False
 
 
 def extract_controls(index: NodeIndex, source: str) -> list[Control]:
@@ -3318,7 +3577,10 @@ def _strict_json(text: str) -> Any:
     """JSON as a document's is read, and as everything that may go into a
     request is: NaN, Infinity and a repeated key are refused (a ValueError,
     _RepeatedKey for a key), as the page's JSON.parse and repeatedKey refuse
-    them, and an integer of any length is read, as JSON.parse reads one."""
+    them, and an integer of any length is read, as JSON.parse reads one. JSON
+    nested past _JSON_DEPTH is refused first (_TooDeep)."""
+    if _json_too_deep(text):
+        raise _TooDeep()
     return json.loads(text, object_pairs_hook=_no_repeated_keys, parse_constant=_not_json, parse_int=_json_int)
 
 
@@ -3372,6 +3634,9 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
         if "fields" in given:
             try:
                 listed = _strict_json(given["fields"][-1])
+            except _TooDeep:
+                problems.append(f"this control block writes fields as JSON nested deeper than {_JSON_DEPTH} levels, which this client "
+                                "does not read, so what it sends is not known; it is not invoked")
             except ValueError:
                 problems.append("this control block writes fields as text that is not JSON, so what it sends is not known; it is not "
                                 "invoked")
@@ -3402,6 +3667,8 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
             media_type=_text(data.get("mediaType")) or None, expects=_text(data.get("expects")) or None,
             returns=_text(data.get("returns")) or None, target=_text(data.get("target")) or None,
             fields=fields, source=url, destructive=destructive, read_only=read_only, conflict=problems[0] if problems else None,
+            # A block never describes the shape it expects, so only its fields written in place are known.
+            warning=_expects_warning(data["expects"], bool(fields)) if isinstance(data.get("expects"), str) and data["expects"] else None,
         ))
     title_match = re.search(r"^#[ \t]+(.+)$", text, re.MULTILINE)
     title = title_match.group(1) if title_match else local_name(url) or url
@@ -3699,9 +3966,12 @@ def classify_payload(text: str, content_type: str) -> str | None:
             return "markdown"
     if sample[:1] in ("{", "["):
         # Whether it is JSON at all, as the page's JSON.parse decides it; a
-        # repeated key is refused when the document is read.
+        # repeated key is refused when the document is read, and so is JSON
+        # nested too deep, which is JSON the reader refuses by name.
         try:
             _page_json(text)
+            return "jsonld"
+        except _TooDeep:
             return "jsonld"
         except ValueError:
             pass
@@ -4371,10 +4641,13 @@ def _offers(fld: Field, value: Any) -> bool:
     """Whether a JSON Schema field's input can give an entry: one its schema's
     type allows, and, in a number or a boolean field, a number or a boolean
     (or None). An entry that holds a number no double holds (1e400, which the
-    page's JSON.parse reads as an infinity) is none, and so is an integer
-    field's entry past 2^53, which the page's JSON.parse, and so this
-    client's reading, has rounded: neither is the number the document wrote."""
+    page's JSON.parse reads as an infinity) is none, and so is an entry that
+    is an integer past 2^53, in any field, which the page's JSON.parse, and so
+    this client's reading, may have rounded: neither is surely the number the
+    document wrote."""
     if _past_double(value):
+        return False
+    if _is_number(value) and float(value).is_integer() and abs(value) > _MAX_SAFE_INTEGER:
         return False
     if fld.schema_types is not None and not any(t in fld.schema_types for t in _json_types_of(value)):
         return False
@@ -4476,7 +4749,7 @@ def _choices_of(fld: Field) -> list[tuple[str, Any]]:
     return [(_text(entry), entry) for entry in fld.enum if entry is not None]
 
 
-def _check_schema(schema: Any, value: Any, name: str, report: Any) -> None:
+def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[int, set[str]] | None = None) -> None:
     """Checks a JSON Schema field's value against its schema, and each part of
     it against the schema inside (items, properties, additionalProperties),
     applying each keyword to the kinds of value JSON Schema applies it to: a
@@ -4490,9 +4763,14 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any) -> None:
     many bad parts costs no more than its size, and an enumeration's entries
     are named once. Each enum's entries are keyed once (_json_key), so each
     part is looked up in them at the cost of its own size. A walk with a
-    stack. The page's schemaCheck is the same."""
+    stack. `enums` keys each enum once for a whole check of a control's
+    values; a name that holds "/" is set apart from the pointer after it
+    ("d/x at /0"). The page's schemaCheck is the same."""
     stack: list[tuple[Any, Any, str]] = [(schema, value, name)]
-    enums: dict[int, set[str]] = {}
+    enums = {} if enums is None else enums
+
+    def step(at: str, token: Any) -> str:
+        return f"{name} at /{token}" if at == name and "/" in name else f"{at}/{token}"
     while stack:
         sch, val, at = stack.pop()
         if sch is False:
@@ -4550,7 +4828,7 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any) -> None:
                 problem = f"{at}: takes at most {_inty(sch['maxItems'])} values, got {len(val)}"
             items = sch.get("items")
             if "items" in sch and isinstance(items, (bool, dict)):
-                children.extend((items, item, f"{at}/{i}") for i, item in enumerate(val))
+                children.extend((items, item, step(at, i)) for i, item in enumerate(val))
         elif isinstance(val, dict):
             if isinstance(sch.get("required"), list):
                 missing = next((key for key in sch["required"] if isinstance(key, str) and key not in val), None)
@@ -4558,7 +4836,7 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any) -> None:
                     problem = f'{at}: is missing the key "{missing}"'
             props = sch["properties"] if isinstance(sch.get("properties"), dict) else None
             extra = sch["additionalProperties"] if "additionalProperties" in sch else True
-            children.extend((props[key] if props is not None and key in props else extra, val[key], f"{at}/{_pointer_token(key)}")
+            children.extend((props[key] if props is not None and key in props else extra, val[key], step(at, _pointer_token(key)))
                             for key in _js_keys(val))
         if problem is not None:
             report(problem)
@@ -4582,11 +4860,187 @@ _INTEGER_RANGES: dict[str, tuple[int | None, int | None]] = {
     "unsignedByte": (0, 255), "unsignedShort": (0, 65535), "unsignedInt": (0, 2 ** 32 - 1), "unsignedLong": (0, 2 ** 64 - 1),
     "nonNegativeInteger": (0, None), "positiveInteger": (1, None), "nonPositiveInteger": (None, 0), "negativeInteger": (None, -1),
 }
+# The XSD 1.1 (Part 2) date and time datatypes, each checked against its
+# lexical grammar by hand, and against its value constraints: a year of four
+# digits or more (no leading zero past four, a "-" before it, 0000 allowed), a
+# month from 01 to 12, a day no later than its month's last (29 February only
+# in a leap year of the proleptic Gregorian calendar, or in a gMonthDay), an
+# hour from 00 to 23, or 24:00:00 exactly, minutes and seconds from 00 to 59, a
+# fraction of a second of one digit or more, a timezone of Z or of +hh:mm or
+# -hh:mm no more than 14:00 from UTC (one an xsd:dateTimeStamp must have), and
+# a duration of one part or more, in the order Y M D, then T and H M S, a
+# fraction only on the seconds, and T only before a part of the time. Digits
+# are ASCII digits. The page's TEMPORAL and xsdTemporal are the same, step for
+# step.
+_TEMPORAL = frozenset({"date", "dateTime", "dateTimeStamp", "time", "gYear", "gYearMonth", "gMonth", "gDay", "gMonthDay",
+                       "duration", "yearMonthDuration", "dayTimeDuration"})
+
+
+def _char(s: str, i: int) -> str:
+    return s[i] if 0 <= i < len(s) else ""
+
+
+def _digits_at(s: str, i: int) -> int:
+    j = i
+    while j < len(s) and "0" <= s[j] <= "9":
+        j += 1
+    return j - i
+
+
+def _two_at(s: str, i: int, low: int, high: int) -> int:
+    """The two digits at i, as a number from low to high, or -1."""
+    if _digits_at(s, i) < 2:
+        return -1
+    n = int(s[i:i + 2])
+    return n if low <= n <= high else -1
+
+
+def _year_at(s: str, i: int) -> tuple[int, int] | None:
+    """A year at i: (where it ends, its last four digits), or None."""
+    if _char(s, i) == "-":
+        i += 1
+    n = _digits_at(s, i)
+    if n < 4 or (n > 4 and s[i] == "0"):
+        return None
+    return i + n, int(s[i + n - 4:i + n])
+
+
+def _month_days(month: int, leap: bool) -> int:
+    return (29 if leap else 28) if month == 2 else (30 if month in (4, 6, 9, 11) else 31)
+
+
+def _leap_year(last4: int) -> bool:
+    """Whether a year whose last four digits these are is a leap year: 4, 100 and 400 all divide 10,000."""
+    return last4 % 400 == 0 or (last4 % 4 == 0 and last4 % 100 != 0)
+
+
+def _date_at(s: str, i: int) -> int:
+    """A date at i, year-month-day: where it ends, or -1."""
+    year = _year_at(s, i)
+    if year is None or _char(s, year[0]) != "-":
+        return -1
+    month = _two_at(s, year[0] + 1, 1, 12)
+    if month < 0 or _char(s, year[0] + 3) != "-":
+        return -1
+    day = _two_at(s, year[0] + 4, 1, 31)
+    return -1 if day < 0 or day > _month_days(month, _leap_year(year[1])) else year[0] + 6
+
+
+def _time_at(s: str, i: int) -> int:
+    """A time at i, hh:mm:ss and a fraction: where it ends, or -1. 24:00:00 is the end of a day, exactly."""
+    hour = _two_at(s, i, 0, 24)
+    minute = _two_at(s, i + 3, 0, 59) if _char(s, i + 2) == ":" else -1
+    second = _two_at(s, i + 6, 0, 59) if minute >= 0 and _char(s, i + 5) == ":" else -1
+    if hour < 0 or second < 0:
+        return -1
+    end = i + 8
+    zero = True
+    if _char(s, end) == ".":
+        n = _digits_at(s, end + 1)
+        if not n:
+            return -1
+        zero = all(c == "0" for c in s[end + 1:end + 1 + n])
+        end += 1 + n
+    return -1 if hour == 24 and (minute != 0 or second != 0 or not zero) else end
+
+
+def _zone_at(s: str, i: int) -> int:
+    """What is at i, to the end: nothing (0), a timezone (1), or anything else (-1)."""
+    if i == len(s):
+        return 0
+    if _char(s, i) == "Z":
+        return 1 if i + 1 == len(s) else -1
+    if _char(s, i) not in ("+", "-") or _char(s, i + 3) != ":" or i + 6 != len(s):
+        return -1
+    hour = _two_at(s, i + 1, 0, 14)
+    minute = _two_at(s, i + 4, 0, 59)
+    return -1 if hour < 0 or minute < 0 or (hour == 14 and minute != 0) else 1
+
+
+def _duration_ok(kind: str, s: str) -> bool:
+    """A duration: an optional "-", "P", then parts of digits and a letter, in
+    the order Y M D, then T and H M S. A yearMonthDuration has only Y and M; a
+    dayTimeDuration no Y and no M before T."""
+    i = 1 if _char(s, 0) == "-" else 0
+    if _char(s, i) != "P":
+        return False
+    i += 1
+    units, last, parts, time_parts, used = "YMD", -1, 0, -1, ""
+    while i < len(s):
+        if s[i] == "T":
+            if time_parts >= 0:
+                return False
+            time_parts, units, last = 0, "HMS", -1
+            i += 1
+            continue
+        n = _digits_at(s, i)
+        if not n:
+            return False
+        j = i + n
+        fraction = False
+        if _char(s, j) == ".":
+            f = _digits_at(s, j + 1)
+            if not f:
+                return False
+            j += 1 + f
+            fraction = True
+        at = units.find(s[j]) if j < len(s) else -1
+        if at <= last or (fraction and not (time_parts >= 0 and s[j] == "S")):
+            return False
+        last = at
+        parts += 1
+        if time_parts >= 0:
+            time_parts += 1
+        else:
+            used += s[j]
+        i = j + 1
+    if not parts or time_parts == 0:
+        return False
+    if kind == "yearMonthDuration":
+        return time_parts < 0 and "D" not in used
+    if kind == "dayTimeDuration":
+        return "Y" not in used and "M" not in used
+    return True
+
+
+def _xsd_temporal(kind: str, s: str) -> bool:
+    """Whether text is a value of the XSD date or time datatype named."""
+    if kind == "date":
+        end = _date_at(s, 0)
+        return end >= 0 and _zone_at(s, end) >= 0
+    if kind in ("dateTime", "dateTimeStamp"):
+        end = _date_at(s, 0)
+        if end < 0 or _char(s, end) != "T":
+            return False
+        end = _time_at(s, end + 1)
+        zone = -1 if end < 0 else _zone_at(s, end)
+        return zone >= 0 if kind == "dateTime" else zone == 1
+    if kind == "time":
+        end = _time_at(s, 0)
+        return end >= 0 and _zone_at(s, end) >= 0
+    if kind == "gYear":
+        year = _year_at(s, 0)
+        return year is not None and _zone_at(s, year[0]) >= 0
+    if kind == "gYearMonth":
+        year = _year_at(s, 0)
+        return (year is not None and _char(s, year[0]) == "-" and _two_at(s, year[0] + 1, 1, 12) >= 0
+                and _zone_at(s, year[0] + 3) >= 0)
+    if kind == "gMonth":
+        return s.startswith("--") and _two_at(s, 2, 1, 12) >= 0 and _zone_at(s, 4) >= 0
+    if kind == "gDay":
+        return s.startswith("---") and _two_at(s, 3, 1, 31) >= 0 and _zone_at(s, 5) >= 0
+    if kind == "gMonthDay":
+        month = _two_at(s, 2, 1, 12) if s.startswith("--") else -1
+        day = _two_at(s, 5, 1, 31) if month >= 0 and _char(s, 4) == "-" else -1
+        return day >= 0 and day <= _month_days(month, True) and _zone_at(s, 7) >= 0
+    return _duration_ok(kind, s)
+
+
 # The datatypes whose values this client checks: text, an IRI, a number, a
-# boolean and rdf:JSON. A field of any other names its datatype here, and a
-# value given for it is refused, since its form (a date's, say) is not checked.
-# The page's uncheckedDatatype is the same.
-_CHECKED_XSD = frozenset({"string", "anyURI", "boolean", "decimal"}) | _XSD_INTEGERS | _XSD_DOUBLES
+# boolean, a date or a time, and rdf:JSON. A field of any other names its
+# datatype here, and a value given for it is refused, since its form (a
+# language tag's, say) is not checked. The page's uncheckedDatatype is the same.
+_CHECKED_XSD = frozenset({"string", "anyURI", "boolean", "decimal"}) | _XSD_INTEGERS | _XSD_DOUBLES | _TEMPORAL
 
 
 def _unchecked_datatype(fld: Field) -> str | None:
@@ -4633,6 +5087,8 @@ def coerce_value(fld: Field, value: Any) -> Any:
             # refused, as the page refuses them, and never reach a request.
             try:
                 parsed = _strict_json(value if isinstance(value, str) else _scalar_text(value))
+            except _TooDeep as exc:
+                raise ValueError(f"{fld.name}{_DEEP_VALUE}") from exc
             except _RepeatedKey as exc:
                 raise ValueError(f'{fld.name} repeats the key "{exc.key}" in one object, so which value it means is not '
                                  "known") from exc
@@ -4696,60 +5152,6 @@ def _unpaired_surrogate(value: Any) -> bool:
     return False
 
 
-def _item_text(item: Any) -> str | None:
-    """A list default's value as the form's text holds it: text as it is, a
-    number or a boolean as JavaScript writes it; None for JSON, which a list
-    of text values does not hold. The page's itemText is the same."""
-    if isinstance(item, (dict, list)):
-        return None
-    return item if isinstance(item, str) else _scalar_text(item)
-
-
-def _form_default(fld: Field) -> Any:
-    """What the page's form holds for a field when nothing is given, which is
-    what the page reads: the default's text (a string as it is, a JSON value
-    as its JSON, a number or a boolean as JavaScript writes it); for a list,
-    its values' texts one per line, or the options a multiple choice selects;
-    or None where the form is left empty. The form holds a default only as it
-    is: a choice whose default is none of its options, or whose option of its
-    text is another JSON value (a JSON Schema enum ["1"] with the default 1), a multiple choice
-    whose defaults are not its options in their order, each once, text with a
-    carriage return (which a text area writes as a line feed), a list whose
-    lines read back as other values than its defaults, and a default that
-    holds a number no double holds, are left out of it. The page then reads
-    the default itself, and so does validate_fields, so a default is checked
-    and sent as the document gives it, never as a form control changed it. A
-    number field that is not a choice reads its default itself too:
-    _coerce_number writes a JSON number as the form does, and refuses one past
-    2^53 in an integer field, as the page refuses the text its form then
-    holds."""
-    options = [] if fld.json_kind else [text for text, _ in _choices_of(fld)]
-    if options and fld.multi:
-        wanted = [_text(x) for x in as_list(fld.default)]
-        listed = set(wanted)
-        held = [option for option in options if option in listed]
-        return held if held and held == wanted else None
-    if options:
-        text = _text(fld.default)
-        if fld.json_schema:
-            choice = next((c for c in _choices_of(fld) if c[0] == text), None)
-            return text if choice is not None and _same_json(choice[1], fld.default) else None
-        return text if text in options else None
-    if _numeric_kind(fld):
-        return None
-    if fld.multi:
-        listed = fld.default if isinstance(fld.default, list) else [fld.default]
-        text = "\n".join(_text(x) for x in listed) if isinstance(fld.default, list) else _text(fld.default)
-        wanted = [_item_text(x) for x in _multi_items(listed)]
-        # A text area reads a carriage return back as a line feed, so text with one is not held as it is.
-        held = _multi_items(text)
-        return text if "\r" not in text and None not in wanted and held == wanted else None
-    if _past_double(fld.default):
-        return None
-    text = _text(fld.default)
-    return None if "\r" in text else text
-
-
 def _multi_items(value: Any) -> list[Any]:
     """A list field's values: a list as given (a repeated --field, or the
     defaults), or text, read as a JSON array when it is one and otherwise as one
@@ -4766,6 +5168,8 @@ def _multi_items(value: Any) -> list[Any]:
     if text.strip(_SPACES).startswith("["):
         try:
             parsed = _page_json(text)
+        except _TooDeep:
+            raise
         except ValueError:
             parsed = None
         if isinstance(parsed, list):
@@ -4775,7 +5179,7 @@ def _multi_items(value: Any) -> list[Any]:
 
 
 def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choices: _ShapeChoices | None,
-                 from_default: bool) -> Any:
+                 from_default: bool, enums: dict[int, set[str]] | None = None) -> Any:
     """One value of a field, typed and checked; each problem goes to `report`,
     which keeps it once. Returns the value to send. A value given for a field
     with a constraint this client does not check is refused, with the
@@ -4783,7 +5187,10 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     it names one, unless it is the field's default (`from_default`), which is
     checked as the document gives it, never as the choice its text names; it
     is checked by _check_schema. Any other field's value is checked by its
-    facets, its sh:in by `choices` (_shape_choices, read once per field). The
+    facets, its sh:in by `choices` (_shape_choices, read once per field). A
+    field that takes no value (sh:maxCount 0), or a template variable a closed
+    shape does not name, refuses any; a default is first checked to be of the
+    kind its field takes. `enums` keys each enum once for a whole check. The
     page's checkValue is the same."""
     if fld.unchecked:
         report(f"{fld.name}: has a constraint this client does not check ({', '.join(fld.unchecked)}), so it is not sent")
@@ -4791,9 +5198,19 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     if fld.not_writable:
         report(f"{fld.name}: is not writable (hydra:writable false), so it is not sent")
         return None
+    if fld.closed_out:
+        report(f"{fld.name}: is not allowed by its shape, which is closed (sh:closed true), so it is not sent")
+        return None
+    if not fld.multi and fld.max_count == 0 and fld.max_items is None:
+        report(f"{fld.name}: takes at most 0 values, got 1")
+        return None
     unread_type = None if fld.json_schema else _unchecked_datatype(fld)
     if unread_type:
         report(f"{fld.name}: takes {unread_type}, whose form this client does not check, so it is not sent")
+        return None
+    wrong_kind = _default_kind_problem(fld, found) if from_default else None
+    if wrong_kind:
+        report(wrong_kind)
         return None
     if numeric and isinstance(found, str):
         found = found.strip(_SPACES)
@@ -4819,14 +5236,13 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
         report(f"{fld.name}: holds an unpaired surrogate, which is not Unicode text")
         return None
     if fld.json_schema:
-        # An integer past 2^53, which only this client reads exactly, is not
-        # one of an enum's or a const's entries, which both clients read as
-        # doubles, so it is refused as the page refuses it.
-        if (numeric == "integer" and isinstance(typed, int) and not isinstance(typed, bool) and abs(typed) > _MAX_SAFE_INTEGER
+        # An integer past 2^53 is not looked up in an enum's or a const's
+        # entries, which are the doubles both clients read, perhaps rounded.
+        if (numeric and _is_number(typed) and float(typed).is_integer() and abs(typed) > _MAX_SAFE_INTEGER
                 and isinstance(fld.schema, dict) and ("enum" in fld.schema or "const" in fld.schema)):
             report(f"{fld.name}: integer too large to send exactly")
             return None
-        _check_schema(fld.schema, typed, fld.name, report)
+        _check_schema(fld.schema, typed, fld.name, report, enums)
         return typed
     structured = isinstance(typed, (dict, list))
     # A JSON array holds as many values as it has items, and a field that takes
@@ -4847,6 +5263,9 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
             struct.pack("<f", typed)
         except OverflowError:
             report(f"{fld.name}: out of the range of xsd:float")
+    # A date or a time is text in its datatype's lexical form, sent as typed.
+    if local in _TEMPORAL and isinstance(typed, str) and not _xsd_temporal(local, typed):
+        report(f"{fld.name}: not an xsd:{local}")
     # A length facet measures text: SHACL counts the text of a literal or an
     # IRI. A body sent whole is measured as it is sent. A JSON value in a field
     # (a node, or rdf:JSON) has no one text a length facet measures, so it is
@@ -4869,7 +5288,10 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
         report(f"{fld.name}: must be {_text(fld.has_value)}")
     # A bound is compared with a number: a value that is none (text, or a node)
     # is an error, not a pass, as SHACL has a comparison it cannot make. A bound
-    # that is no number, such as a date, is not compared, so a value is refused.
+    # that is no number, such as a date, is not compared, so a value is refused;
+    # nor is one on a field that takes no number (text, a date, JSON), which
+    # SHACL would compare with the value's own datatype, never with the number
+    # it reads as.
     bounds = [(kind, bound) for kind, bound in (("minInclusive", fld.min_inclusive), ("maxInclusive", fld.max_inclusive),
                                                 ("minExclusive", fld.min_exclusive), ("maxExclusive", fld.max_exclusive))
               if bound is not None]
@@ -4877,6 +5299,9 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     if unread_bound:
         report(f"{fld.name}: its sh:{unread_bound[0]} {_scalar_text(unread_bound[1])} is not a number, which this client does not "
                "compare, so it is not sent")
+    elif bounds and not numeric:
+        report(f"{fld.name}: its sh:{bounds[0][0]} {_scalar_text(bounds[0][1])} bounds a field that takes no number, which this client "
+               "does not compare, so it is not sent")
     elif bounds:
         number = None if structured else _lexical_number(typed)
         if number is None:
@@ -4910,30 +5335,129 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     return found if fld.raw_body and fld.json_kind and isinstance(found, str) else typed
 
 
+def _default_kind_problem(fld: Field, value: Any) -> str | None:
+    """A default is of the kind its field takes when the field is neither JSON
+    Schema's (whose schema checks its default) nor JSON: text, or for a number
+    or a boolean that value or its text. One of another kind is refused by
+    name, never sent as another kind of JSON nor changed into its text. The
+    page's defaultKindProblem is the same."""
+    if fld.json_schema or fld.json_kind or isinstance(value, str):
+        return None
+    kind = "number" if _numeric_kind(fld) else ("boolean" if _xsd_name(fld.datatype) == "boolean" else None)
+    if kind == "number" and _is_number(value) or kind == "boolean" and isinstance(value, bool):
+        return None
+    word = {"number": "a number", "boolean": "a boolean"}.get(kind or "", "text")
+    return f"{fld.name}: its default {_entry_text(value)} is not {word}, which this field takes, so it is not sent"
+
+
+def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, set[str]]) -> tuple[Any, bool]:
+    """One field's value from what was given for it, typed and checked, as
+    (the value, whether it is one to send); each problem goes to `report`.
+    Nothing given (None, "" or an empty list) is the field's default as the
+    document gives it, whether a flag gave nothing or none was given, as the
+    page reads a link's empty value, a cleared input and an untouched form. A
+    list field takes several values (a repeated --field, a JSON array, or one
+    per line) and is checked against its sh:minCount and sh:maxCount; a list
+    given is checked as it was given, and one that reads as no values is
+    refused, never replaced by the default. A field that takes one value takes
+    the last one given. `enums` keys each enum once for the whole check. The
+    page's fieldValue is the same."""
+    problems = 0
+
+    def note(message: str) -> None:
+        nonlocal problems
+        problems += 1
+        report(message)
+    numeric = _numeric_kind(fld)
+    required = fld.required or (fld.min_count or 0) >= 1
+    if isinstance(found, str) and found == "":
+        found = None
+    if fld.multi:
+        given = found is not None and found != []
+        try:
+            items = _multi_items(found) if found is not None else []
+        except _TooDeep:
+            note(f"{fld.name}{_DEEP_VALUE}")
+            return None, False
+        if not items and given:
+            note(f"{fld.name}: was given no values")
+            return None, False
+        from_default = not items and fld.default is not None
+        if from_default:
+            items = _multi_items(fld.default if isinstance(fld.default, list) else [fld.default])
+            # A default is read as a value given is: one with entries that are all blank holds no values.
+            if not items and any(x is not None for x in as_list(fld.default)):
+                note(f"{fld.name}: was given no values")
+                return None, False
+        if not items:
+            if required:
+                note(f"missing required field '{fld.name}'")
+            return None, False
+        if fld.min_count and len(items) < fld.min_count:
+            note(f"{fld.name}: needs at least {fld.min_count} values, got {len(items)}")
+        if fld.max_count is not None and len(items) > fld.max_count:
+            note(f"{fld.name}: takes at most {fld.max_count} values, got {len(items)}")
+        typed_items = []
+        choices = _shape_choices(fld, numeric)
+        for item in items:
+            if isinstance(item, (dict, list)):
+                note(f"{fld.name}: each value is one {local_name(fld.datatype) or 'text'} value, not JSON")
+                continue
+            wrong_kind = _default_kind_problem(fld, item) if from_default else None
+            if wrong_kind:
+                note(wrong_kind)
+                continue
+            # A JSON number stays one in a number field, so one past 2^53 is not read as the text of its double.
+            typed_items.append(_check_value(fld, item if isinstance(item, str) or numeric else _scalar_text(item), numeric, note,
+                                            choices, False, enums))
+        # sh:hasValue asks that one of a list's values be the one it names.
+        if fld.has_value is not None and not any(v is not None and _shape_entry_matches(fld, numeric, v, fld.has_value)
+                                                 for v in typed_items):
+            note(f"{fld.name}: must include {_text(fld.has_value)}")
+        return typed_items, problems == 0
+    if isinstance(found, list):
+        found = found[-1] if found else None
+    from_default = False
+    if (found is None or found == "") and fld.default is not None:
+        found = fld.default
+        from_default = True
+    # Spaces around a number are not part of it; a number field given only
+    # spaces holds no number, which is refused, not filled with the default,
+    # and a default of only spaces is refused as one given is.
+    if numeric and isinstance(found, str):
+        spaced = found != ""
+        found = found.strip(_SPACES)
+        if found == "" and spaced:
+            try:
+                _coerce_number(numeric, found)
+            except ValueError as exc:
+                note(f"{fld.name}: {exc}")
+            return None, False
+    if found is None or found == "":
+        if required:
+            note(f"missing required field '{fld.name}'")
+        return None, False
+    value = _check_value(fld, found, numeric, note, None if fld.json_schema else _shape_choices(fld, numeric), from_default, enums)
+    return value, problems == 0
+
+
 def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[str, Any], list[str]]:
-    """The values to send, each typed by its field, and every problem with
-    them. A name that is no field's is a problem, not something silently
-    dropped; a list field takes several values (a repeated --field, a JSON
-    array, or one per line) and is checked against its sh:minCount and
-    sh:maxCount, as a JSON array is against the shape's counts or the schema's
-    minItems and maxItems once it parses, dry run or not; and a field that
-    takes one value takes the last given. The page's validateFields is the
-    same."""
+    """The values to send, each typed by its field (_field_value), and every
+    problem with them. A name that is no field's is a problem, not something
+    silently dropped, and so are values given under two names of one field.
+    The page's validateFields is the same."""
     if control.problem:
         return {}, [control.problem]
     errors: list[str] = []
     values: dict[str, Any] = {}
-    # Each problem is kept once, looked up in a set beside the list; `reported`
-    # counts every report, so a value whose problem was already kept is not taken.
+    # Each problem is kept once, looked up in a set beside the list.
     seen: set[str] = set()
-    reported = 0
 
     def report(message: str) -> None:
-        nonlocal reported
-        reported += 1
         if message not in seen:
             seen.add(message)
             errors.append(message)
+    enums: dict[int, set[str]] = {}
     incoming = dict(supplied)
     known: set[str] = set()
     for fld in control.fields:
@@ -4947,77 +5471,8 @@ def validate_fields(control: Control, supplied: dict[str, Any]) -> tuple[dict[st
             report(f"{fld.name}: values were given under more than one of its names ({', '.join(named)})")
             for alias in named[1:]:
                 incoming.pop(alias)
-        numeric = _numeric_kind(fld)
-        required = fld.required or (fld.min_count or 0) >= 1
-        if fld.multi:
-            # A list given is checked as it was given: one that reads as no
-            # values is refused, never replaced by the default. An empty list
-            # is none given, as a multiple select with nothing chosen gives none.
-            given = found is not None and found != []
-            if found is None and fld.default is not None:
-                found = _form_default(fld)
-            items = _multi_items(found) if found is not None else []
-            if not items and given:
-                report(f"{fld.name}: was given no values")
-                continue
-            if not items and fld.default is not None:
-                items = _multi_items(fld.default if isinstance(fld.default, list) else [fld.default])
-                # A default is read as a value given is: one with entries that are all blank holds no values.
-                if not items and any(x is not None for x in as_list(fld.default)):
-                    report(f"{fld.name}: was given no values")
-                    continue
-            if not items:
-                if required:
-                    report(f"missing required field '{fld.name}'")
-                continue
-            if fld.min_count and len(items) < fld.min_count:
-                report(f"{fld.name}: needs at least {fld.min_count} values, got {len(items)}")
-            if fld.max_count is not None and len(items) > fld.max_count:
-                report(f"{fld.name}: takes at most {fld.max_count} values, got {len(items)}")
-            typed_items = []
-            choices = _shape_choices(fld, numeric)
-            for item in items:
-                if isinstance(item, (dict, list)):
-                    report(f"{fld.name}: each value is one {local_name(fld.datatype) or 'text'} value, not JSON")
-                    continue
-                # A JSON number stays one in a number field, so one past 2^53 is not read as the text of its double.
-                typed_items.append(_check_value(fld, item if isinstance(item, str) or numeric else _scalar_text(item), numeric, report,
-                                                choices, False))
-            # sh:hasValue asks that one of a list's values be the one it names.
-            if fld.has_value is not None and not any(v is not None and _shape_entry_matches(fld, numeric, v, fld.has_value)
-                                                     for v in typed_items):
-                report(f"{fld.name}: must include {_text(fld.has_value)}")
-            values[fld.name] = typed_items
-            continue
-        if isinstance(found, list):
-            # A field that takes one value takes the last one given, as a repeated option does.
-            found = found[-1] if found else None
-        if (found is None or found == "") and fld.default is not None and not numeric:
-            # What the page's form holds: a text field's default of 5 is the text "5".
-            found = _form_default(fld)
-        from_default = False
-        if (found is None or found == "") and fld.default is not None:
-            found = fld.default
-            from_default = True
-        # Spaces around a number are not part of it; a number field given only
-        # spaces holds no number, which is refused, not filled with the default,
-        # and a default of only spaces is refused as one given is.
-        if numeric and isinstance(found, str):
-            spaced = found != ""
-            found = found.strip(_SPACES)
-            if found == "" and spaced:
-                try:
-                    _coerce_number(numeric, found)
-                except ValueError as exc:
-                    report(f"{fld.name}: {exc}")
-                continue
-        if found is None or found == "":
-            if required:
-                report(f"missing required field '{fld.name}'")
-            continue
-        before = reported
-        value = _check_value(fld, found, numeric, report, None if fld.json_schema else _shape_choices(fld, numeric), from_default)
-        if reported == before:
+        value, ok = _field_value(fld, found, report, enums)
+        if ok:
             values[fld.name] = value
     for name in incoming:
         if name not in known:

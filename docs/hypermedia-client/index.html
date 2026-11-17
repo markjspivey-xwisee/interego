@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-Qjd+EubmzxW8jbhXe5WbfvuxVAiuYhCLUW25tTWUoC4='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-G+156U6lSaLRIS3sDoDM2/UKYhIRL6yXox8iQv+v1Xo='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -538,7 +538,28 @@ function spend(budget, amount) {
 // nothing under it is renamed or expanded. hmc.py's _json_schema_like is the same.
 function jsonSchemaLike(item, expected) {
   const props = own(item, "properties") ? item.properties : null;
-  return !!props && typeof props === "object" && !Array.isArray(props) && (expected || !Object.keys(item).some(k => k.startsWith("@")));
+  if (!!props && typeof props === "object" && !Array.isArray(props) && (expected || !Object.keys(item).some(k => k.startsWith("@")))) return true;
+  return !!expected && schemaByKeywords(item);
+}
+// JSON Schema's keywords, and those of them that only describe. Where
+// hydra:expects names it, an object whose keys are all keywords (or @id and
+// @type), one or more of which constrains, is a JSON Schema though it has no
+// "properties": {"type": "object", "additionalProperties": false} is the
+// schema of a body of no properties, not a node the document does not
+// describe. hmc.py's _SCHEMA_NOTES, _SCHEMA_KEYWORDS and _schema_by_keywords
+// are the same.
+const SCHEMA_NOTES = new Set(["$schema", "$id", "$anchor", "$dynamicAnchor", "$recursiveAnchor", "$vocabulary", "$comment", "$defs",
+  "definitions", "title", "description", "default", "deprecated", "examples", "format", "contentEncoding", "contentMediaType",
+  "contentSchema", "writeOnly"]);
+const SCHEMA_KEYWORDS = new Set([...SCHEMA_NOTES, "type", "enum", "const", "properties", "additionalProperties", "required", "items",
+  "minItems", "maxItems", "minLength", "maxLength", "pattern", "minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum", "readOnly",
+  "allOf", "anyOf", "oneOf", "not", "if", "then", "else", "multipleOf", "uniqueItems", "contains", "minContains", "maxContains",
+  "prefixItems", "additionalItems", "unevaluatedItems", "unevaluatedProperties", "minProperties", "maxProperties",
+  "patternProperties", "propertyNames", "dependencies", "dependentRequired", "dependentSchemas", "$ref", "$dynamicRef", "$recursiveRef"]);
+function schemaByKeywords(item) {
+  // A key with no value (null or []) is absent, as JSON-LD drops it.
+  const keys = Object.keys(item).filter(k => k !== "@id" && k !== "@type" && present(item[k]));
+  return keys.length > 0 && keys.every(k => SCHEMA_KEYWORDS.has(k)) && keys.some(k => !SCHEMA_NOTES.has(k));
 }
 // Whether a local context propagates to the node objects under the node it
 // applies to: its first entry's "@propagate" when that is a boolean, as
@@ -1130,6 +1151,10 @@ class NodeIndex {
     // once (sharedShapeFields); keyed by the node.
     this.templates = new Map();
     this.shapes = new Map();
+    // Each RDF list's members, read once, keyed by its first node, and the
+    // first node of the list each list node was read in (rdfList).
+    this.lists = new Map();
+    this.listOwners = new Map();
     this._ingest(document, fetchedFrom);
   }
   // Indexes every node object in the document: first the ones at its top, in
@@ -1274,12 +1299,24 @@ class NodeIndex {
   // not be read: a node with other than one rdf:first and one rdf:rest, a rest
   // that is no list node, a cycle, or a member this reader does not read as one
   // value. hmc.py's rdf_list is the same.
+  // A list is read once however many values name it, and a node in two lists
+  // (two lists that share their tail) is a problem, so lists cost their size
+  // once, not once per list that shares them.
   rdfList(head) {
+    const first = this.listNode(head);
+    if (!first) return [[], null];
+    if (!this.lists.has(first)) this.lists.set(first, this.walkList(first));
+    return this.lists.get(first);
+  }
+  walkList(first) {
     const out = []; const seen = new Set();
-    let node = this.listNode(head);
+    let node = first;
     while (node) {
       if (seen.has(node)) return [out, "a malformed RDF list"];
       seen.add(node);
+      const owner = this.listOwners.get(node);
+      if (owner !== undefined && owner !== first) return [out, "an RDF list that shares nodes with another list"];
+      this.listOwners.set(node, first);
       const firsts = asList(this.get(node, P.first)).filter(x => x != null);
       const rests = asList(this.get(node, P.rest)).filter(x => x != null);
       if (firsts.length !== 1 || rests.length !== 1) return [out, "a malformed RDF list"];
@@ -1292,6 +1329,12 @@ class NodeIndex {
       if (!node) return [out, "a malformed RDF list"];
     }
     return [out, null];
+  }
+  // The first node of the one RDF list a value such as sh:in's names, or null.
+  // hmc.py's list_head is the same.
+  listHead(raw) {
+    const items = asList(raw).filter(x => x != null);
+    return items.length === 1 ? this.listNode(items[0]) : null;
   }
   // The members of a list value such as sh:in's: a JSON-LD list object
   // ({"@list": [...]}), an RDF list of rdf:first / rdf:rest nodes, or a plain
@@ -1392,9 +1435,10 @@ function jsonValue(v) {
   if (v && typeof v === "object" && v["@type"] === "@json" && own(v, "@value")) return v["@value"];
   return v;
 }
-// A JSON Schema written in place: an object whose "properties" is an object.
-// hmc.py's _is_json_schema is the same.
-function isJsonSchema(v) { return isMap(v) && isMap(v.properties) && !own(v, P.shProp); }
+// A JSON Schema written in place: an object whose "properties" is an object,
+// or whose keys are JSON Schema's (schemaByKeywords). hmc.py's _is_json_schema
+// is the same.
+function isJsonSchema(v) { return isMap(v) && !own(v, P.shProp) && (isMap(v.properties) || schemaByKeywords(v)); }
 // SHACL constraints on an input that this client does not check, so a value
 // given for it is refused by name (a property shape's own sh:property among
 // them, which constrains its value node); those that relate the input to other
@@ -1540,7 +1584,7 @@ function supportedField(index, ref, problems) {
   const writable = f.one(P.writable, "hydra:writable", v => String(truthy(v)));
   const enumVals = f.enumValues();
   const description = f.describe(P.shDesc, P.comment, P.desc) || (propNode ? facets(index, propNode, problems, f.subject).describe(P.comment) : null);
-  return {
+  const field = {
     name: fieldName(name, named ? iri : null, null), path: named ? iri : null, datatype, jsonKind,
     minCount: minCount != null ? minCount : (required ? 1 : null), maxCount,
     pattern: f.text(P.shPat, "sh:pattern"), defaultValue: f.defaults(multi),
@@ -1549,8 +1593,11 @@ function supportedField(index, ref, problems) {
     minInclusive: f.one(P.shMinI, "sh:minInclusive"), maxInclusive: f.one(P.shMaxI, "sh:maxInclusive"),
     minExclusive: extra.minExclusive, maxExclusive: extra.maxExclusive, hasValue: extra.hasValue, nodeKind: extra.nodeKind,
     unchecked: extra.unchecked, notWritable: writable != null && truthy(writable) !== true,
-    required, rawBody: false, multi
+    required, rawBody: false, multi, inList: index.listHead(index.get(sp, P.shIn))
   };
+  // A property that is not written is never given its default either.
+  if (field.notWritable) field.defaultValue = null;
+  return field;
 }
 
 const PATH_KEYS = [SHACL + "inversePath", SHACL + "alternativePath", SHACL + "zeroOrMorePath", SHACL + "oneOrMorePath",
@@ -1595,7 +1642,8 @@ function schemaField(name, prop0, required, problems) {
   const field = {
     name, path: name, datatype, jsonKind, minCount: required ? 1 : 0, maxCount: 1, pattern: asTextOrNull(prop.pattern),
     minItems: items ? inty(prop.minItems) : null, maxItems: items ? inty(prop.maxItems) : null,
-    defaultValue: prop.default, maxLength: inty(prop.maxLength), minLength: inty(prop.minLength),
+    // A readOnly property is not the client's to write, so it is never given its default.
+    defaultValue: prop.readOnly === true ? null : prop.default, maxLength: inty(prop.maxLength), minLength: inty(prop.minLength),
     description: asText(prop.description), enum: Array.isArray(enumVals) ? enumVals.slice() : [],
     minInclusive: prop.minimum, maxInclusive: prop.maximum, required, rawBody: false, multi: false,
     jsonSchema: true, schema: prop0, schemaTypes: written, nullable: !!written && written.includes("null"), unchecked: read.unchecked
@@ -1619,6 +1667,14 @@ function shapeFields(index, shapeRef) {
     }
     const required = new Set(named.filter(n => typeof n === "string"));
     const properties = isMap(shapeRef.properties) ? shapeRef.properties : {};
+    if (own(shapeRef, "properties") && !isMap(shapeRef.properties)) {
+      problems.push("the JSON Schema writes properties as something other than an object, which this client does not read, so what it sends is not known; this control is not invoked");
+    }
+    // readOnly on the body's schema says the body is not the client's to write.
+    if (shapeRef.readOnly === true) problems.push("the JSON Schema of the body is read-only (readOnly true), so nothing is written to it; this control is not invoked");
+    else if (own(shapeRef, "readOnly") && typeof shapeRef.readOnly !== "boolean") {
+      problems.push("the JSON Schema writes readOnly as something other than a boolean, which this client does not read, so what it sends is not known; this control is not invoked");
+    }
     // The schema of the whole body: it describes an object, each name it
     // requires is one of its properties, and it has no keyword this client does
     // not check, an enum and a const among them, which constrain the body as a
@@ -1653,7 +1709,12 @@ function shapeFields(index, shapeRef) {
     for (const key of valued) problems.push("the shape names sh:" + key + ", which this client does not check, so what it sends is not known; this control is not invoked");
   }
   if (!present(props)) {
-    if (present(supported)) return { fields: asList(supported).map(item => supportedField(index, item, problems)).filter(Boolean), problems };
+    if (present(supported)) {
+      const built = asList(supported).map(item => supportedField(index, item, problems)).filter(Boolean);
+      const shared = sharedListProblem(built);
+      if (shared) problems.push(shared);
+      return { fields: built, problems };
+    }
     if (valued.length) {
       // The body sent whole, checked against the shape's own facets as an input is against its property's.
       const f = facets(index, shape, problems, "the request body");
@@ -1705,10 +1766,29 @@ function shapeFields(index, shapeRef) {
       description: f.describe(P.shDesc, P.comment, P.desc) || "",
       enum: enumVals, minInclusive: f.one(P.shMinI, "sh:minInclusive"), maxInclusive: f.one(P.shMaxI, "sh:maxInclusive"),
       minExclusive: extra.minExclusive, maxExclusive: extra.maxExclusive, hasValue: extra.hasValue, nodeKind: extra.nodeKind,
-      unchecked: extra.unchecked, required: (minCount || 0) >= 1 || extra.hasValue != null, rawBody: false, multi
+      unchecked: extra.unchecked, required: (minCount || 0) >= 1 || extra.hasValue != null, rawBody: false, multi,
+      inList: index.listHead(index.get(node, P.shIn))
     });
   }
+  const shared = sharedListProblem(fields);
+  if (shared) problems.push(shared);
   return { fields, problems };
+}
+// One RDF list that is the sh:in of two inputs would be offered, and named in
+// a problem, once for each, so a document could make that cost the product of
+// the inputs and the list's length: the control is not invoked. hmc.py's
+// _shared_list_problem is the same.
+function sharedListProblem(fields) {
+  const owner = new Map();
+  for (const f of fields) {
+    if (!f.inList) continue;
+    if (owner.has(f.inList)) {
+      return 'the inputs "' + owner.get(f.inList).name + '" and "' + f.name + '" share one sh:in list, which this client would show and check ' +
+        "once for each, at a cost the document's size does not bound; this control is not invoked";
+    }
+    owner.set(f.inList, f);
+  }
+  return null;
 }
 // The fields a SHACL shape or a hydra:Class gives, built once per shape node
 // however many controls name it, with the problems reading their facets gave
@@ -2070,16 +2150,66 @@ function inlineKeyProblem(items) {
   return null;
 }
 // A field from one entry of a control's own "fields" list or a HyperMarkdown
-// block's, each text facet read as text. hmc.py's _inline_field is the same.
+// block's, each text facet read as text, as the substrate's HyperMarkdown lift
+// reads one into a property shape: a default that is a number or a boolean is
+// its text, an rdf:JSON datatype takes JSON, and a minCount or a maxCount above
+// 1 makes a list, as they do for a hydra:supportedProperty. hmc.py's
+// _inline_default and _inline_field are the same.
+function inlineDefault(v) { return typeof v === "number" || typeof v === "boolean" ? String(v) : v; }
 function inlineField(item) {
   const minCount = inty(item.minCount);
+  const maxCount = inty(item.maxCount);
   const path = asTextOrNull(item.path);
+  const datatype = asTextOrNull(item.datatype);
+  const jsonKind = isRdfJson(datatype) ? "json" : null;
   return {
-    name: fieldName(item.name, path, null), path, datatype: asTextOrNull(item.datatype),
-    minCount, maxCount: inty(item.maxCount), pattern: asTextOrNull(item.pattern),
-    defaultValue: item.defaultValue, maxLength: inty(item.maxLength), minLength: inty(item.minLength),
-    description: asText(item.description), required: (minCount || 0) >= 1, enum: [], rawBody: false, multi: false
+    name: fieldName(item.name, path, null), path, datatype, jsonKind,
+    minCount, maxCount, pattern: asTextOrNull(item.pattern),
+    defaultValue: inlineDefault(item.defaultValue), maxLength: inty(item.maxLength), minLength: inty(item.minLength),
+    description: asText(item.description), required: (minCount || 0) >= 1, enum: [], rawBody: false,
+    multi: isMulti(jsonKind, minCount, maxCount, false)
   };
+}
+// Where a control writes its fields in place beside a shape hydra:expects names
+// that the document describes, the shape's fields are its inputs, and each
+// field written in place must be one of them and agree with it on each of
+// these that it gives; otherwise which of the two says what the input takes is
+// not known. hmc.py's _INLINE_COMPARED and _inline_disagreement are the same.
+const INLINE_COMPARED = ["datatype", "minCount", "maxCount", "minLength", "maxLength", "pattern", "defaultValue"];
+function datatypeIri(dt) {
+  const t = asText(dt);
+  return t.startsWith("xsd:") ? XSD + t.slice(4) : (t === "rdf:JSON" ? RDF + "JSON" : t);
+}
+function defaultKey(v) {
+  while (Array.isArray(v) && v.length === 1) v = v[0];
+  return jsonKey(v == null ? null : inlineDefault(v));
+}
+function inlineDisagreement(items, fields) {
+  const byName = new Map();
+  for (const f of fields) if (!byName.has(f.name)) byName.set(f.name, f);
+  for (const item of items) {
+    const subject = subjectOf(item.name, item.path);
+    const f = byName.get(fieldName(item.name, asTextOrNull(item.path), null));
+    if (!f) return subject + " is written in place but is not in the shape hydra:expects names, so what it takes is not known; this control is not invoked";
+    for (const key of INLINE_COMPARED) {
+      if (!own(item, key) || item[key] == null) continue;
+      const v = item[key];
+      const agree = key === "datatype" ? datatypeIri(v) === datatypeIri(f.datatype)
+        : key === "pattern" ? asText(v) === asText(f.pattern)
+          : key === "defaultValue" ? defaultKey(v) === defaultKey(f.defaultValue)
+            : key === "minCount" ? (inty(v) || 0) === (f.minCount || 0)
+              : inty(v) === (f[key] == null ? null : f[key]);
+      if (!agree) return subject + " written in place disagrees with the shape hydra:expects names on its " + key + ", so what it takes is not known; this control is not invoked";
+    }
+  }
+  return null;
+}
+// The warning a control shows when hydra:expects names a shape the document
+// does not describe: only its fields written in place, if any, are known.
+function expectsWarning(expects, inline) {
+  return "hydra:expects names " + (asText(expects) || "a shape") + ", which this document does not describe, so " +
+    (inline ? "only the input fields written in place were built: what else the server expects is not known here."
+      : "no input fields were built: what the server expects is not known here.");
 }
 // The one shape a control expects (a reference, a shape or JSON Schema written
 // in place, or a JSON literal holding a JSON Schema) and the name it is shown
@@ -2151,8 +2281,9 @@ function controlFromNode(index, node, source) {
   let media = one(index.get(node, P.returnsCT), "hydra:returnsContentType", problems, "what it returns");
   if (media == null || media === "") media = one(index.get(node, P.media), "dcat:mediaType", problems, "what it returns");
   // A shape's facets are read now, once per shape (sharedShapeFields), so an
-  // input that names two datatypes or two counts is a problem here too.
-  if (!inlineFields(node) && expectsRaw != null) problems.push(...sharedShapeFields(index, expectsRaw).problems);
+  // input that names two datatypes or two counts is a problem here too, and so
+  // are they where the control also writes its fields in place.
+  if (expectsRaw != null) problems.push(...sharedShapeFields(index, expectsRaw).problems);
   const returns = label(index.get(node, P.returns));
   const control = {
     id: asText(node["@id"] || rel), rel: String(rel), method,
@@ -2177,44 +2308,78 @@ function controlFromNode(index, node, source) {
   }
   return control;
 }
-// A control's input fields, from its inline fields or the shape hydra:expects
-// names, joined to its template's mappings; the problem that keeps it from
-// being invoked, if any; and a warning to show with it. A template's variable
-// that is no input's is sent in the body too, so where the body is a JSON
-// Schema's that names additionalProperties, that is its schema: false refuses
-// a value for it, and a schema types and checks it as a property's.
-// hmc.py's _control_inputs is the same.
+// A control's input fields, from the shape hydra:expects names when the
+// document describes it (a JSON Schema, or a shape that gives fields), checked
+// against any fields the control writes in place, or else from those, joined
+// to its template's mappings; the problem that keeps it from being invoked, if
+// any; and a warning to show with it. A template's variable that is no input's
+// is sent in the body too, so where the body is a JSON Schema's that names
+// additionalProperties, that is its schema: false refuses a value for it, and
+// a schema types and checks it as a property's; it is read once for all such
+// variables, and choices in it that two of them would share are a problem.
+// Where the body is a closed SHACL shape's, such a variable is refused unless
+// sh:ignoredProperties names its property. hmc.py's _control_inputs is the same.
 function controlInputs(index, node, expectsRaw, expects, mappings) {
   let fields = [];
   let warning = null;
   let problem = null;
+  let inlineProblem = null;
   const inline = inlineFields(node);
-  if (inline) {
-    fields = inline.filter(isMap).map(inlineField);
+  const items = inline ? inline.filter(isMap) : [];
+  let shape = expectsRaw != null ? sharedShapeFields(index, expectsRaw) : null;
+  if (shape && !shape.fields.length && !isJsonSchema(expectsRaw)) shape = null;
+  if (shape) {
+    fields = shape.fields;
+    if (inline) inlineProblem = duplicateProblem(items.map(inlineField)) || inlineDisagreement(items, fields);
+    problem = shape.duplicate || inlineProblem;
+  } else if (inline) {
+    fields = items.map(inlineField);
     problem = duplicateProblem(fields);
-  } else if (expectsRaw != null) {
-    const shared = sharedShapeFields(index, expectsRaw);
-    fields = shared.fields;
-    problem = shared.duplicate;
-    if (!fields.length && !isJsonSchema(expectsRaw)) {
-      warning = "hydra:expects names " + (asText(expects) || "a shape") + ", which this document does not describe, so no " +
-        "input fields were built: what the server expects is not known here.";
-    }
   }
+  if (expectsRaw != null && !shape) warning = expectsWarning(expects, inline && items.length > 0);
   if (mappings.length) {
     const given = fields.length;
     fields = mergeMappings(fields, mappings);
-    const schema = !inline && expectsRaw != null ? jsonValue(expectsRaw) : null;
+    const schema = shape ? jsonValue(expectsRaw) : null;
     const extra = [];
-    if (isJsonSchema(schema) && own(schema, "additionalProperties") && schema.additionalProperties !== true) {
+    if (fields.length > given && isJsonSchema(schema) && own(schema, "additionalProperties") && schema.additionalProperties !== true) {
+      // Built once, for the first such variable, and copied for each.
+      const first = fields[given];
+      const built = schemaField(first.name, schema.additionalProperties, first.required, extra);
+      if (fields.length - given > 1 && namesChoices(schema.additionalProperties)) {
+        extra.push('the inputs "' + first.name + '" and "' + fields[given + 1].name + '" share the choices of additionalProperties, which this client ' +
+          "would show and check once for each, at a cost the document's size does not bound; this control is not invoked");
+      }
       for (let i = given; i < fields.length; i++) {
         const added = fields[i];
-        fields[i] = { ...schemaField(added.name, schema.additionalProperties, added.required, extra), path: added.path, variable: added.variable };
+        fields[i] = { ...built, name: added.name, path: added.path, variable: added.variable, required: added.required, minCount: added.required ? 1 : 0 };
       }
     }
-    problem = duplicateProblem(fields) || (extra.length ? extra[0] : null);
+    const closed = fields.length > given && shape && !isJsonSchema(schema) ? index.node(jsonValue(expectsRaw)) : null;
+    if (closed && asList(index.get(closed, SHACL + "closed")).some(v => v != null && truthy(label(v)) !== false)) {
+      const [ignored, why, several] = index.listValues(index.get(closed, SHACL + "ignoredProperties"));
+      if (several || why != null) {
+        extra.push("the shape writes sh:ignoredProperties as " + (several ? "more than one list" : why) +
+          ", which this client does not read, so what it sends is not known; this control is not invoked");
+      }
+      const kept = new Set(ignored.map(asText));
+      for (let i = given; i < fields.length; i++) if (!fields[i].path || !kept.has(fields[i].path)) fields[i] = { ...fields[i], closedOut: true };
+    }
+    problem = inlineProblem || duplicateProblem(fields) || (extra.length ? extra[0] : null);
   }
   return { fields, warning, problem };
+}
+// Whether a JSON Schema names choices anywhere in it: an enum or a const at any depth.
+function namesChoices(schema) {
+  const stack = [schema];
+  while (stack.length) {
+    const s = stack.pop();
+    if (Array.isArray(s)) { for (const x of s) stack.push(x); continue; }
+    if (!isMap(s)) continue;
+    if (own(s, "enum") || own(s, "const")) return true;
+    for (const key of Object.keys(s)) stack.push(s[key]);
+  }
+  return false;
 }
 
 function extractControls(index, source) {
@@ -2262,10 +2427,34 @@ const unquote = (v) => v.replace(/^"|"$/g, "");
 const CONTROL_BLOCK = /:::control[ \t]+([^ \t\n]+)[ \t]*\n(.*?)(?:\n:::|$)/gs;
 // Keys of a block whose value is text, and a block's fields, which is a JSON array of objects.
 const MD_TEXT = ["rel", "method", "target", "expects", "mediaType"];
+// JSON nested deeper than JSON_DEPTH arrays and objects is not read, whether
+// a document, a value given or a response: Python's json.loads would run out
+// of call stack where JSON.parse does not, and a request body's indentation
+// grows with depth, so each client refuses it alike before it is parsed. The
+// scan skips strings by their escapes and counts brackets, so it is linear.
+// hmc.py's _JSON_DEPTH, _json_too_deep and _TooDeep are the same.
+const JSON_DEPTH = 256;
+function jsonTooDeep(text) {
+  let depth = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c === 34) { i++; while (i < text.length && text.charCodeAt(i) !== 34) i += text.charCodeAt(i) === 92 ? 2 : 1; }
+    else if (c === 91 || c === 123) { if (++depth > JSON_DEPTH) return true; }
+    else if (c === 93 || c === 125) depth--;
+  }
+  return false;
+}
+// JSON.parse, after refusing text nested past JSON_DEPTH (an error whose `deep` is true).
+function parseJson(text) {
+  if (jsonTooDeep(text)) { const err = new Error("JSON nested too deep"); err.deep = true; throw err; }
+  return JSON.parse(text);
+}
+// What a value nested past JSON_DEPTH is refused with, after the field's name.
+const DEEP_VALUE = ": nests JSON deeper than " + JSON_DEPTH + " levels, which this client does not read, so it is not sent";
 // JSON as a document's is read: NaN, Infinity and a repeated key are refused
 // (it throws), as hmc.py's _strict_json refuses them.
 function strictJson(text) {
-  const value = JSON.parse(text);
+  const value = parseJson(text);
   if (repeatedKey(text) != null) throw new Error("repeated key");
   return value;
 }
@@ -2321,8 +2510,12 @@ function parseMarkdown(text, url, contentType) {
       const written = given.get("fields");
       let listed;
       let parsed = true;
-      try { listed = strictJson(written[written.length - 1]); } catch { parsed = false; }
-      if (!parsed) problems.push("this control block writes fields as text that is not JSON, so what it sends is not known; it is not invoked");
+      let deep = false;
+      try { listed = strictJson(written[written.length - 1]); } catch (err) { parsed = false; deep = !!(err && err.deep); }
+      if (!parsed) {
+        problems.push(deep ? "this control block writes fields as JSON nested deeper than " + JSON_DEPTH + " levels, which this client does not read, so what it sends is not known; it is not invoked"
+          : "this control block writes fields as text that is not JSON, so what it sends is not known; it is not invoked");
+      }
       else if (Array.isArray(listed) && listed.every(isMap)) {
         fields = listed.map(inlineField);
         const unreadKey = inlineKeyProblem(listed);
@@ -2346,6 +2539,8 @@ function parseMarkdown(text, url, contentType) {
       description: asText(data.description) || asText(data.whenToUse), mediaType: asTextOrNull(data.mediaType),
       expects: asTextOrNull(data.expects), returns: asTextOrNull(data.returns), target: asTextOrNull(data.target),
       template: null, fields, types: [], source: url,
+      // A block never describes the shape it expects, so only its fields written in place are known.
+      warning: typeof data.expects === "string" && data.expects ? expectsWarning(data.expects, fields.length > 0) : null,
       destructive: hinted.destructive, readOnly: hinted.readOnly, conflict, problem: conflict
     };
     control.unsafe = isUnsafe(control);
@@ -2362,7 +2557,8 @@ function classifyPayload(text, contentType) {
   if (ct.includes("turtle") || ct === "text/ttl") return "turtle";
   if ((ct.includes("markdown") || ct === "text/plain") && (text.includes(":::control") || sample.startsWith("---"))) return "markdown";
   if (sample.startsWith("{") || sample.startsWith("[")) {
-    try { JSON.parse(text); return "jsonld"; } catch {}
+    // JSON nested too deep is JSON the reader refuses by name, not another representation.
+    try { parseJson(text); return "jsonld"; } catch (err) { if (err && err.deep) return "jsonld"; }
   }
   if (sample.startsWith("@prefix") || sample.startsWith("PREFIX") || sample.startsWith("<http")) return "turtle";
   if (text.includes(":::control")) return "markdown";
@@ -2486,6 +2682,7 @@ async function fetchAuthority(url) {
 function parseDescriptor(text, contentType, url, fetchedFrom) {
   const kind = classifyPayload(text, contentType);
   if (kind === "jsonld") {
+    if (jsonTooDeep(text)) throw new Error("This document nests JSON deeper than " + JSON_DEPTH + " levels, which this client does not read, so it is not read.");
     const document = JSON.parse(text);
     const repeated = repeatedKey(text);
     if (repeated != null) throw new Error('This document repeats the key "' + repeated + '" in one object, so which value it means is not known, and it is not read.');
@@ -2873,10 +3070,13 @@ function readSchema(prop, subject) {
 // Whether a JSON Schema field's input can give an entry: one its schema's type
 // allows, and, in a number or a boolean field, a number or a boolean (or null).
 // An entry that holds a number no double holds (1e400, which JSON.parse reads
-// as an infinity) is none, and so is an integer field's entry past 2^53, which
-// JSON.parse has rounded: neither is the number the document wrote.
+// as an infinity) is none, and so is an entry that is an integer past 2^53, in
+// any field, which JSON.parse may have rounded: neither is surely the number
+// the document wrote.
 function offers(field, v) {
   if (tooLarge(v)) return false;
+  // An integer past 2^53 is the double JSON.parse rounded it to, which may not be the number written.
+  if (typeof v === "number" && Number.isInteger(v) && !Number.isSafeInteger(v)) return false;
   if (field.schemaTypes && !jsonTypesOf(v).some(t => field.schemaTypes.includes(t))) return false;
   if (numericKind(field) === "integer") return v === null || Number.isSafeInteger(v);
   if (numericKind(field)) return v === null || typeof v === "number";
@@ -2922,9 +3122,10 @@ function schemaChoices(field, problems, subject) {
 // an enumeration's entries are named once. Each enum's entries are keyed once
 // (jsonKey), so each part is looked up in them at the cost of its own size. A
 // walk with a stack. hmc.py's _check_schema is the same.
-function schemaCheck(schema, value, name, report) {
+function schemaCheck(schema, value, name, report, enums = new Map()) {
   const stack = [[schema, value, name]];
-  const enums = new Map();
+  // A name that holds "/" is set apart from the pointer after it: "d/x at /0".
+  const step = (at, token) => (at === name && name.includes("/") ? name + " at /" : at + "/") + token;
   while (stack.length) {
     const [s, v, at] = stack.pop();
     if (s === false) return report(at + ": is not allowed by its schema");
@@ -2959,12 +3160,12 @@ function schemaCheck(schema, value, name, report) {
     if (Array.isArray(v)) {
       if (own(s, "minItems") && v.length < inty(s.minItems)) return report(at + ": needs at least " + inty(s.minItems) + " values, got " + v.length);
       if (own(s, "maxItems") && v.length > inty(s.maxItems)) return report(at + ": takes at most " + inty(s.maxItems) + " values, got " + v.length);
-      if (own(s, "items") && (typeof s.items === "boolean" || isMap(s.items))) v.forEach((item, i) => children.push([s.items, item, at + "/" + i]));
+      if (own(s, "items") && (typeof s.items === "boolean" || isMap(s.items))) v.forEach((item, i) => children.push([s.items, item, step(at, i)]));
     } else if (isMap(v)) {
       if (Array.isArray(s.required)) for (const key of s.required) if (typeof key === "string" && !own(v, key)) return report(at + ': is missing the key "' + key + '"');
       const props = isMap(s.properties) ? s.properties : null;
       const extra = own(s, "additionalProperties") ? s.additionalProperties : true;
-      for (const key of Object.keys(v)) children.push([props && own(props, key) ? props[key] : extra, v[key], at + "/" + pointerToken(key)]);
+      for (const key of Object.keys(v)) children.push([props && own(props, key) ? props[key] : extra, v[key], step(at, pointerToken(key))]);
     }
     for (let i = children.length - 1; i >= 0; i--) stack.push(children[i]);
   }
@@ -2978,11 +3179,135 @@ const INTEGER_RANGES = new Map([["byte", [-128, 127]], ["short", [-32768, 32767]
   ["long", [-9223372036854775808, 9223372036854775807]], ["unsignedByte", [0, 255]], ["unsignedShort", [0, 65535]],
   ["unsignedInt", [0, 4294967295]], ["unsignedLong", [0, 18446744073709551615]], ["nonNegativeInteger", [0, null]],
   ["positiveInteger", [1, null]], ["nonPositiveInteger", [null, 0]], ["negativeInteger", [null, -1]]]);
+// The XSD 1.1 (Part 2) date and time datatypes, each checked against its
+// lexical grammar by hand, and against its value constraints: a year of four
+// digits or more (no leading zero past four, a "-" before it, 0000 allowed), a
+// month from 01 to 12, a day no later than its month's last (29 February only
+// in a leap year of the proleptic Gregorian calendar, or in a gMonthDay), an
+// hour from 00 to 23, or 24:00:00 exactly, minutes and seconds from 00 to 59, a
+// fraction of a second of one digit or more, a timezone of Z or of +hh:mm or
+// -hh:mm no more than 14:00 from UTC (one an xsd:dateTimeStamp must have), and
+// a duration of one part or more, in the order Y M D, then T and H M S, a
+// fraction only on the seconds, and T only before a part of the time. Digits
+// are ASCII digits. hmc.py's _TEMPORAL and _xsd_temporal are the same, step
+// for step.
+const TEMPORAL = new Set(["date", "dateTime", "dateTimeStamp", "time", "gYear", "gYearMonth", "gMonth", "gDay", "gMonthDay",
+  "duration", "yearMonthDuration", "dayTimeDuration"]);
+function digitsAt(s, i) { let j = i; while (j < s.length && s.charCodeAt(j) >= 48 && s.charCodeAt(j) <= 57) j++; return j - i; }
+// The two digits at i, as a number from low to high, or -1.
+function twoAt(s, i, low, high) {
+  if (digitsAt(s, i) < 2) return -1;
+  const n = (s.charCodeAt(i) - 48) * 10 + (s.charCodeAt(i + 1) - 48);
+  return n >= low && n <= high ? n : -1;
+}
+// A year at i: [where it ends, its last four digits], or null.
+function yearAt(s, i) {
+  if (s[i] === "-") i++;
+  const n = digitsAt(s, i);
+  if (n < 4 || (n > 4 && s[i] === "0")) return null;
+  return [i + n, Number(s.slice(i + n - 4, i + n))];
+}
+function monthDays(month, leap) { return month === 2 ? (leap ? 29 : 28) : ([4, 6, 9, 11].includes(month) ? 30 : 31); }
+// Whether a year whose last four digits these are is a leap year: 4, 100 and 400 all divide 10,000.
+function leapYear(last4) { return last4 % 400 === 0 || (last4 % 4 === 0 && last4 % 100 !== 0); }
+// A date at i, year-month-day: where it ends, or -1.
+function dateAt(s, i) {
+  const y = yearAt(s, i);
+  if (!y || s[y[0]] !== "-") return -1;
+  const month = twoAt(s, y[0] + 1, 1, 12);
+  if (month < 0 || s[y[0] + 3] !== "-") return -1;
+  const day = twoAt(s, y[0] + 4, 1, 31);
+  return day < 0 || day > monthDays(month, leapYear(y[1])) ? -1 : y[0] + 6;
+}
+// A time at i, hh:mm:ss and a fraction: where it ends, or -1. 24:00:00 is the end of a day, exactly.
+function timeAt(s, i) {
+  const hour = twoAt(s, i, 0, 24);
+  const minute = s[i + 2] === ":" ? twoAt(s, i + 3, 0, 59) : -1;
+  const second = minute >= 0 && s[i + 5] === ":" ? twoAt(s, i + 6, 0, 59) : -1;
+  if (hour < 0 || second < 0) return -1;
+  let end = i + 8;
+  let zero = true;
+  if (s[end] === ".") {
+    const n = digitsAt(s, end + 1);
+    if (!n) return -1;
+    for (let k = end + 1; k <= end + n; k++) if (s[k] !== "0") zero = false;
+    end += 1 + n;
+  }
+  return hour === 24 && (minute !== 0 || second !== 0 || !zero) ? -1 : end;
+}
+// What is at i, to the end: nothing (0), a timezone (1), or anything else (-1).
+function zoneAt(s, i) {
+  if (i === s.length) return 0;
+  if (s[i] === "Z") return i + 1 === s.length ? 1 : -1;
+  if ((s[i] !== "+" && s[i] !== "-") || s[i + 3] !== ":" || i + 6 !== s.length) return -1;
+  const hour = twoAt(s, i + 1, 0, 14);
+  const minute = twoAt(s, i + 4, 0, 59);
+  return hour < 0 || minute < 0 || (hour === 14 && minute !== 0) ? -1 : 1;
+}
+// A duration: an optional "-", "P", then parts of digits and a letter, in the
+// order Y M D, then T and H M S. A yearMonthDuration has only Y and M; a
+// dayTimeDuration no Y and no M before T.
+function durationOk(type, s) {
+  let i = s[0] === "-" ? 1 : 0;
+  if (s[i] !== "P") return false;
+  i++;
+  let units = "YMD"; let last = -1; let parts = 0; let timeParts = -1; let used = "";
+  while (i < s.length) {
+    if (s[i] === "T") {
+      if (timeParts >= 0) return false;
+      timeParts = 0; units = "HMS"; last = -1; i++;
+      continue;
+    }
+    const n = digitsAt(s, i);
+    if (!n) return false;
+    let j = i + n;
+    let fraction = false;
+    if (s[j] === ".") {
+      const f = digitsAt(s, j + 1);
+      if (!f) return false;
+      j += 1 + f; fraction = true;
+    }
+    const at = j < s.length ? units.indexOf(s[j]) : -1;
+    if (at <= last || (fraction && !(timeParts >= 0 && s[j] === "S"))) return false;
+    last = at; parts++;
+    if (timeParts >= 0) timeParts++; else used += s[j];
+    i = j + 1;
+  }
+  if (!parts || timeParts === 0) return false;
+  if (type === "yearMonthDuration") return timeParts < 0 && !used.includes("D");
+  if (type === "dayTimeDuration") return !used.includes("Y") && !used.includes("M");
+  return true;
+}
+// Whether text is a value of the XSD date or time datatype named.
+function xsdTemporal(type, s) {
+  let end;
+  switch (type) {
+    case "date": end = dateAt(s, 0); return end >= 0 && zoneAt(s, end) >= 0;
+    case "dateTime": case "dateTimeStamp": {
+      end = dateAt(s, 0);
+      if (end < 0 || s[end] !== "T") return false;
+      end = timeAt(s, end + 1);
+      const zone = end < 0 ? -1 : zoneAt(s, end);
+      return type === "dateTime" ? zone >= 0 : zone === 1;
+    }
+    case "time": end = timeAt(s, 0); return end >= 0 && zoneAt(s, end) >= 0;
+    case "gYear": { const y = yearAt(s, 0); return !!y && zoneAt(s, y[0]) >= 0; }
+    case "gYearMonth": { const y = yearAt(s, 0); return !!y && s[y[0]] === "-" && twoAt(s, y[0] + 1, 1, 12) >= 0 && zoneAt(s, y[0] + 3) >= 0; }
+    case "gMonth": return s.startsWith("--") && twoAt(s, 2, 1, 12) >= 0 && zoneAt(s, 4) >= 0;
+    case "gDay": return s.startsWith("---") && twoAt(s, 3, 1, 31) >= 0 && zoneAt(s, 5) >= 0;
+    case "gMonthDay": {
+      const month = s.startsWith("--") ? twoAt(s, 2, 1, 12) : -1;
+      const day = month >= 0 && s[4] === "-" ? twoAt(s, 5, 1, 31) : -1;
+      return day >= 0 && day <= monthDays(month, true) && zoneAt(s, 7) >= 0;
+    }
+    default: return durationOk(type, s);
+  }
+}
 // The datatypes whose values this client checks: text, an IRI, a number, a
-// boolean and rdf:JSON. A field of any other names its datatype here, and a value
-// given for it is refused, since its form (a date's, say) is not checked.
-// hmc.py's _unchecked_datatype is the same.
-const CHECKED_XSD = new Set(["string", "anyURI", "boolean", "decimal", ...XSD_INTEGERS, ...XSD_DOUBLES]);
+// boolean, a date or a time, and rdf:JSON. A field of any other names its
+// datatype here, and a value given for it is refused, since its form (a
+// language tag's, say) is not checked. hmc.py's _unchecked_datatype is the same.
+const CHECKED_XSD = new Set(["string", "anyURI", "boolean", "decimal", ...XSD_INTEGERS, ...XSD_DOUBLES, ...TEMPORAL]);
 function uncheckedDatatype(field) {
   const dt = asText(field.datatype);
   if (!dt || field.jsonKind || isRdfJson(dt)) return null;
@@ -3012,6 +3337,7 @@ function coerceValue(field, value) {
       // Read as a document is: NaN, Infinity and a repeated key are refused,
       // as hmc.py's _strict_json refuses them, and never reach a request.
       const text = String(value);
+      if (jsonTooDeep(text)) throw new Error(field.name + DEEP_VALUE);
       try { parsed = JSON.parse(text); }
       catch { throw new Error(field.name + " must be JSON"); }
       const repeated = repeatedKey(text);
@@ -3080,7 +3406,7 @@ function multiItems(value) {
   const text = String(value);
   if (trimSpaces(text).startsWith("[")) {
     let parsed = null;
-    try { parsed = JSON.parse(text); } catch {}
+    try { parsed = parseJson(text); } catch (err) { if (err && err.deep) throw err; }
     if (Array.isArray(parsed)) return parsed.filter(kept);
   }
   return text.replace(/\r\n?/g, "\n").split("\n").filter(line => trimSpaces(line) !== "");
@@ -3132,15 +3458,22 @@ function codePoints(text) {
 // it is the field's default (`fromDefault`), which is checked as the document
 // gives it, never as the choice its text names; it is checked by schemaCheck.
 // Any other field's value is checked by its facets, its sh:in by `choices`
-// (shapeChoices, read once per field). hmc.py's _check_value is the same.
-function checkValue(field, found, numeric, report, choices, fromDefault) {
+// (shapeChoices, read once per field). A field that takes no value (sh:maxCount
+// 0), or a template variable a closed shape does not name, refuses any; a
+// default is first checked to be of the kind its field takes. `enums` keys
+// each enum once for a whole check. hmc.py's _check_value is the same.
+function checkValue(field, found, numeric, report, choices, fromDefault, enums) {
   if (field.unchecked && field.unchecked.length) {
     report(field.name + ": has a constraint this client does not check (" + field.unchecked.join(", ") + "), so it is not sent");
     return null;
   }
   if (field.notWritable) { report(field.name + ": is not writable (hydra:writable false), so it is not sent"); return null; }
+  if (field.closedOut) { report(field.name + ": is not allowed by its shape, which is closed (sh:closed true), so it is not sent"); return null; }
+  if (!field.multi && field.maxCount === 0 && field.maxItems == null) { report(field.name + ": takes at most 0 values, got 1"); return null; }
   const unreadType = field.jsonSchema ? null : uncheckedDatatype(field);
   if (unreadType) { report(field.name + ": takes " + unreadType + ", whose form this client does not check, so it is not sent"); return null; }
+  const wrongKind = fromDefault ? defaultKindProblem(field, found) : null;
+  if (wrongKind) { report(wrongKind); return null; }
   if (numeric && typeof found === "string") found = trimSpaces(found);
   let typed;
   const choice = field.jsonSchema && !fromDefault && typeof found === "string" ? choicesOf(field).find(c => c[0] === found) : null;
@@ -3153,7 +3486,14 @@ function checkValue(field, found, numeric, report, choices, fromDefault) {
   if (!numeric && tooLarge(typed)) { report(field.name + ": holds a number too large to send"); return null; }
   if (unpaired(typed)) { report(field.name + ": holds an unpaired surrogate, which is not Unicode text"); return null; }
   if (field.jsonSchema) {
-    schemaCheck(field.schema, typed, field.name, report);
+    // An integer past 2^53 is not looked up in an enum's or a const's entries,
+    // which are the doubles JSON.parse read, perhaps rounded.
+    if (numeric && typeof typed === "number" && Number.isInteger(typed) && !Number.isSafeInteger(typed) && isMap(field.schema) &&
+        (own(field.schema, "enum") || own(field.schema, "const"))) {
+      report(field.name + ": integer too large to send exactly");
+      return null;
+    }
+    schemaCheck(field.schema, typed, field.name, report, enums);
     return typed;
   }
   const structured = typed != null && typeof typed === "object";
@@ -3167,6 +3507,8 @@ function checkValue(field, found, numeric, report, choices, fromDefault) {
   if (range && ((range[0] != null && typed < range[0]) || (range[1] != null && typed > range[1]))) report(field.name + ": out of the range of xsd:" + local);
   // A float is a double here, but one past the largest float is none.
   if (local === "float" && typeof typed === "number" && !Number.isFinite(Math.fround(typed))) report(field.name + ": out of the range of xsd:float");
+  // A date or a time is text in its datatype's lexical form, sent as typed.
+  if (TEMPORAL.has(local) && typeof typed === "string" && !xsdTemporal(local, typed)) report(field.name + ": not an xsd:" + local);
   // A length facet measures text: SHACL counts the text of a literal or an IRI.
   // A body sent whole is measured as it is sent. A JSON value in a field (a node,
   // or rdf:JSON) has no one text a length facet measures, so it is refused.
@@ -3181,12 +3523,16 @@ function checkValue(field, found, numeric, report, choices, fromDefault) {
   if (field.hasValue != null && !field.multi && !shapeEntryMatches(field, numeric, typed, field.hasValue)) report(field.name + ": must be " + asText(field.hasValue));
   // A bound is compared with a number: a value that is none (text, or a node) is
   // an error, not a pass, as SHACL has a comparison it cannot make. A bound that
-  // is no number, such as a date, is not compared, so a value is refused.
+  // is no number, such as a date, is not compared, so a value is refused; nor is
+  // one on a field that takes no number (text, a date, JSON), which SHACL would
+  // compare with the value's own datatype, never with the number it reads as.
   const bounds = [["minInclusive", field.minInclusive], ["maxInclusive", field.maxInclusive],
     ["minExclusive", field.minExclusive], ["maxExclusive", field.maxExclusive]].filter(b => b[1] != null);
   const unreadBound = bounds.find(b => boundNumber(b[1]) == null);
   if (unreadBound) report(field.name + ": its sh:" + unreadBound[0] + " " + asText(unreadBound[1]) + " is not a number, which this client does not compare, so it is not sent");
-  else if (bounds.length) {
+  else if (bounds.length && !numeric) {
+    report(field.name + ": its sh:" + bounds[0][0] + " " + asText(bounds[0][1]) + " bounds a field that takes no number, which this client does not compare, so it is not sent");
+  } else if (bounds.length) {
     const n = structured ? null : lexicalNumber(typed);
     if (n == null) report(field.name + ": not a number");
     else {
@@ -3229,14 +3575,90 @@ function checkValue(field, found, numeric, report, choices, fromDefault) {
 function aliasesOf(field) {
   return [...new Set([field.name, field.variable, field.path && localName(field.path)].filter(Boolean))];
 }
+// A default is of the kind its field takes when the field is neither JSON
+// Schema's (whose schema checks its default) nor JSON: text, or for a number or
+// a boolean that value or its text. One of another kind is refused by name,
+// never sent as another kind of JSON nor changed into its text. hmc.py's
+// _default_kind_problem is the same.
+function defaultKindProblem(field, v) {
+  if (field.jsonSchema || field.jsonKind || typeof v === "string") return null;
+  const kind = numericKind(field) ? "number" : (xsdName(field.datatype) === "boolean" ? "boolean" : null);
+  if (kind && typeof v === kind) return null;
+  return field.name + ": its default " + entryText(v) + " is not " + (kind === "number" ? "a number" : kind === "boolean" ? "a boolean" : "text") +
+    ", which this field takes, so it is not sent";
+}
+// One field's value from what was given for it, typed and checked, as
+// [the value, whether it is one to send]; each problem goes to `report`. Nothing
+// given (null, "" or an empty list) is the field's default as the document
+// gives it, whether a link, a flag or a cleared input gave nothing. A list
+// field takes several values (a multiple select, a JSON array, or one per line)
+// and is checked against its sh:minCount and sh:maxCount; a list given is
+// checked as it was given, and one that reads as no values is refused, never
+// replaced by the default. A field that takes one value takes the last one
+// given, as a repeated option does. `enums` keys each enum once for the whole
+// check. hmc.py's _field_value is the same.
+function fieldValue(field, found, report, enums) {
+  let problems = 0;
+  const note = (message) => { problems++; report(message); };
+  const numeric = numericKind(field);
+  const required = field.required || (field.minCount || 0) >= 1;
+  if (found === "") found = null;
+  if (field.multi) {
+    const given = found != null && !(Array.isArray(found) && !found.length);
+    let items;
+    try { items = found != null ? multiItems(found) : []; } catch { note(field.name + DEEP_VALUE); return [null, false]; }
+    if (!items.length && given) { note(field.name + ": was given no values"); return [null, false]; }
+    const fromDefault = !items.length && field.defaultValue != null;
+    if (fromDefault) {
+      items = multiItems(Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue]);
+      // A default is read as a value given is: one with entries that are all blank holds no values.
+      if (!items.length && asList(field.defaultValue).some(x => x != null)) { note(field.name + ": was given no values"); return [null, false]; }
+    }
+    if (!items.length) { if (required) note("missing required field '" + field.name + "'"); return [null, false]; }
+    if (field.minCount && items.length < field.minCount) note(field.name + ": needs at least " + field.minCount + " values, got " + items.length);
+    if (field.maxCount != null && items.length > field.maxCount) note(field.name + ": takes at most " + field.maxCount + " values, got " + items.length);
+    const typedItems = [];
+    const choices = shapeChoices(field, numeric);
+    for (const item of items) {
+      if (item != null && typeof item === "object") {
+        note(field.name + ": each value is one " + (localName(field.datatype) || "text") + " value, not JSON");
+        continue;
+      }
+      const wrongKind = fromDefault ? defaultKindProblem(field, item) : null;
+      if (wrongKind) { note(wrongKind); continue; }
+      typedItems.push(checkValue(field, typeof item === "string" ? item : String(item), numeric, note, choices, false, enums));
+    }
+    // sh:hasValue asks that one of a list's values be the one it names.
+    if (field.hasValue != null && !typedItems.some(v => v != null && shapeEntryMatches(field, numeric, v, field.hasValue))) {
+      note(field.name + ": must include " + asText(field.hasValue));
+    }
+    return [typedItems, problems === 0];
+  }
+  if (Array.isArray(found)) found = found.length ? found[found.length - 1] : null;
+  let fromDefault = false;
+  if ((found == null || found === "") && field.defaultValue != null) { found = field.defaultValue; fromDefault = true; }
+  // Spaces around a number are not part of it; a number field given only
+  // spaces holds no number, which is refused, not filled with the default,
+  // and a default of only spaces is refused as one given is.
+  if (numeric && typeof found === "string") {
+    const spaced = found !== "";
+    found = trimSpaces(found);
+    if (found === "" && spaced) {
+      try { coerceNumber(field, numeric, found); } catch (err) { note(String(err.message || err)); }
+      return [null, false];
+    }
+  }
+  if (found == null || found === "") { if (required) note("missing required field '" + field.name + "'"); return [null, false]; }
+  const value = checkValue(field, found, numeric, note, field.jsonSchema ? null : shapeChoices(field, numeric), fromDefault, enums);
+  return [value, problems === 0];
+}
 function validateFields(control, supplied) {
   const errors = []; const values = Object.create(null);
   if (control.problem) return { values, errors: [control.problem] };
-  // Each problem is kept once, looked up in a set beside the list; `reported`
-  // counts every report, so a value whose problem was already kept is not taken.
+  // Each problem is kept once, looked up in a set beside the list.
   const seen = new Set();
-  let reported = 0;
-  const report = (message) => { reported++; if (!seen.has(message)) { seen.add(message); errors.push(message); } };
+  const report = (message) => { if (!seen.has(message)) { seen.add(message); errors.push(message); } };
+  const enums = new Map();
   const incoming = Object.assign(Object.create(null), supplied);
   const known = new Set();
   for (const field of control.fields) {
@@ -3245,61 +3667,11 @@ function validateFields(control, supplied) {
     // A value is given under one of a field's names; values under two of them
     // are a problem, never one of them taken and the other dropped.
     const named = aliases.filter(a => own(incoming, a) && incoming[a] != null && incoming[a] !== "");
-    let found = named.length ? incoming[named[0]] : null;
+    const found = named.length ? incoming[named[0]] : null;
     for (const a of named) delete incoming[a];
     if (named.length > 1) report(field.name + ": values were given under more than one of its names (" + named.join(", ") + ")");
-    const numeric = numericKind(field);
-    const required = field.required || (field.minCount || 0) >= 1;
-    if (field.multi) {
-      // A list given is checked as it was given: one that reads as no values
-      // is refused, never replaced by the default. An empty list is none given,
-      // as a multiple select with nothing chosen gives none.
-      const given = found != null && !(Array.isArray(found) && !found.length);
-      let items = found != null ? multiItems(found) : [];
-      if (!items.length && given) { report(field.name + ": was given no values"); continue; }
-      if (!items.length && field.defaultValue != null) {
-        items = multiItems(Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue]);
-        // A default is read as a value given is: one with entries that are all blank holds no values.
-        if (!items.length && asList(field.defaultValue).some(x => x != null)) { report(field.name + ": was given no values"); continue; }
-      }
-      if (!items.length) { if (required) report("missing required field '" + field.name + "'"); continue; }
-      if (field.minCount && items.length < field.minCount) report(field.name + ": needs at least " + field.minCount + " values, got " + items.length);
-      if (field.maxCount != null && items.length > field.maxCount) report(field.name + ": takes at most " + field.maxCount + " values, got " + items.length);
-      const typedItems = [];
-      const choices = shapeChoices(field, numeric);
-      for (const item of items) {
-        if (item != null && typeof item === "object") {
-          report(field.name + ": each value is one " + (localName(field.datatype) || "text") + " value, not JSON");
-          continue;
-        }
-        typedItems.push(checkValue(field, typeof item === "string" ? item : String(item), numeric, report, choices, false));
-      }
-      // sh:hasValue asks that one of a list's values be the one it names.
-      if (field.hasValue != null && !typedItems.some(v => v != null && shapeEntryMatches(field, numeric, v, field.hasValue))) {
-        report(field.name + ": must include " + asText(field.hasValue));
-      }
-      values[field.name] = typedItems;
-      continue;
-    }
-    // A field that takes one value takes the last one given, as a repeated option does.
-    if (Array.isArray(found)) found = found.length ? found[found.length - 1] : null;
-    let fromDefault = false;
-    if ((found == null || found === "") && field.defaultValue != null) { found = field.defaultValue; fromDefault = true; }
-    // Spaces around a number are not part of it; a number field given only
-    // spaces holds no number, which is refused, not filled with the default,
-    // and a default of only spaces is refused as one given is.
-    if (numeric && typeof found === "string") {
-      const spaced = found !== "";
-      found = trimSpaces(found);
-      if (found === "" && spaced) {
-        try { coerceNumber(field, numeric, found); } catch (err) { report(String(err.message || err)); }
-        continue;
-      }
-    }
-    if (found == null || found === "") { if (required) report("missing required field '" + field.name + "'"); continue; }
-    const before = reported;
-    const value = checkValue(field, found, numeric, report, field.jsonSchema ? null : shapeChoices(field, numeric), fromDefault);
-    if (reported === before) values[field.name] = value;
+    const [value, ok] = fieldValue(field, found, report, enums);
+    if (ok) values[field.name] = value;
   }
   for (const name of Object.keys(incoming)) if (!known.has(name)) report("no input field is named '" + name + "'");
   // A value that goes in the address (a template's variable, or any value of a
@@ -3621,7 +3993,7 @@ function fieldControl(field) {
   const req = field.required || (field.minCount || 0) >= 1;
   const key = esc(field.name);
   let input;
-  const options = enumOptions(field);
+  const options = selectOptions(field);
   const blank = options.map(() => "<option></option>").join("");
   // A list field is a multiple select when it has choices, and otherwise a text
   // area that takes one value per line (or a JSON array).
@@ -3649,12 +4021,10 @@ function jsonChoices(field) {
     (isMap(s) ? (own(s, "const") ? [s.const] : (Array.isArray(s.enum) ? s.enum : [])).map(entryText) : []);
   return entries.length ? "one of " + entries.join(", ") : null;
 }
-// A list default's value as the form's text holds it: text as it is, a number
-// or a boolean as JavaScript writes it; null for JSON, which a list of text
-// values does not hold. hmc.py's _item_text is the same.
-function itemText(item) {
-  return typeof item === "string" ? item : (item !== null && typeof item === "object" ? null : String(item));
-}
+// The options a select offers: its choices' texts, but for one that is empty
+// text, which the blank option already writes and which no value gives, since
+// an empty value is none.
+function selectOptions(field) { return enumOptions(field).filter(text => text !== ""); }
 // A select's options, as a list read once, and the values of those chosen: a
 // select's live collections can cost their length at each step, so a long
 // list of choices would cost its length squared.
@@ -3662,42 +4032,39 @@ function optionsOf(el) { return [...el.querySelectorAll("option")]; }
 function chosen(el) { return optionsOf(el).filter(o => o.selected).map(o => o.value); }
 // Puts a field's choices and its default in its input through the DOM, so
 // nothing HTML parsing does to markup changes either. The form shows a default
-// only when it holds it as it is: a choice whose default is none of its
-// options, or whose option of its text is another JSON value (a JSON Schema
-// enum ["1"] with the default 1), a multiple choice whose defaults are not its options in their order,
-// each once, text with a carriage return (which a text area reads back as a
-// line feed), and a list whose lines read back as other values than its
-// defaults are left out, and the input is left empty. validateFields then reads
-// the default itself, as hmc.py's _form_default says, so a default is checked
-// and sent as the document gives it, never as an input changed it.
+// only when what it then holds is read, with no problem, as the same value as
+// the default itself: a text a select has no option for, a carriage return a
+// text area reads back as a line feed, the text "1" of a string field's
+// default 1, choices out of their options' order, and a default that is
+// refused are left out, and the input is left empty. validateFields then reads
+// the default itself, as hmc.py does whenever a field is given nothing, so an
+// untouched form, a cleared input, a link's empty value and an empty --field
+// all send what the document's default is, or refuse it alike.
 function fillInput(el, field) {
   if (el.localName === "select") {
-    const options = enumOptions(field);
+    const options = selectOptions(field);
     optionsOf(el).slice(el.multiple ? 0 : 1).forEach((o, k) => { o.value = options[k]; o.textContent = options[k]; });
   }
   if (field.defaultValue == null) return;
   if (el.multiple) {
-    const wanted = asList(field.defaultValue).map(asText);
-    const listed = new Set(wanted);
+    const wanted = new Set(asList(field.defaultValue).map(asText));
     const all = optionsOf(el);
-    for (const o of all) o.selected = listed.has(o.value);
-    const held = chosen(el);
-    if (!held.length || held.length !== wanted.length || held.some((v, k) => v !== wanted[k])) for (const o of all) o.selected = false;
+    for (const o of all) o.selected = wanted.has(o.value);
+    if (!holds(field, chosen(el))) for (const o of all) o.selected = false;
     return;
   }
   const text = fieldDefaultText(field);
   el.value = text;
-  let held = el.value === text;
-  if (held && el.localName === "select" && field.jsonSchema) {
-    const choice = choicesOf(field).find(c => c[0] === text);
-    held = !!choice && sameJson(choice[1], field.defaultValue);
-  }
-  if (held && field.multi) {
-    const wanted = multiItems(Array.isArray(field.defaultValue) ? field.defaultValue : [field.defaultValue]).map(itemText);
-    const lines = multiItems(el.value);
-    held = !wanted.includes(null) && lines.length === wanted.length && lines.every((v, k) => v === wanted[k]);
-  }
-  if (!held) el.value = "";
+  if (el.value !== text || !holds(field, text)) el.value = "";
+}
+// Whether a form that holds `given` for a field sends what its default does:
+// both read with no problem, as the same value.
+function holds(field, given) {
+  const quiet = () => {};
+  const [a, held] = fieldValue(field, given, quiet, new Map());
+  if (!held) return false;
+  const [b, ok] = fieldValue(field, null, quiet, new Map());
+  return ok && sameJson(a, b);
 }
 // The previous control's form, and its confirmation, go before anything else
 // happens, and a control that cannot be shown leaves a warning, never a form.
@@ -3936,7 +4303,8 @@ async function runInvoke(forceDry, formControl) {
     }
     const text = await res.text();
     let parsed = null;
-    try { parsed = JSON.parse(text); } catch {}
+    // A response nested too deep is shown as its text, as one that is not JSON is.
+    try { parsed = parseJson(text); } catch {}
     // A GET or HEAD that followed a redirect got its answer where it landed.
     const landed = res.redirected && typeof res.url === "string" && res.url ? res.url : plan.url;
     const outcome = answerOutcome(plan.url, res.status, landed);

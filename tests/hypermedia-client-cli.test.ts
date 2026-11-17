@@ -17,7 +17,8 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES, fetchRoutes,
   hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED, LOAD_HEADERS,
-  OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, type HopHeaders } from './hypermedia-client-fixtures.js';
+  OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, RULE_CASES,
+  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -519,7 +520,10 @@ describe('hmc.py: numeric fields', () => {
     ['count', '1e3', 'count: not an integer'],
     ['count', '1_000', 'count: not an integer'],
     ['size', '1.5', 'size: not an integer'],
-    ['level', 'abc', 'level: not a number'],
+    // A bound on a field with no number datatype is not compared: SHACL compares a value's own
+    // datatype, so "3" would be text that no number bounds.
+    ['level', 'abc', 'level: its sh:minInclusive 1 bounds a field that takes no number, which this client does not compare, so it is not sent'],
+    ['level', '3', 'level: its sh:minInclusive 1 bounds a field that takes no number, which this client does not compare, so it is not sent'],
     // Only a space, tab, CR or LF around a number is not part of it, the set the page strips too.
     ['amount', '\x1c5', 'amount: not a number'],
     ['amount', '5\u00a0', 'amount: not a number'],
@@ -543,13 +547,13 @@ describe('hmc.py: numeric fields', () => {
     // A double is the double nearest its text, the value XSD gives that text. The long is past
     // 2^53, which a double does not hold, and within xsd:long's range, so it is sent as written.
     const dry = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount= 2.5 ', '--field', 'count=-3',
-      '--field', 'size=+1234567890123456789', '--field', 'level=3', '--field', 'price=\t2.50\r\n',
+      '--field', 'size=+1234567890123456789', '--field', 'price=\t2.50\r\n',
       '--field', 'ratio=0.10000000000000001', '--dry-run', '--json']);
     expect(dry.code, dry.stderr).toBe(0);
     // JSON.parse would round the long integer, so its text is checked as printed.
     expect(dry.stdout).toContain('"size": 1234567890123456789');
     const body = (JSON.parse(dry.stdout) as { request: { body: Record<string, unknown> } }).request.body;
-    expect({ ...body, size: null }).toEqual({ amount: 2.5, count: -3, size: null, level: '3', price: 2.5, ratio: 0.1 });
+    expect({ ...body, size: null }).toEqual({ amount: 2.5, count: -3, size: null, price: 2.5, ratio: 0.1 });
     const before = sent();
     const live = await hmc(['invoke', `${base}/numbers`, 'urn:numbers', '--field', 'amount=2.5', '--confirm']);
     expect(live.code, live.stderr).toBe(0);
@@ -1164,7 +1168,7 @@ describe('hmc.py: the address sent is the address printed', () => {
 describe('hmc.py: values a request can carry, and lengths in code points', () => {
   const sentTo = () => seen.filter(s => / \/num-target(\?|$)/.test(s)).length;
 
-  it.each([...VALUE_CASES, ...CHOICE_CASES, ...SWEEP_CASES])('reads %s %s (%s) as the page does: case %#', async (path, rel, _title, fields, outcome) => {
+  it.each([...VALUE_CASES, ...CHOICE_CASES, ...SWEEP_CASES, ...RULE_CASES])('reads %s %s (%s) as the page does: case %#', async (path, rel, _title, fields, outcome) => {
     if ('body' in outcome) {
       const { r, request } = await dry(path, rel, fields);
       expect(r.code, r.stderr).toBe(0);
@@ -1235,6 +1239,40 @@ describe('hmc.py: values a request can carry, and lengths in code points', () =>
   });
 });
 
+describe('hmc.py: warnings and dates', () => {
+  it.each(WARNING_CASES)('describes %s %s (%s) with the warning the page shows', async (path, rel, _title, warning) => {
+    const r = await hmc(['describe', `${base}${path}`, rel]);
+    expect(r.code, r.stderr).toBe(0);
+    expect((JSON.parse(r.stdout) as { warning: string | null }).warning).toBe(warning);
+  });
+
+  it('checks each date and time as XSD 1.1 writes it, as the page does', async () => {
+    // hmc.py as a library: every case through validate_fields in one process.
+    const script = [
+      'import json, sys', 'sys.dont_write_bytecode = True', 'sys.path.insert(0, sys.argv[1])', 'import hmc',
+      'url = sys.argv[2]', 'data = json.loads(sys.stdin.read())', 'd = hmc.parse_descriptor(data["doc"], "application/ld+json", url)',
+      'control = next(c for c in d.controls if c.rel == "urn:temporal")', 'out = []',
+      'for kind, text in data["cases"]:', '    values, errors = hmc.validate_fields(control, {kind: text})', '    out.append([values, errors])',
+      'print(json.dumps(out))'].join('\n');
+    const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+      const child = spawn(PYTHON, ['-I', '-c', script, dirname(HMC), `${base}/temporal`],
+        { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*' } });
+      let stdout = ''; let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', d => { stdout += d; });
+      child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
+      child.on('close', code => resolve({ code, stdout, stderr }));
+      child.stdin.end(JSON.stringify({ doc: sharedDescriptors(base)['/temporal'], cases: TEMPORAL_CASES.map(([kind, text]) => [kind, text]) }));
+    });
+    expect(r.code, r.stderr).toBe(0);
+    const results = JSON.parse(r.stdout) as Array<[Record<string, unknown>, string[]]>;
+    TEMPORAL_CASES.forEach(([kind, text, ok], i) => {
+      const [values, errors] = results[i]!;
+      if (ok) expect([values, errors], `${kind} ${JSON.stringify(text)}`).toEqual([{ [kind]: text }, []]);
+      else expect(errors, `${kind} ${JSON.stringify(text)}`).toEqual(text === '' ? [] : [`${kind}: not an xsd:${kind}`]);
+    });
+  });
+});
+
 describe('hmc.py: template mappings', () => {
   it('makes one field of two mappings of one variable, and of a renaming mapping and a bare one, as the page does', async () => {
     for (const rel of ['urn:twin-variable', 'urn:twin-renamed']) {
@@ -1261,6 +1299,19 @@ describe('hmc.py: a document\'s size, not its shape, sets the cost', () => {
       expect(problems(run.stderr)).toHaveLength(1);
       expect(problems(run.stderr)[0]!.startsWith(refused)).toBe(true);
     } else expect(run.code, run.stderr).toBe(0);
+  }, 60_000);
+
+  it.each(SHARED_COST_CASES)('refuses %s\'s control %s, whose inputs share one list of choices, within the budget', async (path, rel, problem) => {
+    const r = await hmc(['describe', `${base}${path}`, rel]);
+    expect(r.timedOut, 'killed after 30 s').toBe(false);
+    expect(r.ms, 'run time').toBeLessThan(3_000);
+    expect(r.code, r.stderr).toBe(0);
+    expect((JSON.parse(r.stdout) as { problem: string | null }).problem).toBe(problem);
+    const run = await hmc(['invoke', `${base}${path}`, rel, '--dry-run']);
+    expect(run.timedOut, 'killed after 30 s').toBe(false);
+    expect(run.ms, 'dry run time').toBeLessThan(3_000);
+    expect(run.code, run.stdout).toBe(2);
+    expect(problems(run.stderr)).toEqual([problem]);
   }, 60_000);
 
   it('lists every control of a document whose controls share one shape within the budget', async () => {

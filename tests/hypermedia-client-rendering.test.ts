@@ -26,7 +26,8 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES,
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
-  LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, type HopHeaders } from './hypermedia-client-fixtures.js';
+  LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES,
+  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -1070,8 +1071,11 @@ describe('hypermedia client: numeric fields', () => {
     ['size', '1e3', 'size: not an integer'],
     // A JSON number cannot carry this integer exactly, so the page does not round it.
     ['size', '9007199254740993', 'size: integer too large to send exactly'],
-    ['level', 'abc', 'level: not a number'],
-    ['level', '7', 'level: above maxInclusive'],
+    // A bound on a field with no number datatype is not compared: SHACL compares a value's own
+    // datatype, so "3" would be text that no number bounds.
+    ['level', 'abc', 'level: its sh:minInclusive 1 bounds a field that takes no number, which this client does not compare, so it is not sent'],
+    ['level', '7', 'level: its sh:minInclusive 1 bounds a field that takes no number, which this client does not compare, so it is not sent'],
+    ['level', '3', 'level: its sh:minInclusive 1 bounds a field that takes no number, which this client does not compare, so it is not sent'],
     // Only a space, tab, CR or LF around a number is not part of it, the set hmc.py strips too.
     ['amount', '\uFEFF5', 'amount: not a number'],
     ['amount', '5\u00A0', 'amount: not a number'],
@@ -1110,12 +1114,12 @@ describe('hypermedia client: numeric fields', () => {
 
       // Numbers written as numbers are sent as numbers; surrounding spaces are not part of one. A
       // double is the double nearest its text, the value XSD gives that text.
-      fill({ amount: ' 2.5 ', count: '-3', size: '+7', level: '3', price: '\t2.50 ', ratio: '0.10000000000000001' });
+      fill({ amount: ' 2.5 ', count: '-3', size: '+7', price: '\t2.50 ', ratio: '0.10000000000000001' });
       result.innerHTML = '';
       click(t, button(document, 'dry'));
       await vi.waitFor(() => expect(result.textContent).toContain('Dry run — nothing was sent.'));
       const planned = JSON.parse(result.querySelector('pre')!.textContent!) as { body: unknown };
-      expect(planned.body).toEqual({ amount: 2.5, count: -3, size: 7, level: '3', price: 2.5, ratio: 0.1 });
+      expect(planned.body).toEqual({ amount: 2.5, count: -3, size: 7, price: 2.5, ratio: 0.1 });
       click(t, button(document, 'live'));
       await vi.waitFor(() => expect(result.textContent).toMatch(/Response HTTP 200/));
       expect(t.calls.filter(c => c.url.startsWith(`${HOST}/num-target`))).toEqual([{ url: `${HOST}/num-target`, method: 'POST' }]);
@@ -1970,7 +1974,7 @@ describe('hypermedia client: values a request can carry, and lengths in code poi
   // A choice is set in the form only where the form offers it: a select is given one of its options,
   // and a value no option holds, or a list of them, is given by the link alone, as is a value for a
   // control the page shows no form for.
-  it.each([...CHOICE_CASES, ...SWEEP_CASES])('reads %s %s (%s) as hmc.py does, by a link and by the form: case %#', async (path, rel, title, fields, outcome) => {
+  it.each([...CHOICE_CASES, ...SWEEP_CASES, ...RULE_CASES])('reads %s %s (%s) as hmc.py does, by a link and by the form: case %#', async (path, rel, title, fields, outcome) => {
     // A control refused as it is read shows its problem in place of a form, and a link builds none.
     const query = Object.entries(fields).map(([k, v]) => `&field.${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('');
     const opened = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1${query}`);
@@ -2030,6 +2034,39 @@ describe('hypermedia client: values a request can carry, and lengths in code poi
       // The page has shown the response, so nothing of the invoke is still running when the window closes.
       await vi.waitFor(() => expect(t.document.getElementById('result')!.textContent).toContain('Response HTTP'));
       expect(t.sent.filter(s => s.url === `${HOST}/num-target`).map(s => s.body)).toEqual([body]);
+    } finally { t.dom.window.close(); }
+  });
+});
+
+describe('hypermedia client: warnings, dates and choices', () => {
+  it.each(WARNING_CASES)('shows %s %s (%s) with the warning hmc.py gives', async (path, rel, _title, warning) => {
+    const { t } = await linkPlan(path, rel, {});
+    try {
+      expect([...t.document.querySelectorAll('#detail .warn')].map(e => e.textContent)).toContain(warning);
+    } finally { t.dom.window.close(); }
+  });
+
+  it('checks each date and time as XSD 1.1 writes it, as hmc.py does', () => {
+    const t = load('');
+    try {
+      type Page = { parseDescriptor: (text: string, type: string, url: string) => { controls: Array<{ rel: string }> };
+        validateFields: (control: unknown, supplied: Record<string, string>) => { values: Record<string, unknown>; errors: string[] } };
+      const page = t.dom.window as unknown as Page;
+      const control = page.parseDescriptor(SHARED['/temporal']!, 'application/ld+json', `${HOST}/temporal`).controls.find(c => c.rel === 'urn:temporal');
+      for (const [kind, text, ok] of TEMPORAL_CASES) {
+        const { values, errors } = page.validateFields(control, { [kind]: text });
+        if (ok) expect([{ ...values }, errors], `${kind} ${JSON.stringify(text)}`).toEqual([{ [kind]: text }, []]);
+        else expect(errors, `${kind} ${JSON.stringify(text)}`).toEqual(text === '' ? [] : [`${kind}: not an xsd:${kind}`]);
+      }
+    } finally { t.dom.window.close(); }
+  });
+
+  it('offers no choice of empty text, which the blank option writes and no value gives', async () => {
+    const t = await loaded('/rules');
+    try {
+      click(t, card(t.document, 'Empty entry')!);
+      const select = t.document.querySelector<HTMLSelectElement>('#invokeForm [data-field="c"]')!;
+      expect([...select.options].map(o => o.value)).toEqual(['', 'a']);
     } finally { t.dom.window.close(); }
   });
 });
@@ -2111,6 +2148,20 @@ describe('hypermedia client: a document\'s size, not its shape, sets the cost', 
         expect(listed(document)).toHaveLength(1);
         expect(listed(document)[0]!.startsWith(refused)).toBe(true);
       } else expect(result).toContain('Dry run — nothing was sent.');
+    } finally { t.dom.window.close(); }
+  }, 60_000);
+});
+
+describe('hypermedia client: one list of choices for many inputs', () => {
+  it.each(SHARED_COST_CASES)('refuses %s\'s control %s, whose inputs share one list of choices, within the budget', async (path, rel, problem) => {
+    const started = Date.now();
+    const t = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'), { timeout: 60_000 });
+      expect(Date.now() - started, 'link to refusal').toBeLessThan(3_000);
+      expect(document.getElementById('invokeForm')).toBeNull();
+      expect(document.querySelector('#detail .warn')!.textContent).toContain(problem);
     } finally { t.dom.window.close(); }
   }, 60_000);
 });

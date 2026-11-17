@@ -601,6 +601,20 @@ keyed once, so a 50,000-item default against a 50,000-entry enum is checked in
 under a second, where `hmc.py` took over 30 s and the page ran out of memory.
 Of 44 new shared rows, 35 failed in each client before; the CSP hash moves.
 
+A thirteenth review found constraints still passed over, and a default the two
+clients sent differently. Now, in both, an empty value and an untouched form
+send the default as the document gives it, and one of another kind than its
+field takes is refused by name; `sh:maxCount 0` takes no value; a field written
+in place counts its values and reads `rdf:JSON`, and beside a shape the document
+describes is checked against it; a schema with no `properties`, a closed shape,
+a SHACL bound on text, a body's `readOnly` and an entry past 2^53 are applied;
+and a choice list two inputs share, RDF lists that share nodes and JSON nested
+past 256 levels are refused, so none costs more than the document's size. Dates
+and times are checked as XSD 1.1 writes them; their bounds are still refused.
+"A value's first problem" above holds for JSON Schema values. Of 67 new shared
+rows, 51 failed in `hmc.py` and 49 on the page before; on the live catalogs only
+a warning on HyperMarkdown controls changed. The CSP hash moves.
+
 ## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
 
 From review of #934. With `requireSignedHead` on, a head with no signature was
