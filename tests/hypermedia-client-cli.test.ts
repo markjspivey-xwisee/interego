@@ -15,8 +15,8 @@ import { tmpdir } from 'node:os';
 import { dirname, join } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
-import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals, LINK_CASES, LISTED,
-  sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, BODY_TEXTS } from './hypermedia-client-fixtures.js';
+import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES, fetchRoutes,
+  jsonldPlans, jsonldRefusals, LINK_CASES, LISTED, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, BODY_TEXTS } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 const PYTHON = process.env['PYTHON'] || 'python3';
@@ -232,6 +232,11 @@ beforeAll(async () => {
     req.on('data', (chunk: Buffer) => chunks.push(chunk));
     req.on('end', () => {
       received.push({ line, body: Buffer.concat(chunks).toString('utf8'), type: String(req.headers['content-type'] || '') });
+      const fetched = Object.prototype.hasOwnProperty.call(fetchRoutes(base), url.pathname) ? fetchRoutes(base)[url.pathname]!(url.searchParams.get('format')) : undefined;
+      if (fetched === 'no answer') { req.socket.destroy(); return; }
+      if (fetched && 'redirect' in fetched) { res.writeHead(302, { location: fetched.redirect }).end(); return; }
+      // A list of types is that many Content-Type headers.
+      if (fetched) { res.setHeader('content-type', fetched.type); res.writeHead(fetched.status || 200).end(fetched.body); return; }
       const route = Object.prototype.hasOwnProperty.call(routes(), url.pathname) ? routes()[url.pathname] : undefined;
       if (!route) { res.writeHead(404, { 'content-type': 'text/plain' }).end('missing'); return; }
       const out = route();
@@ -271,6 +276,36 @@ describe('hmc.py: remote text costs linear time', () => {
     const r = await hmc(['describe', `${base}/slow-pattern`, 'urn:r']);
     expect(r.code, r.stderr).toBe(0);
     expect((JSON.parse(r.stdout) as { fields: Array<{ pattern: string }> }).fields[0]!.pattern).toBe(SLOW_PATTERN);
+  });
+});
+
+describe('hmc.py: a load whose requests fail, as the page\'s', () => {
+  // With rdflib hmc.py reads Turtle, which the page never does; without it, it is the page's twin here too.
+  const READS_TURTLE = spawnSync(PYTHON, ['-I', '-c', 'import rdflib'], { encoding: 'utf8' }).status === 0;
+  const PROBLEMS = {
+    'no answer': /^error: .*(Remote end closed connection without response|Connection reset by peer|redirected more than 20 times)/,
+    turtle: /^error: This descriptor was served as Turtle\. Install rdflib/,
+    'none readable': /^error: Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from /,
+  } as const;
+
+  it.each(FETCH_CASES)('loads %s', async (address, outcome) => {
+    const before = seen.length;
+    const r = await hmc(['list', `${base}${address}`, '--json']);
+    const path = address.split('?')[0]!;
+    const asked = [...new Set(seen.slice(before).map(line => new URL(line.slice(line.indexOf(' ') + 1), base))
+      .filter(u => u.pathname === path).map(u => u.searchParams.get('format')))];
+    if (READS_TURTLE && outcome.withTurtle) {
+      expect([r.code, asked], r.stderr).toEqual([0, outcome.withTurtle]);
+      return;
+    }
+    expect(asked, r.stderr).toEqual(outcome.asked);
+    if ('titles' in outcome) {
+      expect(r.code, r.stderr).toBe(0);
+      expect((JSON.parse(r.stdout) as { controls: Array<{ title: string }> }).controls.map(c => c.title).sort()).toEqual(outcome.titles);
+    } else {
+      expect([r.code, r.stdout]).toEqual([1, '']);
+      expect(r.stderr.trim()).toMatch(PROBLEMS[outcome.problem]);
+    }
   });
 });
 

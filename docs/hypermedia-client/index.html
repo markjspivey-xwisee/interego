@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-n5kteKnkgqrxWIT/0naO5ihwesKpmhGSC5M1hI865bs='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ynSGoY3xPQRb1JS/n0fmW4RYKUUi3KoFWdEJR4e8tZc='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -2283,6 +2283,11 @@ async function fetchText(url, accept) {
   const landed = !proxyBase() && typeof res.url === "string" && /^https:\/\//.test(res.url) ? res.url : url;
   return { ok: res.ok, status: res.status, contentType: ct, text, url, landed };
 }
+// The answers to read for a descriptor address, in the order to read them, as
+// hmc.py's fetch_authority gives them. The address as given is asked first, and
+// a request that gets no answer (fetch rejects: the connection fails, a
+// redirect goes past 20 or off https) ends the load, named. An answer counts
+// when it is 2xx and its body is one classifyPayload reads.
 async function fetchAuthority(url) {
   url = stripFrag(url);
   const accept = "application/ld+json, application/json;q=0.9, text/turtle;q=0.8, text/markdown;q=0.4, */*;q=0.1";
@@ -2299,23 +2304,28 @@ async function fetchAuthority(url) {
   // JSON-LD is preferred. An answer in another form is retried as
   // ?format=jsonld, except that a format the address names itself is kept
   // when the page can read it; Turtle it cannot, so that is always retried.
-  // This is the same with or without a proxy.
+  // The retry is optional: its answer comes first when it is JSON-LD, and the
+  // first answer after it, so a retry that fails, or whose JSON-LD is not read,
+  // leaves the first answer to be read as if it had not been asked. This is the
+  // same with or without a proxy.
   const got = await attempt(url);
   if (got) {
-    if (got.kind === "jsonld" || (hasFmt && got.kind !== "turtle")) return got;
+    if (got.kind === "jsonld" || (hasFmt && got.kind !== "turtle")) return [got];
     const jsonld = withFormat(url, "jsonld");
     if (jsonld !== url) {
       try {
         const alt = await attempt(jsonld);
-        if (alt && alt.kind === "jsonld") return alt;
+        if (alt && alt.kind === "jsonld") return [alt, got];
       } catch {}
     }
-    return got;
+    return [got];
   }
+  // An address that names no format and gets no answer that counts is asked
+  // for each format in turn, until one counts or a request gets no answer.
   if (!hasFmt) {
     for (const fmt of ["jsonld", "turtle", "markdown"]) {
       const alt = await attempt(withFormat(url, fmt));
-      if (alt) return alt;
+      if (alt) return [alt];
     }
   }
   throw new Error("Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from " + url);
@@ -3320,9 +3330,21 @@ async function loadDescriptorUrl(url, push = true) {
   if (problem) throw new Error(problem + "; nothing is sent to " + uri);
   setStatus("Fetching authority document…");
   document.documentElement.dataset.ready = "0";
-  const fetched = await fetchAuthority(url);
-  if (fetched.kind === "turtle") throw new Error("Descriptor arrived as Turtle, which this page does not parse. Ask the host for ?format=jsonld, or use hmc.py, which reads Turtle when rdflib is installed.");
-  const descriptor = parseDescriptor(fetched.text, fetched.contentType, stripFrag(url), fetched.finalUrl);
+  // The first answer read is the descriptor. When none is, the problem named is
+  // the first's: the JSON-LD a retry asked for, when it answered. hmc.py's
+  // load_descriptor reads its answers the same way.
+  let fetched = null, descriptor = null, unread = null;
+  for (const answer of await fetchAuthority(url)) {
+    try {
+      if (answer.kind === "turtle") throw new Error("Descriptor arrived as Turtle, which this page does not parse. Ask the host for ?format=jsonld, or use hmc.py, which reads Turtle when rdflib is installed.");
+      descriptor = parseDescriptor(answer.text, answer.contentType, stripFrag(url), answer.finalUrl);
+      fetched = answer;
+      break;
+    } catch (err) {
+      if (!unread) unread = err;
+    }
+  }
+  if (!fetched) throw unread;
   if (push && state.descriptor) state.history.push(state.descriptor.url);
   state.descriptor = descriptor;
   state.selected = null;

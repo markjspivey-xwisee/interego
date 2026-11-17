@@ -1344,3 +1344,89 @@ export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: stri
       'the input "q" writes its JSON Schema as a reference ($ref), which this client does not read, so what it takes is not known; this control is not invoked'],
   ];
 }
+
+/**
+ * What a host does with one request: answers it (a `type` given as a list is that many Content-Type
+ * headers), sends it to another address, or closes the connection without answering.
+ */
+export type HostAnswer =
+  | { readonly status?: number; readonly type: string | readonly string[]; readonly body: string }
+  | { readonly redirect: string }
+  | 'no answer';
+
+/**
+ * Descriptor addresses whose answer depends on the `format` a request asks for (null when it asks
+ * for none), served to both clients. The page's test answers its fetch with them as a browser's fetch
+ * would: 'no answer' rejects, and a redirect is followed at most 20 times and only to https, which
+ * the page's connect-src allows. hmc.py's test serves them on 127.0.0.1, destroying the socket for
+ * 'no answer'.
+ */
+export function fetchRoutes(base: string): Record<string, (format: string | null) => HostAnswer> {
+  const markdown = (title: string): HostAnswer => ({ type: 'text/markdown', body: ['# Markdown', '',
+    ':::control md-read', `title: ${title}`, 'method: GET', `target: ${base}/api`, ':::', ''].join('\n') });
+  const text = (path: string, title: string) => JSON.stringify({ '@context': CTX, '@id': `${base}${path}`,
+    'iep:affordance': [op('r', `urn:fetch${path.replace(/\//g, ':')}`, 'GET', title, target('/api'))] });
+  const jsonld = (path: string, title: string): HostAnswer => ({ type: 'application/ld+json', body: text(path, title) });
+  const turtle: HostAnswer = { type: 'text/turtle', body: '@prefix dct: <http://purl.org/dc/terms/> .\n<> dct:title "From Turtle" .\n' };
+  const missing: HostAnswer = { status: 404, type: 'text/plain', body: 'missing' };
+  const KEPT = 'Kept markdown read';
+  return {
+    // A readable answer, then a ?format=jsonld retry that fails: the connection closes, a redirect
+    // leaves http(s), the status is 500, the answer is Turtle, or it is JSON-LD that is not JSON or
+    // repeats a key. Each keeps the first answer.
+    '/upgrade-lost': f => f === 'jsonld' ? 'no answer' : markdown(KEPT),
+    '/upgrade-lost-ttl': f => f === 'jsonld' ? 'no answer' : turtle,
+    '/upgrade-redirect': f => f === 'jsonld' ? { redirect: 'ftp://127.0.0.1:9/x' } : markdown(KEPT),
+    '/upgrade-error': f => f === 'jsonld' ? { status: 500, type: 'application/ld+json', body: text('/upgrade-error', 'Error read') } : markdown(KEPT),
+    '/upgrade-other': f => f === 'jsonld' ? turtle : markdown(KEPT),
+    '/upgrade-not-json': f => f === 'jsonld' ? { type: 'application/ld+json', body: '{"@context": ' } : markdown(KEPT),
+    '/upgrade-repeated': f => f === 'jsonld' ? { type: 'application/ld+json',
+      body: text('/upgrade-repeated', 'Repeated read').replace('"hydra:method":"GET"', '"hydra:method":"GET","hydra:method":"GET"') } : markdown(KEPT),
+    // No readable answer at the address as given, and none at all to ?format=jsonld: nothing else is asked.
+    '/fallback-lost': f => f === 'jsonld' ? 'no answer' : f === null ? missing : jsonld('/fallback-lost', 'Fallback read'),
+    // Answers fetch does not count as readable: a 300 (not 2xx, and not a redirect), an empty JSON-LD
+    // body, a body after U+001C (a space to Python's str.strip, not to String.prototype.trim), and
+    // front matter under a type that only starts with text/plain. Each is asked for in other formats.
+    '/not-ok': f => f === 'jsonld' ? jsonld('/not-ok', 'Format read') : { status: 300, type: 'application/ld+json', body: text('/not-ok', 'Multiple choices read') },
+    '/empty-ld': f => f === 'jsonld' ? jsonld('/empty-ld', 'Format read') : { type: 'application/ld+json', body: '' },
+    '/separator': f => f === 'jsonld' ? jsonld('/separator', 'Format read') : { type: 'application/ld+json', body: '\x1c' + text('/separator', 'Separator read') },
+    '/plainish': f => f === null ? { type: 'text/plainish', body: '---\ntitle: Front matter only\n---\n' } : missing,
+    // Answers fetch reads: JSON-LD after a byte order mark, which res.text() drops, and two
+    // Content-Type headers, which Headers.get joins with ", ".
+    '/bom': () => ({ type: 'application/ld+json', body: '﻿' + text('/bom', 'BOM read') }),
+    '/two-types': f => f === null ? { type: ['application/ld+json', 'text/turtle'], body: text('/two-types', 'Two types read') } : missing,
+    // A redirect to itself: fetch gives up after 20, as at the network.
+    '/redirect-loop': () => ({ redirect: '/redirect-loop' }),
+    // An address that names Turtle, which a client that cannot read it asks for again as JSON-LD.
+    '/named-ttl': f => f === 'jsonld' ? jsonld('/named-ttl', 'Named format read') : f === 'turtle' ? turtle : missing,
+  };
+}
+
+/**
+ * What both clients make of loading each address above, as [address, outcome]. `asked` is the
+ * formats requested there, each the first time it is (null for the address as given). An outcome
+ * lists exactly `titles`, or fails with `problem`: 'no answer' names the request that got none,
+ * 'turtle' names the Turtle answer kept, which neither client reads without a Turtle parser, and
+ * 'none readable' names the address. `withTurtle` is the formats asked by a client that reads Turtle
+ * (hmc.py with rdflib), which reads that Turtle answer instead.
+ */
+export type FetchOutcome = { readonly asked: ReadonlyArray<string | null>; readonly withTurtle?: ReadonlyArray<string | null> }
+  & ({ readonly titles: readonly string[] } | { readonly problem: 'no answer' | 'turtle' | 'none readable' });
+export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: FetchOutcome]> = [
+  ['/upgrade-lost', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/upgrade-lost-ttl', { asked: [null, 'jsonld'], problem: 'turtle', withTurtle: [null, 'jsonld'] }],
+  ['/upgrade-redirect', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/upgrade-error', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/upgrade-other', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/upgrade-not-json', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/upgrade-repeated', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/fallback-lost', { asked: [null, 'jsonld'], problem: 'no answer' }],
+  ['/not-ok', { asked: [null, 'jsonld'], titles: ['Format read'] }],
+  ['/empty-ld', { asked: [null, 'jsonld'], titles: ['Format read'] }],
+  ['/separator', { asked: [null, 'jsonld'], titles: ['Format read'] }],
+  ['/plainish', { asked: [null, 'jsonld', 'turtle', 'markdown'], problem: 'none readable' }],
+  ['/bom', { asked: [null], titles: ['BOM read'] }],
+  ['/two-types', { asked: [null], titles: ['Two types read'] }],
+  ['/redirect-loop', { asked: [null], problem: 'no answer' }],
+  ['/named-ttl?format=turtle', { asked: ['turtle', 'jsonld'], titles: ['Named format read'], withTurtle: ['turtle'] }],
+];

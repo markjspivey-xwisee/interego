@@ -439,6 +439,17 @@ path name or template variable is another input's name is refused in both, and
 the page refuses an invoke link carrying a parameter it does not read. 19 new or
 tightened tests failed before; the CSP script hash is updated.
 
+A fifth review found more. When the optional `?format=jsonld` retry got no
+answer, `hmc.py` dropped the HyperMarkdown or Turtle it had already read; both
+clients now keep the first answer whenever that retry fails, including a JSON-LD
+answer that is not JSON or is refused whole. `hmc.py` also read a 300 answer as a
+document, an empty JSON body as JSON-LD, missed JSON-LD after a byte order mark
+or under two `Content-Type` headers, and answered a redirect loop with its last
+redirect; it now reads each answer as `fetch` does, and without `rdflib` asks an
+address that names Turtle again for JSON-LD, as the page does. A request that
+gets no answer still ends the load, named. 15 of 32 new shared-fixture tests
+failed before; the CSP script hash is updated.
+
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so
 no inline event handlers or style attributes), `connect-src https:`, and

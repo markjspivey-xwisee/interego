@@ -24,8 +24,8 @@ import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
-import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, jsonldPlans, jsonldRefusals,
-  LINK_CASES, LISTED, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
+import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES,
+  fetchRoutes, jsonldPlans, jsonldRefusals, LINK_CASES, LISTED, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -346,6 +346,31 @@ function respond(text: string, type: string, status = 200): Response {
   return new Response(text, { status, headers: { 'content-type': type } });
 }
 
+// Addresses whose answer depends on the format asked for; hmc.py's test serves the same.
+const ROUTED = fetchRoutes(HOST);
+/**
+ * A ROUTED address's answer as a browser's fetch gives it: no answer rejects, as a network error
+ * does, and a redirect is followed, at most 20 times and only to https, which the page's connect-src
+ * allows; then the response's url is where it landed.
+ */
+function routed(asked: URL): Response {
+  let at = asked;
+  for (let followed = 0; ; followed++) {
+    const route = at.origin === HOST && Object.prototype.hasOwnProperty.call(ROUTED, at.pathname) ? ROUTED[at.pathname] : undefined;
+    const answer = route ? route(at.searchParams.get('format')) : { status: 404, type: 'text/plain', body: 'missing' };
+    if (answer === 'no answer') throw new TypeError('Failed to fetch');
+    if ('redirect' in answer) {
+      const next = new URL(answer.redirect, at);
+      if (followed >= 20 || next.protocol !== 'https:') throw new TypeError('Failed to fetch');
+      at = next;
+      continue;
+    }
+    const types = typeof answer.type === 'string' ? [answer.type] : answer.type;
+    const res = new Response(answer.body, { status: answer.status || 200, headers: types.map(type => ['content-type', type] as [string, string]) });
+    return at === asked ? res : Object.defineProperty(res, 'url', { value: at.href });
+  }
+}
+
 interface Loaded { dom: JSDOM; document: Document; calls: Array<{ url: string; method: string }>; sent: Array<{ url: string; body: string }>;
   pwned: string[]; errors: string[] }
 
@@ -362,6 +387,7 @@ function load(query: string, extra: Record<string, { type: string; text: string 
         const asked = new URL(url);
         const u = asked.origin === PROXY ? new URL(asked.searchParams.get('url') || 'about:blank') : asked;
         if (u.origin !== HOST) return respond('not here', 'text/plain', 404);
+        if (Object.prototype.hasOwnProperty.call(ROUTED, u.pathname)) return routed(u);
         if (u.pathname === '/desc') return respond(JSON.stringify(descriptor), 'application/ld+json');
         if (u.pathname === '/hm') return respond(hyperMarkdown, 'text/markdown');
         if (u.pathname === '/ttl') {
@@ -621,6 +647,33 @@ describe('hypermedia client: requests', () => {
         expect(document.querySelector('#meta strong')!.textContent, `proxy: ${viaProxy}`).toBe('From JSON-LD');
       } finally { t.dom.window.close(); }
     }
+  });
+});
+
+describe('hypermedia client: a load whose requests fail, as hmc.py\'s', () => {
+  const PROBLEMS = {
+    'no answer': /^Failed to fetch$/,
+    turtle: /^Descriptor arrived as Turtle, which this page does not parse\./,
+    'none readable': /^Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from /,
+  } as const;
+
+  it.each(FETCH_CASES)('loads %s', async (address, outcome) => {
+    const t = load(`?url=${encodeURIComponent(HOST + address)}&autoload=1`);
+    try {
+      const { document } = t;
+      const status = () => document.getElementById('status')!.textContent!;
+      await vi.waitFor(() => expect(['list', 'error'], status()).toContain(document.documentElement.dataset['ready']));
+      const path = address.split('?')[0]!;
+      const asked = [...new Set(t.calls.map(c => new URL(c.url)).filter(u => u.pathname === path).map(u => u.searchParams.get('format')))];
+      expect(asked, status()).toEqual(outcome.asked);
+      if ('titles' in outcome) {
+        expect(document.documentElement.dataset['ready'], status()).toBe('list');
+        expect([...document.querySelectorAll('.card h3')].map(h => h.textContent!).sort()).toEqual(outcome.titles);
+      } else {
+        expect(document.documentElement.dataset['ready']).toBe('error');
+        expect(status()).toMatch(PROBLEMS[outcome.problem]);
+      }
+    } finally { t.dom.window.close(); }
   });
 });
 

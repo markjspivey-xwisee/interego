@@ -3223,18 +3223,31 @@ def _require_web_url(url: str, refused: str = "nothing was sent to") -> None:
         raise RuntimeError(f"hmc.py sends requests to http and https URLs only; {refused} {url}")
 
 
+# fetch follows at most 20 redirects and fails on the next, as it fails at the
+# network. urllib's own limits (ten, and four to one address) would instead
+# answer with the last redirect, whose body a client could read as a document.
+_REDIRECT_LIMIT = 20
+
+
 class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
-    """Follows a redirect only to another http or https URL, and notes where a
-    303 See Other was answered from."""
+    """Follows a redirect only to another http or https URL, and no more than
+    fetch follows, and notes where a 303 See Other was answered from."""
+
+    max_repeats = max_redirections = _REDIRECT_LIMIT
 
     def __init__(self) -> None:
         super().__init__()
         self.see_other_from: str | None = None
+        self.followed = 0
 
     def http_error_302(self, req, fp, code, msg, headers):  # type: ignore[no-untyped-def]
         location = headers.get("location") or headers.get("uri")
         if location:
             _require_web_url(urllib.parse.urljoin(req.full_url, location), "refused a redirect to")
+            if self.followed >= _REDIRECT_LIMIT:
+                raise RuntimeError(f"{req.full_url} was redirected more than {_REDIRECT_LIMIT} times, "
+                                   "more than fetch follows, so the request failed")
+            self.followed += 1
         if code == 303 and self.see_other_from is None:
             self.see_other_from = req.full_url
         return super().http_error_302(req, fp, code, msg, headers)
@@ -3272,11 +3285,28 @@ def http_request(url: str, method: str = "GET", headers: dict[str, str] | None =
     try:
         with _web_opener(redirects).open(request, timeout=timeout) as resp:
             final = redirects.see_other_from or resp.geturl() or url
-            return resp.getcode() or 200, {k.lower(): v for k, v in resp.headers.items()}, resp.read(), final
+            return resp.getcode() or 200, _header_values(resp.headers.items()), resp.read(), final
     except urllib.error.HTTPError as exc:
         body = exc.read() if exc.fp else b""
         final = redirects.see_other_from or exc.geturl() or url
-        return exc.code, {k.lower(): v for k, v in (exc.headers.items() if exc.headers else [])}, body, final
+        return exc.code, _header_values(exc.headers.items() if exc.headers else []), body, final
+
+
+def _header_values(items: Any) -> dict[str, str]:
+    """Response headers by lower-case name, as fetch's Headers.get reads one: a
+    name given more than once is its values joined by ", ", so two Content-Type
+    headers are read as the page reads them, not as the last of them."""
+    out: dict[str, str] = {}
+    for key, value in items:
+        name = key.lower()
+        out[name] = f"{out[name]}, {value}" if name in out else value
+    return out
+
+
+def _body_text(body: bytes) -> str:
+    """A response body as fetch's res.text() reads it: UTF-8, with a leading
+    byte order mark dropped and bytes that are not UTF-8 replaced."""
+    return body.decode("utf-8-sig", errors="replace")
 
 
 def _with_format(url: str, fmt: str) -> str:
@@ -3305,17 +3335,26 @@ def _strip_fragment(url: str) -> str:
     return urllib.parse.urlunsplit((parts.scheme, parts.netloc, parts.path, parts.query, ""))
 
 
+# What String.prototype.trim takes from the ends of a string: ECMAScript's
+# WhiteSpace (tab, VT, FF, space, NBSP, U+FEFF and Unicode's space separators)
+# and LineTerminator (LF, CR, U+2028, U+2029). str.strip() would also take
+# U+001C to U+001F and U+0085, and leave U+FEFF.
+_JS_TRIM = "\t\n\x0b\x0c\r \xa0\u1680\u2000\u2001\u2002\u2003\u2004\u2005\u2006\u2007\u2008\u2009\u200a\u2028\u2029\u202f\u205f\u3000\ufeff"
+
+
 def classify_payload(text: str, content_type: str) -> str | None:
-    ct = (content_type or "").split(";")[0].strip().lower()
-    sample = text.lstrip()[:240]
+    """"jsonld", "turtle" or "markdown" for a body read as one, or None; the
+    page's classifyPayload is the same, its spaces those trim takes."""
+    ct = (content_type or "").split(";")[0].strip(_JS_TRIM).lower()
+    sample = text.strip(_JS_TRIM)[:240]
     if "ld+json" in ct or ct == "application/json":
-        return "jsonld" if sample[:1] in "{[" else None
-    if "turtle" in ct or ct in {"text/ttl", "application/x-turtle"}:
+        return "jsonld" if sample[:1] in ("{", "[") else None
+    if "turtle" in ct or ct == "text/ttl":
         return "turtle"
-    if "markdown" in ct or "text/plain" in ct:
+    if "markdown" in ct or ct == "text/plain":
         if ":::control" in text or sample.startswith("---"):
             return "markdown"
-    if sample[:1] in "{[":
+    if sample[:1] in ("{", "["):
         # Whether it is JSON at all, as the page's JSON.parse decides it; a
         # repeated key is refused when the document is read.
         try:
@@ -3330,44 +3369,70 @@ def classify_payload(text: str, content_type: str) -> str | None:
     return None
 
 
-def fetch_authority(url: str) -> tuple[str, str, str]:
+def _reads_turtle() -> bool:
+    """Whether rdflib, which hmc.py reads Turtle with, is installed."""
+    try:
+        import rdflib  # type: ignore  # noqa: F401
+    except ImportError:
+        return False
+    return True
+
+
+def fetch_authority(url: str) -> list[tuple[str, str, str]]:
+    """The answers to read for a descriptor address, each as (the address it
+    landed at, its content type, its text), in the order to read them. The
+    page's fetchAuthority is the same:
+
+    - The address as given is asked first. A request that gets no answer (the
+      connection fails or closes, a redirect is refused or there are more than
+      fetch follows, or it times out) ends the load, and its problem is named.
+    - An answer counts when its status is 2xx, as fetch's res.ok has it, and
+      its body is one classify_payload reads. One that is not JSON-LD is asked
+      for again as ?format=jsonld, unless the address names a format hmc.py
+      reads (Turtle only with rdflib, as the page never reads it). That retry
+      is optional: its answer comes first when it is JSON-LD, and the first
+      answer after it, so a retry that fails, or whose JSON-LD is not read,
+      leaves the first answer to be read as if it had not been asked.
+    - When the address names no format and its answer does not count,
+      ?format=jsonld, turtle and markdown are asked in turn until one does; a
+      request among them that gets no answer ends the load, named."""
     url = _strip_fragment(url)
     accept = "application/ld+json, application/json;q=0.9, text/turtle;q=0.8, text/markdown;q=0.4, */*;q=0.1"
     tried: list[str] = []
     # The address names a format when any "format" parameter in it has a value, as the page's fetchAuthority reads it.
     existing = any(key == "format" and val for key, val in urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query, keep_blank_values=True))
 
-    def attempt(candidate: str) -> tuple[str, str, str] | None:
+    def attempt(candidate: str) -> tuple[str, tuple[str, str, str]] | None:
         tried.append(candidate)
         # The address the text came from is where it landed after redirects,
         # which its relative IRIs resolve against: /dir answered by /dir/ puts
         # "items" at /dir/items. The page's fetchAuthority does the same.
         status, headers, body, landed = http_request(candidate, headers={"Accept": accept})
-        if status >= 400:
+        if not 200 <= status < 300:
             return None
-        text = body.decode("utf-8", errors="replace")
-        kind = classify_payload(text, headers.get("content-type", ""))
-        if kind:
-            return landed, headers.get("content-type", ""), text
-        return None
+        text = _body_text(body)
+        content_type = headers.get("content-type", "")
+        kind = classify_payload(text, content_type)
+        return (kind, (landed, content_type, text)) if kind else None
 
-    if existing:
-        result = attempt(url)
-        if result:
-            return result
-    else:
-        result = attempt(url)
-        if result:
-            kind = classify_payload(result[2], result[1])
-            if kind != "jsonld":
-                alt = attempt(_with_format(url, "jsonld"))
-                if alt and classify_payload(alt[2], alt[1]) == "jsonld":
-                    return alt
-            return result
+    got = attempt(url)
+    if got:
+        kind, answer = got
+        if kind == "jsonld" or (existing and (kind != "turtle" or _reads_turtle())):
+            return [answer]
+        jsonld = _with_format(url, "jsonld")
+        try:
+            alt = attempt(jsonld) if _request_url(jsonld) != _request_url(url) else None
+        except Exception:  # noqa: BLE001 - an optional retry's failure leaves the answer in hand
+            alt = None
+        if alt and alt[0] == "jsonld":
+            return [alt[1], answer]
+        return [answer]
+    if not existing:
         for fmt in ("jsonld", "turtle", "markdown"):
-            result = attempt(_with_format(url, fmt))
-            if result:
-                return result
+            got = attempt(_with_format(url, fmt))
+            if got:
+                return [got[1]]
     raise RuntimeError(f"Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from {url} (tried {tried})")
 
 
@@ -3411,10 +3476,19 @@ def load_descriptor(url: str) -> Descriptor:
     problem = _address_text_problem(uri)
     if problem:
         raise ValueError(f"{problem}; nothing is sent to {uri}")
-    fetched_from, content_type, text = fetch_authority(url)
-    descriptor = parse_descriptor(text, content_type, _strip_fragment(url), fetched_from)
-    descriptor.content_type = content_type
-    return descriptor
+    # The first answer read is the descriptor. When none is, the problem named
+    # is the first's: the JSON-LD a retry asked for, when it answered. The
+    # page's loadDescriptorUrl reads its answers the same way.
+    problem: Exception | None = None
+    for fetched_from, content_type, text in fetch_authority(url):
+        try:
+            descriptor = parse_descriptor(text, content_type, _strip_fragment(url), fetched_from)
+        except Exception as exc:  # noqa: BLE001
+            problem = problem or exc
+            continue
+        descriptor.content_type = content_type
+        return descriptor
+    raise problem or RuntimeError(f"No descriptor was read from {url}")
 
 
 
@@ -4218,7 +4292,7 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
             data = _request_json(plan.body).encode("utf-8")
     status, headers, body, _ = http_request(plan.url, method=plan.method, headers=plan.headers, data=data)
     content_type = headers.get("content-type", "")
-    text = body.decode("utf-8", errors="replace")
+    text = _body_text(body)
     parsed = None
     if "json" in content_type or text.lstrip()[:1] in "{[":
         # Shown, never sent, so read as leniently as the page's JSON.parse
