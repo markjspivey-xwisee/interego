@@ -1725,6 +1725,31 @@ describe('whose head it reads', () => {
     expect((await requiring(transport).readHead()).records.size).toBe(3);
   });
 
+  it('reads a store with no head as empty while starting it, and as broken once signed heads are required', async () => {
+    const transport = new NativeTransport();
+    // Starting a store: nothing is there yet, and that is an empty store.
+    const starting = signing(transport);
+    expect((await starting.readHead()).records.size).toBe(0);
+    // A store that requires signed heads cannot be started: it has none to show.
+    await expect(requiring(transport).readHead()).rejects.toThrow('Native head is missing');
+    await expect(requiring(transport).commit({ operationId: 'first', expected: await starting.readHead(), changes: [{ key: 'statement:first', artifact: artifact('first') }] }))
+      .rejects.toThrow('Native head is missing');
+    expect(transport.rows.size).toBe(0);
+    await write(starting, 'first');
+    expect((await requiring(transport).readHead()).records.size).toBe(1);
+    // Whoever can write the pod removes the head. Everything it referred to is still there.
+    transport.rows.delete(scope.headUrl);
+    expect(transport.rows.size).toBeGreaterThan(0);
+    // Not required: the store reads as empty, and the next commit would begin it again from nothing.
+    expect((await signing(transport).readHead()).records.size).toBe(0);
+    // Required: it is refused, on read and on write, and nothing is written over the gap.
+    const before = transport.rows.size;
+    await expect(requiring(transport).readHead()).rejects.toThrow('Native head is missing');
+    await expect(requiring(transport).readHeadRecords(['statement:first'])).rejects.toThrow('Native head is missing');
+    await expect(write(requiring(transport), 'again')).rejects.toThrow('Native head is missing');
+    expect(transport.rows.size).toBe(before);
+  });
+
   it('is not built with signers that leave out its own, are empty or are no keys, or to require what it cannot sign', () => {
     const transport = new NativeTransport();
     for (const keys of [[], [stranger.publicKey], [signer.publicKey, 'not-a-key']]) {
