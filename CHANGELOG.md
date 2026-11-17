@@ -49,6 +49,26 @@ remove: the checks it waited for were themselves queued for a runner that
 afternoon, so they ended later than twenty minutes after the push. One run is
 not a measurement of the average.
 
+## 2026-11-17 — Foxxi: whether an unsent profile write is kept or in doubt has a test
+
+#945 fixed the bridge answering "in doubt" for a profile write it had never
+sent, and said it had no test. The decision is now `profilePodStore` in
+`src/xapi-profile-server/pod-store.ts`: the bridge hands it its pod, key
+check, fetch guard, write and read-back, and gets `persist` and `confirm`
+back. Nothing about the answers changes.
+
+`tests/a-profile-write-never-sent-is-not-in-doubt.test.ts` (7 tests) runs it
+under a real `ProfileServer` with a made-up pod: no key, an address not
+fetched, no pod, a write sent whose address is refused by read-back time (in
+doubt, then held), not acknowledged and unreadable (in doubt), not
+acknowledged and readable (kept), and the refusal remembered for one record
+only. With the no-key and never-sent answers removed 3 fail; with a read-back
+refusal answered as not kept, 1 fails.
+
+The bridge was restarted after the move: add, remove and a lost answer against
+a stand-in pod, and a loopback pod address, answered as before. Its handing of
+the parts to `profilePodStore` is covered by that run and the typecheck, not
+by a test.
 
 ## 2026-11-17 — xapi-x: the lint and the controls document are affordances, and Foxxi's profile states what it offers
 
@@ -74,6 +94,7 @@ From the xapi-x list of what was only designed.
 **Not done.** No statement links to a controls document. Foxxi's profile
 states no `xapix:evidences`: each is a proposal about someone else's concept
 and wants review first. An `i2x:` target is taken by its namespace.
+
 
 ## 2026-11-17 — mcp-server: the local Solid server fallback starts
 
@@ -151,6 +172,7 @@ job deletes. `jev-harness.yml` now builds the stdio server before it runs the
 tests it selects, as `bridge-typecheck.yml`'s suite already did: its build cache
 holds `packages/*/dist` only, so on a hit `mcp-server/dist/` was never built and
 the compiled run found no server.
+
 
 ## 2026-11-17 — coached-world: a registration's statements are chained, and the world signs their order
 
