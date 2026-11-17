@@ -27,7 +27,7 @@
 
 import { promises as fs } from 'node:fs';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { Console } from 'node:console';
 import { getHeapStatistics } from 'node:v8';
 import {
@@ -35,7 +35,7 @@ import {
 } from '@interego/solid';
 import { PodStatementStore } from './pod-statement-store.js';
 import { deriveEncryptionKeyPair, type IRI } from '@interego/core';
-import { NativeCommitStore } from '@interego/pgsl';
+import { NativeCommitStore, createNativeHeadSigner } from '@interego/pgsl';
 import { NativeInteregoLrsDatabase } from './native-lrs-store.js';
 
 export interface StoredStatement {
@@ -621,6 +621,8 @@ let nativeDatabase: NativeInteregoLrsDatabase | undefined;
 export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = process.env): NativeInteregoLrsDatabase {
   const config = nativeConfiguration(env), originalFetch = globalThis.fetch.bind(globalThis);
   const senderKeyPair = deriveEncryptionKeyPair(config.privateKey, config.scope.owner);
+  const headSigner = createNativeHeadSigner(createHash('sha256')
+    .update(`${config.privateKey.toLowerCase().replace(/^0x/, '')}:interego-native-head-signing-v1:${config.scope.owner}`).digest());
   const pod = new URL(config.scope.pod);
   const transport: typeof globalThis.fetch = async (input, init) => {
     const request = input instanceof Request ? input : undefined;
@@ -672,7 +674,15 @@ export function createConfiguredNativeLrsDatabase(env: NodeJS.ProcessEnv = proce
     // without this anyone who can write the pod could seal a record of their own and have it read
     // here: a statement under any authority, the LMS's included. The owner is named because the
     // owner is a recipient and may have sealed what is already there.
-    trustedSenderPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])] });
+    trustedSenderPublicKeys: [...new Set([config.ownerPublicKey, senderKeyPair.publicKey])],
+    // The bridge signs every head it commits, and takes a signed head only when the signature is its
+    // own. The check above keeps out whoever is not a recipient; the owner is a recipient, and a
+    // recipient can reuse a genuine wrapped key. Nobody but the bridge holds this signing key.
+    // Everything beneath a head is named by digest, so the one signature covers every statement.
+    headSigner, trustedHeadSignerPublicKeys: [headSigner.publicKey],
+    // Off until the store's head has been written once by a signing bridge: a store from before
+    // carries an unsigned head, and a bridge that refused it could not start.
+    requireSignedHead: env.FOXXI_LRS_NATIVE_REQUIRE_SIGNED_HEAD === '1' });
   return new NativeInteregoLrsDatabase({ client, owner: config.scope.owner,
     scopeIdentity: JSON.stringify(config.scope),
     cursorSecret: createNativeCursorSecret(config.privateKey, config.scope.owner),

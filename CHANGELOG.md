@@ -479,6 +479,60 @@ page's stored token out of reach rests on this file's escaping and policy. Only
 hosting the client on an origin of its own would not; that is the owner's
 decision, and it is not made here.
 
+## 2026-11-17 — Native store: a head is signed by its writer
+
+`trustedSenderPublicKeys` keeps out whoever is not a recipient of the store. A
+recipient holds the content key of what it reads, and can seal other content
+under a wrapped key copied from a genuine artifact. For Foxxi's LRS the store
+owner is a recipient, so a holder of the owner's key who could write the pod
+could still write statements, the LMS's own included.
+
+`NativeCommitStore` takes `headSigner`, `trustedHeadSignerPublicKeys` and
+`requireSignedHead`. A signing client puts an Ed25519 signature on every head
+it commits, over the head's envelope and its address. Everything a head refers
+to is named by the digest of its stored bytes, so the one signature covers every
+record beneath it, including those stored before heads were signed.
+
+Foxxi's LRS signs with a key derived from the bridge's own and takes a signed
+head only under that key. `FOXXI_LRS_NATIVE_REQUIRE_SIGNED_HEAD=1` then refuses
+an unsigned head. It is off by default: a store from before has an unsigned head
+until its next commit, and a bridge that refused it could not start. Until it is
+on, a head with the signature left off is still read.
+
+Not covered: putting an earlier signed head back, and removing what a head
+refers to. Without the options nothing changes.
+
+## 2026-11-17 — xapi-x: version 2 of the profile is published on the pod
+
+The owner said to publish it. The profile's IRI,
+`https://relay.interego.xwisee.com/ns/u-pk-33d42e6b33dc/xapix-profile`, now
+serves version 2: 123 triples, the ones `xapixProfileTurtle()` returns on
+master. The publish was conditional on version 1 still being the head, and its
+descriptor supersedes version 1's. Fetched back as Turtle and compared triple
+for triple: none missing, none extra. `…/xapix-profile/v/2` and
+`…/xapix-profile/templates/projection` resolve.
+
+Only the xapi-x README changes in the repository: it said the pod served
+version 1 and listed this as left to do.
+
+## 2026-11-17 — Foxxi: a test takes a guest learner all the way to a course
+
+The guest-learner tests stopped at a guest with no links. One new case in
+`tests/i2idlx-learning-routes.test.ts` runs the whole path over real HTTP with
+the provider stand-in the other route tests use: a guest signs in by key proof,
+joins a connection with its code, the connection's owner sees the guest's WebID
+among the pending links and approves it against a real registration, the guest
+confirms, reads its own courses and progress, launches its enrolled course, and
+ends its own link.
+
+It also holds the edges: the guest cannot approve its own link or do anything
+else an owner does, another guest cannot confirm or use the link, the AI
+context and progress notifications stay closed with an active link, and no
+provider identifier appears in what the guest is shown.
+
+Test only; no source change. It fails if `courses` is taken out of the
+operations a guest may call.
+
 ## 2026-11-16 — Dependencies: minimatch 11.0.8 under typescript-eslint and electron-builder
 
 `npm audit` lists one advisory against minimatch from 7.0.0 up to 11.0.1,
