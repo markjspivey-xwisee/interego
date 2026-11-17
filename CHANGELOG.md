@@ -53,6 +53,8 @@ bridge accepts as a caller, which is its own piece of work
 (`applications/foxxi-content-intelligence/DURABLE-GUEST.md`, "The general
 guest").
 
+**After review.** A general guest's session that acts as a linked account may not delete that account's course-player record: `POST /learn/forget` answers 403 `player_forget_needs_account_sign_in` for it. The browser holds only a guest's key, for ten minutes at a time; deleting the account's record is the account's to do, signed in as itself.
+
 ## 2026-11-16 — Dependencies: minimatch 11.0.8 under typescript-eslint and electron-builder
 
 `npm audit` lists one advisory against minimatch from 7.0.0 up to 11.0.1,

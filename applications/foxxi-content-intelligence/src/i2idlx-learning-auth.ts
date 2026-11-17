@@ -14,6 +14,13 @@ export interface LearningPrincipal {
   /** Present only on a provisional guest (browser-key possession, no human credential). Routes
    * refuse a guest unless they pass `allowGuest` to resolve(): see GUEST_LEARNING_OPERATIONS. */
   guest?: true;
+  /**
+   * Set on a general guest's session that acts as the registered account identity said it is
+   * linked to. The subject is then the ACCOUNT, but the browser holds only a guest's key: what an
+   * account would not want a linked guest's browser to do to the account's own records (delete
+   * them, say) is refused where this is set.
+   */
+  actsForLinkedAccount?: true;
 }
 /**
  * Identity's general guest door as this sign-in uses it: `GeneralGuestDoor`
@@ -540,7 +547,8 @@ export class LearningAccountAuth {
     const value = opaque(), sessionKey = hash(value), lifetime = new AbortController(), expiresAt = standing.expiresAt;
     const account: Account = { subject: users + subjectId, userId: subjectId, webId: `${this.identity}/users/${subjectId}/profile#me`, podUrl: `${this.pod}/${subjectId}/`,
       agentId: guest.agentDid, clientId: 'interego-general-guest', expiresAt };
-    const principal: LearningPrincipal = { subject: account.subject, userId: account.userId, webId: account.webId, podUrl: account.podUrl, sessionId: opaque(), expiresAt, signal: lifetime.signal, guest: true };
+    const principal: LearningPrincipal = { subject: account.subject, userId: account.userId, webId: account.webId, podUrl: account.podUrl, sessionId: opaque(), expiresAt, signal: lifetime.signal, guest: true,
+      ...(standing.linked ? { actsForLinkedAccount: true as const } : {}) };
     this.sessions.set(sessionKey, { hash: sessionKey, principal, account, token: '', csrf: opaque(), lifetime, timer: this.expire(sessionKey, expiresAt), general: { linked: standing.linked } });
     setCookie(res, COOKIE, value, expiresAt - this.now()); secure(res);
     res.redirect(303, visit.next ? this.base + visit.next : this.base + '/i2idlx/#ask');

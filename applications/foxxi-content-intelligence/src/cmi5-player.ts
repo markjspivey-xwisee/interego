@@ -37,7 +37,8 @@ export async function learnerFromPlayerAuth(auth: LearningAccountAuth, req: Requ
   if (!auth.enabled) throw new PlayerError(503, 'player_sign_in_unavailable');
   const principal = await auth.resolve(req, { allowGuest: true });
   auth.assertMutation(req, principal);
-  return { did: principal.subject, webId: principal.webId, podUrl: principal.podUrl, userId: principal.userId, guest: principal.guest === true };
+  return { did: principal.subject, webId: principal.webId, podUrl: principal.podUrl, userId: principal.userId, guest: principal.guest === true,
+    ...(principal.actsForLinkedAccount === true ? { actsForLinkedAccount: true } : {}) };
 }
 
 export class PlayerError extends Error {
@@ -50,6 +51,8 @@ export interface PlayerLearner {
   podUrl: string;
   userId: string;
   guest: boolean;
+  /** A general guest's session acting as the registered account it is linked to (LearningPrincipal.actsForLinkedAccount). */
+  actsForLinkedAccount?: boolean;
 }
 
 export interface OpenAttempt {
@@ -590,6 +593,9 @@ export function attachCoursePlayerRoutes(app: Express, deps: CoursePlayerDeps): 
   app.post('/learn/forget', forgetLimit, async (req, res) => {
     try {
       const learner = await deps.requireLearner(req);
+      // A linked guest's browser acts as the account for ten minutes at a time. Deleting the
+      // account's own record is the account's to do, signed in as itself.
+      if (learner.actsForLinkedAccount) throw new PlayerError(403, 'player_forget_needs_account_sign_in');
       let forgotten = 0;
       const linked = book.ownerFor(learner.did);
       if (linked?.ownerPodUrl && linked.ownerDid !== learner.did) {
