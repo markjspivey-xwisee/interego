@@ -40,7 +40,7 @@ import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/o
 import { createOwnSubjectActivityStore } from '../src/own-subject-activity-store.js';
 import { rateLimit } from 'express-rate-limit';
 import { SignerHourlyLimit, openHostingRequest, openHostingSettings } from '../src/open-hosting.js';
-import { ProfileServer, ProfileServerError, AdditionNotKept, RemovalNotKept, notKeptAnswer, mountProfileServerReads, MAX_PROFILE_BYTES, type ProfileRecord } from '../src/xapi-profile-server/service.js';
+import { ProfileServer, ProfileServerError, mountProfileServerReads, mountProfileServerWrites, MAX_PROFILE_BYTES, type ProfileRecord } from '../src/xapi-profile-server/service.js';
 import { validates as profileValidates } from '../src/xapi-profile-server/processor.js';
 import { buildFoxxiProfileDoc as ownXapiProfileDoc, FOXXI_PROFILE_ID as OWN_XAPI_PROFILE_ID } from '../src/xapi-profile.js';
 import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
@@ -11007,6 +11007,13 @@ const xapiProfileServer = new ProfileServer({
     });
     return { ...(sl?.holonUri ? { holonUri: sl.holonUri } : {}), persisted: sl?.persisted === true };
   },
+  // Read from the pod's own copy, not from the lattice in this process: the record is in that
+  // from the moment it is composed, whether or not the write landed.
+  confirm: async record => {
+    if (!XAPI_PROFILES_POD) return false;
+    const onPod = await persistedLatticeArtifacts(XAPI_PROFILES_POD, XAPI_PROFILE_RECORD, XAPI_PROFILES_RESOURCE);
+    return onPod === null ? undefined : onPod.some(a => (a.content as ProfileRecord | null)?.id === record.id);
+  },
 });
 
 mountProfileServerReads(app, xapiProfileServer, {
@@ -11051,60 +11058,23 @@ async function fetchProfileByUri(uri: string): Promise<unknown> {
   try { return JSON.parse(text); } catch { throw new ProfileServerError(400, 'What is published there is not JSON.'); }
 }
 
-// POST /agent/xapi-profiles/add — add a profile version, by its contents (`profile`) or by where
-// it is published (`uri`). Signed: the profile is held under the agent that added it. The version
-// is held only once its pod write is acknowledged; otherwise 503, not ok, and nothing changed.
-app.post('/agent/xapi-profiles/add', xapiProfileWriteRateLimit, async (req, res) => {
-  try {
-    const auth = await verifyDelegatedCaller(req.body);
-    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
-    const admitted = xapiProfileAddsBySigner.admit(auth.callerDid);
-    if (!admitted.ok) {
-      res.setHeader('Retry-After', String(admitted.retryAfterSeconds));
-      res.status(429).json({ error: 'this signer has added as many profiles as one signer may in an hour; try again later', retryAfterSeconds: admitted.retryAfterSeconds });
-      return;
-    }
-    const p = auth.payload;
-    if ((p.profile === undefined) === (p.uri === undefined)) { res.status(400).json({ error: 'send the profile itself as `profile`, or where it is published as `uri` — one of the two' }); return; }
-    const uri = typeof p.uri === 'string' ? p.uri : undefined;
-    const doc = uri !== undefined ? await fetchProfileByUri(uri) : p.profile;
-    const r = await xapiProfileServer.add(doc as never, auth.callerDid, uri);
-    const document = `${xapiProfileServerBase}/profile?iri=${encodeURIComponent(r.held.version)}`;
-    sendActionResult(req, res, {
-      ok: true, profile: r.held.id, version: r.held.version, replaced: r.replaced,
-      current: xapiProfileServer.dataset.get(r.held.id)?.version === r.held.version,
-      triples: r.held.stated.length, addedBy: auth.callerDid,
-      graph: r.held.version, document,
-      sparql: `${xapiProfileServerBase}/sparql`,
-      validateTemplates: `${xapiProfileServerBase}/validate_templates`,
-      validatePatterns: `${xapiProfileServerBase}/validate_patterns`,
-      server: xapiProfileServerBase,
-      holonUri: r.holonUri ?? null, persisted: r.persisted,
-    }, bridgeBaseUrl, 'Profile added', []);
-  } catch (err) {
-    if (err instanceof AdditionNotKept) { res.status(err.status).json(notKeptAnswer(err, `${bridgeBaseUrl}/agent/xapi-profiles/add`)); return; }
-    if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
-    sendServerError(res, err, 'route-handler');
-  }
-});
-
-// POST /agent/xapi-profiles/remove — take down a profile (every version) or one version. The
-// agent that added it, or the operator. The lattice is append-only, so what is recorded is the
-// removal; the earlier holon stays addressable and the server stops answering from it, once the
-// removal is acknowledged by the pod. Otherwise 503, not ok, and the profile still answers.
-app.post('/agent/xapi-profiles/remove', xapiProfileWriteRateLimit, async (req, res) => {
-  try {
-    const auth = await verifyDelegatedCaller(req.body);
-    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
-    const iri = typeof auth.payload.iri === 'string' ? auth.payload.iri : '';
-    if (!iri) { res.status(400).json({ error: 'name the profile or the version to take down as `iri`' }); return; }
-    const r = await xapiProfileServer.remove(iri, auth.callerDid);
-    sendActionResult(req, res, { ok: true, removed: r.removed, persisted: r.persisted, server: xapiProfileServerBase }, bridgeBaseUrl, 'Profile taken down', []);
-  } catch (err) {
-    if (err instanceof RemovalNotKept) { res.status(err.status).json(notKeptAnswer(err, `${bridgeBaseUrl}/agent/xapi-profiles/remove`)); return; }
-    if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
-    sendServerError(res, err, 'route-handler');
-  }
+// POST /agent/xapi-profiles/add and /remove (src/xapi-profile-server/service.ts). Signed: a
+// profile is held under the agent that added it, and taken down by that agent or the operator.
+// Either change happens only once its pod write is acknowledged; otherwise 503, not ok, and
+// nothing changed. An addition that ends up not held gives the signer's allowance back.
+mountProfileServerWrites(app, xapiProfileServer, {
+  base: xapiProfileServerBase,
+  addTarget: `${bridgeBaseUrl}/agent/xapi-profiles/add`,
+  removeTarget: `${bridgeBaseUrl}/agent/xapi-profiles/remove`,
+  guard: xapiProfileWriteRateLimit,
+  verify: async body => {
+    const auth = await verifyDelegatedCaller(body as never);
+    return auth.ok ? { ok: true, callerDid: auth.callerDid, payload: auth.payload as Record<string, unknown> } : { ok: false, status: auth.status, error: auth.error };
+  },
+  allowance: xapiProfileAddsBySigner,
+  fetchByUri: fetchProfileByUri,
+  send: (req, res, payload, title) => { sendActionResult(req, res, payload, bridgeBaseUrl, title, []); },
+  serverError: (res, err) => { sendServerError(res, err, 'route-handler'); },
 });
 
 // Writing a profile here and hosting it: a draft, a lint, a publication, and every IRI of a held
@@ -11125,6 +11095,7 @@ mountProfileAuthoring(app, xapiProfileAuthoring, {
     const admitted = xapiProfileAddsBySigner.admit(did);
     if (!admitted.ok) throw new ProfileServerError(429, `This signer has added or published as many profile versions as one signer may in an hour; try again in ${admitted.retryAfterSeconds} seconds.`);
   },
+  publishRefused: did => { xapiProfileAddsBySigner.giveBack(did); },
   send: (req, res, payload, title) => { sendActionResult(req, res, payload, bridgeBaseUrl, title, []); },
 });
 mountProfileHosting(app, xapiProfileServer, {

@@ -16,6 +16,7 @@
  * profile IRI is the one who may add later versions of it or take it down, and the operator may
  * take down any.
  */
+import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response, RequestHandler } from 'express';
 import { turtleIriRef } from '@interego/core';
 import { ProfileDataset, SparqlRefused, type HeldProfile } from './dataset.js';
@@ -32,12 +33,23 @@ export const MAX_KEPT_BYTES = 12 * 1024 * 1024;
 export const MAX_PROFILE_TRIPLES = 6000;
 export const MAX_PATTERN_STATEMENTS = 500;
 
+/**
+ * What every record carries besides its change.
+ *
+ * `id` names the record, so a store can be asked whether it has it. `withdraws` names earlier
+ * records this server sent and then reported as not kept. A store may still come to hold such a
+ * record: its answer was lost and it could not be read back, or the store writes it with the next
+ * record that does land. A withdrawn record is skipped when records are replayed, so a restarted
+ * server holds what the running one said it held. Records kept before these existed have neither.
+ */
+interface RecordMarks { readonly id?: string; readonly withdraws?: readonly string[] }
+
 /** What is kept for each added version, and replayed when the bridge starts. */
 export type ProfileRecord =
-  | { kind: 'added'; doc: Json; by: string; at: string; source?: string }
+  | ({ kind: 'added'; doc: Json; by: string; at: string; source?: string } & RecordMarks)
   /** A version published from a draft: never replaced, and kept with the examples it was linted with. */
-  | { kind: 'published'; doc: Json; examples: ProfileExamples; external: ExternalTerm[]; by: string; at: string }
-  | { kind: 'removed'; iri: string; by: string; at: string };
+  | ({ kind: 'published'; doc: Json; examples: ProfileExamples; external: ExternalTerm[]; by: string; at: string } & RecordMarks)
+  | ({ kind: 'removed'; iri: string; by: string; at: string } & RecordMarks);
 
 export interface ProfileServerOptions {
   /** Profiles that are part of the deployment itself (Foxxi's own). Never removable, never persisted. */
@@ -50,6 +62,12 @@ export interface ProfileServerOptions {
   readonly builtInKept?: () => Array<{ /** A built-in profile's IRI, or the IRI of one version of it. */ profile: string; examples: ProfileExamples; external: ExternalTerm[] }>;
   /** Keep a record durably. Resolves with where it went, or throws. */
   readonly persist?: (record: ProfileRecord, held?: HeldProfile) => Promise<{ holonUri?: string; persisted?: boolean }>;
+  /**
+   * Whether the durable store holds a record, read from the store itself: true when it does, false
+   * when it was read and does not, undefined when it could not be read. Asked when `persist` threw
+   * or did not acknowledge, because a write can land and its answer be lost.
+   */
+  readonly confirm?: (record: ProfileRecord) => Promise<boolean | undefined>;
   /** Every record kept so far. */
   readonly hydrate?: () => Promise<ProfileRecord[]>;
   /** A stored statement by id, for templates that check a referenced statement. */
@@ -114,6 +132,8 @@ export class ProfileServer {
   private readonly writing = new Map<string, { id: string; by: string }>();
   /** profile IRI → a removal under it waiting on its durable write. What it names is held until that lands. */
   private readonly removing = new Set<string>();
+  /** ids of records reported as not kept and not yet withdrawn by a record that was. */
+  private readonly notKept = new Set<string>();
   private hydrated: Promise<void> | undefined;
   private keptBytes = 0;
 
@@ -132,7 +152,10 @@ export class ProfileServer {
   ready(): Promise<void> {
     return this.hydrated ??= (async () => {
       const records = (await this.options.hydrate?.()) ?? [];
+      // A record another record withdraws was reported as not kept: it is not replayed.
+      const withdrawn = new Set(records.flatMap(r => Array.isArray(r.withdraws) ? r.withdraws : []));
       for (const r of [...records].sort((a, b) => a.at.localeCompare(b.at))) {
+        if (r.id !== undefined && withdrawn.has(r.id)) continue;
         try {
           if (r.kind === 'added') { this.keptBytes += sizeOf(r.doc); this.hold(r.doc, r.by); }
           else if (r.kind === 'published') {
@@ -188,6 +211,33 @@ export class ProfileServer {
     return held;
   }
 
+  /**
+   * Send one record to the durable store, and say whether the store has it.
+   *
+   * Kept means `persist` acknowledged it, or, when it threw or did not acknowledge, `confirm` read
+   * the record back from the store: the write landed and only its answer was lost.
+   *
+   * A record that is not kept is remembered, and the next record sent names it in `withdraws`.
+   * The store may come to hold it all the same, and `ready` skips a withdrawn record. What is not
+   * covered: a record that landed, could not be read back, and is replayed by a restart that
+   * happens before this server's next acknowledged write.
+   */
+  private async keep(change: ProfileRecord, held?: HeldProfile): Promise<{ kept: true; holonUri?: string } | { kept: false; why: string }> {
+    const withdraws = [...this.notKept];
+    const record: ProfileRecord = { ...change, id: randomUUID(), ...(withdraws.length ? { withdraws } : {}) };
+    let answer: { holonUri?: string; persisted?: boolean } | undefined;
+    let why = 'the durable write was not acknowledged.';
+    try { answer = await this.options.persist!(record, held); } catch { why = 'the durable write failed.'; }
+    let kept = answer?.persisted === true;
+    if (!kept && this.options.confirm) {
+      try { kept = (await this.options.confirm(record)) === true; } catch { /* could not be read: not confirmed */ }
+    }
+    if (!kept) { this.notKept.add(record.id!); return { kept: false, why }; }
+    // What this record withdrew is withdrawn durably now.
+    for (const id of withdraws) this.notKept.delete(id);
+    return { kept: true, ...(answer?.holonUri ? { holonUri: answer.holonUri } : {}) };
+  }
+
   private drop(iri: string): string[] {
     const gone = this.dataset.remove(iri);
     for (const version of gone) this.publishedVersions.delete(version);
@@ -215,10 +265,8 @@ export class ProfileServer {
     this.keptBytes += size;
     let landed = false;
     try {
-      let kept: { holonUri?: string; persisted?: boolean };
-      try { kept = await this.options.persist({ kind: 'added', doc, by, at: new Date().toISOString(), ...(source ? { source } : {}) }, held); }
-      catch { throw new AdditionNotKept(held.id, held.version, 'the durable write failed.'); }
-      if (kept.persisted !== true) throw new AdditionNotKept(held.id, held.version, 'the durable write was not acknowledged.');
+      const kept = await this.keep({ kind: 'added', doc, by, at: new Date().toISOString(), ...(source ? { source } : {}) }, held);
+      if (!kept.kept) throw new AdditionNotKept(held.id, held.version, kept.why);
       this.dataset.put(held);
       this.owners.set(held.id, by);
       landed = true;
@@ -252,10 +300,8 @@ export class ProfileServer {
     if (!this.options.persist) throw new RemovalNotKept(iri, 'this server has no durable store to record a removal in.');
     this.removing.add(target.id);
     try {
-      let kept: { persisted?: boolean };
-      try { kept = await this.options.persist({ kind: 'removed', iri, by, at: new Date().toISOString() }); }
-      catch { throw new RemovalNotKept(iri, 'the durable write failed.'); }
-      if (kept.persisted !== true) throw new RemovalNotKept(iri, 'the durable write was not acknowledged.');
+      const kept = await this.keep({ kind: 'removed', iri, by, at: new Date().toISOString() });
+      if (!kept.kept) throw new RemovalNotKept(iri, kept.why);
       return { removed: this.drop(iri), persisted: true };
     } finally {
       this.removing.delete(target.id);
@@ -288,10 +334,8 @@ export class ProfileServer {
     this.keptBytes += size;
     let landed = false;
     try {
-      let kept: { holonUri?: string; persisted?: boolean };
-      try { kept = await this.options.persist({ kind: 'published', doc, examples, external, by, at }, held); }
-      catch { throw new PublicationNotKept(held.id, version, 'the durable write failed.'); }
-      if (kept.persisted !== true) throw new PublicationNotKept(held.id, version, 'the durable write was not acknowledged.');
+      const kept = await this.keep({ kind: 'published', doc, examples, external, by, at }, held);
+      if (!kept.kept) throw new PublicationNotKept(held.id, version, kept.why);
       this.dataset.put(held);
       this.owners.set(held.id, by);
       this.publishedVersions.set(held.version, { examples, external, at });
@@ -457,6 +501,104 @@ export function whyNotAddable(doc: unknown): string | undefined {
 }
 
 // ── HTTP ──────────────────────────────────────────────────────────────────────────────────────
+
+type Body = Record<string, unknown>;
+
+export interface WriteRouteOptions {
+  /** `<bridge>/xapi/profiles`, where the server is mounted. */
+  readonly base: string;
+  /** Where the two routes are reached from outside, for the `retry` of an answer that was not kept. */
+  readonly addTarget: string;
+  readonly removeTarget: string;
+  /** Applied to both routes before anything else (a rate limit by address). */
+  readonly guard: RequestHandler;
+  /** Who signed the request, and what they sent. */
+  readonly verify: (body: unknown) => Promise<{ ok: true; callerDid: string; payload: Body } | { ok: false; status: number; error: string }>;
+  /**
+   * How many versions one signer adds in an hour. `admit` counts the addition it admits, and
+   * `giveBack` returns that count when the addition ends up not held, whatever refused it.
+   */
+  readonly allowance?: {
+    admit(signer: string): { ok: true } | { ok: false; retryAfterSeconds: number };
+    giveBack(signer: string): void;
+  };
+  /** Read a profile from where it is published; throws a ProfileServerError when it cannot. */
+  readonly fetchByUri: (uri: string) => Promise<unknown>;
+  /** How the bridge sends an action's result (it adds the links that follow). Defaults to plain JSON. */
+  readonly send?: (req: Request, res: Response, payload: Body, title: string) => void;
+  /** What to answer for an error that is not this server's own. Defaults to a 500. */
+  readonly serverError?: (res: Response, err: unknown) => void;
+}
+
+/**
+ * The write side: POST /agent/xapi-profiles/add and /remove, both signed.
+ *
+ * add     a profile version by its contents (`profile`) or by where it is published (`uri`), held
+ *         under the agent that added it, and only once its durable write is acknowledged.
+ * remove  a profile (every version) or one version, by the agent that added it or the operator.
+ *         What is recorded is the removal; the server stops answering once that is acknowledged.
+ *
+ * A write that was not kept is a 503, not ok, with nothing changed and where to send it again.
+ */
+export function mountProfileServerWrites(app: Express, server: ProfileServer, o: WriteRouteOptions): void {
+  const send = o.send ?? ((_req, res, payload) => { res.json(payload); });
+  const fail = (res: Response, err: unknown) => {
+    if (err instanceof AdditionNotKept) { res.status(err.status).json(notKeptAnswer(err, o.addTarget)); return; }
+    if (err instanceof RemovalNotKept) { res.status(err.status).json(notKeptAnswer(err, o.removeTarget)); return; }
+    if (err instanceof ProfileServerError) { res.status(err.status).json({ error: err.message }); return; }
+    if (o.serverError) { o.serverError(res, err); return; }
+    res.status(500).json({ error: 'The profile server could not answer.' });
+  };
+
+  app.post('/agent/xapi-profiles/add', o.guard, async (req, res) => {
+    // Set once the signer's allowance has counted this request, and cleared once the version is held.
+    let counted: string | undefined;
+    try {
+      const auth = await o.verify(req.body);
+      if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+      const admitted = o.allowance?.admit(auth.callerDid) ?? { ok: true as const };
+      if (!admitted.ok) {
+        res.setHeader('Retry-After', String(admitted.retryAfterSeconds));
+        res.status(429).json({ error: 'this signer has added as many profiles as one signer may in an hour; try again later', retryAfterSeconds: admitted.retryAfterSeconds });
+        return;
+      }
+      counted = auth.callerDid;
+      const p = auth.payload;
+      if ((p.profile === undefined) === (p.uri === undefined)) throw new ProfileServerError(400, 'send the profile itself as `profile`, or where it is published as `uri` — one of the two');
+      const uri = typeof p.uri === 'string' ? p.uri : undefined;
+      const doc = uri !== undefined ? await o.fetchByUri(uri) : p.profile;
+      const r = await server.add(doc as never, auth.callerDid, uri);
+      counted = undefined;
+      send(req, res, {
+        ok: true, profile: r.held.id, version: r.held.version, replaced: r.replaced,
+        current: server.dataset.get(r.held.id)?.version === r.held.version,
+        triples: r.held.stated.length, addedBy: auth.callerDid,
+        graph: r.held.version, document: `${o.base}/profile?iri=${encodeURIComponent(r.held.version)}`,
+        sparql: `${o.base}/sparql`,
+        validateTemplates: `${o.base}/validate_templates`,
+        validatePatterns: `${o.base}/validate_patterns`,
+        server: o.base,
+        holonUri: r.holonUri ?? null, persisted: r.persisted,
+      }, 'Profile added');
+    } catch (err) {
+      fail(res, err);
+    } finally {
+      // The allowance is for versions a signer adds. One that was refused, or not kept, added nothing.
+      if (counted !== undefined) o.allowance?.giveBack(counted);
+    }
+  });
+
+  app.post('/agent/xapi-profiles/remove', o.guard, async (req, res) => {
+    try {
+      const auth = await o.verify(req.body);
+      if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+      const iri = typeof auth.payload.iri === 'string' ? auth.payload.iri : '';
+      if (!iri) { res.status(400).json({ error: 'name the profile or the version to take down as `iri`' }); return; }
+      const r = await server.remove(iri, auth.callerDid);
+      send(req, res, { ok: true, removed: r.removed, persisted: r.persisted, server: o.base }, 'Profile taken down');
+    } catch (err) { fail(res, err); }
+  });
+}
 
 export interface ReadRouteOptions {
   /** `<bridge>/xapi/profiles`, where the server is mounted. */

@@ -24,7 +24,7 @@ export const xapiProfileServerAffordances: Affordance[] = [
     annotations: { title: 'Add an xAPI Profile', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: signedInputs('profile?: <the profile document>, uri?: "https://…" — exactly one of the two'),
     outputs: {
-      description: 'Where the version now answers. 400 when the document is not a profile, 409 when another agent added that profile IRI or the profile is being changed at that moment, 413 when it is too large, 507 when the server is full, 429 past the hourly count, 502 when a uri could not be fetched. 503 with ok: false, added: false and persisted: false when the pod write did not land: the version is not held, a version it would have replaced is unchanged, and the same request can be sent again to `retry`.',
+      description: 'Where the version now answers. 400 when the document is not a profile, 409 when another agent added that profile IRI or the profile is being changed at that moment, 413 when it is too large, 507 when the server is full, 429 past the hourly count (only versions that were added count toward it), 502 when a uri could not be fetched. 503 with ok: false, added: false and persisted: false when the pod write did not land: the version is not held, a version it would have replaced is unchanged, and the same request can be sent again to `retry`.',
       properties: {
         ok: { type: 'boolean' },
         profile: { type: 'string', description: 'The profile IRI.' },

@@ -101,4 +101,13 @@ export class SignerHourlyLimit {
     if (this.seen.size > MAX_SIGNERS_REMEMBERED) this.seen.delete(this.seen.keys().next().value as string);
     return { ok: true };
   }
+
+  /** Return the count `admit` last took for a signer: what it admitted came to nothing. */
+  giveBack(signer: string): void {
+    const key = signer.toLowerCase();
+    const recent = this.seen.get(key);
+    if (!recent) return;
+    recent.pop();
+    if (recent.length === 0) this.seen.delete(key);
+  }
 }

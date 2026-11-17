@@ -1,5 +1,47 @@
 # Changelog
 
+## 2026-11-16 — Foxxi: a profile write reported as not kept stays not kept, and costs its signer nothing
+
+Three things were left open when profile additions, removals and publications
+were made to wait for their durable write.
+
+**A write the server reported as not kept could come back after a restart.**
+Two ways. The write landed on the pod and its answer was lost on the way back.
+Or the write did fail: the bridge composes a record into its lattice before it
+writes, and the whole lattice goes to the pod with the next write that lands,
+the failed record with it. Either way the server answered 503 and "nothing
+changed", and the next restart replayed the record: a version nobody was told
+was added, or a profile taken down that was said to be still held.
+
+- Every record now has an `id`. When `persist` throws or does not acknowledge,
+  `ProfileServer` asks the new `confirm` option whether the store has the
+  record. The bridge answers from the pod's own copy
+  (`persistedLatticeArtifacts`), not from the lattice in the process. A record
+  that is there was kept, and the request succeeds.
+- A record that is not kept is remembered, and the next record the server sends
+  names it in `withdraws`. Replay skips a withdrawn record. The withdrawal is
+  in the same pod write as the record it withdraws when that record goes with
+  a later write, so there is no moment a restart sees one without the other.
+- Not covered: a write that landed, could not be read back, and is replayed by
+  a restart that happens before the server's next acknowledged write.
+- Records kept before this have no `id` and replay as they did.
+
+**A refused addition spent the signer's hourly allowance.** The count was
+taken before the document was looked at. `SignerHourlyLimit` has `giveBack`,
+and the add route returns the count whenever the version ends up not held: a
+bad document, another agent's profile, a `uri` that could not be fetched, a
+full server, a pod write that was not kept. A publication that is refused or
+not kept after its count was taken returns it too (`publishRefused` in
+`mountProfileAuthoring`). The per-address rate limit on both routes is
+unchanged, and is what bounds repeated failures.
+
+**The add and remove routes were not tested over HTTP.** They were written
+inline in `bridge/server.ts`. They are now `mountProfileServerWrites` in
+`src/xapi-profile-server/service.ts`, mounted by the bridge with the same
+verification, rate limit, allowance, fetch and answer bodies as before, and by
+`tests/a-profile-write-that-was-not-kept-stays-not-kept.test.ts` (21 tests)
+with a made-up pod.
+
 ## 2026-11-16 — Dependencies: minimatch 11.0.8 under typescript-eslint and electron-builder
 
 `npm audit` lists one advisory against minimatch from 7.0.0 up to 11.0.1,
