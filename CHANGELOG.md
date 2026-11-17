@@ -13,6 +13,24 @@ for triple: none missing, none extra. `…/xapix-profile/v/2` and
 Only the xapi-x README changes in the repository: it said the pod served
 version 1 and listed this as left to do.
 
+## 2026-11-17 — Foxxi: a test takes a guest learner all the way to a course
+
+The guest-learner tests stopped at a guest with no links. One new case in
+`tests/i2idlx-learning-routes.test.ts` runs the whole path over real HTTP with
+the provider stand-in the other route tests use: a guest signs in by key proof,
+joins a connection with its code, the connection's owner sees the guest's WebID
+among the pending links and approves it against a real registration, the guest
+confirms, reads its own courses and progress, launches its enrolled course, and
+ends its own link.
+
+It also holds the edges: the guest cannot approve its own link or do anything
+else an owner does, another guest cannot confirm or use the link, the AI
+context and progress notifications stay closed with an active link, and no
+provider identifier appears in what the guest is shown.
+
+Test only; no source change. It fails if `courses` is taken out of the
+operations a guest may call.
+
 ## 2026-11-16 — Dependencies: minimatch 11.0.8 under typescript-eslint and electron-builder
 
 `npm audit` lists one advisory against minimatch from 7.0.0 up to 11.0.1,
