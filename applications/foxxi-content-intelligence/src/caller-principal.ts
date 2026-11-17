@@ -20,13 +20,14 @@
  * unit-testable without a pod.
  */
 import type { RecoveredSignedRequest } from './auth.js';
-import { hasControlChars } from './subject-pod-url.js';
+import { hasControlChars, isGeneralGuestDid } from './subject-pod-url.js';
 
 /**
- * How the caller was authenticated.
+ * How a signed `/agent/*` caller was authenticated.
  *
- * (Reserved for a later stage, NOT implemented here: a `'general-guest'` mode, for a caller
- * admitted without a wallet. Nothing produces or accepts it today.)
+ * A general guest is NOT one of these. It has its own principal (`GuestCallerPrincipal`, below),
+ * made only by `generalGuestPrincipal`, and `decideCallerPrincipal` never answers one: a guest
+ * calls the guest operations (src/guest-operations.ts) and no `/agent/*` route.
  */
 export type CallerAuthMode = 'direct' | 'delegated';
 
@@ -40,8 +41,38 @@ export interface CallerPrincipal {
   kind: 'human' | 'agent';
   /** The signed payload, exactly as recovered. */
   payload: Record<string, unknown>;
-  // (Reserved for a later stage, NOT implemented here: an optional `guest?` field carrying
-  // what a general guest was admitted with.)
+}
+
+/** What a general guest was admitted with: identity's statement at the door, as the bridge checked it. */
+export interface GeneralGuestAdmission {
+  /** Identity's user id for the guest: `u-try-guest-<32 hex>`. */
+  readonly userId: string;
+  /** `did:web:<identity host>:users:<userId>`. */
+  readonly guestDid: string;
+  /** The guest's own pod. Never the tenant pod. */
+  readonly podUrl: string;
+  /** Unix milliseconds: after this the admission is gone. */
+  readonly expiresAt: number;
+}
+
+/**
+ * A general guest as a caller. The subject is the GUEST, not the tab key that signed: the key
+ * only shows that this is the browser tab that finished the door visit.
+ */
+export interface GuestCallerPrincipal {
+  /** The guest's DID. */
+  readonly subject: string;
+  /** The tab key that signed the request (its address). It owns nothing. */
+  readonly key: string;
+  readonly authMode: 'general-guest';
+  readonly kind: 'human';
+  readonly payload: Record<string, unknown>;
+  readonly guest: GeneralGuestAdmission;
+}
+
+/** The one place a general guest's principal is made. The caller has verified the key and the admission. */
+export function generalGuestPrincipal(key: string, payload: Record<string, unknown>, guest: GeneralGuestAdmission): GuestCallerPrincipal {
+  return { subject: guest.guestDid, key, authMode: 'general-guest', kind: 'human', payload, guest };
 }
 
 /** Why a caller was refused. One value per refusal the three former copies could produce. */
@@ -49,6 +80,8 @@ export type CallerRefusalReason =
   | 'unsigned'
   | 'agent-id-control-character'
   | 'agent-id-too-long'
+  | 'general-guest-not-accepted'
+  | 'general-guest-key'
   | 'delegation-check-failed'
   | 'delegation-unverified'
   | 'signer-not-anchor';
@@ -94,6 +127,11 @@ export interface CallerPrincipalOptions {
    * `/agent/issue-credential` always sent its own, `verifyDelegatedCaller` sent none.
    */
   unsignedHint?: string;
+  /**
+   * Is this signer a tab key admitted as a general guest? When it is, the request is refused
+   * (403): such a key calls the guest operations and nothing else. Absent, no key is one.
+   */
+  guestKey?: (signer: string) => boolean;
 }
 
 export const AGENT_ID_MAX_LENGTH = 512;
@@ -127,6 +165,14 @@ export async function decideCallerPrincipal(
     if (rec.agentId.length > AGENT_ID_MAX_LENGTH) {
       return { ok: false, reason: 'agent-id-too-long', status: 400, error: `agent_id is ${rec.agentId.length} characters — the limit is ${AGENT_ID_MAX_LENGTH}` };
     }
+  }
+  // A general guest is never a signed /agent caller, direct or delegated: no delegation is read
+  // for one, and no pod is derived for one here. Refused before any I/O.
+  if (isGeneralGuestDid(rec.agentId.trim())) {
+    return { ok: false, reason: 'general-guest-not-accepted', status: 403, error: 'a general guest is not a signed /agent caller: nothing is accepted in a guest\'s name here, by signature or by delegation' };
+  }
+  if (opts.guestKey?.(rec.signer)) {
+    return { ok: false, reason: 'general-guest-key', status: 403, error: 'this key was admitted as a general guest: it calls the guest operations and nothing else' };
   }
   if (isDirectClaim(rec.agentId, rec.signer)) {
     // DIRECT: the signer IS the actor.
