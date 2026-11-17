@@ -22,6 +22,7 @@ process.env.PUBLIC_BASE_URL = 'https://gate.example';
 process.env.CSS_GATE_AUTOSTART = '0';
 process.env.RELAY_VERIFY_URL = '';
 process.env.IDENTITY_URL = '';
+process.env.GUEST_POD_OPERATOR_MODE = 'enforce';
 process.env.GUEST_POD_OPERATOR_WRITES = '3';
 process.env.GUEST_POD_OPERATOR_BYTES = '1000';
 process.env.GUEST_POD_OPERATOR_RESOURCE_BYTES = '600';
@@ -213,7 +214,7 @@ test('the legacy evaluation ids have no deadline the gate can read: only their t
 
 test('/healthz states the bound and that it is counted in this process', async () => {
   const health = await (await fetch(`${gate.base}/healthz`)).json();
-  assert.deepEqual(health.guestPodOperatorWrites, { writes: 3, bytes: 1000, resourceBytes: 600, accounting: 'per-process' });
+  assert.deepEqual(health.guestPodOperatorWrites, { writes: 3, bytes: 1000, resourceBytes: 600, accounting: 'per-process', mode: 'enforce' });
 });
 
 // ── Identity's own provisioning and cleanup do not come through this gate ────────────────────────

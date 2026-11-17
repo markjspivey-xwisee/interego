@@ -58,7 +58,13 @@ account and purged the pod.
   nothing here can refuse them; a test holds `deploy/railway/services.json`
   to that.
 
-A bridge now gets a `410` where it used to get a `201` for a guest that has
+- **Shadow until switched on.** Only `GUEST_POD_OPERATOR_MODE=enforce`
+  refuses. Any other value, and the default, decides the same way, logs what
+  it would have refused (once per pod and reason) and writes as before, so the
+  rule can be watched against the real store before a live guest's writes
+  depend on it. `/healthz` names the mode.
+
+Once enforcing, a bridge gets a `410` where it used to get a `201` for a guest that has
 ended; it should treat that as the guest being gone. The gate cannot tell one
 holder of the operator bearer from another. A write let through just before a
 closure can still land after it; the rule holds from the next write on.

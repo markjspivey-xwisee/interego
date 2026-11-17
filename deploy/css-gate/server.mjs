@@ -68,6 +68,8 @@
  *                      (default 4096), their declared bytes in all
  *                      (default 128 MiB) and each (default 8 MiB),
  *                      counted in this process.
+ *   GUEST_POD_OPERATOR_MODE — `enforce` refuses such a write; any other value
+ *                      (the default) is shadow: decided and logged, written anyway.
  *   CSS_INTERNAL_URL — upstream CSS.
  *   CSS_HOST_HEADER  — Host header to forward to CSS.
  *   USER_BEARER_CACHE_TTL_MS — verified-token cache TTL (default 60000).
@@ -923,6 +925,22 @@ function operatorGuestLimits(env = process.env) {
   });
 }
 const OPERATOR_GUEST_LIMITS = operatorGuestLimits();
+/**
+ * Only the exact value `enforce` refuses. Anything else is SHADOW: the same decision is made and
+ * counted, a refusal is logged (once per pod and reason), and the write goes on as it did before.
+ * The rule reads each guest's sign-in record from the store on every such write, and a store that
+ * answered that read differently from the fixtures would refuse every bridge write into a live
+ * guest's pod; shadow shows what it WOULD refuse on the real store before anything depends on it.
+ */
+const OPERATOR_GUEST_ENFORCE = process.env.GUEST_POD_OPERATOR_MODE === 'enforce';
+const operatorGuestShadowLogged = new Set();
+function operatorGuestShadow(pod, refused) {
+  const key = `${pod} ${refused.error}`;
+  if (operatorGuestShadowLogged.has(key)) return;
+  if (operatorGuestShadowLogged.size >= 2048) operatorGuestShadowLogged.clear();
+  operatorGuestShadowLogged.add(key);
+  console.warn(`[css-gate][guest-pod-operator][shadow] would refuse ${refused.status} ${refused.error} for pod ${pod}; written anyway (GUEST_POD_OPERATOR_MODE is not "enforce")`);
+}
 
 /**
  * What the operator bearer has written into each live guest's pod since this process started:
@@ -1213,7 +1231,7 @@ const server = createServer(async (req, res) => {
       provisionalPlay: { ...PROVISIONAL_LIMITS, accounting: 'durable-lifetime-before-write',
         budgetDocument: PROVISIONAL_BUDGET_DOCUMENT, conditionalNativeCommit: true },
       // What the operator bearer may write into one live guest's pod (operatorGuestWriteRefusal).
-      guestPodOperatorWrites: { ...OPERATOR_GUEST_LIMITS, accounting: 'per-process' },
+      guestPodOperatorWrites: { ...OPERATOR_GUEST_LIMITS, accounting: 'per-process', mode: OPERATOR_GUEST_ENFORCE ? 'enforce' : 'shadow' },
       // The git sha baked into the image, and the only field here that can distinguish one
       // deployment from another — everything above is derived from env vars that survive a
       // redeploy unchanged. ★ That is not hypothetical for this service: its HSTS fix sat
@@ -1362,7 +1380,8 @@ const server = createServer(async (req, res) => {
       // (see "Operator-bearer writes into a guest's pod").
       const guestPod = guestPodOf(target);
       const refused = guestPod && await operatorGuestWriteRefusal(guestPod, privateWrite, req.headers['content-length']);
-      if (refused) {
+      if (refused && !OPERATOR_GUEST_ENFORCE) operatorGuestShadow(guestPod, refused);
+      if (refused && OPERATOR_GUEST_ENFORCE) {
         res.writeHead(refused.status, { 'Content-Type': 'application/json',
           ...(refused.retryAfter ? { 'Retry-After': refused.retryAfter } : {}), ...corsHeaders });
         res.end(JSON.stringify({ error: refused.error, detail: refused.detail }));
