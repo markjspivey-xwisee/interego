@@ -121,9 +121,18 @@ export class Harness {
     return this.finish(j, { verb: 'navigated', objectName: input.task.slice(0, 120) });
   }
 
-  async selectTests(input: SelectTestsInput & { readonly baseRef?: string; readonly headRef?: string }): Promise<JudgmentResponse<TestSelectionJudgment>> {
+  async selectTests(input: SelectTestsInput & { readonly baseRef?: string; readonly headRef?: string; readonly supersedes?: string }): Promise<JudgmentResponse<TestSelectionJudgment>> {
     if (this.repositorySource && !input.changedFiles.length && input.baseRef) {
       throw new HarnessError(400, 'Supply changed_files when using the hosted repository snapshot.');
+    }
+    // A selection made to replace an earlier one (it read the wrong range, say) is published as
+    // the next version of that selection's graph. It is a correction and not a score: the only
+    // other way to supersede a selection is an outcome, which enters the calibration record.
+    // The earlier one is resolved before anything is judged, so a refusal costs no model call.
+    let replaced: Published | undefined;
+    if (input.supersedes !== undefined) {
+      if (!isIri(input.supersedes)) throw new HarnessError(400, 'supersedes must be an absolute IRI without whitespace or <>"{}|^`\\');
+      replaced = await this.replaceableSelection(input.supersedes);
     }
     const { changed, j } = await this.readRepository(async (root) => {
       const changed = input.changedFiles.length > 0
@@ -139,7 +148,33 @@ export class Harness {
       const j = await selectTests(this.jev, this.inventory(undefined, root), { changedFiles: changed, ...(input.task ? { task: input.task } : {}) });
       return { changed, j };
     });
-    return this.finish(j, { verb: 'selected-tests', objectName: `${changed.length} changed files -> ${j.mode}` });
+    // A replacement IS the next version of the graph it replaces, so it carries that graph's IRI:
+    // the payload, the store, the record-outcome control and the pull-request comment all name the
+    // graph the pod holds it under. Under an IRI of its own it could not be scored or replaced
+    // again: nothing is published under that IRI, and its descriptor belongs to the other graph.
+    const selection = replaced ? { ...j, graphIri: replaced.graphIri } : j;
+    return this.finish(selection, { verb: 'selected-tests', objectName: `${changed.length} changed files -> ${j.mode}` }, replaced ? [replaced] : []);
+  }
+
+  /**
+   * The test selection now at the head of a graph, for a selection that is to replace it.
+   * A copy in this bridge's store is not enough: it stays there after an outcome has scored it,
+   * and after another bridge has replaced it. So an outcome recorded here refuses, and where a
+   * pod is configured its current head decides (409 when that head is an outcome). The store's
+   * copy stands in only when the pod holds nothing for the graph, or there is no pod.
+   */
+  private async replaceableSelection(graphIri: string): Promise<Published> {
+    if (this.store.outcomes().some((o) => o.judgmentIri === graphIri)) throw new HarnessError(409, `${graphIri} is already scored, and a scored selection is not replaced`);
+    let prior = this.store.findByGraphIri(graphIri);
+    if (!prior || this.relay?.podName) {
+      try {
+        prior = await this.judgmentFromPod(graphIri);
+      } catch (err) {
+        if (!prior || !(err instanceof HarnessError) || err.status !== 404) throw err;
+      }
+    }
+    if (prior.kind !== 'test-selection') throw new HarnessError(409, `a test selection supersedes only a test selection, and ${graphIri} is a ${prior.kind}`);
+    return prior;
   }
 
   async triage(input: TriageInput): Promise<JudgmentResponse<FailureTriageJudgment>> {
