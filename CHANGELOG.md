@@ -26,8 +26,15 @@ was added, or a profile taken down that was said to be still held.
   not sent until one record that only withdraws them has been kept; that record
   is the same on every attempt. So a pod that is down for a long time is sent
   no more than it was before, plus one small record.
-- Not covered: a write that landed, could not be read back, and is replayed by
-  a restart that happens before the server's next acknowledged write.
+- When the pod can be read neither for the write's answer nor afterwards, the
+  server does not guess. The write is in doubt (`WriteInDoubt`, a 503 with
+  `inDoubt: true` and neither `persisted` nor `retry`): nothing changes in the
+  running server yet, nobody changes that profile meanwhile, and the server
+  settles it from the pod before its next write and on a timer (5 s, doubling
+  to 60 s). A record the pod has is applied; one it does not have is withdrawn.
+  Until then a restart follows the pod, which is what the answer said: not
+  known yet. An addition or publication in doubt keeps its count against the
+  signer's allowance.
 - Records kept before this have no `id` and replay as they did.
 
 **A refused addition spent the signer's hourly allowance.** The count was
@@ -44,7 +51,7 @@ unchanged, and is what bounds repeated failures.
 inline in `bridge/server.ts`. They are now `mountProfileServerWrites` in
 `src/xapi-profile-server/service.ts`, mounted by the bridge with the same
 verification, rate limit, allowance, fetch and answer bodies as before, and by
-`tests/a-profile-write-that-was-not-kept-stays-not-kept.test.ts` (24 tests)
+`tests/a-profile-write-that-was-not-kept-stays-not-kept.test.ts` (30 tests)
 with a made-up pod. The function makes the per-address limiter itself, from
 options, so the limit is in the same place as the routes it guards.
 ## 2026-11-17 — Foxxi: a test takes a guest learner all the way to a course

@@ -15,7 +15,7 @@ import type { Express, Request, Response, RequestHandler } from 'express';
 import { rateLimit, type Options as RateLimitOptions } from 'express-rate-limit';
 import { LintRefused, type DraftView, type ProfileAuthoring } from './authoring.js';
 import { emptyExamples, type ExternalTerm, type ProfileExamples } from './lint.js';
-import { ProfileServerError, PublicationNotKept, type ProfileServer, type Resolved } from './service.js';
+import { ProfileServerError, PublicationNotKept, WriteInDoubt, inDoubtAnswer, type ProfileServer, type Resolved } from './service.js';
 
 type Body = Record<string, unknown>;
 const isObj = (v: unknown): v is Body => typeof v === 'object' && v !== null && !Array.isArray(v);
@@ -77,6 +77,8 @@ export function mountProfileAuthoring(app: Express, authoring: ProfileAuthoring,
           draftKept: true, retry: `${o.base.replace(/\/xapi\/profiles$/, '')}/agent/xapi-profiles/publish` });
         return;
       }
+      // Neither published nor not: the server settles it from the store. The draft is as it was.
+      if (e instanceof WriteInDoubt) { res.status(e.status).json({ ...inDoubtAnswer(e), draftKept: true }); return; }
       if (e instanceof ProfileServerError) { res.status(e.status).json({ error: e.message }); return; }
       res.status(500).json({ error: 'The profile server could not answer.' });
     }
@@ -102,7 +104,8 @@ export function mountProfileAuthoring(app: Express, authoring: ProfileAuthoring,
     // Lint first: a draft with findings is refused without spending the signer's allowance.
     await authoring.lint(p.profile, by).then(view => { if (!view.publishable) throw new LintRefused(view.findings); });
     const taken = o.beforePublish?.(by);
-    const r = await authoring.publish(p.profile, by).catch((e: unknown) => { o.publishRefused?.(by, taken); throw e; });
+    // A publication in doubt may yet be published, so what was taken for it is not returned.
+    const r = await authoring.publish(p.profile, by).catch((e: unknown) => { if (!(e instanceof WriteInDoubt)) o.publishRefused?.(by, taken); throw e; });
     return {
       ok: true, profile: r.held.id, version: r.held.version, generatedAtTime: r.generatedAtTime,
       ...(r.revises ? { wasRevisionOf: r.revises } : {}), deprecated: r.deprecated, immutable: true,

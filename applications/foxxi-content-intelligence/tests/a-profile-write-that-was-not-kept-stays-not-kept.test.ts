@@ -6,7 +6,8 @@
  * their durable write:
  *
  *   1. A write that landed on the pod, with its answer lost on the way back, was reported as not
- *      kept, and the next restart replayed it. So was a write that did fail: the bridge composes a
+ *      kept, and the next restart replayed it. When the pod can be read back the server asks it;
+ *      when it cannot, the write is in doubt, and is settled from the pod once it can. So was a write that did fail: the bridge composes a
  *      record into its lattice before it writes, and the whole lattice goes to the pod with the
  *      next write that lands.
  *   2. An addition that was refused, or not kept, still counted against the signer's hourly allowance.
@@ -16,11 +17,11 @@
  * Everything here is made up: a profile about inspecting bell buoys, kept by a fictional buoy
  * tender, and a pod that fails on command.
  */
-import { describe, it, expect, beforeEach, afterEach } from 'vitest';
+import { describe, it, expect, beforeEach, afterEach, vi } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { ProfileServer, ProfileServerError, AdditionNotKept, RemovalNotKept, mountProfileServerWrites, MAX_WITHDRAWN_BY_ONE_RECORD, type ProfileRecord } from '../src/xapi-profile-server/service.js';
+import { ProfileServer, ProfileServerError, AdditionNotKept, RemovalNotKept, mountProfileServerWrites, WriteInDoubt, MAX_WITHDRAWN_BY_ONE_RECORD, type ProfileRecord } from '../src/xapi-profile-server/service.js';
 import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
 import { mountProfileAuthoring, mountProfileHosting } from '../src/xapi-profile-server/authoring-http.js';
 import { SignerHourlyLimit } from '../src/open-hosting.js';
@@ -150,17 +151,145 @@ describe('a write that landed, with its answer lost', () => {
     expect((await restarted()).published(r.body.version as string)).toBeDefined();
   });
 
-  it('is reported as not kept when the pod cannot be read back, and stays not kept after the next write', async () => {
+});
+
+describe('a write the pod neither acknowledged nor let be read back', () => {
+  const FOG = `${OTHER}/v/1`;
+  const fogSignal = () => bellBuoy(FOG, 'Fog signal', OTHER);
+
+  it('is an addition that landed: in doubt, then held once the pod is read, as a restart held it all along', async () => {
     weather = 'lands-and-the-answer-is-lost'; readable = false;
-    await expect(server.add(bellBuoy(V1), TENDER)).rejects.toBeInstanceOf(AdditionNotKept);
+    await expect(server.add(bellBuoy(V1), TENDER)).rejects.toBeInstanceOf(WriteInDoubt);
+    // Not said to be kept, and not said to be not kept. Here it is not held yet; the pod has it.
     expect(held(server)).toEqual([]);
-    // The pod has the record all the same. The next write that is kept withdraws it.
-    expect(onPod).toHaveLength(1);
-    weather = 'lands'; readable = true;
-    await server.add(bellBuoy(`${OTHER}/v/1`, 'Fog signal', OTHER), TENDER);
-    expect(onPod[1]!.withdraws).toEqual([onPod[0]!.id]);
-    expect(held(server)).toEqual([{ version: `${OTHER}/v/1`, label: { en: 'Fog signal' } }]);
+    expect(server.unsettled).toBe(1);
+    expect(held(await restarted())).toEqual([{ version: V1, label: { en: 'Bell buoy' } }]);
+    // Nobody changes the profile meanwhile, its own writer included.
+    weather = 'lands';
+    await expect(server.add(bellBuoy(V2), TENDER)).rejects.toMatchObject({ status: 409 });
+    await expect(server.add(bellBuoy(V1, 'somebody else\'s'), PASSER_BY)).rejects.toMatchObject({ status: 409 });
+    // Another profile is written as usual, and its record does not withdraw the one in doubt.
+    await server.add(fogSignal(), PASSER_BY);
+    expect(onPod.at(-1)!.withdraws).toBeUndefined();
+    expect(server.unsettled).toBe(1);
+
+    readable = true;
+    await server.settle();
+    expect(server.unsettled).toBe(0);
+    expect(held(server)).toEqual([{ version: V1, label: { en: 'Bell buoy' } }, { version: FOG, label: { en: 'Fog signal' } }]);
     await expectARestartToAgree();
+    // And the profile is its writer's again to change.
+    await expect(server.add(bellBuoy(V2), PASSER_BY)).rejects.toMatchObject({ status: 409 });
+    await expect(server.add(bellBuoy(V2), TENDER)).resolves.toMatchObject({ persisted: true });
+    await expectARestartToAgree();
+  });
+
+  it('is an addition that did not land: in doubt, then not held and withdrawn once the pod is read', async () => {
+    weather = 'fails'; readable = false;
+    await expect(server.add(bellBuoy(V1), TENDER)).rejects.toBeInstanceOf(WriteInDoubt);
+    expect(server.unsettled).toBe(1);
+    await expectARestartToAgree();
+
+    weather = 'lands'; readable = true;
+    // The next write settles what is in doubt before it does anything else.
+    await server.add(fogSignal(), PASSER_BY);
+    expect(server.unsettled).toBe(0);
+    // The record that failed went to the pod with this one, withdrawn by it.
+    expect(onPod.map(r => r.kind)).toEqual(['added', 'added']);
+    expect(onPod[1]!.withdraws).toEqual([onPod[0]!.id]);
+    expect(held(server)).toEqual([{ version: FOG, label: { en: 'Fog signal' } }]);
+    await expectARestartToAgree();
+    // The profile is nobody's.
+    await expect(server.add(bellBuoy(V1), PASSER_BY)).resolves.toMatchObject({ persisted: true });
+  });
+
+  it('is a removal that landed: still answering while in doubt, then down, as a restart had it', async () => {
+    await server.add(bellBuoy(V1), TENDER);
+    weather = 'lands-and-the-answer-is-lost'; readable = false;
+    await expect(server.remove(P, TENDER)).rejects.toBeInstanceOf(WriteInDoubt);
+    expect(held(server).map(h => h.version)).toEqual([V1]);
+    expect((await resource(V1)).status).toBe(200);
+    weather = 'lands';
+    await expect(server.add(bellBuoy(V2), TENDER)).rejects.toMatchObject({ status: 409 });
+    await expect(server.remove(P, OPERATOR)).rejects.toMatchObject({ status: 409 });
+
+    readable = true;
+    await server.settle();
+    expect(held(server)).toEqual([]);
+    expect((await resource(V1)).status).toBe(404);
+    await expectARestartToAgree();
+  });
+
+  it('is a removal that did not land: in doubt, then still held', async () => {
+    await server.add(bellBuoy(V1), TENDER);
+    weather = 'fails'; readable = false;
+    await expect(server.remove(P, TENDER)).rejects.toBeInstanceOf(WriteInDoubt);
+    weather = 'lands'; readable = true;
+    await server.add(fogSignal(), PASSER_BY);
+    expect(held(server).map(h => h.version)).toEqual([V1, FOG]);
+    await expectARestartToAgree();
+    await expect(server.remove(P, TENDER)).resolves.toEqual({ removed: [V1], persisted: true });
+    await expectARestartToAgree();
+  });
+
+  it('is settled without anyone writing, once the pod can be read', async () => {
+    vi.useFakeTimers({ toFake: ['setTimeout', 'clearTimeout'] });
+    try {
+      weather = 'lands-and-the-answer-is-lost'; readable = false;
+      await expect(server.add(bellBuoy(V1), TENDER)).rejects.toBeInstanceOf(WriteInDoubt);
+      // The pod is still unreadable the first time it is read again.
+      await vi.advanceTimersByTimeAsync(5_000);
+      expect(server.unsettled).toBe(1);
+      readable = true;
+      await vi.advanceTimersByTimeAsync(10_000);
+      expect(server.unsettled).toBe(0);
+      expect(held(server)).toEqual([{ version: V1, label: { en: 'Bell buoy' } }]);
+    } finally { vi.useRealTimers(); }
+    await expectARestartToAgree();
+  });
+
+  it('is answered over HTTP as in doubt, not as kept and not as not kept, and keeps its count', async () => {
+    weather = 'lands-and-the-answer-is-lost'; readable = false;
+    const r = await act('add', { profile: bellBuoy(V1) });
+    expect(r.status).toBe(503);
+    expect(r.body).toMatchObject({ ok: false, inDoubt: true, change: 'added', iri: V1, profile: P });
+    expect(r.body).not.toHaveProperty('persisted');
+    expect(r.body).not.toHaveProperty('retry');
+    expect((await resource(V1)).status).toBe(404);
+    // The same request again is refused while it is in doubt, and that refusal costs nothing.
+    weather = 'lands';
+    expect((await act('add', { profile: bellBuoy(V1) })).status).toBe(409);
+    // The addition in doubt is counted: one more, and the allowance is used up.
+    expect((await act('add', { profile: bellBuoy(`${P}/x/1`, 'Another', `${P}/x`) })).status).toBe(200);
+    expect((await act('add', { profile: bellBuoy(`${P}/y/1`, 'A third', `${P}/y`) })).status).toBe(429);
+
+    readable = true;
+    await server.settle();
+    expect((await resource(V1)).status).toBe(200);
+    await expectARestartToAgree();
+
+    // A removal in doubt, the same.
+    weather = 'lands-and-the-answer-is-lost'; readable = false;
+    const gone = await act('remove', { iri: P });
+    expect(gone.status).toBe(503);
+    expect(gone.body).toMatchObject({ ok: false, inDoubt: true, change: 'removed', iri: P, profile: P });
+    expect((await resource(V1)).status).toBe(200);
+  });
+
+  it('is a publication: in doubt with the draft kept, then published once the pod is read', async () => {
+    const hosted = `${BASE}/p/bell-buoy`;
+    const verb = { id: `${hosted}/verbs/inspected`, type: 'Verb', prefLabel: { en: 'inspected' }, definition: { en: 'A tender inspected the buoy.' } };
+    await act('draft', { profile: hosted, set: { prefLabel: { en: 'Bell buoy' }, definition: { en: 'A made-up profile about inspecting a buoy.' }, author: { type: 'Organization', name: 'Fictional Buoy Tenders' } }, put: { concepts: [verb] } });
+    weather = 'lands-and-the-answer-is-lost'; readable = false;
+    const r = await act('publish', { profile: hosted });
+    expect(r.status).toBe(503);
+    expect(r.body).toMatchObject({ ok: false, inDoubt: true, change: 'published', profile: hosted, draftKept: true });
+    const version = r.body.iri as string;
+    expect(server.published(version)).toBeUndefined();
+    readable = true;
+    await server.settle();
+    expect(server.published(version)).toBeDefined();
+    expect((await restarted()).published(version)).toBeDefined();
   });
 });
 

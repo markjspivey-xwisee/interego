@@ -24,7 +24,7 @@ export const xapiProfileServerAffordances: Affordance[] = [
     annotations: { title: 'Add an xAPI Profile', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: signedInputs('profile?: <the profile document>, uri?: "https://…" — exactly one of the two'),
     outputs: {
-      description: 'Where the version now answers. 400 when the document is not a profile, 409 when another agent added that profile IRI or the profile is being changed at that moment, 413 when it is too large, 507 when the server is full, 429 past the hourly count (only versions that were added count toward it), 502 when a uri could not be fetched. 503 with ok: false, added: false and persisted: false when the pod write did not land: the version is not held, a version it would have replaced is unchanged, and the same request can be sent again to `retry`.',
+      description: 'Where the version now answers. 400 when the document is not a profile, 409 when another agent added that profile IRI or the profile is being changed at that moment, 413 when it is too large, 507 when the server is full, 429 past the hourly count (only versions that were added count toward it), 502 when a uri could not be fetched. 503 with ok: false, added: false and persisted: false when the pod write did not land: the version is not held, a version it would have replaced is unchanged, and the same request can be sent again to `retry`. 503 with ok: false and inDoubt: true when the pod neither acknowledged the write nor could be read back: whether it was kept is not known, the server settles it from the pod as soon as it can be read, the profile is changed by nobody until then, and you read the profile to see which it was.',
       properties: {
         ok: { type: 'boolean' },
         profile: { type: 'string', description: 'The profile IRI.' },
@@ -40,6 +40,7 @@ export const xapiProfileServerAffordances: Affordance[] = [
         persisted: { type: 'boolean', description: 'True on an addition. False only on 503, when the pod write did not land and nothing was added.' },
         added: { type: 'boolean', description: 'Present and false on 503.' },
         retry: { type: 'string', description: 'On 503, where to send the same request again.' },
+        inDoubt: { type: 'boolean', description: 'Present and true on a 503 where whether the write was kept is not known yet.' },
       },
       required: ['ok'],
     },
@@ -56,12 +57,13 @@ export const xapiProfileServerAffordances: Affordance[] = [
     annotations: { title: 'Take down an xAPI Profile', readOnlyHint: false, destructiveHint: true, idempotentHint: true, openWorldHint: false },
     inputs: signedInputs('iri: <profile or version IRI>'),
     outputs: {
-      description: 'The version IRIs no longer served. 403 when you did not add it, 404 when it is not held, 409 for the deployment\'s own profile or when the profile is being changed at that moment. 503 with ok: false, removed: [] and persisted: false when the pod write did not land: everything named is still held and still answers, and the same request can be sent again to `retry`.',
+      description: 'The version IRIs no longer served. 403 when you did not add it, 404 when it is not held, 409 for the deployment\'s own profile or when the profile is being changed at that moment. 503 with ok: false, removed: [] and persisted: false when the pod write did not land: everything named is still held and still answers, and the same request can be sent again to `retry`. 503 with ok: false and inDoubt: true when the pod neither acknowledged the write nor could be read back: whether it was kept is not known, the server settles it from the pod as soon as it can be read, the profile is changed by nobody until then, and you read the profile to see which it was.',
       properties: {
         ok: { type: 'boolean' }, removed: { type: 'array', items: { type: 'string' } },
         persisted: { type: 'boolean', description: 'True on a removal. False only on 503, when the pod write did not land and nothing was taken down.' },
         stillHeld: { type: 'boolean', description: 'Present and true on 503.' },
         retry: { type: 'string', description: 'On 503, where to send the same request again.' },
+        inDoubt: { type: 'boolean', description: 'Present and true on a 503 where whether the write was kept is not known yet.' },
       },
       required: ['ok'],
     },
@@ -129,7 +131,7 @@ export const xapiProfileServerAffordances: Affordance[] = [
     annotations: { title: 'Publish an xAPI Profile version', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: false },
     inputs: signedInputs('profile: <profile IRI of your draft>'),
     outputs: {
-      description: 'The published version. 422 with findings when the lint has any, 404 when you have no draft, 409 when the version IRI is already held, 503 (ok: false, published: false, draftKept: true) when the durable write did not land: nothing was published and the draft is kept.',
+      description: 'The published version. 422 with findings when the lint has any, 404 when you have no draft, 409 when the version IRI is already held, 503 (ok: false, published: false, draftKept: true) when the durable write did not land: nothing was published and the draft is kept. 503 with ok: false and inDoubt: true when the pod neither acknowledged the write nor could be read back: whether it was kept is not known, the server settles it from the pod as soon as it can be read, the profile is changed by nobody until then, and you read the profile to see which it was.',
       properties: {
         ok: { type: 'boolean' },
         profile: { type: 'string' }, version: { type: 'string' },
@@ -142,6 +144,7 @@ export const xapiProfileServerAffordances: Affordance[] = [
         published: { type: 'boolean', description: 'On 503: false.' },
         draftKept: { type: 'boolean', description: 'On 503: true. The draft is as it was.' },
         retry: { type: 'string', description: 'On 503: POST a freshly signed request here to publish the same version again.' },
+        inDoubt: { type: 'boolean', description: 'Present and true on a 503 where whether the version was published is not known yet.' },
         holonUri: { type: 'string' },
         persisted: { type: 'boolean', description: 'True on a publication. False only on 503, when the pod write did not land and nothing was published.' },
         findings: { type: 'array', items: { type: 'object' }, description: 'On 422: why it was not published.' },
