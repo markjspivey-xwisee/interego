@@ -4,12 +4,19 @@
  * The hidden cause is not written on the stream the consultant reads first.
  * `passed` and `completed` (and the other cmi5 result verbs) are refused here
  * even if a caller asks: those are the course's to send, after a review.
+ *
+ * The statements of a registration are chained (xapi-x, section 6): each after the first names
+ * the one emitted before it and that one's digest, so the order this world emitted them in can
+ * be recomputed and cannot be changed afterward. Every statement of a mission's opening carries
+ * one timestamp, so without the chain nothing but the array says which came first.
  */
 import { randomUUID } from 'node:crypto';
 import { validateAgainstSuppliedProfile } from '../../foxxi-content-intelligence/src/xapi-profile-supplied.js';
 import { GATE_VERBS, verbId, type Symptom, type WorldPack } from './pack.js';
 import { buildProfile, missionActivityType, profileVersion, symptomActivityType, type ProfileDocument } from './profile.js';
 import { WorldError } from './errors.js';
+import { chained } from '../../foxxi-content-intelligence/src/xapix/statement.js';
+import { xapix } from '../../foxxi-content-intelligence/src/xapix/namespace.js';
 
 export interface XapiStatement {
   /** Who stored it, as the LRS says. Set by an LRS on what it returns; this world sets none on what it writes. */
@@ -23,6 +30,8 @@ export interface XapiStatement {
   readonly result?: { readonly success?: boolean; readonly score?: { readonly raw: number }; readonly response?: string; readonly extensions?: Readonly<Record<string, string>> };
   readonly context: {
     readonly registration: string;
+    /** The xapi-x ordering keys: the statement before this one, its digest, and the signed order of the registration. */
+    readonly extensions?: Readonly<Record<string, string>>;
     readonly contextActivities: {
       readonly category: ReadonlyArray<{ readonly id: string; readonly definition?: { readonly type: string } }>;
       readonly parent?: ReadonlyArray<{ readonly id: string; readonly definition: { readonly type: string } }>;
@@ -47,6 +56,18 @@ function category(pack: WorldPack): XapiStatement['context']['contextActivities'
   return [{ id: profileVersion(pack), definition: { type: ADL_PROFILE } }];
 }
 
+/**
+ * The statements as they are sent: each naming the one emitted before it in the registration
+ * (`after`, for the first of them) and its digest, and the order attestation when one is named.
+ */
+function inOrder(statements: readonly XapiStatement[], after: XapiStatement | undefined, orderAttestation: string | undefined): XapiStatement[] {
+  type Loose = Record<string, unknown>;
+  // The attestation is named before the links are made: a link carries the digest of the statement as it is sent.
+  const named = orderAttestation === undefined ? statements
+    : statements.map(s => ({ ...s, context: { ...s.context, extensions: { ...s.context.extensions, [xapix('orderAttestation')]: orderAttestation } } }));
+  return chained([...(after ? [after] : []), ...named] as unknown as Loose[]).slice(after ? 1 : 0) as unknown as XapiStatement[];
+}
+
 function assertNotAGateVerb(id: string): void {
   if ((GATE_VERBS as readonly string[]).includes(id)) {
     throw new WorldError(409, 'gate-verb-refused', `${id} is sent by the course after review, never by this world`);
@@ -66,6 +87,10 @@ export function buildMissionStatements(input: {
   readonly measured: { readonly raw: number; readonly success: boolean } | undefined;
   readonly timestamp: string;
   readonly registration?: string;
+  /** The statement emitted last in this registration, when there is one: the first built here names it. */
+  readonly after?: XapiStatement;
+  /** The IRI of the signed descriptor that lists this registration's statements in order, once one is to be written. */
+  readonly orderAttestation?: string;
 }): StatementBuild {
   const { pack } = input;
   const profile = buildProfile(pack);
@@ -81,20 +106,13 @@ export function buildMissionStatements(input: {
     registration,
     contextActivities: { category: category(pack), ...(withParent ? { parent } : {}) },
   });
-  const statements: XapiStatement[] = [];
-  const push = (statement: XapiStatement): void => {
-    assertNotAGateVerb(statement.verb.id);
-    const checked = validateAgainstSuppliedProfile(statement as unknown as Record<string, unknown>, profile as unknown as Record<string, unknown>);
-    if (checked.matchedTemplates.length === 0) {
-      throw new WorldError(500, 'profile-mismatch', checked.violations.map(v => v.message).join('; ') || 'statement matched no template');
-    }
-    statements.push(statement);
-  };
+  const built: XapiStatement[] = [];
+  const push = (statement: XapiStatement): void => { built.push(statement); };
 
   const initialized = verbId(pack, 'initialized');
   push({
     ...base,
-    id: `${input.homePage}statements/${randomUUID()}`,
+    id: randomUUID(),
     verb: { id: initialized, display: { en: pack.verbs.initialized } },
     object: { objectType: 'Activity', id: missionIri, definition: { type: missionActivityType(pack), name: { en: input.missionTitle } } },
     context: contextFor(false),
@@ -105,7 +123,7 @@ export function buildMissionStatements(input: {
   for (const symptom of lines) {
     push({
       ...base,
-      id: `${input.homePage}statements/${randomUUID()}`,
+      id: randomUUID(),
       verb: { id: observed, display: { en: pack.verbs.observed } },
       object: {
         objectType: 'Activity',
@@ -121,7 +139,7 @@ export function buildMissionStatements(input: {
   for (let i = 0; i < input.progressed; i++) {
     push({
       ...base,
-      id: `${input.homePage}statements/${randomUUID()}`,
+      id: randomUUID(),
       verb: { id: progressed, display: { en: pack.verbs.progressed } },
       object: { objectType: 'Activity', id: missionIri, definition: { type: missionActivityType(pack), name: { en: input.missionTitle } } },
       result: { response: `${input.missionObject} checkpoint ${i + 1}` },
@@ -133,12 +151,21 @@ export function buildMissionStatements(input: {
     const measured = verbId(pack, 'measured');
     push({
       ...base,
-      id: `${input.homePage}statements/${randomUUID()}`,
+      id: randomUUID(),
       verb: { id: measured, display: { en: pack.verbs.measured } },
       object: { objectType: 'Activity', id: missionIri, definition: { type: missionActivityType(pack), name: { en: input.missionTitle } } },
       result: { success: input.measured.success, score: { raw: input.measured.raw } },
       context: contextFor(false),
     });
+  }
+  // Checked as sent, with the ordering keys on them.
+  const statements = inOrder(built, input.after, input.orderAttestation);
+  for (const statement of statements) {
+    assertNotAGateVerb(statement.verb.id);
+    const checked = validateAgainstSuppliedProfile(statement as unknown as Record<string, unknown>, profile as unknown as Record<string, unknown>);
+    if (checked.matchedTemplates.length === 0) {
+      throw new WorldError(500, 'profile-mismatch', checked.violations.map(v => v.message).join('; ') || 'statement matched no template');
+    }
   }
   return { registration, statements, profile };
 }
@@ -159,13 +186,15 @@ export function buildWorkStatement(input: {
   readonly response: string;
   readonly timestamp: string;
   readonly registration: string;
+  /** The statement emitted last in this registration: this one names it. */
+  readonly after?: XapiStatement;
 }): XapiStatement {
   const { pack } = input;
-  const statement: XapiStatement = {
+  const written: XapiStatement = {
     version: '2.0.0',
     timestamp: input.timestamp,
     actor: actor(input.homePage, input.actorDid),
-    id: `${input.homePage}statements/${randomUUID()}`,
+    id: randomUUID(),
     verb: { id: verbId(pack, 'progressed'), display: { en: pack.verbs.progressed } },
     object: {
       objectType: 'Activity', id: `${pack.profileId}/missions/${input.missionId}`,
@@ -174,6 +203,7 @@ export function buildWorkStatement(input: {
     result: { response: input.response },
     context: { registration: input.registration, contextActivities: { category: category(pack) } },
   };
+  const statement = inOrder([written], input.after, undefined)[0]!;
   assertNotAGateVerb(statement.verb.id);
   const checked = validateAgainstSuppliedProfile(statement as unknown as Record<string, unknown>, buildProfile(pack) as unknown as Record<string, unknown>);
   if (checked.matchedTemplates.length === 0) {

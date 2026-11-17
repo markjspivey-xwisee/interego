@@ -99,6 +99,9 @@ COPY applications/foxxi-content-intelligence/src/xapi-profile-supplied.ts ./appl
 COPY applications/foxxi-content-intelligence/src/auth.ts ./applications/foxxi-content-intelligence/src/auth.ts
 COPY applications/foxxi-content-intelligence/src/session-key.ts ./applications/foxxi-content-intelligence/src/session-key.ts
 COPY applications/foxxi-content-intelligence/src/ssrf-guard.ts ./applications/foxxi-content-intelligence/src/ssrf-guard.ts
+# world.ts and statements.ts chain a registration's statements with the xapi-x helpers.
+COPY applications/foxxi-content-intelligence/src/xapix/statement.ts ./applications/foxxi-content-intelligence/src/xapix/statement.ts
+COPY applications/foxxi-content-intelligence/src/xapix/namespace.ts ./applications/foxxi-content-intelligence/src/xapix/namespace.ts
 COPY deploy/identity/provisional-play.ts ./deploy/identity/provisional-play.ts
 COPY deploy/identity/hosted-terms.ts ./deploy/identity/hosted-terms.ts
 
