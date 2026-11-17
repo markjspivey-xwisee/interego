@@ -735,7 +735,8 @@ const BASELINE = {};
 // 2026-11-16: tests/hypermedia-client-fixtures.ts brings it to 718; the gate named 683.
 // 2026-11-16: merging master (tools/prune-image-dev-tools.mjs among its new files) brings it to
 // 719; the gate named 684.
-export const MIN_FILES = 684;
+// 2026-11-17: merging master (#938's files among them) brings it to 721; the gate named 686.
+export const MIN_FILES = 686;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

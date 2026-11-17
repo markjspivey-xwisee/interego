@@ -240,8 +240,9 @@ is an error rather than dropped. Existing fixtures whose fields take one value
 now carry `sh:maxCount 1`. Both test files serve the same documents, from
 `tests/hypermedia-client-fixtures.ts`, and each finding has a page or
 command-line test, mostly both, that failed before. That module raises the lint
-gate's `MIN_FILES` to 683, the number the gate named. The CSP script hash is
-updated.
+gate's `MIN_FILES` to 683, the number the gate named; with master's own new
+files merged in since, the scope is 721 and the gate named 686, the value this
+change leaves. The CSP script hash is updated.
 
 **The address shown is the address sent.** A review found that the page's dry
 run showed an address as RFC 3986 reads it while fetch requested the one the URL
