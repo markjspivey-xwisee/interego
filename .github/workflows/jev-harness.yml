@@ -82,7 +82,8 @@ jobs:
   # judgment and test combined. One bridge, started once, now answers the selection and the gate
   # in turn, and the decision reads the gate's verdict from the same workspace, not an artifact.
   judge:
-    name: "select tests → run → gate → decide"
+    # Named "… → decide" until 2026-11-17, when the decision became the decide job's.
+    name: "select tests → run → gate"
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
     # The selection and the gate only: the wait and the decision are the decide job's, below.

@@ -38,9 +38,17 @@ of 100 runs for master's head, of any event. Ten completions a head and
 seventy heads a day would push ESLint off that page, and the gate would read
 the listing as too few and refuse the deploy.
 
-**Not verified here.** The split cannot run before it is on a pull request:
-this pull request's own jev-harness run is its first. The wait timer's effect
-on runner-minutes is not measured yet.
+**Its first run, on this pull request (run 44130474784, head 7766c733).** The
+judge job ran 16:54:42Z to 16:56:44Z and ended. The decide job left its timer
+at about 17:17Z, got a runner at 17:45:39Z, read the suite and 15 check runs
+from 6 other workflow runs as success, and decided at 18:08:34Z: no merge,
+because master had moved, so it updated the branch. Before the split the judge
+job would have held its runner from 16:56Z to 18:08Z, 72 minutes; the decide
+job held one for 23. Those 23 minutes are the part a fixed timer cannot
+remove: the checks it waited for were themselves queued for a runner that
+afternoon, so they ended later than twenty minutes after the push. One run is
+not a measurement of the average.
+
 ## 2026-11-17 — mcp-server: the local Solid server fallback starts
 
 When its home pod is on localhost and nothing answers there,
