@@ -84,6 +84,80 @@ outcomes counted a claim nobody on that pod made. xapi-x rule X4 found it.
 asserted step, now without a result: the trajectory's modal statuses have no
 Quoted, and adding one belongs to agentic-performance-practice.
 
+## 2026-11-17 — Foxxi's learner workbench offers identity's general guest (off unless configured)
+
+Identity's general guest is one guest per browser across Interego applications,
+admitted at identity's own door and linkable to a registered account. The
+coached world has used it in production. Foxxi's I2IDL-X learner workbench, and
+the course player that shares its sign-in, now offer it too, beside the guest
+they already have, when the bridge is given `FOXXI_I2IDLX_GENERAL_GUEST=1`.
+
+Nothing is on by merging this. With the setting unset the bridge builds no
+door, attaches no route and adds nothing to any answer: the two new paths are
+answered as a path the application never had, and the session answer is the
+one it was (`tests/i2idlx-learning-general-guest.test.ts` compares both).
+
+**What turns it on.** On the Foxxi bridge: `FOXXI_I2IDLX_GENERAL_GUEST=1`
+(exactly `1`), with `FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY` already set (`1`
+without it stops the bridge at start), and
+`FOXXI_I2IDLX_GENERAL_GUEST_DOOR_ORIGIN` where identity serves the door from a
+dedicated origin. In identity's `PROVISIONAL_PLAY_CLIENTS`, the entry for the
+bridge's origin gains `"generalGuest": true` and
+`"generalGuestReturnPath": "/i2idlx/learning/guest/general/return"`.
+
+**The visit.** `GET /i2idlx/learning/guest/general/start` sends the browser to
+the door with an HttpOnly cookie that binds the visit to it;
+`GET /i2idlx/learning/guest/general/return` exchanges the code server to
+server and sets the workbench's ordinary HttpOnly session cookie. No code or
+token is in an address the browser is left on. A return without the cookie, or
+with another browser's, is refused and spends nothing.
+
+**Who and what.** A general guest is a guest learner: the operations the
+workbench's own guest has, nothing an owner has, never a tenant administrator.
+Its subject is `canonicalSubject` of what identity stated, so a guest linked to
+an account is that account's learner here.
+
+**How long.** The workbench cannot re-check a general guest (identity answers
+an application token only to holders of its introspection secret), so a
+session is bounded when made: at identity's `guestExpiresAt` or after one hour,
+whichever is sooner, and after ten minutes for a linked guest, so an unlink
+reaches an open browser at its next return through the door.
+
+**Shared.** `applications/_shared/guest-access/session.ts` holds that bound
+and the subject decision (`guestSessionStanding`, `LINKED_GUEST_SESSION_MS`);
+the coached world's ten minutes is now that constant. The stand-in identity
+the door tests run against moved from the coached world's tests to
+`applications/_shared/tests/general-guest-identity.ts` and takes the
+applications to register.
+
+**Not done: the dashboard.** Its guest is a key the tab holds, which signs
+every request to the bridge, and it is a static site on an origin with no
+server to exchange a code. Offering the door there means changing what the
+bridge accepts as a caller, which is its own piece of work
+(`applications/foxxi-content-intelligence/DURABLE-GUEST.md`, "The general
+guest").
+
+**After review.** A general guest's session that acts as a linked account may not delete that account's course-player record: `POST /learn/forget` answers 403 `player_forget_needs_account_sign_in` for it. The browser holds only a guest's key, for ten minutes at a time; deleting the account's record is the account's to do, signed in as itself.
+
+## 2026-11-17 — A runner step that opts an already-registered application into the general guest
+
+`tools/coached-world-guest-provision.mjs` sets an application up from nothing.
+An application identity already admits guests for needed a smaller step, and
+editing identity's `PROVISIONAL_PLAY_CLIENTS` by hand risks a value identity
+will not start with.
+
+- `tools/general-guest-opt-in.mjs` and the dispatch-only workflow
+  `general-guest-opt-in.yml` add `generalGuest` and `generalGuestReturnPath`
+  to the application's existing entry, then set the application's door origin
+  and its switch. The door is the one identity states. Identity is written
+  first, the switch last.
+- It creates no key, account or entry, and refuses before any write where the
+  general guest is off at identity, the entry is missing, the application's
+  guest key is not set, or the list would not parse. Every other entry and
+  field is carried over unchanged and checked to be.
+- Nothing is deployed and no value is printed. Unticked `apply` is a dry run.
+- One application is known so far: the Foxxi learner workbench.
+
 ## 2026-11-17 — xapi-x: Foxxi's projector writes the projection category and what a statement supersedes
 
 Foxxi's projector (`mesh-event-projector.ts`) already wrote the `iep#` keys.

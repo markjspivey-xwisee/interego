@@ -22,6 +22,7 @@ import { RateLimiter, bound, clientKey, healthBody, publicOrigin } from '../../_
 import { MAX_CHALLENGES, MAX_RATE_CLIENTS, MAX_SESSIONS } from './bounded.js';
 import { createLocalDoor, createRelayDoor, type GeneralGuestDoor, type GuestDoor } from './guest-play.js';
 import { GuestDoorError } from '../../_shared/guest-access/door.js';
+import { LINKED_GUEST_SESSION_MS } from '../../_shared/guest-access/session.js';
 import { canonicalSubject } from '@interego/abac/portable';
 import { FoxxiCourseLauncher } from './course-launch.js';
 import { HttpLrs, parseLmsAuthority } from './lrs.js';
@@ -219,8 +220,8 @@ function didHost(origin: string): string {
   return url.port ? `${url.hostname}%3A${url.port}` : url.hostname;
 }
 
-/** How long a world session made for a LINKED guest lasts before the link is read again at the door. */
-export const LINKED_SESSION_MS = 10 * 60 * 1000;
+/** How long a world session made for a LINKED guest lasts before the link is read again at the door: the bound every application shares. */
+export const LINKED_SESSION_MS = LINKED_GUEST_SESSION_MS;
 /** End the sessions whose time is up, and forget the ends of sessions that are gone. Run before any session is looked up. */
 function endLapsedSessions(sessions: Map<string, string>, ends: Map<string, number>, now: number): void {
   for (const [token, end] of ends) {

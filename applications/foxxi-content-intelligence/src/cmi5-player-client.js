@@ -34,8 +34,21 @@ function showAccount(current) {
     link.textContent = 'Sign in with an existing Interego account';
     signin.append(link);
   }
+  if (!current.authenticated && current.general_guest_sign_in && typeof current.general_guest_sign_in.start_url === 'string') {
+    // Identity's general guest door: the same guest in every Interego application this browser enters.
+    // A top-level navigation to this bridge's own start path; the session comes back as its cookie.
+    const start = new URL(current.general_guest_sign_in.start_url, location.origin);
+    if (start.origin === location.origin && start.pathname === '/i2idlx/learning/guest/general/start') {
+      const link = document.createElement('a');
+      link.className = 'btn';
+      link.href = start.pathname + '?next=' + encodeURIComponent(location.pathname + location.search);
+      link.textContent = 'Continue as your Interego guest';
+      signin.append(' ', link);
+    }
+  }
   claim.replaceChildren();
-  if (current.authenticated && current.guest && current.guest_sign_in) {
+  // A general guest's key is at identity's door, not in this page: keeping it is done there.
+  if (current.authenticated && current.guest && current.guest_sign_in && !current.general_guest) {
     const button = document.createElement('button');
     button.type = 'button';
     button.textContent = 'Keep this guest — add a passkey, wallet or DID';
@@ -95,7 +108,7 @@ async function linkGuest(current) {
 
 async function forget(current) {
   let token = provision && provision.token;
-  if (!token && current.guest && current.guest_sign_in) {
+  if (!token && current.guest && current.guest_sign_in && !current.general_guest) {
     try {
       const created = await guestFreshCredential(learningGuestSignIn(current.guest_sign_in, location.origin), { confirmTerms: (terms) => confirm(terms) });
       token = created.token;
@@ -112,6 +125,7 @@ async function forget(current) {
   if (token && value.identityDelete && typeof value.identityDelete.url === 'string') {
     await fetch(value.identityDelete.url, { method: 'POST', headers: { Authorization: 'Bearer ' + token, 'Content-Type': 'application/json' }, body: '{}', credentials: 'omit' }).catch(() => undefined);
   }
+  if (current.general_guest) { say('The recording was deleted. Your Interego guest is kept or closed at the Interego identity service, not here.'); return; }
   say(token ? 'The recording was deleted, and the guest account was asked to close.' : 'The recording was deleted. The guest account itself could not be closed just now.');
 }
 

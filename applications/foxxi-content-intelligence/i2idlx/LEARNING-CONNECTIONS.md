@@ -135,6 +135,87 @@ opts in, so a route nobody decided about is closed to guests. What is open on th
 | `courses`, `progress`, `course-readiness`, `quiz-review` | progress notifications (a subscription would outlive the guest) |
 | `/i2idlx/api/learning/launch` | `/i2idlx/api/learning/context` (needs a paired agent, which a guest cannot register) |
 
+## The general guest (off unless `FOXXI_I2IDLX_GENERAL_GUEST=1`)
+
+The guest above is the workbench's own: its key lives in this origin and it is a guest of this
+application alone. Identity also has a **general guest**: one guest per browser across every
+Interego application that offers it, admitted at identity's own door, and linkable to a registered
+account (`deploy/identity/PROVISIONAL-PLAY.md`, "General guest" and "Linking a guest to an
+account"). The workbench can offer that door **beside** its own guest. Nothing about the guest above
+changes, and with the setting unset the session answer, the routes and the pages are what they were.
+
+**Settings, on the bridge.** `FOXXI_I2IDLX_GENERAL_GUEST=1` (exactly `1`), with
+`FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY` already set: the door's grants are signed by the same
+service agent, for the same origin, and `1` without that key stops the bridge at start.
+`FOXXI_I2IDLX_GENERAL_GUEST_DOOR_ORIGIN` names identity's dedicated door origin where it has one
+(production does). In identity's `PROVISIONAL_PLAY_CLIENTS`, the workbench's existing entry (the
+bridge's origin) gains two members:
+
+```json
+"generalGuest": true, "generalGuestReturnPath": "/i2idlx/learning/guest/general/return"
+```
+
+Identity must already run with `PROVISIONAL_GENERAL_GUEST=1`. Add the two members to identity
+first, then set the bridge's variables: a bridge that offers a door identity does not yet answer for
+sends a browser to a page that refuses it. `GET /play/status` then carries
+`learnerWorkbench.generalGuest` with the return path and the door origin in use.
+
+**The visit.** Two routes, both `GET`, both on the bridge's own origin:
+
+1. `/i2idlx/learning/guest/general/start` (optionally `?next=` a `/learn` address, as the ordinary
+   sign-in takes). The shared client (`applications/_shared/guest-access/door.ts`) makes a state
+   and a PKCE verifier it keeps, has the service agent sign a grant, and the browser is sent to
+   identity's door with the grant in the address's fragment. An HttpOnly cookie
+   (`__Host-i2idlx-learning-door`, `SameSite=Lax`, ten minutes) binds the visit to this browser. It
+   is a random value, not a credential. Five starts a minute per address, thirty in all.
+2. `/i2idlx/learning/guest/general/return?code=…&state=…`, the path identity is configured to
+   return to. The bridge exchanges the code with identity server to server, decides by policy over
+   what identity states about the guest (`@interego/abac/portable`, default-deny), checks every
+   canonical field against this deployment's own origins (`u-try-guest-` owner, DID, WebID, pod,
+   agent), sets the same HttpOnly session cookie as any other sign-in, and redirects to the
+   workbench or to `next`. The address the browser is left on carries neither the code nor any
+   token. Identity's token for the guest is discarded.
+
+A return without the door cookie, or with another browser's, is refused (`400
+learning_sign_in_state_invalid`) and spends nothing, so the browser that started the visit can
+still finish it. A finished visit's address is spent: the code is single-use at identity and the
+visit is forgotten here.
+
+**What a general guest is here.** A guest learner: the same `guest: true` principal, the same
+table above, the same course player routes. It is not an owner and is never a tenant
+administrator: the bridge's administrator gate reads a caller the tenant directory resolved from a
+wallet's signature, and a learning session is not one.
+
+**Who it is.** The session's subject is `canonicalSubject` of what identity stated: the guest
+itself, or, for a guest its owner **linked** to a registered account, that account. A linked guest
+is that account's learner here (its links, courses, progress, released review, course-player
+record, and the deletion of that record), with a guest learner's operations and nothing more. Its
+WebID and pod are the account's canonical ones. The link is made and removed at identity, by the
+account's owner with a fresh proof of their credential; this bridge has no part in it.
+
+**How long.** The workbench cannot ask identity about a general guest again: identity answers its
+application token only to a caller holding the introspection secret, which the relay and the
+storage gate hold and an application does not. So a session is never re-checked (the workbench's
+own guest is, every 30 seconds) and is bounded when it is made:
+
+| Session for | Ends |
+|---|---|
+| a general guest that is not linked | at identity's `guestExpiresAt`, or after one hour, whichever is sooner (the ceiling of the workbench's own guest) |
+| a general guest linked to an account | after ten minutes at most (`LINKED_GUEST_SESSION_MS`, shared with the coached world), and never past the two bounds above |
+
+So an unlink reaches an open browser within ten minutes: its session ends, it returns through the
+door, and identity then states it as itself. Until then that session is still the account's. A
+guest that was linked *after* its session began stays itself until that session ends. A guest
+deleted or claimed at identity keeps its session here for at most an hour.
+
+**The pages.** The workbench's learning panel and the course player show "Continue as your
+Interego guest" beside what they already offer, only where the session answer carries
+`general_guest_sign_in`. For a general guest the player does not offer "Keep this guest" (its key
+is at identity's door, where it is kept or linked: `<door>/guest/door#claim`, `#link`), and
+deleting a recording does not ask identity to close the guest.
+
+**The dashboard does not use the door.** See `DURABLE-GUEST.md`, "The general guest".
+
 The course player opts in too. Its `/learn` routes take the same guest session, so a guest can
 launch and play a published or hosted course there with no connection and no administrator
 (`COURSE-PLAYER.md` says what it records and what a guest may do with it). That page can also ask
