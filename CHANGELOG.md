@@ -42,6 +42,30 @@ old one, which is worth that lane's second look.
 it needs a day of runs after it lands. The three steps that hold a runner
 while waiting for other workflows (jev-harness 27.6 minutes on average, the
 auto-deploy gate 17.7, the I2IDL-X UI oracle 12.1) are untouched.
+## 2026-11-17 — coached-world: a registration's statements are chained, and the world signs their order
+
+Every statement of a mission's opening carries one timestamp, so nothing but
+the array said which came first. xapi-x (section 6) had the functions for a
+chain and an order attestation and no emitter that used them.
+
+- **Chained.** Each statement of a registration after the first names the one
+  emitted before it and that one's digest, across the opening, a connected
+  agent's work and the measured result. A reader recomputes the digests; a
+  reordered or altered run is no longer a chain.
+- **Attested.** When a mission settles, the world publishes a descriptor at
+  `descriptors/order/<registration>` whose signed text lists the digests in
+  the order it emitted them. The closing statements name it. It is served at
+  `/graphs` as kind `order-attestation`.
+- **Verified.** `readOrderAttestation` (`src/order.ts`) checks the signature
+  and reads the list; `orderBasis` answers `Attested` only when the digests are
+  the reader's statements in that order.
+- **Statement ids are UUIDs.** They were IRIs ending in one, which xAPI does
+  not allow and a chain cannot name. **This changes what the world sends.**
+- `cpw:` gains `StatementOrder`, `registration` and `statementDigests`.
+
+**Not done.** The attestation is not written to a pod. The world attests its
+own emissions only. llm-telemetry does not chain.
+
 ## 2026-11-17 — Foxxi: a profile write the bridge never sent is not kept, not in doubt
 
 Found by starting the bridge and sending it signed requests, which #933 had
