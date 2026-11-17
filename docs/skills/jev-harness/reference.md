@@ -38,6 +38,7 @@ For a set of changed files (or a git base_ref to diff against), return the tests
 | `base_ref` | string | no | Git ref to diff against on a locally configured checkout. For the hosted snapshot, supply changed_files. |
 | `head_ref` | string | no | Git ref of the change; defaults to the working tree. |
 | `task` | string | no | Optional task sentence for context. |
+| `supersedes` | string | no | The urn:graph:jev-harness:* IRI of an earlier test selection this one replaces. The new selection is published as the next version of that graph. No outcome is recorded. |
 
 ## `jev_harness.triage`
 

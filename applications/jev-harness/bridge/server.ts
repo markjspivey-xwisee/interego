@@ -151,6 +151,7 @@ export function createApp(opts: AppOptions): { app: Express; harness: Harness } 
     ...(str(b['base_ref']) ? { baseRef: str(b['base_ref'])! } : {}),
     ...(str(b['head_ref']) ? { headRef: str(b['head_ref'])! } : {}),
     ...(str(b['task']) ? { task: str(b['task'])! } : {}),
+    ...(str(b['supersedes']) ? { supersedes: str(b['supersedes'])! } : {}),
   })));
 
   app.post('/jev-harness/triage', guarded('TriageInputShape', (b) => harness.triage({
