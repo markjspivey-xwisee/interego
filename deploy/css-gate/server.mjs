@@ -939,7 +939,7 @@ function operatorGuestShadow(pod, refused) {
   if (operatorGuestShadowLogged.has(key)) return;
   if (operatorGuestShadowLogged.size >= 2048) operatorGuestShadowLogged.clear();
   operatorGuestShadowLogged.add(key);
-  console.warn(`[css-gate][guest-pod-operator][shadow] would refuse ${refused.status} ${refused.error} for pod ${pod}; written anyway (GUEST_POD_OPERATOR_MODE is not "enforce")`);
+  process.stderr.write(`[css-gate][guest-pod-operator][shadow] would refuse ${refused.status} ${refused.error} for pod ${pod}; written anyway (GUEST_POD_OPERATOR_MODE is not "enforce")\n`);
 }
 
 /**

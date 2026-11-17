@@ -38,13 +38,14 @@ after(async () => { await gate.close(); await pool.close(); await upstream.close
 
 test('in shadow, a write into a closed guest pod is logged and still written', async () => {
   const warned = [];
-  const warn = console.warn; console.warn = (...a) => { warned.push(a.join(' ')); };
+  const write = process.stderr.write;
+  process.stderr.write = (chunk, ...rest) => { warned.push(String(chunk)); return typeof rest.at(-1) === 'function' ? (rest.at(-1)(), true) : true; };
   try {
     for (let i = 0; i < 2; i++) {
       const r = await fetch(`${gate.base}/${pod}/records/a.json`, { method: 'PUT', headers: { Authorization: 'Bearer operator-fixture', 'Content-Type': 'application/json' }, body: '{}' });
       assert.equal(r.status, 201);
     }
-  } finally { console.warn = warn; }
+  } finally { process.stderr.write = write; }
   assert.deepEqual(stored, [`PUT /${pod}/records/a.json`, `PUT /${pod}/records/a.json`]);
   const lines = warned.filter(l => l.includes('[guest-pod-operator][shadow]'));
   assert.equal(lines.length, 1, 'once per pod and reason');
