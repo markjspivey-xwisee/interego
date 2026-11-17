@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-17 — Foxxi: whether an unsent profile write is kept or in doubt has a test
+
+#945 fixed the bridge answering "in doubt" for a profile write it had never
+sent, and said it had no test. The decision is now `profilePodStore` in
+`src/xapi-profile-server/pod-store.ts`: the bridge hands it its pod, key
+check, fetch guard, write and read-back, and gets `persist` and `confirm`
+back. Nothing about the answers changes.
+
+`tests/a-profile-write-never-sent-is-not-in-doubt.test.ts` (7 tests) runs it
+under a real `ProfileServer` with a made-up pod: no key, an address not
+fetched, no pod, a write sent whose address is refused by read-back time (in
+doubt, then held), not acknowledged and unreadable (in doubt), not
+acknowledged and readable (kept), and the refusal remembered for one record
+only. With the no-key and never-sent answers removed 3 fail; with a read-back
+refusal answered as not kept, 1 fails.
+
+The bridge was restarted after the move: add, remove and a lost answer against
+a stand-in pod, and a loopback pod address, answered as before. Its handing of
+the parts to `profilePodStore` is covered by that run and the typecheck, not
+by a test.
+
 ## 2026-11-17 — coached-world: a registration's statements are chained, and the world signs their order
 
 Every statement of a mission's opening carries one timestamp, so nothing but
@@ -47,14 +68,9 @@ count is given back. A guard refusal at read-back time alone still leaves the
 write in doubt: it says the pod cannot be read now, not that nothing was
 written (review finding).
 
-The decision is `profilePodStore` in `src/xapi-profile-server/pod-store.ts`,
-which the bridge hands its pod, key, guard, write and read-back to, so
-`tests/a-profile-write-never-sent-is-not-in-doubt.test.ts` (7 tests) runs it
-without the bridge. The bridge's own handing-over of those parts is still
-covered by the typecheck and by the run below, not by a test.
-
 Checked on the running bridge, before and after, with no key and with a
-loopback pod. With a key and a stand-in pod the bridge was also run through
+loopback pod. There is no test: the change is in `bridge/server.ts`, which no
+test starts. With a key and a stand-in pod the bridge was also run through
 add, remove and publish, each with the pod's answer lost and with the pod
 down; each settled to what the pod had within five seconds of the pod coming
 back, and a restarted bridge held the same versions under the same owners.
