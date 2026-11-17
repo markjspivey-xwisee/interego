@@ -1,5 +1,132 @@
 # Changelog
 
+## 2026-11-17 — multi-agent demos: their Solid server no longer crashes an hour after it starts
+
+`examples/multi-agent/css-config.json` and `css-config-redis.json` import the
+same CSS key-value storage and memory resource-locker configs as the
+local-node config fixed in the entry below, and crashed the same way on
+Community Solid Server 7.3.0. `solid-server.ts` started them with
+`npx --yes @solid/community-server@7`, which has resolved 7.3.0 since
+2026-11-02. With a scratch copy of master's `css-config.json` that sweeps
+cookies every 6 s instead of every hour, the npx server logged "Lock expired
+after 6000ms" on its first sweep and exited 1 with "callback is not a
+function". The configs serve CSS's account and OIDC routes, which write
+`/.internal/`, so local-node's route (reading `/.internal/` from the file
+backend, without the resource lock) does not fit them.
+
+**Why not pin 7.2.0.** 7.2.0 asks for nodemailer `^9.0.1`, which installs
+9.1.1. `npm audit` on a fresh 7.2.0 install now reports twelve advisories
+against it, not two: two high (GHSA-v53p-9fqp-m79j and GHSA-prgh-xp8r-p3m5,
+quadratic backtracking in `addressparser`) and ten moderate, all fixed by
+10.1.4. None is reachable from these configs. Both import
+`css:config/identity/email/default.json`, which binds the email sender to an
+`UnsupportedAsyncHandler`, so CSS loads nodemailer but never calls it. A fresh
+npx install of 7.3.0 gets nodemailer 10.6.0, which clears all twelve. A pin
+would have traded a crash for a tree that fails every audit, and starts to
+matter the day someone wires a mail sender. It would also have fixed only the
+npx starters. mcp-server's local fallback runs the root's CSS binary, which is
+7.3.0 because `packages/local-node` asks for `^7.3.0`, and (see below) that
+fallback does not start at all.
+
+**The fix is a module the configs import.**
+`examples/multi-agent/css-internal-listing/` is a Components.js module with one
+class, `BufferedListingStore`. It is a ResourceStore that sits between the
+internal value storage (`urn:solid-server:default:JsonResourceStorage`) and the
+full ResourceStore. A container is asked for as internal quads, and its listing
+is read to the end through a pipe, which renews the lock as it reads, then
+handed on in a plain stream that `for await` can read. Everything else passes
+through, so documents are read and written as CSS does, and every read and
+write still takes the resource lock. This is the accessor's
+`PipedJsonResourceStorage` behaviour, as a store wrapper rather than a
+subclass, because the module may import nothing from CSS: npx links the folder
+beside the server, and Node resolves a linked module's imports from where its
+files are, in this repository. Its `config/internal-listing.json` holds the
+Override, and both configs import it.
+
+**How it loads, and what happens without it.** `solid-server.ts` now runs
+`npx --yes -p @solid/community-server@7.3.0 -p <css-internal-listing>
+community-solid-server …`. npm links the folder into the npx install next to
+CSS, where Components.js discovers it and Node requires it by name. The
+configs import the Override by a path relative to themselves, and the Override
+names the component by its full IRI, with no context of its own. Components.js
+fetches any import or context it has no local copy of, from
+linkedsoftwaredependencies.org, which serves whatever npm package has that
+name, and neither `interego-css-internal-listing` nor `@interego` is
+registered there. So nothing in the fix refers to an IRI that could be fetched
+instead. A server started without the module refuses the config at boot
+("Could not find (valid) component types") and fetches nothing. The server is
+pinned to 7.3.0, the release this was verified on, which `@7` had floated to.
+
+**Reader counts stay in memory** in `css-config.json`, as in local-node's
+config: a second Override makes `BackendKeyValueStorage`, which only the memory
+locker's reader counts use, a `MemoryMapStorage`. With the listing fixed, the
+sweep reached those counts under `/.internal/locks/`. A count is a bare number
+with no key, so a sweep that ran while a read was open threw "Cannot read
+properties of undefined (reading 'startsWith')" and deleted nothing. The Redis
+config's locker keeps no counts, so it gets only the listing fix.
+`startSolidServer` wipes the pods folder on every start, so no count from an
+earlier run is left on disk.
+
+**The tests.** `integrations/tests/multi-agent-css-expired-sweep.test.ts` boots
+`css-config.json` in-process on the root's CSS 7.3.0. It hands Components.js
+CSS's own component graph plus exactly the folders `solid-server.ts` gives npx,
+and requires each from its folder. Three of the four sweeps then run directly on
+the instances CSS built (the IdP adapter's has no `@id`, and walks the same
+storage), each raced against 3 s, half the lock: on a fresh start, with an
+expired and a live cookie, with a session signed in through `/.account/`
+(still signed in afterwards), and while an 8 MB read is left open. Written
+first, against master's config, all three sweep cases failed by name at
+3000 ms, and the run then crashed with "callback is not a function". With only
+the listing fix, the open-read case failed on the count. Other cases check that
+the internal storage still reads through the full, locking ResourceStore; that
+the Redis config loads beside the module; that without the module the config
+fails at boot, naming the missing component, with `fetch` never called; that
+the module needs nothing but Node; and that the pinned version is the one the
+file boots. `integrations/tests/multi-agent-solid-server.test.ts` pins the new
+npx arguments.
+
+Through real npx, with the 6 s scratch sweep: started by `startSolidServer`
+itself, the patched server was still up 45 s later, and an account session
+created at start still signed in. Run with the same npx arguments at debug
+level, it logged six sweeps, each finished in 25 to 47 ms. Master's config,
+run through npx the same way, crashed on its first sweep.
+
+**The self-hosted image gets it too** (Codex, on this pull request).
+`deploy/Dockerfile.css` is built by no workflow, but `deploy/azure-deploy.sh`
+builds it and Tier 3 of `spec/STORAGE-TIERS.md` gives it as the self-host
+recipe, and it copies `css-config.json`, which would now refuse to boot alone.
+It now copies the module to `/app/css-internal-listing`, beside the config, and
+runs `npm install -g @solid/community-server@7.3.0 /app/css-internal-listing`,
+pinned like the demos (it floated on `@7`). A global install from a folder
+links the module into the global `node_modules` next to CSS, where Components.js
+finds it. No Docker daemon was available, so the image was not built. The same
+install under a scratch `--prefix`, with the config and module laid out as
+`/app` holds them, booted the copied config from the global binary and logged
+five finished sweeps in 40 s with the 6 s scratch interval.
+
+**Not covered.** mcp-server's local fallback does not start CSS at all, before
+and after this change. It runs the root's CSS binary, and Components.js walks
+up from it into the root's `node_modules`, finds `@comunica` 5 beside CSS's
+`@comunica` 2, and stops with "… ActorDereference … is not a valid component",
+the failure `solid-server.ts` moved the demos to npx for. That is its own
+change. `css-config-redis.json` was loaded, not booted: booting it needs Redis.
+The dashboard image copies `css-config.json` without reading it. Windows was
+not run.
+
+The new test module takes the tracked tree to 735, the whole 35 of slack over
+`MIN_TEST_MODULES` 700, so `tests/vitest-run-integrity.test.ts` asked for the
+floor to move; it is 710, ten modules of headroom.
+
+Checks, in a scratch worktree with the root lockfile's tree (`npm ci`), Node
+22.23.4: the full suite passed 724 files with 10 skipped. The one failure,
+four history cases in `tests/deploy-bundle-scope.test.ts`, came from the
+session's shallow clone, and all 76 passed once the history was fetched. That
+run had the new files untracked, so the fourteen test modules that read the
+tracked tree ran again with them staged; they pass with the floor at 710.
+`npm run lint` (719 files, 0 errors) and every other `lint:all` step pass,
+`lint:changelog` on the full history. The advertised demos still compile
+(`tsconfig.advertised.json`).
+
 ## 2026-11-17 — local-node: the desktop pod server no longer crashes an hour after it starts
 
 `packages/local-node`, which the pod desktop ships, moved to Community Solid

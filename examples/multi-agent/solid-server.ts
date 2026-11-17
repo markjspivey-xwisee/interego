@@ -18,6 +18,18 @@
  * Unix the server gets its own process group and the whole group is signalled; on Windows the tree
  * is ended with taskkill /T. It is also stopped when the demo exits or is interrupted, because a
  * server in its own group no longer receives the terminal's Ctrl+C.
+ *
+ * ★ AND IT IS PINNED, WITH ONE MODULE OF OURS BESIDE IT. `@7` floated to 7.3.0 (2026-11-02), and on
+ * 7.3.0 the hourly expired-entry sweep could not list /.internal/: it waited out the resource lock
+ * and ended the process with "callback is not a function", about an hour after every start. Both
+ * configs now import css-internal-listing/, a Components.js module that fixes that listing, so npx
+ * installs it beside the server (`-p <folder>`, which npm links), where Components.js discovers it
+ * and Node requires it by name. The link does not bring the repository's libraries back: the
+ * walk reads a linked package's own folder and its own node_modules (it has none), not the folders
+ * above it. The server is pinned to the release that fix was verified on;
+ * integrations/tests/multi-agent-css-expired-sweep.test.ts runs the sweep against it. A launcher
+ * that does not put the module beside the server fails at boot ("Could not find (valid) component
+ * types"), rather than an hour later.
  */
 
 import { spawn, spawnSync, type ChildProcess } from 'node:child_process';
@@ -26,10 +38,17 @@ import { tmpdir } from 'node:os';
 import { dirname, isAbsolute, join, relative, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
-/** The server css-config.json was written for. */
-export const SOLID_SERVER_PACKAGE = '@solid/community-server@7';
+/** The server css-config.json and css-config-redis.json were written for, and verified on. */
+export const SOLID_SERVER_PACKAGE = '@solid/community-server@7.3.0';
 
-const REPO_ROOT = resolve(dirname(fileURLToPath(import.meta.url)), '..', '..');
+const HERE = dirname(fileURLToPath(import.meta.url));
+const REPO_ROOT = resolve(HERE, '..', '..');
+
+/** Components.js modules both configs import, installed beside the server: see css-internal-listing/index.cjs. */
+export const SOLID_SERVER_MODULES: readonly string[] = [join(HERE, 'css-internal-listing')];
+
+/** The server's own command, which npx runs once it has installed every package. */
+export const SOLID_SERVER_BIN = 'community-solid-server';
 
 /** Where the server runs and keeps its pods: a fixed folder under the OS temp directory. */
 export const SOLID_SERVER_WORKDIR = join(tmpdir(), 'interego-solid-server');
@@ -63,7 +82,10 @@ export function solidServerLaunch(opts: {
   const podsDir = join(workDir, `pods-${opts.port}`);
   return {
     command: 'npx',
-    args: ['--yes', SOLID_SERVER_PACKAGE, '-c', opts.config, '-p', String(opts.port), '-l', 'warn', '--baseUrl', opts.baseUrl, '-f', podsDir],
+    args: [
+      '--yes', '-p', SOLID_SERVER_PACKAGE, ...SOLID_SERVER_MODULES.flatMap(dir => ['-p', dir]), SOLID_SERVER_BIN,
+      '-c', opts.config, '-p', String(opts.port), '-l', 'warn', '--baseUrl', opts.baseUrl, '-f', podsDir,
+    ],
     cwd: workDir,
     podsDir,
   };

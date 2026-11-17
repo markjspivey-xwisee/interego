@@ -1,0 +1,10 @@
+{
+  "name": "interego-css-internal-listing",
+  "version": "1.0.0",
+  "private": true,
+  "description": "Lets Community Solid Server 7.3.0's hourly expired-entry sweep list /.internal/ again, for the multi-agent demos' Solid server configs. Loaded by Components.js beside CSS (npx -p <this folder>); see index.cjs.",
+  "license": "MIT",
+  "main": "index.cjs",
+  "lsd:module": "https://linkedsoftwaredependencies.org/bundles/npm/interego-css-internal-listing",
+  "lsd:components": "components/components.jsonld"
+}

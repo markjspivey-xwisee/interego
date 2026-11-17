@@ -1,0 +1,30 @@
+{
+  "@context": [
+    "https://linkedsoftwaredependencies.org/bundles/npm/@solid/community-server/^7.0.0/components/context.jsonld",
+    { "icil": "https://linkedsoftwaredependencies.org/bundles/npm/interego-css-internal-listing/^1.0.0/components/components.jsonld#" }
+  ],
+  "@graph": [
+    {
+      "comment": [
+        "CSS 7.3.0 lists a container in the internal value storage by running `for await` over the full",
+        "ResourceStore's body: Turtle, in which it finds no member, inside the locking store's wrapper, which",
+        "`for await` cannot read. The hourly expired-entry sweep waited out the resource lock and crashed the",
+        "process. BufferedListingStore asks for a container as internal quads and reads the listing to the end",
+        "before the walk goes on; documents pass through. Only the source changes, and it is still the full",
+        "ResourceStore, so the internal value storage keeps the resource lock that the account and OIDC routes'",
+        "writes take. baseUrl and container stay as css:config/storage/key-value/resource-store.json sets them.",
+        "The component is named by its full IRI, which only the module installed beside CSS defines: without",
+        "it, the server refuses this config at boot, and there is no context or import here to fetch instead."
+      ],
+      "@type": "Override",
+      "overrideInstance": { "@id": "urn:solid-server:default:JsonResourceStorage" },
+      "overrideParameters": {
+        "@type": "JsonResourceStorage",
+        "source": {
+          "@type": "icil:BufferedListingStore",
+          "icil:BufferedListingStore_source": { "@id": "urn:solid-server:default:ResourceStore" }
+        }
+      }
+    }
+  ]
+}
