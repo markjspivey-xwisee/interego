@@ -46,6 +46,14 @@ on:
 permissions:
   contents: read
 
+# A new push to the same pull request makes the run in flight moot: it tests a head that is no
+# longer the pull request's, and it holds runners the new head's checks are queued behind. Cancel
+# it. Any other event (a master push, a dispatch, a schedule) is grouped by its own run id, so
+# nothing there is ever cancelled or held: auto-deploy reads every master run to its conclusion.
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+
 jobs:
   relay-tests:
     name: "Relay invariants (attribution, scope, engagement, publish gates)"
