@@ -1,6 +1,6 @@
 # xapi-x
 
-A superset of xAPI made by decoration, the way [I2IDL-X](../i2idlx/README.md) is a superset of the I2IDL glossary. The design, the code that carries it out, and the decisions taken on it. The lrs-adapter writes the provenance and supersession decorations, the profile is at version 2, and the rules of section 7 are a lint. What is still only designed is listed under "Left to do".
+A superset of xAPI made by decoration, the way [I2IDL-X](../i2idlx/README.md) is a superset of the I2IDL glossary. The design, the code that carries it out, and the decisions taken on it. The lrs-adapter writes the provenance and supersession decorations, coached-world chains its statements and signs their order, the profile is at version 2, and the rules of section 7 are a lint. What is still only designed is listed under "Left to do".
 
 > **Status: part of the Foxxi vertical. Non-normative, not part of the Interego protocol.** xapi-x adds no term to `iep:` or to any other Interego namespace, and it uses no other publisher's verbs, extensions or IRIs. Its own terms are in `xapix:`, declared in [xapix.ttl](xapix.ttl).
 
@@ -51,8 +51,9 @@ A decoration never changes what a standard member means. `verb`, `object`, `resu
 | `xapix:Projection` category | lrs-adapter, Foxxi's projector | profile template (determining property) |
 | `descriptorDigest` | lrs-adapter, when its caller holds the descriptor's bytes | lint (form) |
 | `supersedesStatement`, `context.statement` | lrs-adapter, from its caller; Foxxi's projector, from `iep:supersedes` | lint X7 |
-| `previous`, `previousDigest` | no emitter; `chained()` builds them | `orderBasis`, lint |
-| `orderAttestation`, `controls` | nothing | profile declares them; `orderBasis` takes an attestation its reader verified |
+| `previous`, `previousDigest` | coached-world, on every statement of a registration after the first | `orderBasis`, lint |
+| `orderAttestation` | coached-world, on the statements that close a registration; the descriptor it names is signed by the world | `readOrderAttestation` verifies the signature, `orderBasis` compares the digests |
+| `controls` | nothing | profile declares it; lint |
 | `evidences`, `offers` | no profile yet | lint X9 |
 
 In the examples below, `IEP#` stands for `https://markjspivey-xwisee.github.io/interego/ns/iep#` and `XAPIX#` for the `xapix:` namespace. A real statement writes the full IRI. Every name, address and identifier is made up.
@@ -294,7 +295,9 @@ Rules:
 }
 ```
 
-In code (`src/xapix/statement.ts`): `statementDigest` is the SHA-256 of a statement's RFC 8785 canonical JSON without `stored`, `authority` and `version`; `chained` links a run; `orderBasis(statements, attestation?)` returns the strongest basis that holds for the whole run and why a stronger one does not. It is told whether the reader verified an attestation's signature and does not verify one itself. No emitter chains its statements yet.
+In code (`src/xapix/statement.ts`): `statementDigest` is the SHA-256 of a statement's RFC 8785 canonical JSON without `stored`, `authority` and `version`; `chained` links a run; `orderBasis(statements, attestation?)` returns the strongest basis that holds for the whole run and why a stronger one does not. It is told whether the reader verified an attestation's signature and does not verify one itself.
+
+**coached-world is the first emitter that chains, and the first that attests.** Every statement of a mission's opening carries one timestamp, so until now only the array said which came first. Each statement of a registration after the first now names the one emitted before it and its digest (`applications/coached-world/src/statements.ts`), across the opening, a connected agent's work and the measured result. When a mission settles, the world publishes a descriptor at `…/descriptors/order/<registration>` whose signed text holds the digests of that registration's statements in the order it emitted them, and the closing statements name it. `readOrderAttestation` (`applications/coached-world/src/order.ts`) verifies the signature and reads the list; `orderBasis` then answers `Attested` only when the digests are the reader's statements in that order. The world signs with its own wallet and attests its own emissions: a statement another party stored under the registration is not in the list. To chain, the world's statement ids became plain UUIDs; they were IRIs ending in one, which xAPI does not allow.
 
 xAPI's own signed statements (a JWS attachment) attest one statement's content. They say nothing about order, and they compose with this unchanged.
 
@@ -357,8 +360,8 @@ The owner was asked eleven questions and answered: decide them, "you know what m
 
 ## Left to do
 
-- **An emitter that chains.** `chained()` and `orderBasis` exist and no emitter calls them. The first should be one whose statements share a registration (llm-telemetry or coached-world), and it is that vertical's change.
-- **An order attestation that is written and verified.** The term is declared and `orderBasis` accepts one its reader verified. Nothing publishes the signed descriptor that lists the digests, and nothing verifies one.
+- **A second emitter that chains.** coached-world does. llm-telemetry does not: its statements arrive from several observers, a retried event must reproduce the statement it made the first time, and its streams are partial by design, so a chain there needs its own decision about what a gap means.
+- **An order attestation on a pod.** coached-world's is served by the world at `/graphs` with its signature. It is not written to a pod, and nothing reads one back from a pod.
 - **`xapix:controls`.** Declared and linted. It needs a document to link to, served by the bridge for a statement that has no descriptor, and no such route exists.
 - **`xapix:evidences` and `xapix:offers` on a real profile.** The lint checks them; Foxxi's profile states none, because each evidence link is a proposal that wants review before it is published.
 - **The lint as an affordance** on the profile server, and the two lookups for X9 (the pinned I2IDL release; an affordance that dereferences) wired to real sources.
