@@ -441,14 +441,23 @@ tightened tests failed before; the CSP script hash is updated.
 
 A fifth review found more. When the optional `?format=jsonld` retry got no
 answer, `hmc.py` dropped the HyperMarkdown or Turtle it had already read; both
-clients now keep the first answer whenever that retry fails, including a JSON-LD
-answer that is not JSON or is refused whole. `hmc.py` also read a 300 answer as a
+clients now keep the first answer whenever that retry gets no answer or no 2xx
+JSON-LD. `hmc.py` also read a 300 answer as a
 document, an empty JSON body as JSON-LD, missed JSON-LD after a byte order mark
 or under two `Content-Type` headers, and answered a redirect loop with its last
 redirect; it now reads each answer as `fetch` does, and without `rdflib` asks an
 address that names Turtle again for JSON-LD, as the page does. A request that
 gets no answer still ends the load, named. 15 of 32 new shared-fixture tests
 failed before; the CSP script hash is updated.
+
+A sixth review found two more. When that retry answered JSON-LD the client
+refuses whole (not JSON, a repeated key, `@reverse`), both clients read the first
+answer as if nothing had come back, so a GET the JSON-LD marked destructive was
+listed as safe. The first answer is still listed, but with the JSON-LD's problem
+named, and every control in it is unsafe and refused with that problem. `hmc.py`
+also followed a 3xx with an empty `Location` back to the same address up to 20
+times; a browser does not follow it, and now neither does `hmc.py`. 7 of the 38
+shared-fixture tests failed before; the CSP script hash is updated.
 
 The page also carries a Content-Security-Policy `<meta>`: `default-src 'none'`,
 its own inline script and stylesheet allowed by SHA-256 hash and nothing else (so

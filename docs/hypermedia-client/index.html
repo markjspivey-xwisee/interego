@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ynSGoY3xPQRb1JS/n0fmW4RYKUUi3KoFWdEJR4e8tZc='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-gSNp0cJCCPLBW/coWMgy3LmLHEwpyBSDrHRkgqKUdqQ='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -2305,9 +2305,11 @@ async function fetchAuthority(url) {
   // ?format=jsonld, except that a format the address names itself is kept
   // when the page can read it; Turtle it cannot, so that is always retried.
   // The retry is optional: its answer comes first when it is JSON-LD, and the
-  // first answer after it, so a retry that fails, or whose JSON-LD is not read,
-  // leaves the first answer to be read as if it had not been asked. This is the
-  // same with or without a proxy.
+  // first answer after it, so a retry that gets no answer, or one that is not
+  // 2xx JSON-LD, leaves the first answer to be read as if it had not been asked.
+  // JSON-LD it answers that is then refused is the authority refused, and
+  // loadDescriptorUrl names it with the first answer (authorityRefused). This
+  // is the same with or without a proxy.
   const got = await attempt(url);
   if (got) {
     if (got.kind === "jsonld" || (hasFmt && got.kind !== "turtle")) return [got];
@@ -3048,7 +3050,8 @@ function renderList() {
   });
   meta.innerHTML = `<strong>${esc(desc.title)}</strong><br>${esc(desc.url)}<br>types: ${esc((desc.types || []).map(localName).join(", "))}<br>${esc((desc.controls || []).length)} controls · ${esc((desc.contentType || "").split(";")[0])}` +
     (seeAlso.length ? `<div class="see">seeAlso: ${seeAlso.join(" ")}</div>` : "") +
-    (desc.description ? `<div class="desc-note">${esc(desc.description)}</div>` : "");
+    (desc.description ? `<div class="desc-note">${esc(desc.description)}</div>` : "") +
+    (desc.problem ? `<div class="warn">${esc(desc.problem)}</div>` : "");
   const safe = desc.controls.filter(c => !c.unsafe);
   const unsafe = desc.controls.filter(c => c.unsafe);
   const card = (c) => {
@@ -3321,6 +3324,23 @@ async function runInvoke(forceDry, formControl) {
     setStatus("Invoke failed: " + msg);
   }
 }
+// Marks a descriptor read from a first answer after the JSON-LD a retry
+// answered, the authority for it, was refused whole. The answer is kept, since
+// the retry was optional, but not read as safe: what that JSON-LD says of each
+// control (a hint, a method, a target) is not known, so the descriptor names the
+// refusal, and every control is listed with the writes and refused, naming it.
+// The page reads no Turtle, so the answer is HyperMarkdown, whose controls hold
+// their problem as written. hmc.py's _authority_refused is the same.
+function authorityRefused(descriptor, jsonldUrl, kind, err) {
+  const because = err && err.message || String(err);
+  const name = kind === "turtle" ? "Turtle" : "HyperMarkdown";
+  descriptor.problem = "The JSON-LD answer to " + jsonldUrl + " is refused, so the controls read from the " + name +
+    " answer are listed and none is invoked: " + because;
+  for (const c of descriptor.controls) {
+    c.conflict = c.problem = "the JSON-LD answer to " + jsonldUrl + " is refused, and what it says of this control is not known, so it is not invoked: " + because;
+    c.unsafe = true;
+  }
+}
 // The address is checked as it is given, before anything reads it: one a URL
 // parser reads differently from its text (a tab or a line break it drops, a
 // space, a backslash) is refused, as hmc.py's load_descriptor refuses it.
@@ -3331,10 +3351,13 @@ async function loadDescriptorUrl(url, push = true) {
   setStatus("Fetching authority document…");
   document.documentElement.dataset.ready = "0";
   // The first answer read is the descriptor. When none is, the problem named is
-  // the first's: the JSON-LD a retry asked for, when it answered. hmc.py's
-  // load_descriptor reads its answers the same way.
+  // the first's: the JSON-LD a retry asked for, when it answered. When that
+  // JSON-LD is refused and the first answer is read after it, the first answer
+  // is not read as safe (authorityRefused). hmc.py's load_descriptor reads its
+  // answers the same way.
+  const answers = await fetchAuthority(url);
   let fetched = null, descriptor = null, unread = null;
-  for (const answer of await fetchAuthority(url)) {
+  for (const answer of answers) {
     try {
       if (answer.kind === "turtle") throw new Error("Descriptor arrived as Turtle, which this page does not parse. Ask the host for ?format=jsonld, or use hmc.py, which reads Turtle when rdflib is installed.");
       descriptor = parseDescriptor(answer.text, answer.contentType, stripFrag(url), answer.finalUrl);
@@ -3345,6 +3368,7 @@ async function loadDescriptorUrl(url, push = true) {
     }
   }
   if (!fetched) throw unread;
+  if (unread) authorityRefused(descriptor, answers[0].url, fetched.kind, unread);
   if (push && state.descriptor) state.history.push(state.descriptor.url);
   state.descriptor = descriptor;
   state.selected = null;
@@ -3354,7 +3378,7 @@ async function loadDescriptorUrl(url, push = true) {
   document.title = "Hypermedia Client — " + descriptor.title;
   renderDetail();
   renderList();
-  setStatus(`Loaded ${descriptor.controls.length} controls from ${descriptor.title} (${fetched.kind}).`);
+  setStatus(`Loaded ${descriptor.controls.length} controls from ${descriptor.title} (${fetched.kind}).` + (descriptor.problem ? " " + descriptor.problem : ""));
   document.documentElement.dataset.ready = state.selected ? "0" : "list";
   return descriptor;
 }

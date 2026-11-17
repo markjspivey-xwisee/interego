@@ -287,24 +287,43 @@ describe('hmc.py: a load whose requests fail, as the page\'s', () => {
     turtle: /^error: This descriptor was served as Turtle\. Install rdflib/,
     'none readable': /^error: Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from /,
   } as const;
+  const REFUSED_NOTE = /^The JSON-LD answer to http:\/\/127\.0\.0\.1:\d+\/[\w-]+\?format=jsonld is refused, so the controls read from the HyperMarkdown answer are listed and none is invoked: ./;
+  const REFUSED_CONTROL = /^the JSON-LD answer to http:\/\/127\.0\.0\.1:\d+\/[\w-]+\?format=jsonld is refused, and what it says of this control is not known, so it is not invoked: ./;
 
   it.each(FETCH_CASES)('loads %s', async (address, outcome) => {
     const before = seen.length;
     const r = await hmc(['list', `${base}${address}`, '--json']);
     const path = address.split('?')[0]!;
-    const asked = [...new Set(seen.slice(before).map(line => new URL(line.slice(line.indexOf(' ') + 1), base))
-      .filter(u => u.pathname === path).map(u => u.searchParams.get('format')))];
+    const requests = seen.slice(before).map(line => new URL(line.slice(line.indexOf(' ') + 1), base)).filter(u => u.pathname === path);
+    const asked = [...new Set(requests.map(u => u.searchParams.get('format')))];
     if (READS_TURTLE && outcome.withTurtle) {
       expect([r.code, asked], r.stderr).toEqual([0, outcome.withTurtle]);
       return;
     }
     expect(asked, r.stderr).toEqual(outcome.asked);
+    if (outcome.requests !== undefined) expect(requests, r.stderr).toHaveLength(outcome.requests);
     if ('titles' in outcome) {
       expect(r.code, r.stderr).toBe(0);
-      expect((JSON.parse(r.stdout) as { controls: Array<{ title: string }> }).controls.map(c => c.title).sort()).toEqual(outcome.titles);
+      const listed = JSON.parse(r.stdout) as { problem: string | null; controls: Array<{ title: string; unsafe: boolean; problem: string | null }> };
+      expect(listed.controls.map(c => c.title).sort()).toEqual(outcome.titles);
+      if (!outcome.refused) {
+        expect(listed.problem).toBeNull();
+        return;
+      }
+      // The answer listed is not read as safe: every control is refused, naming the JSON-LD's problem.
+      const because = outcome.refused === true ? '' : outcome.refused;
+      expect(listed.problem).toMatch(REFUSED_NOTE);
+      expect(listed.problem).toContain(because);
+      for (const control of listed.controls) {
+        expect([control.unsafe, control.problem]).toEqual([true, expect.stringMatching(REFUSED_CONTROL)]);
+        expect(control.problem).toContain(because);
+      }
+      const invoked = await hmc(['invoke', `${base}${address}`, 'md-read', '--confirm']);
+      expect([invoked.code, problems(invoked.stderr)]).toEqual([2, [listed.controls[0]!.problem]]);
     } else {
       expect([r.code, r.stdout]).toEqual([1, '']);
-      expect(r.stderr.trim()).toMatch(PROBLEMS[outcome.problem]);
+      if (outcome.problem === 'refused') expect(r.stderr.trim()).toBe(`error: ${outcome.refused}`);
+      else expect(r.stderr.trim()).toMatch(PROBLEMS[outcome.problem]);
     }
   });
 });

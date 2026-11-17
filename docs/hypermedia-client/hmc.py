@@ -1725,6 +1725,9 @@ class Descriptor:
     see_also: list[str] = field(default_factory=list)
     raw: Any = None
     context: Context | None = None
+    # Why what is listed is not read as safe, when it is not: the JSON-LD a
+    # retry answered, the authority for this answer, was refused.
+    problem: str | None = None
 
     def matches(self, rel: str) -> list[Control]:
         """The controls a name given on the command line names: those it names
@@ -1760,7 +1763,7 @@ class Descriptor:
         return {
             "url": self.url, "title": self.title, "types": self.types,
             "description": self.description, "contentType": self.content_type,
-            "seeAlso": self.see_also,
+            "seeAlso": self.see_also, "problem": self.problem,
             "controls": [c.to_public() for c in self.controls],
         }
 
@@ -3241,13 +3244,17 @@ class _WebOnlyRedirects(urllib.request.HTTPRedirectHandler):
         self.followed = 0
 
     def http_error_302(self, req, fp, code, msg, headers):  # type: ignore[no-untyped-def]
-        location = headers.get("location") or headers.get("uri")
-        if location:
-            _require_web_url(urllib.parse.urljoin(req.full_url, location), "refused a redirect to")
-            if self.followed >= _REDIRECT_LIMIT:
-                raise RuntimeError(f"{req.full_url} was redirected more than {_REDIRECT_LIMIT} times, "
-                                   "more than fetch follows, so the request failed")
-            self.followed += 1
+        # Only a Location with something in it redirects, as a browser reads
+        # one; urllib would also follow an empty one, to the address itself, and
+        # a URI header. Without one the 3xx is the answer, which is not 2xx.
+        location = (headers.get("location") or "").strip(" \t")
+        if not location:
+            return None
+        _require_web_url(urllib.parse.urljoin(req.full_url, location), "refused a redirect to")
+        if self.followed >= _REDIRECT_LIMIT:
+            raise RuntimeError(f"{req.full_url} was redirected more than {_REDIRECT_LIMIT} times, "
+                               "more than fetch follows, so the request failed")
+        self.followed += 1
         if code == 303 and self.see_other_from is None:
             self.see_other_from = req.full_url
         return super().http_error_302(req, fp, code, msg, headers)
@@ -3391,8 +3398,10 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
       for again as ?format=jsonld, unless the address names a format hmc.py
       reads (Turtle only with rdflib, as the page never reads it). That retry
       is optional: its answer comes first when it is JSON-LD, and the first
-      answer after it, so a retry that fails, or whose JSON-LD is not read,
-      leaves the first answer to be read as if it had not been asked.
+      answer after it, so a retry that gets no answer, or one that is not 2xx
+      JSON-LD, leaves the first answer to be read as if it had not been asked.
+      JSON-LD it answers that is then refused is the authority refused, and
+      load_descriptor names it with the first answer (_authority_refused).
     - When the address names no format and its answer does not count,
       ?format=jsonld, turtle and markdown are asked in turn until one does; a
       request among them that gets no answer ends the load, named."""
@@ -3477,18 +3486,38 @@ def load_descriptor(url: str) -> Descriptor:
     if problem:
         raise ValueError(f"{problem}; nothing is sent to {uri}")
     # The first answer read is the descriptor. When none is, the problem named
-    # is the first's: the JSON-LD a retry asked for, when it answered. The
-    # page's loadDescriptorUrl reads its answers the same way.
-    problem: Exception | None = None
+    # is the first's: the JSON-LD a retry asked for, when it answered. When
+    # that JSON-LD is refused and the first answer is read after it, the first
+    # answer is not read as safe (_authority_refused). The page's
+    # loadDescriptorUrl reads its answers the same way.
+    unread: Exception | None = None
     for fetched_from, content_type, text in fetch_authority(url):
         try:
             descriptor = parse_descriptor(text, content_type, _strip_fragment(url), fetched_from)
         except Exception as exc:  # noqa: BLE001
-            problem = problem or exc
+            unread = unread or exc
             continue
         descriptor.content_type = content_type
+        if unread is not None:
+            _authority_refused(descriptor, _request_url(_with_format(_strip_fragment(url), "jsonld")),
+                               classify_payload(text, content_type), unread)
         return descriptor
-    raise problem or RuntimeError(f"No descriptor was read from {url}")
+    raise unread or RuntimeError(f"No descriptor was read from {url}")
+
+
+def _authority_refused(descriptor: Descriptor, jsonld_url: str, kind: str | None, problem: Exception) -> None:
+    """Marks a descriptor read from a first answer after the JSON-LD a retry
+    answered, the authority for it, was refused whole. The answer is kept,
+    since the retry was optional, but not read as safe: what that JSON-LD says
+    of each control (a hint, a method, a target) is not known, so the
+    descriptor names the refusal, and every control is listed with the writes
+    and refused, naming it. The page's authorityRefused is the same."""
+    name = "Turtle" if kind == "turtle" else "HyperMarkdown"
+    descriptor.problem = (f"The JSON-LD answer to {jsonld_url} is refused, so the controls read from the {name} "
+                          f"answer are listed and none is invoked: {problem}")
+    for control in descriptor.controls:
+        control.conflict = (f"the JSON-LD answer to {jsonld_url} is refused, and what it says of this control is not "
+                            f"known, so it is not invoked: {problem}")
 
 
 
@@ -4332,6 +4361,8 @@ def print_control_table(descriptor: Descriptor) -> None:
         say("types: " + ", ".join(local_name(t) or t for t in descriptor.types))
     if descriptor.description:
         say(textwrap.fill(descriptor.description, 100))
+    if descriptor.problem:
+        say(f"note: {descriptor.problem}")
     say()
     safe = [c for c in descriptor.controls if not c.unsafe]
     unsafe = [c for c in descriptor.controls if c.unsafe]

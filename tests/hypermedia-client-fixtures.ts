@@ -1358,30 +1358,38 @@ export type HostAnswer =
  * Descriptor addresses whose answer depends on the `format` a request asks for (null when it asks
  * for none), served to both clients. The page's test answers its fetch with them as a browser's fetch
  * would: 'no answer' rejects, and a redirect is followed at most 20 times and only to https, which
- * the page's connect-src allows. hmc.py's test serves them on 127.0.0.1, destroying the socket for
+ * the page's connect-src allows, while one with an empty Location is no redirect, as Chromium reads
+ * it, and its 302 is the answer. hmc.py's test serves them on 127.0.0.1, destroying the socket for
  * 'no answer'.
  */
 export function fetchRoutes(base: string): Record<string, (format: string | null) => HostAnswer> {
   const markdown = (title: string): HostAnswer => ({ type: 'text/markdown', body: ['# Markdown', '',
     ':::control md-read', `title: ${title}`, 'method: GET', `target: ${base}/api`, ':::', ''].join('\n') });
-  const text = (path: string, title: string) => JSON.stringify({ '@context': CTX, '@id': `${base}${path}`,
-    'iep:affordance': [op('r', `urn:fetch${path.replace(/\//g, ':')}`, 'GET', title, target('/api'))] });
+  const text = (path: string, title: string, extra: Record<string, unknown> = {}) => JSON.stringify({ '@context': CTX, '@id': `${base}${path}`,
+    'iep:affordance': [op('r', `urn:fetch${path.replace(/\//g, ':')}`, 'GET', title, { ...target('/api'), ...extra })] });
   const jsonld = (path: string, title: string): HostAnswer => ({ type: 'application/ld+json', body: text(path, title) });
   const turtle: HostAnswer = { type: 'text/turtle', body: '@prefix dct: <http://purl.org/dc/terms/> .\n<> dct:title "From Turtle" .\n' };
   const missing: HostAnswer = { status: 404, type: 'text/plain', body: 'missing' };
   const KEPT = 'Kept markdown read';
+  const reversed = (path: string): HostAnswer => ({ type: 'application/ld+json',
+    body: text(path, 'Reverse read', { '@reverse': { 'hydra:operation': { '@id': `${base}${path}` } } }) });
   return {
-    // A readable answer, then a ?format=jsonld retry that fails: the connection closes, a redirect
-    // leaves http(s), the status is 500, the answer is Turtle, or it is JSON-LD that is not JSON or
-    // repeats a key. Each keeps the first answer.
+    // A readable answer, then a ?format=jsonld retry that gets no JSON-LD: the connection closes, a
+    // redirect leaves http(s), the status is 500, or the answer is Turtle. Each keeps the first answer.
     '/upgrade-lost': f => f === 'jsonld' ? 'no answer' : markdown(KEPT),
     '/upgrade-lost-ttl': f => f === 'jsonld' ? 'no answer' : turtle,
     '/upgrade-redirect': f => f === 'jsonld' ? { redirect: 'ftp://127.0.0.1:9/x' } : markdown(KEPT),
     '/upgrade-error': f => f === 'jsonld' ? { status: 500, type: 'application/ld+json', body: text('/upgrade-error', 'Error read') } : markdown(KEPT),
     '/upgrade-other': f => f === 'jsonld' ? turtle : markdown(KEPT),
+    // A readable answer, then a ?format=jsonld retry that answers JSON-LD the client refuses whole: it
+    // is not JSON, it marks the GET destructive and repeats a key, or it uses @reverse. The first answer
+    // is still listed, and every control in it is refused, named; nothing in it is read as safe. Turtle,
+    // which the page never reads, leaves nothing read, and the load ends naming the JSON-LD's problem.
     '/upgrade-not-json': f => f === 'jsonld' ? { type: 'application/ld+json', body: '{"@context": ' } : markdown(KEPT),
-    '/upgrade-repeated': f => f === 'jsonld' ? { type: 'application/ld+json',
-      body: text('/upgrade-repeated', 'Repeated read').replace('"hydra:method":"GET"', '"hydra:method":"GET","hydra:method":"GET"') } : markdown(KEPT),
+    '/upgrade-repeated': f => f === 'jsonld' ? { type: 'application/ld+json', body: text('/upgrade-repeated', 'Repeated read', { 'iep:destructiveHint': true })
+      .replace('"hydra:method":"GET"', '"hydra:method":"GET","hydra:method":"GET"') } : markdown(KEPT),
+    '/upgrade-reverse': f => f === 'jsonld' ? reversed('/upgrade-reverse') : markdown(KEPT),
+    '/upgrade-refused-ttl': f => f === 'jsonld' ? reversed('/upgrade-refused-ttl') : turtle,
     // No readable answer at the address as given, and none at all to ?format=jsonld: nothing else is asked.
     '/fallback-lost': f => f === 'jsonld' ? 'no answer' : f === null ? missing : jsonld('/fallback-lost', 'Fallback read'),
     // Answers fetch does not count as readable: a 300 (not 2xx, and not a redirect), an empty JSON-LD
@@ -1395,8 +1403,10 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     // Content-Type headers, which Headers.get joins with ", ".
     '/bom': () => ({ type: 'application/ld+json', body: '﻿' + text('/bom', 'BOM read') }),
     '/two-types': f => f === null ? { type: ['application/ld+json', 'text/turtle'], body: text('/two-types', 'Two types read') } : missing,
-    // A redirect to itself: fetch gives up after 20, as at the network.
+    // A redirect to itself: fetch gives up after 20, as at the network. A 302 with an empty Location
+    // is no redirect, as Chromium reads it: an answer that is not 2xx, asked for once.
     '/redirect-loop': () => ({ redirect: '/redirect-loop' }),
+    '/empty-location': f => f === null ? { redirect: '' } : f === 'jsonld' ? jsonld('/empty-location', 'Format read') : missing,
     // An address that names Turtle, which a client that cannot read it asks for again as JSON-LD.
     '/named-ttl': f => f === 'jsonld' ? jsonld('/named-ttl', 'Named format read') : f === 'turtle' ? turtle : missing,
   };
@@ -1404,22 +1414,31 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
 
 /**
  * What both clients make of loading each address above, as [address, outcome]. `asked` is the
- * formats requested there, each the first time it is (null for the address as given). An outcome
- * lists exactly `titles`, or fails with `problem`: 'no answer' names the request that got none,
- * 'turtle' names the Turtle answer kept, which neither client reads without a Turtle parser, and
- * 'none readable' names the address. `withTurtle` is the formats asked by a client that reads Turtle
- * (hmc.py with rdflib), which reads that Turtle answer instead.
+ * formats requested there, each the first time it is (null for the address as given), and
+ * `requests`, when given, how many requests went there. An outcome lists exactly `titles`, or fails
+ * with `problem`: 'no answer' names the request that got none, 'turtle' names the Turtle answer kept,
+ * which neither client reads without a Turtle parser, 'none readable' names the address, and
+ * 'refused' is the problem of the JSON-LD a retry answered. `refused` is that problem as both
+ * clients word it (true where each words it its own way, as JSON.parse and Python's json word a
+ * syntax error). With `titles`, it means each control listed is unsafe and refused with a problem
+ * naming it, and the descriptor names it too. `withTurtle` is the formats asked by a client that
+ * reads Turtle (hmc.py with rdflib), which reads that Turtle answer instead.
  */
-export type FetchOutcome = { readonly asked: ReadonlyArray<string | null>; readonly withTurtle?: ReadonlyArray<string | null> }
-  & ({ readonly titles: readonly string[] } | { readonly problem: 'no answer' | 'turtle' | 'none readable' });
+export type FetchOutcome = { readonly asked: ReadonlyArray<string | null>; readonly withTurtle?: ReadonlyArray<string | null>;
+  readonly requests?: number; readonly refused?: string | true }
+  & ({ readonly titles: readonly string[] } | { readonly problem: 'no answer' | 'turtle' | 'none readable' | 'refused' });
+const REVERSE = 'This document uses @reverse, which this client does not read, so it is not read.';
 export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: FetchOutcome]> = [
   ['/upgrade-lost', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
   ['/upgrade-lost-ttl', { asked: [null, 'jsonld'], problem: 'turtle', withTurtle: [null, 'jsonld'] }],
   ['/upgrade-redirect', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
   ['/upgrade-error', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
   ['/upgrade-other', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
-  ['/upgrade-not-json', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
-  ['/upgrade-repeated', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/upgrade-not-json', { asked: [null, 'jsonld'], titles: ['Kept markdown read'], refused: true }],
+  ['/upgrade-repeated', { asked: [null, 'jsonld'], titles: ['Kept markdown read'],
+    refused: 'This document repeats the key "hydra:method" in one object, so which value it means is not known, and it is not read.' }],
+  ['/upgrade-reverse', { asked: [null, 'jsonld'], titles: ['Kept markdown read'], refused: REVERSE }],
+  ['/upgrade-refused-ttl', { asked: [null, 'jsonld'], problem: 'refused', refused: REVERSE, withTurtle: [null, 'jsonld'] }],
   ['/fallback-lost', { asked: [null, 'jsonld'], problem: 'no answer' }],
   ['/not-ok', { asked: [null, 'jsonld'], titles: ['Format read'] }],
   ['/empty-ld', { asked: [null, 'jsonld'], titles: ['Format read'] }],
@@ -1428,5 +1447,6 @@ export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: Fetc
   ['/bom', { asked: [null], titles: ['BOM read'] }],
   ['/two-types', { asked: [null], titles: ['Two types read'] }],
   ['/redirect-loop', { asked: [null], problem: 'no answer' }],
+  ['/empty-location', { asked: [null, 'jsonld'], requests: 2, titles: ['Format read'] }],
   ['/named-ttl?format=turtle', { asked: ['turtle', 'jsonld'], titles: ['Named format read'], withTurtle: ['turtle'] }],
 ];

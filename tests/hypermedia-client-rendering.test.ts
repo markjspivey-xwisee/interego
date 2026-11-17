@@ -351,7 +351,8 @@ const ROUTED = fetchRoutes(HOST);
 /**
  * A ROUTED address's answer as a browser's fetch gives it: no answer rejects, as a network error
  * does, and a redirect is followed, at most 20 times and only to https, which the page's connect-src
- * allows; then the response's url is where it landed.
+ * allows; then the response's url is where it landed. A redirect with an empty Location is none, as
+ * Chromium reads it: the 302 is the answer.
  */
 function routed(asked: URL): Response {
   let at = asked;
@@ -359,6 +360,7 @@ function routed(asked: URL): Response {
     const route = at.origin === HOST && Object.prototype.hasOwnProperty.call(ROUTED, at.pathname) ? ROUTED[at.pathname] : undefined;
     const answer = route ? route(at.searchParams.get('format')) : { status: 404, type: 'text/plain', body: 'missing' };
     if (answer === 'no answer') throw new TypeError('Failed to fetch');
+    if ('redirect' in answer && !answer.redirect.trim()) return new Response('', { status: 302, headers: { location: answer.redirect } });
     if ('redirect' in answer) {
       const next = new URL(answer.redirect, at);
       if (followed >= 20 || next.protocol !== 'https:') throw new TypeError('Failed to fetch');
@@ -656,6 +658,8 @@ describe('hypermedia client: a load whose requests fail, as hmc.py\'s', () => {
     turtle: /^Descriptor arrived as Turtle, which this page does not parse\./,
     'none readable': /^Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from /,
   } as const;
+  const REFUSED_NOTE = /^The JSON-LD answer to https:\/\/hostile\.example\/[\w-]+\?format=jsonld is refused, so the controls read from the HyperMarkdown answer are listed and none is invoked: ./;
+  const REFUSED_CONTROL = /the JSON-LD answer to https:\/\/hostile\.example\/[\w-]+\?format=jsonld is refused, and what it says of this control is not known, so it is not invoked: ./;
 
   it.each(FETCH_CASES)('loads %s', async (address, outcome) => {
     const t = load(`?url=${encodeURIComponent(HOST + address)}&autoload=1`);
@@ -664,14 +668,35 @@ describe('hypermedia client: a load whose requests fail, as hmc.py\'s', () => {
       const status = () => document.getElementById('status')!.textContent!;
       await vi.waitFor(() => expect(['list', 'error'], status()).toContain(document.documentElement.dataset['ready']));
       const path = address.split('?')[0]!;
-      const asked = [...new Set(t.calls.map(c => new URL(c.url)).filter(u => u.pathname === path).map(u => u.searchParams.get('format')))];
+      const requests = t.calls.map(c => new URL(c.url)).filter(u => u.pathname === path);
+      const asked = [...new Set(requests.map(u => u.searchParams.get('format')))];
       expect(asked, status()).toEqual(outcome.asked);
-      if ('titles' in outcome) {
-        expect(document.documentElement.dataset['ready'], status()).toBe('list');
-        expect([...document.querySelectorAll('.card h3')].map(h => h.textContent!).sort()).toEqual(outcome.titles);
-      } else {
+      if (outcome.requests !== undefined) expect(requests, status()).toHaveLength(outcome.requests);
+      if (!('titles' in outcome)) {
         expect(document.documentElement.dataset['ready']).toBe('error');
-        expect(status()).toMatch(PROBLEMS[outcome.problem]);
+        if (outcome.problem === 'refused') expect(status()).toBe(outcome.refused);
+        else expect(status()).toMatch(PROBLEMS[outcome.problem]);
+        return;
+      }
+      expect(document.documentElement.dataset['ready'], status()).toBe('list');
+      expect([...document.querySelectorAll('.card h3')].map(h => h.textContent!).sort()).toEqual(outcome.titles);
+      const note = document.querySelector('#meta .warn');
+      if (!outcome.refused) {
+        expect(note).toBeNull();
+        return;
+      }
+      // The answer listed is not read as safe: the list and the status name the JSON-LD's problem,
+      // and every control is listed with the writes and refused, naming it.
+      const because = outcome.refused === true ? '' : outcome.refused;
+      expect(note!.textContent).toMatch(REFUSED_NOTE);
+      expect(note!.textContent).toContain(because);
+      expect(status()).toContain(note!.textContent!);
+      expect([groupTitles(document, 0), groupTitles(document, 1)]).toEqual([[], outcome.titles]);
+      for (const title of outcome.titles) {
+        click(t, card(document, title)!);
+        expect(document.getElementById('invokeForm')).toBeNull();
+        expect(document.querySelector('#detail .warn')!.textContent).toMatch(REFUSED_CONTROL);
+        expect(document.querySelector('#detail .warn')!.textContent).toContain(because);
       }
     } finally { t.dom.window.close(); }
   });
