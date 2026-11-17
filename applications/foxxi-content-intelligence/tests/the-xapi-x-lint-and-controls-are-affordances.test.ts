@@ -13,7 +13,7 @@ import { builtInProfiles, builtInKept } from '../src/xapi-profile-server/built-i
 import { xapiProfileServerAffordances } from '../src/xapi-profile-server/affordances.js';
 import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
 import { validates, type Json } from '../src/xapi-profile-server/processor.js';
-import { mountXapixRoutes } from '../src/xapix/http.js';
+import { mountXapixRoutes, templatesFollowed } from '../src/xapix/http.js';
 import { controlsDocument, controlsUrl, offersOf } from '../src/xapix/controls.js';
 import { lintXapixProfile } from '../src/xapix/lint.js';
 import { IEP_DECORATIONS, XAPIX_PROFILE_ID, xapix } from '../src/xapix/namespace.js';
@@ -216,6 +216,18 @@ describe('the controls document', () => {
     expect(nothing.body).toMatchObject({ templates: [], controls: [] });
     expect(nothing.body.link).toBeUndefined();
     expect((await post('/controls', { statement: 'not a statement' })).status).toBe(400);
+  });
+
+  it('finds the template a statement follows even when it breaks a rule of a template in another profile', async () => {
+    // A made-up second profile whose template also matches a failed lesson, and asks for a response it does not carry.
+    const strict = {
+      id: 'https://example.org/profiles/strict', type: 'Profile', versions: [{ id: 'https://example.org/profiles/strict/v/1', generatedAtTime: '2026-11-17T00:00:00.000Z' }],
+      templates: [{ id: 'https://example.org/profiles/strict/templates/failed-with-a-response', type: 'StatementTemplate', inScheme: 'https://example.org/profiles/strict/v/1',
+        verb: `${ADL}/verbs/failed`, rules: [{ location: '$.result.response', presence: 'included' }] }],
+    };
+    const both = new ProfileServer({ builtIn: () => [...builtInProfiles(), strict as never], builtInKept });
+    expect(validates(failedLesson(), [...(buildFoxxiProfileDoc({ generatedAt: PROFILE_GENERATED_AT }) as unknown as { templates: Json[] }).templates.filter(t => t.deprecated !== true), ...strict.templates as Json[]]).outcome).toBe('invalid');
+    expect((await templatesFollowed(both, failedLesson())).map(t => t.id)).toEqual([LESSON_FAILED]);
   });
 
   it('names an offer the deployment does not serve as unresolved, and gives it no target', () => {
