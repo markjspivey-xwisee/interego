@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-17 — Foxxi: whether an unsent profile write is kept or in doubt has a test
+
+#945 fixed the bridge answering "in doubt" for a profile write it had never
+sent, and said it had no test. The decision is now `profilePodStore` in
+`src/xapi-profile-server/pod-store.ts`: the bridge hands it its pod, key
+check, fetch guard, write and read-back, and gets `persist` and `confirm`
+back. Nothing about the answers changes.
+
+`tests/a-profile-write-never-sent-is-not-in-doubt.test.ts` (7 tests) runs it
+under a real `ProfileServer` with a made-up pod: no key, an address not
+fetched, no pod, a write sent whose address is refused by read-back time (in
+doubt, then held), not acknowledged and unreadable (in doubt), not
+acknowledged and readable (kept), and the refusal remembered for one record
+only. With the no-key and never-sent answers removed 3 fail; with a read-back
+refusal answered as not kept, 1 fails.
+
+The bridge was restarted after the move: add, remove and a lost answer against
+a stand-in pod, and a loopback pod address, answered as before. Its handing of
+the parts to `profilePodStore` is covered by that run and the typecheck, not
+by a test.
+
 ## 2026-11-17 — xapi-x: the lint and the controls document are affordances, and Foxxi's profile states what it offers
 
 From the xapi-x list of what was only designed.
@@ -24,6 +45,7 @@ From the xapi-x list of what was only designed.
 **Not done.** No statement links to a controls document. Foxxi's profile
 states no `xapix:evidences`: each is a proposal about someone else's concept
 and wants review first. An `i2x:` target is taken by its namespace.
+
 
 ## 2026-11-17 — mcp-server: the local Solid server fallback starts
 
@@ -102,6 +124,7 @@ tests it selects, as `bridge-typecheck.yml`'s suite already did: its build cache
 holds `packages/*/dist` only, so on a hit `mcp-server/dist/` was never built and
 the compiled run found no server.
 
+
 ## 2026-11-17 — coached-world: a registration's statements are chained, and the world signs their order
 
 Every statement of a mission's opening carries one timestamp, so nothing but
@@ -170,6 +193,52 @@ Once enforcing, a bridge gets a `410` where it used to get a `201` for a guest t
 ended; it should treat that as the guest being gone. The gate cannot tell one
 holder of the operator bearer from another. A write let through just before a
 closure can still land after it; the rule holds from the next write on.
+
+## 2026-11-17 — identity: a guest pod larger than one cleanup pass lists is closed and purged all the same
+
+The janitor's cleanup of a guest (`u-try-play-`, `u-try-guest-`) listed the
+whole pod before it closed the account, and threw past 128 resources or eight
+levels (`Provisional cleanup traversal limit`). A guest pod something had
+filled beyond that (an application writing a guest's records into it with the
+operator bearer) was therefore never closed and never purged: every pass
+listed it, threw, logged `provisional cleanup kept <id>` and left the account
+open and the data in place, for good.
+
+- **Closed at the deadline, whatever the pod holds.** A pass now lists at most
+  128 resources (`PASS_RESOURCES`), depth first, and stops there instead of
+  throwing. The account is closed in that same pass (its tombstone, marked
+  `provisionalPlayPurgePending`), the resources the pass listed are deleted,
+  and the purge returns `partial`: the owner stays in the janitor's queue and
+  each later pass deletes the next 128, until one lists the whole of what is
+  left and finishes as a purge always has (closure fence, mark cleared). The
+  eight-level limit is gone: depth was never work, only the count is.
+- **A pass is bounded.** At most 128 container listings, each read up to 4 MiB
+  (`LISTING_BYTES`; a longer one is cut and the names read before the cut are
+  used), and at most 128 deletions.
+- **Progress is read from the pod.** What is deleted is no longer listed, so an
+  interrupted pass or a restart loses nothing. A process also remembers, per
+  unfinished purge, the documents the store refused to delete and the
+  container a pass stopped in without anything to delete (a chain of
+  containers deeper than a pass lists). Both only save requests.
+- **Nothing outside the guest's own segment is requested.** Every URL listed,
+  and the container a pass resumes in, is checked against
+  `<pod origin>/<userId>/` first, as before.
+- **A pod within the bound is cleaned up exactly as before**, in one pass.
+  A claimed guest (one that holds a credential) and one whose deadline has
+  not passed are still kept whole, at any size: nothing is closed or deleted.
+- **Documents answered `409` on `DELETE`** (native heads outside the game
+  data) are still kept, with the containers that hold them, and logged once
+  when the purge finishes. No plain request deletes one, and the cleanup sends
+  the store's native delete only to a guest's game data, so holding the purge
+  open for them would retry without end. They no longer stop a large pod
+  either: a later pass neither counts nor requests them again.
+- The game-data backfill leaves a finished purge whose pod holds more than a
+  pass lists as it finds it (it re-opens a purge for game data alone).
+
+One case is still never finished, each pass of it bounded: a single container
+whose listing is longer than 4 MiB and begins with nothing but documents the
+store refuses to delete. `purgeProvisionalPlayPod`'s `close` is given a second
+argument (`whole`), and its result may be `partial`.
 
 ## 2026-11-17 — Foxxi: the pod resolver can place an identity guest on its own pod (not switched on)
 
