@@ -1,5 +1,52 @@
 # Changelog
 
+## 2026-11-16 — Foxxi profile server: a declared extension holds a statement to its schema
+
+Found by walking the authoring tool against the deployed bridge. A profile
+was published there whose tide extension declares `{"type":"number"}`. A
+statement carrying the tide as the text "high" was sent to
+`/xapi/profiles/validate_templates`, and the answer was 204.
+
+The lint requires every extension to declare a schema, and nothing read it
+afterwards. The specification's validation algorithm reads templates and never
+a concept, and `processor.ts` is that algorithm branch for branch, so the
+declaration bound no statement.
+
+The server now checks it beside the algorithm
+(`applications/foxxi-content-intelligence/src/xapi-profile-server/extension-schema.ts`).
+`processor.ts` is unchanged.
+
+- `validate_templates`: a statement that matches a template is held to the
+  `inlineSchema` of each extension the profile declares, in `result`,
+  `context`, the object's definition and the context activities' definitions.
+  A wrong value is a 400 with a comment naming the extension and where it
+  sits.
+- `validate_patterns`: the same for each statement of a run that otherwise
+  follows.
+- The profile lint: an example whose extension value its own profile's schema
+  does not allow is a finding, `example-extension-value`, and is not counted
+  as its template's example.
+- The xapi-x lint (rule X2) reads values with the same function, so there is
+  one reader.
+
+What is read is a bounded part of JSON Schema: type, enum, const, numeric and
+length bounds, `format: iri`, items, minItems, maxItems, properties, required,
+and plain patterns. Anything else in a schema is named in the answer's
+`notChecked` and is not held against the value. So is a schema given by IRI,
+which is not fetched.
+
+A pattern is run only when nothing in it repeats without a bound: no group, no
+`*`, no `+`, no backreference, no `{n,}`. A profile is someone else's document
+and these routes are open, and a pattern such as `^(a+)+$` stalls a server on
+forty characters. Every pattern the built-in profiles declare is a plain one,
+and a test fails if that stops being so.
+
+Not covered: an extension the profile does not declare is left alone, since it
+is another profile's. A 204 has no body, so on success the caller is not told
+what was not checked. An extension that sits in a place its declared type does
+not name (a context extension under `result`) is still checked for its value
+and not reported as misplaced.
+
 ## 2026-11-16 — Dependencies: minimatch 11.0.8 under typescript-eslint and electron-builder
 
 `npm audit` lists one advisory against minimatch from 7.0.0 up to 11.0.1,
