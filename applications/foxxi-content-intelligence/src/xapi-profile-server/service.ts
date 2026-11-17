@@ -18,6 +18,7 @@
  */
 import { randomUUID } from 'node:crypto';
 import type { Express, Request, Response, RequestHandler } from 'express';
+import { rateLimit, type Options as RateLimitOptions } from 'express-rate-limit';
 import { turtleIriRef } from '@interego/core';
 import { ProfileDataset, SparqlRefused, type HeldProfile } from './dataset.js';
 import { follows, validates, type Json as PJson } from './processor.js';
@@ -32,6 +33,8 @@ export const MAX_PROFILE_BYTES = 256 * 1024;
 export const MAX_KEPT_BYTES = 12 * 1024 * 1024;
 export const MAX_PROFILE_TRIPLES = 6000;
 export const MAX_PATTERN_STATEMENTS = 500;
+/** The most records one record withdraws. Past this many not kept, a write first sends one record that withdraws them. */
+export const MAX_WITHDRAWN_BY_ONE_RECORD = 32;
 
 /**
  * What every record carries besides its change.
@@ -49,7 +52,9 @@ export type ProfileRecord =
   | ({ kind: 'added'; doc: Json; by: string; at: string; source?: string } & RecordMarks)
   /** A version published from a draft: never replaced, and kept with the examples it was linted with. */
   | ({ kind: 'published'; doc: Json; examples: ProfileExamples; external: ExternalTerm[]; by: string; at: string } & RecordMarks)
-  | ({ kind: 'removed'; iri: string; by: string; at: string } & RecordMarks);
+  | ({ kind: 'removed'; iri: string; by: string; at: string } & RecordMarks)
+  /** Changes nothing itself: it is kept for what it withdraws. */
+  | ({ kind: 'withdrawn'; by: string; at: string } & RecordMarks);
 
 export interface ProfileServerOptions {
   /** Profiles that are part of the deployment itself (Foxxi's own). Never removable, never persisted. */
@@ -134,6 +139,8 @@ export class ProfileServer {
   private readonly removing = new Set<string>();
   /** ids of records reported as not kept and not yet withdrawn by a record that was. */
   private readonly notKept = new Set<string>();
+  /** The record that withdraws them when there are too many for a change to carry, until it is kept. */
+  private withdrawal: ProfileRecord | undefined;
   private hydrated: Promise<void> | undefined;
   private keptBytes = 0;
 
@@ -163,7 +170,7 @@ export class ProfileServer {
             const held = this.hold(r.doc, r.by);
             this.publishedVersions.set(held.version, { examples: r.examples, external: r.external ?? [], at: r.at });
           }
-          else this.drop(r.iri);
+          else if (r.kind === 'removed') this.drop(r.iri);
         } catch { /* a record that no longer reads is skipped, not fatal */ }
       }
     })().catch(e => { this.hydrated = undefined; throw e; });
@@ -221,10 +228,31 @@ export class ProfileServer {
    * The store may come to hold it all the same, and `ready` skips a withdrawn record. What is not
    * covered: a record that landed, could not be read back, and is replayed by a restart that
    * happens before this server's next acknowledged write.
+   *
+   * A store that is down fails write after write, and a store like the bridge's keeps each failed
+   * record in hand. So what one record withdraws is bounded: past MAX_WITHDRAWN_BY_ONE_RECORD not
+   * kept, the change is not sent until one record that only withdraws them has been kept. That
+   * record changes nothing when replayed, so it needs no withdrawing itself, and it is the same
+   * record on every attempt, so a store that keeps what it is sent keeps it once.
    */
   private async keep(change: ProfileRecord, held?: HeldProfile): Promise<{ kept: true; holonUri?: string } | { kept: false; why: string }> {
+    if (this.notKept.size >= MAX_WITHDRAWN_BY_ONE_RECORD) {
+      const withdrawal = this.withdrawal ??= { kind: 'withdrawn', by: change.by, at: new Date().toISOString(), id: randomUUID(), withdraws: [...this.notKept] };
+      if (!(await this.send(withdrawal)).kept) return { kept: false, why: 'the durable store has not kept this server\'s recent writes, and did not keep this one.' };
+      for (const id of withdrawal.withdraws ?? []) this.notKept.delete(id);
+      if (this.withdrawal === withdrawal) this.withdrawal = undefined;
+    }
     const withdraws = [...this.notKept];
     const record: ProfileRecord = { ...change, id: randomUUID(), ...(withdraws.length ? { withdraws } : {}) };
+    const sent = await this.send(record, held);
+    if (!sent.kept) { this.notKept.add(record.id!); return sent; }
+    // What this record withdrew is withdrawn durably now.
+    for (const id of withdraws) this.notKept.delete(id);
+    return sent;
+  }
+
+  /** One record to the store: acknowledged, or read back from it when it was not. */
+  private async send(record: ProfileRecord, held?: HeldProfile): Promise<{ kept: true; holonUri?: string } | { kept: false; why: string }> {
     let answer: { holonUri?: string; persisted?: boolean } | undefined;
     let why = 'the durable write was not acknowledged.';
     try { answer = await this.options.persist!(record, held); } catch { why = 'the durable write failed.'; }
@@ -232,10 +260,7 @@ export class ProfileServer {
     if (!kept && this.options.confirm) {
       try { kept = (await this.options.confirm(record)) === true; } catch { /* could not be read: not confirmed */ }
     }
-    if (!kept) { this.notKept.add(record.id!); return { kept: false, why }; }
-    // What this record withdrew is withdrawn durably now.
-    for (const id of withdraws) this.notKept.delete(id);
-    return { kept: true, ...(answer?.holonUri ? { holonUri: answer.holonUri } : {}) };
+    return kept ? { kept: true, ...(answer?.holonUri ? { holonUri: answer.holonUri } : {}) } : { kept: false, why };
   }
 
   private drop(iri: string): string[] {
@@ -510,17 +535,21 @@ export interface WriteRouteOptions {
   /** Where the two routes are reached from outside, for the `retry` of an answer that was not kept. */
   readonly addTarget: string;
   readonly removeTarget: string;
-  /** Applied to both routes before anything else (a rate limit by address). */
-  readonly guard: RequestHandler;
+  /**
+   * How often one address may call the two routes, together. The limiter is made here from these
+   * options, and applied before anything else: a request is counted before its signature is checked.
+   */
+  readonly limit: Pick<RateLimitOptions, 'windowMs' | 'limit'> & Partial<RateLimitOptions>;
   /** Who signed the request, and what they sent. */
   readonly verify: (body: unknown) => Promise<{ ok: true; callerDid: string; payload: Body } | { ok: false; status: number; error: string }>;
   /**
-   * How many versions one signer adds in an hour. `admit` counts the addition it admits, and
-   * `giveBack` returns that count when the addition ends up not held, whatever refused it.
+   * How many versions one signer adds in an hour. `admit` counts the addition it admits and says
+   * when (`at`); `giveBack` returns that one count when the addition ends up not held, whatever
+   * refused it.
    */
   readonly allowance?: {
-    admit(signer: string): { ok: true } | { ok: false; retryAfterSeconds: number };
-    giveBack(signer: string): void;
+    admit(signer: string): { ok: true; at: number } | { ok: false; retryAfterSeconds: number };
+    giveBack(signer: string, at: number): void;
   };
   /** Read a profile from where it is published; throws a ProfileServerError when it cannot. */
   readonly fetchByUri: (uri: string) => Promise<unknown>;
@@ -542,6 +571,7 @@ export interface WriteRouteOptions {
  */
 export function mountProfileServerWrites(app: Express, server: ProfileServer, o: WriteRouteOptions): void {
   const send = o.send ?? ((_req, res, payload) => { res.json(payload); });
+  const guard = rateLimit({ standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' }, ...o.limit });
   const fail = (res: Response, err: unknown) => {
     if (err instanceof AdditionNotKept) { res.status(err.status).json(notKeptAnswer(err, o.addTarget)); return; }
     if (err instanceof RemovalNotKept) { res.status(err.status).json(notKeptAnswer(err, o.removeTarget)); return; }
@@ -550,19 +580,19 @@ export function mountProfileServerWrites(app: Express, server: ProfileServer, o:
     res.status(500).json({ error: 'The profile server could not answer.' });
   };
 
-  app.post('/agent/xapi-profiles/add', o.guard, async (req, res) => {
+  app.post('/agent/xapi-profiles/add', guard, async (req, res) => {
     // Set once the signer's allowance has counted this request, and cleared once the version is held.
-    let counted: string | undefined;
+    let counted: { signer: string; at: number } | undefined;
     try {
       const auth = await o.verify(req.body);
       if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
-      const admitted = o.allowance?.admit(auth.callerDid) ?? { ok: true as const };
-      if (!admitted.ok) {
+      const admitted = o.allowance?.admit(auth.callerDid);
+      if (admitted && !admitted.ok) {
         res.setHeader('Retry-After', String(admitted.retryAfterSeconds));
         res.status(429).json({ error: 'this signer has added as many profiles as one signer may in an hour; try again later', retryAfterSeconds: admitted.retryAfterSeconds });
         return;
       }
-      counted = auth.callerDid;
+      if (admitted) counted = { signer: auth.callerDid, at: admitted.at };
       const p = auth.payload;
       if ((p.profile === undefined) === (p.uri === undefined)) throw new ProfileServerError(400, 'send the profile itself as `profile`, or where it is published as `uri` — one of the two');
       const uri = typeof p.uri === 'string' ? p.uri : undefined;
@@ -584,11 +614,11 @@ export function mountProfileServerWrites(app: Express, server: ProfileServer, o:
       fail(res, err);
     } finally {
       // The allowance is for versions a signer adds. One that was refused, or not kept, added nothing.
-      if (counted !== undefined) o.allowance?.giveBack(counted);
+      if (counted !== undefined) o.allowance?.giveBack(counted.signer, counted.at);
     }
   });
 
-  app.post('/agent/xapi-profiles/remove', o.guard, async (req, res) => {
+  app.post('/agent/xapi-profiles/remove', guard, async (req, res) => {
     try {
       const auth = await o.verify(req.body);
       if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }

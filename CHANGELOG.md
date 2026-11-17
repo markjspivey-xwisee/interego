@@ -1,6 +1,6 @@
 # Changelog
 
-## 2026-11-16 — Foxxi: a profile write reported as not kept stays not kept, and costs its signer nothing
+## 2026-11-17 — Foxxi: a profile write reported as not kept stays not kept, and costs its signer nothing
 
 Three things were left open when profile additions, removals and publications
 were made to wait for their durable write.
@@ -22,13 +22,18 @@ was added, or a profile taken down that was said to be still held.
   names it in `withdraws`. Replay skips a withdrawn record. The withdrawal is
   in the same pod write as the record it withdraws when that record goes with
   a later write, so there is no moment a restart sees one without the other.
+- One record withdraws at most 32 others. Past that many not kept, a change is
+  not sent until one record that only withdraws them has been kept; that record
+  is the same on every attempt. So a pod that is down for a long time is sent
+  no more than it was before, plus one small record.
 - Not covered: a write that landed, could not be read back, and is replayed by
   a restart that happens before the server's next acknowledged write.
 - Records kept before this have no `id` and replay as they did.
 
 **A refused addition spent the signer's hourly allowance.** The count was
-taken before the document was looked at. `SignerHourlyLimit` has `giveBack`,
-and the add route returns the count whenever the version ends up not held: a
+taken before the document was looked at. `SignerHourlyLimit.admit` now says
+when it counted, `giveBack` returns that one count, and the add route returns
+it whenever the version ends up not held: a
 bad document, another agent's profile, a `uri` that could not be fetched, a
 full server, a pod write that was not kept. A publication that is refused or
 not kept after its count was taken returns it too (`publishRefused` in
@@ -39,8 +44,9 @@ unchanged, and is what bounds repeated failures.
 inline in `bridge/server.ts`. They are now `mountProfileServerWrites` in
 `src/xapi-profile-server/service.ts`, mounted by the bridge with the same
 verification, rate limit, allowance, fetch and answer bodies as before, and by
-`tests/a-profile-write-that-was-not-kept-stays-not-kept.test.ts` (21 tests)
-with a made-up pod.
+`tests/a-profile-write-that-was-not-kept-stays-not-kept.test.ts` (24 tests)
+with a made-up pod. The function makes the per-address limiter itself, from
+options, so the limit is in the same place as the routes it guards.
 ## 2026-11-17 — Foxxi: a test takes a guest learner all the way to a course
 
 The guest-learner tests stopped at a guest with no links. One new case in

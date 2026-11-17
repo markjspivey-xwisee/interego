@@ -11027,10 +11027,6 @@ mountProfileServerReads(app, xapiProfileServer, {
 /** Hosts a profile may be fetched from by URI. Anything else is added by its contents. */
 const XAPI_PROFILE_URI_HOSTS: readonly string[] = (process.env.FOXXI_XAPI_PROFILE_URI_HOSTS ?? 'profiles.adlnet.gov,raw.githubusercontent.com,w3id.org')
   .split(',').map(h => h.trim().toLowerCase()).filter(h => /^[a-z0-9.-]+$/.test(h));
-const xapiProfileWriteRateLimit = rateLimit({
-  windowMs: 3_600_000, limit: 60, ipv6Subnet: 56, identifier: 'xapi-profiles',
-  standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
-});
 const xapiProfileAddsBySigner = new SignerHourlyLimit(Number(process.env.FOXXI_XAPI_PROFILE_ADDS_PER_HOUR ?? 12));
 
 /** Read a profile from where it is published. Public targets only, bounded, never followed inward. */
@@ -11066,7 +11062,7 @@ mountProfileServerWrites(app, xapiProfileServer, {
   base: xapiProfileServerBase,
   addTarget: `${bridgeBaseUrl}/agent/xapi-profiles/add`,
   removeTarget: `${bridgeBaseUrl}/agent/xapi-profiles/remove`,
-  guard: xapiProfileWriteRateLimit,
+  limit: { windowMs: 3_600_000, limit: 60, ipv6Subnet: 56, identifier: 'xapi-profiles' },
   verify: async body => {
     const auth = await verifyDelegatedCaller(body as never);
     return auth.ok ? { ok: true, callerDid: auth.callerDid, payload: auth.payload as Record<string, unknown> } : { ok: false, status: auth.status, error: auth.error };
@@ -11094,8 +11090,9 @@ mountProfileAuthoring(app, xapiProfileAuthoring, {
   beforePublish: did => {
     const admitted = xapiProfileAddsBySigner.admit(did);
     if (!admitted.ok) throw new ProfileServerError(429, `This signer has added or published as many profile versions as one signer may in an hour; try again in ${admitted.retryAfterSeconds} seconds.`);
+    return admitted.at;
   },
-  publishRefused: did => { xapiProfileAddsBySigner.giveBack(did); },
+  publishRefused: (did, at) => { if (typeof at === 'number') xapiProfileAddsBySigner.giveBack(did, at); },
   send: (req, res, payload, title) => { sendActionResult(req, res, payload, bridgeBaseUrl, title, []); },
 });
 mountProfileHosting(app, xapiProfileServer, {

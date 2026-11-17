@@ -20,7 +20,7 @@ import { describe, it, expect, beforeEach, afterEach } from 'vitest';
 import express from 'express';
 import type { Server } from 'node:http';
 import type { AddressInfo } from 'node:net';
-import { ProfileServer, ProfileServerError, AdditionNotKept, RemovalNotKept, mountProfileServerWrites, type ProfileRecord } from '../src/xapi-profile-server/service.js';
+import { ProfileServer, ProfileServerError, AdditionNotKept, RemovalNotKept, mountProfileServerWrites, MAX_WITHDRAWN_BY_ONE_RECORD, type ProfileRecord } from '../src/xapi-profile-server/service.js';
 import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
 import { mountProfileAuthoring, mountProfileHosting } from '../src/xapi-profile-server/authoring-http.js';
 import { SignerHourlyLimit } from '../src/open-hosting.js';
@@ -36,6 +36,8 @@ const V1 = `${P}/v/1`, V2 = `${P}/v/2`;
 const OTHER = 'https://buoys.example/profiles/fog-signal';
 const TENDER = 'did:example:buoy-tender', PASSER_BY = 'did:example:passer-by', OPERATOR = 'did:example:operator';
 const ADDS_PER_HOUR = 2;
+/** How many calls one address makes to the add and remove routes, together, in the test's window. */
+const ADDRESS_LIMIT = 40;
 
 const bellBuoy = (version: string, label = 'Bell buoy', id = P): Obj => ({
   '@context': 'https://w3id.org/xapi/profiles/context', id, type: 'Profile',
@@ -95,7 +97,7 @@ beforeEach(async () => {
   app.use(express.json({ limit: '2mb' }));
   mountProfileServerWrites(app, server, {
     base: BASE, addTarget: `${BRIDGE}/agent/xapi-profiles/add`, removeTarget: `${BRIDGE}/agent/xapi-profiles/remove`,
-    guard: (_req, _res, next) => { next(); }, verify, allowance,
+    limit: { windowMs: 60_000, limit: ADDRESS_LIMIT }, verify, allowance,
     fetchByUri: async uri => {
       fetched.push(uri);
       if (uri.endsWith('/missing')) throw new ProfileServerError(502, 'The profile could not be fetched: its host answered 404.');
@@ -104,8 +106,8 @@ beforeEach(async () => {
   });
   mountProfileAuthoring(app, new ProfileAuthoring(server, { now: () => new Date('2026-04-01T06:00:00.000Z'), hostedUnder: `${BASE}/p/` }), {
     base: BASE, limit: { windowMs: 60_000, limit: 100_000 }, verify,
-    beforePublish: did => { if (!allowance.admit(did).ok) throw new ProfileServerError(429, 'as many as one signer may in an hour'); },
-    publishRefused: did => { allowance.giveBack(did); },
+    beforePublish: did => { const a = allowance.admit(did); if (!a.ok) throw new ProfileServerError(429, 'as many as one signer may in an hour'); return a.at; },
+    publishRefused: (did, at) => { allowance.giveBack(did, at as number); },
   });
   mountProfileHosting(app, server, { base: BASE });
   http = app.listen(0, '127.0.0.1');
@@ -213,6 +215,31 @@ describe('a write that failed, and goes to the pod with the next one that lands'
     expect(onPod[3]!.withdraws).toBeUndefined();
   });
 
+  it('names a bounded number of records in any one record, however long the pod is down', async () => {
+    await server.add(bellBuoy(`${OTHER}/v/1`, 'Fog signal', OTHER), PASSER_BY);
+    weather = 'fails';
+    const attempts = MAX_WITHDRAWN_BY_ONE_RECORD * 4;
+    for (let i = 0; i < attempts; i++) await expect(server.add(bellBuoy(V1, `try ${i}`), TENDER)).rejects.toBeInstanceOf(AdditionNotKept);
+    // Removals wait in the same way.
+    await expect(server.remove(OTHER, PASSER_BY)).rejects.toBeInstanceOf(RemovalNotKept);
+    // What the bridge's lattice has in hand: one of each distinct record it was sent.
+    const inHand = [...new Map(composed.map(r => [r.id, r])).values()];
+    for (const r of inHand) expect(r.withdraws?.length ?? 0).toBeLessThanOrEqual(MAX_WITHDRAWN_BY_ONE_RECORD);
+    // Past the bound, the change is not sent: only the one record that withdraws, the same each time.
+    expect(inHand.filter(r => r.kind === 'added')).toHaveLength(MAX_WITHDRAWN_BY_ONE_RECORD);
+    expect(inHand.filter(r => r.kind === 'withdrawn')).toHaveLength(1);
+    expect(inHand.filter(r => r.kind === 'removed')).toHaveLength(0);
+    expect(JSON.stringify(inHand).length).toBeLessThan(attempts * 600);
+
+    weather = 'lands';
+    await server.add(bellBuoy(V1, 'kept at last'), TENDER);
+    expect(held(server)).toEqual([{ version: V1, label: { en: 'kept at last' } }, { version: `${OTHER}/v/1`, label: { en: 'Fog signal' } }]);
+    await expectARestartToAgree();
+    // Nothing is left waiting to be withdrawn.
+    await server.add(bellBuoy(V2, 'next'), TENDER);
+    expect(onPod.at(-1)!.withdraws).toBeUndefined();
+  });
+
   it('leaves records kept before records had ids replaying as they did', async () => {
     onPod = [{ kind: 'added', doc: bellBuoy(V1), by: TENDER, at: '2026-01-01T00:00:00.000Z' }];
     expect(held(await restarted())).toEqual([{ version: V1, label: { en: 'Bell buoy' } }]);
@@ -303,16 +330,38 @@ describe('the hourly allowance of a signer', () => {
 
   it('gives back only what it took', () => {
     const limit = new SignerHourlyLimit(1);
-    limit.giveBack(TENDER);
-    expect(limit.admit(TENDER).ok).toBe(true);
-    expect(limit.admit(TENDER).ok).toBe(false);
-    limit.giveBack(TENDER);
-    expect(limit.admit(TENDER).ok).toBe(true);
+    limit.giveBack(TENDER, 0);
+    const first = limit.admit(TENDER, 1_000);
+    expect(first).toEqual({ ok: true, at: 1_000 });
+    expect(limit.admit(TENDER, 2_000).ok).toBe(false);
+    limit.giveBack(TENDER, 1_000);
+    limit.giveBack(TENDER, 1_000);
+    expect(limit.admit(TENDER, 3_000).ok).toBe(true);
+    expect(limit.admit(TENDER, 4_000).ok).toBe(false);
+  });
+
+  it('gives back the count of the request that failed, not of a later one that did not', () => {
+    const HOUR = 3_600_000;
+    const limit = new SignerHourlyLimit(2);
+    const failing = limit.admit(TENDER, 0), kept = limit.admit(TENDER, 10_000);
+    expect(failing.ok && kept.ok).toBe(true);
+    // The earlier request fails after the later one succeeded.
+    limit.giveBack(TENDER, 0);
+    // An hour after the failed one, the kept one is still inside its hour: one more, not two.
+    expect(limit.admit(TENDER, HOUR + 1).ok).toBe(true);
+    expect(limit.admit(TENDER, HOUR + 2).ok).toBe(false);
   });
 });
 
 describe('POST /agent/xapi-profiles/remove', () => {
   beforeEach(async () => { await server.add(bellBuoy(V1), TENDER); });
+
+  it('is limited by address, with the add route, before a signature is looked at', async () => {
+    const statuses: number[] = [];
+    for (let i = 0; i < ADDRESS_LIMIT + 2; i++) statuses.push((await act(i % 2 ? 'add' : 'remove', {}, '')).status);
+    expect(statuses.slice(0, ADDRESS_LIMIT).every(s => s === 401)).toBe(true);
+    expect(statuses.slice(ADDRESS_LIMIT)).toEqual([429, 429]);
+  });
 
   it('takes a profile down for the agent that added it, and it stops answering', async () => {
     const r = await act('remove', { iri: P });

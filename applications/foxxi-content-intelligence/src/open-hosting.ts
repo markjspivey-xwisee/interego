@@ -87,7 +87,7 @@ export class SignerHourlyLimit {
   private readonly seen = new Map<string, number[]>();
   constructor(private readonly limit: number) {}
 
-  admit(signer: string, now = Date.now()): { ok: true } | { ok: false; retryAfterSeconds: number } {
+  admit(signer: string, now = Date.now()): { ok: true; at: number } | { ok: false; retryAfterSeconds: number } {
     const key = signer.toLowerCase();
     const recent = (this.seen.get(key) ?? []).filter(t => now - t < HOUR_MS);
     if (recent.length >= this.limit) {
@@ -99,15 +99,20 @@ export class SignerHourlyLimit {
     this.seen.delete(key);
     this.seen.set(key, recent);
     if (this.seen.size > MAX_SIGNERS_REMEMBERED) this.seen.delete(this.seen.keys().next().value as string);
-    return { ok: true };
+    return { ok: true, at: now };
   }
 
-  /** Return the count `admit` last took for a signer: what it admitted came to nothing. */
-  giveBack(signer: string): void {
+  /**
+   * Return one count `admit` took for a signer, named by the `at` it answered with: what it
+   * admitted came to nothing. The count of that request is the one returned, not the latest, so
+   * a request that fails after a later one succeeded leaves the later one counted from its own time.
+   */
+  giveBack(signer: string, at: number): void {
     const key = signer.toLowerCase();
     const recent = this.seen.get(key);
-    if (!recent) return;
-    recent.pop();
+    const i = recent?.indexOf(at) ?? -1;
+    if (!recent || i < 0) return;
+    recent.splice(i, 1);
     if (recent.length === 0) this.seen.delete(key);
   }
 }

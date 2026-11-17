@@ -33,10 +33,10 @@ export interface AuthoringRouteOptions {
    * mounted without a limit. The limiter is made here, beside the routes it guards.
    */
   readonly limit: Pick<RateLimitOptions, 'windowMs' | 'limit'> & Partial<RateLimitOptions>;
-  /** Called before a publication with who is publishing; throws a ProfileServerError to refuse it (a count per signer, say). */
-  readonly beforePublish?: (by: string) => void;
-  /** Called when a publication `beforePublish` let through was then refused or not kept, so a count taken there can be returned. */
-  readonly publishRefused?: (by: string) => void;
+  /** Called before a publication with who is publishing; throws a ProfileServerError to refuse it (a count per signer, say). What it returns names what it took. */
+  readonly beforePublish?: (by: string) => unknown;
+  /** Called when a publication `beforePublish` let through was then refused or not kept, with what `beforePublish` returned, so a count taken there can be returned. */
+  readonly publishRefused?: (by: string, taken: unknown) => void;
   /** How the bridge sends an action's result (it adds the links that follow). Defaults to plain JSON. */
   readonly send?: (req: Request, res: Response, payload: Body, title: string) => void;
 }
@@ -101,8 +101,8 @@ export function mountProfileAuthoring(app: Express, authoring: ProfileAuthoring,
   app.post('/agent/xapi-profiles/publish', guard, signed('Profile version published', async (p, by) => {
     // Lint first: a draft with findings is refused without spending the signer's allowance.
     await authoring.lint(p.profile, by).then(view => { if (!view.publishable) throw new LintRefused(view.findings); });
-    o.beforePublish?.(by);
-    const r = await authoring.publish(p.profile, by).catch((e: unknown) => { o.publishRefused?.(by); throw e; });
+    const taken = o.beforePublish?.(by);
+    const r = await authoring.publish(p.profile, by).catch((e: unknown) => { o.publishRefused?.(by, taken); throw e; });
     return {
       ok: true, profile: r.held.id, version: r.held.version, generatedAtTime: r.generatedAtTime,
       ...(r.revises ? { wasRevisionOf: r.revises } : {}), deprecated: r.deprecated, immutable: true,
