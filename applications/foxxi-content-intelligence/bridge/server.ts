@@ -230,6 +230,7 @@ import { mintSessionToken, deriveUserWallet } from '../src/auth.js';
 import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
+import { decideCallerPrincipal, directSubject, type CallerDecision, type CallerPrincipalOptions, type DelegationChecks } from '../src/caller-principal.js';
 import { acceptSessionKeys, sessionKeyPolicy, sessionKeyPolicyFor, SESSION_KEY_CHAIN_ID } from '../src/session-key.js';
 import { deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -1988,52 +1989,55 @@ type BoundCaller =
   | { ok: true; callerDid: string; authMode: 'direct' | 'delegated'; signer: string; payload: Record<string, unknown> }
   | { ok: false; status: number; error: string; hint?: string };
 
-async function bindSignedCaller(body: unknown, opts: { hint?: string } = {}): Promise<BoundCaller> {
-  const rec = recoverSignedRequest(body);
-  if (!rec.ok) {
-    return {
-      ok: false, status: 401, error: `agent signature required: ${rec.reason}`,
-      ...(opts.hint ? { hint: opts.hint } : {}),
-    };
-  }
-  /**
-   * ── ★★ agent_id IS CALLER TEXT, AND IN DELEGATED MODE IT BECOMES callerDid ──────────────────
-   *
-   * A signature proves who holds a key; it proves NOTHING about the string signed alongside it. In
-   * DELEGATED mode this value is returned as `callerDid` and then flows into a Turtle literal on a
-   * PUBLIC register, into a persisted pod row, and into pod-URL derivation — so one unvalidated
-   * control character makes the register unparseable for every reader, and (now that rows are
-   * durable) does so permanently, with no in-band way to remove it. Reject it at the ONE boundary
-   * every caller crosses, rather than escaping at each of the sinks — escaping-per-sink is the
-   * arrangement that has already been wrong here more than once.
-   */
-  if (hasControlChars(rec.agentId)) {
-    return { ok: false, status: 400, error: 'agent_id contains a control character — an identity must be a single line of printable text' };
-  }
-  if (rec.agentId.length > 512) {
-    return { ok: false, status: 400, error: `agent_id is ${rec.agentId.length} characters — the limit is 512` };
-  }
-  const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
-  if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
-    return { ok: true, callerDid: `did:ethr:${rec.signer}`, authMode: 'direct', signer: rec.signer, payload: rec.payload };
-  }
-  const delegationPod = resolveSubjectPodUrl(rec.agentId);
-  let del;
-  try {
+/**
+ * ── ★★ THE ONE PLACE A SIGNED /agent/* CALLER IS DECIDED ────────────────────────────────────
+ *
+ * Recovers the envelope and hands the decision (direct or delegated, see the note above) to
+ * src/caller-principal.ts, supplying the three pod reads a delegated caller needs.
+ * `bindSignedCaller`, `verifyDelegatedCaller` and /agent/issue-credential are shims over this:
+ * each passes the options that keep the behaviour it had when it carried its own copy.
+ *
+ * tests/the-caller-is-decided-in-one-place.test.ts holds this file to it.
+ */
+const signedCallerDelegationChecks: DelegationChecks = {
+  // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
+  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
+  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
+  podFor: (agentId) => resolveSubjectPodUrl(agentId),
+  verify: async (agentId, delegationPod) => {
+    // SSRF guard: this pod is fetched BEFORE authorization succeeds. Reject a target that
+    // resolves to a private/loopback/link-local address (defeats a public hostname pointing
+    // at an internal IP; the literal case is already dropped by resolveSubjectPodUrl).
     await assertSafeFetchTarget(delegationPod);
-    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never });
-  } catch (err) {
-    return { ok: false, status: 401, error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` };
-  }
-  if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
-    return { ok: false, status: 401, error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` };
-  }
-  const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
-  const anchor = vc?.proof?.signerAddress;
-  if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
-    return { ok: false, status: 401, error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''} — only the key that anchors the agent's delegation may sign for them` };
-  }
-  return { ok: true, callerDid: rec.agentId, authMode: 'delegated', signer: rec.signer, payload: rec.payload };
+    return verifyAgentDelegation(agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
+  },
+  anchorOf: async (agentId, delegationPod) => {
+    const vc = await readDelegationCredential(delegationPod, agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
+    return vc?.proof?.signerAddress;
+  },
+};
+
+function resolveSignedPrincipal(body: unknown, opts: CallerPrincipalOptions): Promise<CallerDecision> {
+  return decideCallerPrincipal(recoverSignedRequest(body), signedCallerDelegationChecks, opts);
+}
+
+/**
+ * ── ★★ agent_id IS CALLER TEXT, AND IN DELEGATED MODE IT BECOMES callerDid ──────────────────
+ *
+ * A signature proves who holds a key; it proves NOTHING about the string signed alongside it. In
+ * DELEGATED mode this value is returned as `callerDid` and then flows into a Turtle literal on a
+ * PUBLIC register, into a persisted pod row, and into pod-URL derivation — so one unvalidated
+ * control character makes the register unparseable for every reader, and (now that rows are
+ * durable) does so permanently, with no in-band way to remove it. Reject it at the ONE boundary
+ * every caller crosses, rather than escaping at each of the sinks — escaping-per-sink is the
+ * arrangement that has already been wrong here more than once. (`agentIdBounds` below: this shim
+ * asks for the check; `verifyDelegatedCaller` and /agent/issue-credential never made it.)
+ */
+async function bindSignedCaller(body: unknown, opts: { hint?: string } = {}): Promise<BoundCaller> {
+  const r = await resolveSignedPrincipal(body, { agentIdBounds: true, anchorRefusalExplains: true, ...(opts.hint ? { unsignedHint: opts.hint } : {}) });
+  if (!r.ok) return { ok: false, status: r.status, error: r.error, ...(r.hint ? { hint: r.hint } : {}) };
+  const { subject, key, authMode, payload } = r.principal;
+  return { ok: true, callerDid: subject, authMode, signer: key, payload };
 }
 
 /** Land one projected mesh event into its agent's OWN derived-view tenant
@@ -7766,42 +7770,16 @@ app.get('/agent/issue-credential/affordance', (_req, res) => {
 app.post('/agent/issue-credential', async (req, res) => {
   try {
     // SAME verifiable-delegation auth as /agent/review-record.
-    const rec = recoverSignedRequest(req.body);
-    if (!rec.ok) {
-      res.status(401).json({ error: `agent signature required: ${rec.reason}`, hint: 'sign_request the issuance args, then act urn:iep:action:foxxi:issue-credential.' });
+    const caller = await resolveSignedPrincipal(req.body, {
+      agentIdBounds: false, anchorRefusalExplains: false,
+      unsignedHint: 'sign_request the issuance args, then act urn:iep:action:foxxi:issue-credential.',
+    });
+    if (!caller.ok) {
+      res.status(caller.status).json({ error: caller.error, ...(caller.hint ? { hint: caller.hint } : {}) });
       return;
     }
-    const p = rec.payload;
-    const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
-    let callerDid: string;
-    if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
-      callerDid = `did:ethr:${rec.signer}`;
-    } else {
-      // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
-  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
-  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
-  const delegationPod = resolveSubjectPodUrl(rec.agentId);
-      let del;
-      try {
-        // SSRF guard before the pre-authorization delegation fetch (see verifyDelegatedCaller).
-        await assertSafeFetchTarget(delegationPod);
-        del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
-      } catch (err) {
-        res.status(401).json({ error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` });
-        return;
-      }
-      if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
-        res.status(401).json({ error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` });
-        return;
-      }
-      const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
-      const anchor = vc?.proof?.signerAddress;
-      if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
-        res.status(401).json({ error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''}` });
-        return;
-      }
-      callerDid = rec.agentId;
-    }
+    const p = caller.principal.payload;
+    const callerDid = caller.principal.subject;
     if (!issuerKeySeed) { res.status(503).json({ error: 'issuance not configured (FOXXI_ISSUER_KEY_SEED unset)' }); return; }
     const recipientDid = typeof p.recipient_did === 'string' ? p.recipient_did.trim() : '';
     if (!recipientDid) { res.status(400).json({ error: 'recipient_did required' }); return; }
@@ -8240,39 +8218,11 @@ async function verifyPrivatePerformanceCaller(body: unknown, write: boolean): Pr
 
 async function verifyDelegatedCaller(body: unknown):
   Promise<{ ok: true; callerDid: string; signer: string; payload: Record<string, unknown> } | { ok: false; status: number; error: string }> {
-  const rec = recoverSignedRequest(body);
-  if (!rec.ok) return { ok: false, status: 401, error: `agent signature required: ${rec.reason}` };
-  const p = rec.payload;
-  const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
-  if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
-    // DIRECT mode: the signer IS the actor.
-    return { ok: true, callerDid: `did:ethr:${rec.signer}`, signer: rec.signer, payload: p };
-  }
-  // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
-  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
-  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
-  const delegationPod = resolveSubjectPodUrl(rec.agentId);
-  let del;
-  try {
-    // SSRF guard: this pod is fetched BEFORE authorization succeeds. Reject a target that
-    // resolves to a private/loopback/link-local address (defeats a public hostname pointing
-    // at an internal IP; the literal case is already dropped by resolveSubjectPodUrl).
-    await assertSafeFetchTarget(delegationPod);
-    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
-  } catch (err) {
-    return { ok: false, status: 401, error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` };
-  }
-  if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
-    return { ok: false, status: 401, error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` };
-  }
-  const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
-  const anchor = vc?.proof?.signerAddress;
-  if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
-    return { ok: false, status: 401, error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''}` };
-  }
-  // DELEGATED mode: the signer is the delegation ANCHOR — the delegator's key
-  // (the pod owner), which is exactly what the ownership guard should check.
-  return { ok: true, callerDid: rec.agentId, signer: rec.signer, payload: p };
+  const r = await resolveSignedPrincipal(body, { agentIdBounds: false, anchorRefusalExplains: false });
+  if (!r.ok) return { ok: false, status: r.status, error: r.error };
+  // DIRECT: the signer IS the actor. DELEGATED: the signer is the delegation ANCHOR — the
+  // delegator's key (the pod owner), which is exactly what the ownership guard should check.
+  return { ok: true, callerDid: r.principal.subject, signer: r.principal.key, payload: r.principal.payload };
 }
 
 // ── Hardened delegated-tenant-admin (bug #2b) ──────────────────────────────
@@ -12214,7 +12164,7 @@ async function resolveForCaller(callerDid: string, signer: string, p: Record<str
   if (!root || !isCompositionItem(root)) return { ok: false, status: 404, error: 'no such composition here: name one by its IRI' };
   // A wallet signing for itself is a person; a delegated agent is an agent. Either may say otherwise.
   const kind: 'human' | 'agent' = p.learner_kind === 'human' || p.learner_kind === 'agent'
-    ? p.learner_kind : (callerDid === `did:ethr:${signer}` ? 'human' : 'agent');
+    ? p.learner_kind : (callerDid === directSubject(signer) ? 'human' : 'agent');
   try {
     const admission: Admission | undefined = p.admission === undefined ? undefined : admissionFrom(p.admission);
     // With none in the request, what the learner has kept for each competency stands

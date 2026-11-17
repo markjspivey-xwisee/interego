@@ -222,6 +222,69 @@ tracked tree ran again with them staged; they pass with the floor at 710.
 `lint:changelog` on the full history. The advertised demos still compile
 (`tsconfig.advertised.json`).
 
+## 2026-11-17 — Foxxi bridge: who is calling a signed route is decided in one place
+
+A refactor. No route answers differently.
+
+`applications/foxxi-content-intelligence/bridge/server.ts` decided who signed
+an `/agent/*` request three times: in `verifyDelegatedCaller`, in
+`bindSignedCaller`, and inline in `/agent/issue-credential`. All three
+applied one rule. A caller whose signed `agent_id` carries the recovered
+signer address is that wallet, `did:ethr:<signer>`. Any other `agent_id` is
+accepted only when that agent's delegation, read from its own derived pod, is
+CryptographicallyVerified and the request signer is the key that anchors it.
+A fourth site, `resolveForCaller`, worked out afterwards whether the caller
+had been direct by rebuilding `did:ethr:<signer>` and comparing strings.
+
+The rule is now in `src/caller-principal.ts`, which does no I/O: the pod
+derivation, the delegation check and the anchor read are passed in. It
+returns a `CallerPrincipal` (`subject`, `key`, `authMode`, `kind`, `payload`)
+or a refusal with a status, the message, and a reason code.
+`resolveSignedPrincipal` in server.ts is its one caller. The three former
+copies are shims over it and return what they returned before.
+
+The copies differed in three ways. Each is an option the shim sets, so each
+call site keeps what it did:
+
+- `bindSignedCaller` refuses, with 400, an `agent_id` that contains a control
+  character or is longer than 512 characters, and does so before it looks at
+  whether the caller is direct. The other two do not check
+  (`agentIdBounds`).
+- `bindSignedCaller` ends its "request signer is not the delegation anchor
+  key" refusal with "only the key that anchors the agent's delegation may
+  sign for them". The other two stop after the anchor address
+  (`anchorRefusalExplains`).
+- On a request with no valid signature, `bindSignedCaller` sends the hint its
+  call site gave it, `/agent/issue-credential` always sends its own, and
+  `verifyDelegatedCaller` sends none (`unsignedHint`).
+
+`resolveForCaller` keeps its arguments and compares the caller against
+`directSubject(signer)`, the module's one place a signer address becomes a
+caller DID, where it used to rebuild that string itself. The comparison is
+the same. The handlers of `/agent/content/resolve` and
+`/agent/content/launch` are not edited, and `verifyDelegatedCaller` returns
+the same fields as before, since four modules take it as a dependency.
+
+Not changed: `resolveCaller` (the directory and role resolver),
+`mergeSignedEnvelope`, and the sites that recover a signed request to ask
+about a wallet and not about an agent.
+
+`tests/the-caller-is-decided-in-one-place.test.ts` reads server.ts as text.
+It fails on a `did:ethr:${…signer}` template, a mention of
+`recoverSignedRequest`, or a `mergeSignedEnvelope(` call anywhere but the
+resolver and fifteen named sites, each listed with its reason; a listed site
+that no longer matches fails too. `tests/caller-principal.test.ts` covers the
+rule: direct, delegated, each refusal's status and wording, each option, and
+that `authMode` is direct exactly when the subject is `did:ethr:<signer>`.
+No existing test is edited.
+
+Checks: the nine existing Foxxi test modules of signed callers (110 cases)
+pass unchanged. All of `applications/foxxi-content-intelligence/tests`, run
+together with the 67 root test modules that read a `server.ts`, passes: 294
+files, 4,672 cases, 11 skipped. `tsc --noEmit` is clean on
+`tsconfig.check.json` and on the bridge's own `tsconfig.json`, and
+`npm run lint:all` passes with the new files staged.
+
 ## 2026-11-17 — local-node: the desktop pod server no longer crashes an hour after it starts
 
 `packages/local-node`, which the pod desktop ships, moved to Community Solid
