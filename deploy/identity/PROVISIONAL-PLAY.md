@@ -200,6 +200,27 @@ The guest link needs no ordering of its own. A css-gate with the general guest a
 
 **Applications.** The coached world offers the door beside its own when `CPW_GENERAL_GUEST=1` (with its relay door configured; return path `/play/general/return`). It admits a general guest under `canonicalSubject` of what identity stated, so a guest linked to an account is that account's consultant from its next visit, from any browser linked to it, and is itself again once unlinked. A world session made for a linked guest ends after ten minutes, so an unlink reaches a browser that was already in at its next return through the door. Foxxi's I2IDL-X learner workbench (and the course player that shares its sign-in) offers the door beside its own guest when the bridge has `FOXXI_I2IDLX_GENERAL_GUEST=1` (with the workbench's guest service key; return path `/i2idlx/learning/guest/general/return`, on the bridge's origin, which is the audience). It admits a general guest as a guest learner under `canonicalSubject`, with the operations its own guest has and no others. Its own guest's sessions are re-checked with identity every 30 seconds; a general guest's cannot be, because identity answers an application token only to a caller holding the introspection secret. So such a session is bounded when it is made: at `guestExpiresAt` or after one hour, whichever is sooner, and after ten minutes for a linked guest (`LINKED_GUEST_SESSION_MS` in `applications/_shared/guest-access/session.ts`, the bound the coached world uses). Foxxi's dashboard does not use the door: its guest is a key the tab holds, which signs every request, and it is a static site on an origin with no server to exchange a code (`applications/foxxi-content-intelligence/DURABLE-GUEST.md`, "The general guest"). A linked guest is not claimed: the door's token is no bearer once the link is confirmed, and the record's writer refuses it a credential of its own until the owner unlinks it.
 
+## What an application's bridge may write into a guest's pod
+
+A guest's own token writes two checkpoint documents and nothing else (above). An application's bridge that keeps a guest's records in the guest's pod writes them with the gate's operator bearer, the one secret the gate knows, and until this section's rule the gate let that bearer write any path of any pod: into a guest's pod after its deadline, and after identity had closed and purged it. Identity and the relay are not such writers: both reach the store directly at their `CSS_URL` (identity with no bearer at all), so nothing here applies to identity's provisioning, its sign-in record or its cleanup.
+
+For `PUT`, `POST` and `PATCH` with the operator bearer into a pod named `u-try-play-<32 hex>` or `u-try-guest-<32 hex>`, the gate reads the pod's sign-in record from the store at every write and decides on it:
+
+| The record | The write |
+|---|---|
+| a tombstone (`deletedAt`) | `410 guest_pod_closed` |
+| unclaimed, its anchor's deadline passed (closed by the janitor yet or not) | `410 guest_pod_expired` |
+| none, or one with no anchor that names this pod | `409 guest_pod_not_open` (no account stands behind the pod, so no cleanup would ever visit it) |
+| not readable, or not a JSON object | `503 guest_pod_state_unavailable`, `Retry-After: 2`; nothing is let through unread |
+| holds a wallet, passkey or DID (the guest was claimed) | written as any registered account's pod is, with no bound |
+| unclaimed and before its deadline | let through, within the bound below |
+
+The pod's sign-in record and write budget (and their `.acl` / `.meta`, and a `POST` that names one in its `Slug`) are refused outright for a guest's pod (`403 guest_pod_private_document`): identity writes the first past the gate and the gate writes the second itself, so a write of either through the gate is nobody's, and one over a tombstone would re-open a closed guest. `DELETE` is never refused by this rule (operator tooling removes what a closed pod still holds with it), and reads are untouched. The legacy evaluation ids (`u-try-<12 hex>`) have no anchor: only their tombstone refuses a write.
+
+A live guest's pod takes at most `GUEST_POD_OPERATOR_WRITES` such writes (default 4096) and `GUEST_POD_OPERATOR_BYTES` of declared `Content-Length` in all (default 128 MiB), each write at most `GUEST_POD_OPERATOR_RESOURCE_BYTES` (default 8 MiB): `507 guest_pod_operator_write_limit` and `413 guest_pod_operator_resource_limit` past them. The count is kept in the gate's process, not on the pod: a restart starts it again and each replica allows the whole bound. It is a ceiling on a runaway writer and on how much a cleanup has to purge, not an account of storage. The durable ledger (`play-budget.json`) is the guest's own, bound to the guest's token, and is not charged for a bridge's writes.
+
+The gate reads the anchor's claims (`userId`, `expiresAt`) without checking its signature, which needs identity's key: it reads them from the one document only identity writes. A write the gate let through just before a closure can still reach the store after it; the rule holds from the next write on.
+
 ## Configuration and protocol
 
 Identity also needs its existing stable `TOKEN_SIGNING_KEY`, `CSS_URL`, `RELAY_URL`, and canonical HTTPS `CSS_PUBLIC_URL`. The allowlisted application origins are added to identity's existing explicit CORS allowlist. No wildcard or shared Play secret is introduced.
