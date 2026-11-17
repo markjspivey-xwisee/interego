@@ -82,7 +82,7 @@ import { guestApplications, subjectAttributes, type GeneralTokenGrant, type Subj
 import { doorHostGuard, mountGeneralGuest, parseDoorOrigin } from './provisional-general-guest-routes.js';
 import { mountGuestLink } from './provisional-guest-link-routes.js';
 import { guestLinkDashboard } from './provisional-guest-link-dashboard.js';
-import { advertisesNativeDelete, playGameDataResidue, purgeProvisionalPlayPod, type PlayGameDataResidue } from './provisional-play-cleanup.js';
+import { advertisesNativeDelete, playGameDataResidue, purgeProvisionalPlayPod, type PlayGameDataResidue, type PlayPurgeProgress } from './provisional-play-cleanup.js';
 import { isAdmissionLedger, readAdmissionLedger } from './provisional-play-admission.js';
 import { hostedBetaNotice, hostedPrivacyUrl, hostedTermsPolicy, readTermsAcceptance, type TermsAcceptance } from './hosted-terms.js';
 import {
@@ -702,6 +702,13 @@ const reopenedByBackfill = new Map<string, { residueLogged: boolean }>();
 // if the tombstone were a deletion's. Now a purge of an owner already here returns at once, so at
 // most one purge of an owner is queued or running; the purge takes its owner out when it returns.
 const playPurgesInFlight = new Set<string>();
+
+// What the passes of a Play owner's purge keep between them while it is unfinished, for a pod that
+// holds more than one pass lists (provisional-play-cleanup.ts PlayPurgeProgress): the documents its
+// store refused to delete, and where a pass that could delete nothing stopped. It only saves work:
+// where a purge has got to is read from the pod at every pass, so after a restart the purge goes on
+// without it. Dropped with the owner when its purge finishes.
+const playPurgeProgress = new Map<string, PlayPurgeProgress>();
 
 // Play owners whose deletion (POST /users/me/delete) the pod may have taken without confirming it,
 // nothing having settled it, so the route answered 503 and asked for a retry with the same token:
@@ -6963,12 +6970,18 @@ async function purgePlayOwner(userId: string, reopen?: PlayReopen): Promise<Play
   let outcome: PlayPurgeOutcome;
   try {
     outcome = await withIdentityPodMutex(userId, async () => {
-      const purge = await purgeProvisionalPlayPod({ userId, cssUrl: CSS_URL,
-        close: async listed => {
+      let progress = playPurgeProgress.get(userId);
+      if (!progress) playPurgeProgress.set(userId, progress = { retained: new Set() });
+      const purge = await purgeProvisionalPlayPod({ userId, cssUrl: CSS_URL, progress,
+        close: async (listed, whole) => {
           if (reopen || reopenedByBackfill.has(userId)) {
             const residue = playGameDataResidue(new URL(`${userId}/`, CSS_URL), listed);
             gameData = residue.gameData.length;
-            leftBecause = reopen ? await reopenFinishedPlayPurge(userId, residue, reopen) : playResidueOutside(residue);
+            // A pod that holds more than one pass lists holds more than game data's few documents,
+            // whatever the part listed names: the backfill, which re-opens a purge for its game
+            // data alone, leaves it as it finds it.
+            leftBecause = !whole ? 'outside: its pod holds more than one cleanup pass lists'
+              : reopen ? await reopenFinishedPlayPurge(userId, residue, reopen) : playResidueOutside(residue);
             if (leftBecause !== undefined) return 'kept';
           }
           const r = await deleteUserCompletely(userId, { lockHeld: true, stillDeletable: playOwnerPurgeable, playPurge: true });
@@ -6986,9 +6999,11 @@ async function purgePlayOwner(userId: string, reopen?: PlayReopen): Promise<Play
       // out an owner it queued itself): an on-demand load may have queued it since the run began.
       const held = purge.outcome === 'kept' && !reopen && leftBecause !== undefined;
       if (!reopen || leftBecause === undefined) {
-        if (registryLeft === undefined && !held) unfinishedPlayPurges.delete(userId);
+        // 'partial': the account is closed and its pod holds more than a pass lists; the next pass goes on.
+        if (registryLeft === undefined && !held && purge.outcome !== 'partial') unfinishedPlayPurges.delete(userId);
         else unfinishedPlayPurges.add(userId);
       }
+      if (purge.outcome === 'partial') log(`Janitor: the purge of ${userId} goes on at the next pass, its account closed: its pod holds more than one pass lists (${purge.deleted ?? 0} resource(s) deleted in this one)`);
       // Logged once: the mark is cleared, so neither a later pass nor a restart comes back to it. A
       // finished purge was logged only with what it kept, which every guest who had saved had.
       if (purge.outcome === 'purged') {
@@ -7022,7 +7037,7 @@ async function purgePlayOwner(userId: string, reopen?: PlayReopen): Promise<Play
     outcome = `error:${(err as Error).message}`;
   } finally {
     playPurgesInFlight.delete(userId);
-    if (!unfinishedPlayPurges.has(userId)) reopenedByBackfill.delete(userId);
+    if (!unfinishedPlayPurges.has(userId)) { reopenedByBackfill.delete(userId); playPurgeProgress.delete(userId); }
   }
   return outcome;
 }
@@ -7059,7 +7074,7 @@ async function finishPlayPurge(userId: string): Promise<void> {
 // delete the game data and its two containers and clear the mark. Nothing new deletes anything.
 
 /** What a purge of a Play owner came to (purgePlayOwner), which the game-data backfill tallies. */
-type PlayPurgeOutcome = 'purged' | 'closed' | 'in-flight' | `kept:${string}` | `error:${string}`;
+type PlayPurgeOutcome = 'purged' | 'partial' | 'closed' | 'in-flight' | `kept:${string}` | `error:${string}`;
 /**
  * One owner's turn in the game-data backfill: its guest deadline (ms) from the admission ledger, and
  * the run's answer from the store on its native delete (asked once a run). `purging`: the purge went
