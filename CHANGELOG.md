@@ -1,5 +1,24 @@
 # Changelog
 
+## 2026-11-17 — A runner step that opts an already-registered application into the general guest
+
+`tools/coached-world-guest-provision.mjs` sets an application up from nothing.
+An application identity already admits guests for needed a smaller step, and
+editing identity's `PROVISIONAL_PLAY_CLIENTS` by hand risks a value identity
+will not start with.
+
+- `tools/general-guest-opt-in.mjs` and the dispatch-only workflow
+  `general-guest-opt-in.yml` add `generalGuest` and `generalGuestReturnPath`
+  to the application's existing entry, then set the application's door origin
+  and its switch. The door is the one identity states. Identity is written
+  first, the switch last.
+- It creates no key, account or entry, and refuses before any write where the
+  general guest is off at identity, the entry is missing, the application's
+  guest key is not set, or the list would not parse. Every other entry and
+  field is carried over unchanged and checked to be.
+- Nothing is deployed and no value is printed. Unticked `apply` is a dry run.
+- One application is known so far: the Foxxi learner workbench.
+
 ## 2026-11-16 — jev-harness: a test selection can replace an earlier one
 
 A selection could only be superseded by an outcome, and an outcome is a score:

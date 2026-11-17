@@ -1,0 +1,43 @@
+name: Opt an application into the general guest
+# For an application identity already admits guests for (tools/general-guest-opt-in.mjs): adds the
+# general guest to its entry in identity's PROVISIONAL_PLAY_CLIENTS and turns its own switch on.
+# Creates no key, account or entry. No value is printed and nothing is deployed: the run ends by
+# naming the services to redeploy. Unticked `apply` is a dry run. Dispatch only, from master.
+on:
+  workflow_dispatch:
+    inputs:
+      application:
+        description: 'The application to opt in'
+        type: choice
+        options:
+          - foxxi-workbench
+      apply:
+        description: 'Write (unticked = dry run that lists what it would do)'
+        type: boolean
+        default: false
+permissions:
+  contents: read
+concurrency:
+  # The same list the coached world's provisioning writes: never two writers at once.
+  group: coached-world-guest-provision
+  cancel-in-progress: false
+jobs:
+  opt-in:
+    if: github.repository == 'markjspivey-xwisee/interego' && github.ref == 'refs/heads/master'
+    runs-on: ubuntu-latest
+    timeout-minutes: 10
+    steps:
+      - uses: actions/checkout@v6
+      - uses: actions/setup-node@v6
+        with:
+          node-version: '20'
+      - name: Install (the shared helper imports ethers)
+        run: npm ci --ignore-scripts
+      - name: Verify the helper
+        run: node --test tests/general-guest-opt-in.test.mjs
+      - name: Opt in (values never printed)
+        env:
+          RAILWAY_PROJECT_TOKEN: ${{ secrets.RAILWAY_PROJECT_TOKEN }}
+          APPLICATION: ${{ inputs.application }}
+          APPLY: ${{ inputs.apply }}
+        run: node tools/general-guest-opt-in.mjs
