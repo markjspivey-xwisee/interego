@@ -86,6 +86,29 @@
       }
     },
     {
+      "comment": [
+        "CSS 7.3 lists a container in the internal value storage by running `for await` over the",
+        "locking ResourceStore's stream, which cannot be read that way: the hourly expired-entry sweep",
+        "waited out the resource lock and then crashed the process. PipedJsonResourceStorage reads the",
+        "listing through a pipe and changes nothing else; source, baseUrl and container are as in",
+        "css:config/storage/key-value/resource-store.json."
+      ],
+      "@type": "Override",
+      "overrideInstance": {
+        "@id": "urn:solid-server:default:JsonResourceStorage"
+      },
+      "overrideParameters": {
+        "@type": "PipedJsonResourceStorage",
+        "source": {
+          "@id": "urn:solid-server:default:ResourceStore"
+        },
+        "baseUrl": {
+          "@id": "urn:solid-server:default:variable:baseUrl"
+        },
+        "container": "/.internal/"
+      }
+    },
+    {
       "@type": "Override",
       "overrideInstance": {
         "@id": "urn:solid-server:default:MetadataWriter_Mapped"
@@ -242,8 +265,9 @@
       "comment": [
         "Shared Redis read-write/resource locker across replicas (ephemeral, atomic).",
         "expiration 90000 ms, not 6000, for the reason given on the ResourceLocker override in",
-        "pgsl-server.json: css-gate waits up to 90 s for a response head, and an expiry that fires",
-        "first answers 500 while the operation carries on without its lock."
+        "pgsl-server.json: css-gate waits up to 90 s for a response head. An expiry that fires while a",
+        "write's body is still arriving destroys the request (nothing is stored); one that fires after",
+        "the body is read answers 500 while the operation carries on without its lock."
       ],
       "@id": "urn:solid-server:default:ResourceLocker",
       "@type": "WrappedExpiringReadWriteLocker",

@@ -1,5 +1,334 @@
 # Changelog
 
+## 2026-11-17 — local-node: the desktop pod server no longer crashes an hour after it starts
+
+`packages/local-node`, which the pod desktop ships, moved to Community Solid
+Server 7.3.0 in the nodemailer change, and on 7.3.0 its hourly expired-entry
+sweep crashed the process. Every expiring storage CSS builds (cookies,
+forgot-password records, ownership tokens, IdP adapter entries) sweeps once an
+hour by walking `/.internal/`, and 7.3.0 cannot list a container there (the
+entry below has the mechanism). Nobody can sign in, because the loopback
+gateway forwards only requests under the pod's own path. But CSS writes
+`/.internal/` itself at boot, so the walk always has a container to list.
+local-node's own source and `config/file-pod.json`, run against CSS 7.3.0 with
+the sweep called once, waited out the 6 s resource lock and crashed with
+"callback is not a function", both straight after a fresh start and with two
+cookies stored.
+
+**The fix is config only.** `config/file-pod.json` now points the internal
+value storage, `urn:solid-server:default:JsonResourceStorage`, at
+`urn:solid-server:default:ResourceStore_Backend`, the file backend, instead of
+the full ResourceStore. The backend answers a container with its quads, not
+wrapped, which is how CSS's own `BackendKeyValueStorage` reads the same
+container. With it, the same sweep returned in 13 ms after a fresh start and
+in 28 ms with two cookies stored, deleting the expired one and keeping the
+live one.
+
+The css image's class was not reused here. local-node gives Components.js
+only CSS's own component graph (`isolatedCssModules`, so no ancestor
+`node_modules` reaches the loader), so wiring `PipedJsonResourceStorage` in
+would mean shipping a hand-made component module inside the desktop app. The
+backend route uses only CSS's own classes. What it gives up
+is the resource lock on the documents this storage owns (accounts, cookies,
+OIDC and setup entries). Besides CSS's own setup at boot and the sweeps, only
+CSS's account and OIDC routes write those. They are outside the pod's path, so
+the gateway answers 404 before CSS sees them. If the gateway ever forwards
+those routes, this storage needs the lock back and a listing fix of its own,
+and the comment beside the override says so.
+
+**Reader counts stay in memory.** The resource locker keeps a reader count for
+each read lock. On this config it wrote every count through
+`BackendKeyValueStorage` as a file under `/.internal/locks/`, and deleted it
+when the read ended, so every pod request wrote `/.internal/`. The sweep walks
+all of `/.internal/`, and a count is a bare number with no key: a sweep that
+ran while a pod read was open threw "Cannot read properties of undefined
+(reading 'startsWith')" and deleted nothing that hour. A second override makes
+`BackendKeyValueStorage` a `MemoryMapStorage`, as
+`css:config/storage/key-value/memory.json` does, beside the in-memory locker
+that uses the counts; the css image keeps its counts in memory too. Nothing
+else is stored there, and no pod request writes `/.internal/` now.
+
+**The gateway drops `Forwarded`.** It already dropped `X-Forwarded-*`. CSS
+takes the host and scheme of every identifier from RFC 7239's `Forwarded`
+when a request carries it, so a pod read sent with
+`Forwarded: host=foreign.example` was answered 500. It could not reach another
+path. The header is now removed with the others.
+
+**The tests.** `tests/local-node-expired-sweep.test.ts` boots a real local node
+and runs three of the four sweeps directly on the instances CSS built (the IdP
+adapter's has no `@id` to reach it by, and walks the same storage): on a fresh
+start, with an expired and a live cookie stored, and while an 8 MB pod read is
+left unread. Each sweep races a budget of 3 s, half the lock, because a sweep
+that waits for the lock never returns at all. A first case checks that the
+gateway answers 404 itself for the account, OIDC and internal routes, also
+when the path arrives with literal or percent-encoded dot segments. With
+master's `config/file-pod.json` the three sweep cases fail by name at 3 s.
+Without the second override the open read's sweep fails on the count. A
+gateway that forwarded the raw request path, not the resolved one, fails the
+first case. `tests/local-node.test.ts` gains a `Forwarded` case, which got 500
+before the gateway change.
+
+The new test file takes the linted scope to 717, one past the floor's slack,
+so `MIN_FILES` in `tools/lint-gate.mjs` moved to 682, the number the gate
+named. With master's own new files merged in, the scope is 719 and the gate
+named 684, which is the value this change leaves.
+
+Checks: `tests/local-node-expired-sweep.test.ts` (4 tests),
+`tests/local-node.test.ts` (9) and pod-desktop's `local-federation.test.ts`,
+which also starts a local node, pass with the typecheck gate clean. They ran
+against CSS 7.3.0 from the accessor's lockfile, the same tarball as the root
+lockfile's, through a scratch `node_modules`, not the root lockfile's exact
+tree. Node 22.22.0. The desktop app itself was not started.
+
+Not covered: a reader count that an earlier start left under
+`/.internal/locks/` (one stopped mid-read) stays on disk, and every sweep
+fails on it, logged and not a crash, until the file is deleted; with nobody
+able to sign in there is nothing for the sweeps to delete anyway.
+`examples/multi-agent/css-config.json` and `css-config-redis.json` import the
+same key-value and locker configs and crash the same way on 7.3.0, which both
+`npx --yes @solid/community-server@7` and mcp-server's local fallback (the
+root's CSS binary) start. That was already so on master. Those configs serve
+the account and OIDC routes, so this override does not fit them, and the
+choice between pinning 7.2.0 there (with its nodemailer 9) and a listing fix
+they can load is left to its own change.
+
+## 2026-11-17 — Dependencies: the pod server moves to Solid server 7.3.0, and uuid 11.1.1 under Comunica
+
+`npm audit` lists one advisory against both Solid server trees,
+GHSA-w5hq-g745-h8pq ("uuid: Missing buffer bounds check in v3/v5/v6 when buf is
+provided", moderate, uuid below 11.1.1). Every Community Solid Server 7 release
+brings uuid 9 in through Comunica 2: `@comunica/expression-evaluator` 2.10.0
+asks for `^9.0.0`, and its latest release, 3.2.1, still does. The root lockfile
+reported it nine times (local-node's CSS 7.3.0), and
+`integrations/pgsl-css-accessor`'s lockfile, which the css image
+(`interego-css-pgsl`) installs with `npm ci`, reported it with the minimatch
+chain of its build tools twelve times. This change clears both, and moves the
+css image from CSS 7.2.0 to 7.3.0, the newest stable release. As published,
+7.3.0 crashes the pod server. It does so in two places, and one of them also
+has a second fault. The accessor now works around all three, and around a
+lock that 7.3.0's container walk holds too long.
+
+**What 7.3.0 breaks.** 7.3.0's locking store hands every write, as 7.2.0
+already did every read, a stream object made with `Object.create` over the
+real stream, whose `read()` renews the lock. Node's async iterator, and
+readable-stream's, accept a `'readable'` event only when it is emitted on the
+object they were given. The real stream emits them on itself, so `for await`
+over the derived object never wakes. When the lock expires and the stream
+closes, the iterator calls an undefined callback: "TypeError: callback is not
+a function", thrown from a stream callback, which ends the process.
+`src/NativeStageOperationHandler.ts` already reads a locked stream through
+events for this reason. Two places run `for await` over one:
+
+- The accessor's write path. `PgslDataAccessor.writeDocument` reads every body
+  with `for await`, as do `readNativeCommitCommand` and pgsl-store's
+  `writeStream`. Unpatched, `test:server` crashed before the boot line, at the
+  first write `initialize-root` makes.
+- CSS's internal value storage. 7.3.0's `JsonResourceStorage` lists a
+  container by running `for await` over its body, which is the read lock's
+  derived stream. Every expiring storage (cookies, forgot-password records,
+  ownership tokens, IdP adapter entries) sweeps once an hour by walking
+  `/.internal/` this way. The listing has a second fault, which the crash
+  hides: it asks for the container with no type preference. The converting
+  store reads "no preference" as "anything but an internal type"
+  (`cleanPreferences`), so the body arrives serialized as Turtle, the loop
+  meets bytes, and it finds no member. 7.2.0 read the members from the
+  container's metadata, which 7.3.0 no longer fills for a plain read.
+
+**The fixes.** `src/LockedStream.ts` adds `throughPipe(stream)`, which pipes a
+locked stream into a `PassThrough` of the same mode with CSS's own
+`pipeSafely`. On an error, `pipeSafely` leaves an HTTP request body open, as
+CSS does, instead of destroying the response with it. The pipe reads through
+the derived `read()` as it starts and each time the `PassThrough` drains, so
+the lock is renewed whenever the pipe pulls: read slowly through CSS's own
+`createExpiringRepresentation`, a 200 KB body renewed it 55 times. A chunk
+that arrives while the pipe is flowing passes without a renewal, so a body
+sent more slowly than it is read renews the lock only as the read starts.
+`writeDocument` reads its body through it, which covers all three readers.
+`src/PipedJsonResourceStorage.ts` is CSS's `JsonResourceStorage` with two
+methods changed: a container is asked for as internal quads, and its listing
+is read through `throughPipe`, to the end, before any member is visited.
+Documents are still read and written as CSS does. Both configs wire it with an
+Override of `urn:solid-server:default:JsonResourceStorage`, beside the
+KeyValueStorage override that already serves this sweep.
+
+Each piece is needed. In a scratch tree laid out as `pgsl-css-server.yml` lays
+it out, from this lockfile, on the in-memory backend:
+
+- unpatched, `test:server` and `test:expiry` both crashed at boot, 7 s in;
+- with the write fix and CSS's own `JsonResourceStorage`, `test:expiry` waited
+  out the 90 s lock and crashed at 97 s;
+- with the quads request but no pipe, the same, at 97 s;
+- with the pipe but no quads request, the sweep returned at once and deleted
+  nothing: `test:expiry` failed on the expired cookie still being stored;
+- with both, `test:contexts:offline`, `test:server` (the boot line exactly
+  once), the 23-case contract battery and `test:expiry` all passed, and each
+  sweep took milliseconds.
+
+**A listing is read before the walk goes on.** CSS 7.3 walks each member's
+sub-tree from inside its loop over the parent container's listing, so the
+parent's read lock stays held for as long as that sub-tree takes, and is
+renewed only when the listing is read again. Once a listing outgrows the pipe's
+buffers, nothing reads it while a sub-tree is walked. On a private PostgreSQL
+16, with the lock cut to 1.5 s and one of eight sub-containers holding 801
+documents, the parent's lock expired, the listing was destroyed, and the walk
+stopped at 801 of 808 with "Premature close". A failed walk deletes nothing, so
+expired entries would pile up and lengthen the next sweep. Read to the end
+first, the same walk found all 808. CSS 7.2 never held a listing open across
+the walk either. `test:expiry` now walks 24 sub-containers through a store that
+records each fetch, and fails if a member is fetched while a listing is still
+unread; the previous class fails it in memory and on PostgreSQL.
+
+`test:expiry` also races each sweep against 10 s, so a listing that waits for
+the lock fails there by name, at 18 s with CSS's own `JsonResourceStorage`,
+instead of crashing the run at 97 s. `pgsl-css-server.yml` now runs
+`test:expiry` on PostgreSQL as well as in memory.
+
+**What else 7.3.0 changes for the pod server.** Between 7.2.0 and 7.3.0, the
+write, delete and condition code of `DataAccessorBasedStore` is unchanged, and
+so are `BasicConditions` and the ETag handler. So the store behaviour that
+identity's code and tests describe as "CSS 7.2 with the PGSL accessor" (ETags,
+`If-Match` on a missing document, refusals) carries over.
+`deploy/identity/AUTH-ARCHITECTURE.md` now says production runs 7.3, and
+`tools/railway-services.mjs` names 7.3.0 among the releases whose boot it
+describes. Comments in identity's code that name the version their probes ran
+against are left as written, and so is the one in `provisional-play-cleanup.ts`
+that calls the production store 7.2: any edit there rebuilds and redeploys
+identity. A container's `ldp:contains` triples now
+stream in its body instead of sitting in its metadata; the contract battery's
+container cases pass. `ServerInitializer`, which prints the boot line the
+deploy tool waits for, and the `config/app` tree are byte-identical, and
+`tests/build-sha-is-verifiable.test.ts` now pins 7.3.0.
+`WrappedExpiringReadWriteLocker` gains a `maxHoldDuration`, off by default,
+and the 90 s override leaves it off. When a write's lock expires, 7.3.0
+destroys its body if the body is still arriving (the client sees a reset and
+nothing is stored), and otherwise answers 500 while the write carries on
+without the lock; the comments on that override in both configs now say so.
+And `identity/handler/default.json` gains a "recover WebID" account route,
+which lets a signed-in CSS account regenerate the profile card of a WebID in
+one of its own pods. Allow-all authorization already lets anyone write there,
+so it adds nothing that was not already possible. CSS 7.3.0 asks for
+nodemailer `^10.0.9`, whose floor is below the first fixed release, 10.1.4, so
+the override stays. Its test now checks CSS's own range against that release,
+in place of the `^9.0.1` it pinned, and its header no longer says the root
+overrides nodemailer: the root resolves 10.3.1 through CSS's own range.
+
+The 8.0.0 alphas were not an alternative: nothing has been published on that
+line since 2026-03-13, it needs Node 22 (the image and its CI run Node 20), it
+moves to Components.js 6, and it asks for nodemailer `^8.0.2`, which has two
+high advisories.
+
+**uuid.** The advisory needs a caller-supplied buffer. expression-evaluator
+2.10.0 calls uuid three times, for SPARQL's `UUID()`, `STRUUID()` and
+`BNODE()`, each a bare `uuid.v4()`, so it was never reachable here, and this
+is hygiene. The override is 11.1.1 exactly because Comunica 2 is CommonJS and
+`require()`s uuid. 11.1.1 is the last fixed release with a CommonJS build;
+12 and later are ESM-only, and uuid's maintainers expect to deprecate the 11.x
+CommonJS line around 2028. Both `package.json` files now carry
+`"@comunica/expression-evaluator": { "uuid@<11.1.1": "11.1.1" }`. A
+range-keyed override rewrites only a dependency whose range intersects the
+key, so this one matches nothing once expression-evaluator asks for `^11.1.1`
+or CSS moves to Comunica 5, and should then be deleted. Under it,
+expression-evaluator resolved by a scratch install ran `UUID()`, `STRUUID()`
+and `BNODE()` through both its async and sync evaluators against uuid 11.1.1,
+loaded from `dist/cjs` with Node's `require(esm)` turned off.
+
+npm wrote the accessor's lockfile itself. In the root lockfile it did not:
+npm's lockfile-only pass does not walk past a workspace link, and the CSS
+there sits under the `packages/local-node` workspace. So the nested
+`@comunica/expression-evaluator/node_modules/uuid` 9.0.1 entry was deleted by
+hand, and expression-evaluator now resolves the hoisted uuid 11.1.1 that was
+already there. `npm ci` accepts the root lock with or without the override,
+so no install step would notice the two drifting apart. The new
+`integrations/tests/comunica-uuid-is-patched.test.ts` reads both trees and
+fails if the override goes, if any locked uuid is below 11.1.1, or if any
+expression-evaluator would load a uuid that is not 11.x at 11.1.1 or later.
+
+**minimatch in the accessor.** The accessor's `package.json` also takes the
+root's `"@typescript-eslint/typescript-estree": { "minimatch@>=7.0.0
+<11.0.1": "11.0.8" }`, for the same advisory the 2026-11-16 entry cleared
+in the root. It is dev only, under componentsjs-generator 4.3.0's
+typescript-estree 7.18.0, which loads minimatch but calls it only for a
+project service. The generator parses without one. The accessor's build ran
+here on 11.0.8, generated its components, and passed `test:contexts:offline`.
+
+**Lockfile.** The accessor's `package.json` asks for
+`@solid/community-server` `^7.3.0` in place of `^7.1.9`. Its lockfile changes in
+exactly these entries:
+- `@solid/community-server` 7.2.0 to 7.3.0, whose own nodemailer range moves
+  from `^9.0.1` to `^10.0.9`, the only range that differs between the two
+  releases;
+- `uuid` 9.0.1 to 11.1.1;
+- `minimatch` (dev) 9.0.9 to 11.0.8;
+- `@isaacs/nonrecursive-glob-match` 1.1.0 (dev), new;
+- `minimatch/node_modules/brace-expansion` 5.0.13 (dev), new;
+- `minimatch/node_modules/balanced-match` 4.0.4 (dev), new.
+
+nodemailer stays 10.3.1, componentsjs 5.5.1, and the generator's componentsjs
+6.4.0. The new CSS entry is byte for byte the root lockfile's 7.3.0 entry. The
+root lockfile loses the one nested uuid entry, and nothing else changes in it.
+Each time it ran, npm 10.9.4 dropped the `libc` fields of the eight Linux
+packages of the Claude Code CLI and the agent SDK and rewrote the flags of the
+`applications/foxxi-content-intelligence` entry; those lines are kept as they
+are on master.
+
+**Audit.** `npm audit --package-lock-only`, measured on 2026-11-17: the root
+lockfile goes from 9 moderate to 0, the accessor's from 12 moderate to 0, and
+stays at 0 on CSS 7.3.0.
+
+`deploy/Dockerfile.css` is left as it is. Its header says nothing builds it,
+it is not in `deploy/images.json`, and its unpinned global install has no
+lockfile for an override to reach. `examples/multi-agent`'s
+`npx --yes @solid/community-server@7` has no lockfile either; the local-node
+entry above says what 7.3.0 does to its config.
+
+**What runs it.** `pgsl-css-server.yml` and `pgsl-css-accessor.yml` run on a
+push that touches the accessor. Bridge Typecheck's durable-LRS job installs
+the accessor tree. The root suite, Local Pod Windows Installer and Desktop
+Packaging install from the root lockfile. After merge, auto-deploy rebuilds
+`interego-css-pgsl` and rolls the css singleton, now on CSS 7.3.0 with uuid
+11.1.1 under its Comunica; the deploy tool waits for the same boot line. It
+also rebuilds and redeploys twelve more services, because the root
+`package.json`, `package-lock.json` and `packages/local-node` sit inside their
+bundle scope: relay, bridge, dashboard, pgsl-browser, discord, and the foxxi,
+wsp, agp, jev-harness, wrd, pev and coached-world bridges. Those images install
+from the root lockfile (`npm install --workspaces` in `deploy/Dockerfile.relay`
+and `Dockerfile.dashboard`, `npm ci` in `Dockerfile.interego-bridge`),
+local-node's CSS included, so the rebuilds do change them. The relay roll
+starts the client-signature live check, and one deploy event is published per
+service, thirteen in all. identity, css-gate and the static sites are not
+rebuilt.
+
+Checks: the scratch tree above, rebuilt from this branch, passes the four
+in-memory steps on Node 20.20.2 (the image's major) and on 22.22.0. On Node 20,
+`test:server` (the boot line once), the contract battery (23 of 23) and
+`test:expiry` pass on a private PostgreSQL 16 too, and `test:expiry` passes
+with `pgsl-server-redis.json` against a local Redis on both backends. From the
+earlier run: the accessor built (its `tsc` and the Components.js
+generator, which emits the new class), `npm ls --all --package-lock-only`
+exits 0 for the accessor, and a second lockfile-only install leaves its
+lockfile byte for byte as it is. The vitest files that read these manifests,
+configs and locks pass (`tests/build-sha-is-verifiable.test.ts`, the uuid and
+nodemailer tests, and the image, bundle-scope and pod-desktop packaging
+tests), with the typecheck gate clean. From the uuid half of this change:
+loaded with npm's own Arborist, neither lockfile has an invalid or missing
+required edge; with the root override removed, `npm ls uuid` on the root exits
+1; and the uuid test fails with the root override removed, with the nested
+uuid 9.0.1 entry put back, and with the accessor's lockfile from master.
+
+With master merged in (the native store's signed heads), Bridge Typecheck's
+durable-LRS steps ran against this accessor tree on Node 20 and a private
+PostgreSQL 16: the inventory file, the accessor's `native-commit.it.ts`, the
+native-store files (163 tests) and Foxxi's `native-lrs-store.test.ts` and
+`xapi-durable-primary.test.ts` (75) passed. The vitest here is 3.2.6, not the
+lockfile's 4.1.12, and after `native-commit-store.test.ts` it reported a
+worker RPC timeout ("Timeout calling onTaskUpdate") with every test passed.
+
+Not covered: the FoundationDB run was not repeated here; `pgsl-css-server.yml`
+runs the server and the contract battery on PostgreSQL. CSS 7.3.0 renews a
+write's lock only when the pipe pulls, so a slow client's upload gets no
+renewal after it starts; css-gate gives up on it at 60 to 90 s, near the
+90 s lock, and per-chunk renewal would need a paused-mode read of its own.
+
 ## 2026-11-16 — Foxxi profile server: a declared extension holds a statement to its schema
 
 Found by walking the authoring tool against the deployed bridge. A profile

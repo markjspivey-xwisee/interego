@@ -50,6 +50,7 @@ import {
   nativeCommitSourceResource, nativeSnapshot, readNativeCommitCommand, requireNativeCommitScope, setNativeCommitReceipt,
 } from './NativeCommit.js';
 import { nativeDeleteScope } from './NativeDelete.js';
+import { throughPipe } from './LockedStream.js';
 
 const CONTAINER_MARKER_CT = 'internal/container';
 const NQUADS = 'application/n-quads';
@@ -153,9 +154,13 @@ export class PgslDataAccessor implements DataAccessor {
 
   async writeDocument(
     identifier: ResourceIdentifier,
-    data: Guarded<Readable>,
+    locked: Guarded<Readable>,
     metadata: RepresentationMetadata,
   ): Promise<void> {
+    // CSS 7.3's locking store hands every write a stream that `for await` cannot read, and every
+    // path below reads it that way (here, in readNativeCommitCommand and in pgsl-store's
+    // writeStream): read it through a pipe, which still renews the write lock (LockedStream.ts).
+    const data = throughPipe(locked);
     const contentType = this.fullContentType(metadata) ?? 'application/octet-stream';
     if (isNativeCommitMediaType(contentType)) {
       const { command, bytes } = await readNativeCommitCommand(data);

@@ -268,7 +268,9 @@ export async function startLocalNode(config: LocalDeploymentConfig, options: Loc
       const headers: IncomingHttpHeaders = { ...request.headers, host: new URL(origin).host };
       const connectionHeaders = String(headers.connection ?? '').split(',').map(header => header.trim().toLowerCase());
       for (const header of Object.keys(headers)) {
-        if (HOP_HEADERS.has(header) || connectionHeaders.includes(header) || header === 'authorization' || header.startsWith('x-forwarded-')) delete headers[header];
+        // CSS takes an identifier's host and scheme from Forwarded or X-Forwarded-*: neither may reach it.
+        if (HOP_HEADERS.has(header) || connectionHeaders.includes(header) || header === 'authorization'
+          || header === 'forwarded' || header.startsWith('x-forwarded-')) delete headers[header];
       }
       const upstream = httpRequest({ socketPath: ipcPath, path: `${url.pathname}${url.search}`, method: request.method, headers }, result => {
         const responseHeaders = { ...result.headers };

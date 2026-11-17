@@ -9,6 +9,8 @@
  *    from a connection string (or PGSL_PG_CONNSTR), for use in a CSS config.
  *  - KeyedEntriesStorage: keeps keyless /.internal/ documents out of the internal
  *    value storage's entries(), so the expired-entry sweep can run.
+ *  - PipedJsonResourceStorage: CSS's JsonResourceStorage with container listings read
+ *    through a pipe, so CSS 7.3's sweep can list /.internal/ under the locking store.
  *
  * componentsjs-generator scans this export to emit dist/components/*.jsonld.
  * The factory and native protocol handlers are Components.js entry points;
@@ -23,3 +25,4 @@ export { NativeDeleteOperationHandler } from './NativeDeleteOperationHandler.js'
 export { NativeConditionsParser } from './NativeConditionsParser.js';
 export { NativeCapabilityHeaders } from './NativeCapabilityHeaders.js';
 export { KeyedEntriesStorage } from './KeyedEntriesStorage.js';
+export { PipedJsonResourceStorage } from './PipedJsonResourceStorage.js';

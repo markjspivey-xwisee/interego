@@ -35,5 +35,33 @@
   ],
   "@graph": [{
     "comment": "Private backend, reachable only through a runtime-owned IPC socket. The outer loopback gateway authenticates every read and write. Private content is encrypted by the Interego publisher; this backend does not encrypt arbitrary plaintext resources. Notifications and federation transports are not enabled by this profile."
+  }, {
+    "comment": [
+      "The internal value storage reads /.internal/ from the file backend, not through the full ResourceStore.",
+      "CSS 7.3 lists a container there by running `for await` over the container's body. Through the full store",
+      "that body is Turtle, in which it finds no member, inside the locking store's wrapper, which `for await`",
+      "cannot read: the hourly expired-entry sweep waited out the 6 s resource lock and crashed the process,",
+      "about an hour after every start. The backend answers with the quads themselves, as it does for CSS's own",
+      "urn:solid-server:default:BackendKeyValueStorage. What this gives up is the resource lock on the documents",
+      "this storage owns (accounts, cookies, OIDC and setup entries). Besides CSS's own setup at boot and the",
+      "sweeps, only CSS's account and OIDC routes write those, and the gateway forwards only requests under the",
+      "pod's own path, so it never reaches them. If it ever forwards them, this storage needs the lock back."
+    ],
+    "@type": "Override",
+    "overrideInstance": { "@id": "urn:solid-server:default:JsonResourceStorage" },
+    "overrideParameters": {
+      "@type": "JsonResourceStorage",
+      "source": { "@id": "urn:solid-server:default:ResourceStore_Backend" }
+    }
+  }, {
+    "comment": [
+      "The resource locker's reader counts stay in memory, beside the in-memory locker that uses them, as",
+      "css:config/storage/key-value/memory.json keeps them; this storage holds nothing else. On the file backend",
+      "every pod read wrote and then deleted a count under /.internal/locks/. The sweep walks all of /.internal/,",
+      "and a count is a bare number with no key, so a sweep that ran while a read was open threw and deleted nothing."
+    ],
+    "@type": "Override",
+    "overrideInstance": { "@id": "urn:solid-server:default:BackendKeyValueStorage" },
+    "overrideParameters": { "@type": "MemoryMapStorage" }
   }]
 }

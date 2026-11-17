@@ -10,7 +10,7 @@ name: pgsl-css-server (full CSS server over PGSL)
 # The server is assembled in a CLEAN, deployment-shaped tree OUTSIDE the repo
 # checkout ($RUNNER_TEMP/app). This is deliberate: inside the monorepo, Components.js
 # walks up into the repo-root node_modules whose componentsjs@6 (via @comunica) is
-# incompatible with CSS 7.1.9's componentsjs@5. The clean tree is exactly the shape
+# incompatible with CSS 7's componentsjs@5. The clean tree is exactly the shape
 # of the production Docker image, so this job validates the real deployable.
 
 on:
@@ -118,3 +118,9 @@ jobs:
         env:
           PGSL_PG_CONNSTR: 'postgresql://postgres:postgres@localhost:5432/pgsl'
         run: npm run test:contract
+
+      - name: Expired-entry sweep and its walk of /.internal/ — REAL PostgreSQL
+        working-directory: ${{ runner.temp }}/app/integrations/pgsl-css-accessor
+        env:
+          PGSL_PG_CONNSTR: 'postgresql://postgres:postgres@localhost:5432/pgsl'
+        run: npm run test:expiry
