@@ -2,8 +2,9 @@ import { isPlayNamespace } from './provisional-play.js';
 /**
  * Bounded, own-pod-only cleanup; physical PGSL history reclamation is separate.
  *
- * The pod's tree is listed and checked first (own pod only, at most 128 resources over eight
- * levels), and nothing is changed when that fails. Then `close()`, under the owner's lock the
+ * The pod's tree is listed and checked first (own pod only, at most PASS_RESOURCES resources a pass:
+ * see PlayPurgeProgress for a pod that holds more), and nothing is changed when that fails. Then
+ * `close()`, under the owner's lock the
  * caller holds, closes the owner's account on its record as the pod holds it (server.ts
  * purgePlayOwner: auth-methods.jsonld is overwritten with the purge's tombstone, marked as a purge
  * not yet finished, on the ETag of the record it checked). An enrolment that read the anchor before
@@ -65,12 +66,58 @@ export interface PlayPodPurge {
   /**
    * 'purged': close() said 'purge', every resource but the record, its container, `retained` and
    * the containers that hold those is deleted, the game data included, and a last listing found no
-   * game data. 'closed' and 'kept': close()'s answer.
+   * game data. 'partial': close() said 'purge' and this pass deleted what it listed, but the pod
+   * holds more than one pass lists (PASS_RESOURCES): the account is closed, the purge stays marked,
+   * and the caller's next pass goes on. 'closed' and 'kept': close()'s answer.
    */
-  outcome: 'purged' | 'closed' | 'kept';
+  outcome: 'purged' | 'partial' | 'closed' | 'kept';
   /** The documents outside the game data kept because the pod refused their DELETE with 409 (native heads), by URL. */
   retained: string[];
+  /** For 'partial': how many resources this pass deleted (or found gone). */
+  deleted?: number;
 }
+
+/**
+ * A pod larger than one pass lists.
+ *
+ * The listing used to throw past 128 resources or eight levels, before the account was closed, so a
+ * pod something had filled beyond that (an application writing a guest's records into it) was never
+ * closed and never purged: every janitor pass listed it, threw, and kept it. Now a pass lists at most
+ * PASS_RESOURCES resources, depth first, children before their containers, and stops there. A pod
+ * that fits is listed whole, and everything above happens in that one pass, as it always has. One
+ * that does not is closed all the same (close() is told the listing is not the whole pod), the
+ * resources the pass did list are deleted, and the purge returns 'partial': the caller keeps it
+ * marked and queued, and each later pass lists what is left and deletes the next PASS_RESOURCES of
+ * it, until a pass lists the whole of what remains and finishes as above (closure fence included).
+ *
+ * What a pass does is bounded whatever the pod holds: at most PASS_RESOURCES container listings,
+ * each read up to LISTING_BYTES, and at most PASS_RESOURCES deletions. Where the pod has got to is
+ * read from the pod at every pass (what is deleted is no longer listed), so a pass that is
+ * interrupted, or a process that restarts, loses nothing. Two things the pod does not say are kept by
+ * the caller between the passes of one process (PlayPurgeProgress), and only save work:
+ * `retained`, the documents whose DELETE was answered 409 and the containers left holding only
+ * those, which a later pass neither counts nor requests again (without it a pod that begins with
+ * PASS_RESOURCES such heads would be listed the same way at every pass); and `resume`, the
+ * container a pass stopped in without having listed anything it could delete (a chain of containers
+ * deeper than PASS_RESOURCES), where the next pass starts. A restart forgets both: the documents are
+ * sent their one DELETE again, and a chain that deep is walked down again over as many passes.
+ * One pod is never finished: one container whose listing is longer than LISTING_BYTES and begins
+ * with nothing but documents the store refuses to delete. Each pass of it is still bounded.
+ *
+ * Nothing outside `<pod origin>/<userId>/` is requested at any pass: every URL listed, `resume`
+ * included, is checked against the pod's root before it is requested.
+ */
+export interface PlayPurgeProgress {
+  /** Documents whose DELETE the pod answered 409, and containers that hold nothing else, by URL: kept, and not requested again. */
+  retained: Set<string>;
+  /** A container inside the pod where the next pass starts its listing, or undefined for the root. */
+  resume?: string;
+}
+
+/** The most resources one pass lists, and so deletes. */
+export const PASS_RESOURCES = 128;
+/** The most of one container's listing a pass reads. */
+export const LISTING_BYTES = 4 * 1024 * 1024;
 
 /**
  * A Play pod's game data, by path relative to the pod's root: the css-gate's checkpoints
@@ -192,8 +239,12 @@ export async function purgeProvisionalPlayPod(options: {
    * process answered 503, once its guest deadline has passed, close() has sent the owner's agent
    * registry a DELETE first, which may have failed), 'kept' when the account is kept. `listed`: the
    * pod's tree as checked, children before their containers, the URLs 'purge' then deletes.
+   * `whole`: false when the pod holds more than this pass listed (`listed` is then only part of
+   * it, and says nothing of what else the pod holds).
    */
-  close(listed: readonly string[]): Promise<'purge' | 'closed' | 'kept'>;
+  close(listed: readonly string[], whole: boolean): Promise<'purge' | 'closed' | 'kept'>;
+  /** What the caller kept of this owner's earlier passes (PlayPurgeProgress); changed in place. */
+  progress?: PlayPurgeProgress;
 }): Promise<PlayPodPurge> {
   if (!/^u-try-(?:play|guest)-[a-f0-9]{32}$/.test(options.userId)) throw new Error('Refusing non-Play pod cleanup');
   const root = new URL(`${options.userId}/`, options.cssUrl);
@@ -201,54 +252,140 @@ export async function purgeProvisionalPlayPod(options: {
   const request: PodRequest = (url, init = {}) => fetcher(url, {
     ...init, redirect: 'error', signal: AbortSignal.timeout(15000),
   });
-  /** The pod's tree, children before their containers, checked as it is listed. */
-  const list = async (): Promise<string[]> => {
+  const progress = options.progress ?? { retained: new Set<string>() };
+  const ownPod = (url: URL): boolean => url.origin === root.origin && url.pathname.startsWith(root.pathname)
+    && !url.search && !url.hash && !url.username && !url.password;
+  /** A container's listing, read up to LISTING_BYTES; `cut` when it is longer than that. */
+  const readListing = async (response: Response): Promise<{ body: string; cut: boolean }> => {
+    if (!response.body) return { body: await response.text(), cut: false };
+    const reader = response.body.getReader();
+    const chunks: Uint8Array[] = [];
+    let size = 0;
+    let cut = false;
+    for (;;) {
+      const { done, value } = await reader.read();
+      if (done) break;
+      if (size + value.byteLength > LISTING_BYTES) {
+        chunks.push(value.subarray(0, LISTING_BYTES - size));
+        cut = true;
+        await reader.cancel().catch(() => {});
+        break;
+      }
+      chunks.push(value);
+      size += value.byteLength;
+    }
+    return { body: Buffer.concat(chunks).toString('utf8'), cut };
+  };
+  /** The children a listing names. Of one cut short, those named whole before the cut. */
+  const contained = (body: string, cut: boolean): string[] => {
+    const names: string[] = [];
+    if (!cut) {
+      for (const block of body.matchAll(/ldp:contains\s+((?:<[^>]+>\s*(?:,\s*)?)+)(?:;|\.)/g)) {
+        for (const reference of block[1].matchAll(/<([^>]+)>/g)) names.push(reference[1]);
+      }
+      return names;
+    }
+    for (const start of body.matchAll(/ldp:contains\s+/g)) {
+      const reference = /\s*<([^>]+)>\s*,?/y;
+      reference.lastIndex = start.index + start[0].length;
+      for (let match = reference.exec(body); match; match = reference.exec(body)) names.push(match[1]);
+    }
+    return names;
+  };
+  /**
+   * The tree under `from` (the pod's root, or `progress.resume`), children before their containers,
+   * checked as it is listed, up to PASS_RESOURCES resources. `whole`: every resource under `from` is
+   * in `ordered`. Otherwise `ordered` holds the documents met before the pass stopped and the
+   * containers all of whose children it holds, and `stoppedIn` is the innermost container the pass
+   * stopped in. A resource in `progress.retained` is listed, never counted or requested. `missing`:
+   * `from` is gone.
+   */
+  const list = async (from: URL = root): Promise<{ ordered: string[]; whole: boolean; stoppedIn?: string; missing?: true }> => {
     const seen = new Set<string>();
     const ordered: string[] = [];
-    const visit = async (url: URL, depth: number): Promise<void> => {
-      if (seen.has(url.href)) return;
-      if (depth > 8 || seen.size >= 128) throw new Error('Provisional cleanup traversal limit');
-      if (url.origin !== root.origin || !url.pathname.startsWith(root.pathname) || url.search || url.hash || url.username || url.password)
-        throw new Error('Refusing foreign provisional cleanup target');
+    let counted = 0;
+    let stoppedIn: string | undefined;
+    let missing = false;
+    /** False once the pass has stopped: nothing more is listed, and no container above is whole. */
+    const visit = async (url: URL, parent?: URL): Promise<boolean> => {
+      if (seen.has(url.href)) return true;
+      if (!ownPod(url)) throw new Error('Refusing foreign provisional cleanup target');
+      if (progress.retained.has(url.href)) { seen.add(url.href); ordered.push(url.href); return true; }
+      if (counted >= PASS_RESOURCES) { stoppedIn ??= (parent ?? url).href; return false; }
       seen.add(url.href);
+      counted++;
       if (url.pathname.endsWith('/')) {
         const response = await request(url.href, { headers: { Accept: 'text/turtle' } });
-        if (response.status === 404) return;
+        if (response.status === 404) { if (!parent) missing = true; return true; }
         if (!response.ok) throw new Error('Provisional cleanup listing unavailable');
-        const body = await response.text();
-        for (const block of body.matchAll(/ldp:contains\s+((?:<[^>]+>\s*(?:,\s*)?)+)(?:;|\.)/g)) {
-          for (const reference of block[1].matchAll(/<([^>]+)>/g)) await visit(new URL(reference[1], url), depth + 1);
+        const { body, cut } = await readListing(response);
+        for (const reference of contained(body, cut)) {
+          if (!await visit(new URL(reference, url), url)) return false;
         }
+        if (cut) { stoppedIn ??= url.href; return false; }
       }
       ordered.push(url.href);
+      return true;
     };
-    await visit(root, 0);
-    return ordered;
+    const whole = await visit(from);
+    return { ordered, whole, ...(stoppedIn !== undefined ? { stoppedIn } : {}), ...(missing ? { missing: true as const } : {}) };
   };
-  // Discover and validate the entire bounded tree before changing anything.
-  const listed = await list();
-  const closed = await options.close(listed);
+  // Where an earlier pass stopped without anything to delete (a chain of containers deeper than a
+  // pass lists): this pass starts there. Gone, or no container inside this pod: from the root.
+  let resumed: URL | undefined;
+  if (progress.resume !== undefined) {
+    try { resumed = new URL(progress.resume); } catch { /* from the root */ }
+    if (resumed && (!ownPod(resumed) || !resumed.pathname.endsWith('/') || resumed.href === root.href)) resumed = undefined;
+    progress.resume = undefined;
+  }
+  // Discover and validate the tree, as far as a pass lists it, before changing anything.
+  let listing = resumed ? await list(resumed) : await list();
+  if (resumed && listing.missing) { resumed = undefined; listing = await list(); }
+  // Under `resume` the listing is never the whole pod, however much of that container it holds.
+  const whole = listing.whole && !resumed;
+  const listed = listing.ordered;
+  const closed = await options.close(listed, whole);
   if (closed !== 'purge') return { outcome: closed, retained: [] };
   // Children before their containers (the order list() gives); never the record, nor the
   // container that holds it.
   const anchor = new URL('auth-methods.jsonld', root).href;
   const targets = listed.filter(url => url !== root.href && url !== anchor);
   const nativeDelete = deleteGameData(root, request);
-  const retained: string[] = [];
+  // What an earlier pass was refused, where this one's listing names it, then what this pass is.
+  const kept: string[] = targets.filter(url => progress.retained.has(url));
+  let deleted = 0;
   for (const url of targets) {
+    if (progress.retained.has(url)) continue;
     const container = url.endsWith('/');
-    // A container that holds a kept document is not empty: it stays with it.
-    if (container && retained.some(kept => kept.startsWith(url))) continue;
-    if (!container && isPlayGameData(root, url)) { await nativeDelete(url); continue; }
+    // A container that holds a kept document is not empty: it stays with it. Everything else it
+    // held was listed before it, and is deleted by now.
+    // One that may hold game data is listed again at every pass all the same (the closure fence's too).
+    if (container && kept.some(held => held.startsWith(url))) {
+      kept.push(url);
+      if (!matchesGameData(PLAY_GAME_CONTAINER, inPod(root, url) ?? '')) progress.retained.add(url);
+      continue;
+    }
+    if (!container && isPlayGameData(root, url)) { await nativeDelete(url); deleted++; continue; }
     const response = await request(url, { method: 'DELETE' });
-    if (response.ok || response.status === 404) continue;
-    if (response.status === 409 && !container) { retained.push(url); continue; }
+    if (response.ok || response.status === 404) { deleted++; continue; }
+    if (response.status === 409 && !container) { kept.push(url); progress.retained.add(url); continue; }
     throw new Error('Provisional cleanup deletion incomplete');
   }
+  // The documents kept, of every pass of this purge in this process.
+  const retained = [...new Set([...kept, ...progress.retained])].filter(url => !url.endsWith('/'));
+  if (!whole) {
+    // Nothing this pass could delete, and it stopped deeper than where it started: the next pass
+    // starts there.
+    if (deleted === 0 && listing.stoppedIn !== undefined && listing.stoppedIn !== (resumed ?? root).href) progress.resume = listing.stoppedIn;
+    return { outcome: 'partial', retained, deleted };
+  }
   // Closure fence: game data a write the gate authorized before the tombstone put back meanwhile.
-  const late = (await list()).filter(url => isPlayGameData(root, url));
+  const fence = await list();
+  const late = fence.ordered.filter(url => isPlayGameData(root, url));
   if (late.length > 0) {
     throw new Error(`Provisional cleanup: game data is on the pod again after its deletion (${late.map(url => url.slice(root.href.length)).join(', ')})`);
   }
+  // More on the pod than a pass lists, written since this pass listed it: the next pass goes on.
+  if (!fence.whole) return { outcome: 'partial', retained, deleted };
   return { outcome: 'purged', retained };
 }
