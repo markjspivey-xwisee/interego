@@ -72,7 +72,10 @@ and not in the directory mcp-server was started in, and stops when mcp-server
 does. On the previous `server.ts`, the source run fails with the two lines
 above, and the compiled run fails at once. It lives in `integrations/tests/`
 because the server it boots reads `examples/`, which the base-without-verticals
-job deletes.
+job deletes. `jev-harness.yml` now builds the stdio server before it runs the
+tests it selects, as `bridge-typecheck.yml`'s suite already did: its build cache
+holds `packages/*/dist` only, so on a hit `mcp-server/dist/` was never built and
+the compiled run found no server.
 
 ## 2026-11-17 — multi-agent demos: their Solid server no longer crashes an hour after it starts
 

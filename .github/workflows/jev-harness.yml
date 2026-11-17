@@ -118,6 +118,13 @@ jobs:
           key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
       - if: steps.dist.outputs.cache-hit != 'true'
         run: npm run build
+      # The dist cache holds packages/*/dist only, and its key ignores mcp-server/, so on a hit the
+      # stdio server is not built at all. A selected test that starts mcp-server/dist/server.js
+      # (integrations/tests/mcp-server-local-solid-server.test.ts) then found no server, or would
+      # find a stale one. Built on every run, as bridge-typecheck.yml's suite does, so it is this
+      # checkout's.
+      - name: Build the published stdio server and configuration adapter
+        run: npm run build --workspace @interego/mcp
       - name: Start the bridge bound to this checkout
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
