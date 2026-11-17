@@ -1,5 +1,53 @@
 # Changelog
 
+## 2026-11-17 — Foxxi's dashboard offers identity's general guest, as an attribution (off unless configured)
+
+The learner workbench got identity's general guest in the entry below; the
+dashboard was left out because its guest is a key the tab holds and it is a
+static site on another origin. It now offers the door beside "Start as a
+guest" when the bridge is given `FOXXI_PLAY_GENERAL_GUEST=1`.
+
+Nothing is on by merging this. With the setting unset the bridge builds no
+door, attaches no route and adds nothing to any answer, and the sign-in page
+shows no new control
+(`tests/a-dashboard-guest-comes-through-identitys-door.test.ts`).
+
+**What it is.** A general guest on the dashboard is still a tab key: the tab
+makes a wallet and signs every request, and the bridge authenticates and
+authorizes each one as that key, as it does for any tab guest. The bridge's
+caller model is not changed. What the door adds is a statement the bridge
+keeps beside it (`src/dashboard-general-guest.ts`): which Interego guest the
+key was admitted as, and whom identity said that guest acts for (the account
+it is linked to, else itself), until a stated time. No authorization reads it.
+
+**What it is not.** It does not bring a guest's records back on the next
+visit (each visit is a new tab key), and a linked guest reads and changes
+nothing of the account's. Doing either means re-deciding every place the
+bridge reads a caller from a wallet address, or having the bridge keep
+guests' keys; `DURABLE-GUEST.md`, "The general guest", says why neither was
+added here.
+
+**The visit.** No cookie: the dashboard and the bridge are different origins.
+`POST /play/general/start` (the dashboard's `Origin` only) answers the door
+address and a binding the page keeps in its tab; identity returns the browser
+to the dashboard's own `/guest/general/return`, where the page clears the
+code and state from the address at once; `POST /play/general/finish`, signed
+by the tab's new key, carries code, state and binding, and the bridge
+exchanges the code. A return address in another browser, or with another
+binding, finishes nothing and spends nothing. `POST /play/general/standing`
+and `/sign-out` are signed by the key.
+
+**Bounds.** No later than the guest's deadline, nor eight hours; ten minutes
+when linked. In memory, at most 1000, swept, dropped on sign-out.
+
+**What turns it on.** On the bridge: `FOXXI_PLAY_GENERAL_GUEST=1` (exactly
+`1`) with `FOXXI_PLAY_SERVICE_PRIVATE_KEY` and `FOXXI_PLAY_AUDIENCE` already
+set (`1` without them stops the bridge at start), and
+`FOXXI_PLAY_GENERAL_GUEST_DOOR_ORIGIN` where the door has its own origin. In
+identity's `PROVISIONAL_PLAY_CLIENTS`, the dashboard's entry gains
+`"generalGuest": true` and `"generalGuestReturnPath": "/guest/general/return"`.
+Identity's code is not changed.
+
 ## 2026-11-17 — Foxxi's learner workbench offers identity's general guest (off unless configured)
 
 Identity's general guest is one guest per browser across Interego applications,

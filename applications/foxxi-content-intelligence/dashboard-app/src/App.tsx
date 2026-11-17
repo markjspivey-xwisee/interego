@@ -58,6 +58,7 @@ import { EfficacyPanel } from './components/EfficacyPanel.js';
 import { WorkPanel } from './components/WorkPanel.js';
 import { Header, Card } from './components/common.js';
 import { loadSession, saveSession, clearSession, signsOnly, type FoxxiSession } from './auth/session.js';
+import { GENERAL_GUEST_RETURN_PATH, browserGeneralGuestDeps, signOutGeneralGuest } from './auth/general-guest.js';
 import { signsAloneBecause, standingSettled, tokenStandingOf, type SignsAloneBecause, type TokenStanding } from './auth/token-standing.js';
 import { getTransport, resetTransportProbe } from './interego/client.js';
 import { SAMPLE_ADMIN_PAYLOAD } from './sample/data.js';
@@ -98,6 +99,8 @@ function AppRoutes() {
     navigate(signsOnly(s) ? '/learn' : '/', { replace: true });
   }
   function onLogout() {
+    // A general guest's statement on the bridge is dropped with the session; signing out never waits on it.
+    if (session?.generalGuest && session.connectedPrivateKey) void signOutGeneralGuest(session.generalGuest, session.connectedPrivateKey, browserGeneralGuestDeps());
     clearSession();
     resetTransportProbe();
     setSession(null);
@@ -108,6 +111,8 @@ function AppRoutes() {
     return (
       <Routes>
         <Route path="/login" element={<Login onSignIn={onSignIn} />} />
+        {/* Identity's general guest door returns here; the sign-in page reads the return and clears the address. */}
+        <Route path={GENERAL_GUEST_RETURN_PATH} element={<Login onSignIn={onSignIn} />} />
         <Route path="*" element={<Navigate to="/login" replace />} />
       </Routes>
     );

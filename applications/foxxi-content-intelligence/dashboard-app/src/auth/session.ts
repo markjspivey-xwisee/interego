@@ -59,6 +59,12 @@ export interface FoxxiSession {
    * page can bring it back on this browser. Not a secret; absent for a guest kept in the tab only.
    */
   guestKeptUntil?: string;
+  /**
+   * For a guest that came through identity's general guest door (auth/general-guest.ts): which
+   * Interego guest the bridge attributes this tab's key to, the account that guest is linked to if
+   * `linked`, and until when. Not a secret, and no authority: the session signs as its tab key.
+   */
+  generalGuest?: { guestDid: string; subject: string; linked: boolean; until: string; signOutUrl: string };
 }
 
 export interface SessionOption {
@@ -251,6 +257,22 @@ export async function connectAsGuest(tenantPodUrl: string, make: () => ethers.HD
     name: `Guest ${wallet.address.slice(0, 6)}…${wallet.address.slice(-4)}`,
     audienceTags: ['connected-wallet', 'guest'],
     guestRecoveryPhrase: phrase,
+  };
+}
+
+/**
+ * "Interego guest" login: the tab came back from identity's general guest door and the bridge has
+ * recorded whom this tab's new key is attributed to (auth/general-guest.ts). The session is a guest
+ * session in every other respect: the same key in memory, the same signing, the same pages.
+ */
+export async function connectAsGeneralGuest(tenantPodUrl: string, wallet: ethers.HDNodeWallet,
+  standing: { guestDid: string; subject: string; linked: boolean; expiresAt: string }, signOutUrl: string): Promise<FoxxiSession> {
+  const session = await connectAsGuest(tenantPodUrl, () => wallet);
+  return {
+    ...session,
+    name: `Interego guest …${standing.guestDid.slice(-6)}${standing.linked ? ' (linked to an account)' : ''}`,
+    audienceTags: [...session.audienceTags, 'general-guest'],
+    generalGuest: { guestDid: standing.guestDid, subject: standing.subject, linked: standing.linked, until: standing.expiresAt, signOutUrl },
   };
 }
 

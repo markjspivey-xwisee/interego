@@ -2,7 +2,7 @@ import React, { useEffect, useState } from 'react';
 import { ethers } from 'ethers';
 import { Card, Button, Pill } from './common.js';
 import {
-  adminSessionOption, learnerSessionOptions, connectAsGuest, connectFromExtension, connectFromPrivateKey, sessionFromOption,
+  adminSessionOption, learnerSessionOptions, connectAsGeneralGuest, connectAsGuest, connectFromExtension, connectFromPrivateKey, sessionFromOption,
   type SessionRole, type FoxxiSession,
 } from '../auth/session.js';
 import { walletExtension } from '../auth/signer.js';
@@ -12,6 +12,20 @@ import {
 import { SAMPLE_TENANT_POD_URL } from '../sample/data.js';
 
 /** The bridge this dashboard talks to; its /start page says what can be done here. */
+import { GENERAL_GUEST_RETURN_PATH, browserGeneralGuestDeps, finishGeneralGuest, generalGuestOffer, generalGuestReturn, startGeneralGuest, type GeneralGuestOffer } from '../auth/general-guest.js';
+
+// The door's return is read once per page load, and its code and state are taken out of the address
+// in the same step, before any request leaves this page. Kept here, not in component state, so a
+// second mount of the sign-in page neither reads the address again nor finishes the visit twice.
+let doorReturn: { code: string; state: string } | null | undefined;
+let doorFinish: Promise<FoxxiSession> | undefined;
+function takeDoorReturn(): { code: string; state: string } | null {
+  if (doorReturn === undefined) {
+    doorReturn = generalGuestReturn(window.location);
+    if (window.location.pathname === GENERAL_GUEST_RETURN_PATH) window.history.replaceState(null, '', '/login');
+  }
+  return doorReturn;
+}
 const BRIDGE_BASE = ((import.meta.env.VITE_FOXXI_BRIDGE_URL as string | undefined) ?? 'https://foxxi-bridge.interego.xwisee.com').replace(/\/$/, '');
 
 export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
@@ -40,6 +54,29 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
         setKeep(!!offered && !offered.terms);
         setKept(existing);
       } catch { /* no IndexedDB, or no WebCrypto: the tab-only guest */ }
+    })();
+    return () => { live = false; };
+  }, []);
+  // Interego's general guest (auth/general-guest.ts): offered only where the bridge says so. When
+  // this page is the door's return, the code and state leave the address before anything is asked.
+  const [general, setGeneral] = useState<GeneralGuestOffer | null>(null);
+  useEffect(() => {
+    let live = true;
+    const returned = takeDoorReturn();
+    void (async () => {
+      const deps = browserGeneralGuestDeps();
+      const offered = await generalGuestOffer(BRIDGE_BASE, deps);
+      if (!offered) return;
+      if (live) setGeneral(offered);
+      if (!returned) return;
+      if (live) { setGuestBusy(true); setGuestErr(null); }
+      try {
+        doorFinish ??= finishGeneralGuest(offered, returned, deps)
+          .then(({ wallet, standing }) => connectAsGeneralGuest(SAMPLE_TENANT_POD_URL, wallet, standing, offered.signOutUrl));
+        const session = await doorFinish;
+        if (live) onSignIn(session);
+      } catch (e) { if (live) setGuestErr(`Interego's guest door did not let this tab in (${(e as Error).message}). You can start as a guest in this tab instead.`); }
+      finally { if (live) setGuestBusy(false); }
     })();
     return () => { live = false; };
   }, []);
@@ -113,6 +150,21 @@ export function Login({ onSignIn }: { onSignIn: (s: FoxxiSession) => void }) {
                 setKept(null);
               })(); }}>Forget it on this browser</Button>
             </div>
+          </div>
+        )}
+        {general && (
+          <div data-testid="general-guest" style={{ marginTop: 12, paddingTop: 10, borderTop: '1px solid var(--border)' }}>
+            <div style={{ color: 'var(--text-dim)', fontSize: 12, marginBottom: 6 }}>
+              Or come in as this browser's Interego guest: one guest across Interego applications, which you can
+              link to an account. You leave this page for Interego's guest door and come back. Here it is still a
+              guest: this tab signs with a key of its own, and Foxxi notes which Interego guest (or linked account)
+              that key belongs to. Applications you enter this way can tell they are serving the same browser.
+            </div>
+            <Button disabled={guestBusy} onClick={() => { void (async () => {
+              setGuestBusy(true); setGuestErr(null);
+              try { window.location.assign(await startGeneralGuest(general, browserGeneralGuestDeps())); }
+              catch (e) { setGuestErr(`Interego's guest door is not available now (${(e as Error).message}).`); setGuestBusy(false); }
+            })(); }}>Continue as an Interego guest</Button>
           </div>
         )}
         {guestErr && <div style={{ color: 'var(--bad)', fontSize: 12, marginTop: 6 }}>✗ {guestErr}</div>}

@@ -131,6 +131,7 @@ import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 import { frontDoor, frontDoorHtml } from '../src/front-door.js';
 import { PlayGrantError, PlayGrantService, learnerGuestGrantConfig, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
 import { GENERAL_GUEST_RETURN_PATH, learnerGeneralGuestDoor, learnerGeneralGuestSettings } from '../src/i2idlx-general-guest.js';
+import { DashboardGeneralGuest, attachDashboardGeneralGuestRoutes, dashboardGeneralGuestDoor, dashboardGeneralGuestOffer, dashboardGeneralGuestSettings } from '../src/dashboard-general-guest.js';
 import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
@@ -11496,6 +11497,14 @@ const learnerGuestGrants = learnerGuestSettings ? new PlayGrantService(learnerGu
 const learnerGeneralGuest = learnerGeneralGuestSettings(process.env, learnerGuestSettings);
 const learnerGeneralDoor = learnerGeneralGuest && learnerGuestGrants
   ? learnerGeneralGuestDoor(learnerGeneralGuest, request => learnerGuestGrants.generalGuestGrant(request)) : null;
+// Identity's general guest door for the DASHBOARD (src/dashboard-general-guest.ts; DURABLE-GUEST.md,
+// "The general guest"). Off unless FOXXI_PLAY_GENERAL_GUEST=1; with it unset nothing below is built,
+// attached or reported. It keeps a statement of whom a tab key is attributed to and is read by no
+// caller check in this file: a general guest's requests are a tab guest's.
+const dashboardGeneralGuest = dashboardGeneralGuestSettings(process.env, playGrantSettings);
+const dashboardGeneralGuests = dashboardGeneralGuest && playGrants
+  ? new DashboardGeneralGuest({ door: dashboardGeneralGuestDoor(dashboardGeneralGuest, request => playGrants.generalGuestGrant(request)) }) : null;
+if (dashboardGeneralGuests) attachDashboardGeneralGuestRoutes(app, dashboardGeneralGuests);
 const playGrantRateLimit = rateLimit({
   windowMs: 3_600_000, limit: 10, ipv6Subnet: 56, identifier: 'play-grant',
   standardHeaders: 'draft-8', legacyHeaders: false, message: { error: 'too_many_requests' },
@@ -11507,7 +11516,8 @@ const playStatusRateLimit = rateLimit({
 app.get('/play/guest', (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   res.json(playGrantSettings
-    ? { enabled: true, audience: playGrantSettings.audience, identityUrl: playGrantSettings.identityUrl }
+    ? { enabled: true, audience: playGrantSettings.audience, identityUrl: playGrantSettings.identityUrl,
+      ...(dashboardGeneralGuest ? { generalGuest: dashboardGeneralGuestOffer(dashboardGeneralGuest) } : {}) }
     : { enabled: false });
 });
 app.post('/play/grant', playGrantRateLimit, async (req, res) => {
@@ -11528,6 +11538,7 @@ app.get('/play/status', playStatusRateLimit, async (_req, res) => {
   res.setHeader('Cache-Control', 'no-store');
   try {
     res.json({ ...(playGrants ? await playGrants.status() : { enabled: false }),
+      ...(dashboardGeneralGuest ? { generalGuest: dashboardGeneralGuestOffer(dashboardGeneralGuest) } : {}),
       ...(learnerGuestGrants ? { learnerWorkbench: { ...await learnerGuestGrants.status(),
         ...(learnerGeneralGuest ? { generalGuest: { enabled: true, returnPath: GENERAL_GUEST_RETURN_PATH, doorOrigin: learnerGeneralGuest.doorOrigin ?? learnerGeneralGuest.identityUrl } } : {}) } } : {}) });
   } catch { res.status(503).json({ enabled: !!playGrants, ready: false, problem: 'status unavailable' }); }

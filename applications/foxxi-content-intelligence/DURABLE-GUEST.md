@@ -56,30 +56,135 @@ identity's own door and linkable to a registered account: `deploy/identity/PROVI
 "General guest") is offered by Foxxi's I2IDL-X learner workbench and its course player when
 `FOXXI_I2IDLX_GENERAL_GUEST=1` (`i2idlx/LEARNING-CONNECTIONS.md`, "The general guest").
 
-**The dashboard does not offer it**, and nothing on this page changes. Two things stand in the way,
-and neither is a setting:
+**The dashboard offers it too, beside "Start as a guest", when the bridge has
+`FOXXI_PLAY_GENERAL_GUEST=1`.** It is off otherwise, and then nothing on this page changes: no
+route, no member of any answer, no control on the sign-in page
+(`tests/a-dashboard-guest-comes-through-identitys-door.test.ts`).
 
-1. *The dashboard has no session with the bridge to give a general guest.* A dashboard guest **is**
-   a key: the tab makes a secp256k1 wallet, and the bridge authenticates each `/agent/*` request by
-   recovering its signer, who is the caller (`did:ethr:<address>`). A general guest's key is a
-   P-256 key that never leaves identity's door origin, so in the dashboard it has nothing to sign
-   with. Admitting it needs either a bearer session accepted wherever the bridge now requires a
-   signature, or a rule that a tab key's requests count as another subject's (for a linked guest, a
-   registered account's). Both change what every ownership and attribution check in the bridge
-   reads as "the caller". That is a change to the bridge's authentication as a whole, to be
-   designed and reviewed on its own, not added beside it.
-2. *The dashboard is a static site on another origin.* Identity returns the browser to a path on
-   the application's registered origin, and the code must be exchanged, and the visit's cookie
-   checked, by a server. The dashboard's origin has none (nginx serving files). Either that host
-   proxies the return path to the bridge, or the bridge's origin is the audience and the finished
-   session is handed to a page on another origin. The second cannot use the HttpOnly cookie that
-   binds the visit (to the dashboard's page it is a cross-origin cookie, and a third-party one
-   wherever the two hosts are not the same site); a hand-over without it (the dashboard starts the
-   visit with a form post the bridge accepts only from the dashboard's `Origin`, and collects the
-   session once with a secret only its tab holds) is possible but has been run in no browser.
+### What a general guest is on the dashboard, and what it is not
 
-Until both are settled, a dashboard guest is what this page describes: a wallet the tab makes,
-optionally kept in a per-application provisional pod.
+A dashboard guest **is** a key: the tab makes a secp256k1 wallet and the bridge authenticates each
+request by recovering its signer. That is not one check. `resolveCaller`, `verifyDelegatedCaller`,
+`bindSignedCaller` and several inline recoveries in `bridge/server.ts` each read the caller from
+the signature, and most go on to derive a pod, an owner and a public-or-private regime from the
+**wallet address** (the directory's address map, `foreignPodRefusal`, `membershipHolds`,
+`selfBoundPod`, the human-or-agent reading of `did:ethr:<signer>`). A general guest's key is a
+P-256 key that never leaves identity's door origin, so there is nothing for the tab to sign with
+as that guest, and a registered account's records are keyed to its own wallet or pod.
+
+So the caller model is **not changed**. A general guest on the dashboard is still a tab key:
+
+- The tab makes a wallet and signs every request with it, exactly as "Start as a guest" does.
+  Every request is authenticated and authorized as `did:ethr:<that key>` and nothing else: the
+  same role, the same pods, the same limits as any tab guest, whether the guest is linked or not.
+- What the door adds is a **statement** the bridge keeps beside the caller model
+  (`src/dashboard-general-guest.ts`): "tab key K was admitted through identity's door as guest G,
+  which identity said acts for subject S, until T". S is `canonicalSubject` of what identity
+  stated at the exchange (the account a guest is linked to, else the guest itself).
+- Nothing in the bridge's authorization reads the statement. The bridge's own file names the table
+  only where it is made and where its routes are attached, and a test holds it to that.
+
+What this gives a visitor: they come in as their browser's one Interego guest (admitted under
+identity's terms and caps, recorded on that guest as having used this application, linkable to
+their account at the door), and the dashboard and the bridge know which Interego guest, or which
+account, the tab's key belongs to.
+
+What it does **not** give, and why it was not built here:
+
+- *The same records on the next visit.* Each visit is a new tab key, so what a guest did last time
+  is under last time's key. Carrying records across visits needs one of two things. Either the
+  bridge treats a tab key's requests as subject S's **wherever it reads a caller**, which means
+  every site above is re-decided for a subject that is not a wallet (which pod it writes, with
+  the bridge's own write credential; whether its records read as a person's, private, or an
+  agent's, public; what `membershipHolds` means for it) and, for a linked guest, that a browser
+  holding only a guest's key writes into a registered account's pod. Or the bridge hands each
+  returning guest the same wallet, which makes the bridge the keeper of guests' keys. The first is
+  a change to the bridge's authentication as a whole and the second a custody decision; neither is
+  safe to add beside the rest, so neither is here. Until one is decided, "Keep this guest in this
+  browser" above is what brings the same dashboard guest back.
+- *Anything of the account's.* A linked guest is attributed to the account and is not it: it has no
+  role of the account's, reads none of its records, and cannot change or delete them, because no
+  request it can sign is the account's.
+- *A reader of the attribution.* The statement is answered to the tab key that owns it
+  (`POST /play/general/standing`) and to code in the bridge (`standingOf`). No store or report
+  reads it yet: what a guest does is recorded under its tab key as before.
+
+### The visit, with no cookie
+
+The dashboard is a static site on another origin than the bridge, so the HttpOnly cookie the other
+adopters bind a visit with would be a cross-site one. The visit is bound to the tab instead.
+
+1. **Start.** The sign-in page asks `POST /play/general/start`, answered only for the dashboard's
+   `Origin` and rate-limited (each start has the service agent sign a grant). The answer carries the
+   door address and the door's `binding`, a random value. The page keeps the visit's `state` and
+   `binding` in its tab's `sessionStorage` and navigates to the door. The bridge's CORS lets only
+   the dashboard's origins read the answer, and the page goes nowhere but identity's door.
+2. **Return.** Identity sends the browser to the **dashboard's** origin, at
+   `/guest/general/return?code=…&state=…` (the dashboard's entry in identity's client list, so no
+   second return path is needed on the bridge's). The app serves its sign-in page there, which
+   takes the code and state out of the address in the same step that reads them, before any
+   request. The code is not a bearer: it is exchanged only with the PKCE verifier, which never
+   leaves the bridge, and it is spent after one use or sixty seconds. It does appear, once, in the
+   request line the dashboard's web server sees.
+3. **Finish.** The page makes its tab key (in memory, never stored) and sends `{code, state,
+   binding}` in a request that key signs to `POST /play/general/finish`. The bridge finishes the
+   visit only with the binding it issued for that state, exchanges the code with identity itself,
+   checks the answer again against its own identity origin, and keeps the statement for the key.
+   The answer says whom the key is attributed to, and nothing else.
+
+Why this holds against the two attacks a sign-in round trip invites:
+
+- *Login CSRF* (making a victim's tab act as the attacker's guest). The attacker can pass the door
+  as their own guest and hand a victim the return address. The victim's page finishes only a visit
+  whose state is in its own tab's storage, so it drops the address without a request; and were a
+  page to send it, the bridge refuses a binding that is not the one issued for that state. Neither
+  refusal spends anyone's visit.
+- *Fixation, and a stolen return address.* Someone holding a victim's return address has a code and
+  a state, and neither the binding (in the victim's tab) nor the verifier (in the bridge). They
+  finish nothing, and the refusal spends nothing, so the victim's tab still finishes.
+
+A top-level navigation to a bridge address that sets a first-party bridge cookie was the other
+candidate. It needs a second return path on the bridge's origin (identity allows one per entry,
+and the learner workbench has it), a start ticket in an address, and a hand-over of the finished
+session to another origin at the end. The scheme above needs none of the three.
+
+### Bounds
+
+A statement lasts no later than the guest's own deadline, nor eight hours (a tab guest's session),
+and ten minutes when the guest is linked: the bridge is not told when an owner unlinks, so the link
+is read again at the door (`LINKED_GUEST_SESSION_MS`). Statements are held in memory only, at most
+1000 at once (a full table refuses a new key before its code is spent), swept when past their
+bound, dropped by `POST /play/general/sign-out` (which the dashboard's sign-out sends), and all
+forgotten when the bridge restarts. When a statement ends the tab is a tab guest and nothing it was
+doing stops.
+
+### What a general guest can reach
+
+Everything a tab guest can, as its tab key, and nothing else. The pages are the ones a signing
+session has (`signsOnly`): Learn (play what is hosted, bring a package, read its own record),
+Author (fragments, compositions, folding a course, admissions), Work (signed performance records)
+and My forwarding (forwarding targets, inbound credentials). Each of those requests is decided as
+it is for any tab guest, on `did:ethr:<tab key>`; none consults the statement. The roster pages
+(profile, my activity) and every administrator page stay closed to it, as to any signing session,
+and the admin gate's policy (`src/tenant-admin-policy.ts`) refuses it in shadow and enforcing
+alike, even where the linked account is the tenant's administrator.
+
+### Turning it on
+
+| Variable | Value |
+| --- | --- |
+| `FOXXI_PLAY_GENERAL_GUEST` | Exactly `1`. Needs `FOXXI_PLAY_SERVICE_PRIVATE_KEY` and `FOXXI_PLAY_AUDIENCE` (below): the door's grants are signed by the same service agent. `1` without them stops the bridge at start. |
+| `FOXXI_PLAY_GENERAL_GUEST_DOOR_ORIGIN` | Optional. The HTTPS origin identity serves the door page from, when that is a dedicated one (identity's `GENERAL_GUEST_DOOR_ORIGIN`). Unset, the door is identity's own origin. |
+
+In identity's `PROVISIONAL_PLAY_CLIENTS`, the **dashboard's** entry (the one step 6 below adds)
+gains `"generalGuest": true` and `"generalGuestReturnPath": "/guest/general/return"`, and identity
+runs with `PROVISIONAL_GENERAL_GUEST=1`. The bridge's own entry, which the learner workbench uses,
+is not touched. `GET /play/guest` and `GET /play/status` then carry a `generalGuest` member.
+
+Not exercised, because it needs the live services and a browser: the door page itself, the
+dashboard's web server answering the return path with the app (its fallback does, by its
+configuration), `sessionStorage` across the navigation, and the bridge's CORS for the four
+posts. The round trip is tested against identity's own provider run in process.
 
 ## The three routes
 
