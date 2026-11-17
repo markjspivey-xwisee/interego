@@ -1,5 +1,138 @@
 # Changelog
 
+## 2026-11-17 — Dependencies: uuid 11.1.1 under Comunica, and the pod server stays on Solid server 7.2.0
+
+`npm audit` lists one advisory against both Solid server trees,
+GHSA-w5hq-g745-h8pq ("uuid: Missing buffer bounds check in v3/v5/v6 when buf is
+provided", moderate, uuid below 11.1.1). Every Community Solid Server 7 release
+brings uuid 9 in through Comunica 2: `@comunica/expression-evaluator` 2.10.0
+asks for `^9.0.0`, and its latest release, 3.2.1, still does. The root lockfile
+reported it nine times (local-node's CSS 7.3.0), and
+`integrations/pgsl-css-accessor`'s lockfile, which the css image
+(`interego-css-pgsl`) installs with `npm ci`, reported it with the minimatch
+chain of its build tools twelve times. This change clears both. It was also
+meant to move the css image from CSS 7.2.0 to 7.3.0, and does not: under 7.3.0
+the pod server crashes, for the reasons below.
+
+**Why the pod server stays on 7.2.0.** 7.3.0's locking store now hands every
+write a stream object made with `Object.create` over the request body, whose
+`read()` renews the write lock. 7.2.0 already does the same for reads.
+Node's async iterator, and readable-stream's, accept a `'readable'` event only
+when it is emitted on the object they were given, and the original stream
+emits most of them, so `for await` over the derived object loses its wake-up,
+and when the stream closes it calls an undefined callback: "TypeError: callback is not a function",
+thrown from a stream callback, which ends the process.
+`src/NativeStageOperationHandler.ts` already reads a locked stream through
+events for this reason. Two places now hit it:
+
+- The accessor's write path. `PgslDataAccessor.writeDocument` reads every body
+  with `for await`, as does pgsl-store's `writeStream`. In a tree assembled
+  the way `pgsl-css-server.yml` assembles it, `test:server` crashed on 7.3.0
+  before the boot line, and passed on 7.2.0. Piping the body into a
+  `PassThrough` first fixed that in a trial (the lock still renews, since the
+  pipe reads through the derived object): `test:server` and the 23-case
+  contract battery then passed on 7.3.0. That fix is not in this change.
+- CSS's own key-value storage. 7.3.0's `JsonResourceStorage` now lists a
+  container by iterating its body with `for await`, and that body is the read
+  lock's derived stream. The expired-entry sweep, which CSS runs every hour,
+  walks containers this way. `test:expiry` hung until the lock expired (90 s
+  in `pgsl-server.json`) and then crashed the same way; on 7.2.0 it passes.
+  Stock CSS shows the same without PGSL. A sweep over a cookie storage
+  holding two entries crashed after the 6 s lock expiry on 7.3.0 under CSS's
+  own `file.json` config and under local-node's `config/file-pod.json`. On
+  7.2.0 the same sweep finished in 102 ms and 134 ms. This one is in CSS's
+  code. Working around it means replacing a CSS storage class in the
+  accessor's config.
+
+So the image moves when both are dealt with, in a change of its own. 7.3.0 is
+the newest stable release. The 8.0.0 alphas are not an alternative: nothing
+has been published on that line since 2026-03-13, it needs Node 22 (the
+image and its CI run Node 20), it moves to Components.js 6, and it asks for
+nodemailer `^8.0.2`, which has two high advisories.
+
+**local-node already runs 7.3.0.** `packages/local-node`, which the pod
+desktop ships, moved to it in the nodemailer change, and its config has the
+same hourly sweep. Whether the desktop ever holds expiring entries for that
+sweep to walk was not checked here. It is the next thing to look at.
+
+**uuid.** The advisory needs a caller-supplied buffer. expression-evaluator
+2.10.0 calls uuid three times, for SPARQL's `UUID()`, `STRUUID()` and
+`BNODE()`, each a bare `uuid.v4()`, so it was never reachable here, and this
+is hygiene. The override is 11.1.1 exactly because Comunica 2 is CommonJS and
+`require()`s uuid. 11.1.1 is the last fixed release with a CommonJS build;
+12 and later are ESM-only. Both `package.json` files now carry
+`"@comunica/expression-evaluator": { "uuid@<11.1.1": "11.1.1" }`. A
+range-keyed override rewrites only a dependency whose range intersects the
+key, so this one matches nothing once expression-evaluator asks for `^11.1.1`
+or CSS moves to Comunica 5, and should then be deleted. Under it,
+expression-evaluator resolved by a scratch install ran `UUID()`, `STRUUID()`
+and `BNODE()` through both its async and sync evaluators against uuid 11.1.1,
+loaded from `dist/cjs` with Node's `require(esm)` turned off.
+
+npm wrote the accessor's lockfile itself. In the root lockfile it did not:
+npm's lockfile-only pass does not walk past a workspace link, and the CSS
+there sits under the `packages/local-node` workspace. So the nested
+`@comunica/expression-evaluator/node_modules/uuid` 9.0.1 entry was deleted by
+hand, and expression-evaluator now resolves the hoisted uuid 11.1.1 that was
+already there. `npm ci` accepts the root lock with or without the override,
+so no install step would notice the two drifting apart. The new
+`integrations/tests/comunica-uuid-is-patched.test.ts` reads both trees and
+fails if the override goes, if any locked uuid is below 11.1.1, or if any
+expression-evaluator would load a uuid that is not 11.x at 11.1.1 or later.
+
+**minimatch in the accessor.** The accessor's `package.json` also takes the
+root's `"@typescript-eslint/typescript-estree": { "minimatch@>=7.0.0
+<11.0.1": "11.0.8" }`, for the same advisory the 2026-11-16 entry cleared
+in the root. It is dev only, under componentsjs-generator 4.3.0's
+typescript-estree 7.18.0, which loads minimatch but calls it only for a
+project service. The generator parses without one. The accessor's build ran
+here on 11.0.8, generated its components, and passed `test:contexts:offline`.
+
+**Lockfile.** The accessor's lockfile changes in exactly these entries:
+- `uuid` 9.0.1 to 11.1.1;
+- `minimatch` (dev) 9.0.9 to 11.0.8;
+- `@isaacs/nonrecursive-glob-match` 1.1.0 (dev), new;
+- `minimatch/node_modules/brace-expansion` 5.0.13 (dev), new;
+- `minimatch/node_modules/balanced-match` 4.0.4 (dev), new.
+
+`@solid/community-server` stays 7.2.0, nodemailer 10.3.1, componentsjs 5.5.1,
+and the generator's componentsjs 6.4.0. The root lockfile loses the one nested
+uuid entry, and nothing else changes in it. Each time it ran, npm 10.9.4
+dropped the `libc` fields of the eight Linux packages of the Claude Code CLI
+and the agent SDK and rewrote the flags of the
+`applications/foxxi-content-intelligence` entry; those lines are kept as they
+are on master.
+
+**Audit.** `npm audit --package-lock-only`, measured on 2026-11-17: the root
+lockfile goes from 9 moderate to 0, the accessor's from 12 moderate to 0.
+
+`deploy/Dockerfile.css` is left as it is. Its header says nothing builds it,
+it is not in `deploy/images.json`, and its unpinned global install has no
+lockfile for an override to reach. The same is true of
+`examples/multi-agent`'s `npx --yes @solid/community-server@7`. Neither ships.
+
+**What runs it.** `pgsl-css-server.yml` and `pgsl-css-accessor.yml` run on a
+push that touches the accessor. Bridge Typecheck's durable-LRS job installs
+the accessor tree. The root suite, Local Pod Windows Installer and Desktop
+Packaging install from the root lockfile. After merge, auto-deploy rebuilds
+`interego-css-pgsl` and rolls the css singleton, now with uuid 11.1.1 under
+its Comunica.
+
+Checks: in a scratch tree laid out as `pgsl-css-server.yml` lays it out, from
+this lockfile, `test:contexts:offline`, `test:server` (the boot line once),
+the contract battery and `test:expiry` passed against the in-memory backend.
+`tests/local-node.test.ts` passed against a scratch install of CSS 7.3.0 with
+uuid 11.1.1. Loaded with npm's own Arborist, neither lockfile has an invalid
+or missing required edge. `npm ls --all --package-lock-only` exits 0 for both;
+with the root override removed, `npm ls uuid` on the root exits 1. The new
+test fails with the root override removed, with the nested uuid 9.0.1 entry
+put back, and with the accessor's lockfile from master.
+
+Not covered: the trials above ran on Node 22.22.0, the only Node here. CI
+and the image run 20. Neither the real PostgreSQL nor the FoundationDB run
+was repeated here; CI runs both. uuid's maintainers expect to deprecate the
+11.x CommonJS line around 2028.
+
 ## 2026-11-17 — Foxxi: a test takes a guest learner all the way to a course
 
 The guest-learner tests stopped at a guest with no links. One new case in
