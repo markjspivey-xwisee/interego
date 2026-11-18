@@ -1,7 +1,7 @@
 /**
  * Optional check, run by hand: a whole practice in the role-play player BY VOICE.
  *
- *   node applications/practice-evidence/tools/voice-check.mjs [player-url] [picks]
+ *   node applications/practice-evidence/tools/voice-check.mjs [player-url] [picks] [score]
  *   node applications/practice-evidence/tools/voice-check.mjs --cases <dir> [player-url]
  *
  * Each reply is read from the page, spoken by the Windows speech engine into a WAV file, played
@@ -9,6 +9,10 @@
  * From there on the page's own code runs: what it heard, the reply it matched, the learner's
  * "Use the highlighted reply", the score. Exits 1 when a spoken reply did not match the reply
  * that was spoken, or the practice did not reach its score.
+ *
+ * With no picks it speaks the sample scenario's best reply at every step, and the score must then
+ * be the top score. With picks of your own, give the score they should reach as [score], or the
+ * check only requires that a score was reached.
  *
  * It opens the player with no launch, so the player is in preview mode and saves nothing.
  *
@@ -40,7 +44,10 @@ const casesAt = process.argv[2] === '--cases' ? process.argv[3] : null;
 if (process.argv[2] === '--cases' && !casesAt) { process.stderr.write('--cases needs the directory that holds cases.json\n'); process.exit(2); }
 const url = (casesAt ? process.argv[4] : process.argv[2]) ?? DEFAULT_URL;
 /** The reply to speak at each step, by position. The default is the sample scenario's best path. */
-const picks = ((casesAt ? null : process.argv[3]) ?? '1,1,2,0,1').split(',').map(Number);
+const ownPicks = casesAt ? undefined : process.argv[3];
+const picks = (ownPicks ?? '1,1,2,0,1').split(',').map(Number);
+/** The score the practice must reach: given beside picks of your own, or the top score for the best path. */
+const wantScore = ownPicks === undefined ? 'top' : process.argv[4] === undefined ? null : Number(process.argv[4]);
 if (process.platform !== 'win32') { process.stderr.write('voice-check needs Windows: it speaks with System.Speech.\n'); process.exit(2); }
 
 const work = mkdtempSync(join(tmpdir(), 'pev-voice-'));
@@ -153,8 +160,10 @@ try {
       const text = el.innerText.replace(/\s+/g, ' ').trim(), m = /(\d+)\s*of\s*(\d+)/.exec(text);
       return { score: m ? Number(m[1]) : null, outOf: m ? Number(m[2]) : null, text: text.slice(0, 240) };
     });
-    ok = steps.length === picks.length && steps.every((s) => s.matched === s.wanted) && results !== null && results.score !== null;
-    report = { url, checkedAt: new Date().toISOString(), result: ok ? 'every spoken reply matched, and the practice reached its score' : results === null ? 'FAILED: the practice did not reach its results screen' : 'FAILED', steps, results };
+    // A score was reached, and it is the one expected: reaching the results screen with 0 of 15 is not a pass of the best path.
+    const scoreOk = results !== null && results.score !== null && (wantScore === null || results.score === (wantScore === 'top' ? results.outOf : wantScore));
+    ok = steps.length === picks.length && steps.every((s) => s.matched === s.wanted) && scoreOk;
+    report = { url, checkedAt: new Date().toISOString(), result: ok ? 'every spoken reply matched, and the practice reached its score' : results === null ? 'FAILED: the practice did not reach its results screen' : !scoreOk ? `FAILED: the score was ${results.score} of ${results.outOf}, not ${wantScore === 'top' ? 'the top score' : wantScore}` : 'FAILED', steps, results };
   }
 } finally {
   await browser.close();
