@@ -3303,7 +3303,7 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
     }
     const forUnit = {
       registration: l.registration, activityId: l.activityId, lrsEndpoint: l.endpoint,
-      send: 'The assignable unit sends these, in this order, inside the session they name, with its own cmi5 credential. If the LRS answers that a statement with one of these ids already exists, read that statement back and compare it with the document here: only an equal one is this result recorded; a different one is another result, and nothing more may be sent for the registration.',
+      send: 'The assignable unit sends these, in this order, inside the session they name, with its own cmi5 credential. If the LRS answers that a statement with one of these ids already exists, read that statement back and compare it with the document here: only an equal one is this result recorded; a different one is another result, and nothing more may be sent for the registration. The statements carry no timestamp: the unit sets each one when it first sends it, after its own initialized and before its terminated, and keeps that timestamp for a retry; a timestamp is not part of the comparison. When the review was made is in each context as pev:reviewedAt.',
     };
     if (l.handedOut) {
       // The session they were fixed for may have ended before the unit sent them. The learner, asking
@@ -3320,7 +3320,10 @@ async function launchedStatementsAct(call: Call, args: Record<string, unknown>):
           const statements = held.statements.map((st) => {
             const context = isObj(st['context']) ? st['context'] : {};
             const extensions = isObj(context['extensions']) ? context['extensions'] : {};
-            return { ...st, context: { ...context, extensions: { ...extensions, [CMI5_SESSION_EXT]: sessionId } } };
+            // One fixed before statements stopped carrying a timestamp has the time of the review on
+            // it. For another session that time is before the session began, so it is not carried over.
+            const { timestamp: _reviewTime, ...unstamped } = st;
+            return { ...unstamped, context: { ...context, extensions: { ...extensions, [CMI5_SESSION_EXT]: sessionId } } };
           });
           const problems = statements.flatMap((st) => launchedStatementProblems(st, l, { sessionId }));
           if (problems.length > 0) {

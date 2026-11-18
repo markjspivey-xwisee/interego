@@ -52,11 +52,14 @@ const FOXXI_VOCAB = 'https://foxxi-bridge.interego.xwisee.com/ns/foxxi#';
 /** The poly-granular zoom axis (the PGSL principle). */
 export type TrajectoryGranularity = 'task' | 'subtask' | 'tool-call';
 /** Modal status of a step — L1 iep:modalStatus values. */
-export type TrajectoryModalStatus = 'Hypothetical' | 'Asserted' | 'Counterfactual';
+export type TrajectoryModalStatus = 'Hypothetical' | 'Asserted' | 'Counterfactual' | 'Quoted';
 
 export interface TrajectoryStepInput {
   /** Modal status: Hypothetical = intention/plan, Asserted = executed,
-   *  Counterfactual = a rejected alternative branch. */
+   *  Counterfactual = a rejected alternative branch, Quoted = someone else's
+   *  claim, repeated and not endorsed. A Quoted step is not something this
+   *  agent did: like an intention or a rejected branch it is kept natively and
+   *  never projected to xAPI as executed work. */
   modalStatus: TrajectoryModalStatus;
   /** Poly-granular level. */
   granularity: TrajectoryGranularity;
@@ -176,7 +179,7 @@ export function trajectoryShape(t: AgentTrajectory): {
   byModalStatus: Record<TrajectoryModalStatus, number>;
   byGranularity: Record<TrajectoryGranularity, number>;
 } {
-  const byModalStatus: Record<TrajectoryModalStatus, number> = { Hypothetical: 0, Asserted: 0, Counterfactual: 0 };
+  const byModalStatus: Record<TrajectoryModalStatus, number> = { Hypothetical: 0, Asserted: 0, Counterfactual: 0, Quoted: 0 };
   const byGranularity: Record<TrajectoryGranularity, number> = { task: 0, subtask: 0, 'tool-call': 0 };
   for (const s of t.steps) { byModalStatus[s.modalStatus]++; byGranularity[s.granularity]++; }
   return { byModalStatus, byGranularity };
@@ -234,7 +237,7 @@ export interface TrajectoryXapiProjection {
   statements: Array<Record<string, unknown>>;
   /** What xAPI structurally cannot hold, retained only in the native form. */
   retainedNativeOnly: {
-    /** Hypothetical + Counterfactual steps — xAPI is Asserted-only. */
+    /** Hypothetical, Counterfactual and Quoted steps — xAPI is Asserted-only. */
     modalStepsDropped: number;
     /** Asserted task/subtask steps — xAPI is flat, drops the hierarchy. */
     structuralStepsFlattened: number;

@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 97 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 99 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -192,7 +192,7 @@ Ask a SPARQL SELECT or ASK query of the profiles held. The xAPI Profile Server (
 
 **Validate a statement against a profile's statement templates**
 
-Run the specification's statement template validation (Part Three, 2.1) for one xAPI Statement against a profile on the server, named by its id. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. A statement validates when it matches at least one template on every determining property (verb, object activity type, context activity types, attachment usage types) and follows every rule of each template it matches. 204 with no body when it validates. 400 with comments naming the template, the rule's location and what was found when it does not, or when it matches no template. Nothing is stored. As the specification says of this API, it is for experiment and demonstration, not for a critical path.
+Run the specification's statement template validation (Part Three, 2.1) for one xAPI Statement against a profile on the server, named by its id. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. A statement validates when it matches at least one template on every determining property (verb, object activity type, context activity types, attachment usage types) and follows every rule of each template it matches. Beside the specification's algorithm, which reads no concept, each extension the profile declares with an inlineSchema is held to it: a value of the wrong kind is refused, with a comment naming the extension and where it sits. 204 with no body when it validates. 400 with comments naming the template, the rule's location and what was found when it does not, or when it matches no template. Nothing is stored. As the specification says of this API, it is for experiment and demonstration, not for a critical path.
 
 - Action: `urn:iep:action:foxxi:xapi-profile-validate-templates`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_templates` (served by a bespoke route; not through the bridge's MCP endpoint)
@@ -207,7 +207,7 @@ Run the specification's statement template validation (Part Three, 2.1) for one 
 
 **Validate a run of statements against a profile's patterns**
 
-Run the specification's pattern validation (Part Three, 2.2) for an array of xAPI Statements against a profile on the server, named by its id. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The statements are taken in timestamp order, then array order. They follow the profile when each validates against its statement templates and one primary pattern matches all of them from first to last. 204 with no body when they do. 400 with comments saying which statement or which part of the pattern did not. Up to 500 statements. Nothing is stored.
+Run the specification's pattern validation (Part Three, 2.2) for an array of xAPI Statements against a profile on the server, named by its id. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. The statements are taken in timestamp order, then array order. They follow the profile when each validates against its statement templates and one primary pattern matches all of them from first to last, and each extension the profile declares with an inlineSchema carries a value that schema allows. 204 with no body when they do. 400 with comments saying which statement or which part of the pattern did not. Up to 500 statements. Nothing is stored.
 
 - Action: `urn:iep:action:foxxi:xapi-profile-validate-patterns`
 - HTTP: `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/validate_patterns` (served by a bespoke route; not through the bridge's MCP endpoint)
@@ -217,6 +217,39 @@ Run the specification's pattern validation (Part Three, 2.2) for an array of xAP
 | --- | --- | --- | --- |
 | `statements` | array | yes | The xAPI Statements of one registration or sub-registration. |
 | `profile` | string | yes | The id of a profile, or of a version, held on the server. |
+
+## `foxxi.xapi_profile_lint_decorations`
+
+**Check statements or a profile against the xapi-x rules**
+
+Run the xapi-x rules over xAPI Statements, over a profile, or both. The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. xapi-x is a superset of xAPI by decoration: a statement that is a projection of a signed descriptor says so in extensions (its source descriptor, its modal status, whether the projection lost anything, what it supersedes, what came before it), and a profile may say what a concept is evidence of (xapix:evidences) and what a template offers (xapix:offers). For statements, name the held profiles that declare their keys in profiles; the xapi-x profile is always read. The rules: every decoration is declared and sits where its type says, with a value its schema allows; a source descriptor and a modal status come together; a statement that is not Asserted carries no success, completion or score and no outcome verb; the lossy flag is stated and true when anything was lost; a statement supersedes only earlier statements and refers to one of them; no extension gives a place in a sequence as a bare number; a digest is a digest. For a profile, name a held one in profile or send one as document: every evidences target is a design idea, every offers target is an affordance, and with every decoration removed the profile is still the same profile and its examples still follow the templates that ask for no decoration. Nothing sent is kept. When a profile is checked, linksChecked says whether the two lookups for evidences and offers were available, and when one was not, those targets were checked for shape only; a request about statements alone makes no lookup.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-lint-decorations`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/xapi/profiles/lint_decorations` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `statements` | array | no | xAPI Statements to check, up to 500. |
+| `profiles` | array of string | no | The ids of held profiles that declare the keys the statements carry, beside the xapi-x profile. |
+| `outcomeVerbs` | array of string | no | Verb IRIs that say an outcome, beyond those the profiles show to be (a template with the verb requires success, completion or a score). |
+| `profile` | string | no | The id of a held profile, or of a version, to check. It is checked with the examples it is kept with. |
+| `document` | object | no | A profile document to check, in place of profile. |
+| `examples` | object | no | { statements: [{ id, statement }], sequences: [] } to check the profile with. |
+
+## `foxxi.xapi_profile_controls`
+
+**Read what can be done after a statement that follows a template**
+
+Read the controls a statement template offers: the affordances its profile states under xapix:offers, each described as this deployment serves it now (target, method, inputs). The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. Name one or more statement templates in template. This is the document an xapix:controls link on a statement points at. It is of a template, not of a statement, so it says nothing a statement says. Follow each target as given and build no address from a statement. An offer is a possibility, not a permission: each affordance applies its own access rules. unresolved names an offered affordance this deployment does not serve. To ask for one statement, POST { statement, profile? } to the same address: the templates it follows are found and the statement is not kept.
+
+- Action: `urn:iep:action:foxxi:xapi-profile-controls`
+- HTTP: `GET https://foxxi-bridge.interego.xwisee.com/xapi/profiles/controls` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `template` | string | yes | The IRI of a statement template held on the server. |
 
 ## `foxxi.i2idlx_capabilities`
 

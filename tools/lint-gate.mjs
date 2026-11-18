@@ -731,6 +731,8 @@ const BASELINE = {};
 // 2026-11-14: packages/abac/portable/ (the dependency-free decision and its types) and
 // tests/abac-portable.test.ts bring it to 712; the gate named 678.
 // 2026-11-15: tools/coached-world-guest-provision.mjs, its declarations and its test bring it to 715; the gate named 681.
+// 2026-11-17: tests/local-node-expired-sweep.test.ts brings it to 717; the gate named 682.
+// 2026-11-17: merged with master's 683, the scope is 719; the gate named 684.
 // 2026-11-15: tests/hypermedia-client-rendering.test.ts and tests/hypermedia-client-cli.test.ts bring it to 717; the gate named 682.
 // 2026-11-16: tests/hypermedia-client-fixtures.ts brings it to 718; the gate named 683.
 // 2026-11-16: merging master (tools/prune-image-dev-tools.mjs among its new files) brings it to

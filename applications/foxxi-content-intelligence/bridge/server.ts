@@ -46,6 +46,7 @@ import { buildFoxxiProfileDoc as ownXapiProfileDoc, FOXXI_PROFILE_ID as OWN_XAPI
 import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
 import { builtInProfiles, builtInKept } from '../src/xapi-profile-server/built-in.js';
 import { mountProfileAuthoring, mountProfileHosting } from '../src/xapi-profile-server/authoring-http.js';
+import { mountXapixRoutes } from '../src/xapix/http.js';
 import { PROFILE_GENERATED_AT as OWN_XAPI_PROFILE_GENERATED_AT } from '../src/xapi-lrs.js';
 import { createOwnLtiReconciliation, validateRecoveryEntry, type RecoveryEntry } from '../src/lti-own-reconciliation.js';
 import { createOwnLtiReconciliationStore } from '../src/lti-own-reconciliation-store.js';
@@ -59,6 +60,7 @@ import { telemetryView, captureView } from '../../llm-telemetry/view.js';
 import { mountTelemetryClientSetup } from '../../llm-telemetry/client-setup-routes.js';
 import { captureResource, readCapturePreferences, updateCapturePreferences, withCaptureConsent, createTelemetryRateLimit, CaptureError, type CaptureStore } from '../../llm-telemetry/capture.js';
 import { latticeReadWhole, persistedLatticeArtifacts } from '../src/foundation-shared-lattice.js';
+import { profilePodStore } from '../src/xapi-profile-server/pod-store.js';
 import { recordNotReadWhole, servedInPart } from '../src/whole-record-gate.js';
 import express, { type RequestHandler } from 'express';
 
@@ -131,6 +133,8 @@ import { foxxiAffordances, foxxiAdminAffordances } from '../affordances.js';
 import { frontDoor, frontDoorHtml } from '../src/front-door.js';
 import { PlayGrantError, PlayGrantService, learnerGuestGrantConfig, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
 import { GENERAL_GUEST_RETURN_PATH, learnerGeneralGuestDoor, learnerGeneralGuestSettings } from '../src/i2idlx-general-guest.js';
+import { DashboardGeneralGuest, DashboardGuestError, attachDashboardGeneralGuestRoutes, dashboardGeneralGuestDoor, dashboardGeneralGuestSettings, dashboardGuestIdentityHost, type DashboardGuestPorts } from '../src/dashboard-general-guest.js';
+import { GuestLearningRecordStore, guestRecordSealSecret } from '../src/guest-learning-record.js';
 import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
@@ -230,6 +234,7 @@ import { mintSessionToken, deriveUserWallet } from '../src/auth.js';
 import { sendServerError } from '../src/http-errors.js';
 import { runXapiConformance, runScormConformance, runCmi5Conformance, runCamConformance } from '../src/compliance-runner.js';
 import { recoverSignedRequest } from '../src/auth.js';
+import { decideCallerPrincipal, directSubject, type CallerDecision, type CallerPrincipalOptions, type DelegationChecks, type GuestCallerPrincipal } from '../src/caller-principal.js';
 import { acceptSessionKeys, sessionKeyPolicy, sessionKeyPolicyFor, SESSION_KEY_CHAIN_ID } from '../src/session-key.js';
 import { deriveEncryptionKeyPair, importWallet, makeWalletDelegationVerifier, parseTrig, TENANT_ADMIN_CAPABILITY, pgslNodeKind, pgslNodeHash, actionUrl, ownPodSegment } from '@interego/core';
 import { proveCompetency } from '../src/competency-proof.js';
@@ -492,7 +497,7 @@ import { LtiPlatformReadiness, isPlatformSnapshot } from '../src/lti-platform-re
 import { ScopedLtiConnection } from '../src/lti-scoped-connection.js';
 import { agsScore, answersFrom, renderGonePage, renderOutcomePage, renderScoPage, type GradePassback, type GradedView, type ScoView } from '../src/lti-player.js';
 import { attachScormDispatchRoutes, DispatchRegistry, perAddressLimiter, registryWriter, type DispatchEngine } from '../src/scorm-dispatch.js';
-import { glossaryLoader } from '../src/i2idl-glossary.js';
+import { glossaryLoader, I2IDLX_NS } from '../src/i2idl-glossary.js';
 import { askCourse } from '../src/course-ask.js';
 import { attachDecorationRoutes } from '../src/decorations/routes.js';
 import { attachWorkbenchRoutes, workbenchEncryptionKeypair, workbenchOwnerAnchors } from '../src/i2idlx-workbench.js';
@@ -563,7 +568,7 @@ import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js'
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator, callerUserIdOf } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
-import { resolveSubjectPodUrlPure, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
+import { resolveSubjectPodUrlGuarded, namedSubjectPodUrlGuarded, statementOwnerPod, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
 import { configureStoreSpelling } from '../src/store-origins.js';
 import { resolveReadTarget, type ReadTargetDecision } from '../src/read-target.js';
 import { retireRow, activeRows, isRetired } from '../src/enrolment-register.js';
@@ -577,6 +582,12 @@ import type {
 } from '@interego/core';
 
 const tenantPodUrl = process.env.FOXXI_TENANT_POD_URL ?? '';
+/**
+ * The identity host a general guest's DID is written under, for the pod resolver
+ * (resolveSubjectPodUrl). Undefined where the dashboard's general guest is off
+ * (FOXXI_PLAY_GENERAL_GUEST is not `1`), and then the resolver answers as it always has.
+ */
+const guestIdentityHost = dashboardGuestIdentityHost(process.env);
 
 /** The env-internal spelling, named once so the two readers below cannot disagree about it. */
 const cssInternalPodUrl = process.env.FOXXI_CSS_INTERNAL_URL ?? 'http://css.railway.internal:3456/';
@@ -1775,7 +1786,36 @@ function resolveSubjectPodUrl(didOrWebId: string | undefined, explicit?: string)
   // and write touches, and it was private to this file — so nothing could unit-test the branch that
   // silently returned the SHARED tenant pod for an identity form it did not recognize. See
   // src/subject-pod-url.ts for the measured failure that moved it.
-  return resolveSubjectPodUrlPure({ tenantPodUrl, identity: didOrWebId, explicit, safeUrl: safePublicUrlOrUndefined });
+  //
+  // A GENERAL GUEST'S DID (`…:users:u-try-guest-<32 hex>`) is resolved with the identity host and
+  // then guarded: it lands on the guest's OWN pod or this throws `SubjectPodRefusedError` (403).
+  // It never falls through to the tenant pod. That rule is on only where the dashboard's general
+  // guest is (FOXXI_PLAY_GENERAL_GUEST=1); with it off `guestIdentityHost` is undefined and every
+  // identity, a guest's DID included, resolves exactly as it did before the rule existed.
+  return resolveSubjectPodUrlGuarded({ tenantPodUrl, identity: didOrWebId, explicit, safeUrl: safePublicUrlOrUndefined, guestIdentityHost });
+}
+
+/**
+ * `resolveSubjectPodUrl` for an identity SOMEONE ELSE named: a statement's actor, a stored author,
+ * a learner a play was started for. Answers `undefined` where the guest rule refuses the identity
+ * (a general guest's DID that is not a guest of this deployment's identity), instead of throwing.
+ *
+ * WHY THERE ARE TWO. The guest rule throws so that a caller acting AS a guest can never be handed
+ * the tenant pod. But most of this file resolves a pod for a name it was merely given, on a path
+ * where the request itself is fine: a statement already committed whose actor is some other
+ * deployment's guest, a void applied to one, a course read naming one as its author. A throw
+ * there turned a request that used to succeed into an error answer, after the statement was stored. Those
+ * call sites ask here, and treat `undefined` as they already treat an identity with no pod on
+ * this store: no owner lens, no lattice copy, not found. A place whose identity is a signed
+ * caller's (or a signed author's, stored) still asks `resolveSubjectPodUrl`: the caller decision
+ * refuses a general guest's DID before any pod is derived, so the rule is never reached there
+ * (tests/a-workbench-guest-under-the-guest-rule.test.ts lists every call and which it is).
+ *
+ * With the rule off (FOXXI_PLAY_GENERAL_GUEST is not `1`) nothing is ever refused, so this is
+ * `resolveSubjectPodUrl` exactly and never answers `undefined`.
+ */
+function namedSubjectPodUrl(didOrWebId: string | undefined): string | undefined {
+  return namedSubjectPodUrlGuarded({ tenantPodUrl, identity: didOrWebId, safeUrl: safePublicUrlOrUndefined, guestIdentityHost });
 }
 
 const MESH_PROJECT_INTERVAL_MS = pollingInterval(process.env.FOXXI_MESH_PROJECT_INTERVAL_MS);
@@ -1988,52 +2028,61 @@ type BoundCaller =
   | { ok: true; callerDid: string; authMode: 'direct' | 'delegated'; signer: string; payload: Record<string, unknown> }
   | { ok: false; status: number; error: string; hint?: string };
 
-async function bindSignedCaller(body: unknown, opts: { hint?: string } = {}): Promise<BoundCaller> {
-  const rec = recoverSignedRequest(body);
-  if (!rec.ok) {
-    return {
-      ok: false, status: 401, error: `agent signature required: ${rec.reason}`,
-      ...(opts.hint ? { hint: opts.hint } : {}),
-    };
-  }
-  /**
-   * ── ★★ agent_id IS CALLER TEXT, AND IN DELEGATED MODE IT BECOMES callerDid ──────────────────
-   *
-   * A signature proves who holds a key; it proves NOTHING about the string signed alongside it. In
-   * DELEGATED mode this value is returned as `callerDid` and then flows into a Turtle literal on a
-   * PUBLIC register, into a persisted pod row, and into pod-URL derivation — so one unvalidated
-   * control character makes the register unparseable for every reader, and (now that rows are
-   * durable) does so permanently, with no in-band way to remove it. Reject it at the ONE boundary
-   * every caller crosses, rather than escaping at each of the sinks — escaping-per-sink is the
-   * arrangement that has already been wrong here more than once.
-   */
-  if (hasControlChars(rec.agentId)) {
-    return { ok: false, status: 400, error: 'agent_id contains a control character — an identity must be a single line of printable text' };
-  }
-  if (rec.agentId.length > 512) {
-    return { ok: false, status: 400, error: `agent_id is ${rec.agentId.length} characters — the limit is 512` };
-  }
-  const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
-  if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
-    return { ok: true, callerDid: `did:ethr:${rec.signer}`, authMode: 'direct', signer: rec.signer, payload: rec.payload };
-  }
-  const delegationPod = resolveSubjectPodUrl(rec.agentId);
-  let del;
-  try {
+/**
+ * ── ★★ THE ONE PLACE A SIGNED /agent/* CALLER IS DECIDED ────────────────────────────────────
+ *
+ * Recovers the envelope and hands the decision (direct or delegated, see the note above) to
+ * src/caller-principal.ts, supplying the three pod reads a delegated caller needs.
+ * `bindSignedCaller`, `verifyDelegatedCaller` and /agent/issue-credential are shims over this:
+ * each passes the options that keep the behaviour it had when it carried its own copy.
+ *
+ * tests/the-caller-is-decided-in-one-place.test.ts holds this file to it.
+ */
+const signedCallerDelegationChecks: DelegationChecks = {
+  // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
+  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
+  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
+  podFor: (agentId) => resolveSubjectPodUrl(agentId),
+  verify: async (agentId, delegationPod) => {
+    // SSRF guard: this pod is fetched BEFORE authorization succeeds. Reject a target that
+    // resolves to a private/loopback/link-local address (defeats a public hostname pointing
+    // at an internal IP; the literal case is already dropped by resolveSubjectPodUrl).
     await assertSafeFetchTarget(delegationPod);
-    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never });
-  } catch (err) {
-    return { ok: false, status: 401, error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` };
-  }
-  if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
-    return { ok: false, status: 401, error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` };
-  }
-  const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
-  const anchor = vc?.proof?.signerAddress;
-  if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
-    return { ok: false, status: 401, error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''} — only the key that anchors the agent's delegation may sign for them` };
-  }
-  return { ok: true, callerDid: rec.agentId, authMode: 'delegated', signer: rec.signer, payload: rec.payload };
+    return verifyAgentDelegation(agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
+  },
+  anchorOf: async (agentId, delegationPod) => {
+    const vc = await readDelegationCredential(delegationPod, agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
+    return vc?.proof?.signerAddress;
+  },
+};
+
+function resolveSignedPrincipal(body: unknown, opts: CallerPrincipalOptions): Promise<CallerDecision> {
+  return decideCallerPrincipal(recoverSignedRequest(body), signedCallerDelegationChecks, { ...opts, guestKey: signer => dashboardGuestKeys?.(signer) ?? false });
+}
+/**
+ * Is this address a tab key admitted as a dashboard general guest? Set where that is switched on
+ * (below, beside the guest's own routes); undefined otherwise, and then no key is one. Such a key
+ * is refused on every signed /agent/* route: a guest calls the guest operations and nothing else.
+ */
+let dashboardGuestKeys: ((signer: string) => boolean) | undefined;
+
+/**
+ * ── ★★ agent_id IS CALLER TEXT, AND IN DELEGATED MODE IT BECOMES callerDid ──────────────────
+ *
+ * A signature proves who holds a key; it proves NOTHING about the string signed alongside it. In
+ * DELEGATED mode this value is returned as `callerDid` and then flows into a Turtle literal on a
+ * PUBLIC register, into a persisted pod row, and into pod-URL derivation — so one unvalidated
+ * control character makes the register unparseable for every reader, and (now that rows are
+ * durable) does so permanently, with no in-band way to remove it. Reject it at the ONE boundary
+ * every caller crosses, rather than escaping at each of the sinks — escaping-per-sink is the
+ * arrangement that has already been wrong here more than once. (`agentIdBounds` below: this shim
+ * asks for the check; `verifyDelegatedCaller` and /agent/issue-credential never made it.)
+ */
+async function bindSignedCaller(body: unknown, opts: { hint?: string } = {}): Promise<BoundCaller> {
+  const r = await resolveSignedPrincipal(body, { agentIdBounds: true, anchorRefusalExplains: true, ...(opts.hint ? { unsignedHint: opts.hint } : {}) });
+  if (!r.ok) return { ok: false, status: r.status, error: r.error, ...(r.hint ? { hint: r.hint } : {}) };
+  const { subject, key, authMode, payload } = r.principal;
+  return { ok: true, callerDid: subject, authMode, signer: key, payload };
 }
 
 /** Land one projected mesh event into its agent's OWN derived-view tenant
@@ -6025,10 +6074,12 @@ const app = createVerticalBridge({
       // recognizable self-sovereign identities map to an owner lens; generic
       // upstream account names return null and fall back to the caller tenant.
       ownerTenantOfStatement: (stmt) => {
-        const name = (stmt?.actor as { account?: { name?: string } } | undefined)?.account?.name;
-        if (typeof name !== 'string' || !name) return null;
-        if (!/^did:(ethr|web|key):/.test(name) && !/(u-pk-|u-did-|u-eth-|eth-0x)/.test(name)) return null;
-        return lensTenantFor(actorForPod(resolveSubjectPodUrl(name), MESH_ACTOR_LABELS));
+        // A general guest of this deployment's identity is its own owner (its own pod's lens, where
+        // the course player already keeps its statements). One the guest rule refuses is nobody's
+        // here: the caller's tenant, as for any name that is not a recognizable identity
+        // (statementOwnerPod, src/subject-pod-url.ts).
+        const pod = statementOwnerPod(stmt, namedSubjectPodUrl);
+        return pod === null ? null : lensTenantFor(actorForPod(pod, MESH_ACTOR_LABELS));
       },
       // cmi5 moveOn orchestration — after each Statement is stored, the
       // LMS re-evaluates the AU's moveOn and auto-emits `satisfied`.
@@ -7766,42 +7817,16 @@ app.get('/agent/issue-credential/affordance', (_req, res) => {
 app.post('/agent/issue-credential', async (req, res) => {
   try {
     // SAME verifiable-delegation auth as /agent/review-record.
-    const rec = recoverSignedRequest(req.body);
-    if (!rec.ok) {
-      res.status(401).json({ error: `agent signature required: ${rec.reason}`, hint: 'sign_request the issuance args, then act urn:iep:action:foxxi:issue-credential.' });
+    const caller = await resolveSignedPrincipal(req.body, {
+      agentIdBounds: false, anchorRefusalExplains: false,
+      unsignedHint: 'sign_request the issuance args, then act urn:iep:action:foxxi:issue-credential.',
+    });
+    if (!caller.ok) {
+      res.status(caller.status).json({ error: caller.error, ...(caller.hint ? { hint: caller.hint } : {}) });
       return;
     }
-    const p = rec.payload;
-    const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
-    let callerDid: string;
-    if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
-      callerDid = `did:ethr:${rec.signer}`;
-    } else {
-      // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
-  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
-  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
-  const delegationPod = resolveSubjectPodUrl(rec.agentId);
-      let del;
-      try {
-        // SSRF guard before the pre-authorization delegation fetch (see verifyDelegatedCaller).
-        await assertSafeFetchTarget(delegationPod);
-        del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
-      } catch (err) {
-        res.status(401).json({ error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` });
-        return;
-      }
-      if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
-        res.status(401).json({ error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` });
-        return;
-      }
-      const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
-      const anchor = vc?.proof?.signerAddress;
-      if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
-        res.status(401).json({ error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''}` });
-        return;
-      }
-      callerDid = rec.agentId;
-    }
+    const p = caller.principal.payload;
+    const callerDid = caller.principal.subject;
     if (!issuerKeySeed) { res.status(503).json({ error: 'issuance not configured (FOXXI_ISSUER_KEY_SEED unset)' }); return; }
     const recipientDid = typeof p.recipient_did === 'string' ? p.recipient_did.trim() : '';
     if (!recipientDid) { res.status(400).json({ error: 'recipient_did required' }); return; }
@@ -8240,39 +8265,11 @@ async function verifyPrivatePerformanceCaller(body: unknown, write: boolean): Pr
 
 async function verifyDelegatedCaller(body: unknown):
   Promise<{ ok: true; callerDid: string; signer: string; payload: Record<string, unknown> } | { ok: false; status: number; error: string }> {
-  const rec = recoverSignedRequest(body);
-  if (!rec.ok) return { ok: false, status: 401, error: `agent signature required: ${rec.reason}` };
-  const p = rec.payload;
-  const claimedAddr = rec.agentId.toLowerCase().match(/0x[0-9a-f]{40}/)?.[0];
-  if (claimedAddr && claimedAddr === rec.signer.toLowerCase()) {
-    // DIRECT mode: the signer IS the actor.
-    return { ok: true, callerDid: `did:ethr:${rec.signer}`, signer: rec.signer, payload: p };
-  }
-  // The delegation VC is read from the AGENT'S OWN derived pod — NEVER a caller-supplied
-  // subject_pod_url. Honoring the override let a caller point the delegation-source read at
-  // an attacker-controlled pod (delegation-source confusion) AND was an unguarded SSRF sink.
-  const delegationPod = resolveSubjectPodUrl(rec.agentId);
-  let del;
-  try {
-    // SSRF guard: this pod is fetched BEFORE authorization succeeds. Reject a target that
-    // resolves to a private/loopback/link-local address (defeats a public hostname pointing
-    // at an internal IP; the literal case is already dropped by resolveSubjectPodUrl).
-    await assertSafeFetchTarget(delegationPod);
-    del = await verifyAgentDelegation(rec.agentId as unknown as IRI, delegationPod, { verifier: makeWalletDelegationVerifier(), fetch: guardedFetchFn(globalThis.fetch) as never }); // delegation read: re-guard every redirect hop (round-32 pre-auth SSRF)
-  } catch (err) {
-    return { ok: false, status: 401, error: `delegation verification failed for ${rec.agentId} on ${delegationPod}: ${(err as Error).message}` };
-  }
-  if (!del.valid || del.trustLevel !== 'CryptographicallyVerified') {
-    return { ok: false, status: 401, error: `agent ${rec.agentId} has no cryptographically-verified delegation on ${delegationPod}: ${del.reason ?? del.trustLevel ?? 'unverified'}` };
-  }
-  const vc = await readDelegationCredential(delegationPod, rec.agentId as unknown as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never }).catch(() => null);
-  const anchor = vc?.proof?.signerAddress;
-  if (!anchor || anchor.toLowerCase() !== rec.signer.toLowerCase()) {
-    return { ok: false, status: 401, error: `request signer ${rec.signer} is not the delegation anchor key${anchor ? ` (${anchor})` : ''}` };
-  }
-  // DELEGATED mode: the signer is the delegation ANCHOR — the delegator's key
-  // (the pod owner), which is exactly what the ownership guard should check.
-  return { ok: true, callerDid: rec.agentId, signer: rec.signer, payload: p };
+  const r = await resolveSignedPrincipal(body, { agentIdBounds: false, anchorRefusalExplains: false });
+  if (!r.ok) return { ok: false, status: r.status, error: r.error };
+  // DIRECT: the signer IS the actor. DELEGATED: the signer is the delegation ANCHOR — the
+  // delegator's key (the pod owner), which is exactly what the ownership guard should check.
+  return { ok: true, callerDid: r.principal.subject, signer: r.principal.key, payload: r.principal.payload };
 }
 
 // ── Hardened delegated-tenant-admin (bug #2b) ──────────────────────────────
@@ -10349,7 +10346,9 @@ async function keepAppliedVoid(voided: Record<string, unknown>, voidingStatement
   const did = ownerDidOf(voided);
   const statementId = typeof voided.id === 'string' ? voided.id : undefined;
   if (!did || !statementId) return;
-  const pod = resolveSubjectPodUrl(did);
+  // An owner the guest rule refuses has no pod on this store either: voided in the lens alone.
+  const pod = namedSubjectPodUrl(did);
+  if (pod === undefined) return;
   if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) return;
   const label = actorForPod(pod, MESH_ACTOR_LABELS);
   await composeIntoSharedLattice({
@@ -10671,7 +10670,8 @@ async function resolveCourseForRead(courseId: string, authorDid?: string): Promi
   const cached = agentScormCourses.get(courseId);
   if (cached) return cached;
   const tryPod = async (did: string): Promise<AgentScormCourse | null> => {
-    const pod = resolveSubjectPodUrl(did);
+    const pod = namedSubjectPodUrl(did);
+    if (pod === undefined) return null;   // an author the guest rule refuses holds no course here
     const loaded = await loadCourseFromLattice(pod, did, actorForPod(pod, MESH_ACTOR_LABELS), courseId).catch(() => null);
     if (loaded) { const c = loaded as unknown as AgentScormCourse; seatScormCourse(c); recordCourseAuthor(courseId, c.authoredBy || did); return c; }
     return null;
@@ -10979,21 +10979,14 @@ const XAPI_PROFILES_RESOURCE = 'xapi-profiles';
 const XAPI_PROFILE_RECORD = 'xapi:ProfileRecord';
 const xapiProfileServerBase = `${bridgeBaseUrl}/xapi/profiles`;
 
-const xapiProfileServer = new ProfileServer({
-  // Foxxi's own profile and the xapi-x profile: both are this deployment's, served from its code.
-  builtIn: () => builtInProfiles() as never,
-  builtInKept,
-  isOperator: did => adminWebId !== '' && did === adminWebId,
-  hydrate: async () => {
-    if (!XAPI_PROFILES_POD) return [];
-    await ensureResident(XAPI_PROFILES_POD, XAPI_PROFILES_POD, XAPI_PROFILES_LABEL, undefined, XAPI_PROFILES_RESOURCE);
-    markLatticePublic(XAPI_PROFILES_LABEL);
-    const records = latticeArtifacts(XAPI_PROFILES_LABEL, XAPI_PROFILE_RECORD).map(a => a.content as ProfileRecord).filter(r => r && typeof r.at === 'string');
-    bridgeLog(`[foxxi-bridge][xapi-profiles] ${records.length} profile record(s) read back from the lattice`);
-    return records;
-  },
-  persist: async (record, held) => {
-    if (!XAPI_PROFILES_POD) return { persisted: false };
+// Where profile records go and how the bridge says afterwards whether one is there
+// (src/xapi-profile-server/pod-store.ts). The pod's own copy is read, not the lattice in this
+// process: a record is in that from the moment it is composed, whether or not the write landed.
+const xapiProfilePodStore = profilePodStore({
+  pod: XAPI_PROFILES_POD,
+  hasKey: () => bridgeEncryptionKeypair() !== null,
+  guard: assertSafeFetchTarget,
+  write: async (record, held) => {
     // The spine is the profile and its version; the document is the holon's content, and its
     // triples are projected from that when the bridge starts. Composing every triple into the
     // lattice was measured first: a 19 KB profile of 545 triples became 7,398 nodes and an
@@ -11008,13 +11001,26 @@ const xapiProfileServer = new ProfileServer({
     });
     return { ...(sl?.holonUri ? { holonUri: sl.holonUri } : {}), persisted: sl?.persisted === true };
   },
-  // Read from the pod's own copy, not from the lattice in this process: the record is in that
-  // from the moment it is composed, whether or not the write landed.
-  confirm: async record => {
-    if (!XAPI_PROFILES_POD) return false;
+  readBack: async () => {
     const onPod = await persistedLatticeArtifacts(XAPI_PROFILES_POD, XAPI_PROFILE_RECORD, XAPI_PROFILES_RESOURCE);
-    return onPod === null ? undefined : onPod.some(a => (a.content as ProfileRecord | null)?.id === record.id);
+    return onPod === null ? null : onPod.map(a => a.content as ProfileRecord);
   },
+});
+const xapiProfileServer = new ProfileServer({
+  // Foxxi's own profile and the xapi-x profile: both are this deployment's, served from its code.
+  builtIn: () => builtInProfiles() as never,
+  builtInKept,
+  isOperator: did => adminWebId !== '' && did === adminWebId,
+  hydrate: async () => {
+    if (!XAPI_PROFILES_POD) return [];
+    await ensureResident(XAPI_PROFILES_POD, XAPI_PROFILES_POD, XAPI_PROFILES_LABEL, undefined, XAPI_PROFILES_RESOURCE);
+    markLatticePublic(XAPI_PROFILES_LABEL);
+    const records = latticeArtifacts(XAPI_PROFILES_LABEL, XAPI_PROFILE_RECORD).map(a => a.content as ProfileRecord).filter(r => r && typeof r.at === 'string');
+    bridgeLog(`[foxxi-bridge][xapi-profiles] ${records.length} profile record(s) read back from the lattice`);
+    return records;
+  },
+  persist: xapiProfilePodStore.persist,
+  confirm: xapiProfilePodStore.confirm,
 });
 
 mountProfileServerReads(app, xapiProfileServer, {
@@ -11101,6 +11107,27 @@ mountProfileHosting(app, xapiProfileServer, {
   // The deployment's own profile is served at /xapi/profile; its version, templates and patterns
   // have IRIs beneath that, which answered nothing.
   own: OWN_XAPI_PROFILE_ID.startsWith(`${bridgeBaseUrl}/`) ? [{ path: new URL(OWN_XAPI_PROFILE_ID).pathname, iri: OWN_XAPI_PROFILE_ID }] : [],
+});
+
+// The xapi-x rules and the controls document (src/xapix/http.ts). Read-only and unsigned. The
+// lint fetches nothing itself: whether an IRI is a design idea is asked of the I2IDL release this
+// bridge already reads for "Ask your course" (cached a day), and whether one is an affordance is
+// asked of the manifest this bridge serves.
+const servedAffordance = (iri: string) => activeAffordances.find(a => a.action === iri);
+mountXapixRoutes(app, xapiProfileServer, {
+  base: xapiProfileServerBase,
+  links: async () => {
+    const sources = await i2idlGlossary().catch(() => null);
+    return {
+      // An i2x: concept is taken by its namespace: the ontology's term list is not read here.
+      ...(sources ? { designIdea: (iri: string) => sources.glossary.byIri.has(iri) || iri.startsWith(I2IDLX_NS) } : {}),
+      affordance: (iri: string) => servedAffordance(iri) !== undefined,
+    };
+  },
+  describeAffordance: iri => {
+    const a = servedAffordance(iri);
+    return a ? { title: a.title, description: a.description, method: a.method, target: a.targetTemplate.replace('{base}', bridgeBaseUrl), mediaType: a.mediaType, inputs: a.inputs as never } : undefined;
+  },
 });
 
 // ── Credentials through any signed connection ─────────────────────────────────────────────────
@@ -11869,7 +11896,8 @@ function contentRateLimited(req: import('express').Request, res: import('express
 
 /** A learner's competencies from their own record (read from their pod, as the learner record route reads it). */
 async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'): Promise<RecordedCompetency[]> {
-  const pod = resolveSubjectPodUrl(learnerDid);
+  const pod = namedSubjectPodUrl(learnerDid);
+  if (pod === undefined) return [];   // refused by the guest rule: no pod here to read a record from
   const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
   const podOrigin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
   if (!tenantOrigin || podOrigin !== tenantOrigin) return [];   // no pod here to read a record from
@@ -11893,7 +11921,8 @@ async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'):
  * pod whose list cannot be read now says so rather than reading as one where nothing was kept.
  */
 async function learnerAdmissions(learnerDid: string): Promise<{ ok: true; standing: Map<string, AdmissionRecord> } | { ok: false; error: string }> {
-  const pod = resolveSubjectPodUrl(learnerDid);
+  const pod = namedSubjectPodUrl(learnerDid);
+  if (pod === undefined) return { ok: true, standing: new Map() };   // refused by the guest rule: no pod here to have kept anything on
   if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) return { ok: true, standing: new Map() };
   const read = await readAdmissions(pod, bridgeEncryptionKeypair(), globalThis.fetch as never);
   return read.ok ? { ok: true, standing: standingAdmissions(read.records) } : read;
@@ -12201,7 +12230,7 @@ async function resolveForCaller(callerDid: string, signer: string, p: Record<str
   if (!root || !isCompositionItem(root)) return { ok: false, status: 404, error: 'no such composition here: name one by its IRI' };
   // A wallet signing for itself is a person; a delegated agent is an agent. Either may say otherwise.
   const kind: 'human' | 'agent' = p.learner_kind === 'human' || p.learner_kind === 'agent'
-    ? p.learner_kind : (callerDid === `did:ethr:${signer}` ? 'human' : 'agent');
+    ? p.learner_kind : (callerDid === directSubject(signer) ? 'human' : 'agent');
   try {
     const admission: Admission | undefined = p.admission === undefined ? undefined : admissionFrom(p.admission);
     // With none in the request, what the learner has kept for each competency stands
@@ -12381,6 +12410,119 @@ app.post('/agent/content/next', async (req, res) => {
     }, bridgeBaseUrl, outcome.done ? 'Composition completed' : 'Next step', outcome.done ? [] : activeAffordances.filter(a => a.toolName === 'foxxi.content_next'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
+
+// ── The dashboard's general guest (src/dashboard-general-guest.ts) ──────────────────────────
+// Off unless FOXXI_PLAY_GENERAL_GUEST=1; with it unset nothing below is built or attached.
+//
+// A guest is a caller of its own kind. It reaches the bridge at ONE route, with one of the
+// operation names in src/guest-operations.ts (default-deny), and each handler below is given the
+// guest PRINCIPAL: whose record it is and which pod it touches come from `principal.guest`, never
+// from a request. A guest's record is one SEALED document on the guest's own pod
+// (src/guest-learning-record.ts): the gate serves it to anyone who has the guest's id, and only
+// this bridge and the guest's own admitted tabs can open it. Nothing here writes a lens, a
+// lattice, the efficacy tally, a forwarding target or anything else on the tenant pod on a
+// guest's behalf.
+const dashboardGeneralGuest = dashboardGeneralGuestSettings(process.env, playGrantSettings);
+if (dashboardGeneralGuest && playGrants) {
+  if (!guestIdentityHost || new URL(dashboardGeneralGuest.identityUrl).host.toLowerCase() !== guestIdentityHost) {
+    throw new Error('FOXXI_PLAY_GENERAL_GUEST=1: the identity host the pod resolver was given is not the one the door answers for');
+  }
+  if (!tenantPodUrl) throw new Error('FOXXI_PLAY_GENERAL_GUEST=1 needs FOXXI_TENANT_POD_URL: a guest\'s pod is placed on the tenant pod\'s origin');
+  // The record is never written in the clear, so a bridge with nothing to seal it with does not
+  // offer the guest at all, rather than starting and refusing every step.
+  const guestSealSecret = guestRecordSealSecret(process.env);
+  if (!guestSealSecret) throw new Error('FOXXI_PLAY_GENERAL_GUEST=1 needs FOXXI_BRIDGE_PRIVATE_KEY (or FOXXI_WALLET_SEED): a guest\'s record is sealed with a key derived from it');
+  /** Bound below, once the door exists: the record keys of the tabs admitted as a guest now. */
+  let guestTabKeys: (userId: string) => readonly string[] = () => [];
+  const guestRecords = new GuestLearningRecordStore({
+    tenantPodUrl, identityHost: guestIdentityHost,
+    sealSecret: guestSealSecret,
+    tabKeys: owner => guestTabKeys(owner.userId),
+    // The bridge's own fetch: it attaches the operator bearer to a write on the pod origin and to nothing else.
+    fetch: (url, init) => (globalThis.fetch as typeof fetch)(url, init),
+  });
+  /** A composition resolved for a guest from the guest's own record. No admission is read or taken: a guest keeps none. */
+  const resolveForGuest = async (principal: GuestCallerPrincipal, args: Record<string, unknown>) => {
+    const iri = args.composition;
+    const root = typeof iri === 'string' && iri.length <= 2048 ? await contentStore.fetch(iri) : undefined;
+    if (!root || !isCompositionItem(root)) throw new DashboardGuestError(404, 'general_guest_no_such_composition');
+    const { missing } = await contentStore.gather(root);
+    const kept = await guestRecords.read(principal.guest);
+    const elr = await assembleEnterpriseLearnerRecord({
+      learnerDid: principal.subject, learnerPodUrl: principal.guest.podUrl, subjectKind: 'human',
+      publicPodUrl: canonicalPublicPodUrl(principal.guest.podUrl),
+      tenantDid: tenantProfileDid, lrsEndpoint: bridgeBaseUrl,
+      statements: kept.statements.map(statement => ({ id: String(statement.id), statement, stored: kept.updatedAt, voided: false })),
+    });
+    await ensureEfficacy();
+    try {
+      const resolution = resolveComposition({
+        composition: root, learner: { id: principal.subject, kind: 'human' }, record: elr.competencies, lookup: lookupIri => contentStore.get(lookupIri),
+        efficacy: (competency, fragment, level) => fragmentEfficacy.counts(competency, fragment, level),
+      });
+      return { root, resolution, missing };
+    } catch (e) {
+      if (e instanceof ContentError) throw new DashboardGuestError(400, 'general_guest_composition_refused', { detail: e.message });
+      throw e;
+    }
+  };
+  const guestPorts: DashboardGuestPorts = {
+    'record.read': async (principal) => {
+      const kept = await guestRecords.read(principal.guest);
+      return { ok: true, subject: kept.subject, updatedAt: kept.updatedAt, count: kept.statements.length, statements: kept.statements };
+    },
+    'course.resolve': async (principal, args) => {
+      const r = await resolveForGuest(principal, args);
+      return {
+        ok: true, ...r.resolution, learnerKind: 'human', missing: r.missing,
+        steps: r.resolution.steps.map(step => ({ ...step, fragment: fragmentForLearner(step.fragment) })),
+      };
+    },
+    'course.launch': async (principal, args) => {
+      const r = await resolveForGuest(principal, args);
+      const play = startPlay(r.resolution, r.root.title, { id: principal.subject, kind: 'human' }, { session: randomUUID(), registration: randomUUID() }, new Date().toISOString());
+      const about = { skipped: r.resolution.skipped, unmet: r.resolution.unmet, refused: r.resolution.refused, trace: r.resolution.trace, missing: r.missing };
+      if (!play) return { ok: true, done: true, nothingToPlay: true, composition: r.root['@id'], learnerKind: 'human', ...about };
+      keepPlay(play, wayInBy('human'));
+      return { ok: true, sessionId: play.id, registration: play.registration, composition: r.root['@id'], title: r.root.title, learnerKind: 'human', step: currentView(play), ...about };
+    },
+    'course.next': async (principal, args) => {
+      const entry = typeof args.session_id === 'string' ? contentPlays.get(args.session_id) : undefined;
+      if (!entry || entry.expiresAt < Date.now()) throw new DashboardGuestError(404, 'general_guest_no_such_play');
+      // A play is its learner's: a guest answers only the play it launched as itself.
+      if (entry.play.learner.id !== principal.subject) throw new DashboardGuestError(403, 'general_guest_not_your_play');
+      const expected = args.expected_step;
+      if (expected !== undefined && (typeof expected !== 'number' || !Number.isSafeInteger(expected) || expected < 1)) throw new DashboardGuestError(400, 'general_guest_input_invalid');
+      // The step counts only once its statements are kept in the guest's own record, on the guest's own pod.
+      const taken = await takeStep(entry, args.answers, {
+        actor: { objectType: 'Agent', account: { homePage: String(authoritativeSource), name: principal.subject } },
+        now: new Date().toISOString(), newId: randomUUID, platform: 'Foxxi',
+        ...(expected !== undefined ? { expectedStep: expected } : {}),
+      }, statements => guestRecords.append(principal.guest, statements), markIfGraded);
+      if (!taken.ok) throw new DashboardGuestError(taken.status, 'general_guest_step_refused', { detail: taken.error, ...(taken.validationErrors ? { validationErrors: taken.validationErrors } : {}) });
+      const outcome = taken.step;
+      if (outcome.done && expected === undefined) contentPlays.delete(entry.play.id);
+      return {
+        ok: true, sessionId: entry.play.id, recorded: taken.recorded, done: outcome.done, ...(taken.resumed ? { keptEarlierAnswers: true } : {}),
+        ...(taken.replayed ? { replayedReceipt: true } : {}),
+        ...(outcome.graded ? { graded: outcome.graded } : {}),
+        ...(outcome.done ? { summary: { steps: entry.play.steps.length, graded: entry.play.graded } } : { step: currentView(entry.play) }),
+      };
+    },
+  };
+  const dashboardGeneralGuests = new DashboardGeneralGuest({
+    door: dashboardGeneralGuestDoor(dashboardGeneralGuest, request => playGrants.generalGuestGrant(request)),
+    ports: guestPorts,
+    // The one resolver: for a guest's DID it is given the identity host and refuses the tenant pod.
+    podFor: guestDid => resolveSubjectPodUrl(guestDid),
+    // Identity states the pod under its own spelling of this store; either spelling is this store.
+    sameStore,
+    record: guestRecords,
+  });
+  guestTabKeys = userId => dashboardGeneralGuests.recordKeysOf(userId);
+  dashboardGuestKeys = signer => dashboardGeneralGuests.holds(signer);
+  attachDashboardGeneralGuestRoutes(app, dashboardGeneralGuests);
+}
 
 // A fragment's IRI dereferences to its public form: no salt, verifier or explanation, and still
 // checkable against the IRI (publicFragmentIsIntact). Markdown on request, for an agent reading

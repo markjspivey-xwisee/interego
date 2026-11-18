@@ -16,6 +16,7 @@
  */
 import { validates, type Json } from '../xapi-profile-server/processor.js';
 import { lintProfile, type LintFinding, type ProfileExamples } from '../xapi-profile-server/lint.js';
+import { schemaFailure } from '../xapi-profile-server/extension-schema.js';
 import { IEP_DECORATIONS, IEP_NS, XAPIX_NS, xapix } from './namespace.js';
 import { PROJECTION_TYPE, isDigest } from './statement.js';
 
@@ -63,26 +64,8 @@ export function outcomeVerbsOf(profiles: readonly Json[]): Set<string> {
   return out;
 }
 
-/** The part of JSON Schema the decorations use: type, enum, items, minItems, pattern and `format: iri`. */
-export function schemaFailure(value: unknown, schema: unknown): string | null {
-  if (schema === true || !isObject(schema)) return schema === false ? 'no value is allowed' : null;
-  if (Array.isArray(schema.enum) && !schema.enum.some(e => JSON.stringify(e) === JSON.stringify(value))) return `is not one of ${JSON.stringify(schema.enum)}`;
-  const type = schema.type;
-  if (typeof type === 'string') {
-    const actual = value === null ? 'null' : Array.isArray(value) ? 'array' : typeof value;
-    const ok = type === actual || (type === 'integer' && typeof value === 'number' && Number.isInteger(value));
-    if (!ok) return `is ${actual === 'object' ? 'an object' : actual === 'array' ? 'an array' : `a ${actual}`}, and the schema asks for ${type}`;
-  }
-  if (typeof value === 'string') {
-    if (schema.format === 'iri' && !isIri(value)) return 'is not an IRI';
-    if (typeof schema.pattern === 'string' && !new RegExp(schema.pattern).test(value)) return `does not match ${schema.pattern}`;
-  }
-  if (Array.isArray(value)) {
-    if (typeof schema.minItems === 'number' && value.length < schema.minItems) return `has ${value.length} items, and the schema asks for at least ${schema.minItems}`;
-    for (const [i, item] of value.entries()) { const inner = schemaFailure(item, schema.items); if (inner) return `item ${i} ${inner}`; }
-  }
-  return null;
-}
+/** A value against a parsed schema: the profile server's reader, which the decorations share. */
+export { schemaFailure };
 
 const extensionsAt = (statement: Json, member: 'result' | 'context'): Json => {
   const holder = statement[member];

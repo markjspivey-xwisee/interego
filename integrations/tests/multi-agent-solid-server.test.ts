@@ -26,6 +26,8 @@ import { dirname, join, resolve } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { describe, expect, it } from 'vitest';
 import {
+  SOLID_SERVER_BIN,
+  SOLID_SERVER_MODULES,
   SOLID_SERVER_PACKAGE,
   SOLID_SERVER_WORKDIR,
   isInside,
@@ -47,13 +49,20 @@ describe('the Solid server launch', () => {
     expect(isInside(launch.podsDir, launch.cwd)).toBe(true);
     expect(launch.command).toBe('npx');
     expect(launch.args).toEqual([
-      '--yes', SOLID_SERVER_PACKAGE,
+      '--yes', '-p', SOLID_SERVER_PACKAGE, '-p', join(DIR, 'css-internal-listing'), SOLID_SERVER_BIN,
       '-c', launchOptions.config,
       '-p', '3456',
       '-l', 'warn',
       '--baseUrl', 'http://localhost:3456/',
       '-f', launch.podsDir,
     ]);
+  });
+
+  it('installs the listing fix both configs import beside the server, as a folder npx links', () => {
+    // css-internal-listing/index.cjs: Components.js finds it only beside CSS, and CSS 7.3.0's
+    // hourly sweep crashes the server without it.
+    expect(SOLID_SERVER_MODULES).toEqual([join(DIR, 'css-internal-listing')]);
+    expect(SOLID_SERVER_PACKAGE).toBe('@solid/community-server@7.3.0');
   });
 
   it('refuses to run the server from inside the repository', () => {

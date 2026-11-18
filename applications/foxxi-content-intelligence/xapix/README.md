@@ -1,6 +1,6 @@
 # xapi-x
 
-A superset of xAPI made by decoration, the way [I2IDL-X](../i2idlx/README.md) is a superset of the I2IDL glossary. The design, the code that carries it out, and the decisions taken on it. The lrs-adapter writes the provenance and supersession decorations, the profile is at version 2, and the rules of section 7 are a lint. What is still only designed is listed under "Left to do".
+A superset of xAPI made by decoration, the way [I2IDL-X](../i2idlx/README.md) is a superset of the I2IDL glossary. The design, the code that carries it out, and the decisions taken on it. The lrs-adapter writes the provenance and supersession decorations, coached-world chains its statements and signs their order, the profile is at version 2, and the rules of section 7 are a lint. What is still only designed is listed under "Left to do".
 
 > **Status: part of the Foxxi vertical. Non-normative, not part of the Interego protocol.** xapi-x adds no term to `iep:` or to any other Interego namespace, and it uses no other publisher's verbs, extensions or IRIs. Its own terms are in `xapix:`, declared in [xapix.ttl](xapix.ttl).
 
@@ -40,6 +40,8 @@ A decoration never changes what a standard member means. `verb`, `object`, `resu
 | `src/xapix/profile.ts` | The xapi-x profile. Version 2 (current): eleven concepts and a template that selects on the `xapix:Projection` category. Version 1, as first published, is still built by `buildXapixProfileDocV1`. |
 | `src/xapix/statement.ts` | What an emitter calls: the projection category, a content digest, supersession, RFC 8785 canonical JSON, a statement's digest, a chain, and `orderBasis`, which says what stands behind an order. |
 | `src/xapix/lint.ts` | Rules X1 to X10 as code, with the profile lint's finding shape. |
+| `src/xapix/controls.ts` | The document an `xapix:controls` link points at: what templates offer, each affordance as the deployment serves it. |
+| `src/xapix/http.ts` | The rules and the controls document as routes on the profile server, each the target of an affordance. |
 | `src/xapix/publication.ts` | The profile as the triples that are published, from the same function the profile server reads a profile with. |
 | `applications/lrs-adapter/src/projection-statement.ts` | The statement the adapter posts, as a function of its own. It writes the four keys, the projection category, and the digest and supersession when its caller states them. |
 | `tests/an-lrs-adapter-statement-follows-the-xapi-x-profile.test.ts` | Runs the adapter's own builder through the specification's `validates` against the profile. |
@@ -51,9 +53,11 @@ A decoration never changes what a standard member means. `verb`, `object`, `resu
 | `xapix:Projection` category | lrs-adapter, Foxxi's projector | profile template (determining property) |
 | `descriptorDigest` | lrs-adapter, when its caller holds the descriptor's bytes | lint (form) |
 | `supersedesStatement`, `context.statement` | lrs-adapter, from its caller; Foxxi's projector, from `iep:supersedes` | lint X7 |
-| `previous`, `previousDigest` | no emitter; `chained()` builds them | `orderBasis`, lint |
-| `orderAttestation`, `controls` | nothing | profile declares them; `orderBasis` takes an attestation its reader verified |
-| `evidences`, `offers` | no profile yet | lint X9 |
+| `previous`, `previousDigest` | coached-world, on every statement of a registration after the first | `orderBasis`, lint |
+| `orderAttestation` | coached-world, on the statements that close a registration; the descriptor it names is signed by the world | `readOrderAttestation` verifies the signature, `orderBasis` compares the digests |
+| `controls` | no emitter; the profile server serves the document it links to | profile declares it; lint |
+| `offers` | Foxxi's profile, on its two failed templates | lint X9, against the bridge's manifest |
+| `evidences` | no profile yet | lint X9, against the I2IDL release the bridge reads |
 
 In the examples below, `IEP#` stands for `https://markjspivey-xwisee.github.io/interego/ns/iep#` and `XAPIX#` for the `xapix:` namespace. A real statement writes the full IRI. Every name, address and identifier is made up.
 
@@ -258,6 +262,10 @@ Two cases, and neither embeds a control in a statement.
 
 A consumer holding a statement that follows this template may follow either link. It never assembles a URL from an activity id, a registration or a naming convention. An offer is a possibility, not a permission: the affordance's own access rules decide.
 
+**In code.** Foxxi's profile states what it offers after a failed attempt: its `lesson-failed` and `course-failed` templates offer asking the course a question, reading the passages that bear on one, and taking the lesson. Each is named by the action IRI the bridge's manifest names it by.
+
+The profile server serves the controls document at `GET /xapi/profiles/controls?template=<template IRI>` (`src/xapix/controls.ts`, `src/xapix/http.ts`): the template's offers, each with the target, method and inputs the deployment serves today. **The document is of a template, not of a statement**, which differs from the per-statement address in the example above. A statement's controls are its template's, so a per-statement document would add nothing but the statement's id, and a public address keyed by a statement id says which kind of statement a person has. A document of a template says nothing a statement says and needs no signature. `POST /xapi/profiles/controls` with a statement finds the templates it follows and answers with the same document and its link; the statement is not kept. An offer whose affordance the deployment does not serve is listed as unresolved, with no target.
+
 ## 6. Ordering and attestation
 
 A pattern is a claim about order, and xAPI gives two orderings: `timestamp`, which the emitter writes, and `stored`, which the LRS assigns. A counter the client assigns is a third emitter claim and proves nothing; pull request 910 judged one and did not adopt it. xapi-x adds no counter. It says **who stands behind an order**, in four grades (`xapix:OrderBasis`):
@@ -294,7 +302,9 @@ Rules:
 }
 ```
 
-In code (`src/xapix/statement.ts`): `statementDigest` is the SHA-256 of a statement's RFC 8785 canonical JSON without `stored`, `authority` and `version`; `chained` links a run; `orderBasis(statements, attestation?)` returns the strongest basis that holds for the whole run and why a stronger one does not. It is told whether the reader verified an attestation's signature and does not verify one itself. No emitter chains its statements yet.
+In code (`src/xapix/statement.ts`): `statementDigest` is the SHA-256 of a statement's RFC 8785 canonical JSON without `stored`, `authority` and `version`; `chained` links a run; `orderBasis(statements, attestation?)` returns the strongest basis that holds for the whole run and why a stronger one does not. It is told whether the reader verified an attestation's signature and does not verify one itself.
+
+**coached-world is the first emitter that chains, and the first that attests.** Every statement of a mission's opening carries one timestamp, so until now only the array said which came first. Each statement of a registration after the first now names the one emitted before it and its digest (`applications/coached-world/src/statements.ts`), across the opening, a connected agent's work and the measured result. When a mission settles, the world publishes a descriptor at `…/descriptors/order/<registration>` whose signed text holds the digests of that registration's statements in the order it emitted them, and the closing statements name it. `readOrderAttestation` (`applications/coached-world/src/order.ts`) verifies the signature and reads the list; `orderBasis` then answers `Attested` only when the digests are the reader's statements in that order. The world signs with its own wallet and attests its own emissions: a statement another party stored under the registration is not in the list. To chain, the world's statement ids became plain UUIDs; they were IRIs ending in one, which xAPI does not allow.
 
 xAPI's own signed statements (a JWS attachment) attest one statement's content. They say nothing about order, and they compose with this unchanged.
 
@@ -314,7 +324,7 @@ xAPI's own signed statements (a JWS attachment) attest one statement's content. 
 
 ### Lint rules
 
-Each is code in `src/xapix/lint.ts`: `lintXapixStatements(statements, profiles)` for X1 to X8 and `lintXapixProfile(profile, examples, resolvers)` for X9 and X10, both returning the profile lint's findings. The last column says what the code can and cannot see.
+Each is code in `src/xapix/lint.ts`: `lintXapixStatements(statements, profiles)` for X1 to X8 and `lintXapixProfile(profile, examples, resolvers)` for X9 and X10, both returning the profile lint's findings. Both are reached as one affordance, `foxxi.xapi_profile_lint_decorations` (`POST /xapi/profiles/lint_decorations`), which reads and keeps nothing and asks for no signature. Its answer says what was judged and, for a profile, whether each X9 lookup was available; the lookups are made only when a profile is checked. The last column says what the code can and cannot see.
 
 | | Rule | In code |
 |---|---|---|
@@ -326,7 +336,7 @@ Each is code in `src/xapix/lint.ts`: `lintXapixStatements(statements, profiles)`
 | X6 | A projection that loses anything states `projectionLossy: true`; one that loses nothing states `false`. Never absent. | `xapix-lossy`, for statements written from 2026-11-15; version 2's template requires the flag |
 | X7 | `supersedesStatement` never names the statement itself, and a correction comes with a voiding statement. | `xapix-supersedes`: not itself, a list of ids, and `context.statement` names one of them. The correction half is not checkable: nothing in a statement tells a correction from a revision. |
 | X8 | No extension claims a place in a sequence with a bare number. | `xapix-bare-position`, by the key's name (sequence, ordinal, position, counter, step index) and a numeric value. A counter under another name is not seen. |
-| X9 | The target of every `xapix:evidences` exists in the pinned I2IDL release or in `i2x:`; the target of every `xapix:offers` dereferences to an affordance. | `xapix-link-shape`, `xapix-link-target`. The lint fetches nothing: its caller passes the two lookups, and without them only the shape is checked. |
+| X9 | The target of every `xapix:evidences` exists in the pinned I2IDL release or in `i2x:`; the target of every `xapix:offers` dereferences to an affordance. | `xapix-link-shape`, `xapix-link-target`. The lint fetches nothing: its caller passes the two lookups, and without them only the shape is checked. On the bridge, a design idea is a concept of the I2IDL release it already reads (cached a day), and an `i2x:` IRI is taken by its namespace, its term list not being read there; an affordance is an action of the manifest the bridge serves. |
 | X10 | With every decoration removed, the profile is still a valid profile and each statement still follows every template that asks for no decoration. | `xapix-not-a-superset` |
 | X11 | No two templates of a profile share their determining properties. | the profile lint's own `same-determining-properties`; not repeated |
 
@@ -337,7 +347,7 @@ Each is code in `src/xapix/lint.ts`: `lintXapixStatements(statements, profiles)`
 3. **Foxxi's projector said the same things under other names.** `mesh-event-projector.ts` writes the descriptor as `foxxi:substrateDescriptorIri` and the superseded one as `foxxi:supersededDescriptor`, both in `context.extensions`, and stated modal status only through the verb. Two emitters, two vocabularies for one idea (decision 6, which says what was done about it).
 4. **`docs/ns/iep.ttl` names xAPI.** The comment on `iep:sourceDescriptor` says it is "used as an xAPI result.extensions key by the LRS projection". That is a Layer 1 vocabulary describing itself by one technology. It is a comment, not a MUST, and the term itself is neutral; noted, not touched.
 5. **The adapter's README lists the keys as surviving two LRS products.** That evidence is the reason section 1 keeps the IRIs.
-6. **Foxxi's projector projected a Quoted descriptor with an outcome verb.** A Quoted descriptor was given the verb an Asserted one gets (`completed`, or `failed`), with `foxxi:endorsed: false`, and rule X4 found it once the verb was named as an outcome verb. Fixed: Foxxi's vocabulary (2026.11.1) and profile have a `quoted` verb and a `quoted-descriptor` template that excludes `success`, `completion` and score, and the projector uses them. Statements stored before the change keep the verb they were given. The trajectory step for a Quoted descriptor still reads as an asserted step without a result; the trajectory's own modal statuses have no Quoted.
+6. **Foxxi's projector projected a Quoted descriptor with an outcome verb.** A Quoted descriptor was given the verb an Asserted one gets (`completed`, or `failed`), with `foxxi:endorsed: false`, and rule X4 found it once the verb was named as an outcome verb. Fixed: Foxxi's vocabulary (2026.11.1) and profile have a `quoted` verb and a `quoted-descriptor` template that excludes `success`, `completion` and score, and the projector uses them. Statements stored before the change keep the verb they were given. The trajectory step for a Quoted descriptor is a Quoted step: agentic-performance-practice's trajectory has that status, counts it apart, and does not project such a step to xAPI as work the agent performed.
 
 ## Decisions
 
@@ -348,18 +358,18 @@ The owner was asked eleven questions and answered: decide them, "you know what m
 3. **The four keys stay `iep#` IRIs in `result.extensions`.** Stored statements carry them. The adapter now writes `projectionLossy` on every projection, `false` included, so a reader can tell a faithful projection from one that did not say.
 4. **Four modal statuses in a statement: Asserted, Hypothetical, Counterfactual, Quoted.** Quoted is added because repeating a claim is not making it, and a consumer must not count it either. Retracted is never a stored status: voiding is how xAPI says it, and saying it twice invites the two to disagree.
 5. **One rule for non-asserted statements: no outcome members and no outcome verb (X4).** Whether projection is on by default follows from it: off where the caller supplies the verb, allowed where the emitter chooses it.
-6. **One vocabulary.** Foxxi's projector writes the `iep#` keys as well as its own `foxxi:` keys for one profile version, then stops writing its own. The first half is done: every projection that is not a voiding statement carries `sourceDescriptor`, `modalStatus` and `projectionLossy` under `result.extensions`, and Foxxi's `performed-descriptor`, `intended-descriptor` and `considered-descriptor` templates hold a statement that carries them to them (the modal status has to be one the template's verb can say). The rules are `recommended`, not `included`, because projections stored before this carry only the `foxxi:` keys and are still projections. Foxxi's profile does not redeclare the keys: this profile declares them, and both are held on the one server. The projector still writes its `foxxi:` keys, and Foxxi's templates still require `foxxi:substrateDescriptorIri`; stopping that is the second half and is not done.
+6. **One vocabulary.** Foxxi's projector writes the `iep#` keys as well as its own `foxxi:` keys for one profile version, then stops writing its own. The first half is done: every projection that is not a voiding statement carries `sourceDescriptor`, `modalStatus` and `projectionLossy` under `result.extensions`, and Foxxi's `performed-descriptor`, `intended-descriptor` and `considered-descriptor` templates hold a statement that carries them to them (the modal status has to be one the template's verb can say). The rules are `recommended`, not `included`, because projections stored before this carry only the `foxxi:` keys and are still projections. Foxxi's profile does not redeclare the keys: this profile declares them, and both are held on the one server. The projector still writes its `foxxi:` keys, and Foxxi's templates still require `foxxi:substrateDescriptorIri`; stopping that is the second half and is not done. It waits on the condition this decision set, a new version of Foxxi's profile: seven templates require the key, `superseding-descriptor` is told from `performed-descriptor` by `foxxi:supersededDescriptor` alone, and the learner record finds a projection by `foxxi:substrateDescriptorIri` (`src/learner-record.ts`). Dropping the keys under version 1 would leave new projections matching no template and stored ones unread.
 7. **The marker is `xapix:Projection`.** A marker that says "this is a projection of a descriptor" should not belong to one application. Foxxi's `activities/descriptor-projection` stays on stored statements.
 8. **A revision does not void; a correction does.** Voiding a statement that was a fair record when it was written would say it never should have counted, which is false. A plain LRS showing both is the stated loss.
 9. **Digests are SHA-256 over RFC 8785 canonical JSON** of the statement as its emitter sent it, without `stored`, `authority` and `version`. **Anyone may sign an order attestation.** There is no authority to appoint: the signer is named with the conclusion and the reader decides whether to trust them.
 10. **Evidence links target I2IDL's own concept IRIs, or `i2x:` authored concepts where I2IDL has none.** Each is a proposal (Hypothetical) until reviewed, as every link I2IDL-X proposes is.
-11. **The lint is a function first**, beside the processor, that a profile's tests call; an affordance on the profile server follows. The rules are a rule set in `src/xapix/lint.ts`, not a second linter: they return the profile lint's findings, call it for the superset check, and leave every question of whether a statement follows a template to the processor.
+11. **The lint is a function first**, beside the processor, that a profile's tests call; the affordance on the profile server followed it. The rules are a rule set in `src/xapix/lint.ts`, not a second linter: they return the profile lint's findings, call it for the superset check, and leave every question of whether a statement follows a template to the processor.
 
 ## Left to do
 
-- **An emitter that chains.** `chained()` and `orderBasis` exist and no emitter calls them. The first should be one whose statements share a registration (llm-telemetry or coached-world), and it is that vertical's change.
-- **An order attestation that is written and verified.** The term is declared and `orderBasis` accepts one its reader verified. Nothing publishes the signed descriptor that lists the digests, and nothing verifies one.
-- **`xapix:controls`.** Declared and linted. It needs a document to link to, served by the bridge for a statement that has no descriptor, and no such route exists.
-- **`xapix:evidences` and `xapix:offers` on a real profile.** The lint checks them; Foxxi's profile states none, because each evidence link is a proposal that wants review before it is published.
-- **The lint as an affordance** on the profile server, and the two lookups for X9 (the pinned I2IDL release; an affordance that dereferences) wired to real sources.
-- **Foxxi's projector**: the second half of decision 6 (it stops writing `foxxi:substrateDescriptorIri`, Foxxi's templates stop requiring it, and the readers of that key, `learner-record.ts` and `content-delivery.ts`, move to `sourceDescriptor` first); and a Quoted modal status for a trajectory step, which belongs to agentic-performance-practice (finding 6).
+- **A second emitter that chains.** coached-world does. llm-telemetry does not: its statements arrive from several observers, a retried event must reproduce the statement it made the first time, and its streams are partial by design, so a chain there needs its own decision about what a gap means.
+- **An order attestation on a pod.** coached-world's is served by the world at `/graphs` with its signature. It is not written to a pod, and nothing reads one back from a pod.
+- **An emitter that writes `xapix:controls`.** The document exists and is served. No statement links to it: the failed attempts Foxxi holds are written by the content a learner runs, not by Foxxi.
+- **`xapix:evidences` on a real profile.** Foxxi's profile states none. Each evidence link is a proposal about someone else's concept and wants the owner's review before it is published; a built-in profile is served the moment it is deployed.
+- **Whether an `i2x:` concept exists.** The bridge's lookup takes an `i2x:` IRI by its namespace.
+- **Foxxi's projector**: the second half of decision 6 (it stops writing `foxxi:substrateDescriptorIri`, Foxxi's templates stop requiring it, and the readers of that key, `learner-record.ts` and `content-delivery.ts`, move to `sourceDescriptor` first). It is a new version of Foxxi's profile, not a change under version 1 (decision 6).

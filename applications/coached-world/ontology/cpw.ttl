@@ -23,6 +23,7 @@ cpw:Faction a owl:Class ; rdfs:label "faction" ; rdfs:comment "A faction is a po
 cpw:Pact a owl:Class ; rdfs:label "pact" ; rdfs:comment "A federation agreement between two faction pods." .
 cpw:Agent a owl:Class ; rdfs:label "agent" ; rdfs:comment "An autonomous agent. Its memory is a descriptor on its pod. Control is who the descriptor names, and a transfer supersedes it." .
 cpw:Lesson a owl:Class ; rdfs:label "lesson" .
+cpw:StatementOrder a owl:Class ; rdfs:label "statement order" ; rdfs:comment "The order this world emitted the xAPI statements of one registration in. The descriptor beside it is signed, and the signed text holds the same list, so it is an order attestation in the xapi-x sense. It covers this world's own statements only." .
 
 cpw:name a owl:DatatypeProperty ; rdfs:range xsd:string .
 cpw:heldBy a owl:ObjectProperty ; rdfs:comment "The faction with the greatest control share." .
@@ -35,4 +36,6 @@ cpw:lesson a owl:ObjectProperty .
 cpw:cause a owl:DatatypeProperty ; rdfs:comment "Cause id from the world pack. The pack is the vocabulary; this property does not enumerate causes." .
 cpw:matched a owl:DatatypeProperty ; rdfs:range xsd:boolean ; rdfs:comment "Whether the intervention addressed the cause the pack assigned." .
 cpw:text a owl:DatatypeProperty ; rdfs:range xsd:string .
+cpw:registration a owl:DatatypeProperty ; rdfs:domain cpw:StatementOrder ; rdfs:range xsd:string ; rdfs:comment "The xAPI registration (a UUID) the ordered statements share." .
+cpw:statementDigests a owl:ObjectProperty ; rdfs:domain cpw:StatementOrder ; rdfs:comment "An RDF list of the statements' digests, first emitted first. Each is sha256: and 64 hex characters, over the statement's RFC 8785 canonical JSON without the stored, authority and version members." .
 cpw:pack a owl:ObjectProperty ; rdfs:comment "The world pack IRI these individuals were read from." .

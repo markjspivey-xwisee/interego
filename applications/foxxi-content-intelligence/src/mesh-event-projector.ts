@@ -141,7 +141,7 @@ const humanLabel = (iri: string) => tail(iri).replace(/[-_]+/g, ' ').trim() || i
 /** Map iep:ModalStatusEnum (opaque infrastructure) → the structural projection shape.
  *  This reads the epistemic status of the CLAIM; it never asserts task success. */
 function modalMode(modalStatus?: string): {
-  stepVerb: 'asserted' | 'intended' | 'considered';
+  stepVerb: 'asserted' | 'intended' | 'considered' | 'quoted';
   trajModal: TrajectoryModalStatus;
   voided: boolean;
   endorsed: boolean;
@@ -150,7 +150,9 @@ function modalMode(modalStatus?: string): {
     case 'Hypothetical':   return { stepVerb: 'intended',   trajModal: 'Hypothetical',   voided: false, endorsed: true };
     case 'Counterfactual': return { stepVerb: 'considered', trajModal: 'Counterfactual', voided: false, endorsed: true };
     case 'Retracted':      return { stepVerb: 'considered', trajModal: 'Counterfactual', voided: true,  endorsed: true };
-    case 'Quoted':         return { stepVerb: 'asserted',   trajModal: 'Asserted',       voided: false, endorsed: false };
+    // Someone else's claim, repeated: a step of its own kind, not an asserted one (the trajectory
+    // counts and projects Asserted steps as work this agent did).
+    case 'Quoted':         return { stepVerb: 'quoted',     trajModal: 'Quoted',         voided: false, endorsed: false };
     case 'Asserted':
     default:               return { stepVerb: 'asserted',   trajModal: 'Asserted',       voided: false, endorsed: true };
   }

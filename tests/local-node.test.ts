@@ -215,6 +215,18 @@ describe('a real local pod, with outbound connections denied', () => {
     expect((await pod.fetch(pod.podUrl)).status).toBe(200);
   });
 
+  it('drops a Forwarded header, as it drops X-Forwarded-*, so the pod still answers for its own origin', async () => {
+    // CSS takes the host and scheme of every identifier from Forwarded when it is present.
+    const pod = current();
+    const credential = (await readFile(join(fixtureDir, 'persistent', 'service-credential'), 'utf8')).trim();
+    expect(await rawRequest(pod.podUrl, {
+      Authorization: `Bearer ${credential}`, Forwarded: 'host=foreign.example;proto=https',
+    })).toBe(200);
+    expect(await rawRequest(pod.podUrl, {
+      Authorization: `Bearer ${credential}`, 'X-Forwarded-Host': 'foreign.example', 'X-Forwarded-Proto': 'https',
+    })).toBe(200);
+  });
+
   it('keeps the active data directory locked and leaves the running pod usable', async () => {
     await expect(startLocalNode(resolveDeploymentConfig({
       profile: 'local', dataDir: join(fixtureDir, 'persistent'),

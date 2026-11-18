@@ -31,11 +31,26 @@
     "css:config/util/logging/winston.json",
     "css:config/util/representation-conversion/default.json",
     "css:config/util/resource-locker/memory.json",
-    "css:config/util/variables/default.json"
+    "css:config/util/variables/default.json",
+    "./css-internal-listing/config/internal-listing.json"
   ],
   "@graph": [
     {
       "comment": "Open-access, file-backed Solid server with WebSocket notifications. Pod data is stored under rootFilePath (configured via CLI/env) so it survives container restarts. Content-level privacy is handled at the Interego client-side encryption layer (JWE), not at the ACL layer — CSS access control stays allow-all for the demo; client encrypts before PUT."
+    },
+    {
+      "comment": "The last import is examples/multi-agent/css-internal-listing/, which lets CSS 7.3.0's hourly expired-entry sweep list /.internal/ again. examples/multi-agent/solid-server.ts installs it beside the server; a server started without it refuses this config at boot."
+    },
+    {
+      "comment": [
+        "The memory locker's reader counts stay in memory, beside the locker that uses them, as",
+        "css:config/storage/key-value/memory.json keeps them; this storage holds nothing else. On the file backend",
+        "every read wrote and then deleted a count under /.internal/locks/. The sweep walks all of /.internal/, and a",
+        "count is a bare number with no key, so a sweep that ran while a read was open threw and deleted nothing."
+      ],
+      "@type": "Override",
+      "overrideInstance": { "@id": "urn:solid-server:default:BackendKeyValueStorage" },
+      "overrideParameters": { "@type": "MemoryMapStorage" }
     }
   ]
 }

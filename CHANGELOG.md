@@ -684,6 +684,1106 @@ for the problem it reports, and names running out of memory. Of 5 new shared
 rows, all failed in each client before, and so did 5 Turtle rows. The CSP hash
 moves.
 
+## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
+
+A Quoted descriptor repeats someone else's claim without endorsing it. The
+trajectory had three modal statuses and no Quoted, so Foxxi's projector
+recorded such a step as Asserted, which is the status the trajectory counts
+and projects as executed work.
+
+- **agentic-performance-practice:** `TrajectoryModalStatus` gains `Quoted`.
+  The step's descriptor states it, `trajectoryShape` counts it apart, and
+  `projectTrajectoryToXapi` drops it with the intentions and rejected
+  branches, reported under `modalStepsDropped`.
+- **Foxxi's projector** gives a Quoted descriptor a `quoted` step with status
+  `Quoted`, and reports its mode as `quoted`. **This changes what a caller of
+  `projectMeshEntry` reads** for a Quoted descriptor: `mode` was `asserted`.
+
+**Not done.** Foxxi's projector still writes its own `foxxi:` descriptor keys
+beside the `iep#` ones. Stopping needs a new version of Foxxi's profile, whose
+templates require those keys; the xapi-x README says what depends on them.
+
+## 2026-11-18 — Foxxi: a dashboard guest's record is sealed, and the guest rule no longer breaks the workbench guest
+
+Two things stood between the dashboard's general guest (on the bridge behind
+`FOXXI_PLAY_GENERAL_GUEST=1`, still off) and switching it on.
+
+- **The guest's learning record was readable by anyone who had the guest's
+  id.** It was a plain document on the guest's pod, and the gate serves pod
+  reads with no sign-in. It is now the substrate's multi-recipient envelope at
+  `<guest pod>/foxxi-dashboard/learning-record.sealed.json`. Who can open it:
+  the bridge (a key derived from its own secret and the guest's DID, so this is
+  a bridge-held service key), and each of the guest's own browser tabs that
+  sent an X25519 public key (`record_key`) when it finished the door visit.
+  Nobody else. With the switch on the bridge does not start without
+  `FOXXI_BRIDGE_PRIVATE_KEY` or a wallet seed to seal with.
+- **With the switch on, the pod resolver re-routes or refuses a general
+  guest's DID at every place that calls it**, and the learner workbench's
+  general guest (a separate switch, already on) reaches two of them with its
+  own DID: whose a posted statement is, and where an applied void is kept.
+  Both answered the shared tenant pod. With the switch on they answer the
+  guest's own pod, which is where the course player already keeps that
+  guest's statements. **This changes the workbench guest when the dashboard's
+  switch is turned on:** its statements stop being forwarded to targets set on
+  the tenant pod's lens, and its applied voids are kept on its own pod. A
+  statement that names another identity's guest was stored and then answered
+  as a refusal; it is taken as any statement whose actor has no pod here. A
+  route that still meets the refusal answers 403, not 500.
+- **`finish` compared identity's stated pod with the bridge's as strings.**
+  They are compared as URLs: the same pod root, on the same store. The pod
+  that is kept and used is the bridge's own derivation.
+
+With the switch off nothing changes: the resolver refuses nothing, and every
+changed place asks it exactly as before.
+
+**Not done.** The dashboard's page still does not offer the guest, and no
+browser has run the round trip or made a `record_key`. A tab becomes a
+recipient at the next write after it is admitted, not at once. The bridge can
+read every guest's record; a record only the guest's browser can open would
+need the guest's lasting key, which lives at the door's origin. Nothing was
+switched on or deployed.
+
+## 2026-11-17 — CI: the merge decision no longer holds a runner while it waits
+
+The gated auto-merge waits for the whole suite and every other check on a pull
+request's head before it decides. That wait was the last step but one of
+jev-harness's judge job, so it held a runner for as long as it polled: 27.6
+minutes on average over 20 runs, almost all of it for Mutation Gate, a
+31-minute job that runs on every pull request. In a burst of pushes that is one
+runner per open pull request doing nothing, while the checks it waits for
+queue behind it. On 2026-11-17 between 05:00Z and 09:00Z a job waited a median
+of 19 to 35 minutes for a runner.
+
+The wait and the decision are now their own job, `decide`, which names a
+GitHub environment, `merge-wait`, that carries a 20-minute wait timer. GitHub
+holds such a job without a runner and starts it when the timer ends. It then
+reads the suite and the checks with the same tool and the same fifty-minute
+deadline as before, and decides. The judge job (selection, gate, comments,
+artifact) ends as soon as the gate has answered; the decision reads the gate's
+verdict from the judge's artifact and the selection's outcome from a job
+output.
+
+No merge is later for this: nothing merges before Mutation Gate concludes, and
+that is never under twenty minutes from the push. When Mutation Gate gets
+shorter, the timer should come down with it.
+
+**The environment is a repository setting, not a file.** `merge-wait` was
+created on 2026-11-17 with `wait_timer: 20` (Settings → Environments). If it
+is deleted, GitHub creates it again without a timer the first time the job
+runs, and the job polls from the start as the judge job used to: slower, not
+wrong. Each decision also records a deployment to `merge-wait` on the pull
+request, which is noise in its timeline and nothing else.
+
+**Why not start the decision from the checks' completion events.** A
+`workflow_run` or dispatched run is filed under master's head, not the pull
+request's. `tools/ci-green-for-sha.mjs`, the auto-deploy gate, reads one page
+of 100 runs for master's head, of any event. Ten completions a head and
+seventy heads a day would push ESLint off that page, and the gate would read
+the listing as too few and refuse the deploy.
+
+**Its first run, on this pull request (run 44130474784, head 7766c733).** The
+judge job ran 16:54:42Z to 16:56:44Z and ended. The decide job left its timer
+at about 17:17Z, got a runner at 17:45:39Z, read the suite and 15 check runs
+from 6 other workflow runs as success, and decided at 18:08:34Z: no merge,
+because master had moved, so it updated the branch. Before the split the judge
+job would have held its runner from 16:56Z to 18:08Z, 72 minutes; the decide
+job held one for 23. Those 23 minutes are the part a fixed timer cannot
+remove: the checks it waited for were themselves queued for a runner that
+afternoon, so they ended later than twenty minutes after the push. One run is
+not a measurement of the average.
+
+## 2026-11-17 — CI: a push to a pull request cancels the runs on the head it replaced
+
+Jobs were waiting for a runner, not running slowly. Over the last 1000 runs
+(2026-11-16 03:39Z to 2026-11-17 15:23Z; 481 of them read job by job, 1181
+jobs) a job waited a median of 2.5 minutes to start, 44 minutes at the 90th
+percentile and 97 at worst. The wait is bursty: between 05:00Z and 09:00Z on
+the 17th the hourly median was 19 to 35 minutes, and outside bursts it is
+zero. Only 3 of the 1000 runs were re-runs, so retries are not the cost.
+
+One pull request head starts a median of 10 workflows (23 at most) and about
+180 runner-minutes. 29 of the workflows a pull request can start had no
+concurrency group, Bridge Typecheck (35 job-minutes over six jobs) and
+Mutation Gate (one 31-minute job) among them, so a head that a later push
+replaced ran every one of them to its end, in front of the new head's checks
+in the queue. Branches in the window took up to nine pushes.
+
+Each of those 29 now declares
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+```
+
+A pull request's runs of one workflow share a group, so a new push cancels the
+one in flight. Every other event (a master push, a dispatch, a schedule) is
+grouped by its own run id: nothing there is cancelled or held, and
+auto-deploy still reads every master run to its conclusion.
+
+`tests/workflow-pr-runs-cancel-superseded.test.ts` reads the workflow
+directory and fails for a pull request workflow with no such group, so the
+thirtieth workflow cannot be added without one. Three keep their run and are
+listed there with why: `nightly-emergent.yml` (observational; its note says a
+half-finished run still leaves artifacts), and `i2idlx-native-diagnostic.yml`
+and `i2idlx-orchestra-history.yml`, which hold a group without cancelling and
+are left as the I2IDL-X lane set them. Those two queue a new head behind the
+old one, which is worth that lane's second look.
+
+**Not in this change.** How much queue time this removes is not measured yet;
+it needs a day of runs after it lands. The three steps that hold a runner
+while waiting for other workflows (jev-harness 27.6 minutes on average, the
+auto-deploy gate 17.7, the I2IDL-X UI oracle 12.1) are untouched.
+
+## 2026-11-17 — Practice Evidence: a reviewed result is timestamped in the session it is sent in
+
+Found on the first end-to-end run against the deployed bridges. The passed or
+failed and the completed that a unit sends after a review carried the time of
+the review as their timestamp. The unit sends them in a later session, and cmi5
+orders a session's statements by timestamp with initialized first and terminated
+last (9.3). So they were dated before the initialized of their own session: on
+the run, 15:00:34Z against a session that began at 16:04:39Z. The LRS took them
+and the result was right; the order was not.
+
+The statements Practice Evidence hands out now carry no timestamp. The unit
+stamps each one the first time it sends it, after its own initialized, on the
+clock that stamps its initialized and terminated, and keeps that stamp for a
+retry. When the review was made is in each context as `pev:reviewedAt`. The
+role-play player does this, and compares a statement the LRS already holds
+without the timestamp it set itself. A statement fixed before this change, for a
+session that ended unsent, loses its review-time timestamp when it is fixed again
+for another session.
+
+The player also reads what the learning record holds of its session before it
+opens a visit. A session the LMS continues is opened by a fresh load of the page,
+which used to send a second initialized. It now sends none when the session has
+one, starts its clock after the session's latest statement, and sends nothing at
+all when the record cannot be read. It follows the record's own link to further
+pages, five at most and only on the record's own origin.
+
+Not changed: a unit other than this player has to stamp the statements itself;
+the instructions handed out with them now say so.
+
+## 2026-11-17 — Foxxi: whether an unsent profile write is kept or in doubt has a test
+
+#945 fixed the bridge answering "in doubt" for a profile write it had never
+sent, and said it had no test. The decision is now `profilePodStore` in
+`src/xapi-profile-server/pod-store.ts`: the bridge hands it its pod, key
+check, fetch guard, write and read-back, and gets `persist` and `confirm`
+back. Nothing about the answers changes.
+
+`tests/a-profile-write-never-sent-is-not-in-doubt.test.ts` (7 tests) runs it
+under a real `ProfileServer` with a made-up pod: no key, an address not
+fetched, no pod, a write sent whose address is refused by read-back time (in
+doubt, then held), not acknowledged and unreadable (in doubt), not
+acknowledged and readable (kept), and the refusal remembered for one record
+only. With the no-key and never-sent answers removed 3 fail; with a read-back
+refusal answered as not kept, 1 fails.
+
+The bridge was restarted after the move: add, remove and a lost answer against
+a stand-in pod, and a loopback pod address, answered as before. Its handing of
+the parts to `profilePodStore` is covered by that run and the typecheck, not
+by a test.
+
+## 2026-11-17 — xapi-x: the lint and the controls document are affordances, and Foxxi's profile states what it offers
+
+From the xapi-x list of what was only designed.
+
+- **`foxxi.xapi_profile_lint_decorations`** (`POST /xapi/profiles/lint_decorations`)
+  runs rules X1 to X10 over statements, a profile, or both. It reads the
+  profiles held, keeps nothing and asks for no signature. Its answer says what
+  was judged and whether each lookup for rule X9 was available.
+- **The two X9 lookups have real sources on the bridge.** A design idea is a
+  concept of the I2IDL release the bridge already reads; an affordance is an
+  action of the manifest the bridge serves.
+- **`foxxi.xapi_profile_controls`** (`GET /xapi/profiles/controls?template=...`)
+  serves the document an `xapix:controls` link points at: what a template
+  offers, each affordance with the target, method and inputs served today.
+  The document is of a template, not of a statement, so it says nothing a
+  statement says. `POST` with a statement finds the templates it follows.
+- **Foxxi's profile states offers.** Its `lesson-failed` and `course-failed`
+  templates offer asking the course a question, reading the passages that bear
+  on one, and taking the lesson. `xapix:offers` is a property a plain profile
+  processor ignores; the same statements follow the templates as before.
+
+**Not done.** No statement links to a controls document. Foxxi's profile
+states no `xapix:evidences`: each is a proposal about someone else's concept
+and wants review first. An `i2x:` target is taken by its namespace.
+
+## 2026-11-17 — Foxxi: the dashboard's general guest is a caller on the bridge (switched off)
+
+Third step toward a dashboard general guest being a real caller. Bridge side
+only, behind `FOXXI_PLAY_GENERAL_GUEST=1`, which defaults off. With it unset no
+route is attached and the pod resolver answers as before.
+
+- **The door round trip, without a cookie.** `POST /play/general/start` gives
+  the dashboard's page a door address and a binding; identity returns the
+  browser to the dashboard; the page makes a key for its tab and signs
+  `{code, state, binding}` to `POST /play/general/finish`. The bridge
+  exchanges the code and admits that key as the guest, for an hour at most.
+- **The caller is the guest.** A request the key signs at
+  `POST /play/general/act` has the guest's DID as its subject
+  (`generalGuestPrincipal`). The key itself is refused on every signed
+  `/agent/*` route while admitted, and no `/agent/*` route accepts a request
+  signed or delegated in a guest's name (403, before any pod is read).
+- **Default-deny operations** (`src/guest-operations.ts`): `guest.standing`,
+  `guest.sign_out`, `record.read`, `course.resolve`, `course.launch`,
+  `course.next`. Any other name is refused. A request carrying `acting_as`,
+  a subject, a pod URL or any other claim of identity or authority is refused.
+- **The guest's own pod.** With the switch on, the bridge's pod resolver gives
+  a general guest's DID the identity host and guards the answer: its own pod,
+  or a refusal, never the tenant pod. A guest's record is one plain JSON
+  document there (`foxxi-dashboard/learning-record.json`), written with the
+  operator bearer. A `410` from the gate ends every session of that guest and
+  is not retried; `409`, `503`, `413` and `507` are answered as refusals.
+- **Limits per guest:** 120 operations and 30 writes a minute, four tabs, and
+  256 pod writes of at most 256 KiB per bridge process.
+
+**Not done.** The dashboard page has no button. A guest linked to an account
+is refused. The round trip has been run in no browser and against no live
+gate. A guest's play does not count toward the efficacy tally. The guest's
+record is not sealed, and pod reads are anonymous. With the switch on, the
+resolver's guest rule also applies to the learner workbench's general guests
+wherever the bridge resolves their DID, which has not been exercised.
+
+
+## 2026-11-17 — mcp-server: the local Solid server fallback starts
+
+When its home pod is on localhost and nothing answers there,
+`mcp-server/server.ts` starts a Community Solid Server
+(`spec/STORAGE-TIERS.md`, Tier 1). It never did. It ran the root's
+`node_modules/.bin/community-solid-server` with
+`examples/multi-agent/css-config.json`, and Components.js, walking up from
+that CSS into the root's `node_modules`, found the root's `@comunica` 5 beside
+CSS's own `@comunica` 2 and refused the config ("Could not build the config
+files … `ActorDereference` … is not a valid component"). The tool call that
+needed the pod then waited out the 30 s startup timeout and failed. The
+compiled server failed sooner: from `mcp-server/dist/` it looked for the
+binary in `mcp-server/node_modules/.bin/` and the config in
+`mcp-server/examples/`, neither of which exists.
+
+**The fix.** `mcp-server/local-solid-server.ts` builds the server the way
+`packages/local-node` and `integrations/tests/multi-agent-css-expired-sweep.test.ts`
+do: Components.js is handed CSS's own component graph, the Components.js
+context CSS was built against, and the local modules the config imports (it
+reads them from the config, which names `css-internal-listing/`), and each of
+those is required from its own folder. It runs in a child process that
+`server.ts` forks, with its own execArgv, so it works from source under tsx
+and compiled from `dist/`; the config is found from either.
+
+**Why not the demos' npx launcher.** `examples/multi-agent/solid-server.ts`
+already solves both problems, by running a CSS that npx installs outside the
+repository. mcp-server cannot use it. `tools/base-neutrality-lint.mjs` holds
+the base, mcp-server included, to no imports from `examples/`, and `tsc` would
+not compile one into `dist/` (it is outside `rootDir`). npx also needs the
+network on the first run and downloads a second CSS. `@interego/mcp` publishes
+`dist/` only, so `examples/` is not there at run time either way (the package
+is not on the npm registry today). The fallback keeps running the CSS this
+workspace installs, as it always meant to.
+
+**Why a child process, not in-process as local-node does.** CSS logs through
+winston's Console transport, which writes to stdout, and mcp-server's stdout
+is the MCP stream. The child's stdout and stderr are pipes that `server.ts`
+reads and copies to its stderr. The old spawn read only stderr, so a full
+stdout pipe would have stalled the server. A CSS crash now ends CSS, not the
+MCP session. The child stops when mcp-server does, on SIGTERM or when the IPC
+channel closes. The old `shell: true` spawn signalled the shell, not
+necessarily CSS. Its SIGTERM handler is registered with `on`, not `once`:
+`proper-lockfile`'s `signal-exit` re-raises a signal on a process left with
+only its own handler, and a `once` handler is removed before the next one
+runs, so the child died by the signal instead of stopping.
+
+**Where the pods go.** The old spawn passed no `--rootFilePath`, so CSS would
+have written the pods and `.internal/` into the current directory, which an
+MCP client sets to the user's project. They now go under
+`CG_CSS_ROOT_FILE_PATH`, by default `interego-mcp-css-<port>` in the OS temp
+directory, which `spec/STORAGE-TIERS.md` already promised. The folder is
+created owner-only (0700) when it does not exist.
+
+**Smaller changes in `ensureCSS`.** Concurrent tool calls share one startup
+instead of forking one CSS each, the second of which would fail on the port. A CSS
+that exits before it listens fails the call at once, with the end of its
+output, instead of after 30 s. A call that times out leaves the CSS starting,
+and the next call waits on that same process. Readiness is the child's
+"listening" message, and the pod is provisioned outside the startup promise,
+so a provisioning error reaches the caller instead of being an unhandled
+rejection inside a `setInterval`. The undocumented `CG_CSS_BIN` override is
+gone: there is no binary to point at.
+
+**The test.** `integrations/tests/mcp-server-local-solid-server.test.ts` starts
+mcp-server over stdio as an MCP client does, from source under tsx and compiled
+from `dist/`, with a home pod on a free localhost port that nothing answers.
+It calls `get_pod_status`, and checks that CSS built its config, answers HTTP,
+holds the provisioned home pod, keeps its files under `CG_CSS_ROOT_FILE_PATH`
+and not in the directory mcp-server was started in, and stops when mcp-server
+does. On the previous `server.ts`, the source run fails with the two lines
+above, and the compiled run fails at once. It lives in `integrations/tests/`
+because the server it boots reads `examples/`, which the base-without-verticals
+job deletes. `jev-harness.yml` now builds the stdio server before it runs the
+tests it selects, as `bridge-typecheck.yml`'s suite already did: its build cache
+holds `packages/*/dist` only, so on a hit `mcp-server/dist/` was never built and
+the compiled run found no server.
+
+
+## 2026-11-17 — coached-world: a registration's statements are chained, and the world signs their order
+
+Every statement of a mission's opening carries one timestamp, so nothing but
+the array said which came first. xapi-x (section 6) had the functions for a
+chain and an order attestation and no emitter that used them.
+
+- **Chained.** Each statement of a registration after the first names the one
+  emitted before it and that one's digest, across the opening, a connected
+  agent's work and the measured result. A reader recomputes the digests; a
+  reordered or altered run is no longer a chain.
+- **Attested.** When a mission settles, the world publishes a descriptor at
+  `descriptors/order/<registration>` whose signed text lists the digests in
+  the order it emitted them. The closing statements name it. It is served at
+  `/graphs` as kind `order-attestation`.
+- **Verified.** `readOrderAttestation` (`src/order.ts`) checks the signature
+  and reads the list; `orderBasis` answers `Attested` only when the digests are
+  the reader's statements in that order.
+- **Statement ids are UUIDs.** They were IRIs ending in one, which xAPI does
+  not allow and a chain cannot name. **This changes what the world sends.**
+- `cpw:` gains `StatementOrder`, `registration` and `statementDigests`.
+
+**Not done.** The attestation is not written to a pod. The world attests its
+own emissions only. llm-telemetry does not chain.
+
+## 2026-11-17 — css-gate: the operator bearer no longer writes into a guest's pod once the guest is closed or expired
+
+The gate's operator bearer wrote any path of any pod, and every check on a
+guest's pod (`u-try-play-`, `u-try-guest-`) was on the guest's own token. An
+application's bridge holds that bearer (it is the one secret the gate knows),
+so a bridge that keeps a guest's records in the guest's pod could go on
+writing there after the guest's deadline, and after identity had closed the
+account and purged the pod.
+
+- **Closed or expired: refused.** For `PUT`, `POST` and `PATCH` with the
+  operator bearer into a guest's pod, the gate now reads the pod's sign-in
+  record from the store at every write. A tombstone is `410 guest_pod_closed`;
+  an unclaimed guest past its anchor's deadline is `410 guest_pod_expired`,
+  whether the janitor has closed it yet or not; no record, or no anchor that
+  names the pod, is `409 guest_pod_not_open`; a record that cannot be read is
+  `503 guest_pod_state_unavailable` and nothing is let through unread.
+- **A guest's sign-in record and write budget are not written through the
+  gate** (`403 guest_pod_private_document`). Identity writes the first past
+  the gate and the gate writes the second itself; a write over a tombstone
+  would have re-opened a closed guest.
+- **A bound for a live guest's pod.** At most `GUEST_POD_OPERATOR_WRITES`
+  operator writes (default 4096) and `GUEST_POD_OPERATOR_BYTES` declared bytes
+  (default 128 MiB), each at most `GUEST_POD_OPERATOR_RESOURCE_BYTES` (default
+  8 MiB): `507` and `413` past them. Counted in the gate's process, so a
+  restart starts it again: a ceiling on a runaway writer, not a ledger.
+  `/healthz` states it (`guestPodOperatorWrites`).
+- **Unchanged:** `DELETE` (operator tooling removes what a closed pod holds),
+  reads, every pod that is not a guest's, a guest that was claimed (a
+  registered account in the same pod: no deadline, no bound), and a guest's
+  own token. Identity's provisioning and cleanup, and the relay's writes, do
+  not come through the gate (they reach the store at their `CSS_URL`), so
+  nothing here can refuse them; a test holds `deploy/railway/services.json`
+  to that.
+
+- **Shadow until switched on.** Only `GUEST_POD_OPERATOR_MODE=enforce`
+  refuses. Any other value, and the default, decides the same way, logs what
+  it would have refused (once per pod and reason) and writes as before, so the
+  rule can be watched against the real store before a live guest's writes
+  depend on it. `/healthz` names the mode.
+
+Once enforcing, a bridge gets a `410` where it used to get a `201` for a guest that has
+ended; it should treat that as the guest being gone. The gate cannot tell one
+holder of the operator bearer from another. A write let through just before a
+closure can still land after it; the rule holds from the next write on.
+
+## 2026-11-17 — identity: a guest pod larger than one cleanup pass lists is closed and purged all the same
+
+The janitor's cleanup of a guest (`u-try-play-`, `u-try-guest-`) listed the
+whole pod before it closed the account, and threw past 128 resources or eight
+levels (`Provisional cleanup traversal limit`). A guest pod something had
+filled beyond that (an application writing a guest's records into it with the
+operator bearer) was therefore never closed and never purged: every pass
+listed it, threw, logged `provisional cleanup kept <id>` and left the account
+open and the data in place, for good.
+
+- **Closed at the deadline, whatever the pod holds.** A pass now lists at most
+  128 resources (`PASS_RESOURCES`), depth first, and stops there instead of
+  throwing. The account is closed in that same pass (its tombstone, marked
+  `provisionalPlayPurgePending`), the resources the pass listed are deleted,
+  and the purge returns `partial`: the owner stays in the janitor's queue and
+  each later pass deletes the next 128, until one lists the whole of what is
+  left and finishes as a purge always has (closure fence, mark cleared). The
+  eight-level limit is gone: depth was never work, only the count is.
+- **A pass is bounded.** At most 128 container listings, each read up to 4 MiB
+  (`LISTING_BYTES`; a longer one is cut and the names read before the cut are
+  used), and at most 128 deletions.
+- **Progress is read from the pod.** What is deleted is no longer listed, so an
+  interrupted pass or a restart loses nothing. A process also remembers, per
+  unfinished purge, the documents the store refused to delete and the
+  container a pass stopped in without anything to delete (a chain of
+  containers deeper than a pass lists). Both only save requests.
+- **Nothing outside the guest's own segment is requested.** Every URL listed,
+  and the container a pass resumes in, is checked against
+  `<pod origin>/<userId>/` first, as before.
+- **A pod within the bound is cleaned up exactly as before**, in one pass.
+  A claimed guest (one that holds a credential) and one whose deadline has
+  not passed are still kept whole, at any size: nothing is closed or deleted.
+- **Documents answered `409` on `DELETE`** (native heads outside the game
+  data) are still kept, with the containers that hold them, and logged once
+  when the purge finishes. No plain request deletes one, and the cleanup sends
+  the store's native delete only to a guest's game data, so holding the purge
+  open for them would retry without end. They no longer stop a large pod
+  either: a later pass neither counts nor requests them again.
+- The game-data backfill leaves a finished purge whose pod holds more than a
+  pass lists as it finds it (it re-opens a purge for game data alone).
+
+One case is still never finished, each pass of it bounded: a single container
+whose listing is longer than 4 MiB and begins with nothing but documents the
+store refuses to delete. `purgeProvisionalPlayPod`'s `close` is given a second
+argument (`whole`), and its result may be `partial`.
+
+## 2026-11-17 — Foxxi: the pod resolver can place an identity guest on its own pod (not switched on)
+
+Second step toward a dashboard general guest being a real caller. Nothing is
+switched on: no route, and no caller of the resolver, passes the new option.
+
+`resolveSubjectPodUrlPure` answers the shared tenant pod for any subject it has
+no rule for. A general guest's DID, `did:web:<identity host>:users:u-try-guest-<32 hex>`,
+is one of those, so every guest would have shared one pod and one statement
+lens.
+
+- **The rule.** `SubjectPodUrlOptions` takes an optional `identityHost`. With
+  it, a subject `did:web:<that host>:users:<id>` that `ownPodSegment` does not
+  recognise resolves to `<pod origin>/<id>/`, the address identity creates the
+  pod at and the css-gate scopes that user's bearer to. `<id>` must be one of
+  identity's own shapes in full: `u-pk-`, `u-eth-`, `u-did-` or `u-try-` and 12
+  hex, `u-try-play-` or `u-try-guest-` and 32 hex. The host is compared whole
+  and case-insensitively, with a port in either spelling (`host:port` as
+  identity writes it, `host%3Aport` as Foxxi's learning sign-in does). Anything
+  else is answered as before: a seeded legacy id, another host, a look-alike
+  host, an uppercase or over-long id, a slash, a dot segment, a percent escape,
+  a control character.
+- **Unchanged without the option.** Without `identityHost` the function is the
+  one on master. The test file keeps master's body as a reference and compares
+  the two over a table of every form in use and 3,300 generated subjects. A
+  guest linked to an account is given as the account's DID, which already
+  resolved to the account's pod.
+- **A guard, not called yet.** `guardSubjectPod` refuses a general guest, or any
+  DID under the identity host's `:users:`, whose pod is the tenant pod; one of
+  identity's own ids whose pod is not `<pod origin>/<that id>/`; and a pod URL
+  it cannot read. Every other subject is answered `ok`.
+
+**Why the bridge does not pass the host yet.** Guest DIDs already reach the
+resolver in the running bridge: the LRS picks forwarding targets by the
+statement actor's pod (`ownerTenantOfStatement`), and an applied void is kept
+with the voided statement's owner. For a `u-try-play-` or `u-try-guest-` actor
+both land on the tenant pod's lens today. Passing the host there would move
+them, so it is left to the step that decides each call site.
+
+**Not done.** The bridge writes pods with the operator bearer, which the
+css-gate lets write any pod, a guest's included, outside the guest's write
+budget and after its account is closed. Identity's cleanup lists at most 128
+resources of a guest pod and keeps the whole pod when there are more. Neither
+is changed here.
+
+The port spelling of the identity host is rewritten with a global replace; a
+validated host has at most one colon, so the result is the same.
+
+## 2026-11-17 — Foxxi: a profile write the bridge never sent is not kept, not in doubt
+
+Found by starting the bridge and sending it signed requests, which #933 had
+not done. A profile write is "in doubt" when the pod neither acknowledged it
+nor let its own copy be read back. The bridge said "cannot be read back" in
+two cases where it had sent nothing at all:
+
+- no lattice key is configured (`FOXXI_WALLET_SEED` or
+  `FOXXI_ISSUER_KEY_SEED`), so `composeIntoSharedLattice` returns before it
+  writes;
+- the pod's address is one the fetch guard refuses (loopback or private), so
+  the write is refused before it is sent.
+
+In both, every add, remove and publish answered 503 `inDoubt`, and the
+profile was then refused to everyone (409) until the bridge restarted,
+because the doubt could never settle. The bridge's `confirm` now answers
+"not kept" when there is no key, and for a record whose write `persist`
+itself refused at the guard before composing or sending anything. So the
+request gets the plain 503 with `retry`, nothing is reserved and the signer's
+count is given back. A guard refusal at read-back time alone still leaves the
+write in doubt: it says the pod cannot be read now, not that nothing was
+written (review finding).
+
+Checked on the running bridge, before and after, with no key and with a
+loopback pod. There is no test: the change is in `bridge/server.ts`, which no
+test starts. With a key and a stand-in pod the bridge was also run through
+add, remove and publish, each with the pod's answer lost and with the pod
+down; each settled to what the pod had within five seconds of the pod coming
+back, and a restarted bridge held the same versions under the same owners.
+
+## 2026-11-17 — multi-agent demos: their Solid server no longer crashes an hour after it starts
+
+`examples/multi-agent/css-config.json` and `css-config-redis.json` import the
+same CSS key-value storage and memory resource-locker configs as the
+local-node config fixed in the entry below, and crashed the same way on
+Community Solid Server 7.3.0. `solid-server.ts` started them with
+`npx --yes @solid/community-server@7`, which has resolved 7.3.0 since
+2026-11-02. With a scratch copy of master's `css-config.json` that sweeps
+cookies every 6 s instead of every hour, the npx server logged "Lock expired
+after 6000ms" on its first sweep and exited 1 with "callback is not a
+function". The configs serve CSS's account and OIDC routes, which write
+`/.internal/`, so local-node's route (reading `/.internal/` from the file
+backend, without the resource lock) does not fit them.
+
+**Why not pin 7.2.0.** 7.2.0 asks for nodemailer `^9.0.1`, which installs
+9.1.1. `npm audit` on a fresh 7.2.0 install now reports twelve advisories
+against it, not two: two high (GHSA-v53p-9fqp-m79j and GHSA-prgh-xp8r-p3m5,
+quadratic backtracking in `addressparser`) and ten moderate, all fixed by
+10.1.4. None is reachable from these configs. Both import
+`css:config/identity/email/default.json`, which binds the email sender to an
+`UnsupportedAsyncHandler`, so CSS loads nodemailer but never calls it. A fresh
+npx install of 7.3.0 gets nodemailer 10.6.0, which clears all twelve. A pin
+would have traded a crash for a tree that fails every audit, and starts to
+matter the day someone wires a mail sender. It would also have fixed only the
+npx starters. mcp-server's local fallback runs the root's CSS binary, which is
+7.3.0 because `packages/local-node` asks for `^7.3.0`, and (see below) that
+fallback does not start at all.
+
+**The fix is a module the configs import.**
+`examples/multi-agent/css-internal-listing/` is a Components.js module with one
+class, `BufferedListingStore`. It is a ResourceStore that sits between the
+internal value storage (`urn:solid-server:default:JsonResourceStorage`) and the
+full ResourceStore. A container is asked for as internal quads, and its listing
+is read to the end through a pipe, which renews the lock as it reads, then
+handed on in a plain stream that `for await` can read. Everything else passes
+through, so documents are read and written as CSS does, and every read and
+write still takes the resource lock. This is the accessor's
+`PipedJsonResourceStorage` behaviour, as a store wrapper rather than a
+subclass, because the module may import nothing from CSS: npx links the folder
+beside the server, and Node resolves a linked module's imports from where its
+files are, in this repository. Its `config/internal-listing.json` holds the
+Override, and both configs import it.
+
+**How it loads, and what happens without it.** `solid-server.ts` now runs
+`npx --yes -p @solid/community-server@7.3.0 -p <css-internal-listing>
+community-solid-server …`. npm links the folder into the npx install next to
+CSS, where Components.js discovers it and Node requires it by name. The
+configs import the Override by a path relative to themselves, and the Override
+names the component by its full IRI, with no context of its own. Components.js
+fetches any import or context it has no local copy of, from
+linkedsoftwaredependencies.org, which serves whatever npm package has that
+name, and neither `interego-css-internal-listing` nor `@interego` is
+registered there. So nothing in the fix refers to an IRI that could be fetched
+instead. A server started without the module refuses the config at boot
+("Could not find (valid) component types") and fetches nothing. The server is
+pinned to 7.3.0, the release this was verified on, which `@7` had floated to.
+
+**Reader counts stay in memory** in `css-config.json`, as in local-node's
+config: a second Override makes `BackendKeyValueStorage`, which only the memory
+locker's reader counts use, a `MemoryMapStorage`. With the listing fixed, the
+sweep reached those counts under `/.internal/locks/`. A count is a bare number
+with no key, so a sweep that ran while a read was open threw "Cannot read
+properties of undefined (reading 'startsWith')" and deleted nothing. The Redis
+config's locker keeps no counts, so it gets only the listing fix.
+`startSolidServer` wipes the pods folder on every start, so no count from an
+earlier run is left on disk.
+
+**The tests.** `integrations/tests/multi-agent-css-expired-sweep.test.ts` boots
+`css-config.json` in-process on the root's CSS 7.3.0. It hands Components.js
+CSS's own component graph plus exactly the folders `solid-server.ts` gives npx,
+and requires each from its folder. Three of the four sweeps then run directly on
+the instances CSS built (the IdP adapter's has no `@id`, and walks the same
+storage), each raced against 3 s, half the lock: on a fresh start, with an
+expired and a live cookie, with a session signed in through `/.account/`
+(still signed in afterwards), and while an 8 MB read is left open. Written
+first, against master's config, all three sweep cases failed by name at
+3000 ms, and the run then crashed with "callback is not a function". With only
+the listing fix, the open-read case failed on the count. Other cases check that
+the internal storage still reads through the full, locking ResourceStore; that
+the Redis config loads beside the module; that without the module the config
+fails at boot, naming the missing component, with `fetch` never called; that
+the module needs nothing but Node; and that the pinned version is the one the
+file boots. `integrations/tests/multi-agent-solid-server.test.ts` pins the new
+npx arguments.
+
+Through real npx, with the 6 s scratch sweep: started by `startSolidServer`
+itself, the patched server was still up 45 s later, and an account session
+created at start still signed in. Run with the same npx arguments at debug
+level, it logged six sweeps, each finished in 25 to 47 ms. Master's config,
+run through npx the same way, crashed on its first sweep.
+
+**The self-hosted image gets it too** (Codex, on this pull request).
+`deploy/Dockerfile.css` is built by no workflow, but `deploy/azure-deploy.sh`
+builds it and Tier 3 of `spec/STORAGE-TIERS.md` gives it as the self-host
+recipe, and it copies `css-config.json`, which would now refuse to boot alone.
+It now copies the module to `/app/css-internal-listing`, beside the config, and
+runs `npm install -g @solid/community-server@7.3.0 /app/css-internal-listing`,
+pinned like the demos (it floated on `@7`). A global install from a folder
+links the module into the global `node_modules` next to CSS, where Components.js
+finds it. No Docker daemon was available, so the image was not built. The same
+install under a scratch `--prefix`, with the config and module laid out as
+`/app` holds them, booted the copied config from the global binary and logged
+five finished sweeps in 40 s with the 6 s scratch interval.
+
+**Not covered.** mcp-server's local fallback does not start CSS at all, before
+and after this change. It runs the root's CSS binary, and Components.js walks
+up from it into the root's `node_modules`, finds `@comunica` 5 beside CSS's
+`@comunica` 2, and stops with "… ActorDereference … is not a valid component",
+the failure `solid-server.ts` moved the demos to npx for. That is its own
+change. `css-config-redis.json` was loaded, not booted: booting it needs Redis.
+The dashboard image copies `css-config.json` without reading it. Windows was
+not run.
+
+The new test module takes the tracked tree to 735, the whole 35 of slack over
+`MIN_TEST_MODULES` 700, so `tests/vitest-run-integrity.test.ts` asked for the
+floor to move; it is 710, ten modules of headroom.
+
+Checks, in a scratch worktree with the root lockfile's tree (`npm ci`), Node
+22.23.4: the full suite passed 724 files with 10 skipped. The one failure,
+four history cases in `tests/deploy-bundle-scope.test.ts`, came from the
+session's shallow clone, and all 76 passed once the history was fetched. That
+run had the new files untracked, so the fourteen test modules that read the
+tracked tree ran again with them staged; they pass with the floor at 710.
+`npm run lint` (719 files, 0 errors) and every other `lint:all` step pass,
+`lint:changelog` on the full history. The advertised demos still compile
+(`tsconfig.advertised.json`).
+
+## 2026-11-17 — Foxxi bridge: who is calling a signed route is decided in one place
+
+A refactor. No route answers differently.
+
+`applications/foxxi-content-intelligence/bridge/server.ts` decided who signed
+an `/agent/*` request three times: in `verifyDelegatedCaller`, in
+`bindSignedCaller`, and inline in `/agent/issue-credential`. All three
+applied one rule. A caller whose signed `agent_id` carries the recovered
+signer address is that wallet, `did:ethr:<signer>`. Any other `agent_id` is
+accepted only when that agent's delegation, read from its own derived pod, is
+CryptographicallyVerified and the request signer is the key that anchors it.
+A fourth site, `resolveForCaller`, worked out afterwards whether the caller
+had been direct by rebuilding `did:ethr:<signer>` and comparing strings.
+
+The rule is now in `src/caller-principal.ts`, which does no I/O: the pod
+derivation, the delegation check and the anchor read are passed in. It
+returns a `CallerPrincipal` (`subject`, `key`, `authMode`, `kind`, `payload`)
+or a refusal with a status, the message, and a reason code.
+`resolveSignedPrincipal` in server.ts is its one caller. The three former
+copies are shims over it and return what they returned before.
+
+The copies differed in three ways. Each is an option the shim sets, so each
+call site keeps what it did:
+
+- `bindSignedCaller` refuses, with 400, an `agent_id` that contains a control
+  character or is longer than 512 characters, and does so before it looks at
+  whether the caller is direct. The other two do not check
+  (`agentIdBounds`).
+- `bindSignedCaller` ends its "request signer is not the delegation anchor
+  key" refusal with "only the key that anchors the agent's delegation may
+  sign for them". The other two stop after the anchor address
+  (`anchorRefusalExplains`).
+- On a request with no valid signature, `bindSignedCaller` sends the hint its
+  call site gave it, `/agent/issue-credential` always sends its own, and
+  `verifyDelegatedCaller` sends none (`unsignedHint`).
+
+`resolveForCaller` keeps its arguments and compares the caller against
+`directSubject(signer)`, the module's one place a signer address becomes a
+caller DID, where it used to rebuild that string itself. The comparison is
+the same. The handlers of `/agent/content/resolve` and
+`/agent/content/launch` are not edited, and `verifyDelegatedCaller` returns
+the same fields as before, since four modules take it as a dependency.
+
+Not changed: `resolveCaller` (the directory and role resolver),
+`mergeSignedEnvelope`, and the sites that recover a signed request to ask
+about a wallet and not about an agent.
+
+`tests/the-caller-is-decided-in-one-place.test.ts` reads server.ts as text.
+It fails on a `did:ethr:${…signer}` template, a mention of
+`recoverSignedRequest`, or a `mergeSignedEnvelope(` call anywhere but the
+resolver and fifteen named sites, each listed with its reason; a listed site
+that no longer matches fails too. `tests/caller-principal.test.ts` covers the
+rule: direct, delegated, each refusal's status and wording, each option, and
+that `authMode` is direct exactly when the subject is `did:ethr:<signer>`.
+No existing test is edited.
+
+Checks: the nine existing Foxxi test modules of signed callers (110 cases)
+pass unchanged. All of `applications/foxxi-content-intelligence/tests`, run
+together with the 67 root test modules that read a `server.ts`, passes: 294
+files, 4,672 cases, 11 skipped. `tsc --noEmit` is clean on
+`tsconfig.check.json` and on the bridge's own `tsconfig.json`, and
+`npm run lint:all` passes with the new files staged.
+
+## 2026-11-17 — local-node: the desktop pod server no longer crashes an hour after it starts
+
+`packages/local-node`, which the pod desktop ships, moved to Community Solid
+Server 7.3.0 in the nodemailer change, and on 7.3.0 its hourly expired-entry
+sweep crashed the process. Every expiring storage CSS builds (cookies,
+forgot-password records, ownership tokens, IdP adapter entries) sweeps once an
+hour by walking `/.internal/`, and 7.3.0 cannot list a container there (the
+entry below has the mechanism). Nobody can sign in, because the loopback
+gateway forwards only requests under the pod's own path. But CSS writes
+`/.internal/` itself at boot, so the walk always has a container to list.
+local-node's own source and `config/file-pod.json`, run against CSS 7.3.0 with
+the sweep called once, waited out the 6 s resource lock and crashed with
+"callback is not a function", both straight after a fresh start and with two
+cookies stored.
+
+**The fix is config only.** `config/file-pod.json` now points the internal
+value storage, `urn:solid-server:default:JsonResourceStorage`, at
+`urn:solid-server:default:ResourceStore_Backend`, the file backend, instead of
+the full ResourceStore. The backend answers a container with its quads, not
+wrapped, which is how CSS's own `BackendKeyValueStorage` reads the same
+container. With it, the same sweep returned in 13 ms after a fresh start and
+in 28 ms with two cookies stored, deleting the expired one and keeping the
+live one.
+
+The css image's class was not reused here. local-node gives Components.js
+only CSS's own component graph (`isolatedCssModules`, so no ancestor
+`node_modules` reaches the loader), so wiring `PipedJsonResourceStorage` in
+would mean shipping a hand-made component module inside the desktop app. The
+backend route uses only CSS's own classes. What it gives up
+is the resource lock on the documents this storage owns (accounts, cookies,
+OIDC and setup entries). Besides CSS's own setup at boot and the sweeps, only
+CSS's account and OIDC routes write those. They are outside the pod's path, so
+the gateway answers 404 before CSS sees them. If the gateway ever forwards
+those routes, this storage needs the lock back and a listing fix of its own,
+and the comment beside the override says so.
+
+**Reader counts stay in memory.** The resource locker keeps a reader count for
+each read lock. On this config it wrote every count through
+`BackendKeyValueStorage` as a file under `/.internal/locks/`, and deleted it
+when the read ended, so every pod request wrote `/.internal/`. The sweep walks
+all of `/.internal/`, and a count is a bare number with no key: a sweep that
+ran while a pod read was open threw "Cannot read properties of undefined
+(reading 'startsWith')" and deleted nothing that hour. A second override makes
+`BackendKeyValueStorage` a `MemoryMapStorage`, as
+`css:config/storage/key-value/memory.json` does, beside the in-memory locker
+that uses the counts; the css image keeps its counts in memory too. Nothing
+else is stored there, and no pod request writes `/.internal/` now.
+
+**The gateway drops `Forwarded`.** It already dropped `X-Forwarded-*`. CSS
+takes the host and scheme of every identifier from RFC 7239's `Forwarded`
+when a request carries it, so a pod read sent with
+`Forwarded: host=foreign.example` was answered 500. It could not reach another
+path. The header is now removed with the others.
+
+**The tests.** `tests/local-node-expired-sweep.test.ts` boots a real local node
+and runs three of the four sweeps directly on the instances CSS built (the IdP
+adapter's has no `@id` to reach it by, and walks the same storage): on a fresh
+start, with an expired and a live cookie stored, and while an 8 MB pod read is
+left unread. Each sweep races a budget of 3 s, half the lock, because a sweep
+that waits for the lock never returns at all. A first case checks that the
+gateway answers 404 itself for the account, OIDC and internal routes, also
+when the path arrives with literal or percent-encoded dot segments. With
+master's `config/file-pod.json` the three sweep cases fail by name at 3 s.
+Without the second override the open read's sweep fails on the count. A
+gateway that forwarded the raw request path, not the resolved one, fails the
+first case. `tests/local-node.test.ts` gains a `Forwarded` case, which got 500
+before the gateway change.
+
+The new test file takes the linted scope to 717, one past the floor's slack,
+so `MIN_FILES` in `tools/lint-gate.mjs` moved to 682, the number the gate
+named. With master's own new files merged in, the scope is 719 and the gate
+named 684, which is the value this change leaves.
+
+Checks: `tests/local-node-expired-sweep.test.ts` (4 tests),
+`tests/local-node.test.ts` (9) and pod-desktop's `local-federation.test.ts`,
+which also starts a local node, pass with the typecheck gate clean. They ran
+against CSS 7.3.0 from the accessor's lockfile, the same tarball as the root
+lockfile's, through a scratch `node_modules`, not the root lockfile's exact
+tree. Node 22.22.0. The desktop app itself was not started.
+
+Not covered: a reader count that an earlier start left under
+`/.internal/locks/` (one stopped mid-read) stays on disk, and every sweep
+fails on it, logged and not a crash, until the file is deleted; with nobody
+able to sign in there is nothing for the sweeps to delete anyway.
+`examples/multi-agent/css-config.json` and `css-config-redis.json` import the
+same key-value and locker configs and crash the same way on 7.3.0, which both
+`npx --yes @solid/community-server@7` and mcp-server's local fallback (the
+root's CSS binary) start. That was already so on master. Those configs serve
+the account and OIDC routes, so this override does not fit them, and the
+choice between pinning 7.2.0 there (with its nodemailer 9) and a listing fix
+they can load is left to its own change.
+
+## 2026-11-17 — Dependencies: the pod server moves to Solid server 7.3.0, and uuid 11.1.1 under Comunica
+
+`npm audit` lists one advisory against both Solid server trees,
+GHSA-w5hq-g745-h8pq ("uuid: Missing buffer bounds check in v3/v5/v6 when buf is
+provided", moderate, uuid below 11.1.1). Every Community Solid Server 7 release
+brings uuid 9 in through Comunica 2: `@comunica/expression-evaluator` 2.10.0
+asks for `^9.0.0`, and its latest release, 3.2.1, still does. The root lockfile
+reported it nine times (local-node's CSS 7.3.0), and
+`integrations/pgsl-css-accessor`'s lockfile, which the css image
+(`interego-css-pgsl`) installs with `npm ci`, reported it with the minimatch
+chain of its build tools twelve times. This change clears both, and moves the
+css image from CSS 7.2.0 to 7.3.0, the newest stable release. As published,
+7.3.0 crashes the pod server. It does so in two places, and one of them also
+has a second fault. The accessor now works around all three, and around a
+lock that 7.3.0's container walk holds too long.
+
+**What 7.3.0 breaks.** 7.3.0's locking store hands every write, as 7.2.0
+already did every read, a stream object made with `Object.create` over the
+real stream, whose `read()` renews the lock. Node's async iterator, and
+readable-stream's, accept a `'readable'` event only when it is emitted on the
+object they were given. The real stream emits them on itself, so `for await`
+over the derived object never wakes. When the lock expires and the stream
+closes, the iterator calls an undefined callback: "TypeError: callback is not
+a function", thrown from a stream callback, which ends the process.
+`src/NativeStageOperationHandler.ts` already reads a locked stream through
+events for this reason. Two places run `for await` over one:
+
+- The accessor's write path. `PgslDataAccessor.writeDocument` reads every body
+  with `for await`, as do `readNativeCommitCommand` and pgsl-store's
+  `writeStream`. Unpatched, `test:server` crashed before the boot line, at the
+  first write `initialize-root` makes.
+- CSS's internal value storage. 7.3.0's `JsonResourceStorage` lists a
+  container by running `for await` over its body, which is the read lock's
+  derived stream. Every expiring storage (cookies, forgot-password records,
+  ownership tokens, IdP adapter entries) sweeps once an hour by walking
+  `/.internal/` this way. The listing has a second fault, which the crash
+  hides: it asks for the container with no type preference. The converting
+  store reads "no preference" as "anything but an internal type"
+  (`cleanPreferences`), so the body arrives serialized as Turtle, the loop
+  meets bytes, and it finds no member. 7.2.0 read the members from the
+  container's metadata, which 7.3.0 no longer fills for a plain read.
+
+**The fixes.** `src/LockedStream.ts` adds `throughPipe(stream)`, which pipes a
+locked stream into a `PassThrough` of the same mode with CSS's own
+`pipeSafely`. On an error, `pipeSafely` leaves an HTTP request body open, as
+CSS does, instead of destroying the response with it. The pipe reads through
+the derived `read()` as it starts and each time the `PassThrough` drains, so
+the lock is renewed whenever the pipe pulls: read slowly through CSS's own
+`createExpiringRepresentation`, a 200 KB body renewed it 55 times. A chunk
+that arrives while the pipe is flowing passes without a renewal, so a body
+sent more slowly than it is read renews the lock only as the read starts.
+`writeDocument` reads its body through it, which covers all three readers.
+`src/PipedJsonResourceStorage.ts` is CSS's `JsonResourceStorage` with two
+methods changed: a container is asked for as internal quads, and its listing
+is read through `throughPipe`, to the end, before any member is visited.
+Documents are still read and written as CSS does. Both configs wire it with an
+Override of `urn:solid-server:default:JsonResourceStorage`, beside the
+KeyValueStorage override that already serves this sweep.
+
+Each piece is needed. In a scratch tree laid out as `pgsl-css-server.yml` lays
+it out, from this lockfile, on the in-memory backend:
+
+- unpatched, `test:server` and `test:expiry` both crashed at boot, 7 s in;
+- with the write fix and CSS's own `JsonResourceStorage`, `test:expiry` waited
+  out the 90 s lock and crashed at 97 s;
+- with the quads request but no pipe, the same, at 97 s;
+- with the pipe but no quads request, the sweep returned at once and deleted
+  nothing: `test:expiry` failed on the expired cookie still being stored;
+- with both, `test:contexts:offline`, `test:server` (the boot line exactly
+  once), the 23-case contract battery and `test:expiry` all passed, and each
+  sweep took milliseconds.
+
+**A listing is read before the walk goes on.** CSS 7.3 walks each member's
+sub-tree from inside its loop over the parent container's listing, so the
+parent's read lock stays held for as long as that sub-tree takes, and is
+renewed only when the listing is read again. Once a listing outgrows the pipe's
+buffers, nothing reads it while a sub-tree is walked. On a private PostgreSQL
+16, with the lock cut to 1.5 s and one of eight sub-containers holding 801
+documents, the parent's lock expired, the listing was destroyed, and the walk
+stopped at 801 of 808 with "Premature close". A failed walk deletes nothing, so
+expired entries would pile up and lengthen the next sweep. Read to the end
+first, the same walk found all 808. CSS 7.2 never held a listing open across
+the walk either. `test:expiry` now walks 24 sub-containers through a store that
+records each fetch, and fails if a member is fetched while a listing is still
+unread; the previous class fails it in memory and on PostgreSQL.
+
+`test:expiry` also races each sweep against 10 s, so a listing that waits for
+the lock fails there by name, at 18 s with CSS's own `JsonResourceStorage`,
+instead of crashing the run at 97 s. `pgsl-css-server.yml` now runs
+`test:expiry` on PostgreSQL as well as in memory.
+
+**What else 7.3.0 changes for the pod server.** Between 7.2.0 and 7.3.0, the
+write, delete and condition code of `DataAccessorBasedStore` is unchanged, and
+so are `BasicConditions` and the ETag handler. So the store behaviour that
+identity's code and tests describe as "CSS 7.2 with the PGSL accessor" (ETags,
+`If-Match` on a missing document, refusals) carries over.
+`deploy/identity/AUTH-ARCHITECTURE.md` now says production runs 7.3, and
+`tools/railway-services.mjs` names 7.3.0 among the releases whose boot it
+describes. Comments in identity's code that name the version their probes ran
+against are left as written, and so is the one in `provisional-play-cleanup.ts`
+that calls the production store 7.2: any edit there rebuilds and redeploys
+identity. A container's `ldp:contains` triples now
+stream in its body instead of sitting in its metadata; the contract battery's
+container cases pass. `ServerInitializer`, which prints the boot line the
+deploy tool waits for, and the `config/app` tree are byte-identical, and
+`tests/build-sha-is-verifiable.test.ts` now pins 7.3.0.
+`WrappedExpiringReadWriteLocker` gains a `maxHoldDuration`, off by default,
+and the 90 s override leaves it off. When a write's lock expires, 7.3.0
+destroys its body if the body is still arriving (the client sees a reset and
+nothing is stored), and otherwise answers 500 while the write carries on
+without the lock; the comments on that override in both configs now say so.
+And `identity/handler/default.json` gains a "recover WebID" account route,
+which lets a signed-in CSS account regenerate the profile card of a WebID in
+one of its own pods. Allow-all authorization already lets anyone write there,
+so it adds nothing that was not already possible. CSS 7.3.0 asks for
+nodemailer `^10.0.9`, whose floor is below the first fixed release, 10.1.4, so
+the override stays. Its test now checks CSS's own range against that release,
+in place of the `^9.0.1` it pinned, and its header no longer says the root
+overrides nodemailer: the root resolves 10.3.1 through CSS's own range.
+
+The 8.0.0 alphas were not an alternative: nothing has been published on that
+line since 2026-03-13, it needs Node 22 (the image and its CI run Node 20), it
+moves to Components.js 6, and it asks for nodemailer `^8.0.2`, which has two
+high advisories.
+
+**uuid.** The advisory needs a caller-supplied buffer. expression-evaluator
+2.10.0 calls uuid three times, for SPARQL's `UUID()`, `STRUUID()` and
+`BNODE()`, each a bare `uuid.v4()`, so it was never reachable here, and this
+is hygiene. The override is 11.1.1 exactly because Comunica 2 is CommonJS and
+`require()`s uuid. 11.1.1 is the last fixed release with a CommonJS build;
+12 and later are ESM-only, and uuid's maintainers expect to deprecate the 11.x
+CommonJS line around 2028. Both `package.json` files now carry
+`"@comunica/expression-evaluator": { "uuid@<11.1.1": "11.1.1" }`. A
+range-keyed override rewrites only a dependency whose range intersects the
+key, so this one matches nothing once expression-evaluator asks for `^11.1.1`
+or CSS moves to Comunica 5, and should then be deleted. Under it,
+expression-evaluator resolved by a scratch install ran `UUID()`, `STRUUID()`
+and `BNODE()` through both its async and sync evaluators against uuid 11.1.1,
+loaded from `dist/cjs` with Node's `require(esm)` turned off.
+
+npm wrote the accessor's lockfile itself. In the root lockfile it did not:
+npm's lockfile-only pass does not walk past a workspace link, and the CSS
+there sits under the `packages/local-node` workspace. So the nested
+`@comunica/expression-evaluator/node_modules/uuid` 9.0.1 entry was deleted by
+hand, and expression-evaluator now resolves the hoisted uuid 11.1.1 that was
+already there. `npm ci` accepts the root lock with or without the override,
+so no install step would notice the two drifting apart. The new
+`integrations/tests/comunica-uuid-is-patched.test.ts` reads both trees and
+fails if the override goes, if any locked uuid is below 11.1.1, or if any
+expression-evaluator would load a uuid that is not 11.x at 11.1.1 or later.
+
+**minimatch in the accessor.** The accessor's `package.json` also takes the
+root's `"@typescript-eslint/typescript-estree": { "minimatch@>=7.0.0
+<11.0.1": "11.0.8" }`, for the same advisory the 2026-11-16 entry cleared
+in the root. It is dev only, under componentsjs-generator 4.3.0's
+typescript-estree 7.18.0, which loads minimatch but calls it only for a
+project service. The generator parses without one. The accessor's build ran
+here on 11.0.8, generated its components, and passed `test:contexts:offline`.
+
+**Lockfile.** The accessor's `package.json` asks for
+`@solid/community-server` `^7.3.0` in place of `^7.1.9`. Its lockfile changes in
+exactly these entries:
+- `@solid/community-server` 7.2.0 to 7.3.0, whose own nodemailer range moves
+  from `^9.0.1` to `^10.0.9`, the only range that differs between the two
+  releases;
+- `uuid` 9.0.1 to 11.1.1;
+- `minimatch` (dev) 9.0.9 to 11.0.8;
+- `@isaacs/nonrecursive-glob-match` 1.1.0 (dev), new;
+- `minimatch/node_modules/brace-expansion` 5.0.13 (dev), new;
+- `minimatch/node_modules/balanced-match` 4.0.4 (dev), new.
+
+nodemailer stays 10.3.1, componentsjs 5.5.1, and the generator's componentsjs
+6.4.0. The new CSS entry is byte for byte the root lockfile's 7.3.0 entry. The
+root lockfile loses the one nested uuid entry, and nothing else changes in it.
+Each time it ran, npm 10.9.4 dropped the `libc` fields of the eight Linux
+packages of the Claude Code CLI and the agent SDK and rewrote the flags of the
+`applications/foxxi-content-intelligence` entry; those lines are kept as they
+are on master.
+
+**Audit.** `npm audit --package-lock-only`, measured on 2026-11-17: the root
+lockfile goes from 9 moderate to 0, the accessor's from 12 moderate to 0, and
+stays at 0 on CSS 7.3.0.
+
+`deploy/Dockerfile.css` is left as it is. Its header says nothing builds it,
+it is not in `deploy/images.json`, and its unpinned global install has no
+lockfile for an override to reach. `examples/multi-agent`'s
+`npx --yes @solid/community-server@7` has no lockfile either; the local-node
+entry above says what 7.3.0 does to its config.
+
+**What runs it.** `pgsl-css-server.yml` and `pgsl-css-accessor.yml` run on a
+push that touches the accessor. Bridge Typecheck's durable-LRS job installs
+the accessor tree. The root suite, Local Pod Windows Installer and Desktop
+Packaging install from the root lockfile. After merge, auto-deploy rebuilds
+`interego-css-pgsl` and rolls the css singleton, now on CSS 7.3.0 with uuid
+11.1.1 under its Comunica; the deploy tool waits for the same boot line. It
+also rebuilds and redeploys twelve more services, because the root
+`package.json`, `package-lock.json` and `packages/local-node` sit inside their
+bundle scope: relay, bridge, dashboard, pgsl-browser, discord, and the foxxi,
+wsp, agp, jev-harness, wrd, pev and coached-world bridges. Those images install
+from the root lockfile (`npm install --workspaces` in `deploy/Dockerfile.relay`
+and `Dockerfile.dashboard`, `npm ci` in `Dockerfile.interego-bridge`),
+local-node's CSS included, so the rebuilds do change them. The relay roll
+starts the client-signature live check, and one deploy event is published per
+service, thirteen in all. identity, css-gate and the static sites are not
+rebuilt.
+
+Checks: the scratch tree above, rebuilt from this branch, passes the four
+in-memory steps on Node 20.20.2 (the image's major) and on 22.22.0. On Node 20,
+`test:server` (the boot line once), the contract battery (23 of 23) and
+`test:expiry` pass on a private PostgreSQL 16 too, and `test:expiry` passes
+with `pgsl-server-redis.json` against a local Redis on both backends. From the
+earlier run: the accessor built (its `tsc` and the Components.js
+generator, which emits the new class), `npm ls --all --package-lock-only`
+exits 0 for the accessor, and a second lockfile-only install leaves its
+lockfile byte for byte as it is. The vitest files that read these manifests,
+configs and locks pass (`tests/build-sha-is-verifiable.test.ts`, the uuid and
+nodemailer tests, and the image, bundle-scope and pod-desktop packaging
+tests), with the typecheck gate clean. From the uuid half of this change:
+loaded with npm's own Arborist, neither lockfile has an invalid or missing
+required edge; with the root override removed, `npm ls uuid` on the root exits
+1; and the uuid test fails with the root override removed, with the nested
+uuid 9.0.1 entry put back, and with the accessor's lockfile from master.
+
+With master merged in (the native store's signed heads), Bridge Typecheck's
+durable-LRS steps ran against this accessor tree on Node 20 and a private
+PostgreSQL 16: the inventory file, the accessor's `native-commit.it.ts`, the
+native-store files (163 tests) and Foxxi's `native-lrs-store.test.ts` and
+`xapi-durable-primary.test.ts` (75) passed. The vitest here is 3.2.6, not the
+lockfile's 4.1.12, and after `native-commit-store.test.ts` it reported a
+worker RPC timeout ("Timeout calling onTaskUpdate") with every test passed.
+
+Not covered: the FoundationDB run was not repeated here; `pgsl-css-server.yml`
+runs the server and the contract battery on PostgreSQL. CSS 7.3.0 renews a
+write's lock only when the pipe pulls, so a slow client's upload gets no
+renewal after it starts; css-gate gives up on it at 60 to 90 s, near the
+90 s lock, and per-chunk renewal would need a paused-mode read of its own.
+
+## 2026-11-16 — Foxxi profile server: a declared extension holds a statement to its schema
+
+Found by walking the authoring tool against the deployed bridge. A profile
+was published there whose tide extension declares `{"type":"number"}`. A
+statement carrying the tide as the text "high" was sent to
+`/xapi/profiles/validate_templates`, and the answer was 204.
+
+The lint requires every extension to declare a schema, and nothing read it
+afterwards. The specification's validation algorithm reads templates and never
+a concept, and `processor.ts` is that algorithm branch for branch, so the
+declaration bound no statement.
+
+The server now checks it beside the algorithm
+(`applications/foxxi-content-intelligence/src/xapi-profile-server/extension-schema.ts`).
+`processor.ts` is unchanged.
+
+- `validate_templates`: a statement that matches a template is held to the
+  `inlineSchema` of each extension the profile declares, in `result`,
+  `context`, the object's definition and the context activities' definitions.
+  A wrong value is a 400 with a comment naming the extension and where it
+  sits.
+- `validate_patterns`: the same for each statement of a run that otherwise
+  follows.
+- The profile lint: an example whose extension value its own profile's schema
+  does not allow is a finding, `example-extension-value`, and is not counted
+  as its template's example.
+- The xapi-x lint (rule X2) reads values with the same function, so there is
+  one reader.
+
+What is read is a bounded part of JSON Schema: type, enum, const, numeric and
+length bounds, `format: iri`, items, minItems, maxItems, properties, required,
+and plain patterns. Anything else in a schema is named in the answer's
+`notChecked` and is not held against the value. So is a schema given by IRI,
+which is not fetched.
+
+A pattern is run only when nothing in it repeats without a bound: no group, no
+`*`, no `+`, no backreference, no `{n,}`, and at most one repetition of a
+varying count (`?` or `{n,m}`), since several of those over the same
+characters multiply. A profile is someone else's document
+and these routes are open, and a pattern such as `^(a+)+$` stalls a server on
+forty characters. Every pattern the built-in profiles declare is a plain one,
+and a test fails if that stops being so.
+
+Not covered: an extension the profile does not declare is left alone, since it
+is another profile's. A 204 has no body, so on success the caller is not told
+what was not checked. An extension that sits in a place its declared type does
+not name (a context extension under `result`) is still checked for its value
+and not reported as misplaced.
 ## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
 
 From review of #934. With `requireSignedHead` on, a head with no signature was
@@ -3338,8 +4438,6 @@ server, several small transactions each.
 
 `POST /agent/cmi5/launch` returns one launch URL. Its fetch token is single-use and expires after 30 minutes, so a trainee who bookmarks it cannot get back into the activity. A signed caller can now mint `GET /cmi5/go/<token>` (`POST /agent/cmi5/go`) for themselves and one course. The token is 32 random bytes and the URL does not carry the learner. Each open builds a fresh cmi5 launch and redirects to the AU: a new fetch token every time, the same registration and session while that session has not been terminated, abandoned or waived, and a new registration afterwards (Review when the activity is already satisfied). `POST /agent/cmi5/go/revoke` withdraws it. Opens are rate-limited per address and per token. Links expire in 90 days unless `expires_in_days` says otherwise, and they are kept on the tenant pod at `foxxi-lattice/cmi5-personal-links.json`. A read of that file that fails is not followed by a write, so a pod that cannot be read is not replaced by this process's copy. Withdrawn and expired links stay recorded and do not count toward the learner's limit. Mint and revoke are also limited on the route, before the signature is checked. The link is not tied to one course or one person: the course is whichever published course the request names, the actor is whoever signed, and the activity's moveOn and mastery are that course's own structure. Withdrawal, expiry and the per-address limit are the same ones a SCORM dispatch uses, and both registries refuse to overwrite the pod when a read fails.
 
-
-
 ## 2026-11-13 — Foxxi is an xAPI Profile Server
 
 The bridge served one profile, its own, and checked a statement against a
@@ -3557,7 +4655,6 @@ other key a caller adds is still refused, and neither value reaches what the
 relay signs. A test reproduces the refusal with the body as routed, and another
 fails if the middleware starts adding a name the helper does not know.
 
-
 ## 2026-11-12 — Native commits: a write reads the head once and skips three repeat requests (opt-in)
 
 After batched staging, a single-statement LRS write still made eight sequential
@@ -3730,7 +4827,6 @@ calls neither identity nor the relay.
 
 `MIN_FILES` in `tools/lint-gate.mjs` goes from 670 to 673, the number the gate
 named when the new files took the linted count past its slack.
-
 
 ## 2026-11-11 — Native commits: a commit's immutable representations are staged in one receipted request
 
@@ -8174,7 +9270,6 @@ Since 20:49 UTC every identity-server start logged `Account index: 0 loaded, 360
 ## 2026-10-23 — Play guests can follow their own native descriptor heads
 
 Provisional descriptor reads now recognize only this deployment's configured internal/public store alias before applying the same exact guest-pod and resource-path checks. Both the early REST/MCP gate and the durable tool guard receive that configuration, so an internal descriptor URL returned by get_current_head can be read by its owner. Foreign origins, foreign pods, credentials, query/fragment additions, encoded separators and traversal spellings remain refused; mutation policy and quotas are unchanged. Focused tests drive native head-to-descriptor following and refusal cases.
-
 
 ## 2026-10-23 — Identity: forgotten surface agents are served again, and nobody can register another user's
 

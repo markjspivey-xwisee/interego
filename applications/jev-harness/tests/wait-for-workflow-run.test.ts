@@ -76,20 +76,42 @@ describe('the judge workflow runs the wait with the names the tool expects', () 
     // GITHUB_RUN_ID is the runner's own default variable; setting it in env: would be a second, wrong id.
     expect(judge).not.toMatch(/^\s+GITHUB_RUN_ID:/m);
   });
-  it('★ grants the two reads to the judge job alone: the close-time job lists neither runs nor check runs', () => {
+  it('★ grants the two reads to the decide job alone: the judge and close-time jobs list neither runs nor check runs', () => {
     const judge = read('.github/workflows/jev-harness.yml');
     const block = (text: string, indent: string) => new RegExp(`^${indent}permissions:\\n((?:${indent}  .+\\n)+)`, 'm').exec(text)?.[1] ?? '';
     const workflow = block(judge, '');
     expect(workflow).toMatch(/^ {2}contents: read\b/m);
     expect(workflow).toMatch(/^ {2}pull-requests: write\b/m);
     expect(workflow).not.toMatch(/actions:|checks:/);
-    const judgeJob = /^ {2}judge:\n([\s\S]*?)^ {2}outcomes-on-close:/m.exec(judge)?.[1] ?? '';
-    const own = block(judgeJob, '    ');
-    // A job's block replaces the workflow's, so the two the judge still needs are restated beside the reads.
+    const judgeJob = /^ {2}judge:\n([\s\S]*?)^ {2}decide:/m.exec(judge)?.[1] ?? '';
+    expect(judgeJob).toContain('bin/follow.ts');
+    expect(judgeJob, 'the judge job lists nothing, so it restates no permissions').not.toMatch(/^\s+permissions:/m);
+    const decideJob = /^ {2}decide:\n([\s\S]*?)^ {2}outcomes-on-close:/m.exec(judge)?.[1] ?? '';
+    const own = block(decideJob, '    ');
+    // A job's block replaces the workflow's, so the two the decision still needs are restated beside the reads.
     for (const scope of ['contents: read', 'pull-requests: write', 'actions: read', 'checks: read']) expect(own, scope).toMatch(new RegExp(`^ {6}${scope}\\b`, 'm'));
     const close = judge.slice(judge.search(/^ {2}outcomes-on-close:/m));
     expect(close).toContain('bin/outcomes-on-close.ts');
     expect(close).not.toMatch(/^\s+permissions:/m);
+  });
+  it('★ the wait holds no runner: it is the decide job\'s, behind the merge-wait environment\'s timer', () => {
+    // Measured 2026-11-17 over 20 runs: as the judge job's step, the wait held a runner 27.6 minutes
+    // on average. An environment's wait timer holds the job without one.
+    const judge = read('.github/workflows/jev-harness.yml');
+    const judgeJob = /^ {2}judge:\n([\s\S]*?)^ {2}decide:/m.exec(judge)?.[1] ?? '';
+    const decideJob = /^ {2}decide:\n([\s\S]*?)^ {2}outcomes-on-close:/m.exec(judge)?.[1] ?? '';
+    expect(judgeJob).not.toBe('');
+    expect(judgeJob, 'a wait in the judge job holds its runner for the whole of it').not.toContain('wait-for-workflow-run.mjs');
+    expect(judgeJob).not.toContain('bin/auto-merge.ts');
+    expect(judgeJob, 'the decision reads the selection as a job output now').toMatch(/^ {6}selection: \$\{\{ steps\.selection\.outcome \}\}/m);
+    expect(decideJob).toMatch(/^ {4}needs: judge$/m);
+    expect(decideJob).toMatch(/^ {4}environment: merge-wait$/m);
+    // A cancelled run decides nothing; a judge job a block failed still gets its printed refusal.
+    expect(decideJob).toMatch(/^ {4}if: \$\{\{ !cancelled\(\) && /m);
+    expect(decideJob).toContain('SELECTION_RESULT: ${{ needs.judge.outputs.selection }}');
+    expect(decideJob).toContain('name: jev-harness-judgments');
+    expect(decideJob).toContain('node tools/wait-for-workflow-run.mjs');
+    expect(decideJob).toContain('bin/auto-merge.ts');
   });
 });
 

@@ -2,7 +2,9 @@ name: jev-harness (System One judgments)
 
 # Copy to .github/workflows/ in the monorepo with the vertical at applications/jev-harness.
 #
-# One job on every pull request (three until 2026-09-22; see the job's own note), in order:
+# Two jobs on every pull request: the judge (selection, gate, artifacts) on a runner at once, and
+# the decision behind a twenty-minute environment timer that holds no runner (see the decide
+# job's note). In order:
 #   select-tests     follow select-tests → run the selection → triage the log (only when the run failed) → score the selection
 #   review-gate      follow review-gate on the PR diff; the job fails for block (a secret in the
 #                    diff, exit 3) and, only when the repository variable JEV_REQUIRE_HUMAN_REVIEW
@@ -80,17 +82,16 @@ jobs:
   # judgment and test combined. One bridge, started once, now answers the selection and the gate
   # in turn, and the decision reads the gate's verdict from the same workspace, not an artifact.
   judge:
-    name: "select tests → run → gate → decide"
+    # Named "… → decide" until 2026-11-17, when the decision became the decide job's.
+    name: "select tests → run → gate"
     if: ${{ github.event_name != 'pull_request' || github.event.action != 'closed' }}
     runs-on: ubuntu-latest
-    timeout-minutes: 70
-    # The workflow's two, restated (a job's block replaces the workflow's), and the two reads only
-    # this job's wait makes; the close-time job lists neither runs nor check runs.
-    permissions:
-      contents: read
-      pull-requests: write
-      actions: read # the wait before the decision lists the workflow runs on the head
-      checks: read # ... and the check runs on it, from every app
+    # The selection and the gate only: the wait and the decision are the decide job's, below.
+    timeout-minutes: 30
+    outputs:
+      # What the decision reads as "the selected tests passed": success or failure, of a step
+      # that may fail without failing the job.
+      selection: ${{ steps.selection.outcome }}
     steps:
       - uses: actions/checkout@v6
         with:
@@ -118,6 +119,13 @@ jobs:
           key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
       - if: steps.dist.outputs.cache-hit != 'true'
         run: npm run build
+      # The dist cache holds packages/*/dist only, and its key ignores mcp-server/, so on a hit the
+      # stdio server is not built at all. A selected test that starts mcp-server/dist/server.js
+      # (integrations/tests/mcp-server-local-solid-server.test.ts) then found no server, or would
+      # find a stale one. Built on every run, as bridge-typecheck.yml's suite does, so it is this
+      # checkout's.
+      - name: Build the published stdio server and configuration adapter
+        run: npm run build --workspace @interego/mcp
       - name: Start the bridge bound to this checkout
         env:
           TYPESAFE_API_KEY: ${{ secrets.TYPESAFE_API_KEY }}
@@ -207,6 +215,76 @@ jobs:
           path: |
             .jev-harness/
             ${{ env.HARNESS_DIR }}/bridge.log
+  # ── The decision, on a runner only once the checks are nearly in ─────────────────────────────
+  # Until 2026-11-17 the wait and the decision were the judge job's last two steps. Measured over
+  # 20 runs, that step held a runner for 27.6 minutes on average doing nothing but asking GitHub
+  # every thirty seconds whether Mutation Gate (one 31-minute job on every pull request) had
+  # finished. During a burst of pushes that is one of the account's runners per open pull request,
+  # idle, while the checks it is waiting for sit in the queue behind it: on 2026-11-17 between
+  # 05:00Z and 09:00Z a job waited a median of 19 to 35 minutes for a runner.
+  #
+  # The `merge-wait` environment carries a wait timer (20 minutes; a repository setting, under
+  # Settings → Environments). GitHub holds a job that names it for that long WITHOUT a runner,
+  # then starts it. So this job begins about when the slowest check is ending, reads the suite and
+  # every other check exactly as before (the same tool as its wait step runs, the same fifty-minute
+  # deadline, now counted from here), and decides. A merge is no later for it: nothing merges
+  # before Mutation Gate concludes, and that is never under twenty minutes from the push.
+  #
+  # ★ NOT workflow_run, AND NOT A DISPATCH. Either would file its runs under master's head, not
+  # the pull request's, and tools/ci-green-for-sha.mjs (the auto-deploy gate) reads one page of
+  # 100 runs for master's head, of any event: hundreds of decision runs a day would push ESLint
+  # off that page and the gate would refuse the deploy as too-few. A job of THIS run stays on the
+  # pull request's head, and the wait already leaves this workflow's own out by workflow id.
+  #
+  # If the environment is ever deleted, GitHub creates it again with no timer the first time this
+  # job runs: the job then starts at once and polls as the judge job used to. Slower, not wrong.
+  #
+  # `!cancelled()` and not `always()`: a block fails the judge job and the decision still runs to
+  # print its refusal, but a run a newer push cancelled decides nothing.
+  decide:
+    name: "wait for every check → decide"
+    needs: judge
+    if: ${{ !cancelled() && github.event_name == 'pull_request' && github.event.action != 'closed' }}
+    runs-on: ubuntu-latest
+    environment: merge-wait
+    timeout-minutes: 65
+    # The workflow's two, restated (a job's block replaces the workflow's), and the two reads only
+    # this job's wait makes; the judge and close-time jobs list neither runs nor check runs.
+    permissions:
+      contents: read
+      pull-requests: write
+      actions: read # the wait before the decision lists the workflow runs on the head
+      checks: read # ... and the check runs on it, from every app
+    steps:
+      - uses: actions/checkout@v6
+        with:
+          fetch-depth: 0
+      - uses: actions/setup-node@v6
+        with:
+          node-version: 20
+          cache: npm
+      - uses: actions/cache@v5
+        id: node-modules
+        with:
+          path: node_modules
+          key: node-modules-${{ runner.os }}-${{ hashFiles('package-lock.json') }}
+      - if: steps.node-modules.outputs.cache-hit != 'true'
+        run: npm ci
+      # The judge job saved this key minutes ago; a miss builds what the decision's imports need.
+      - uses: actions/cache/restore@v5
+        id: dist
+        with:
+          path: packages/*/dist
+          key: dist-${{ runner.os }}-${{ hashFiles('package-lock.json', 'packages/*/src/**', 'packages/*/package.json', 'packages/*/tsconfig*.json', 'tsconfig.base.json') }}
+      - if: steps.dist.outputs.cache-hit != 'true'
+        run: npm run build
+      # The gate's verdict and the selection, as the judge job left them: the decision read them
+      # from the same workspace while it was a step of that job, and reads them from its artifact
+      # now. The artifact's root is the workspace, so .jev-harness/ lands where it was written.
+      - uses: actions/download-artifact@v8
+        with:
+          name: jev-harness-judgments
+          path: ${{ github.workspace }}
       # ── The whole suite, before the decision ────────────────────────────────────────────────
       # bridge-typecheck.yml runs the whole root suite on this same head, ten minutes, and until
       # 2026-09-22 nothing here read its result: the decision merged on the selected tests while
@@ -226,7 +304,7 @@ jobs:
       # with `checks_detail` naming what failed or was still running. One deadline for both: the
       # fifty minutes below. On 2026-10-26 and 27 Mutation Gate's 63 successful runs (of 66) took
       # 18 to 47 minutes from the push, median 29, so the wait is fifty minutes, and this job's
-      # timeout-minutes is 70 to hold it with the selection and the gate before it. A check still
+      # timeout-minutes is 65 to hold it with the install before it. A check still
       # running at the deadline means no merge, and the next push decides again. SUITE_GATE leaves
       # an advisory suite out of `checks`.
       - name: Wait for the whole suite and every other check on this head
@@ -263,7 +341,7 @@ jobs:
           # update the base branch, even when the repository's auto-merge switch is on.
           ARMED: ${{ github.event.pull_request.draft != true && vars.JEV_AUTO_MERGE == 'true' }}
           TOKEN_PRESENT: ${{ secrets.JEV_MERGE_TOKEN != '' }}
-          SELECTION_RESULT: ${{ steps.selection.outcome }}
+          SELECTION_RESULT: ${{ needs.judge.outputs.selection }}
           CALIBRATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/calibration
           REPUTATION_URL: https://jev-harness-bridge-production.up.railway.app/jev-harness/reputation
           SUITE_RESULT: ${{ steps.suite.outputs.result }}

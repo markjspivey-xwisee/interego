@@ -56,30 +56,69 @@ identity's own door and linkable to a registered account: `deploy/identity/PROVI
 "General guest") is offered by Foxxi's I2IDL-X learner workbench and its course player when
 `FOXXI_I2IDLX_GENERAL_GUEST=1` (`i2idlx/LEARNING-CONNECTIONS.md`, "The general guest").
 
-**The dashboard does not offer it**, and nothing on this page changes. Two things stand in the way,
-and neither is a setting:
+**The dashboard's page does not offer it yet.** The bridge's side of it exists and is switched
+off: `FOXXI_PLAY_GENERAL_GUEST=1` turns it on (with the dashboard's own service account,
+`FOXXI_PLAY_SERVICE_PRIVATE_KEY` and `FOXXI_PLAY_AUDIENCE`; `FOXXI_PLAY_GENERAL_GUEST_DOOR_ORIGIN`
+names the door's origin where identity serves it from a dedicated one). With the switch unset
+nothing below is built or attached and nothing on this page changes. The page's button, and a
+guest linked to a registered account, are later steps.
 
-1. *The dashboard has no session with the bridge to give a general guest.* A dashboard guest **is**
-   a key: the tab makes a secp256k1 wallet, and the bridge authenticates each `/agent/*` request by
-   recovering its signer, who is the caller (`did:ethr:<address>`). A general guest's key is a
-   P-256 key that never leaves identity's door origin, so in the dashboard it has nothing to sign
-   with. Admitting it needs either a bearer session accepted wherever the bridge now requires a
-   signature, or a rule that a tab key's requests count as another subject's (for a linked guest, a
-   registered account's). Both change what every ownership and attribution check in the bridge
-   reads as "the caller". That is a change to the bridge's authentication as a whole, to be
-   designed and reviewed on its own, not added beside it.
-2. *The dashboard is a static site on another origin.* Identity returns the browser to a path on
-   the application's registered origin, and the code must be exchanged, and the visit's cookie
-   checked, by a server. The dashboard's origin has none (nginx serving files). Either that host
-   proxies the return path to the bridge, or the bridge's origin is the audience and the finished
-   session is handed to a page on another origin. The second cannot use the HttpOnly cookie that
-   binds the visit (to the dashboard's page it is a cross-origin cookie, and a third-party one
-   wherever the two hosts are not the same site); a hand-over without it (the dashboard starts the
-   visit with a form post the bridge accepts only from the dashboard's `Origin`, and collects the
-   session once with a secret only its tab holds) is possible but has been run in no browser.
+Two things stood in the way, and this is how each is settled (`src/dashboard-general-guest.ts`):
 
-Until both are settled, a dashboard guest is what this page describes: a wallet the tab makes,
-optionally kept in a per-application provisional pod.
+1. *The dashboard is a static site on another origin, so no cookie can bind a visit.* The page
+   starts a visit with `POST /play/general/start` (answered only for the dashboard's `Origin`) and
+   keeps the door's `binding` in its tab. Identity returns the browser to the dashboard's
+   registered return path (`/guest/general/return`) with a code. The page then makes a key for its
+   tab and sends `{code, state, binding}` in a request that key signs, to
+   `POST /play/general/finish`. The bridge finishes the visit only with the binding it issued for
+   that state and exchanges the code itself. The page may add `record_key`, an X25519 public key
+   it made for the tab (the secret stays in the tab): the guest's record is then sealed for that
+   tab too. This round trip has been run in no browser.
+2. *A tab key is not the guest.* After `finish`, the bridge holds that this tab key was admitted
+   as that guest, for an hour at most or until the guest's own deadline. A request the key signs
+   at `POST /play/general/act` is the **guest's**: its subject is the guest's DID
+   (`did:web:<identity host>:users:u-try-guest-…`) and its records are on the guest's own pod. The
+   key itself is nobody, and is refused on every signed `/agent/*` route while it is admitted.
+
+**What a guest can do** is the list in `src/guest-operations.ts`, and nothing else: ask its
+standing, sign out, read its own learning record, see what a composition would play for it, launch
+one, and answer its steps. Any other name is refused, and so is any request that says who it is
+for, on whose authority, or which pod it touches (`acting_as`, a subject, a pod URL): a guest acts
+as itself. No signed `/agent/*` route and no `foxxi.*` tool accepts a request in a guest's name.
+
+**Where a guest's record is.** One sealed document on the guest's own pod,
+`<pod origin>/<guest id>/foxxi-dashboard/learning-record.sealed.json`
+(`src/guest-learning-record.ts`), written by the bridge with the gate's operator bearer. It is
+never the tenant pod: with the switch on, the bridge's pod resolver places a general guest's DID on
+its own pod or refuses it. Nothing is written to a lens, a lattice, the efficacy tally or a
+forwarding target for a guest. When the gate answers a write with `410` (the guest is closed or
+expired) every session of that guest ends and the write is not tried again.
+
+**Who can read a guest's record.** The gate serves pod reads with no sign-in, so whoever has a
+guest's id can fetch the document. It is ciphertext: the record is sealed in the substrate's
+multi-recipient envelope (X25519, XSalsa20-Poly1305), and nothing of it is in the clear. Two
+parties can open it:
+
+- **The bridge**, at any time, for every guest. It opens each guest's record with a key derived
+  from its own secret (`FOXXI_BRIDGE_PRIVATE_KEY`, else its wallet seed) and that guest's DID. This
+  is a bridge-held service key: the record is confidential from the public and from the storage
+  provider, not from whoever operates the bridge. The bridge needs it because it reads the record
+  at every step, and because a guest outlives both a bridge process and a browser tab.
+- **The guest's own tab**, when it sent a `record_key` at `finish`: it is a recipient of every
+  version written while it is admitted, and can open the document from its pod without asking the
+  bridge. A tab that sent none reads its record through the bridge (`record.read`).
+
+Nobody else: not a holder of the guest's id, not a reader at the gate, not the operator bearer.
+A reader without a key still sees that a record exists, when it was last sealed, about how large
+it is, and the public keys it is sealed for. With the switch on the bridge does not start without
+a secret to seal with.
+
+**Who is refused at the door.** A guest identity states is linked to a registered account, or
+acting on another's behalf. Not yet.
+
+**Limits** are counted per guest, not per tab or address: 120 operations and 30 writes a minute,
+at most four tabs, and at most 256 writes to the pod per bridge process, each a record of at most
+256 KiB (384 KiB as sealed).
 
 ## The three routes
 

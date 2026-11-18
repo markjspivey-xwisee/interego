@@ -7,7 +7,7 @@
 #   packages/pgsl-store/package.json
 #   integrations/pgsl-css-accessor      (accessor + factory + Components.js config)
 # This clean tree avoids the monorepo-root componentsjs@6 (via @comunica) that is
-# incompatible with CSS 7.1.9's componentsjs@5.
+# incompatible with CSS 7's componentsjs@5.
 #
 # Runtime config: PGSL_PG_CONNSTR (Postgres), CSS_BASE_URL (public URL), PORT.
 

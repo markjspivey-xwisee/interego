@@ -29,7 +29,7 @@
     "test:contexts:offline": "node test/components-context-offline.mjs"
   },
   "dependencies": {
-    "@solid/community-server": "^7.1.9"
+    "@solid/community-server": "^7.3.0"
   },
   "devDependencies": {
     "componentsjs-generator": "^4.2.0",
@@ -37,6 +37,12 @@
     "typescript": "^5.6.0"
   },
   "overrides": {
+    "@comunica/expression-evaluator": {
+      "uuid@<11.1.1": "11.1.1"
+    },
+    "@typescript-eslint/typescript-estree": {
+      "minimatch@>=7.0.0 <11.0.1": "11.0.8"
+    },
     "nodemailer": "^10.3.1"
   }
 }
