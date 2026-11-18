@@ -45,8 +45,33 @@ import { readFileSync, writeFileSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { MUTANTS } from './mutation-gate.data.mjs';
 
+import { parseShard, shardOf } from './mutation-gate.shard.mjs';
+
 const only = process.argv.find(a => a.startsWith('--only='))?.slice('--only='.length);
-const selected = only ? MUTANTS.filter(m => m.name.includes(only)) : MUTANTS;
+const shardArg = process.argv.find(a => a.startsWith('--shard='))?.slice('--shard='.length);
+
+// ── ONE SHARD OF THE TABLE (tools/mutation-gate.shard.mjs says why and how it is cut) ────────
+// The cut is of the WHOLE table by position, then `--only` narrows within it, so a mutant is in
+// the same shard whatever else is asked for. A shard that cannot be parsed is refused here: read
+// as "no shard", it would run every mutant on every runner and call that one fifth.
+let shard;
+if (shardArg !== undefined) {
+  try {
+    shard = parseShard(shardArg);
+  } catch (err) {
+    console.error(`★ ${err.message}`);
+    process.exit(1);
+  }
+}
+const pool = shard ? shardOf(MUTANTS, shard) : MUTANTS;
+const selected = only ? pool.filter(m => m.name.includes(only)) : pool;
+
+// TRAP 6, one step earlier still: a shard past the end of a short table selects nothing.
+if (shard && pool.length === 0) {
+  console.error(`★ --shard=${shardArg} holds no mutant (the table has ${MUTANTS.length}), so this `
+    + 'run would verify NOTHING. Name fewer shards in mutation-gate.yml.');
+  process.exit(1);
+}
 
 /**
  * ★★ TRAP 6. AN EMPTY SELECTION IS A FAILURE, NOT A PASS.
@@ -68,7 +93,7 @@ const selected = only ? MUTANTS.filter(m => m.name.includes(only)) : MUTANTS;
 if (only && selected.length === 0) {
   console.error(`★ --only=${only} matched no mutant, so this run verified NOTHING and would `
     + 'otherwise have exited 0 with "0/0 defect(s) caught".');
-  console.error(`  Available: ${MUTANTS.map(m => m.name).join(', ')}`);
+  console.error(`  Available${shard ? ` in shard ${shardArg}` : ''}: ${pool.map(m => m.name).join(', ')}`);
   process.exit(1);
 }
 

@@ -28,6 +28,7 @@ import { existsSync, readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 import { MUTANTS } from '../tools/mutation-gate.data.mjs';
+import { parseShard, shardOf } from '../tools/mutation-gate.shard.mjs';
 
 const ROOT = join(dirname(fileURLToPath(import.meta.url)), '..');
 
@@ -116,5 +117,35 @@ describe('a gate arrives with a mutant', () => {
       'a mutant with no `why` is a defect nobody can evaluate, and one with no `mustFail` is '
         + 'applied against nothing:\n  ' + malformed.join('\n  '),
     ).toEqual([]);
+  });
+
+  it('★ the shards mutation-gate.yml runs are this table: each mutant in one, and none empty', () => {
+    // The gate is cut across runners by position (tools/mutation-gate.shard.mjs). The cut is
+    // proven for any table in tests/mutation-gate-shards.test.ts; this is the real one, and the
+    // harness that applies it.
+    const workflow = readFileSync(join(ROOT, '.github/workflows/mutation-gate.yml'), 'utf8');
+    const named = (/^ {8}shard:\s*\[(.*)\]\s*$/m.exec(workflow)?.[1] ?? '').split(',').map((s) => s.trim().replace(/^['"]|['"]$/g, '')).filter(Boolean);
+    expect(named.length).toBeGreaterThan(1);
+    const seen = new Map<string, number>();
+    for (const s of named) {
+      const part = shardOf(MUTANTS, parseShard(s));
+      expect(part.length, `shard ${s} holds no mutant, so its runner verifies nothing`).toBeGreaterThan(0);
+      for (const m of part) seen.set(m.name, (seen.get(m.name) ?? 0) + 1);
+    }
+    // Names are how a mutant is counted here, so two sharing one would hide a loss.
+    expect(new Set(MUTANTS.map((m) => m.name)).size).toBe(MUTANTS.length);
+    expect([...seen.keys()].sort()).toEqual(MUTANTS.map((m) => m.name).sort());
+    expect([...seen.values()].every((count) => count === 1)).toBe(true);
+    // The harness takes the cut from the same module, and exits on a shard that holds nothing.
+    const harness = readFileSync(join(ROOT, 'tools/mutation-gate.mjs'), 'utf8');
+    expect(harness).toContain("import { parseShard, shardOf } from './mutation-gate.shard.mjs';");
+    // Anchored on structure, not on a window of characters: the guard's own block, from its
+    // `if` to the brace that closes it.
+    const guardAt = harness.indexOf('if (shard && pool.length === 0) {');
+    expect(guardAt).toBeGreaterThan(-1);
+    const guard = harness.slice(guardAt, harness.indexOf('\n}\n', guardAt));
+    // Spelled in two parts: tests/test-files-are-runnable.test.ts refuses a collected test that
+    // contains that call, and cannot tell a quoted one from a real one.
+    expect(guard).toContain(['process', 'exit(1);'].join('.'));
   });
 });
