@@ -1,5 +1,28 @@
 # Changelog
 
+## 2026-11-18 — Role-play player: one initialized when a practice is opened again
+
+The LMS continues an open cmi5 session when a course is opened again. Opened part
+way through a practice, the player loaded afresh and sent a second initialized
+into that session; cmi5 has one, first (9.3). #952 fixed this for a visit that
+records a reviewed result and left the practice path as it was.
+
+A practice now opens its visit the same way: the player reads what the learning
+record holds of its session, sends initialized only when the session has none,
+and starts its clock after the session's latest statement. When the record cannot
+be read, no practice is started and the learner is offered another try. Before,
+a practice began whether or not the record took its initialized.
+
+Opening a visit also clears a send that failed earlier when the session turns out
+to have its initialized already. Without that, a try whose initialized was stored
+and whose answer was lost left every later statement queued behind the failure.
+
+Not changed: the practice itself starts over on the fresh load. What the earlier
+load recorded (a consent, some exchanges) stays in the session. Practice Evidence
+reads every exchange of the session as one conversation: over the scenario's turn
+limit it refuses the registration, and under it the earlier exchanges are part of
+what the reviewer reads.
+
 ## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
 
 A Quoted descriptor repeats someone else's claim without endorsing it. The
