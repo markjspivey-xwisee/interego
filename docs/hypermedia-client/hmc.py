@@ -16,6 +16,7 @@ import contextlib
 import copy
 import encodings.idna as _idna_codec
 import heapq
+import http.client
 import ipaddress
 import json
 import math
@@ -5010,8 +5011,10 @@ def _web_opener(redirects: _WebOnlyRedirects | None) -> urllib.request.OpenerDir
 @dataclass
 class Exchange:
     """A request's answer: its status, headers and body; `base`, the address
-    the answer is the document at (see http_request); and `landed`, the address
-    that gave it, after any redirects followed."""
+    the answer is the document at: the URL after any redirects, as JSON-LD
+    takes a document's base from, except that a 303 See Other leaves it at the
+    URL that answered 303; and `landed`, the address that gave it, after any
+    redirects followed."""
     status: int
     headers: dict[str, str]
     body: bytes
@@ -5020,12 +5023,28 @@ class Exchange:
 
 
 def http_exchange(url: str, method: str = "GET", headers: dict[str, str] | None = None,
-                  data: bytes | None = None, timeout: int = 60, follow: bool = True) -> Exchange:
+                  data: bytes | None = None, timeout: int = 60, follow: bool = True,
+                  limit: int | None = None, error_body: bool = True) -> Exchange:
     """Sends one request to the URL exactly as _request_url writes it. With
     `follow`, a GET's or HEAD's redirect is followed as fetch follows one (see
     _WebOnlyRedirects); without it, and for any other method, a redirect is
     the answer, on its headers: nothing is sent to its Location, and its body
-    is not read, so the answer's body is empty."""
+    is not read, so the answer's body is empty. Without `error_body`, the body
+    of an answer that is not 2xx is not read either. With `limit`, the body is
+    read to one byte past it and no further, so a body longer than `limit` is
+    `limit` + 1 bytes long. A body that ends short of the Content-Length its
+    answer gave, the connection closed, raises IncompleteRead, as the page's
+    fetch fails on it: the answer is not taken as whole."""
+    def body_of(answer: Any) -> bytes:
+        if limit is None:
+            return answer.read()
+        body = answer.read(limit + 1)
+        # read(amt), unlike read(), stops where the connection closed without
+        # saying so; what it left of the Content-Length says the body was cut.
+        left = getattr(answer, "length", None)
+        if len(body) <= limit and left:
+            raise http.client.IncompleteRead(body, left)
+        return body
     _require_web_url(url)
     url = _request_url(url)
     req_headers = {"User-Agent": USER_AGENT}
@@ -5037,30 +5056,21 @@ def http_exchange(url: str, method: str = "GET", headers: dict[str, str] | None 
         with _web_opener(redirects).open(request, timeout=timeout) as resp:
             landed = resp.geturl() or url
             see_other = redirects.see_other_from if redirects else None
-            return Exchange(resp.getcode() or 200, _header_values(resp.headers.items()), resp.read(), see_other or landed, landed)
+            return Exchange(resp.getcode() or 200, _header_values(resp.headers.items()), body_of(resp), see_other or landed, landed)
     except urllib.error.HTTPError as exc:
-        if not follow and exc.code in REDIRECT_STATUSES:
+        if (not follow and exc.code in REDIRECT_STATUSES) or not error_body:
             # A redirect not followed is the answer on its headers: the page's
             # fetch, with redirect: "manual", gets an opaque redirect, which
             # has no body. Its body is not read, so one that never ends does
-            # not hold the request until it times out.
+            # not hold the request until it times out; nor is the body of an
+            # answer the caller reads only for its status.
             exc.close()
             body = b""
         else:
-            body = exc.read() if exc.fp else b""
+            body = body_of(exc.fp) if exc.fp else b""
         landed = exc.geturl() or url
         see_other = redirects.see_other_from if redirects else None
         return Exchange(exc.code, _header_values(exc.headers.items() if exc.headers else []), body, see_other or landed, landed)
-
-
-def http_request(url: str, method: str = "GET", headers: dict[str, str] | None = None,
-                 data: bytes | None = None, timeout: int = 60) -> tuple[int, dict[str, str], bytes, str]:
-    """The status, headers and body of a request, and the address the answer
-    is the document at: the URL after any redirects, as JSON-LD takes a
-    document's base from, except that a 303 See Other leaves it at the URL that
-    answered 303. The URL is sent exactly as _request_url writes it."""
-    answer = http_exchange(url, method, headers, data, timeout)
-    return answer.status, answer.headers, answer.body, answer.base
 
 
 def invoke_done(url: str, status: int, landed: str) -> tuple[bool, str]:
@@ -5182,10 +5192,14 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
     page's fetchAuthority is the same:
 
     - The address as given is asked first. A request that gets no answer (the
-      connection fails or closes, a redirect is refused or there are more than
-      fetch follows, or it times out) ends the load, and its problem is named.
+      connection fails or closes, its body included, a redirect is refused or
+      there are more than fetch follows, or it times out) ends the load, and
+      its problem is named.
     - An answer counts when its status is 2xx, as fetch's res.ok has it, and
-      its body is one classify_payload reads. One that is not JSON-LD is asked
+      its body, read to RESPONSE_MAX bytes and no further, is one
+      classify_payload reads. The body of an answer that is not 2xx is not
+      read, since it does not count whatever it holds, and one longer than
+      RESPONSE_MAX bytes does not count. One that is not JSON-LD is asked
       for again as ?format=jsonld, unless the address names a format hmc.py
       reads (Turtle only with rdflib, as the page never reads it). That retry
       is optional: its answer comes first when it is JSON-LD, and the first
@@ -5195,10 +5209,13 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
       load_descriptor names it with the first answer (_authority_refused).
     - When the address names no format and its answer does not count,
       ?format=jsonld, turtle and markdown are asked in turn until one does; a
-      request among them that gets no answer ends the load, named."""
+      request among them that gets no answer ends the load, named. When none
+      counts and one was longer than RESPONSE_MAX bytes, the first such is
+      named (_document_too_large)."""
     url = _strip_fragment(url)
     accept = "application/ld+json, application/json;q=0.9, text/turtle;q=0.8, text/markdown;q=0.4, */*;q=0.1"
     tried: list[str] = []
+    too_large: list[str] = []
     # The address names a format when any "format" parameter in it has a value, as the page's fetchAuthority reads it.
     existing = any(key == "format" and val for key, val in urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query, keep_blank_values=True))
 
@@ -5207,8 +5224,15 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
         # The address the text came from is where it landed after redirects,
         # which its relative IRIs resolve against: /dir answered by /dir/ puts
         # "items" at /dir/items. The page's fetchAuthority does the same.
-        status, headers, body, landed = http_request(candidate, headers={"Accept": accept})
+        # The body of an answer that is not 2xx is not read; a 2xx one is read
+        # as an invoke's response is, to RESPONSE_MAX bytes and no further, and
+        # past that it does not count. The page's fetchText does the same.
+        answer = http_exchange(candidate, headers={"Accept": accept}, limit=RESPONSE_MAX, error_body=False)
+        status, headers, body, landed = answer.status, answer.headers, answer.body, answer.base
         if not 200 <= status < 300:
+            return None
+        if len(body) > RESPONSE_MAX:
+            too_large.append(candidate)
             return None
         text = _body_text(body)
         content_type = headers.get("content-type", "")
@@ -5233,6 +5257,8 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
             got = attempt(_with_format(url, fmt))
             if got:
                 return [got[1]]
+    if too_large:
+        raise RuntimeError(_document_too_large(too_large[0]))
     raise RuntimeError(f"Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from {url} (tried {tried})")
 
 
@@ -7500,6 +7526,74 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
                        mcp=mcp, notes=notes)
 
 
+# A response is read up to RESPONSE_MAX bytes and no further: past that the read
+# stops, and nothing of the response is shown, named (TOO_LARGE), whatever its
+# status says of the request. A descriptor's 2xx answer is read so too, and past
+# it does not count; a load that ends with none that counts names the first such
+# (_document_too_large). The page's RESPONSE_MAX, TOO_LARGE and documentTooLarge
+# are the same.
+RESPONSE_MAX = 8 * 1024 * 1024
+TOO_LARGE = f"This response is larger than {RESPONSE_MAX} bytes, so it was not read, and nothing of it is shown."
+
+
+def _document_too_large(url: str) -> str:
+    return f"The answer to {url} is larger than {RESPONSE_MAX} bytes, so it was not read."
+
+
+# What a response is shown as grows at most linearly with its size. Its text is
+# written as received; indenting its JSON may add _LAYOUT_PER_BYTE characters
+# for each of its bytes, and _LAYOUT_FLOOR at least. Past that it is shown as its
+# text, after a note naming why (_json_as_text), so JSON's depth does not set
+# what is written. The page's LAYOUT_PER_BYTE, LAYOUT_FLOOR, indentSize and
+# jsonAsText are the same; the page also lays a SPARQL result out as a table,
+# within a bound of its own, where hmc.py writes it as the JSON it is.
+_LAYOUT_PER_BYTE = 8
+_LAYOUT_FLOOR = 10000
+
+
+def _layout_bound(size: int) -> int:
+    return max(_LAYOUT_FLOOR, _LAYOUT_PER_BYTE * size)
+
+
+def _json_as_text(added: int, size: int) -> str:
+    return (f"This JSON, indented, would add {added} characters, more than a response of {size} bytes is shown as; "
+            "it is shown as text.")
+
+
+def _indent_size(value: Any) -> int:
+    """The characters indenting JSON by two spaces adds to it, as the page's
+    JSON.stringify(value, null, 2) writes it beyond JSON.stringify(value), and
+    json.dumps(indent=2) alike: each member of a list or object that has one on
+    a line of its own, one level deeper, an object's ": " for ":", and the
+    closing bracket on a line of its own. A walk with a stack, linear in the
+    value. The page's indentSize is the same."""
+    total = 0
+    stack: list[tuple[Any, int]] = [(value, 0)]
+    while stack:
+        item, depth = stack.pop()
+        if isinstance(item, dict):
+            members = list(item.values())
+        elif isinstance(item, (list, tuple)):
+            members = list(item)
+        else:
+            continue
+        if not members:
+            continue
+        total += len(members) * (2 * depth + 3) + (len(members) if isinstance(item, dict) else 0) + 2 * depth + 1
+        stack.extend((member, depth + 1) for member in members)
+    return total
+
+
+def _json_written(value: Any, size: int) -> str:
+    """What list --json, describe and invoke write of a value of their own (a
+    listing, a control, a request and its outcome): JSON indented by two spaces
+    while that adds no more than a document of `size` bytes allows
+    (_layout_bound), and unindented past it, so the depth of a value a document
+    or a person gives does not set how much is written. The page shows a
+    request so."""
+    return _json_out(value, 2 if _indent_size(value) <= _layout_bound(size) else None)
+
+
 def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | None = None) -> dict[str, Any]:
     """Sends a plan's request, or shows it, and says how it ended. `done` is
     true only for a 2xx answer, and `outcome` says what happened in words, as
@@ -7530,11 +7624,14 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
         elif plan.body is not None and not isinstance(plan.body, (str, bytes)):
             data = _request_json(plan.body).encode("utf-8")
     follow = not unsafe and plan.method in FOLLOWED_METHODS
-    answer = http_exchange(plan.url, method=plan.method, headers=plan.headers, data=data, follow=follow)
+    answer = http_exchange(plan.url, method=plan.method, headers=plan.headers, data=data, follow=follow, limit=RESPONSE_MAX)
     content_type = answer.headers.get("content-type", "")
-    text = _body_text(answer.body)
+    size = len(answer.body)
+    # Past RESPONSE_MAX bytes nothing of the response is shown, and its text is null.
+    text = None if size > RESPONSE_MAX else _body_text(answer.body)
+    note = TOO_LARGE if text is None else None
     parsed = None
-    if "json" in content_type or text.lstrip()[:1] in "{[":
+    if text is not None and ("json" in content_type or text.lstrip()[:1] in "{["):
         # Shown, never sent, so read as leniently as the page's JSON.parse
         # reads it: a repeated key takes its last value. NaN and Infinity are
         # not JSON there either, so such a body is shown as its text.
@@ -7542,8 +7639,18 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
             parsed = _page_json(text)
         except ValueError:
             parsed = None
+    if isinstance(parsed, (dict, list)):
+        # JSON whose indenting would add more than its size allows is shown as
+        # its text, after a note, and `body` is null: --json would indent it too.
+        added = _indent_size(parsed)
+        if added > _layout_bound(size):
+            note = _json_as_text(added, size)
+            parsed = None
     result["response"] = {"status": answer.status, "headers": answer.headers, "contentType": content_type,
                           "bodyText": text, "body": parsed, "url": plan.url, "landed": answer.landed}
+    # `note` is given only with a note, so a response shown as it is reads as it did before there were notes.
+    if note is not None:
+        result["response"]["note"] = note
     if not follow and answer.status in REDIRECT_STATUSES:
         # Only a Location with something in it is one, as _WebOnlyRedirects
         # reads it; it is named as resolved against the address it came from.
@@ -7683,7 +7790,7 @@ def cmd_list(args: argparse.Namespace) -> int:
     descriptor = load_descriptor(args.url)
     # Listing is one step of work: past its budget nothing is written, and the document is refused by name.
     with _working(descriptor.size):
-        text = _json_out(descriptor.to_public()) if args.json else _control_table(descriptor)
+        text = _json_written(descriptor.to_public(), descriptor.size) if args.json else _control_table(descriptor)
     print(text)
     return 0
 
@@ -7735,7 +7842,7 @@ def cmd_describe(args: argparse.Namespace) -> int:
         public["problem"] = refused
         public["fields"] = None
     public["transport"] = classify_transport(control, descriptor.url)
-    print(_json_out(public))
+    print(_json_written(public, descriptor.size))
     return 0
 
 
@@ -7748,12 +7855,14 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     # the bytes given too, and the request's the bytes of the values it sends.
     refused = _open_control(descriptor, control)
     errors = [refused] if refused is not None else []
+    sent_size = descriptor.size
     if not errors:
         try:
             with _working(descriptor.size + _given_size(supplied)):
                 values, errors = validate_fields(control, supplied)
             if not errors:
-                with _working(descriptor.size + _sent_size(values)):
+                sent_size = descriptor.size + _sent_size(values)
+                with _working(sent_size):
                     plan = resolve_plan(control, values, descriptor.url)
                 result = invoke_plan(plan, confirm=args.confirm, dry_run=True if args.dry_run else None)
         except (UnsendableValue, WorkExceeded) as exc:
@@ -7768,7 +7877,8 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     # for any other answer. A refused address is 1 and a refused value 2.
     code = 0 if result.get("dryRun") or result.get("done") else 3 if result.get("blocked") else 4
     if args.json:
-        print(_json_out(result))
+        # The response's text counts toward what may be written of it.
+        print(_json_written(result, sent_size + _utf8_length((result.get("response") or {}).get("bodyText") or "")))
         return code
     req = result["request"]
     say(f"{req['method']} {req.get('url') or '(no HTTP URL)'}")
@@ -7777,7 +7887,7 @@ def cmd_invoke(args: argparse.Namespace) -> int:
         say(f"note: {note}")
     if req.get("mcp"):
         say("mcp:")
-        say(textwrap.indent(_json_out(req["mcp"]), "  "))
+        say(textwrap.indent(_json_written(req["mcp"], sent_size), "  "))
     if req.get("bodyText"):
         say("body:")
         say(textwrap.indent(str(req["bodyText"]), "  "))
@@ -7793,12 +7903,14 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     if result.get("redirect"):
         # A redirect's body is not the answer to the request, as the page shows none.
         return code
+    if resp.get("note"):
+        say(resp["note"])
     body = resp.get("body")
-    text = resp.get("bodyText") or ""
+    text = resp.get("bodyText")
     if isinstance(body, (dict, list)):
         pretty = _json_out(body)
         say(pretty if len(pretty) < 8000 else pretty[:8000] + "\n…")
-    else:
+    elif text is not None:
         say(text if len(text) < 8000 else text[:8000] + "\n…")
     return code
 

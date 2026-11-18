@@ -58,6 +58,8 @@ function deepScoped(base: string, path: string, scoped: 'type' | 'property') {
  * How an invoke of one /outcomes control ends, read from what the host received and answered:
  *   - `answer`: the request got this final answer, from the address it was sent to, or from
  *     `landed` when a GET or HEAD followed a redirect there, by way of each address in `via` in turn;
+ *     with `tooLarge`, its body, sent with a Content-Length that says so, is longer than
+ *     RESPONSE_MAX, and nothing of it is shown, named (RESPONSE_TOO_LARGE);
  *   - `redirect`: the address answered with this redirect, and the request was not sent again,
  *     to its Location (a path on the host, an absolute URL, or null for an empty one) or as a GET;
  *   - `refused`: a GET's redirect to this address, which neither client sends to: no answer;
@@ -65,16 +67,23 @@ function deepScoped(base: string, path: string, scoped: 'type' | 'property') {
  *     it, as it refuses such an address, and sends nothing there; the page's browser reads the
  *     backslash as a slash and lands at `landed` (resolved against the host), which answers `answer`;
  *   - `loop`: a GET's or HEAD's redirect into a loop, along LOOP. The host receives the request this
- *     many times, 20 redirects followed and the 21st not, as fetch follows them: no answer.
+ *     many times, 20 redirects followed and the 21st not, as fetch follows them: no answer;
+ *   - `cut`: the address answered, and the connection closed `cut[0]` bytes into a body whose
+ *     Content-Length was `cut[1]` bytes more: no answer, as fetch rejects reading it, and hmc.py's
+ *     read raises IncompleteRead.
  * `landed` is written as fetch writes a response's url: no fragment, and `{`, `}` and the backtick
  * percent-encoded.
  */
 export type InvokeEnd =
-  | { readonly answer: number; readonly landed?: string; readonly via?: readonly string[] }
+  | { readonly answer: number; readonly landed?: string; readonly via?: readonly string[]; readonly tooLarge?: true }
   | { readonly redirect: 301 | 302 | 303 | 307 | 308; readonly location: string | null }
   | { readonly refused: string }
   | { readonly backslash: string; readonly landed: string; readonly answer: number }
-  | { readonly loop: number };
+  | { readonly loop: number }
+  | { readonly cut: readonly [read: number, more: number] };
+/** A body the connection drops after CUT_AT bytes, short of the Content-Length it was sent with. */
+const CUT_BODY = 'line one\nline two\nline three\n';
+const CUT_AT = 18;
 /**
  * Where a loop row's request goes: the address it is sent to redirects to the second, and the second
  * and the third each to the other, so the 21st request goes to another address than the first.
@@ -121,6 +130,13 @@ const OUTCOMES: ReadonlyArray<readonly [title: string, method: string, answer: s
   ['GET backslash path', 'GET', 'backslash-path', { backslash: '/landing\\b', landed: '/landing/b', answer: 404 }],
   ['GET backslash host', 'GET', 'backslash-host', { backslash: '\\\\other.example/x', landed: 'https://other.example/x', answer: 404 }],
   ['GET 404 HTML', 'GET', '404-html', { answer: 404 }],
+  // An answer whose body the connection drops before its Content-Length, 2xx or not, is no answer.
+  ['GET cut short', 'GET', 'cut', { cut: [CUT_AT, CUT_BODY.length - CUT_AT] }],
+  ['GET 404 cut short', 'GET', '404-cut', { cut: [CUT_AT, CUT_BODY.length - CUT_AT] }],
+  // An answer longer than RESPONSE_MAX, 2xx or not, sent with its whole Content-Length: read to a byte
+  // past RESPONSE_MAX and no further, and not taken for one cut short, since it is longer than that.
+  ['GET too large', 'GET', 'too-large', { answer: 200, tooLarge: true }],
+  ['GET 404 too large', 'GET', '404-too-large', { answer: 404, tooLarge: true }],
   ...(['POST', 'GET'] as const).flatMap(method => [200, 300, 404, 500].map(status => [`${method} ${status}`, method, `${status}`, { answer: status }] as const)),
 ];
 const outcomeSlug = (title: string) => title.toLowerCase().replace(/ /g, '-');
@@ -1454,6 +1470,9 @@ export function sharedDescriptors(base: string): Record<string, string> {
     op('d', 'urn:repeat:delete', 'DELETE', 'Repeated method', target('/thing'))] }).replace('"hydra:method":"DELETE"', '"hydra:method":"DELETE","hydra:method":"GET"');
   // NaN is not JSON: the page's JSON.parse refuses it, and hmc.py, whose json.loads would read it, does too.
   out['/outcomes'] = JSON.stringify(outcomesDescriptor(base));
+  // A GET for each response shownCases serves, titled "Shown <name>".
+  out['/shown'] = JSON.stringify({ '@context': CTX, '@id': `${base}/shown`, 'iep:affordance': shownCases().map(c =>
+    op(c.name, `urn:shown:${c.name}`, 'GET', `Shown ${c.name}`, target(`/shown/${c.name}`))) });
   out['/not-json'] = JSON.stringify({ '@context': CTX, '@id': `${base}/not-json`, 'iep:affordance': [
     op('n', 'urn:nan:read', 'GET', 'NaN read', { ...target('/api'), 'hydra:title': 'NAN-HERE' })] }).replace('"NAN-HERE"', 'NaN');
   return out;
@@ -2698,7 +2717,11 @@ export type WorkStep = 'read' | 'list' | 'list --json' | 'control' | 'request';
  *     50,000 characters, which each client expanded whole before charging it (1 GB);
  *   - expr-explode: one exploded variable whose name is 20,000 characters and whose default is
  *     a list of 50,000 values, which writes the name once for each value (1 GB);
- *   - honest: 300 controls, each with its own shape of ten properties, which every step reads.
+ *   - honest: 300 controls, each with its own shape of ten properties, which every step reads;
+ *   - mcp-indented: a write with no transport but MCP whose JSON default holds 40 arrays nested
+ *     240 deep, which the page's dry run showed indented, twice, as the MCP call's payload (10 MB
+ *     for 20 KB), and hmc.py's list --json and describe wrote indented (4.8 MB). Each still plans,
+ *     and what each writes of its own as JSON is indented only within what its size allows.
  * And sharedNodeDocuments', in which many controls, inputs or mappings name one node by reference, a
  * node of thousands of keys or values (SHARED_NODE_SIZES), which each client read again for each
  * that names it: before, the page's list took 8 to 27 s, past its budget, and hmc.py's 5 to 25 s.
@@ -2776,6 +2799,7 @@ export const WORK_CASES: ReadonlyArray<readonly [path: string, rel: string, refu
   ['/work/range-distinct', 'urn:c0', ['read'], null, null],
   ['/work/mapping-distinct', 'urn:c0', ['read'], null, null],
   ['/work/closed-shared', 'urn:c1499', [], null, null],
+  ['/work/mcp-indented', 'urn:c', [], null, null],
 ];
 
 /** Each COST_CASES path's document as the text served; build it once per test file. */
@@ -2955,6 +2979,10 @@ export function costDescriptors(base: string): Record<string, string> {
         'hydra:mapping': [{ 'hydra:variable': LONG_VARIABLE }] },
       'hydra:expects': { type: 'object', properties: { [LONG_VARIABLE]: { type: 'array', items: { type: 'string' },
         default: Array(50000).fill('x') } } } }] },
+    // A write with no transport but MCP whose JSON default holds 40 arrays nested 240 deep.
+    '/work/mcp-indented': { '@context': CTX, '@id': `${base}/work/mcp-indented`, 'iep:affordance': [{ '@id': '#c', '@type': 'iep:Affordance',
+      'iep:action': { '@id': 'urn:c' }, 'hydra:method': 'POST', 'hydra:title': 'C',
+      'hydra:expects': { type: 'object', properties: { data: { type: 'object', default: { n: Array(40).fill(nested(240)) } } } } }] },
     // 300 writes, each expecting a shape of its own with ten described properties.
     '/work/honest': { '@context': CTX, '@id': `${base}/work/honest`,
       'iep:affordance': range(300).map(i => ({ '@id': `#c${i}`, '@type': 'iep:Affordance', ...get(`urn:c${i}`, `Write ${i}`), 'hydra:method': 'POST',
@@ -3242,7 +3270,15 @@ export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: stri
  * never finishes), or closes the connection without answering.
  */
 export type HostAnswer =
-  | { readonly status?: number; readonly type: string | readonly string[]; readonly body: string; readonly headBody?: true }
+  | { readonly status?: number; readonly type: string | readonly string[]; readonly body: string; readonly headBody?: true;
+    /** Sent in parts of this many bytes. */
+    readonly chunk?: number;
+    /** Sent with the whole body's Content-Length, but only this many bytes of it before the connection closes. */
+    readonly cut?: number;
+    /** Sent with a Content-Length past the body, which is sent, and then nothing, the connection held open. */
+    readonly endless?: true;
+    /** Sent with its own Content-Length; otherwise hmc.py's host sends it chunked. The page's fetch reads it alike either way. */
+    readonly sized?: true }
   | { readonly redirect: string; readonly status?: 301 | 302 | 303 | 307 | 308; readonly body?: string; readonly unending?: true }
   | 'no answer';
 
@@ -3279,8 +3315,9 @@ export const LOAD_HEADERS: HopHeaders = {
  * for none), served to both clients. The page's test answers its fetch with them as a browser's fetch
  * would: 'no answer' rejects, and a redirect is followed at most 20 times and only to https, which
  * the page's connect-src allows, while one with an empty Location is no redirect, as Chromium reads
- * it, and its 302 is the answer. hmc.py's test serves them on 127.0.0.1, destroying the socket for
- * 'no answer'.
+ * it, and its 302 is the answer; a body is a stream of `chunk` bytes at a time, and errs where it is
+ * `cut`, as fetch's body does when the connection drops. hmc.py's test serves them on 127.0.0.1,
+ * destroying the socket for 'no answer', and writing a `cut` answer's head and bytes itself.
  */
 export function fetchRoutes(base: string): Record<string, (format: string | null) => HostAnswer> {
   const markdown = (title: string): HostAnswer => ({ type: 'text/markdown', body: ['# Markdown', '',
@@ -3291,6 +3328,10 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
   const turtle: HostAnswer = { type: 'text/turtle', body: '@prefix dct: <http://purl.org/dc/terms/> .\n<> dct:title "From Turtle" .\n' };
   const missing: HostAnswer = { status: 404, type: 'text/plain', body: 'missing' };
   const KEPT = 'Kept markdown read';
+  const FOUR = ['# Markdown', '', ...['One', 'Two', 'Three', 'Four'].flatMap(title => [`:::control md-${title.toLowerCase()}`, `title: ${title}`,
+    'method: GET', `target: ${base}/api`, ':::', ''])].join('\n');
+  // A body padded with spaces after it to `bytes` bytes.
+  const padded = (body: string, bytes: number) => body + ' '.repeat(bytes - Buffer.byteLength(body));
   const reversed = (path: string): HostAnswer => ({ type: 'application/ld+json',
     body: text(path, 'Reverse read', { '@reverse': { 'hydra:operation': { '@id': `${base}${path}` } } }) });
   return {
@@ -3330,6 +3371,36 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     // A load that follows two redirects, a 301 and then a 308, to a document: a GET on each hop.
     '/moved': () => ({ redirect: '/moved-on', status: 301 }),
     '/moved-on': () => ({ redirect: '/bom', status: 308 }),
+    // A descriptor of RESPONSE_MAX bytes, read; one of a byte more in every format, which does not
+    // count, so each format is asked and the load ends naming its size; and a ?format=jsonld retry
+    // answered so, which leaves the first answer read. Each is JSON-LD a client would read, after
+    // whitespace that pads it to its size.
+    '/largest-doc': () => ({ type: 'application/ld+json', body: padded(text('/largest-doc', 'Largest read'), RESPONSE_MAX) }),
+    '/too-large-doc': () => ({ type: 'application/ld+json', body: padded(text('/too-large-doc', 'Too large read'), RESPONSE_MAX + 1) }),
+    // And one of 64 KiB more, in every format, sent with its Content-Length: read to a byte past
+    // RESPONSE_MAX, with more of it still to come, which is not a body cut short.
+    '/too-large-sized': () => ({ type: 'application/ld+json', body: padded(text('/too-large-sized', 'Too large read'), RESPONSE_MAX + 65_536),
+      sized: true }),
+    '/upgrade-too-large': f => f === 'jsonld'
+      ? { type: 'application/ld+json', body: padded(text('/upgrade-too-large', 'Upgrade read'), RESPONSE_MAX + 1) } : markdown(KEPT),
+    // Answers that do not count whatever their body holds, so neither client reads it: a 404 of a byte
+    // more than RESPONSE_MAX, and one whose body never ends. And a 2xx page of a byte more, which does
+    // not count either. Each is asked for in other formats, as an answer that does not count is.
+    '/big-not-ok': f => f === 'jsonld' ? jsonld('/big-not-ok', 'Format read')
+      : f === null ? { status: 404, type: 'text/html', body: padded('<p>gone</p>', RESPONSE_MAX + 1) } : missing,
+    '/endless-not-ok': f => f === 'jsonld' ? jsonld('/endless-not-ok', 'Format read')
+      : f === null ? { status: 404, type: 'text/html', body: '<p>', endless: true } : missing,
+    '/big-html': f => f === 'jsonld' ? jsonld('/big-html', 'Format read')
+      : f === null ? { type: 'text/html', body: padded('<p>page</p>', RESPONSE_MAX + 1) } : missing,
+    // A body the connection drops before the Content-Length it was sent with is no answer: HyperMarkdown
+    // of four controls cut after two, which ends the load, and a ?format=jsonld retry cut halfway,
+    // which leaves the first answer read, the retry being optional.
+    '/cut-doc': () => ({ type: 'text/markdown', body: FOUR, cut: FOUR.indexOf(':::control md-three') }),
+    '/upgrade-cut': f => f === 'jsonld'
+      ? { type: 'application/ld+json', body: text('/upgrade-cut', 'Cut read'), cut: Math.floor(text('/upgrade-cut', 'Cut read').length / 2) } : markdown(KEPT),
+    // JSON-LD after a byte order mark, with an é in its title, sent a byte at a time, so the mark and
+    // the é each arrive split across parts.
+    '/split': () => ({ type: 'application/ld+json', body: '\ufeff' + text('/split', 'Split é read'), chunk: 1 }),
     // An address that names Turtle, which a client that cannot read it asks for again as JSON-LD.
     '/named-ttl': f => f === 'jsonld' ? jsonld('/named-ttl', 'Named format read') : f === 'turtle' ? turtle : missing,
     // Where /outcomes' controls send, whatever the method: each redirect status to /landing, a
@@ -3349,10 +3420,16 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     '/answer/backslash-path': () => ({ redirect: '/landing\\b', status: 302 }),
     '/answer/backslash-host': () => ({ redirect: '\\\\other.example/x', status: 302 }),
     '/answer/404-html': () => ({ status: 404, type: 'text/html', body: '<p>gone</p>' }),
+    '/answer/cut': () => ({ type: 'text/plain', body: CUT_BODY, cut: CUT_AT }),
+    '/answer/404-cut': () => ({ status: 404, type: 'text/plain', body: CUT_BODY, cut: CUT_AT }),
+    '/answer/too-large': () => ({ type: 'text/plain', body: 'x'.repeat(RESPONSE_MAX + 65_536), sized: true }),
+    '/answer/404-too-large': () => ({ status: 404, type: 'text/plain', body: 'x'.repeat(RESPONSE_MAX + 65_536), sized: true }),
     ...Object.fromEntries([200, 300, 404, 500].map(status => [`/answer/${status}`, () => ({ status, type: 'text/plain', body: `answered ${status}` })])),
     '/landing': () => ({ type: 'text/plain', body: LANDING_BODY }),
     '/landing%7B%60%7D': () => ({ type: 'text/plain', body: LANDING_BODY }),
     '/landing-body': () => ({ type: 'text/plain', body: LANDING_BODY, headBody: true }),
+    // What /shown's controls read: responses whose layout once grew faster than their size, and honest ones.
+    ...Object.fromEntries(shownCases().map(c => [`/shown/${c.name}`, () => ({ type: c.type, body: c.body })])),
   };
 }
 
@@ -3360,7 +3437,8 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
  * What both clients make of loading each address above, as [address, outcome]. `asked` is the
  * formats requested there, each the first time it is (null for the address as given), and
  * `requests`, when given, how many requests went there. An outcome lists exactly `titles`, or fails
- * with `problem`: 'no answer' names the request that got none, 'turtle' names the Turtle answer kept,
+ * with `problem`: 'no answer' names the request that got none, 'too large' the first answer longer
+ * than RESPONSE_MAX bytes, where none counts, 'turtle' names the Turtle answer kept,
  * which neither client reads without a Turtle parser, 'none readable' names the address, and
  * 'refused' is the problem of the JSON-LD a retry answered. `refused` is that problem as both
  * clients word it (true where each words it its own way, as JSON.parse and Python's json word a
@@ -3370,7 +3448,7 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
  */
 export type FetchOutcome = { readonly asked: ReadonlyArray<string | null>; readonly withTurtle?: ReadonlyArray<string | null>;
   readonly requests?: number; readonly refused?: string | true }
-  & ({ readonly titles: readonly string[] } | { readonly problem: 'no answer' | 'turtle' | 'none readable' | 'refused' });
+  & ({ readonly titles: readonly string[] } | { readonly problem: 'no answer' | 'too large' | 'turtle' | 'none readable' | 'refused' });
 const REVERSE = 'This document uses @reverse, which this client does not read, so it is not read.';
 export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: FetchOutcome]> = [
   ['/upgrade-lost', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
@@ -3394,6 +3472,16 @@ export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: Fetc
   ['/empty-location', { asked: [null, 'jsonld'], requests: 2, titles: ['Format read'] }],
   ['/moved', { asked: [null], titles: ['BOM read'] }],
   ['/named-ttl?format=turtle', { asked: ['turtle', 'jsonld'], titles: ['Named format read'], withTurtle: ['turtle'] }],
+  ['/largest-doc', { asked: [null], titles: ['Largest read'] }],
+  ['/too-large-doc', { asked: [null, 'jsonld', 'turtle', 'markdown'], problem: 'too large' }],
+  ['/too-large-sized', { asked: [null, 'jsonld', 'turtle', 'markdown'], problem: 'too large' }],
+  ['/upgrade-too-large', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/big-not-ok', { asked: [null, 'jsonld'], titles: ['Format read'] }],
+  ['/endless-not-ok', { asked: [null, 'jsonld'], titles: ['Format read'] }],
+  ['/big-html', { asked: [null, 'jsonld'], titles: ['Format read'] }],
+  ['/cut-doc', { asked: [null], problem: 'no answer' }],
+  ['/upgrade-cut', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/split', { asked: [null], titles: ['Split é read'] }],
 ];
 
 /**
@@ -3437,4 +3525,171 @@ export function invokeNotFollowed(method: string, url: string, status: number | 
   const asGet = method !== 'GET' && method !== 'HEAD' && (status === null || status === 303 || (method === 'POST' && (status === 301 || status === 302)));
   return `Not done: ${url} ${answered}. The ${method} was not re-sent${asGet ? ', or turned into a GET' : ''}: ` +
     `a request goes only to the address its dry run shows. Whether ${url} acted on it is not known.`;
+}
+
+/**
+ * The most of a response either client reads, in bytes: past it the read stops, and nothing of the
+ * response is shown, named (RESPONSE_TOO_LARGE), whatever its status says of the request.
+ */
+export const RESPONSE_MAX = 8 * 1024 * 1024;
+export const RESPONSE_TOO_LARGE = `This response is larger than ${RESPONSE_MAX} bytes, so it was not read, and nothing of it is shown.`;
+/**
+ * What indenting a response of n bytes may add, in either client: LAYOUT_PER_BYTE characters for
+ * each of its bytes, and LAYOUT_FLOOR at least. Past that the response is shown as its text, as a
+ * body neither client recognises is, after a note naming why (jsonAsText).
+ */
+export const LAYOUT_PER_BYTE = 8;
+export const LAYOUT_FLOOR = 10_000;
+export const layoutBound = (bytes: number) => Math.max(LAYOUT_FLOOR, LAYOUT_PER_BYTE * bytes);
+/**
+ * The most elements the page's table of a SPARQL result of n bytes may have: one for each
+ * TABLE_BYTES_PER_ELEMENT bytes, and TABLE_FLOOR at least, counted by what each part of it builds
+ * (tableCount). Its cells show no more characters than the response has bytes, and LAYOUT_FLOOR at
+ * least. Past either the response is shown as its text, after a note naming why (tableAsText).
+ * jsdom builds an element in about 17 us, against the 12.5 us a byte the time rule allows, so a
+ * table at the bound takes at most about a fifth of what its size allows, and one at the floor
+ * under a third of 3 s, whatever its cells show.
+ */
+export const TABLE_BYTES_PER_ELEMENT = 8;
+export const TABLE_FLOOR = 30_000;
+export const tableElements = (bytes: number) => Math.max(TABLE_FLOOR, Math.floor(bytes / TABLE_BYTES_PER_ELEMENT));
+/**
+ * The elements the page counts for a result's table, for what each part builds: the head's row and
+ * each row one, each cell one, a cell that shows a name or a value one more, for its text, and one
+ * that shows a link, a value that is an https URL, three more, for the link, its address and its
+ * text. An http URL, which the page shows as text, is a value like any other.
+ */
+export function tableCount(vars: readonly string[], bindings: ReadonlyArray<Readonly<Record<string, { readonly value: string }>>>): number {
+  const columns = new Map<string, number>();
+  for (const v of vars) columns.set(v, (columns.get(v) ?? 0) + 1);
+  let count = 1 + vars.reduce((sum, v) => sum + (v ? 2 : 1), 0);
+  for (const row of bindings) {
+    count += 1 + vars.length;
+    for (const [key, cell] of Object.entries(row)) {
+      if (cell.value) count += (columns.get(key) ?? 0) * (/^https:\/\//i.test(cell.value) ? 3 : 1);
+    }
+  }
+  return count;
+}
+export const tableAsText = (rows: number, columns: number, bytes: number) =>
+  `This result's table would have ${rows} row(s) x ${columns} column(s), more than a response of ${bytes} bytes is shown as; it is shown as text.`;
+export const jsonAsText = (added: number, bytes: number) =>
+  `This JSON, indented, would add ${added} characters, more than a response of ${bytes} bytes is shown as; it is shown as text.`;
+
+/** How a client shows a response: as a table (the page only), as indented JSON, as its text, or nothing of it. */
+export type Shown = 'table' | 'json' | 'text' | 'nothing';
+export interface ShownCase {
+  readonly name: string; readonly type: string; readonly body: string; readonly bytes: number;
+  readonly page: Shown; readonly hmc: Shown; readonly pageNote: string | null; readonly hmcNote: string | null;
+  /** The most the page may take to show it, in ms, where that is less than its size allows. */
+  readonly ms?: number;
+}
+let shownMemo: ReadonlyArray<ShownCase> | null = null;
+/**
+ * The answers to /shown's GET controls, at /shown/<name>, with how each client shows each and the
+ * note it writes first (null for none). Built once: two are 8 MB.
+ *   - sparse: Codex's, a SPARQL result of 1,000 variables and 1,000 empty bindings, whose table the
+ *     page built cell by cell, a million of them, 9 MB of markup for 9 KB;
+ *   - dense: an honest result of 300 rows and 3 columns, every cell bound, still a table;
+ *   - repeated: one row of a result that names one variable 1,000 times and binds it to 20,000
+ *     characters, which the table showed in each of the 1,000 columns (20 MB for 26 KB);
+ *   - indented: JSON of 40 arrays each nested 255 deep, which indenting wrote as 5 MB for 20 KB;
+ *   - too-deep: JSON nested 5,000 deep, which neither client reads as JSON, so it is its text;
+ *   - geo: honest GeoJSON, nested seven deep, still indented;
+ *   - largest, too-large: text of RESPONSE_MAX bytes, shown, and of one byte more, not read;
+ *   - long-names: 50 variables of 16,000 characters and 400,000 empty bindings, 2 MB, which the
+ *     page once looked up by name in each row, each lookup costing the name's length. Within its
+ *     bound, about 5,000 rows, that was 7 s, and the table's bound alone allows that, so the row is
+ *     held to 3 s: mapped once, its names cost 0.5 s. (V8 hashes a name of 16,384 characters or more
+ *     by its length alone, at no cost, so longer names would not measure the lookup.)
+ *   - long-names-table: 2 variables of 16,000 characters, one no binding names, and a short one,
+ *     with 7,000 bindings, whose table fits: each name was looked up in each row, twice;
+ *   - padded: 400 variables and 400 empty bindings after 20,000 bytes of whitespace, which the page
+ *     built as 160,000 cells, 7 for each byte, the bytes it never shows counted for them;
+ *   - honest-sparse, optional: honest results that bind little, as unmatched OPTIONALs leave them,
+ *     2 variables and 500 empty bindings, and 8 variables and 3,000 bindings, one in ten binding one
+ *     IRI: tables, as small results are, within TABLE_FLOOR;
+ *   - at-bound, past-bound: 100 variables and as many empty bindings as the table's bound allows at
+ *     256 KiB, padded with whitespace to exactly the bytes its count allows, a table that takes a
+ *     fifth of the time its size allows; and the same result a byte shorter, one element past it,
+ *     shown as text;
+ *   - links-at-bound, links-past-bound: 5,461 variables all named "a", and one binding of "a" to an
+ *     https IRI, shown as a link in each column, the costliest cell, padded to exactly the bound at
+ *     256 KiB (a link cell counted 4, since it is about four times an empty cell's cost); and a
+ *     byte shorter, shown as text;
+ *   - at-floor, past-floor: 1 variable and 14,998 bindings, one binding it to an http IRI, which
+ *     the page shows as text, not a link: exactly TABLE_FLOOR elements, 45 KB; and two binding it,
+ *     one element past, shown as text;
+ *   - chars-floor: 2 variables both named "a", and one binding of "a" to 4,000 characters, shown in
+ *     both: 8,002 characters of 4 KB, a table only as LAYOUT_FLOOR allows;
+ *   - one-column: 1 variable and 87,000 empty bindings, 261 KB, two elements for each 3 bytes, a
+ *     table that took longer than its size allows, shown as text.
+ * hmc.py shows no table: it writes a SPARQL result as the JSON it is, indented by the same rule.
+ */
+export function shownCases(): ReadonlyArray<ShownCase> {
+  if (shownMemo) return shownMemo;
+  const SPARQL = 'application/sparql-results+json';
+  const sparql = (vars: readonly string[], bindings: readonly object[]) => JSON.stringify({ head: { vars }, results: { bindings } });
+  // What indenting JSON adds: JSON.stringify(value, null, 2) beyond JSON.stringify(value).
+  const added = (text: string) => { const v: unknown = JSON.parse(text); return JSON.stringify(v, null, 2).length - JSON.stringify(v).length; };
+  const vars = Array.from({ length: 1000 }, (_, i) => `v${i}`);
+  // `count` variable names of `length` characters each, told apart by their first characters.
+  const named = (count: number, length: number) => Array.from({ length: count }, (_, i) => `v${i}`.padEnd(length, 'n'));
+  const dense = Array.from({ length: 300 }, (_, i) => ({ s: { type: 'uri', value: `https://data.example/s/${i}` },
+    p: { type: 'uri', value: 'https://data.example/p' }, o: { type: 'literal', value: `value ${i}` } }));
+  const geo = { type: 'FeatureCollection', features: Array.from({ length: 20 }, (_, f) => ({ type: 'Feature', properties: { name: `f${f}` },
+    geometry: { type: 'Polygon', coordinates: [Array.from({ length: 50 }, (_, i) => [i + 0.5, f + 0.25])] } })) };
+  const indented = `[${Array.from({ length: 40 }, () => JSON.stringify(nested(255))).join(',')}]`;
+  const none = () => null;
+  const build = (name: string, type: string, body: string, page: Shown, hmc: Shown,
+    pageNote: (bytes: number) => string | null, hmcNote: (bytes: number) => string | null = pageNote, ms?: number): ShownCase => {
+    const bytes = Buffer.byteLength(body);
+    return { name, type, body, bytes, page, hmc, pageNote: pageNote(bytes), hmcNote: hmcNote(bytes), ...(ms === undefined ? {} : { ms }) };
+  };
+  // A body padded with spaces after it to `bytes` bytes.
+  const padTo = (body: string, bytes: number) => body + ' '.repeat(bytes - Buffer.byteLength(body));
+  // A result padded to exactly the bytes its table's count allows (`past` bytes fewer for one past it).
+  const atCount = (result: { vars: readonly string[]; bindings: ReadonlyArray<Record<string, { value: string }>> }, past = 0) =>
+    padTo(sparql(result.vars, result.bindings), tableCount(result.vars, result.bindings) * TABLE_BYTES_PER_ELEMENT - past);
+  // The most empty bindings of 100 variables the table's bound allows at 256 KiB: the head's row and
+  // a cell for each variable, showing its name, then a row and a cell for each variable for each binding.
+  const AT_BOUND = 256 * 1024;
+  const atBound = Math.floor((tableElements(AT_BOUND) - tableCount(vars.slice(0, 100), [])) / 101);
+  const hundred = { vars: vars.slice(0, 100), bindings: Array<Record<string, { value: string }>>(atBound).fill({}) };
+  // As many variables named "a" as the bound at 256 KiB allows, a head cell and a link cell for each.
+  const linked = { vars: Array<string>(Math.floor((tableElements(AT_BOUND) - 2) / 6)).fill('a'),
+    bindings: [{ a: { type: 'uri', value: 'https://data.example/a' } }] };
+  // 1 variable and 14,998 bindings, `bound` of them binding it to an http IRI, shown as text: with one,
+  // the head's 3 (its row, and its cell with the name), 2 for each binding (a row and a cell) and 1 for
+  // the value shown make TABLE_FLOOR exactly.
+  const floor = (bound: number) => ({ vars: ['s'], bindings: Array.from({ length: 14_998 }, (_, i) => i < bound ? { s: { type: 'uri', value: 'http://data.example/s' } } : {}) });
+  const optional = Array.from({ length: 3000 }, (_, i) => i % 10 ? {} : { [vars[i % 8]!]: { type: 'uri', value: `https://data.example/o/${i}` } });
+  shownMemo = [
+    build('sparse', SPARQL, sparql(vars, Array(1000).fill({})), 'text', 'json', bytes => tableAsText(1000, 1000, bytes), none),
+    build('dense', SPARQL, sparql(['s', 'p', 'o'], dense), 'table', 'json', none),
+    build('repeated', SPARQL, sparql(Array(1000).fill('a'), [{ a: { type: 'literal', value: 'x'.repeat(20000) } }]), 'text', 'json',
+      bytes => tableAsText(1, 1000, bytes), none),
+    build('indented', 'application/json', indented, 'text', 'text', bytes => jsonAsText(added(indented), bytes)),
+    build('too-deep', 'application/json', '['.repeat(5000) + ']'.repeat(5000), 'text', 'text', none),
+    build('geo', 'application/geo+json', JSON.stringify(geo), 'json', 'json', none),
+    build('largest', 'text/plain', 'x'.repeat(RESPONSE_MAX), 'text', 'text', none),
+    build('too-large', 'text/plain', 'x'.repeat(RESPONSE_MAX + 1), 'nothing', 'nothing', () => RESPONSE_TOO_LARGE),
+    build('long-names', SPARQL, sparql(named(50, 16000), Array(400000).fill({})), 'text', 'json', bytes => tableAsText(400000, 50, bytes), none,
+      3_000),
+    build('long-names-table', SPARQL, sparql([...named(2, 16000), 's'], Array.from({ length: 7000 }, (_, i) =>
+      i < 2 ? { [i ? 's' : named(2, 16000)[1]!]: { type: 'uri', value: `https://data.example/bound/${i}` } } : {})), 'table', 'json', none),
+    build('padded', SPARQL, sparql(vars.slice(0, 400), Array(400).fill({})) + ' '.repeat(20000), 'text', 'json',
+      bytes => tableAsText(400, 400, bytes), none),
+    build('honest-sparse', SPARQL, sparql(['s', 'o'], Array(500).fill({})), 'table', 'json', none),
+    build('optional', SPARQL, sparql(vars.slice(0, 8), optional), 'table', 'json', none),
+    build('at-bound', SPARQL, atCount(hundred), 'table', 'json', none),
+    build('past-bound', SPARQL, atCount(hundred, 1), 'text', 'json', bytes => tableAsText(atBound, 100, bytes), none),
+    build('links-at-bound', SPARQL, atCount(linked), 'table', 'json', none),
+    build('links-past-bound', SPARQL, atCount(linked, 1), 'text', 'json', bytes => tableAsText(1, linked.vars.length, bytes), none),
+    build('at-floor', SPARQL, sparql(floor(1).vars, floor(1).bindings), 'table', 'json', none),
+    build('past-floor', SPARQL, sparql(floor(2).vars, floor(2).bindings), 'text', 'json', bytes => tableAsText(14_998, 1, bytes), none),
+    build('chars-floor', SPARQL, sparql(['a', 'a'], [{ a: { type: 'literal', value: 'x'.repeat(4000) } }]), 'table', 'json', none),
+    build('one-column', SPARQL, sparql(['s'], Array(87000).fill({})), 'text', 'json', bytes => tableAsText(87000, 1, bytes), none),
+  ];
+  return shownMemo;
 }
