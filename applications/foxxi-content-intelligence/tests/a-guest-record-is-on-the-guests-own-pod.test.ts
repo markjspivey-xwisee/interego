@@ -17,8 +17,10 @@ import { describe, it, expect } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { join, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
+import { openEncryptedEnvelope, type EncryptedEnvelope } from '@interego/core';
 import {
-  GUEST_RECORD_KIND, GUEST_RECORD_MAX_BYTES, GUEST_RECORD_MAX_WRITES, GUEST_RECORD_PATH, GuestLearningRecordStore, GuestPodError, guestRecordUrl,
+  GUEST_RECORD_KIND, GUEST_RECORD_MAX_BYTES, GUEST_RECORD_MAX_SEALED_BYTES, GUEST_RECORD_MAX_WRITES, GUEST_RECORD_PATH, GUEST_RECORD_SEALED_KIND,
+  GuestLearningRecordStore, GuestPodError, guestRecordSealKey, guestRecordUrl,
   type GuestRecordFetch, type GuestRecordOwner,
 } from '../src/guest-learning-record.js';
 import { SubjectPodRefusedError, resolveSubjectPodUrlGuarded, resolveSubjectPodUrlPure } from '../src/subject-pod-url.js';
@@ -48,7 +50,15 @@ function pod(answers: number[] = []): { fetch: GuestRecordFetch; calls: Array<{ 
   };
   return { fetch, calls, docs };
 }
-const store = (fetch: GuestRecordFetch): GuestLearningRecordStore => new GuestLearningRecordStore({ tenantPodUrl: TENANT, identityHost: HOST, fetch, now: () => Date.parse('2026-11-17T10:00:00Z') });
+/** A synthetic sealing secret: 64 hex characters that are nobody's key. */
+const SECRET = '5ea1'.repeat(16);
+const store = (fetch: GuestRecordFetch): GuestLearningRecordStore => new GuestLearningRecordStore({ tenantPodUrl: TENANT, identityHost: HOST, sealSecret: SECRET, fetch, now: () => Date.parse('2026-11-17T10:00:00Z') });
+/** What the bridge sealed into a document, opened with the bridge's key for this guest. */
+const opened = (text: string, did = DID): Record<string, unknown> => {
+  const doc = JSON.parse(text) as { kind: string; envelope: EncryptedEnvelope };
+  expect(doc.kind).toBe(GUEST_RECORD_SEALED_KIND);
+  return JSON.parse(openEncryptedEnvelope(doc.envelope, guestRecordSealKey(SECRET, did))!) as Record<string, unknown>;
+};
 const statement = (id: string): Record<string, unknown> => ({ id, verb: { id: 'http://adlnet.gov/expapi/verbs/answered' }, object: { id: 'urn:example:lighthouse-keeping:question-1' } });
 const refusal = async (work: Promise<unknown>): Promise<GuestPodError> => {
   try { await work; } catch (error) { if (error instanceof GuestPodError) return error; throw error; }
@@ -128,7 +138,7 @@ describe('keeping a guest\'s record', () => {
     expect(await store(p.fetch).read(OWNER)).toEqual({ kind: GUEST_RECORD_KIND, version: 1, subject: DID, updatedAt: '2026-11-17T10:00:00.000Z', statements: [] });
   });
 
-  it('a step is one write of one plain JSON document to the guest\'s own pod', async () => {
+  it('a step is one write of one sealed JSON document to the guest\'s own pod', async () => {
     const p = pod(), s = store(p.fetch);
     expect(await s.append(OWNER, [statement('s-1'), statement('s-2')])).toEqual(['s-1', 's-2']);
     const writes = p.calls.filter(c => c.method !== 'GET');
@@ -137,9 +147,9 @@ describe('keeping a guest\'s record', () => {
     // No credential is attached here: the bridge's own fetch adds the operator bearer to a write on the pod origin.
     expect(Object.keys(writes[0]!.headers ?? {})).toEqual(['Content-Type']);
     expect(p.calls.every(c => c.url === `${POD}${GUEST_RECORD_PATH}`)).toBe(true);
-    const doc = JSON.parse(p.docs.get(`${POD}${GUEST_RECORD_PATH}`)!);
+    const doc = opened(p.docs.get(`${POD}${GUEST_RECORD_PATH}`)!);
     expect(doc).toMatchObject({ kind: GUEST_RECORD_KIND, version: 1, subject: DID });
-    expect(doc.statements.map((x: { id: string }) => x.id)).toEqual(['s-1', 's-2']);
+    expect((doc.statements as Array<{ id: string }>).map(x => x.id)).toEqual(['s-1', 's-2']);
     expect((await s.read(OWNER)).statements).toHaveLength(2);
   });
 
@@ -209,7 +219,19 @@ describe('writes are small and few', () => {
   it('the bounds sit well inside the gate\'s for a guest\'s pod (4096 writes, 128 MiB, 8 MiB each)', () => {
     expect(GUEST_RECORD_MAX_BYTES).toBeLessThanOrEqual(1024 * 1024);
     expect(GUEST_RECORD_MAX_WRITES).toBeLessThanOrEqual(1024);
-    expect(GUEST_RECORD_MAX_WRITES * GUEST_RECORD_MAX_BYTES).toBeLessThanOrEqual(64 * 1024 * 1024);
+    // What is written is the SEALED document, larger than the record it holds; it is the one bounded against the gate.
+    expect(GUEST_RECORD_MAX_SEALED_BYTES).toBeLessThanOrEqual(8 * 1024 * 1024);
+    expect(GUEST_RECORD_MAX_WRITES * GUEST_RECORD_MAX_SEALED_BYTES).toBeLessThan(128 * 1024 * 1024);
+    expect(GUEST_RECORD_MAX_WRITES).toBeLessThan(4096);
+  });
+
+  it('a record at its size bound still fits the sealed document\'s bound, with every tab a recipient', async () => {
+    const p = pod(), s = store(p.fetch);
+    const base = JSON.stringify({ kind: GUEST_RECORD_KIND, version: 1, subject: DID, updatedAt: '2026-11-17T10:00:00.000Z', statements: [{ ...statement('s-big'), note: '' }] }).length;
+    await s.append(OWNER, [{ ...statement('s-big'), note: 'x'.repeat(GUEST_RECORD_MAX_BYTES - base) }]);
+    const written = p.calls.find(c => c.method === 'PUT')!.body!;
+    expect(Buffer.byteLength(written, 'utf8')).toBeLessThanOrEqual(GUEST_RECORD_MAX_SEALED_BYTES);
+    expect(Buffer.byteLength(written, 'utf8')).toBeGreaterThan(GUEST_RECORD_MAX_BYTES);
   });
 
   it('a record that would pass its size is refused before anything is sent', async () => {

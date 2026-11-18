@@ -71,7 +71,9 @@ Two things stood in the way, and this is how each is settled (`src/dashboard-gen
    registered return path (`/guest/general/return`) with a code. The page then makes a key for its
    tab and sends `{code, state, binding}` in a request that key signs, to
    `POST /play/general/finish`. The bridge finishes the visit only with the binding it issued for
-   that state and exchanges the code itself. This round trip has been run in no browser.
+   that state and exchanges the code itself. The page may add `record_key`, an X25519 public key
+   it made for the tab (the secret stays in the tab): the guest's record is then sealed for that
+   tab too. This round trip has been run in no browser.
 2. *A tab key is not the guest.* After `finish`, the bridge holds that this tab key was admitted
    as that guest, for an hour at most or until the guest's own deadline. A request the key signs
    at `POST /play/general/act` is the **guest's**: its subject is the guest's DID
@@ -84,20 +86,39 @@ one, and answer its steps. Any other name is refused, and so is any request that
 for, on whose authority, or which pod it touches (`acting_as`, a subject, a pod URL): a guest acts
 as itself. No signed `/agent/*` route and no `foxxi.*` tool accepts a request in a guest's name.
 
-**Where a guest's record is.** One plain JSON document on the guest's own pod,
-`<pod origin>/<guest id>/foxxi-dashboard/learning-record.json` (`src/guest-learning-record.ts`),
-written by the bridge with the gate's operator bearer. It is never the tenant pod: with the switch
-on, the bridge's pod resolver places a general guest's DID on its own pod or refuses it. Nothing is
-written to a lens, a lattice, the efficacy tally or a forwarding target for a guest. The document
-is not sealed, and the gate serves reads anonymously, so whoever knows the guest's id can read it.
-When the gate answers a write with `410` (the guest is closed or expired) every session of that
-guest ends and the write is not tried again.
+**Where a guest's record is.** One sealed document on the guest's own pod,
+`<pod origin>/<guest id>/foxxi-dashboard/learning-record.sealed.json`
+(`src/guest-learning-record.ts`), written by the bridge with the gate's operator bearer. It is
+never the tenant pod: with the switch on, the bridge's pod resolver places a general guest's DID on
+its own pod or refuses it. Nothing is written to a lens, a lattice, the efficacy tally or a
+forwarding target for a guest. When the gate answers a write with `410` (the guest is closed or
+expired) every session of that guest ends and the write is not tried again.
+
+**Who can read a guest's record.** The gate serves pod reads with no sign-in, so whoever has a
+guest's id can fetch the document. It is ciphertext: the record is sealed in the substrate's
+multi-recipient envelope (X25519, XSalsa20-Poly1305), and nothing of it is in the clear. Two
+parties can open it:
+
+- **The bridge**, at any time, for every guest. It opens each guest's record with a key derived
+  from its own secret (`FOXXI_BRIDGE_PRIVATE_KEY`, else its wallet seed) and that guest's DID. This
+  is a bridge-held service key: the record is confidential from the public and from the storage
+  provider, not from whoever operates the bridge. The bridge needs it because it reads the record
+  at every step, and because a guest outlives both a bridge process and a browser tab.
+- **The guest's own tab**, when it sent a `record_key` at `finish`: it is a recipient of every
+  version written while it is admitted, and can open the document from its pod without asking the
+  bridge. A tab that sent none reads its record through the bridge (`record.read`).
+
+Nobody else: not a holder of the guest's id, not a reader at the gate, not the operator bearer.
+A reader without a key still sees that a record exists, when it was last sealed, about how large
+it is, and the public keys it is sealed for. With the switch on the bridge does not start without
+a secret to seal with.
 
 **Who is refused at the door.** A guest identity states is linked to a registered account, or
 acting on another's behalf. Not yet.
 
 **Limits** are counted per guest, not per tab or address: 120 operations and 30 writes a minute,
-at most four tabs, and at most 256 writes of at most 256 KiB to the pod per bridge process.
+at most four tabs, and at most 256 writes to the pod per bridge process, each a record of at most
+256 KiB (384 KiB as sealed).
 
 ## The three routes
 

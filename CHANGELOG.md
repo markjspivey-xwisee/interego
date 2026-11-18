@@ -19,6 +19,46 @@ and projects as executed work.
 beside the `iep#` ones. Stopping needs a new version of Foxxi's profile, whose
 templates require those keys; the xapi-x README says what depends on them.
 
+## 2026-11-18 — Foxxi: a dashboard guest's record is sealed, and the guest rule no longer breaks the workbench guest
+
+Two things stood between the dashboard's general guest (on the bridge behind
+`FOXXI_PLAY_GENERAL_GUEST=1`, still off) and switching it on.
+
+- **The guest's learning record was readable by anyone who had the guest's
+  id.** It was a plain document on the guest's pod, and the gate serves pod
+  reads with no sign-in. It is now the substrate's multi-recipient envelope at
+  `<guest pod>/foxxi-dashboard/learning-record.sealed.json`. Who can open it:
+  the bridge (a key derived from its own secret and the guest's DID, so this is
+  a bridge-held service key), and each of the guest's own browser tabs that
+  sent an X25519 public key (`record_key`) when it finished the door visit.
+  Nobody else. With the switch on the bridge does not start without
+  `FOXXI_BRIDGE_PRIVATE_KEY` or a wallet seed to seal with.
+- **With the switch on, the pod resolver re-routes or refuses a general
+  guest's DID at every place that calls it**, and the learner workbench's
+  general guest (a separate switch, already on) reaches two of them with its
+  own DID: whose a posted statement is, and where an applied void is kept.
+  Both answered the shared tenant pod. With the switch on they answer the
+  guest's own pod, which is where the course player already keeps that
+  guest's statements. **This changes the workbench guest when the dashboard's
+  switch is turned on:** its statements stop being forwarded to targets set on
+  the tenant pod's lens, and its applied voids are kept on its own pod. A
+  statement that names another identity's guest was stored and then answered
+  as a refusal; it is taken as any statement whose actor has no pod here. A
+  route that still meets the refusal answers 403, not 500.
+- **`finish` compared identity's stated pod with the bridge's as strings.**
+  They are compared as URLs: the same pod root, on the same store. The pod
+  that is kept and used is the bridge's own derivation.
+
+With the switch off nothing changes: the resolver refuses nothing, and every
+changed place asks it exactly as before.
+
+**Not done.** The dashboard's page still does not offer the guest, and no
+browser has run the round trip or made a `record_key`. A tab becomes a
+recipient at the next write after it is admitted, not at once. The bridge can
+read every guest's record; a record only the guest's browser can open would
+need the guest's lasting key, which lives at the door's origin. Nothing was
+switched on or deployed.
+
 ## 2026-11-17 — CI: the merge decision no longer holds a runner while it waits
 
 The gated auto-merge waits for the whole suite and every other check on a pull
