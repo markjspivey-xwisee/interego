@@ -533,8 +533,8 @@ hosting the client on an origin of its own would not; that is the owner's
 decision, and it is not made here.
 
 CodeQL raised five high alerts on the rendering test itself, not on the
-client: three JSON strings built by escaping only `"` (a backslash would have
-passed through), and two places that found the page's `<script>` and `<style>`
+client: three JSON strings built by escaping only double quotes (a backslash
+would have passed through), and two places that found the page's `<script>` and `<style>`
 with a lower-case pattern. The strings are now written with `JSON.stringify`,
 which gives the same text for these values, and the CSP checks read the page
 with jsdom's parser. That parser also sees what the patterns missed: with a
