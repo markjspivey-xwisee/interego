@@ -585,9 +585,13 @@ export async function assembleEnterpriseLearnerRecord(
  *  system of record), and only falls back to the LRS statement URL when no
  *  substrate descriptor is present (e.g. a natively-recorded course statement). */
 const SUBSTRATE_DESCRIPTOR_EXT = `${FOXXI_VOCAB}substrateDescriptorIri`;
+const SOURCE_DESCRIPTOR_EXT = 'https://markjspivey-xwisee.github.io/interego/ns/iep#sourceDescriptor';
 function rawDataLocationFor(rec: StoredStatement, lrsEndpoint: string): string {
   const ext = (rec.statement.context as { extensions?: Record<string, unknown> } | undefined)?.extensions ?? {};
-  const src = ext[SUBSTRATE_DESCRIPTOR_EXT];
+  const said = (rec.statement.result as { extensions?: Record<string, unknown> } | undefined)?.extensions ?? {};
+  // A projection names its descriptor in `iep#sourceDescriptor`. One stored before 2026-11-17,
+  // and a voiding statement, name it in Foxxi's own key, which is read second.
+  const src = typeof said[SOURCE_DESCRIPTOR_EXT] === 'string' && said[SOURCE_DESCRIPTOR_EXT] ? said[SOURCE_DESCRIPTOR_EXT] : ext[SUBSTRATE_DESCRIPTOR_EXT];
   return (typeof src === 'string' && src) ? src : `${lrsEndpoint}/xapi/statements?statementId=${rec.id}`;
 }
 

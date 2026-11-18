@@ -28,7 +28,7 @@ import { lintXapixStatements } from '../src/xapix/lint.js';
 
 type Obj = Record<string, unknown>;
 const BASE = 'https://bridge.example/xapi/profiles';
-const FOXXI_VERSION = `${FOXXI_PROFILE_ID}/v/1`;
+const FOXXI_VERSION = `${FOXXI_PROFILE_ID}/v/2`, FOXXI_V1 = `${FOXXI_PROFILE_ID}/v/1`;
 const foxxi = buildFoxxiProfileDoc({ generatedAt: PROFILE_GENERATED_AT }) as Obj & { concepts: Obj[]; templates: Obj[]; patterns: Obj[] };
 
 let server: ProfileServer, http: Server, origin: string;
@@ -48,7 +48,7 @@ describe('the examples kept with a built-in profile', () => {
   it('pass the lint a published profile has to pass, for each built-in profile', () => {
     const authoring = new ProfileAuthoring(server, { hostedUnder: `${BASE}/p/` });
     const kept = builtInKept();
-    // One for each version held: Foxxi's profile, and the xapi-x profile in its two versions.
+    // One for each version held: Foxxi's profile and the xapi-x profile, each in its two versions.
     const versionOf = (doc: unknown) => (doc as { versions: Array<{ id: string }> }).versions[0]!.id;
     expect(kept.map(k => server.dataset.get(k.profile)!.version)).toEqual(builtInProfiles().map(versionOf));
     for (const k of kept) {
@@ -59,9 +59,14 @@ describe('the examples kept with a built-in profile', () => {
   });
 
   it('are an example for every template and every primary pattern of Foxxi\'s profile', () => {
-    const { examples } = builtInKept().find(k => k.profile === FOXXI_PROFILE_ID)!;
-    expect(examples.statements.length).toBe(foxxi.templates.length);
-    expect(examples.sequences.map(s => s.pattern).sort()).toEqual(foxxi.patterns.filter(p => p.primary === true).map(p => p.id as string).sort());
+    // For the current version: every template and primary pattern it does not keep only as deprecated.
+    const { examples } = builtInKept().find(k => k.profile === FOXXI_VERSION)!;
+    const judging = <X extends Obj>(parts: X[]) => parts.filter(p => p.deprecated !== true);
+    expect(examples.statements.length).toBe(judging(foxxi.templates).length);
+    expect(examples.sequences.map(s => s.pattern).sort()).toEqual(judging(foxxi.patterns).filter(p => p.primary === true).map(p => p.id as string).sort());
+    // And version 1 is kept with its own, the same number: version 2 replaced five templates and two primary patterns, one for one.
+    const v1 = builtInKept().find(k => k.profile === FOXXI_V1)!.examples;
+    expect([v1.statements.length, v1.sequences.length]).toEqual([examples.statements.length, examples.sequences.length]);
   });
 
   it('are the same each time they are built', () => {
@@ -72,6 +77,7 @@ describe('the examples kept with a built-in profile', () => {
     // A profile's IRI answers for its current version; each version answers for itself.
     for (const [profile, version, asked] of [
       [FOXXI_PROFILE_ID, FOXXI_VERSION, [FOXXI_PROFILE_ID, FOXXI_VERSION]],
+      [FOXXI_PROFILE_ID, FOXXI_V1, [FOXXI_V1]],
       [XAPIX_PROFILE_ID, XAPIX_PROFILE_VERSION_ID, [XAPIX_PROFILE_ID, XAPIX_PROFILE_VERSION_ID]],
       [XAPIX_PROFILE_ID, XAPIX_PROFILE_V1_ID, [XAPIX_PROFILE_V1_ID]],
     ] as const) {
@@ -111,9 +117,9 @@ describe('Foxxi\'s profile declares only Foxxi\'s own terms', () => {
     expect([...named].filter(iri => !external.includes(iri))).toEqual([]);
     expect(external.filter(own)).toEqual([]);
     expect(new Set(external).size).toBe(external.length);
-    // Thirteen verbs and four activity types the profile used to declare, and the two it never did.
+    // Thirteen verbs and four activity types the profile used to declare, the two it never did, and the xapi-x projection marker.
     expect(FOXXI_EXTERNAL_TERMS.filter(t => t.type === 'Verb').length).toBe(13);
-    expect(FOXXI_EXTERNAL_TERMS.filter(t => t.type === 'ActivityType').length).toBe(6);
+    expect(FOXXI_EXTERNAL_TERMS.filter(t => t.type === 'ActivityType').length).toBe(7);
   });
 
   it('still knows every verb its statements use, its own or not', () => {
@@ -155,8 +161,9 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
       [IEP_DECORATIONS.modalStatus]: stated,
       [IEP_DECORATIONS.projectionLossy]: lossy,
     });
-    // Its own key is still written, and names the same descriptor.
-    expect(((statement.context as Json).extensions as Json)[`${FOXXI_NS}substrateDescriptorIri`]).toBe(decorations(statement)[IEP_DECORATIONS.sourceDescriptor]);
+    // Foxxi's own keys for the same things are no longer written on a projection (decision 6).
+    for (const key of ['substrateDescriptorIri', 'supersededDescriptor', 'endorsed'])
+      expect(((statement.context as Json).extensions as Json)[`${FOXXI_NS}${key}`], key).toBeUndefined();
     expect(validates(statement, xapix)).toMatchObject({ outcome: 'success', findings: [], templates: [XAPIX_PROJECTION_TEMPLATE_ID] });
     const judged = await followsFoxxi(statement);
     expect(judged.comments).toEqual([]);
@@ -177,8 +184,10 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     expect(context(statement).statement).toEqual({ objectType: 'StatementRef', id: deterministicUuid(D0) });
     // The id it names is the id the superseded descriptor's own projection has.
     expect(project({ descriptorUrl: D0 }).id).toBe(deterministicUuid(D0));
-    // Foxxi's own key is still written, and it voids nothing.
-    expect((context(statement).extensions as Json)[`${FOXXI_NS}supersededDescriptor`]).toBe(D0);
+    // Foxxi's own key for it is gone; the superseded descriptor is still named, as an activity. It voids nothing.
+    expect((context(statement).extensions as Json)[`${FOXXI_NS}supersededDescriptor`]).toBeUndefined();
+    expect(((context(statement).contextActivities as Json).other as Json[]).map(a => a.id)).toEqual([D0]);
+    expect((await followsFoxxi(project({ verb: `${FOXXI_NS}performed`, supersedes: [D0, DM1] }))).templates.sort()).toEqual([`${FOXXI_PROFILE_ID}/templates/performed-projection`, `${FOXXI_PROFILE_ID}/templates/superseding-projection`].sort());
     expect((statement.verb as Json).id).not.toBe('http://adlnet.gov/expapi/verbs/voided');
     expect((await followsFoxxi(statement)).comments).toEqual([]);
     expect(validates(statement, xapix)).toMatchObject({ outcome: 'success', findings: [] });
@@ -215,17 +224,17 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     expect([...new Set(lintXapixStatements([before], profiles, options).map(f => f.code))]).toEqual(['xapix-outcome-not-asserted']);
   });
 
-  it('a Quoted descriptor is projected as quoted: no outcome verb, no outcome, and marked as not endorsed', async () => {
+  it('a Quoted descriptor is projected as quoted: no outcome verb, no outcome, and its modal status says it is not endorsed', async () => {
     for (const more of [{}, { success: true }, { success: false, scoreScaled: 0.1 }] as Array<Partial<MeshDiscoverEntry>>) {
       const statement = project({ modalStatus: 'Quoted', ...more });
       expect((statement.verb as Json).id).toBe(`${FOXXI_NS}verbs/quoted`);
       expect(Object.keys(statement.result as Json)).toEqual(['extensions']);
-      expect((context(statement).extensions as Json)[`${FOXXI_NS}endorsed`]).toBe(false);
+      expect(decorations(statement)[IEP_DECORATIONS.modalStatus]).toBe('Quoted');
       // Not a performance record: no performance category beside the two projection markers.
       expect(((context(statement).contextActivities as Json).category as Json[]).length).toBe(2);
       const judged = await followsFoxxi(statement);
       expect(judged.comments).toEqual([]);
-      expect(judged.templates).toEqual([`${FOXXI_PROFILE_ID}/templates/quoted-descriptor`]);
+      expect(judged.templates).toEqual([`${FOXXI_PROFILE_ID}/templates/quoted-projection`]);
       // Its trajectory step is a Quoted step, not an asserted one, and carries no outcome.
       const projected = projectMeshEntry(entry({ modalStatus: 'Quoted', ...more }), 'https://pod.example/fictional-agent/')!;
       expect(projected.step.result).toBeUndefined();
@@ -284,9 +293,23 @@ describe('Foxxi\'s projector writes the keys the xapi-x profile declares', () =>
     expect(context(voiding).statement).toBeUndefined();
   });
 
-  it('a projection stored before the keys were written still follows Foxxi\'s profile', async () => {
-    const { result: _dropped, ...before } = project({ verb: `${FOXXI_NS}performed` }) as Json & { result?: Json };
-    expect((await followsFoxxi(before)).comments).toEqual([]);
+  it('a projection stored under version 1 still follows version 1, which is still held', async () => {
+    // As the projector wrote it before the iep# keys: Foxxi's own key in context, nothing in result.
+    const now = project({ verb: `${FOXXI_NS}performed` }) as Json & { result?: Json };
+    const { result: _dropped, ...rest } = now;
+    const before = { ...rest, context: { ...context(now), extensions: { ...(context(now).extensions as Json), [`${FOXXI_NS}substrateDescriptorIri`]: 'https://pod.example/fictional-agent/context-graphs/1790000000000.ttl' } } };
+    const v1 = await server.validateTemplates(before, FOXXI_V1);
+    expect(v1.comments).toEqual([]);
+    expect(v1.templates).toEqual([`${FOXXI_PROFILE_ID}/templates/performed-descriptor`]);
+    // Version 2 asks for the iep# keys, so it does not pass that statement.
+    expect((await followsFoxxi(before)).comments.join('\n')).toContain(IEP_DECORATIONS.sourceDescriptor);
+    // And what the projector writes now is not what version 1 asked for.
+    expect((await server.validateTemplates(now, FOXXI_V1)).comments.join('\n')).toContain('substrateDescriptorIri');
+  });
+
+  it('a retraction still names its descriptor in Foxxi\'s own key: a voiding statement is not a projection', () => {
+    const voiding = project({ modalStatus: 'Retracted', supersedes: [D0] });
+    expect(context(voiding).extensions).toMatchObject({ [`${FOXXI_NS}substrateDescriptorIri`]: 'https://pod.example/fictional-agent/context-graphs/1790000000000.ttl', [`${FOXXI_NS}supersededDescriptor`]: D0 });
   });
 
   it('a projection whose modal status its verb cannot say does not follow Foxxi\'s profile', async () => {
