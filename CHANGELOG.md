@@ -697,6 +697,12 @@ whose list is given empty (`empty`), since `in` alone does not tell an empty
 list from none, and the README's rule that `[]` is no value names the SHACL
 list parameters as its exception.
 
+The page's work-budget rows allowed each step 3 s, and its dry run of the
+largest honest document, a form of 2,500 inputs that takes about 2 s in jsdom,
+once took 3.1 s on a busy CI runner. Those rows now allow 3 s, or 1 ms for
+each 80 bytes of the document where that is more, as the budget grows with the
+document; the refusals and the size of what is shown are still checked exactly.
+
 ## 2026-11-18 — Practice Evidence: a voice check for the role-play player
 
 `applications/practice-evidence/tools/voice-check.mjs` runs a whole practice in

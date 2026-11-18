@@ -2204,6 +2204,13 @@ describe('hypermedia client: one budget of work for each thing a person asks of 
   it.each(WORK_CASES)('reads %s and dry-runs %s within the budget, or refuses by name where it is past it', async (path, rel, refused, dryRun, sent) => {
     const size = Buffer.byteLength(COST[path]!);
     const problem = workProblem(size);
+    // The time allowed grows with the document, as its work budget does: 3 s, or 1 ms for each
+    // 80 bytes where that is more. The largest documents here are honest work the budget admits,
+    // such as a form of 2,500 inputs, which jsdom builds in about 2 s on a quiet machine and has
+    // taken past 3 s on a busy CI runner. An amplification grows with the product of a document's
+    // parts, not its size, so it still passes this many times over; the refusals and the size of
+    // what is shown are checked exactly below.
+    const allowed = Math.max(3_000, Math.ceil(size / 80));
     for (const query of [`?url=${encodeURIComponent(HOST + path)}&autoload=1`, `?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1`]) {
       const started = Date.now();
       const t = load(query);
@@ -2211,7 +2218,7 @@ describe('hypermedia client: one budget of work for each thing a person asks of 
         const { document } = t;
         const ready = () => document.documentElement.dataset['ready'];
         await vi.waitFor(() => expect(ready(), document.getElementById('status')!.textContent!).toMatch(/^(list|done|error)$/), { timeout: 60_000 });
-        expect(Date.now() - started, query).toBeLessThan(3_000);
+        expect(Date.now() - started, query).toBeLessThan(allowed);
         expect(document.body.innerHTML.length, 'page shown').toBeLessThan(HTML.length + 8 * size);
         expect(t.calls.filter(call => call.url.startsWith(`${HOST}/api`)), 'sent').toEqual([]);
         if (refused.includes('read')) {
