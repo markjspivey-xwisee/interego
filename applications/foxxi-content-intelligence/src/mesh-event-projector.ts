@@ -309,15 +309,23 @@ export function projectMeshEntry(
     // (GAP 4). Never fabricated beyond the default: a bare descriptor stays agent/production.
     [PERF_EXT.actorKind]: entry.actorKind ?? 'agent',
     [PERF_EXT.contextKind]: entry.contextKind ?? 'production',
-    [`${FOXXI_NS}substrateDescriptorIri`]: entry.descriptorUrl,
-    ...(superseded ? { [`${FOXXI_NS}supersededDescriptor`]: superseded } : {}),
     ...(entry.trustLevel ? { [`${FOXXI_NS}trustLevel`]: entry.trustLevel } : {}),
     ...(typeof entry.epistemicConfidence === 'number' ? { [`${FOXXI_NS}epistemicConfidence`]: entry.epistemicConfidence } : {}),
     ...(typeof entry.groundTruth === 'boolean' ? { [`${FOXXI_NS}groundTruth`]: entry.groundTruth } : {}),
-    ...(mode.endorsed === false ? { [`${FOXXI_NS}endorsed`]: false } : {}),
   };
-  // The voiding statement keeps the extensions it had: it replaces nothing, it voids.
+  // One vocabulary (xapix/README.md, decision 6): a projection names its descriptor in
+  // `iep#sourceDescriptor`, states `iep#modalStatus` (Quoted says "not endorsed") and names what it
+  // replaces in `xapix:supersedesStatement`, all written below. Foxxi's own keys for the same
+  // three things were written beside them for one profile version and are no longer written here.
   const projectionExtensions = { ...extensions, ...replaces.extensions };
+  // A voiding statement is not a projection: it carries no `iep#` keys and no modal status, since
+  // a retraction is said by voiding and not by a stored status. So the descriptor that retracts
+  // is still named the one way a voiding statement can name it, in Foxxi's own key.
+  const voidingExtensions = {
+    ...extensions,
+    [`${FOXXI_NS}substrateDescriptorIri`]: entry.descriptorUrl,
+    ...(superseded ? { [`${FOXXI_NS}supersededDescriptor`]: superseded } : {}),
+  };
 
   const actor = { objectType: 'Agent', account: { homePage: FOXXI_NS, name: agent } };
   const id = deterministicUuid(entry.descriptorUrl);
@@ -331,7 +339,7 @@ export function projectMeshEntry(
         actor,
         verb,
         object: { objectType: 'StatementRef', id: deterministicUuid(superseded ?? entry.descriptorUrl) },
-        context: { extensions, contextActivities: { category: [descriptorProjectionCategory()] } },
+        context: { extensions: voidingExtensions, contextActivities: { category: [descriptorProjectionCategory()] } },
         ...(ts ? { timestamp: ts } : {}),
       }
     : {

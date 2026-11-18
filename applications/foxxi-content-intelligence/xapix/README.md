@@ -57,7 +57,7 @@ A decoration never changes what a standard member means. `verb`, `object`, `resu
 | `orderAttestation` | coached-world, on the statements that close a registration; the descriptor it names is signed by the world | `readOrderAttestation` verifies the signature, `orderBasis` compares the digests |
 | `controls` | no emitter; the profile server serves the document it links to | profile declares it; lint |
 | `offers` | Foxxi's profile, on its two failed templates | lint X9, against the bridge's manifest |
-| `evidences` | no profile yet | lint X9, against the I2IDL release the bridge reads |
+| `evidences` | Foxxi's profile (version 2), on three of its concepts | lint X9, against the I2IDL release the bridge reads |
 
 In the examples below, `IEP#` stands for `https://markjspivey-xwisee.github.io/interego/ns/iep#` and `XAPIX#` for the `xapix:` namespace. A real statement writes the full IRI. Every name, address and identifier is made up.
 
@@ -223,7 +223,17 @@ A statement using the verb is unchanged; the link is read from the profile:
 
 What the link means is narrow: *a statement with this verb is evidence that the design idea was enacted*. It does not say the verb is the idea, and it does not classify the activity (that is `i2x:isClassifiedBy`, on the activity). Like every link I2IDL-X proposes about an I2IDL concept, it is Hypothetical until reviewed.
 
-The I2IDL concept IRI above shows the shape; the real one comes from the pinned glossary release, and the lint (section 7) checks that the target exists there.
+The I2IDL concept IRI above shows the shape; the real one comes from the pinned glossary release, and the lint (section 7) checks that the target exists there. I2IDL's own IRIs are `https://id.i2idl.org/concepts/<id>`.
+
+**Foxxi's profile states three** (`FOXXI_EVIDENCE_LINKS` in `src/xapi-profile.ts`), each read from I2IDL's release on 2026-11-17 and each a proposal until reviewed:
+
+| Foxxi's concept | Evidence of |
+|---|---|
+| `foxxi:verbs/credentialed` | Digital credential |
+| `foxxi:activities/concept-graph-node` | Concept map |
+| `foxxi:activities/composition` | Personalization |
+
+One link was considered and not made: `foxxi:verbs/retrieved` is the system fetching passages for an answer, not a learner recalling something, so it is no evidence of Retrieval practice.
 
 ## 5. Hypermedia
 
@@ -320,7 +330,7 @@ xAPI's own signed statements (a JWS attachment) attest one statement's content. 
 
 **Version 1's template has no determining property**, because nothing in a statement the lrs-adapter wrote then marked it as a projection except the keys themselves. Asked of version 1, every statement is held to it: a statement without the keys is *invalid*, not *unmatched*. That is the right answer to "is this a well-formed projection?" and the wrong template to copy into a domain profile.
 
-**Version 2 selects on `contextCategoryActivityType: [xapix:Projection]`**, now that emitters write the category. A statement that does not claim to be a projection is unmatched. A projection must also say whether it is lossy and must not link to controls. Version 2 declares the six `xapix:` context extensions and the activity type. Version 1's template is kept in it, deprecated, and statements written before 2026-11-16 are judged against version 1. The profile server holds both versions, so `…/v/1` still resolves and still validates. **Version 2 is in the repository and on the profile server; the pod still serves version 1** until version 2 is published there.
+**Version 2 selects on `contextCategoryActivityType: [xapix:Projection]`**, now that emitters write the category. A statement that does not claim to be a projection is unmatched. A projection must also say whether it is lossy and must not link to controls. Version 2 declares the six `xapix:` context extensions and the activity type. Version 1's template is kept in it, deprecated, and statements written before 2026-11-16 are judged against version 1. The profile server holds both versions, so `…/v/1` still resolves and still validates. Version 2 is in the repository, on the profile server and, since 2026-11-17, on the pod.
 
 ### Lint rules
 
@@ -358,7 +368,7 @@ The owner was asked eleven questions and answered: decide them, "you know what m
 3. **The four keys stay `iep#` IRIs in `result.extensions`.** Stored statements carry them. The adapter now writes `projectionLossy` on every projection, `false` included, so a reader can tell a faithful projection from one that did not say.
 4. **Four modal statuses in a statement: Asserted, Hypothetical, Counterfactual, Quoted.** Quoted is added because repeating a claim is not making it, and a consumer must not count it either. Retracted is never a stored status: voiding is how xAPI says it, and saying it twice invites the two to disagree.
 5. **One rule for non-asserted statements: no outcome members and no outcome verb (X4).** Whether projection is on by default follows from it: off where the caller supplies the verb, allowed where the emitter chooses it.
-6. **One vocabulary.** Foxxi's projector writes the `iep#` keys as well as its own `foxxi:` keys for one profile version, then stops writing its own. The first half is done: every projection that is not a voiding statement carries `sourceDescriptor`, `modalStatus` and `projectionLossy` under `result.extensions`, and Foxxi's `performed-descriptor`, `intended-descriptor` and `considered-descriptor` templates hold a statement that carries them to them (the modal status has to be one the template's verb can say). The rules are `recommended`, not `included`, because projections stored before this carry only the `foxxi:` keys and are still projections. Foxxi's profile does not redeclare the keys: this profile declares them, and both are held on the one server. The projector still writes its `foxxi:` keys, and Foxxi's templates still require `foxxi:substrateDescriptorIri`; stopping that is the second half and is not done. It waits on the condition this decision set, a new version of Foxxi's profile: seven templates require the key, `superseding-descriptor` is told from `performed-descriptor` by `foxxi:supersededDescriptor` alone, and the learner record finds a projection by `foxxi:substrateDescriptorIri` (`src/learner-record.ts`). Dropping the keys under version 1 would leave new projections matching no template and stored ones unread.
+6. **One vocabulary.** Foxxi's projector wrote the `iep#` keys as well as its own `foxxi:` keys for one profile version, and has now stopped writing its own. **Both halves are done.** Under version 1 of Foxxi's profile a projection carried `foxxi:substrateDescriptorIri`, `foxxi:supersededDescriptor` and `foxxi:endorsed`, and from 2026-11-16 the `iep#` keys beside them. Version 2 (2026-11-17) is the current version: a projection names its descriptor in `iep#sourceDescriptor`, states `iep#modalStatus` (Quoted says "not endorsed") and names what it replaces in `xapix:supersedesStatement`, and Foxxi's three keys are not written. A template's rules do not change under its IRI, so the five descriptor templates and the four patterns over them have successors (`performed-projection`, `intended-projection`, `considered-projection`, `quoted-projection`, `superseding-projection`; `projection-stream`, `projection-act`, `projection-revision-arc`, `projection-revisions`) that require the `iep#` keys and select on the `xapix:Projection` category. The old ones stay in the document, deprecated. Version 1 is still held on the profile server, so a statement stored under it is judged by it. Two things keep Foxxi's key: a voiding statement, which is not a projection and has no `iep#` keys to name its descriptor with, and `content-delivery.ts`, which uses the key for a delivered artifact and is not the projector. The learner record reads `iep#sourceDescriptor` first and Foxxi's key second. Foxxi's profile does not redeclare the `iep#` keys: this profile declares them, and both are held on the one server.
 7. **The marker is `xapix:Projection`.** A marker that says "this is a projection of a descriptor" should not belong to one application. Foxxi's `activities/descriptor-projection` stays on stored statements.
 8. **A revision does not void; a correction does.** Voiding a statement that was a fair record when it was written would say it never should have counted, which is false. A plain LRS showing both is the stated loss.
 9. **Digests are SHA-256 over RFC 8785 canonical JSON** of the statement as its emitter sent it, without `stored`, `authority` and `version`. **Anyone may sign an order attestation.** There is no authority to appoint: the signer is named with the conclusion and the reader decides whether to trust them.
@@ -370,6 +380,5 @@ The owner was asked eleven questions and answered: decide them, "you know what m
 - **A second emitter that chains.** coached-world does. llm-telemetry does not: its statements arrive from several observers, a retried event must reproduce the statement it made the first time, and its streams are partial by design, so a chain there needs its own decision about what a gap means.
 - **An order attestation on a pod.** coached-world's is served by the world at `/graphs` with its signature. It is not written to a pod, and nothing reads one back from a pod.
 - **An emitter that writes `xapix:controls`.** The document exists and is served. No statement links to it: the failed attempts Foxxi holds are written by the content a learner runs, not by Foxxi.
-- **`xapix:evidences` on a real profile.** Foxxi's profile states none. Each evidence link is a proposal about someone else's concept and wants the owner's review before it is published; a built-in profile is served the moment it is deployed.
+- **A review of the three evidence links.** Foxxi's profile states them as proposals. Nobody at I2IDL has seen them.
 - **Whether an `i2x:` concept exists.** The bridge's lookup takes an `i2x:` IRI by its namespace.
-- **Foxxi's projector**: the second half of decision 6 (it stops writing `foxxi:substrateDescriptorIri`, Foxxi's templates stop requiring it, and the readers of that key, `learner-record.ts` and `content-delivery.ts`, move to `sourceDescriptor` first). It is a new version of Foxxi's profile, not a change under version 1 (decision 6).

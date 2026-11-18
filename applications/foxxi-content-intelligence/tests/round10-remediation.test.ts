@@ -13,7 +13,8 @@ describe('round-10 — profile Concepts/Templates/Patterns carry type + inScheme
     templates: Array<Record<string, unknown>>;
     patterns: Array<Record<string, unknown>>;
   };
-  const versionId = `${doc.id}/v/1`;
+  // The current version: every term of the document is in its scheme.
+  const versionId = `${doc.id}/v/2`;
   it('every template has type=StatementTemplate + inScheme', () => {
     for (const t of doc.templates) {
       expect(t.type).toBe('StatementTemplate');
