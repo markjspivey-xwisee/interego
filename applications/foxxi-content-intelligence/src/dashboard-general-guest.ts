@@ -18,7 +18,10 @@
  *   3. finish: the page makes a key K for its tab and sends `{code, state, binding}` in a request
  *      K signs. The bridge finishes the visit only with the binding it issued for that state,
  *      exchanges the code itself, checks identity's answer again against this deployment, and
- *      admits K as that guest.
+ *      admits K as that guest. The page may also send `record_key`: an X25519 public key it made
+ *      for the tab (its secret stays in the tab). The guest's record is sealed for it as well as
+ *      for the bridge, so the tab can open its own record from its own pod
+ *      (src/guest-learning-record.ts, "Who can decrypt").
  *
  * A stranger holding a return address has no binding and no verifier; a return address planted in
  * another browser finishes nothing there.
@@ -48,7 +51,7 @@ import { GeneralGuestDoor, type DoorFetch, type DoorGrant, type GeneralGuestSess
 import { guestSessionStanding } from '../../_shared/guest-access/session.js';
 import { recoverSignedRequest, type RecoveredSignedRequest } from './auth.js';
 import { generalGuestPrincipal, type GeneralGuestAdmission, type GuestCallerPrincipal } from './caller-principal.js';
-import { GuestPodError } from './guest-learning-record.js';
+import { GuestPodError, isTabRecordKey } from './guest-learning-record.js';
 import { GUEST_OPERATION_PURPOSE, decideGuestOperation, type GuestOperation } from './guest-operations.js';
 import type { PlayGrantConfig } from './play-grant.js';
 import { routeJson } from './route-json.js';
@@ -165,6 +168,47 @@ export interface DashboardGeneralGuestOptions {
   readonly maxBindings?: number;
   /** Reads a signed request (src/auth.ts). */
   readonly recover?: (body: unknown) => RecoveredSignedRequest;
+  /**
+   * Are two origins this deployment's own store under two spellings (its public address and its
+   * address inside the cluster)? Used only to read identity's stated pod (`statedPodIsOwn`).
+   * Absent, only the one origin is the store.
+   */
+  readonly sameStore?: (a: string, b: string) => boolean;
+  /**
+   * The guest's sealed record, for the answers that tell a tab where it is and who sealed it.
+   * Absent, those answers say nothing of it.
+   */
+  readonly record?: { addressOf(owner: GeneralGuestAdmission): string; sealedBy(owner: GeneralGuestAdmission): string };
+}
+
+/**
+ * Does the pod identity STATED for a guest name the pod the bridge DERIVED for it?
+ *
+ * The derived pod is the only one ever used: `<tenant pod origin>/<guest id>/`, from the bridge's
+ * own resolver. Identity's statement is a cross-check, and identity writes it from its own
+ * configuration (`new URL('<id>/', CSS_PUBLIC_URL).href`). Comparing the two as strings made the
+ * check depend on both services spelling one store identically. So they are compared as URLs:
+ *
+ *   - the path must be exactly `/<guest id>/`: one segment, the guest's own, with its slash;
+ *   - no credentials, query or fragment;
+ *   - the origin must be the derived pod's (a default port or the host's case are not a
+ *     difference), or, where `sameStore` says so, another spelling of this deployment's own store.
+ *
+ * Nothing here widens where a guest's records go. A stated pod on any other origin, on the tenant
+ * pod, on another guest's pod or deeper than the pod root is refused, as before.
+ */
+export function statedPodIsOwn(stated: unknown, derived: string, userId: string, sameStore?: (a: string, b: string) => boolean): boolean {
+  if (typeof stated !== 'string' || stated.length > 2048 || !/^u-try-guest-[0-9a-f]{32}$/.test(userId)) return false;
+  let s: URL, d: URL;
+  try { s = new URL(stated); d = new URL(derived); } catch { return false; }
+  if (d.pathname !== `/${userId}/` || s.pathname !== `/${userId}/`) return false;
+  if ((s.protocol !== 'https:' && s.protocol !== 'http:') || s.username || s.password || s.search || s.hash) return false;
+  // The path AS WRITTEN is the pod root too: a dot segment, an empty segment or an escape that a
+  // URL parser would fold into `/<id>/` is not the pod root as stated.
+  const scheme = stated.indexOf('://'), path = scheme < 0 ? -1 : stated.indexOf('/', scheme + 3);
+  if (path < 0 || stated.slice(path) !== `/${userId}/`) return false;
+  if (s.origin === d.origin) return true;
+  try { return sameStore?.(s.origin + '/', d.origin + '/') === true; } catch { return false; }
 }
 
 export class DashboardGeneralGuest {
@@ -175,6 +219,8 @@ export class DashboardGeneralGuest {
   private readonly now: () => number;
   private readonly maxBindings: number;
   private readonly recover: (body: unknown) => RecoveredSignedRequest;
+  private readonly sameStore?: (a: string, b: string) => boolean;
+  private readonly record?: DashboardGeneralGuestOptions['record'];
   /** Keyed by the tab key's lowercased address. In memory only: a restart forgets every one. */
   private readonly bindings = new Map<string, GeneralGuestAdmission>();
   /** Guests the gate said are closed or expired, until their own deadline: not admitted again here. */
@@ -188,6 +234,26 @@ export class DashboardGeneralGuest {
     this.maxBindings = options.maxBindings ?? 1000;
     if (!Number.isSafeInteger(this.maxBindings) || this.maxBindings < 1 || this.maxBindings > 10_000) throw new Error('Invalid general guest capacity');
     this.recover = options.recover ?? recoverSignedRequest;
+    if (options.sameStore) this.sameStore = options.sameStore;
+    if (options.record) this.record = options.record;
+  }
+
+  /**
+   * The record keys (X25519 public keys) of the tabs admitted as this guest now, oldest first:
+   * who, beside the bridge, the guest's record is sealed for at its next write.
+   */
+  recordKeysOf(userId: string): string[] {
+    const now = this.now(), keys: string[] = [];
+    for (const admission of this.bindings.values()) if (admission.userId === userId && admission.expiresAt > now && admission.recordKey) keys.push(admission.recordKey);
+    return [...new Set(keys)];
+  }
+
+  /** What an answer says of the guest's record: where it is, who sealed it, and whether this tab is sealed for. */
+  private standing(admission: GeneralGuestAdmission): Record<string, unknown> {
+    const standing = publicStanding(admission);
+    if (!this.record) return standing;
+    try { return { ...standing, record: { url: this.record.addressOf(admission), sealed: true, sealedBy: this.record.sealedBy(admission), forThisTab: admission.recordKey !== undefined } }; }
+    catch { return standing; }
   }
 
   /** How many tab keys are admitted now, after those past their bound are dropped. */
@@ -271,7 +337,10 @@ export class DashboardGeneralGuest {
     this.fromDashboard(req); this.sweep(); this.admit('finishes', 100);
     const { address, payload } = this.signedBy(req, DASHBOARD_GENERAL_GUEST_FINISH_PURPOSE);
     const expected = ['agent_id', 'timestamp', 'purpose', 'code', 'state', 'binding'];
-    if (Object.keys(payload).length !== expected.length || expected.some(key => typeof payload[key] !== 'string')) refuse(400, 'general_guest_input_invalid');
+    // `record_key` is the one optional field: the tab's own X25519 public key, to seal its record for.
+    const recordKey = payload['record_key'];
+    if (Object.keys(payload).length !== expected.length + (recordKey === undefined ? 0 : 1) || expected.some(key => typeof payload[key] !== 'string')) refuse(400, 'general_guest_input_invalid');
+    if (recordKey !== undefined && !isTabRecordKey(recordKey)) refuse(400, 'general_guest_input_invalid');
     const { code, state, binding } = payload as { code: string; state: string; binding: string };
     if (!/^[\x21-\x7e]{1,2048}$/.test(code) || !/^[A-Za-z0-9_-]{20,128}$/.test(state) || !/^[A-Za-z0-9_-]{43}$/.test(binding)) refuse(400, 'general_guest_input_invalid');
     // Room is checked before the code is spent: a full table costs the visitor nothing but a retry.
@@ -298,19 +367,22 @@ export class DashboardGeneralGuest {
     if (standing.linked) refuse(403, 'general_guest_linked_refused');
     if (standing.guestDid !== guest.ownerDid || standing.subject !== guest.ownerDid) refuse(401, 'general_guest_return_invalid');
     // The guest's records go to the guest's own pod, as the bridge's one resolver places it, and
-    // identity must have stated the same pod. A guest the resolver would put on the tenant pod is refused.
+    // identity must have stated the same pod (`statedPodIsOwn`: the same pod root on the same
+    // store, read as a URL). A guest the resolver would put on the tenant pod is refused. The pod
+    // that is kept and used is the DERIVED one, never identity's string.
     let podUrl: string;
     try { podUrl = this.podFor(guest.ownerDid); } catch { return refuse(403, 'general_guest_pod_refused'); }
-    if (typeof podUrl !== 'string' || !podUrl.endsWith(`/${id}/`) || guest.podUrl !== podUrl) refuse(403, 'general_guest_pod_refused');
+    if (typeof podUrl !== 'string' || !podUrl.endsWith(`/${id}/`) || !statedPodIsOwn(guest.podUrl, podUrl, id, this.sameStore)) refuse(403, 'general_guest_pod_refused');
     if (this.goneGuests.has(id)) refuse(410, 'general_guest_gone');
     this.admit('finish:' + id, DASHBOARD_GUEST_LIMITS.finishes);
     if (this.bindings.size >= this.maxBindings && !this.bindings.has(address)) refuse(429, 'general_guest_busy');
     // One guest, a few tabs: a further tab ends the oldest (Map order is insertion order).
     const held = [...this.bindings].filter(([key, admission]) => admission.userId === id && key !== address).map(([key]) => key);
     for (const key of held.slice(0, Math.max(0, held.length - (DASHBOARD_GUEST_KEYS_PER_GUEST - 1)))) this.bindings.delete(key);
-    const admission: GeneralGuestAdmission = { userId: id, guestDid: guest.ownerDid, podUrl, expiresAt: standing.expiresAt };
+    const admission: GeneralGuestAdmission = { userId: id, guestDid: guest.ownerDid, podUrl, expiresAt: standing.expiresAt,
+      ...(typeof recordKey === 'string' ? { recordKey } : {}) };
     this.bindings.delete(address); this.bindings.set(address, admission);
-    return { generalGuest: publicStanding(admission) };
+    return { generalGuest: this.standing(admission) };
   }
 
   /**
@@ -329,7 +401,7 @@ export class DashboardGeneralGuest {
     this.admit('op:' + admission.userId, DASHBOARD_GUEST_LIMITS.operations);
     if (decided.spec.writes) this.admit('write:' + admission.userId, DASHBOARD_GUEST_LIMITS.writes);
     const principal = generalGuestPrincipal(address, payload, admission);
-    if (decided.operation === 'guest.standing') return { generalGuest: publicStanding(admission) };
+    if (decided.operation === 'guest.standing') return { generalGuest: this.standing(admission) };
     if (decided.operation === 'guest.sign_out') { this.bindings.delete(address); return { signed_out: true }; }
     try { return await this.ports[decided.operation](principal, decided.args); }
     catch (error) {

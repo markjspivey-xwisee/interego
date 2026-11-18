@@ -53,6 +53,12 @@ export interface GeneralGuestAdmission {
   readonly podUrl: string;
   /** Unix milliseconds: after this the admission is gone. */
   readonly expiresAt: number;
+  /**
+   * The X25519 public key (base64) the admitted tab made for itself, when it sent one: a recipient
+   * of the guest's sealed record while this admission stands (src/guest-learning-record.ts).
+   * It carries no authority; the tab key that signs requests is another key.
+   */
+  readonly recordKey?: string;
 }
 
 /**

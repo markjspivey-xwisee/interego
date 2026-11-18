@@ -11,13 +11,25 @@
  *
  * Log the real error server-side for operators; return a generic, non-disclosing body.
  * A minimal structural Response type keeps this module free of a hard express import.
+ *
+ * ONE ERROR IS NOT A 500: `SubjectPodRefusedError` (src/subject-pod-url.ts). It is a decision, not
+ * a fault: the request named a general guest whose records this bridge will not place (another
+ * identity's guest, which would land on the shared tenant pod). It is thrown from the one pod
+ * resolver, which some forty call sites reach, and every route that funnels its failures here
+ * answered it 500. It is answered 403 with its reason code and nothing else. It arises only where
+ * the dashboard's general guest is switched on; with the switch off this function is as it was.
  */
+import { SubjectPodRefusedError } from './subject-pod-url.js';
 
 export interface MinimalErrorResponse {
   status(code: number): { json(body: unknown): void };
 }
 
 export function sendServerError(res: MinimalErrorResponse, err: unknown, context: string): void {
+  if (err instanceof SubjectPodRefusedError) {
+    res.status(403).json({ ok: false, error: 'subject_pod_refused', reason: err.reason });
+    return;
+  }
   try {
     // eslint-disable-next-line no-console
     console.error(`[foxxi:500] ${context}:`, err instanceof Error ? (err.stack ?? err.message) : err);

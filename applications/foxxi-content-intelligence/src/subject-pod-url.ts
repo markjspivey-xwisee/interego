@@ -301,3 +301,39 @@ export function resolveSubjectPodUrlGuarded(opts: SubjectPodUrlOptions & { guest
   if (!guard.ok) throw new SubjectPodRefusedError(guard.reason, guard.error);
   return podUrl;
 }
+
+/**
+ * `resolveSubjectPodUrlGuarded` for an identity SOMEONE ELSE named (a statement's actor, a stored
+ * author, the learner a play was started for): `undefined` where the guest rule refuses the
+ * identity, instead of a throw.
+ *
+ * The guest rule throws so a caller acting AS a guest is never handed the tenant pod. A name the
+ * bridge was merely given is another matter: the request carrying it is usually fine (a statement
+ * already committed, a void already applied, a course being read), and a throw there turned what
+ * used to succeed into an error answer (at the LRS, a refusal sent after the statement was
+ * stored). Those call sites ask here and treat `undefined` as they already treat an identity with
+ * no pod on this store.
+ *
+ * Without `guestIdentityHost` nothing is ever refused: this is `resolveSubjectPodUrlPure` exactly
+ * and never answers `undefined`. Any error that is not the guest rule's refusal still throws.
+ */
+export function namedSubjectPodUrlGuarded(opts: SubjectPodUrlOptions & { guestIdentityHost?: string | undefined }): string | undefined {
+  try { return resolveSubjectPodUrlGuarded(opts); }
+  catch (error) { if (error instanceof SubjectPodRefusedError) return undefined; throw error; }
+}
+
+/**
+ * The pod of the identity a statement's actor names, for per-owner forwarding: `null` when the
+ * actor is no recognizable self-sovereign identity (a generic upstream account name), or is one
+ * the guest rule refuses. `null` means "nobody's here": the caller's own tenant is used.
+ *
+ * `podOf` is the bridge's named resolver. A general guest of this deployment's identity resolves
+ * to its own pod, which is where the course player already keeps that guest's statements.
+ */
+export function statementOwnerPod(statement: Record<string, unknown> | null | undefined, podOf: (identity: string) => string | undefined): string | null {
+  const name = (statement?.['actor'] as { account?: { name?: unknown } } | undefined)?.account?.name;
+  if (typeof name !== 'string' || !name) return null;
+  if (!/^did:(ethr|web|key):/.test(name) && !/(u-pk-|u-did-|u-eth-|eth-0x)/.test(name)) return null;
+  const pod = podOf(name);
+  return pod === undefined ? null : pod;
+}

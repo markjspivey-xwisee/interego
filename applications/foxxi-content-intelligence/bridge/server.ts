@@ -134,7 +134,7 @@ import { frontDoor, frontDoorHtml } from '../src/front-door.js';
 import { PlayGrantError, PlayGrantService, learnerGuestGrantConfig, playGrantConfig, playGrantRequestBody } from '../src/play-grant.js';
 import { GENERAL_GUEST_RETURN_PATH, learnerGeneralGuestDoor, learnerGeneralGuestSettings } from '../src/i2idlx-general-guest.js';
 import { DashboardGeneralGuest, DashboardGuestError, attachDashboardGeneralGuestRoutes, dashboardGeneralGuestDoor, dashboardGeneralGuestSettings, dashboardGuestIdentityHost, type DashboardGuestPorts } from '../src/dashboard-general-guest.js';
-import { GuestLearningRecordStore } from '../src/guest-learning-record.js';
+import { GuestLearningRecordStore, guestRecordSealSecret } from '../src/guest-learning-record.js';
 import { compressLinkedData } from '../src/compress-linked-data.js';
 
 /**
@@ -568,7 +568,7 @@ import { attachOauthTokenRoute, oauthPublicKeyFrom } from '../src/xapi-oauth.js'
 import { attachHypermediaRoutes } from '../src/hypermedia-resources.js';
 import { callerIsOperator, callerUserIdOf } from '../src/operator-auth.js';
 import { assertSafeFetchTarget, safePublicUrlOrUndefined, safeFetch, guardedFetchFn } from '../src/ssrf-guard.js';
-import { resolveSubjectPodUrlGuarded, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
+import { resolveSubjectPodUrlGuarded, namedSubjectPodUrlGuarded, statementOwnerPod, explicitPodRoot, hasControlChars } from '../src/subject-pod-url.js';
 import { configureStoreSpelling } from '../src/store-origins.js';
 import { resolveReadTarget, type ReadTargetDecision } from '../src/read-target.js';
 import { retireRow, activeRows, isRetired } from '../src/enrolment-register.js';
@@ -1793,6 +1793,29 @@ function resolveSubjectPodUrl(didOrWebId: string | undefined, explicit?: string)
   // guest is (FOXXI_PLAY_GENERAL_GUEST=1); with it off `guestIdentityHost` is undefined and every
   // identity, a guest's DID included, resolves exactly as it did before the rule existed.
   return resolveSubjectPodUrlGuarded({ tenantPodUrl, identity: didOrWebId, explicit, safeUrl: safePublicUrlOrUndefined, guestIdentityHost });
+}
+
+/**
+ * `resolveSubjectPodUrl` for an identity SOMEONE ELSE named: a statement's actor, a stored author,
+ * a learner a play was started for. Answers `undefined` where the guest rule refuses the identity
+ * (a general guest's DID that is not a guest of this deployment's identity), instead of throwing.
+ *
+ * WHY THERE ARE TWO. The guest rule throws so that a caller acting AS a guest can never be handed
+ * the tenant pod. But most of this file resolves a pod for a name it was merely given, on a path
+ * where the request itself is fine: a statement already committed whose actor is some other
+ * deployment's guest, a void applied to one, a course read naming one as its author. A throw
+ * there turned a request that used to succeed into an error answer, after the statement was stored. Those
+ * call sites ask here, and treat `undefined` as they already treat an identity with no pod on
+ * this store: no owner lens, no lattice copy, not found. A place whose identity is a signed
+ * caller's (or a signed author's, stored) still asks `resolveSubjectPodUrl`: the caller decision
+ * refuses a general guest's DID before any pod is derived, so the rule is never reached there
+ * (tests/a-workbench-guest-under-the-guest-rule.test.ts lists every call and which it is).
+ *
+ * With the rule off (FOXXI_PLAY_GENERAL_GUEST is not `1`) nothing is ever refused, so this is
+ * `resolveSubjectPodUrl` exactly and never answers `undefined`.
+ */
+function namedSubjectPodUrl(didOrWebId: string | undefined): string | undefined {
+  return namedSubjectPodUrlGuarded({ tenantPodUrl, identity: didOrWebId, safeUrl: safePublicUrlOrUndefined, guestIdentityHost });
 }
 
 const MESH_PROJECT_INTERVAL_MS = pollingInterval(process.env.FOXXI_MESH_PROJECT_INTERVAL_MS);
@@ -6051,10 +6074,12 @@ const app = createVerticalBridge({
       // recognizable self-sovereign identities map to an owner lens; generic
       // upstream account names return null and fall back to the caller tenant.
       ownerTenantOfStatement: (stmt) => {
-        const name = (stmt?.actor as { account?: { name?: string } } | undefined)?.account?.name;
-        if (typeof name !== 'string' || !name) return null;
-        if (!/^did:(ethr|web|key):/.test(name) && !/(u-pk-|u-did-|u-eth-|eth-0x)/.test(name)) return null;
-        return lensTenantFor(actorForPod(resolveSubjectPodUrl(name), MESH_ACTOR_LABELS));
+        // A general guest of this deployment's identity is its own owner (its own pod's lens, where
+        // the course player already keeps its statements). One the guest rule refuses is nobody's
+        // here: the caller's tenant, as for any name that is not a recognizable identity
+        // (statementOwnerPod, src/subject-pod-url.ts).
+        const pod = statementOwnerPod(stmt, namedSubjectPodUrl);
+        return pod === null ? null : lensTenantFor(actorForPod(pod, MESH_ACTOR_LABELS));
       },
       // cmi5 moveOn orchestration — after each Statement is stored, the
       // LMS re-evaluates the AU's moveOn and auto-emits `satisfied`.
@@ -10321,7 +10346,9 @@ async function keepAppliedVoid(voided: Record<string, unknown>, voidingStatement
   const did = ownerDidOf(voided);
   const statementId = typeof voided.id === 'string' ? voided.id : undefined;
   if (!did || !statementId) return;
-  const pod = resolveSubjectPodUrl(did);
+  // An owner the guest rule refuses has no pod on this store either: voided in the lens alone.
+  const pod = namedSubjectPodUrl(did);
+  if (pod === undefined) return;
   if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) return;
   const label = actorForPod(pod, MESH_ACTOR_LABELS);
   await composeIntoSharedLattice({
@@ -10643,7 +10670,8 @@ async function resolveCourseForRead(courseId: string, authorDid?: string): Promi
   const cached = agentScormCourses.get(courseId);
   if (cached) return cached;
   const tryPod = async (did: string): Promise<AgentScormCourse | null> => {
-    const pod = resolveSubjectPodUrl(did);
+    const pod = namedSubjectPodUrl(did);
+    if (pod === undefined) return null;   // an author the guest rule refuses holds no course here
     const loaded = await loadCourseFromLattice(pod, did, actorForPod(pod, MESH_ACTOR_LABELS), courseId).catch(() => null);
     if (loaded) { const c = loaded as unknown as AgentScormCourse; seatScormCourse(c); recordCourseAuthor(courseId, c.authoredBy || did); return c; }
     return null;
@@ -11868,7 +11896,8 @@ function contentRateLimited(req: import('express').Request, res: import('express
 
 /** A learner's competencies from their own record (read from their pod, as the learner record route reads it). */
 async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'): Promise<RecordedCompetency[]> {
-  const pod = resolveSubjectPodUrl(learnerDid);
+  const pod = namedSubjectPodUrl(learnerDid);
+  if (pod === undefined) return [];   // refused by the guest rule: no pod here to read a record from
   const tenantOrigin = (() => { try { return new URL(tenantPodUrl).origin; } catch { return ''; } })();
   const podOrigin = (() => { try { return new URL(pod).origin; } catch { return ''; } })();
   if (!tenantOrigin || podOrigin !== tenantOrigin) return [];   // no pod here to read a record from
@@ -11892,7 +11921,8 @@ async function learnerCompetencies(learnerDid: string, kind: 'human' | 'agent'):
  * pod whose list cannot be read now says so rather than reading as one where nothing was kept.
  */
 async function learnerAdmissions(learnerDid: string): Promise<{ ok: true; standing: Map<string, AdmissionRecord> } | { ok: false; error: string }> {
-  const pod = resolveSubjectPodUrl(learnerDid);
+  const pod = namedSubjectPodUrl(learnerDid);
+  if (pod === undefined) return { ok: true, standing: new Map() };   // refused by the guest rule: no pod here to have kept anything on
   if (!tenantPodUrl || !sameStore(pod, tenantPodUrl)) return { ok: true, standing: new Map() };
   const read = await readAdmissions(pod, bridgeEncryptionKeypair(), globalThis.fetch as never);
   return read.ok ? { ok: true, standing: standingAdmissions(read.records) } : read;
@@ -12387,17 +12417,27 @@ app.post('/agent/content/next', async (req, res) => {
 // A guest is a caller of its own kind. It reaches the bridge at ONE route, with one of the
 // operation names in src/guest-operations.ts (default-deny), and each handler below is given the
 // guest PRINCIPAL: whose record it is and which pod it touches come from `principal.guest`, never
-// from a request. A guest's record is one plain document on the guest's own pod
-// (src/guest-learning-record.ts). Nothing here writes a lens, a lattice, the efficacy tally, a
-// forwarding target or anything else on the tenant pod on a guest's behalf.
+// from a request. A guest's record is one SEALED document on the guest's own pod
+// (src/guest-learning-record.ts): the gate serves it to anyone who has the guest's id, and only
+// this bridge and the guest's own admitted tabs can open it. Nothing here writes a lens, a
+// lattice, the efficacy tally, a forwarding target or anything else on the tenant pod on a
+// guest's behalf.
 const dashboardGeneralGuest = dashboardGeneralGuestSettings(process.env, playGrantSettings);
 if (dashboardGeneralGuest && playGrants) {
   if (!guestIdentityHost || new URL(dashboardGeneralGuest.identityUrl).host.toLowerCase() !== guestIdentityHost) {
     throw new Error('FOXXI_PLAY_GENERAL_GUEST=1: the identity host the pod resolver was given is not the one the door answers for');
   }
   if (!tenantPodUrl) throw new Error('FOXXI_PLAY_GENERAL_GUEST=1 needs FOXXI_TENANT_POD_URL: a guest\'s pod is placed on the tenant pod\'s origin');
+  // The record is never written in the clear, so a bridge with nothing to seal it with does not
+  // offer the guest at all, rather than starting and refusing every step.
+  const guestSealSecret = guestRecordSealSecret(process.env);
+  if (!guestSealSecret) throw new Error('FOXXI_PLAY_GENERAL_GUEST=1 needs FOXXI_BRIDGE_PRIVATE_KEY (or FOXXI_WALLET_SEED): a guest\'s record is sealed with a key derived from it');
+  /** Bound below, once the door exists: the record keys of the tabs admitted as a guest now. */
+  let guestTabKeys: (userId: string) => readonly string[] = () => [];
   const guestRecords = new GuestLearningRecordStore({
     tenantPodUrl, identityHost: guestIdentityHost,
+    sealSecret: guestSealSecret,
+    tabKeys: owner => guestTabKeys(owner.userId),
     // The bridge's own fetch: it attaches the operator bearer to a write on the pod origin and to nothing else.
     fetch: (url, init) => (globalThis.fetch as typeof fetch)(url, init),
   });
@@ -12475,7 +12515,11 @@ if (dashboardGeneralGuest && playGrants) {
     ports: guestPorts,
     // The one resolver: for a guest's DID it is given the identity host and refuses the tenant pod.
     podFor: guestDid => resolveSubjectPodUrl(guestDid),
+    // Identity states the pod under its own spelling of this store; either spelling is this store.
+    sameStore,
+    record: guestRecords,
   });
+  guestTabKeys = userId => dashboardGeneralGuests.recordKeysOf(userId);
   dashboardGuestKeys = signer => dashboardGeneralGuests.holds(signer);
   attachDashboardGeneralGuestRoutes(app, dashboardGeneralGuests);
 }
