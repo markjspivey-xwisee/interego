@@ -139,6 +139,11 @@ describe('a gate arrives with a mutant', () => {
     // The harness takes the cut from the same module, and exits on a shard that holds nothing.
     const harness = readFileSync(join(ROOT, 'tools/mutation-gate.mjs'), 'utf8');
     expect(harness).toContain("import { parseShard, shardOf } from './mutation-gate.shard.mjs';");
-    expect(harness).toMatch(/if \(shard && pool\.length === 0\) \{[\s\S]{0,400}process\.exit\(1\);/);
+    // Anchored on structure, not on a window of characters: the guard's own block, from its
+    // `if` to the brace that closes it.
+    const guardAt = harness.indexOf('if (shard && pool.length === 0) {');
+    expect(guardAt).toBeGreaterThan(-1);
+    const guard = harness.slice(guardAt, harness.indexOf('\n}\n', guardAt));
+    expect(guard).toContain('process.exit(1);');
   });
 });
