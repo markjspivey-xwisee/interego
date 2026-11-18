@@ -733,7 +733,14 @@ const BASELINE = {};
 // 2026-11-15: tools/coached-world-guest-provision.mjs, its declarations and its test bring it to 715; the gate named 681.
 // 2026-11-17: tests/local-node-expired-sweep.test.ts brings it to 717; the gate named 682.
 // 2026-11-17: merged with master's 683, the scope is 719; the gate named 684.
-export const MIN_FILES = 685;
+// 2026-11-15: tests/hypermedia-client-rendering.test.ts and tests/hypermedia-client-cli.test.ts bring it to 717; the gate named 682.
+// 2026-11-16: tests/hypermedia-client-fixtures.ts brings it to 718; the gate named 683.
+// 2026-11-16: merging master (tools/prune-image-dev-tools.mjs among its new files) brings it to
+// 719; the gate named 684.
+// 2026-11-17: merging master (#938's files among them) brings it to 721; the gate named 686.
+// 2026-11-18: merging master (the local-node sweep test among its files) brings it to 723; the gate named 688.
+// 2026-11-18: merging master (the mutation-gate shard files among them) brings it to 726; the gate named 691.
+export const MIN_FILES = 691;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.

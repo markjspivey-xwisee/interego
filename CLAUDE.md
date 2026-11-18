@@ -280,8 +280,11 @@ session opened itself:
 - **Still ask first** before anything that cannot be undone outside the repository: deleting stored
   data, pods, Railway services or projects, and changes to the identity service's sign-in paths.
 
-Every pull request adds a CHANGELOG entry at the top, so open ones conflict whenever another merges.
-Merge `origin/master` in and keep both entries; do not rebase a pushed branch.
+Every pull request adds a changelog entry as **its own file under `changelog/`** (`<date>-<slug>.md`;
+`changelog/README.md` is the convention). Do not add a section to `CHANGELOG.md`: entries written at
+its top conflicted on every merge, and `tests/changelog-lint.test.ts` now fails a pull request that
+adds one. When a branch does conflict with master, merge `origin/master` in; do not rebase a pushed
+branch.
 
 ## Test expectations
 

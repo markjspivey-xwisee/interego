@@ -1,24 +1,30 @@
 # Changelog
 
-## 2026-11-18 — Auto-merge: the merge is held to the commit its checks were read on
+## 2026-11-18 — Practice Evidence: a voice check for the role-play player
 
-The gated auto-merge read the checks on one commit and then asked GitHub to
-merge the pull request, whatever its head was by then. A push that landed
-between the two would have been merged without its checks.
+`applications/practice-evidence/tools/voice-check.mjs` runs a whole practice in
+the role-play player by voice. Until now the spoken path was only ever tried by a
+person; every automated run tapped the written replies. The check speaks each
+reply with the Windows speech engine, plays it into an audio track in the page,
+and hands that track to Chrome's speech recogniser. What the page heard, which
+reply it matched, and the score are the page's own. It runs in the player's
+preview mode and saves nothing.
 
-- **The merge names the tested commit.** The driver now runs `gh pr merge
-  --merge --match-head-commit <sha>`, and GitHub refuses when the branch's head
-  is any other commit. The label is taken back on that refusal, as on any
-  failed merge.
-- **The workflow passes the head** (`--head-sha`), the same
-  `pull_request.head.sha` the wait for the suite and the other checks used.
-- **A missing or malformed head stops the driver** (exit 2) before it reads the
-  pull request, updates the branch, labels or merges. `--dry-run` needs none.
+It is run by hand, not in CI: it needs Windows, Chrome and a network connection.
+It does not exercise the microphone. Chrome's fake-microphone option does not
+reach the recogniser, so the check passes the audio track to it directly.
 
-**Not done.** Nothing here was run against GitHub: the tests cover the command
-that is built, what counts as a head, the order of the driver's steps and the
-workflow's wiring. `gh pr update-branch` is not pinned to a head. Found by
-ChatGPT's review of #950 and #951.
+Seen on its first run, and not changed here: the recogniser stops at the first
+pause, so the text saved as what the learner said can be the opening words only
+("to recap"), and that fragment still matches the full reply and takes its score.
+
+With `--cases <dir>` the check plays one recording per case to the recogniser at
+a given step and records what came back, final and interim, the reply the page
+highlighted and whether it offered to use it, without accepting it. The eight
+cases in `tools/voice-cases/` are spoken here. Two fail today, on purpose: "I
+cannot refund the duplicate today" highlights the reply that refunds it, and "to
+recap" alone highlights the full recap. A pause of 550 ms was enough to end the
+recogniser after "to recap".
 
 ## 2026-11-17 — Foxxi's profile, version 2: a projection names its descriptor one way, and three concepts say what they evidence
 
@@ -11807,6 +11813,10 @@ The existing MCP connection can automatically report allowlisted request metadat
 Telemetry now suppresses public per-event descriptor publication while retaining encrypted canonical persistence and authenticated LRS access. Receipts omit unpublished locators. Existing descriptor publication remains the default for other applications. A transport-level regression verifies both paths.
 
 Notable changes to @interego/core. Dates are UTC.
+
+**This file takes no new entries.** Since 2026-11-18 an entry is its own file under
+[`changelog/`](changelog/), so that two open pull requests never write to the same line;
+[`changelog/README.md`](changelog/README.md) says how and why. Everything up to that date is here.
 
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) with RFC 2119-style
 capability descriptions. The README describes what the system IS, this file describes
