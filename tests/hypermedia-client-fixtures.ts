@@ -3472,21 +3472,25 @@ export function invokeNotFollowed(method: string, url: string, status: number | 
 export const RESPONSE_MAX = 8 * 1024 * 1024;
 export const RESPONSE_TOO_LARGE = `This response is larger than ${RESPONSE_MAX} bytes, so it was not read, and nothing of it is shown.`;
 /**
- * What laying out a response of n bytes may add: LAYOUT_PER_BYTE units for each of its bytes, and
- * LAYOUT_FLOOR at least. The page's table of a SPARQL result counts CELL_UNITS for each cell (its
- * head's and each row included) and a unit for each character a cell shows; indenting JSON, in
- * either client, counts each character it adds. Past that the response is shown as its text, as a
- * body neither client recognises is, after a note naming why (tableAsText, jsonAsText).
+ * What indenting a response of n bytes may add, in either client: LAYOUT_PER_BYTE characters for
+ * each of its bytes, and LAYOUT_FLOOR at least. Past that the response is shown as its text, as a
+ * body neither client recognises is, after a note naming why (jsonAsText).
  */
 export const LAYOUT_PER_BYTE = 8;
 export const LAYOUT_FLOOR = 10_000;
 export const layoutBound = (bytes: number) => Math.max(LAYOUT_FLOOR, LAYOUT_PER_BYTE * bytes);
 /**
- * What one cell of the page's table counts beyond the characters it shows: the markup of an empty
- * one, `<td></td>`. A head's cell and a row count as much, so a table has fewer elements than its
- * response has bytes, however few of those bytes it shows.
+ * The most elements the page's table of a SPARQL result of n bytes may have: one for each
+ * TABLE_BYTES_PER_ELEMENT bytes, and TABLE_FLOOR at least, each cell, its head's and each row an
+ * element (the head's row too), and a cell that shows anything two, for the link it may be. Its
+ * cells show no more characters than the response has bytes, and LAYOUT_FLOOR at least. Past
+ * either the response is shown as its text, after a note naming why (tableAsText). jsdom builds an
+ * element in about 17 us, against the 12.5 us a byte the time rule allows, so a table at the bound
+ * takes about a quarter of what its size allows, and one at the floor 0.8 s of 3 s.
  */
-export const CELL_UNITS = 9;
+export const TABLE_BYTES_PER_ELEMENT = 8;
+export const TABLE_FLOOR = 30_000;
+export const tableElements = (bytes: number) => Math.max(TABLE_FLOOR, Math.floor(bytes / TABLE_BYTES_PER_ELEMENT));
 export const tableAsText = (rows: number, columns: number, bytes: number) =>
   `This result's table would have ${rows} row(s) x ${columns} column(s), more than a response of ${bytes} bytes is shown as; it is shown as text.`;
 export const jsonAsText = (added: number, bytes: number) =>
@@ -3497,6 +3501,8 @@ export type Shown = 'table' | 'json' | 'text' | 'nothing';
 export interface ShownCase {
   readonly name: string; readonly type: string; readonly body: string; readonly bytes: number;
   readonly page: Shown; readonly hmc: Shown; readonly pageNote: string | null; readonly hmcNote: string | null;
+  /** The most the page may take to show it, in ms, where that is less than its size allows. */
+  readonly ms?: number;
 }
 let shownMemo: ReadonlyArray<ShownCase> | null = null;
 /**
@@ -3511,12 +3517,23 @@ let shownMemo: ReadonlyArray<ShownCase> | null = null;
  *   - too-deep: JSON nested 5,000 deep, which neither client reads as JSON, so it is its text;
  *   - geo: honest GeoJSON, nested seven deep, still indented;
  *   - largest, too-large: text of RESPONSE_MAX bytes, shown, and of one byte more, not read;
- *   - long-names: 50 variables of 4,000 characters and 80,000 empty bindings, 440 KB, which the page
- *     looked up by name in each row, each lookup costing the name's length (24 s);
+ *   - long-names: 50 variables of 16,000 characters and 400,000 empty bindings, 2 MB, which the
+ *     page once looked up by name in each row, each lookup costing the name's length. Within its
+ *     bound, about 5,000 rows, that was 7 s, and the table's bound alone allows that, so the row is
+ *     held to 3 s: mapped once, its names cost 0.5 s. (V8 hashes a name of 16,384 characters or more
+ *     by its length alone, at no cost, so longer names would not measure the lookup.)
  *   - long-names-table: 2 variables of 16,000 characters, one no binding names, and a short one,
- *     with 8,000 bindings, whose table fits: each name was looked up in each row, twice;
+ *     with 7,000 bindings, whose table fits: each name was looked up in each row, twice;
  *   - padded: 400 variables and 400 empty bindings after 20,000 bytes of whitespace, which the page
- *     built as 160,000 cells, 7 for each byte, the bytes it never shows counted for them.
+ *     built as 160,000 cells, 7 for each byte, the bytes it never shows counted for them;
+ *   - honest-sparse, optional: honest results that bind little, as unmatched OPTIONALs leave them,
+ *     2 variables and 500 empty bindings, and 8 variables and 3,000 bindings, one in ten binding one
+ *     IRI: tables, as small results are, within TABLE_FLOOR;
+ *   - at-bound, past-bound: 100 variables and as many empty bindings as the table's bound allows at
+ *     256 KiB, padded with whitespace to it, a table that takes a quarter of the time its size
+ *     allows; and one binding more, shown as text;
+ *   - one-column: 1 variable and 87,000 empty bindings, 261 KB, two elements for each 3 bytes, a
+ *     table that took longer than its size allows, shown as text.
  * hmc.py shows no table: it writes a SPARQL result as the JSON it is, indented by the same rule.
  */
 export function shownCases(): ReadonlyArray<ShownCase> {
@@ -3535,10 +3552,17 @@ export function shownCases(): ReadonlyArray<ShownCase> {
   const indented = `[${Array.from({ length: 40 }, () => JSON.stringify(nested(255))).join(',')}]`;
   const none = () => null;
   const build = (name: string, type: string, body: string, page: Shown, hmc: Shown,
-    pageNote: (bytes: number) => string | null, hmcNote: (bytes: number) => string | null = pageNote): ShownCase => {
+    pageNote: (bytes: number) => string | null, hmcNote: (bytes: number) => string | null = pageNote, ms?: number): ShownCase => {
     const bytes = Buffer.byteLength(body);
-    return { name, type, body, bytes, page, hmc, pageNote: pageNote(bytes), hmcNote: hmcNote(bytes) };
+    return { name, type, body, bytes, page, hmc, pageNote: pageNote(bytes), hmcNote: hmcNote(bytes), ...(ms === undefined ? {} : { ms }) };
   };
+  // A body padded with spaces after it to `bytes` bytes.
+  const padTo = (body: string, bytes: number) => body + ' '.repeat(bytes - Buffer.byteLength(body));
+  // The most empty bindings of 100 variables the table's bound allows at 256 KiB: the head's row and
+  // a cell for each variable, then a row and a cell for each variable for each binding.
+  const AT_BOUND = 256 * 1024;
+  const atBound = Math.floor((tableElements(AT_BOUND) - 1 - 100) / 101);
+  const optional = Array.from({ length: 3000 }, (_, i) => i % 10 ? {} : { [vars[i % 8]!]: { type: 'uri', value: `https://data.example/o/${i}` } });
   shownMemo = [
     build('sparse', SPARQL, sparql(vars, Array(1000).fill({})), 'text', 'json', bytes => tableAsText(1000, 1000, bytes), none),
     build('dense', SPARQL, sparql(['s', 'p', 'o'], dense), 'table', 'json', none),
@@ -3549,11 +3573,18 @@ export function shownCases(): ReadonlyArray<ShownCase> {
     build('geo', 'application/geo+json', JSON.stringify(geo), 'json', 'json', none),
     build('largest', 'text/plain', 'x'.repeat(RESPONSE_MAX), 'text', 'text', none),
     build('too-large', 'text/plain', 'x'.repeat(RESPONSE_MAX + 1), 'nothing', 'nothing', () => RESPONSE_TOO_LARGE),
-    build('long-names', SPARQL, sparql(named(50, 4000), Array(80000).fill({})), 'text', 'json', bytes => tableAsText(80000, 50, bytes), none),
-    build('long-names-table', SPARQL, sparql([...named(2, 16000), 's'], Array.from({ length: 8000 }, (_, i) =>
+    build('long-names', SPARQL, sparql(named(50, 16000), Array(400000).fill({})), 'text', 'json', bytes => tableAsText(400000, 50, bytes), none,
+      3_000),
+    build('long-names-table', SPARQL, sparql([...named(2, 16000), 's'], Array.from({ length: 7000 }, (_, i) =>
       i < 2 ? { [i ? 's' : named(2, 16000)[1]!]: { type: 'uri', value: `https://data.example/bound/${i}` } } : {})), 'table', 'json', none),
     build('padded', SPARQL, sparql(vars.slice(0, 400), Array(400).fill({})) + ' '.repeat(20000), 'text', 'json',
       bytes => tableAsText(400, 400, bytes), none),
+    build('honest-sparse', SPARQL, sparql(['s', 'o'], Array(500).fill({})), 'table', 'json', none),
+    build('optional', SPARQL, sparql(vars.slice(0, 8), optional), 'table', 'json', none),
+    build('at-bound', SPARQL, padTo(sparql(vars.slice(0, 100), Array(atBound).fill({})), AT_BOUND), 'table', 'json', none),
+    build('past-bound', SPARQL, padTo(sparql(vars.slice(0, 100), Array(atBound + 1).fill({})), AT_BOUND), 'text', 'json',
+      bytes => tableAsText(atBound + 1, 100, bytes), none),
+    build('one-column', SPARQL, sparql(['s'], Array(87000).fill({})), 'text', 'json', bytes => tableAsText(87000, 1, bytes), none),
   ];
   return shownMemo;
 }

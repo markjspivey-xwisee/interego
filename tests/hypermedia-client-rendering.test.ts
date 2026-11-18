@@ -28,7 +28,7 @@ import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_C
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
   LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES, EMPTY_CASES,
   WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, layoutBound, shownCases,
-  CELL_UNITS, type HopHeaders } from './hypermedia-client-fixtures.js';
+  tableElements, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -916,12 +916,12 @@ describe('hypermedia client: remote text costs linear time', () => {
 describe('hypermedia client: what a response is shown as grows with its size, not with the product of its parts', () => {
   // Each /shown control, invoked by a link: the page shows its answer as a table, indented JSON or
   // its text, or nothing of it, as shownCases says, with the note hmc.py writes for the same rule.
-  // What is shown is counted: the elements and characters in the result, against what laying out
-  // a response of its size may add (layoutBound), with its text and the request's beside it; a
-  // table's cell, row and head cell each count CELL_UNITS of it, so it has fewer elements than the
-  // response has bytes. A table shows each binding's value in the column of each variable that
-  // names it, and nothing in the others. Time grows with the response as the work rows' does: 3 s,
-  // or 1 ms for each 80 bytes where that is more.
+  // What is shown is counted: the elements in the result, against the most a table of a response
+  // of its size may have (tableElements: one for each 8 bytes, and 30,000 at least), and the
+  // characters, against what laying out a response of its size may add (layoutBound), with its
+  // text and the request's beside it. A table shows each binding's value in the column of each
+  // variable that names it, and nothing in the others. Time grows with the response as the work
+  // rows' does: 3 s, or 1 ms for each 80 bytes where that is more, unless the row says less.
   it.each(shownCases().map(c => [c.name] as const))('shows /shown/%s within what its size allows', async name => {
     const c = shownCases().find(one => one.name === name)!;
     const started = Date.now();
@@ -930,7 +930,7 @@ describe('hypermedia client: what a response is shown as grows with its size, no
       const { document } = t;
       await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'),
         { timeout: 110_000 });
-      expect(Date.now() - started, 'link to done').toBeLessThan(Math.max(3_000, Math.ceil(c.bytes / 80)));
+      expect(Date.now() - started, 'link to done').toBeLessThan(c.ms ?? Math.max(3_000, Math.ceil(c.bytes / 80)));
       const result = document.getElementById('result')!;
       expect(result.querySelector('.ok')!.textContent).toBe(invokeDone(`${HOST}/shown/${name}`, 200));
       const shown: Element[] = [];
@@ -956,7 +956,7 @@ describe('hypermedia client: what a response is shown as grows with its size, no
         expect([...tables[0]!.querySelectorAll('thead th')].map(th => th.textContent)).toEqual(parsed.head.vars);
         expect([...tables[0]!.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(td => td.textContent))).toEqual(expected);
       }
-      expect(result.querySelectorAll('*').length, 'elements shown').toBeLessThanOrEqual(Math.floor(layoutBound(c.bytes) / CELL_UNITS) + 50);
+      expect(result.querySelectorAll('*').length, 'elements shown').toBeLessThanOrEqual(tableElements(c.bytes) + 50);
       expect(result.textContent!.length, 'characters shown')
         .toBeLessThanOrEqual(c.page === 'nothing' ? 5_000 : layoutBound(c.bytes) + 6 * c.bytes + 5_000);
       assertInert(t, name);

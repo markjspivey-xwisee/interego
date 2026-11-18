@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-8Df0lN3LBy5AZOcSedD9EZpS9V//THV0HzCAjI+ytto='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-gg70oea7TU28Y9nrr7FZMxCXqU3kRjFlSRNqhSDMpPY='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -4948,23 +4948,31 @@ async function readResponse(res) {
   return { text: parts.join(""), size };
 }
 // What a response is shown as grows at most linearly with its size. Its text is
-// shown as received, escaped, with each https URL in it a link. Laying it out (a
-// SPARQL JSON result as a table, other JSON indented) may add LAYOUT_PER_BYTE
-// units for each of its bytes, and LAYOUT_FLOOR at least (layoutBound): a table
-// counts CELL_UNITS for each cell, its head's and each row included, and one for
-// each character a cell shows, and indenting counts each character it adds. Past
-// that the response is shown as its text, after a note naming why (tableAsText,
-// jsonAsText), so neither a product of a result's rows and columns, nor a value
-// a column names again, nor bytes a table never shows, nor JSON's depth sets
-// what is shown. hmc.py, which shows no table, indents JSON by the same rule:
-// its _LAYOUT_PER_BYTE, _LAYOUT_FLOOR, _indent_size and _json_as_text are the same.
+// shown as received, escaped, with each https URL in it a link. Indenting JSON
+// may add LAYOUT_PER_BYTE characters for each of its bytes, and LAYOUT_FLOOR at
+// least (layoutBound). A SPARQL JSON result is laid out as a table within a bound
+// of its own (tableBound), since a table is laid out an element at a time, and an
+// element costs a browser, and jsdom, far more than a character does: at most one
+// element for each TABLE_BYTES_PER_ELEMENT bytes of the response, and TABLE_FLOOR
+// at least, each cell, its head's and each row an element, and a cell that shows
+// anything two, for the link it may be shown as; and its cells show no more
+// characters than the response has bytes, and LAYOUT_FLOOR at least. An honest
+// result shows each name and value it holds once, so it shows fewer characters
+// than it has bytes, and a cell it binds takes some 30 bytes of it, so it is a
+// table at any size unless most of its cells are empty. Past either bound the
+// response is shown as its text, after a note naming why (tableAsText, jsonAsText), so
+// neither a product of a result's rows and columns, nor a value a column names
+// again, nor bytes a table never shows, nor JSON's depth sets what is shown.
+// hmc.py, which shows no table, indents JSON by the same rule: its
+// _LAYOUT_PER_BYTE, _LAYOUT_FLOOR, _indent_size and _json_as_text are the same.
 const LAYOUT_PER_BYTE = 8;
 const LAYOUT_FLOOR = 10000;
-// What a cell counts beyond the characters it shows: the markup of an empty one,
-// <td></td>. A head's cell (<th></th>) and a row (<tr></tr>) count as much, so a
-// table has fewer elements than its response has bytes, however few it shows.
-const CELL_UNITS = 9;
+const TABLE_BYTES_PER_ELEMENT = 8;
+const TABLE_FLOOR = 30000;
 function layoutBound(size) { return Math.max(LAYOUT_FLOOR, LAYOUT_PER_BYTE * size); }
+function tableBound(size) {
+  return { elements: Math.max(TABLE_FLOOR, Math.floor(size / TABLE_BYTES_PER_ELEMENT)), chars: Math.max(LAYOUT_FLOOR, size) };
+}
 function tableAsText(rows, columns, size) {
   return "This result's table would have " + rows + " row(s) x " + columns + " column(s), more than a response of " + size +
     " bytes is shown as; it is shown as text.";
@@ -4992,30 +5000,34 @@ function indentSize(value) {
 }
 // What a SPARQL result's table shows: for each binding, the text of each column,
 // its value for the variable the column names (empty where it binds none), or
-// null when the table would count more than `bound` (layoutBound). It is counted
-// as it is read, so the count stops as soon as it passes the bound, never after
-// the whole product of rows and columns. A row's own keys are each looked up once
-// among the columns, which are mapped from their variables once, so a row costs
-// the time of its keys, never of each variable's name: a column a row binds
-// nothing for is left empty without a lookup, and a key two columns name fills both.
+// null when the table would pass `bound` (tableBound), in elements or in
+// characters. It is counted as it is read, so the count stops as soon as it
+// passes the bound, never after the whole product of rows and columns. A row's
+// own keys are each looked up once among the columns, which are mapped from their
+// variables once, so a row costs the time of its keys, never of each variable's
+// name: a column a row binds nothing for is left empty without a lookup, and a
+// key two columns name fills both.
 function tableTexts(vars, bindings, bound) {
   const columns = new Map();
-  let total = 0;
+  // The head's row, and a cell for each variable, showing its name.
+  let elements = 1;
+  let chars = 0;
   for (let i = 0; i < vars.length; i++) {
-    if ((total += CELL_UNITS + vars[i].length) > bound) return null;
+    if (++elements > bound.elements || (chars += vars[i].length) > bound.chars) return null;
     const at = columns.get(vars[i]);
     if (at) at.push(i); else columns.set(vars[i], [i]);
   }
   const rows = [];
   for (const row of bindings) {
-    if ((total += CELL_UNITS * (1 + vars.length)) > bound) return null;
+    if ((elements += 1 + vars.length) > bound.elements) return null;
     const texts = new Array(vars.length).fill("");
     for (const key of Object.getOwnPropertyNames(row)) {
       const at = columns.get(key);
       if (!at) continue;
       const cell = row[key];
       const text = asText(cell && typeof cell === "object" ? cell.value : cell);
-      if ((total += at.length * text.length) > bound) return null;
+      if (!text) continue;
+      if ((elements += at.length) > bound.elements || (chars += at.length * text.length) > bound.chars) return null;
       for (const i of at) texts[i] = text;
     }
     rows.push(texts);
@@ -5033,7 +5045,7 @@ function renderBody(contentType, body, parsed, done, size) {
   if (parsed && parsed.head && parsed.results && Array.isArray(parsed.results.bindings)) {
     const bindings = parsed.results.bindings.filter(row => row && typeof row === "object");
     const vars = (Array.isArray(parsed.head.vars) ? parsed.head.vars : Object.keys(bindings[0] || {})).map(asText);
-    const rows = tableTexts(vars, bindings, layoutBound(size));
+    const rows = tableTexts(vars, bindings, tableBound(size));
     if (!rows) return asTextAfter(tableAsText(bindings.length, vars.length, size));
     const html = [`<div class="${note}">SPARQL result: ${bindings.length} row(s)</div><table class="sparql"><thead><tr>`];
     for (const v of vars) html.push("<th>" + esc(v) + "</th>");

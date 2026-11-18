@@ -7523,8 +7523,8 @@ def _document_too_large(url: str) -> str:
 # for each of its bytes, and _LAYOUT_FLOOR at least. Past that it is shown as its
 # text, after a note naming why (_json_as_text), so JSON's depth does not set
 # what is written. The page's LAYOUT_PER_BYTE, LAYOUT_FLOOR, indentSize and
-# jsonAsText are the same; the page also lays a SPARQL result out as a table, by
-# the same bound, where hmc.py writes it as the JSON it is.
+# jsonAsText are the same; the page also lays a SPARQL result out as a table,
+# within a bound of its own, where hmc.py writes it as the JSON it is.
 _LAYOUT_PER_BYTE = 8
 _LAYOUT_FLOOR = 10000
 
