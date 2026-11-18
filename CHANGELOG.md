@@ -692,6 +692,11 @@ input that allows none keeps its control from being invoked. An empty `allOf`,
 `anyOf`, `oneOf` or `prefixItems` is malformed. Of 52 new shared rows, 36
 failed in each client before. The CSP hash moves.
 
+`hmc.py describe` and `list --json` now name, for each field, the constraint
+whose list is given empty (`empty`), since `in` alone does not tell an empty
+list from none, and the README's rule that `[]` is no value names the SHACL
+list parameters as its exception.
+
 ## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
 
 A Quoted descriptor repeats someone else's claim without endorsing it. The

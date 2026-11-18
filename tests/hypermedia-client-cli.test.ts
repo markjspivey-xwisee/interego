@@ -508,17 +508,29 @@ describe('hmc.py: through an HTTP proxy its environment names', () => {
 });
 
 describe('hmc.py: SHACL sh:in lists', () => {
+  it.each([['urn:empty:or-array', 'sh:or'], ['urn:empty:xone-array', 'sh:xone'], ['urn:empty:language-nil', 'sh:languageIn'], ['urn:empty:enum', 'enum']])(
+    'describe and list --json name an empty %s list as the field\'s (%s), where "in" says nothing of it', async (rel, constraint) => {
+      const d = await hmc(['describe', `${base}/empty-lists`, rel]);
+      expect(d.code, d.stderr).toBe(0);
+      const fields = (JSON.parse(d.stdout) as { fields: Array<{ empty: string | null }> }).fields;
+      expect(fields.map(f => f.empty)).toEqual([constraint]);
+      const doc = await listed('/empty-lists');
+      expect(doc.fields.filter(f => f.empty === constraint).length).toBeGreaterThan(0);
+    });
   it('reads the members of a JSON-LD list, an RDF list and a plain array, accepts them, and refuses a value for an empty list', async () => {
     const d = await hmc(['describe', `${base}/list-enum`, 'urn:list-enum']);
     expect(d.code, d.stderr).toBe(0);
-    const fields = (JSON.parse(d.stdout) as { fields: Array<{ name: string; in: unknown[] }> }).fields;
+    const fields = (JSON.parse(d.stdout) as { fields: Array<{ name: string; in: unknown[]; empty: string | null }> }).fields;
     expect(Object.fromEntries(fields.map(f => [f.name, f.in]))).toEqual({
       status: ['draft', 'published'], wrapped: ['low', `${base}/high`], nodes: ['one', 'two'], plain: ['red', 'blue'], empty: [],
     });
+    // describe names the list given empty, which "in" alone does not tell from no list.
+    expect(Object.fromEntries(fields.map(f => [f.name, f.empty]))).toEqual({ status: null, wrapped: null, nodes: null, plain: null, empty: 'sh:in' });
     // list --json names the empty list as the field's, never null, which says it names none.
     const doc = await listed('/list-enum');
     const named = Object.fromEntries(doc.fields.map(f => [f.name, f.in === null ? null : doc.inLists[f.in]]));
     expect(named).toEqual({ status: ['draft', 'published'], wrapped: ['low', `${base}/high`], nodes: ['one', 'two'], plain: ['red', 'blue'], empty: [] });
+    expect(Object.fromEntries(doc.fields.map(f => [f.name, f.empty]))).toEqual({ status: null, wrapped: null, nodes: null, plain: null, empty: 'sh:in' });
     const chosen = ['--field', 'status=draft', '--field', 'wrapped=low', '--field', 'nodes=two', '--field', 'plain=blue'];
     // An empty list allows no value: one given for it is refused, and nothing is sent.
     const refused = await hmc(['invoke', `${base}/list-enum`, 'urn:list-enum', ...chosen, '--field', 'empty=anything']);
@@ -757,7 +769,7 @@ async function dry(path: string, rel: string, fields: Record<string, string | st
 // place as fieldList, or null for a control that is not invoked, whose fields are not given, and,
 // as templateFields, the place of the list of its template's variables that follow its own fields,
 // which the controls that share the template share.
-type ListedField = { name: string; required: boolean; multi: boolean; in: number | null; description: string | null };
+type ListedField = { name: string; required: boolean; multi: boolean; in: number | null; empty: string | null; description: string | null };
 type Listed = { title: string; seeAlso: string[]; fields: ListedField[]; inLists: unknown[][]; fieldLists: number[][];
   controls: Array<{ rel: string; title: string; method: string; unsafe: boolean; target: string | null;
   warning: string | null; problem: string | null; fieldList: number | null; templateFields: number | null; unlisted: boolean }> };

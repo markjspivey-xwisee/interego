@@ -2080,6 +2080,10 @@ class Field:
             "pattern": self.pattern, "defaultValue": self.default,
             "maxLength": self.max_length, "minLength": self.min_length,
             "description": self.description, "in": self.enum,
+            # The constraint whose list is given empty, so the field allows no
+            # value ("sh:in", "sh:or", "sh:xone", "sh:languageIn" or "enum"),
+            # which "in" alone does not say; None where none is.
+            "empty": self.empty,
             "minInclusive": self.min_inclusive, "maxInclusive": self.max_inclusive,
             "required": self.required or (self.min_count or 0) >= 1,
             "rawBody": self.raw_body, "variable": self.variable,
