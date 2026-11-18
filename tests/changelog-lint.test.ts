@@ -16,7 +16,8 @@
  * from the current tree, like a citation that DOES resolve.
  */
 import { describe, it, expect } from 'vitest';
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
+import { spawnSync } from 'node:child_process';
 import { resolve, dirname } from 'node:path';
 import { fileURLToPath } from 'node:url';
 
@@ -159,5 +160,87 @@ describe('the changelog gate', () => {
     // quotes, which is how it was written — still fails here.
     expect(live.replace(/"[^"]*"/g, ''))
       .not.toMatch(/Commit hashes link back to the git history/);
+  });
+});
+
+// ── entries are one file each ─────────────────────────────────────────────────────────────
+//
+// Every pull request wrote its entry at the top of CHANGELOG.md, so every merge to master put
+// every other open pull request into conflict at the same line. Each resolution was a push and
+// each push restarted every check: on 2026-11-17, #950 took six such pushes and #951 five, about
+// fifty checks each, before either could land. An entry is now its own file under changelog/.
+
+describe('changelog entries are one file each, under changelog/', () => {
+  const DIR = resolve(REPO, 'changelog');
+  const files = existsSync(DIR) ? readdirSync(DIR).filter((f) => f.endsWith('.md') && f !== 'README.md').sort() : [];
+  const git = (args: string[]) => {
+    const r = spawnSync('git', args, { cwd: REPO, encoding: 'utf8' });
+    return { ok: r.status === 0, out: (r.stdout ?? '').trim() };
+  };
+
+  it('the directory says how, and has at least the entry that introduced it', () => {
+    expect(existsSync(resolve(DIR, 'README.md'))).toBe(true);
+    expect(files.length).toBeGreaterThan(0);
+    expect(files).toContain('2026-11-18-changelog-entries-are-one-file-each.md');
+  });
+
+  it('each entry file is named <date>-<slug>.md and opens with its heading, on that date', () => {
+    for (const f of files) {
+      const m = /^(\d{4}-\d{2}-\d{2})-[a-z0-9]+(?:-[a-z0-9]+)*\.md$/.exec(f);
+      expect(m, `${f}: name an entry <YYYY-MM-DD>-<lowercase-slug>.md (changelog/README.md)`).not.toBeNull();
+      const first = readFileSync(resolve(DIR, f), 'utf8').split(/\r?\n/)[0] ?? '';
+      expect(first, `${f}: the first line is the entry's heading, "## ${m?.[1]} — <title>"`).toMatch(new RegExp(`^## ${m?.[1]} — \\S`));
+    }
+  });
+
+  it('the gate reads the entry files: their citations, and their merges as documented', async () => {
+    const lint = readFileSync(resolve(REPO, 'tools/changelog-lint.mjs'), 'utf8');
+    // Left out of the path, every merge from here on would count as undocumented.
+    expect(lint).toContain("'--', 'CHANGELOG.md', ENTRY_DIR]");
+    const m = await import(new URL('../tools/changelog-lint.mjs', import.meta.url).href) as { ENTRY_DIR?: string; entryFiles?: (root?: string) => string[] };
+    expect(m.ENTRY_DIR).toBe('changelog');
+    expect(m.entryFiles?.(REPO).map((p) => p.replace(/\\/g, '/').split('/').pop())).toEqual(files);
+    expect(live).toMatch(/This file takes no new entries/);
+  });
+
+  it('★ this branch adds no entry to CHANGELOG.md: an entry at its top conflicts with every merge', () => {
+    // Measured against the merge-base with master, working tree included, so it fails before
+    // the push and not after. It runs in the pull request's suite only (Bridge Typecheck does
+    // not run on master), so a pull request opened before this convention that lands with an
+    // entry in CHANGELOG.md does not turn master red: it is the next pull request that takes
+    // master in and is asked to move its own.
+    // origin/master where there is one; a clone whose default branch has no remote-tracking ref
+    // (a bare local clone) still has master itself.
+    const tracked = git(['merge-base', 'origin/master', 'HEAD']);
+    const base = tracked.ok ? tracked : git(['merge-base', 'master', 'HEAD']);
+    if (!base.ok) {
+      // ★ A SHALLOW CLONE HAS NO MERGE-BASE TO ASK FOR, AND IT IS NOT THE RUN THIS BELONGS TO.
+      // base-without-verticals.yml runs this file too: its checkout takes the default depth of
+      // one, and it also runs on master pushes. The first version of this test threw there in
+      // CI, on every pull request, for a reason that has nothing to do with the changelog
+      // (found in review of #964, before it ran). The run that carries this assertion is Bridge
+      // Typecheck's suite, a full clone, and the test below holds that depth in place. So a
+      // shallow clone passes here, and a FULL clone that still cannot find master is refused,
+      // wherever it runs: there, "could not check" must not read as "fine". (It asked the
+      // environment whether this was CI at first. That made it the second test module to read
+      // that variable, which applications/_shared/tests/shared-live-externals.test.ts counts,
+      // and the answer never mattered: a full clone with no master is wrong anywhere.)
+      const shallow = git(['rev-parse', '--is-shallow-repository']).out === 'true';
+      if (!shallow) throw new Error('neither origin/master nor master resolves in this full clone, so whether this branch adds an entry to CHANGELOG.md cannot be checked. Fetch master.');
+      return;
+    }
+    const diff = git(['diff', '--unified=0', base.out, '--', 'CHANGELOG.md']);
+    expect(diff.ok).toBe(true);
+    const added = diff.out.split('\n').filter((l) => /^\+##\s/.test(l)).map((l) => l.slice(1));
+    expect(added, 'CHANGELOG.md takes no new entries. Move each of these, unchanged, into its own file under changelog/ named <date>-<slug>.md (changelog/README.md), and restore CHANGELOG.md to master\'s (git checkout origin/master -- CHANGELOG.md). Two files never conflict; two entries at the top of one file always do.').toEqual([]);
+  });
+
+  it('the suite that carries that assertion is a full clone: Bridge Typecheck checks out every commit', () => {
+    // The assertion above passes on a shallow clone, so it is only as good as the one run that
+    // is not shallow. If this depth is ever dropped, the rule would pass everywhere, unread.
+    const workflow = readFileSync(resolve(REPO, '.github/workflows/bridge-typecheck.yml'), 'utf8');
+    const suiteJob = /^ {2}suite:\n([\s\S]*?)^ {2}[a-z][a-z0-9-]*:\n/m.exec(workflow)?.[1] ?? '';
+    expect(suiteJob).toContain('npx vitest run');
+    expect(suiteJob, 'the suite job must check out with fetch-depth: 0').toMatch(/fetch-depth:\s*0\b/);
   });
 });
