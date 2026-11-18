@@ -28,7 +28,7 @@ import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_C
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
   LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES, EMPTY_CASES,
   WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, layoutBound, shownCases,
-  tableElements, RESPONSE_MAX, type HopHeaders } from './hypermedia-client-fixtures.js';
+  tableElements, RESPONSE_MAX, RESPONSE_TOO_LARGE, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -796,6 +796,11 @@ describe('hypermedia client: an invoke goes only where its dry run says, and onl
         const body = [...result.querySelectorAll('pre')].filter(pre => pre.textContent === LANDING_BODY);
         if (method === 'HEAD') expect(body, title).toEqual([]);
         else if (!landedAt && 'landed' in end && end.landed && end.landed.startsWith('/landing')) expect(body, title).toHaveLength(1);
+        // A body past RESPONSE_MAX is not read, whatever its status: nothing of it is shown, and the note says so.
+        if ('tooLarge' in end) {
+          const after = result.querySelector('.resp-title')!.nextElementSibling;
+          expect([after?.className, after?.textContent, after?.nextElementSibling ?? null], title).toEqual([done ? 'ok' : 'warn', RESPONSE_TOO_LARGE, null]);
+        }
       }
       assertInert(t, 'outcomes');
     } finally { t.dom.window.close(); }
@@ -875,11 +880,12 @@ describe('hypermedia client: a load whose requests fail, as hmc.py\'s', () => {
       // Every request of a load, at each address a redirect leads it to, is a GET with the load's Accept.
       expect(t.hops.map(h => [h.method, h.headers]), status()).toEqual(t.hops.map(() => ['GET', LOAD_HEADERS]));
       if (outcome.requests !== undefined) expect(requests, status()).toHaveLength(outcome.requests);
-      // Each answer's body is read to its end when it is 2xx and RESPONSE_MAX bytes at most. One
-      // that is not 2xx is cancelled unread, since it does not count whatever it holds, and one
-      // longer is cancelled once past RESPONSE_MAX bytes. One the connection drops errs.
-      const expected = (b: BodyRead): [BodyRead['end'], number] => b.cut !== null ? ['errored', b.cut]
-        : b.status < 200 || b.status > 299 ? ['cancelled', 0]
+      // An answer that is not 2xx is cancelled unread, since it does not count whatever it holds, a
+      // body the connection drops included. A 2xx answer's body is read to its end when it is
+      // RESPONSE_MAX bytes at most, and one longer is cancelled once past RESPONSE_MAX bytes. One the
+      // connection drops errs.
+      const expected = (b: BodyRead): [BodyRead['end'], number] => b.status < 200 || b.status > 299 ? ['cancelled', 0]
+        : b.cut !== null ? ['errored', b.cut]
         : b.size > RESPONSE_MAX ? ['cancelled', Math.min(b.size, RESPONSE_MAX + 65_536)] : ['read', b.size];
       expect(t.reads.map(b => [b.path, b.format, b.end, b.read]), status()).toEqual(t.reads.map(b => [b.path, b.format, ...expected(b)]));
       if (!('titles' in outcome)) {
@@ -993,7 +999,7 @@ describe('hypermedia client: what a response is shown as grows with its size, no
         expect(tables[0]!.querySelectorAll('td')).toHaveLength(parsed.results.bindings.length * parsed.head.vars.length);
         // The columns each variable heads, found once; each binding's own keys fill theirs.
         const columns = new Map<string, number[]>();
-        parsed.head.vars.forEach((v, i) => columns.set(v, [...columns.get(v) ?? [], i]));
+        parsed.head.vars.forEach((v, i) => { const at = columns.get(v); if (at) at.push(i); else columns.set(v, [i]); });
         const expected = parsed.results.bindings.map(row => {
           const texts: string[] = parsed.head.vars.map(() => '');
           for (const [key, cell] of Object.entries(row as Record<string, { value: string }>)) for (const i of columns.get(key) ?? []) texts[i] = cell.value;

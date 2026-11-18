@@ -19,7 +19,7 @@ import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDe
   hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED, LOAD_HEADERS,
   OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, RULE_CASES, EMPTY_CASES,
   WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, turtleCostCases,
-  layoutBound, shownCases, type HopHeaders } from './hypermedia-client-fixtures.js';
+  layoutBound, RESPONSE_TOO_LARGE, shownCases, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 // What list, list --json and describe may write for a document: a dozen bytes for each of its
@@ -295,11 +295,13 @@ beforeAll(async () => {
         res.writeHead(fetched.status || 200, { 'content-type': String(fetched.type), 'content-length': '1048576' }).write(fetched.body);
         return;
       }
-      // A list of types is that many Content-Type headers. A body is written `chunk` bytes at a time.
+      // A list of types is that many Content-Type headers. A body is written `chunk` bytes at a time,
+      // chunked unless it is `sized`.
       if (fetched) {
-        res.setHeader('content-type', fetched.type);
-        res.writeHead(fetched.status || 200);
         const whole = Buffer.from(fetched.body);
+        res.setHeader('content-type', fetched.type);
+        if (fetched.sized) res.setHeader('content-length', whole.length);
+        res.writeHead(fetched.status || 200);
         const step = fetched.chunk || whole.length || 1;
         for (let at = 0; at < whole.length; at += step) res.write(whole.subarray(at, at + step));
         res.end();
@@ -489,16 +491,19 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
       const landedBody = 'landed' in end && end.landed && end.landed.startsWith('/landing');
       if (mode.length) {
         const out = JSON.parse(r.stdout) as { done: boolean; outcome: string; redirect?: unknown;
-          response: { status: number; landed: string; bodyText: string } };
+          response: { status: number; landed: string; bodyText: string | null; note?: string } };
         expect([out.done, out.outcome, out.redirect ?? null, out.response.status, out.response.landed], where)
           .toEqual([done, outcome, 'redirect' in end ? { status: end.redirect, location } : null, 'redirect' in end ? end.redirect : end.answer,
             'redirect' in end ? url : landed]);
         if (method === 'HEAD' || 'redirect' in end) expect(out.response.bodyText, where).toBe('');
         else if (landedBody) expect(out.response.bodyText, where).toBe(LANDING_BODY);
+        // A body past RESPONSE_MAX is not read, whatever its status, and no Content-Length makes it one cut short.
+        if ('tooLarge' in end) expect([out.response.bodyText, out.response.note], where).toEqual([null, RESPONSE_TOO_LARGE]);
       } else {
         expect(r.stdout.split('\n'), where).toContain(outcome);
         if (method === 'HEAD') expect(r.stdout.split('\n'), where).not.toContain(LANDING_BODY);
         else if (landedBody) expect(r.stdout.split('\n'), where).toContain(LANDING_BODY);
+        if ('tooLarge' in end) expect(r.stdout.split('\n'), where).toContain(RESPONSE_TOO_LARGE);
       }
     }
   });

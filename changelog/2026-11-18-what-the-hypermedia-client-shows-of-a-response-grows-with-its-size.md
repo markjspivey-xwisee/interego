@@ -37,3 +37,11 @@ HTML page with JSON-LD at ?format=jsonld ended the load, and a 404 whose body
 never ends held it. hmc.py took a body cut short of its Content-Length as
 whole, listing two of a document's four controls; it now names it, as the
 page's fetch fails on it, for loads and invokes alike.
+
+The page's table now counts each part for what it builds, so its bound holds
+for links too: a row and a cell one element each, a cell that shows a name or
+a value one more, and one that shows an https link three more. The 9 units a
+cell once counted are gone, and its characters may reach 10,000 however small
+the response. 1,000 columns named "a", filled with links by 523 bindings of
+8 MiB, took 45 s against 105 s; at the new bound such a table takes 17 s, and
+the costliest table at 8 MiB 20 s.

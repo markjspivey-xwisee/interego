@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-sXJdeHxt1e27UvAdIpp3J5TGJygXwQj19tax2lqSmZI='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-xZ+e1ohoKr4ahF9ih4foOGmXQpjxPz9dnh3pW3fOv9w='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -4967,12 +4967,14 @@ async function readResponse(res) {
 // of its own (tableBound), since a table is laid out an element at a time, and an
 // element costs a browser, and jsdom, far more than a character does: at most one
 // element for each TABLE_BYTES_PER_ELEMENT bytes of the response, and TABLE_FLOOR
-// at least, each cell, its head's and each row an element, and a cell that shows
-// anything two, for the link it may be shown as; and its cells show no more
-// characters than the response has bytes, and LAYOUT_FLOOR at least. An honest
-// result shows each name and value it holds once, so it shows fewer characters
-// than it has bytes, and a cell it binds takes some 30 bytes of it, so it is a
-// table at any size unless most of its cells are empty. Past either bound the
+// at least, each part counted for what it builds: the head's row and each row
+// one, each cell one, a cell that shows a name or a value one more, for its text,
+// and one that shows a link three more, for the link, its address and its text;
+// and its cells show no more characters than the response has bytes, and
+// LAYOUT_FLOOR at least. An honest result shows each name and value it holds
+// once, so it shows fewer characters than it has bytes, and a cell it binds takes
+// some 30 bytes of it, 40 for a link, so it is a table at any size unless many of
+// its cells are empty, and within TABLE_FLOOR even then. Past either bound the
 // response is shown as its text, after a note naming why (tableAsText, jsonAsText), so
 // neither a product of a result's rows and columns, nor a value a column names
 // again, nor bytes a table never shows, nor JSON's depth sets what is shown.
@@ -5026,7 +5028,7 @@ function tableTexts(vars, bindings, bound) {
   let elements = 1;
   let chars = 0;
   for (let i = 0; i < vars.length; i++) {
-    if (++elements > bound.elements || (chars += vars[i].length) > bound.chars) return null;
+    if ((elements += vars[i] ? 2 : 1) > bound.elements || (chars += vars[i].length) > bound.chars) return null;
     const at = columns.get(vars[i]);
     if (at) at.push(i); else columns.set(vars[i], [i]);
   }
@@ -5040,7 +5042,8 @@ function tableTexts(vars, bindings, bound) {
       const cell = row[key];
       const text = asText(cell && typeof cell === "object" ? cell.value : cell);
       if (!text) continue;
-      if ((elements += at.length) > bound.elements || (chars += at.length * text.length) > bound.chars) return null;
+      // The characters are counted first, so a value is read as a link only within them.
+      if ((chars += at.length * text.length) > bound.chars || (elements += at.length * (followable(text) ? 3 : 1)) > bound.elements) return null;
       for (const i of at) texts[i] = text;
     }
     rows.push(texts);
