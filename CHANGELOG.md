@@ -19,6 +19,39 @@ and projects as executed work.
 beside the `iep#` ones. Stopping needs a new version of Foxxi's profile, whose
 templates require those keys; the xapi-x README says what depends on them.
 
+## 2026-11-18 — General guest opt-in: an application served from another Railway project
+
+`tools/general-guest-opt-in.mjs` could only opt in an application whose own
+service is in the fleet's Railway project, because it sets that service's door
+and switch as well as identity's entry. Hallowmarch is served from a Railway
+project of its own, which the fleet's token does not reach.
+
+- An application marked `elsewhere` gets the identity half only: the token
+  check, identity's general guest on and a door stated, an entry already there
+  for the application's origin, then `generalGuest` and
+  `generalGuestReturnPath` added to that entry. Its own service is never looked
+  up, read or written.
+- The run ends by printing what the operator sets by hand on the application's
+  service: the variable names, and the door origin identity states (which
+  identity already publishes at `/.well-known/play-provisional`). It says what
+  it could not check: that the application holds the key of the service agent
+  the entry names.
+- Two applications added: `hallowmarch-preview`
+  (`https://march-native-preview-production.up.railway.app`) and `hallowmarch`
+  (`https://march-production-f6d9.up.railway.app`), return path
+  `/guest/general/return`. Each origin is its own entry at identity, so the
+  preview is opted in apart from the live game. Both are choices of the
+  workflow, and a test holds the workflow's choices to the tool's list.
+
+Unchanged: the merged value is checked by the same parser before it is sent, no
+other entry or field changes, an unticked `apply` writes nothing, nothing is
+deployed, and no entry, key or account is created. Where identity has no entry
+for the origin the run refuses. `foxxi-workbench` behaves as before.
+
+Tests: `node --test tests/general-guest-opt-in.test.mjs`, synthetic values
+only; the stand-in fleet fails a test if any service but identity is touched
+for an application elsewhere.
+
 ## 2026-11-18 — Foxxi: a dashboard guest's record is sealed, and the guest rule no longer breaks the workbench guest
 
 Two things stood between the dashboard's general guest (on the bridge behind

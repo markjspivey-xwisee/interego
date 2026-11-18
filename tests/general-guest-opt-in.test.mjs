@@ -110,3 +110,111 @@ test('the merge keeps an entry\'s own fields and its place', () => {
   assert.equal(optInPlayClients(value, APP.origin, APP.returnPath).unchanged, true);
   assert.throws(() => optInPlayClients(LIST, APP.origin, '//elsewhere'), refused(/return path/));
 });
+
+// ── An application served from another Railway project (Hallowmarch): identity's half only ────────
+
+const HM_ENTRY = { agentDid: 'did:web:identity.example:agents:march-service', podUrl: 'https://pods.example/march/' };
+const hmList = (origin) => JSON.stringify({ [OTHER]: OTHER_ENTRY, [origin]: HM_ENTRY, [APP.origin]: MINE });
+
+/** A fleet that fails the test if the application's own service is ever looked at. */
+function fleetElsewhere(name, shape = {}) {
+  const f = fleet({ ...shape, identity: { PROVISIONAL_PLAY_CLIENTS: hmList(APPLICATIONS[name].origin), ...(shape.identity ?? {}) } });
+  const inner = f.gql;
+  f.touched = [];
+  f.gql = async (query, variables) => {
+    const service = variables?.s ?? variables?.input?.serviceId;
+    if (service !== undefined && service !== 'svc-identity') { f.touched.push(service); throw Error('a service other than identity was touched'); }
+    return inner(query, variables);
+  };
+  return f;
+}
+
+for (const name of ['hallowmarch-preview', 'hallowmarch']) {
+  const HM = APPLICATIONS[name];
+
+  test(`${name}: the entry is one the tool knows, with nothing of a fleet service in it`, () => {
+    assert.equal(HM.returnPath, '/guest/general/return');
+    assert.equal(new URL(HM.origin).origin, HM.origin);
+    for (const k of ['service', 'needs', 'doorVar', 'switchVar']) assert.equal(HM[k], undefined, k);
+    assert.equal(HM.elsewhere.doorVar, 'HM_GENERAL_GUEST_DOOR_ORIGIN');
+    assert.equal(HM.elsewhere.switchVar, 'HM_GENERAL_GUEST');
+  });
+
+  test(`${name}: a dry run writes nothing, touches only identity, and says what is set elsewhere`, async () => {
+    const f = fleetElsewhere(name);
+    const out = await optIn({ gql: f.gql, application: name, log: f.log });
+    assert.deepEqual(f.writes, []);
+    assert.deepEqual(f.touched, []);
+    assert.equal(out.applied, false);
+    assert.deepEqual(out.redeploy, []);
+    assert.deepEqual(Object.keys(out.services), [IDENTITY_SERVICE]);
+    assert.deepEqual(out.operator.set, [['HM_GENERAL_GUEST_DOOR_ORIGIN', DOOR], ['HM_GENERAL_GUEST', '1']]);
+    assert.ok(f.lines.some((l) => l.includes('would set PROVISIONAL_PLAY_CLIENTS')));
+    assert.ok(f.lines.some((l) => l.includes(`HM_GENERAL_GUEST_DOOR_ORIGIN=${DOOR}`)));
+    assert.ok(f.lines.some((l) => l.includes('HM_GENERAL_GUEST=1')));
+    assert.ok(f.lines.some((l) => l.includes('not served from this Railway project')));
+  });
+
+  test(`${name}: an applied run writes identity's entry and nothing else anywhere`, async () => {
+    const f = fleetElsewhere(name);
+    const out = await optIn({ gql: f.gql, application: name, apply: true, log: f.log });
+    assert.deepEqual(f.writes, ['svc-identity PROVISIONAL_PLAY_CLIENTS']);
+    assert.deepEqual(f.touched, []);
+    const list = checkPlayClients(f.store['svc-identity'].PROVISIONAL_PLAY_CLIENTS);
+    assert.deepEqual(Object.keys(list), [OTHER, HM.origin, APP.origin]);
+    assert.deepEqual(list[OTHER], OTHER_ENTRY);
+    assert.deepEqual(list[APP.origin], MINE);
+    assert.deepEqual(list[HM.origin], { ...HM_ENTRY, generalGuest: true, generalGuestReturnPath: '/guest/general/return' });
+    assert.deepEqual(f.store['svc-app'], { [APP.needs]: SECRET });
+    assert.deepEqual(out.redeploy, [IDENTITY_SERVICE]);
+    f.writes.length = 0;
+    await optIn({ gql: f.gql, application: name, apply: true, log: f.log });
+    assert.deepEqual(f.writes, []);
+  });
+
+  test(`${name}: the door is the only value printed`, async () => {
+    const f = fleetElsewhere(name);
+    await optIn({ gql: f.gql, application: name, apply: true, log: f.log });
+    const all = f.lines.join('\n');
+    for (const secret of [SECRET, OTHER, OTHER_ENTRY.agentDid, HM_ENTRY.agentDid, HM_ENTRY.podUrl, MINE.agentDid, APP.origin]) assert.ok(!all.includes(secret), secret);
+    assert.ok(all.includes(DOOR));
+  });
+
+  test(`${name}: refused before any write`, async (t) => {
+    const cases = [
+      ['a token for another project', { project: 'another-project' }, /does not belong/],
+      ['the general guest off at identity', { identity: { PROVISIONAL_GENERAL_GUEST: undefined } }, /general guest on/],
+      ['no door stated at identity', { identity: { GENERAL_GUEST_DOOR_ORIGIN: undefined } }, /door_origin/],
+      ['a door that is the application itself', { identity: { GENERAL_GUEST_DOOR_ORIGIN: HM.origin } }, /own origin/],
+      ['no entry for the application', { identity: { PROVISIONAL_PLAY_CLIENTS: LIST } }, /admits no guests/],
+      ['a list identity would not start with', { identity: { PROVISIONAL_PLAY_CLIENTS: '{not json' } }, /not JSON/],
+    ];
+    for (const [what, shape, pattern] of cases) {
+      await t.test(what, async () => {
+        const f = fleetElsewhere(name, shape);
+        await assert.rejects(optIn({ gql: f.gql, application: name, apply: true, log: f.log }), refused(pattern));
+        assert.deepEqual(f.writes, []);
+        assert.deepEqual(f.touched, []);
+      });
+    }
+  });
+}
+
+test('an application elsewhere needs no service of its name in the fleet, and one that happens to be there is left alone', async () => {
+  const f = fleetElsewhere('hallowmarch');
+  const inner = f.gql;
+  // A fleet with a stray service called `march`: never resolved, read or written.
+  f.gql = async (query, variables) => (query.includes('project(id')
+    ? { project: { services: { edges: [{ node: { id: 'svc-identity', name: IDENTITY_SERVICE } }, { node: { id: 'svc-stray', name: 'march' } }] } } }
+    : inner(query, variables));
+  await optIn({ gql: f.gql, application: 'hallowmarch', apply: true, log: f.log });
+  assert.deepEqual(f.writes, ['svc-identity PROVISIONAL_PLAY_CLIENTS']);
+  assert.deepEqual(f.touched, []);
+});
+
+test('the workflow offers exactly the applications the tool knows', async () => {
+  const { readFile } = await import('node:fs/promises');
+  const yml = await readFile(new URL('../.github/workflows/general-guest-opt-in.yml', import.meta.url), 'utf8');
+  const options = yml.slice(yml.indexOf('options:'), yml.indexOf('apply:')).split('\n').map((l) => l.trim()).filter((l) => l.startsWith('- ')).map((l) => l.slice(2));
+  assert.deepEqual(options, Object.keys(APPLICATIONS));
+});
