@@ -738,7 +738,8 @@ const BASELINE = {};
 // 2026-11-16: merging master (tools/prune-image-dev-tools.mjs among its new files) brings it to
 // 719; the gate named 684.
 // 2026-11-17: merging master (#938's files among them) brings it to 721; the gate named 686.
-export const MIN_FILES = 686;
+// 2026-11-18: merging master (the local-node sweep test among its files) brings it to 723; the gate named 688.
+export const MIN_FILES = 688;
 
 /**
  * How far below the real linted-file count MIN_FILES may sit before that is itself a failure.
