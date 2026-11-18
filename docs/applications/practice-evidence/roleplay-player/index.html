@@ -610,9 +610,12 @@ async function openVisit(){
   if (sessionOpened) return true;
   const so = await sessionSoFar();
   if (so === null) { trackErr = "the learning record could not be read"; return false; }
-  if (so.initialized) { if (so.last > lastTs) lastTs = so.last; sessionOpened = true; return true; }
   if (so.last > lastTs) lastTs = so.last;
-  chain = Promise.resolve(); trackErr = null;   // a send that failed earlier does not hold up this one
+  // A send that failed earlier does not hold up what is sent from here on. That holds too when the
+  // session turns out to have its initialized: an earlier try may have stored it and lost the answer,
+  // and everything sent after it queues behind that failed send.
+  chain = Promise.resolve(); trackErr = null;
+  if (so.initialized) { sessionOpened = true; return true; }
   sessionOpened = (await send("initialized", "initialized", scenarioAct(), null, true, false, visitStart)) !== null;
   return sessionOpened;
 }
@@ -684,9 +687,19 @@ async function begin(){
   if (got.state === "unknown") return reviewUnknown(got);
   $("rvretry").classList.add("hide");
   if (got.state !== "none") return recordReviewed(got);
+  // A practice opens its visit the way a reviewed result does. The LMS continues an open session
+  // when the course is opened again part way through a practice, and this page then loads afresh:
+  // the session has its initialized, and a second one is not sent. Until 2026-11-18 it was.
+  if (!(await openVisit())) {
+    show("s-reviewed"); setChip("Not saved", "warn");
+    $("rvtitle").textContent = "This visit could not be started";
+    $("rvmsg").textContent = "The learning record did not take the start of this visit" + (trackErr ? " (" + trackErr + ")" : "") + ", so no practice was started. Try again in a moment.";
+    const btn = $("rvretry"); btn.classList.remove("hide"); btn.disabled = false;
+    btn.onclick = async () => { btn.disabled = true; $("rvmsg").textContent = "Trying again…"; await begin(); };
+    return;
+  }
   setChip(P.contextKind === "agent-test" ? "Tracked (agent test)" : "Tracked", "ok");
   show("s-welcome");
-  await send("initialized", "initialized", scenarioAct(), null, true, false);
 }
 
 // ---------- start ----------
