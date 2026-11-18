@@ -787,6 +787,10 @@ pev:judgeRoute a owl:DatatypeProperty ;
 pev:reviewedAt a owl:DatatypeProperty ;
     rdfs:label "reviewed at" ;
     rdfs:comment "When the standing review was made. Kept on a statement sent later, whose own timestamp is the time it was sent in its session." .
+pev:replyId a owl:DatatypeProperty ;
+    rdfs:label "reply id" ;
+    rdfs:comment "The id a scenario gives one of the replies offered at a step of a scripted conversation. Recorded on an exchange beside what the learner said, so the reply can be found again whatever its wording is by then." ;
+    rdfs:range xsd:string .
 pev:criterionLevels a owl:DatatypeProperty ;
     rdfs:label "criterion levels" ;
     rdfs:comment "The reviewed level of every criterion, as a map from criterion id to level id." .

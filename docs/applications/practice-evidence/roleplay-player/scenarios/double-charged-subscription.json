@@ -271,6 +271,8 @@
    "criterionScores": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/criterion-scores",
    "counterpartLine": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/customer-line",
    "matchedReply": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/matched-or-tapped-reply",
+   "stepId": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/step-id",
+   "replyId": "https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#replyId",
    "rubric": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric"
   }
  },
@@ -345,6 +347,7 @@
    ],
    "stages": [
     {
+     "id": "dana-1",
      "goal": "Open with empathy",
      "hint": "Name the problem and apologize before you ask for anything.",
      "evidenceFor": [
@@ -352,6 +355,7 @@
      ],
      "choices": [
       {
+       "id": "dana-1-a",
        "text": "Okay. Can you send me some proof of the charges?",
        "effects": {
         "empathy": 0,
@@ -364,6 +368,7 @@
        "note": "Asking for proof first sounds like doubt. Acknowledge the problem before anything else."
       },
       {
+       "id": "dana-1-b",
        "text": "Being charged twice is frustrating, and I'm sorry that happened. Let's get it sorted right now.",
        "effects": {
         "empathy": 2,
@@ -376,6 +381,7 @@
        "best": true
       },
       {
+       "id": "dana-1-c",
        "text": "Sorry about that. What's the email on the account?",
        "effects": {
         "empathy": 1,
@@ -390,6 +396,7 @@
      ]
     },
     {
+     "id": "dana-2",
      "goal": "Confirm both orders",
      "hint": "You haven't confirmed the order numbers yet: BN-4471 and BN-4472.",
      "evidenceFor": [
@@ -402,6 +409,7 @@
      ],
      "choices": [
       {
+       "id": "dana-2-a",
        "text": "Let me check... yes, I see a $19 charge on Nov 3.",
        "effects": {
         "empathy": 0,
@@ -414,6 +422,7 @@
        "note": "Only one charge confirmed. Name both orders and the amount."
       },
       {
+       "id": "dana-2-b",
        "text": "I can see both: two $19 charges on Nov 3, orders BN-4471 and BN-4472. Is that what you're seeing?",
        "effects": {
         "empathy": 0,
@@ -426,6 +435,7 @@
        "best": true
       },
       {
+       "id": "dana-2-c",
        "text": "Duplicate charges usually drop off on their own. Let's give it a few days.",
        "effects": {
         "empathy": 0,
@@ -440,6 +450,7 @@
      ]
     },
     {
+     "id": "dana-3",
      "goal": "State the policy",
      "hint": "Policy: the refund starts today and posts in 5 to 7 business days.",
      "evidenceFor": [
@@ -452,6 +463,7 @@
      ],
      "choices": [
       {
+       "id": "dana-3-a",
        "text": "It should be back pretty soon. These are usually quick.",
        "effects": {
         "empathy": 0,
@@ -464,6 +476,7 @@
        "note": "Vague timelines make customers anxious. Give the exact window."
       },
       {
+       "id": "dana-3-b",
        "text": "Refunds take up to 30 days, and I'll need a manager to approve it.",
        "effects": {
         "empathy": 0,
@@ -476,6 +489,7 @@
        "note": "Wrong on both counts: it's 5 to 7 business days, and you can do it yourself."
       },
       {
+       "id": "dana-3-c",
        "text": "I'm refunding the duplicate $19 today. It will post to your card in 5 to 7 business days.",
        "effects": {
         "empathy": 0,
@@ -490,6 +504,7 @@
      ]
     },
     {
+     "id": "dana-4",
      "goal": "Offer goodwill",
      "hint": "You can offer one free month yourself. No manager needed.",
      "evidenceFor": [
@@ -502,6 +517,7 @@
      ],
      "choices": [
       {
+       "id": "dana-4-a",
        "text": "You shouldn't have had to deal with this. I've added one free month to your account as an apology.",
        "effects": {
         "empathy": 1,
@@ -514,6 +530,7 @@
        "best": true
       },
       {
+       "id": "dana-4-b",
        "text": "Let me transfer you to a manager who can help with that.",
        "effects": {
         "empathy": 0,
@@ -526,6 +543,7 @@
        "note": "You don't need a manager. The free month is within your own authority."
       },
       {
+       "id": "dana-4-c",
        "text": "I understand. Unfortunately, there's nothing else I can do.",
        "effects": {
         "empathy": 0,
@@ -540,6 +558,7 @@
      ]
     },
     {
+     "id": "dana-5",
      "goal": "Recap and close",
      "hint": "Recap the fix, then check they're satisfied.",
      "evidenceFor": [
@@ -552,6 +571,7 @@
      ],
      "choices": [
       {
+       "id": "dana-5-a",
        "text": "Yep, that's everything. Bye.",
        "effects": {
         "empathy": 0,
@@ -564,6 +584,7 @@
        "note": "An abrupt ending undoes good work. Recap and check they're satisfied."
       },
       {
+       "id": "dana-5-b",
        "text": "To recap: the duplicate $19 from order BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Is there anything else I can help with?",
        "effects": {
         "empathy": 0,
@@ -576,6 +597,7 @@
        "best": true
       },
       {
+       "id": "dana-5-c",
        "text": "Yes. Thanks for calling Brightline, have a great day.",
        "effects": {
         "empathy": 0,
@@ -607,6 +629,7 @@
    ],
    "stages": [
     {
+     "id": "sam-1",
      "goal": "Reassure, then own it",
      "hint": "He's confused, not angry. Reassure him and say it looks like our mistake.",
      "evidenceFor": [
@@ -614,6 +637,7 @@
      ],
      "choices": [
       {
+       "id": "sam-1-a",
        "text": "No problem, that's what I'm here for. It looks like a mistake on our side, and I'm sorry for the confusion. Let's sort it out together.",
        "effects": {
         "empathy": 2,
@@ -626,6 +650,7 @@
        "best": true
       },
       {
+       "id": "sam-1-b",
        "text": "You probably upgraded by accident. Did you click anything?",
        "effects": {
         "empathy": 0,
@@ -638,6 +663,7 @@
        "note": "Guessing, and hinting it's his fault, adds confusion. Reassure him first."
       },
       {
+       "id": "sam-1-c",
        "text": "Okay, what's your email?",
        "effects": {
         "empathy": 0,
@@ -652,6 +678,7 @@
      ]
     },
     {
+     "id": "sam-2",
      "goal": "Explain both orders clearly",
      "hint": "Name both orders and say which one is the duplicate.",
      "evidenceFor": [
@@ -664,6 +691,7 @@
      ],
      "choices": [
       {
+       "id": "sam-2-a",
        "text": "It's just a billing thing. Nothing to worry about.",
        "effects": {
         "empathy": 0,
@@ -676,6 +704,7 @@
        "note": "Vague. Name both orders and say which is the duplicate."
       },
       {
+       "id": "sam-2-b",
        "text": "I see order BN-4471 for $19.",
        "effects": {
         "empathy": 0,
@@ -688,6 +717,7 @@
        "note": "Only one order. Confirm both and the amount."
       },
       {
+       "id": "sam-2-c",
        "text": "You have one plan, Notes Pro at $19 a month. On Nov 3 it was charged twice: orders BN-4471 and BN-4472. The second is a duplicate, not an upgrade.",
        "effects": {
         "empathy": 0,
@@ -702,6 +732,7 @@
      ]
     },
     {
+     "id": "sam-3",
      "goal": "Explain the refund",
      "hint": "Refund starts today and takes 5 to 7 business days to show up.",
      "evidenceFor": [
@@ -714,6 +745,7 @@
      ],
      "choices": [
       {
+       "id": "sam-3-a",
        "text": "Yes, it'll be refunded within 24 hours.",
        "effects": {
         "empathy": 0,
@@ -726,6 +758,7 @@
        "note": "Wrong timeline. It's 5 to 7 business days; promising faster sets up another call."
       },
       {
+       "id": "sam-3-b",
        "text": "Yes. I'm refunding the duplicate $19 today. It takes 5 to 7 business days to show up on your card.",
        "effects": {
         "empathy": 0,
@@ -738,6 +771,7 @@
        "best": true
       },
       {
+       "id": "sam-3-c",
        "text": "You'd need to request that through the website.",
        "effects": {
         "empathy": 0,
@@ -752,6 +786,7 @@
      ]
     },
     {
+     "id": "sam-4",
      "goal": "Prevent the next call",
      "hint": "Tell him what next month looks like, and offer the free month.",
      "evidenceFor": [
@@ -764,6 +799,7 @@
      ],
      "choices": [
       {
+       "id": "sam-4-a",
        "text": "Can't promise anything, billing glitches happen.",
        "effects": {
         "empathy": 0,
@@ -776,6 +812,7 @@
        "note": "Honest-sounding but unsettling. Explain what he'll see and offer the free month."
       },
       {
+       "id": "sam-4-b",
        "text": "I'll escalate it to a manager to investigate.",
        "effects": {
         "empathy": 0,
@@ -788,6 +825,7 @@
        "note": "No manager needed. The fix and the free month are within your authority."
       },
       {
+       "id": "sam-4-c",
        "text": "Next month you'll see one normal $19 charge. And for the trouble, I've added a free month to your account.",
        "effects": {
         "empathy": 1,
@@ -802,6 +840,7 @@
      ]
     },
     {
+     "id": "sam-5",
      "goal": "Recap and close",
      "hint": "Recap in plain words so he knows exactly what happens.",
      "evidenceFor": [
@@ -814,6 +853,7 @@
      ],
      "choices": [
       {
+       "id": "sam-5-a",
        "text": "Nothing at all. To recap: the duplicate $19 from BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Anything else I can help with?",
        "effects": {
         "empathy": 0,
@@ -826,6 +866,7 @@
        "best": true
       },
       {
+       "id": "sam-5-b",
        "text": "Nope. Bye.",
        "effects": {
         "empathy": 0,
@@ -838,6 +879,7 @@
        "note": "Too abrupt for a confused customer. Recap and check he's satisfied."
       },
       {
+       "id": "sam-5-c",
        "text": "No, you're all set. Have a good day.",
        "effects": {
         "empathy": 0,
@@ -869,6 +911,7 @@
    ],
    "stages": [
     {
+     "id": "jordan-1",
      "goal": "Fix first, don't rush the cancel",
      "hint": "Acknowledge the double charge and offer to fix it before talking about cancelling.",
      "evidenceFor": [
@@ -876,6 +919,7 @@
      ],
      "choices": [
       {
+       "id": "jordan-1-a",
        "text": "I can process the cancellation for you right away.",
        "effects": {
         "empathy": 0,
@@ -888,6 +932,7 @@
        "note": "You skipped the actual problem. Acknowledge the double charge and fix it first."
       },
       {
+       "id": "jordan-1-b",
        "text": "I'm sorry. Being charged twice is a frustrating way to find out something's wrong. Before you decide anything, let me fix the charge right now.",
        "effects": {
         "empathy": 2,
@@ -900,6 +945,7 @@
        "best": true
       },
       {
+       "id": "jordan-1-c",
        "text": "If you cancel you'll lose all your notes.",
        "effects": {
         "empathy": 0,
@@ -914,6 +960,7 @@
      ]
     },
     {
+     "id": "jordan-2",
      "goal": "Confirm both orders",
      "hint": "The orders are on screen: BN-4471 and BN-4472.",
      "evidenceFor": [
@@ -926,6 +973,7 @@
      ],
      "choices": [
       {
+       "id": "jordan-2-a",
        "text": "Which card was it on?",
        "effects": {
         "empathy": 0,
@@ -938,6 +986,7 @@
        "note": "The orders are in front of you. Confirm them instead of asking."
       },
       {
+       "id": "jordan-2-b",
        "text": "Our system shows you're active, so the charge is valid.",
        "effects": {
         "empathy": 0,
@@ -950,6 +999,7 @@
        "note": "One charge is valid; the duplicate isn't. Confirm both orders."
       },
       {
+       "id": "jordan-2-c",
        "text": "I see it: two $19 charges on Nov 3, orders BN-4471 and BN-4472. The second is a duplicate.",
        "effects": {
         "empathy": 0,
@@ -964,6 +1014,7 @@
      ]
     },
     {
+     "id": "jordan-3",
      "goal": "State the policy",
      "hint": "Refund the duplicate in full, starting today, 5 to 7 business days.",
      "evidenceFor": [
@@ -976,6 +1027,7 @@
      ],
      "choices": [
       {
+       "id": "jordan-3-a",
        "text": "I'm refunding the duplicate $19 today. It posts in 5 to 7 business days.",
        "effects": {
         "empathy": 0,
@@ -988,6 +1040,7 @@
        "best": true
       },
       {
+       "id": "jordan-3-b",
        "text": "If you cancel, I can refund the whole month.",
        "effects": {
         "empathy": 0,
@@ -1000,6 +1053,7 @@
        "note": "Not the policy. Refund the duplicate in full, starting today."
       },
       {
+       "id": "jordan-3-c",
        "text": "Refunds are handled by billing. I'll pass it on.",
        "effects": {
         "empathy": 0,
@@ -1014,6 +1068,7 @@
      ]
     },
     {
+     "id": "jordan-4",
      "goal": "Make a goodwill offer",
      "hint": "Respect their choice, and offer the free month so they can decide without paying.",
      "evidenceFor": [
@@ -1026,6 +1081,7 @@
      ],
      "choices": [
       {
+       "id": "jordan-4-a",
        "text": "Okay, I've cancelled your account.",
        "effects": {
         "empathy": 0,
@@ -1038,6 +1094,7 @@
        "note": "Too fast. Offer the free month first and let them decide."
       },
       {
+       "id": "jordan-4-b",
        "text": "That's completely your call. If it helps, I've added a free month as an apology, so you can decide without paying for it.",
        "effects": {
         "empathy": 1,
@@ -1050,6 +1107,7 @@
        "best": true
       },
       {
+       "id": "jordan-4-c",
        "text": "Please don't cancel, we really need customers like you.",
        "effects": {
         "empathy": 0,
@@ -1064,6 +1122,7 @@
      ]
     },
     {
+     "id": "jordan-5",
      "goal": "Recap and close",
      "hint": "Recap the refund and the free month, then check they're satisfied.",
      "evidenceFor": [
@@ -1076,6 +1135,7 @@
      ],
      "choices": [
       {
+       "id": "jordan-5-a",
        "text": "Yes. Thanks for staying with Brightline!",
        "effects": {
         "empathy": 0,
@@ -1088,6 +1148,7 @@
        "note": "Friendly, but recap the refund and free month so they know what to expect."
       },
       {
+       "id": "jordan-5-b",
        "text": "Yep. Bye.",
        "effects": {
         "empathy": 0,
@@ -1100,6 +1161,7 @@
        "note": "Abrupt. Recap and check they're satisfied."
       },
       {
+       "id": "jordan-5-c",
        "text": "To recap: the duplicate $19 from BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Is there anything else I can help with?",
        "effects": {
         "empathy": 0,
@@ -1131,6 +1193,7 @@
    ],
    "stages": [
     {
+     "id": "riley-1",
      "goal": "Absorb the anger",
      "hint": "Acknowledge the stress of being overdrawn. Never tell them to calm down.",
      "evidenceFor": [
@@ -1138,6 +1201,7 @@
      ],
      "choices": [
       {
+       "id": "riley-1-a",
        "text": "Please calm down.",
        "effects": {
         "empathy": 0,
@@ -1150,6 +1214,7 @@
        "note": "Telling someone to calm down rarely works. Acknowledge the stress first."
       },
       {
+       "id": "riley-1-b",
        "text": "Overdraft fees aren't something we cover.",
        "effects": {
         "empathy": 0,
@@ -1162,6 +1227,7 @@
        "note": "Leading with a no escalates. Acknowledge, then fix what you can."
       },
       {
+       "id": "riley-1-c",
        "text": "I'm really sorry. A double charge that leaves you overdrawn is stressful, and it's on us. I'm going to fix it with you right now.",
        "effects": {
         "empathy": 2,
@@ -1176,6 +1242,7 @@
      ]
     },
     {
+     "id": "riley-2",
      "goal": "Confirm both orders",
      "hint": "Confirm both orders and say which is the duplicate.",
      "evidenceFor": [
@@ -1188,6 +1255,7 @@
      ],
      "choices": [
       {
+       "id": "riley-2-a",
        "text": "I can see both: two $19 charges on Nov 3, orders BN-4471 and BN-4472. BN-4472 is the duplicate.",
        "effects": {
         "empathy": 0,
@@ -1200,6 +1268,7 @@
        "best": true
       },
       {
+       "id": "riley-2-b",
        "text": "Can you read me the last four digits of your card?",
        "effects": {
         "empathy": 0,
@@ -1212,6 +1281,7 @@
        "note": "Not needed here. Confirm the orders you can already see."
       },
       {
+       "id": "riley-2-c",
        "text": "Hmm, I only see one charge.",
        "effects": {
         "empathy": 0,
@@ -1226,6 +1296,7 @@
      ]
     },
     {
+     "id": "riley-3",
      "goal": "State the policy, no overpromising",
      "hint": "Refund starts today, posts in 5 to 7 business days. Don't promise faster.",
      "evidenceFor": [
@@ -1238,6 +1309,7 @@
      ],
      "choices": [
       {
+       "id": "riley-3-a",
        "text": "Immediately. It'll be back tonight.",
        "effects": {
         "empathy": 0,
@@ -1250,6 +1322,7 @@
        "note": "Overpromising backfires. Give the real window: 5 to 7 business days."
       },
       {
+       "id": "riley-3-b",
        "text": "I'm refunding the duplicate $19 today. It posts in 5 to 7 business days.",
        "effects": {
         "empathy": 0,
@@ -1262,6 +1335,7 @@
        "best": true
       },
       {
+       "id": "riley-3-c",
        "text": "It depends on your bank.",
        "effects": {
         "empathy": 0,
@@ -1276,6 +1350,7 @@
      ]
     },
     {
+     "id": "riley-4",
      "goal": "Be honest about limits",
      "hint": "You can't refund the bank's fee, but you can offer a free month.",
      "evidenceFor": [
@@ -1288,6 +1363,7 @@
      ],
      "choices": [
       {
+       "id": "riley-4-a",
        "text": "We'll reimburse your overdraft fee too.",
        "effects": {
         "empathy": 0,
@@ -1300,6 +1376,7 @@
        "note": "Not within policy. Be honest about what you can do, then offer the free month."
       },
       {
+       "id": "riley-4-b",
        "text": "That's between you and your bank.",
        "effects": {
         "empathy": 0,
@@ -1312,6 +1389,7 @@
        "note": "Accurate but cold. Show you care, then offer the free month."
       },
       {
+       "id": "riley-4-c",
        "text": "I hear you, and I'm sorry for the knock-on hassle. I can't refund the bank's fee, but I've added a free month to your account as an apology.",
        "effects": {
         "empathy": 1,
@@ -1326,6 +1404,7 @@
      ]
     },
     {
+     "id": "riley-5",
      "goal": "Recap and close",
      "hint": "Recap clearly and check they're satisfied.",
      "evidenceFor": [
@@ -1338,6 +1417,7 @@
      ],
      "choices": [
       {
+       "id": "riley-5-a",
        "text": "Okay, bye.",
        "effects": {
         "empathy": 0,
@@ -1350,6 +1430,7 @@
        "note": "Abrupt. Recap and check they're satisfied."
       },
       {
+       "id": "riley-5-b",
        "text": "To recap: the duplicate $19 from BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Is there anything else I can help with?",
        "effects": {
         "empathy": 0,
@@ -1362,6 +1443,7 @@
        "best": true
       },
       {
+       "id": "riley-5-c",
        "text": "Glad I could help. Take care.",
        "effects": {
         "empathy": 0,
@@ -1393,6 +1475,7 @@
    ],
    "stages": [
     {
+     "id": "dana2-1",
      "goal": "De-escalate, offer to fix it yourself",
      "hint": "Don't transfer yet. Acknowledge the repeat call and offer to fix it yourself, now.",
      "evidenceFor": [
@@ -1400,6 +1483,7 @@
      ],
      "choices": [
       {
+       "id": "dana2-1-a",
        "text": "Sure, let me transfer you to a manager.",
        "effects": {
         "empathy": 0,
@@ -1412,6 +1496,7 @@
        "note": "Not yet. Route to a lead only if she refuses the fix. Offer it first."
       },
       {
+       "id": "dana2-1-b",
        "text": "I'm sorry you've had to call twice. That shouldn't happen. I can fix the double charge myself, right now, on this call. Can I take two minutes to do that?",
        "effects": {
         "empathy": 2,
@@ -1424,6 +1509,7 @@
        "best": true
       },
       {
+       "id": "dana2-1-c",
        "text": "Managers are busy. What's the problem?",
        "effects": {
         "empathy": 0,
@@ -1438,6 +1524,7 @@
      ]
     },
     {
+     "id": "dana2-2",
      "goal": "Confirm both orders",
      "hint": "Don't make her repeat herself. Confirm the orders you can see.",
      "evidenceFor": [
@@ -1450,6 +1537,7 @@
      ],
      "choices": [
       {
+       "id": "dana2-2-a",
        "text": "Can you explain the issue from the beginning?",
        "effects": {
         "empathy": 0,
@@ -1462,6 +1550,7 @@
        "note": "Making her repeat herself on a second call hurts. Confirm the orders you can see."
       },
       {
+       "id": "dana2-2-b",
        "text": "I've got it here: two $19 charges on Nov 3, orders BN-4471 and BN-4472. I'm sorry it wasn't fixed the first time.",
        "effects": {
         "empathy": 0,
@@ -1474,6 +1563,7 @@
        "best": true
       },
       {
+       "id": "dana2-2-c",
        "text": "I see a charge on Nov 3.",
        "effects": {
         "empathy": 0,
@@ -1488,6 +1578,7 @@
      ]
     },
     {
+     "id": "dana2-3",
      "goal": "Fix it inside your authority",
      "hint": "Duplicate refunds and a free month are yours to give. No ticket, no callback.",
      "evidenceFor": [
@@ -1500,6 +1591,7 @@
      ],
      "choices": [
       {
+       "id": "dana2-3-a",
        "text": "I'll open a ticket and someone will call you back.",
        "effects": {
         "empathy": 0,
@@ -1512,6 +1604,7 @@
        "note": "That's what failed last time. You can refund it yourself today."
       },
       {
+       "id": "dana2-3-b",
        "text": "A manager has to approve refunds.",
        "effects": {
         "empathy": 0,
@@ -1524,6 +1617,7 @@
        "note": "Not true. Duplicate refunds and a free month are within your authority."
       },
       {
+       "id": "dana2-3-c",
        "text": "I'm refunding the duplicate $19 right now. It will post in 5 to 7 business days, and I'll stay on the line while it goes through.",
        "effects": {
         "empathy": 0,
@@ -1538,6 +1632,7 @@
      ]
     },
     {
+     "id": "dana2-4",
      "goal": "Goodwill, and only route if she refuses",
      "hint": "She's accepted the fix. Offer the free month; no transfer needed.",
      "evidenceFor": [
@@ -1550,6 +1645,7 @@
      ],
      "choices": [
       {
+       "id": "dana2-4-a",
        "text": "I'll transfer you to a manager anyway, just in case.",
        "effects": {
         "empathy": 0,
@@ -1562,6 +1658,7 @@
        "note": "She accepted the fix. Routing her now goes against the escalation rule and wastes her time."
       },
       {
+       "id": "dana2-4-b",
        "text": "You have every right to be annoyed. I've also added a free month to your account as an apology for the repeat call.",
        "effects": {
         "empathy": 1,
@@ -1574,6 +1671,7 @@
        "best": true
       },
       {
+       "id": "dana2-4-c",
        "text": "Okay, anything else?",
        "effects": {
         "empathy": 0,
@@ -1587,6 +1685,7 @@
       }
      ],
      "variant": {
+      "id": "dana2-4v",
       "when": {
        "moodAbove": 70
       },
@@ -1595,6 +1694,7 @@
       "line": "No. I've heard that before. I want a manager.",
       "choices": [
        {
+        "id": "dana2-4v-a",
         "text": "There's nothing more anyone can do.",
         "effects": {
          "empathy": 0,
@@ -1607,6 +1707,7 @@
         "note": "She refused the fix; now routing to a lead is right. Brief them so she doesn't repeat herself."
        },
        {
+        "id": "dana2-4v-b",
         "text": "Transferring you now.",
         "effects": {
          "empathy": 0,
@@ -1619,6 +1720,7 @@
         "note": "Routing is right here, but confirm what's done and brief the lead first."
        },
        {
+        "id": "dana2-4v-c",
         "text": "I understand. The refund is already started and I've added a free month. I'll bring in my lead now and brief them, so you won't have to repeat anything.",
         "effects": {
          "empathy": 1,
@@ -1634,6 +1736,7 @@
      }
     },
     {
+     "id": "dana2-5",
      "goal": "Recap and close",
      "hint": "Recap everything that's done, and note it so she won't need a third call.",
      "evidenceFor": [
@@ -1646,6 +1749,7 @@
      ],
      "choices": [
       {
+       "id": "dana2-5-a",
        "text": "To recap: the duplicate $19 from BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month, and it's noted on your account so you won't need to call again. Anything else?",
        "effects": {
         "empathy": 0,
@@ -1658,6 +1762,7 @@
        "best": true
       },
       {
+       "id": "dana2-5-b",
        "text": "Yes. Bye.",
        "effects": {
         "empathy": 0,
@@ -1670,6 +1775,7 @@
        "note": "Abrupt, on a second call. Recap and check she's satisfied."
       },
       {
+       "id": "dana2-5-c",
        "text": "Yes, thanks for your patience.",
        "effects": {
         "empathy": 0,

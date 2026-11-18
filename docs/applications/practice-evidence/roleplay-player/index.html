@@ -219,6 +219,13 @@ async function loadScenario(ref){
   if (!r.ok) throw new Error("scenario " + abs + " answered " + r.status);
   return {doc: await r.json(), from: abs};
 }
+/* The ids a scenario gives its steps and replies, where it gives any, name one thing each. */
+function repeatedIds(s){
+  const seen = new Set(), twice = new Set();
+  const note = id => { if (id === undefined) return; if (seen.has(id)) twice.add(id); seen.add(id); };
+  for (const who of s.personas || []) for (const st of who.stages || []) for (const step of [st, st.variant].filter(Boolean)) { note(step.id); for (const c of step.choices || []) note(c.id); }
+  return [...twice];
+}
 function checkScenario(s){
   const need = ["scenarioKey","title","rubric","personas","xapi","activity"];
   if (s.resultAfterReview === true && !(s.rubricRef && s.xapi.verbs && s.xapi.verbs.turn && s.xapi.extensions && s.xapi.extensions.counterpartLine && s.xapi.extensions.rubric)) throw new Error("the scenario leaves its result to a reviewer but names no rubricRef, turn verb, counterpart-line extension or rubric extension");
@@ -226,6 +233,7 @@ function checkScenario(s){
   if (!Array.isArray(s.rubric.criteria) || !s.rubric.criteria.length) throw new Error("the scenario's rubric has no criteria");
   if (!Array.isArray(s.personas) || !s.personas.length) throw new Error("the scenario has no personas");
   for (const k of ["verbs","activityTypes","extensions"]) if (!s.xapi[k]) throw new Error("the scenario's xapi block has no " + k);
+  const twice = repeatedIds(s); if (twice.length) throw new Error("the scenario uses an id for more than one step or reply: " + twice.join(", "));
 }
 async function checkProfile(){
   // Every IRI the scenario uses must be a concept the named profile declares (format-agnostic text check).
@@ -416,8 +424,8 @@ function renderPersonas(){
 }
 function variantApplies(v){ return v && v.when && typeof v.when.moodAbove === "number" ? mood > v.when.moodAbove : false; }
 function stageObj(){ const s = persona.stages[stage];
-  if (s.variant && variantAt === stage) return {goal:s.variant.goal, hint:s.variant.hint, line:s.variant.line, choices:s.variant.choices, evidenceFor: s.variant.evidenceFor || s.evidenceFor};
-  const b = bands(); return {goal:s.goal, hint:s.hint, line: stage===0 ? persona.firstLine : (s.lines||[])[mood<b[0]?0:mood<=b[1]?1:2], choices:s.choices, evidenceFor: s.evidenceFor}; }
+  if (s.variant && variantAt === stage) return {id:s.variant.id, goal:s.variant.goal, hint:s.variant.hint, line:s.variant.line, choices:s.variant.choices, evidenceFor: s.variant.evidenceFor || s.evidenceFor};
+  const b = bands(); return {id:s.id, goal:s.goal, hint:s.hint, line: stage===0 ? persona.firstLine : (s.lines||[])[mood<b[0]?0:mood<=b[1]?1:2], choices:s.choices, evidenceFor: s.evidenceFor}; }
 function moodWord(m){ return m<25?"Calm":m<50?"Settling":m<75?"Tense":"Upset"; }
 function scores(){ const s = CRITS.map(()=>0); picks.forEach(p => CRITS.forEach((c,i)=> s[i] += (p.effects[c.id]||0))); return s.map((n,i)=>Math.max(lowVal(CRITS[i]), Math.min(topVal(CRITS[i]), n))); }
 function renderStage(){
@@ -460,7 +468,9 @@ function exchangesHeld(statements){
     const m = /\/turn\/(\d+)$/.exec((st.object && st.object.id) || ""); if (!m) return null;
     const def = (st.object.definition || {}).extensions || {}, res = st.result || {}, n = Number(m[1]);
     if (at[n - 1] || typeof res.response !== "string") return null;
-    at[n - 1] = {line: def[X.extensions.counterpartLine], response: res.response, matched: ((res.extensions || {})[X.extensions.matchedReply]) || null};
+    const rx = res.extensions || {};
+    at[n - 1] = {line: def[X.extensions.counterpartLine], response: res.response, matched: rx[X.extensions.matchedReply] || null,
+      stepId: (X.extensions.stepId && def[X.extensions.stepId]) || null, replyId: (X.extensions.replyId && rx[X.extensions.replyId]) || null};
   }
   for (let i = 0; i < at.length; i++) if (!at[i]) return null;
   return at;
@@ -469,14 +479,29 @@ function exchangesHeld(statements){
    is not recorded apart, so each is tried: the conversation is taken up only as the one customer
    whose every line, and every reply at its step, is what was recorded. false when none is, or more
    than one: a scenario changed since, say. Nothing is then taken up. */
-/* Which reply an exchange was, at the step the conversation stands at. A tapped reply is recorded
-   as its own text. A spoken one is recorded as the words heard, with the reply it was matched to
-   beside it where the scenario names an extension for that (`matchedReply`; the sample scenario
-   does). That recorded reply is what is used: it does not depend on how words are matched today.
-   Only an exchange recorded without it has its words matched again, the way they were matched
-   when they were spoken, and that can come out differently once the matching has changed.
-   null when no one reply is named. */
+/* Which reply an exchange was, at the step the conversation stands at. null when no one reply is named.
+   Three ways, the first the exchange allows:
+   - By id. Where the scenario gives its steps and replies ids (the sample scenario does), an
+     exchange records the step's and the reply's. The reply is the one with that id, at the step
+     with that id. Neither depends on wording, the reply's or the other person's line, so an edit
+     to either does not lose the exchange. An id the step does not have is no reply: it is not
+     guessed at from the text.
+   - By the reply's text, recorded beside a spoken reply's words (`matchedReply`), or as the
+     answer itself when the reply was tapped. For an exchange recorded before ids were.
+   - By matching a spoken reply's words again, where nothing was recorded beside them. That can
+     come out differently once the matching has changed. */
 function replyOf(s, x){
+  if (x.replyId) {
+    if (x.stepId && s.id && x.stepId !== s.id) return null;
+    const byId = s.choices.map((c, i) => c.id === x.replyId ? i : -1).filter(i => i >= 0);
+    if (byId.length !== 1) return null;
+    // Whether the reply was spoken, so that what the learner said is kept as theirs. A scenario that
+    // records the matched reply records it on a spoken exchange only, so its absence is a tap.
+    // One that does not record it leaves the answer itself to tell: a tap's answer is the reply's
+    // text, and anything else was heard. (After an edit to that text a tap reads as spoken there.)
+    const spoken = X.extensions.matchedReply ? !!x.matched : x.response !== s.choices[byId[0]].text;
+    return {i: byId[0], said: spoken ? x.response : ""};
+  }
   const want = x.matched || x.response, found = s.choices.map((c, i) => c.text === want ? i : -1).filter(i => i >= 0);
   if (found.length === 1) return {i: found[0], said: x.matched ? x.response : ""};
   if (found.length > 1 || x.matched) return null;
@@ -491,7 +516,9 @@ function takeUp(exchanges){
     for (const x of exchanges) {
       if (stage >= who.stages.length) { ok = false; break; }
       const s = stageObj(), was = replyOf(s, x);
-      if (s.line !== x.line || was === null) { ok = false; break; }
+      // The step is the one the exchange names, by id where it has one, by the line where it has not.
+      const sameStep = x.stepId && s.id ? x.stepId === s.id : s.line === x.line;
+      if (!sameStep || was === null) { ok = false; break; }
       take(was.i, was.said);
     }
     if (ok) fits.push(who);
@@ -509,9 +536,13 @@ function pick(i, said){
   if (X.verbs.turn && X.extensions.counterpartLine) {
     const n = picks.length, def = {name: L("Exchange " + n), extensions:{[X.extensions.counterpartLine]: s.line}};
     if (X.activityTypes.turn) def.type = X.activityTypes.turn;
+    // Which step this was and which reply was taken, by the ids the scenario gives them. Wording
+    // is for people to read; an id is how the exchange is found again if the wording is edited.
+    if (X.extensions.stepId && s.id) def.extensions[X.extensions.stepId] = s.id;
     // What the learner said, as recognised, or the reply they tapped. The reply it was matched to is kept beside it.
     const res = {response: said || c.text};
     if (said && X.extensions.matchedReply) res.extensions = {[X.extensions.matchedReply]: c.text};
+    if (X.extensions.replyId && c.id) res.extensions = {...(res.extensions || {}), [X.extensions.replyId]: c.id};
     send("turn", "took a turn", {objectType:"Activity", id: activityId + "/turn/" + n, definition: def}, res, false, true);
   }
   if (stage >= persona.stages.length) return finish();
