@@ -287,10 +287,17 @@ describe('how the player opens a visit in a session that may already be open', (
       return r.ok ? st.id : null;
     };
     ${cut('function holds(stored, issued){', 'async function recordReviewed(got, again){')}
-    return { openVisit, postReviewed, nextTs, why: () => trackErr };
+    // What begin touches of the page besides the above: the screens, and the LMS's answer that no review is waiting.
+    const shown = [], els = {};
+    const $ = (id) => els[id] || (els[id] = { textContent: '', disabled: false, onclick: null, classList: { add() {}, remove() {} } });
+    const show = (id) => { shown.push(id); }, setChip = () => {}, P = {}, window = { __rolePlay: {} };
+    const askReviewed = async () => ({ state: 'none' }), recordReviewed = async () => {}, reviewUnknown = () => {};
+    ${cut('async function begin(){', '// ---------- start ----------')}
+    return { openVisit, postReviewed, nextTs, why: () => trackErr, begin, shown, message: () => $('rvmsg').textContent, tryAgain: () => $('rvretry').onclick() };
   `)(lrs.fetch, { lrs: 'https://lrs.example/xapi', authorization: 'Basic token', contextTemplate: { extensions: { [SESSION_EXT]: SESSION } } },
     REG, { verbs: { initialized: INITIALIZED } }, () => ({ objectType: 'Activity', id: 'https://lms.example/au' })) as {
       openVisit(): Promise<boolean>; postReviewed(st: St): Promise<string>; nextTs(): string; why(): string | null;
+      begin(): Promise<void>; shown: string[]; message(): string; tryAgain(): Promise<void>;
     };
   const outcome = (verb: string): St => ({ id: `id-outcome-${verb}`, verb: { id: `http://adlnet.gov/expapi/verbs/${verb}` }, result: { success: verb === 'passed' }, context: { registration: REG } });
   const initializedIn = (lrs: Lrs, session = SESSION): number =>
@@ -373,5 +380,46 @@ describe('how the player opens a visit in a session that may already be open', (
     // Five pages each time, and no more.
     expect(lrs.reads).toHaveLength(10);
     expect(v.why()).toBe('the learning record could not be read');
+  });
+
+  it('starts a practice with one initialized, and with none when the session already has one', async () => {
+    // A first load: the record holds the LMS's launch and nothing else of this session.
+    const first = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z')]);
+    const a = visit(first);
+    await a.begin();
+    expect(initializedIn(first)).toBe(1);
+    expect(a.shown).toEqual(['s-welcome']);
+
+    // The course is opened again part way through that practice. The LMS continues the session, and
+    // the page loads afresh: the record holds its initialized, a consent and two exchanges.
+    const ahead = new Date(Date.now() + 10 * 60_000).toISOString();
+    const again = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z'), stored('initialized', '2026-11-17T16:04:43.000Z'),
+      stored('consented', '2026-11-17T16:05:00.000Z'), stored('answered', '2026-11-17T16:05:20.000Z'), stored('answered', ahead)]);
+    const b = visit(again);
+    await b.begin();
+    expect(again.posts).toEqual([]);
+    expect(initializedIn(again)).toBe(1);
+    expect(b.shown).toEqual(['s-welcome']);
+    // What this load sends next sorts after what the earlier load sent, though that was ahead of this clock.
+    expect(Date.parse(b.nextTs())).toBeGreaterThan(Date.parse(ahead));
+  });
+
+  it('starts no practice when the record cannot be read, and starts one on a later try', async () => {
+    const lrs = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z'), stored('initialized', '2026-11-17T16:04:43.000Z')]);
+    lrs.readStatus = 503;
+    const v = visit(lrs);
+    await v.begin();
+    expect(lrs.posts).toEqual([]);
+    expect(v.shown).toEqual(['s-reviewed']);
+    expect(v.message()).toContain('so no practice was started');
+    lrs.readStatus = 200;
+    await v.tryAgain();
+    expect(lrs.posts).toEqual([]);
+    expect(initializedIn(lrs)).toBe(1);
+    expect(v.shown).toEqual(['s-reviewed', 's-welcome']);
+  });
+
+  it('has one place that sends initialized', () => {
+    expect(page.split('send("initialized"').length - 1).toBe(1);
   });
 });
