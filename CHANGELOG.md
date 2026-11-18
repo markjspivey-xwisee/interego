@@ -1,5 +1,23 @@
 # Changelog
 
+## 2026-11-18 — Practice Evidence: a voice check for the role-play player
+
+`applications/practice-evidence/tools/voice-check.mjs` runs a whole practice in
+the role-play player by voice. Until now the spoken path was only ever tried by a
+person; every automated run tapped the written replies. The check speaks each
+reply with the Windows speech engine, plays it into an audio track in the page,
+and hands that track to Chrome's speech recogniser. What the page heard, which
+reply it matched, and the score are the page's own. It runs in the player's
+preview mode and saves nothing.
+
+It is run by hand, not in CI: it needs Windows, Chrome and a network connection.
+It does not exercise the microphone. Chrome's fake-microphone option does not
+reach the recogniser, so the check passes the audio track to it directly.
+
+Seen on its first run, and not changed here: the recogniser stops at the first
+pause, so the text saved as what the learner said can be the opening words only
+("to recap"), and that fragment still matches the full reply and takes its score.
+
 ## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
 
 A Quoted descriptor repeats someone else's claim without endorsing it. The
