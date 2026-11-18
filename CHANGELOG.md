@@ -673,6 +673,17 @@ context gives a meaning (or any under a remote context) is refused, and numbers
 are named as written. Of 31 new shared rows, 25 failed in `hmc.py` and 20 on the
 page before. The CSP hash moves.
 
+An eighteenth review found one template expression that names a variable many
+times expanded whole before it was charged (2 GB from 90 KB), a type a JSON
+Schema names whose scoped context gives a keyword a meaning passed over, and
+Turtle that `rdflib` expanded before `hmc.py` charged anything. Now each
+variable's part is charged as it is made; a schema is checked in the context
+JSON-LD reads its own keys in, and where it sits; `hmc.py` charges Turtle's
+expansions and terms before `rdflib` reads it, writes where a check failed only
+for the problem it reports, and names running out of memory. Of 5 new shared
+rows, all failed in each client before, and so did 5 Turtle rows. The CSP hash
+moves.
+
 ## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
 
 From review of #934. With `requireSignedHead` on, a head with no signature was

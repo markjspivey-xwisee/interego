@@ -18,7 +18,8 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES, fetchRoutes,
   hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED, LOAD_HEADERS,
   OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, RULE_CASES,
-  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, type HopHeaders } from './hypermedia-client-fixtures.js';
+  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, turtleCostCases,
+  type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 // What list, list --json and describe may write for a document: a dozen bytes for each of its
@@ -60,6 +61,8 @@ let dir = '';
 let secretUrl = '';
 // Large documents whose shape once cost a product of two of their sizes, built once base is known.
 let cost: Record<string, string> = {};
+// Turtle whose prefixes, base or lists rdflib would make far more of than its size.
+const TURTLE_COST = turtleCostCases();
 
 function descriptor(id: string, affordances: object[], graph: object[] = []) {
   return {
@@ -194,6 +197,7 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
     ...Object.fromEntries(Object.entries(sharedDescriptors(base)).map(([path, text]) => [path, () => ({ type: 'application/ld+json', body: text })])),
     ...Object.fromEntries(Object.entries(sharedMarkdown(base)).map(([path, text]) => [path, () => ({ type: 'text/markdown', body: text })])),
     ...Object.fromEntries(Object.entries(cost).map(([path, text]) => [path, () => ({ type: 'application/ld+json', body: text })])),
+    ...Object.fromEntries(TURTLE_COST.map(([path, text]) => [path, () => ({ type: 'text/turtle', body: text })])),
     ...Object.fromEntries(['/purge', '/sparql', '/notes/1', '/publish', '/wiki/Caf%C3%A9', '/items', '/lrs/about', '/search', '/tmpl/items/7',
       '/tmpl/shard/ab/abcdef', '/rates/2', '/find', '/dir/items', '/admin', '/q', '/s'].map(path => [path, () => ({ type: 'text/plain', body: 'fine' })])),
     // /dir answers with the usual trailing-slash redirect; /see-other with a 303, after which JSON-LD
@@ -1404,6 +1408,19 @@ describe('hmc.py: a document\'s size, not its shape, sets the cost', () => {
       expect(r.timedOut, 'killed after 30 s').toBe(false);
       expect(r.ms, `${args[0]} ${args[2] || ''} run time`).toBeLessThan(3_000);
       expect([r.code, r.stderr.trim()], args.join(' ')).toEqual([1, `error: ${EXPANSION_PROBLEM}`]);
+      expect(r.stdout).toBe('');
+    }
+  }, 60_000);
+
+  // Turtle is read by rdflib, which expands its prefixed names and relative IRIs and builds a node
+  // for each term as it parses, before hmc.py reads what it writes: what it would make is charged
+  // first, so each is refused by name, with or without rdflib, sending nothing, in 512 MB.
+  it.each(TURTLE_COST)('refuses the Turtle %s, which rdflib would make far more of than its size, before rdflib reads it', async (path, _text, problem) => {
+    for (const args of [['list', `${base}${path}`], ['list', `${base}${path}`, '--json'], ['describe', `${base}${path}`, 'urn:c0']]) {
+      const r = await hmc(args, 30_000, {}, 512);
+      expect(r.timedOut, 'killed after 30 s').toBe(false);
+      expect(r.ms, `${args[0]} ${args[2] || ''} run time`).toBeLessThan(3_000);
+      expect([r.code, r.stderr.trim()], args.join(' ')).toEqual([1, `error: ${problem}`]);
       expect(r.stdout).toBe('');
     }
   }, 60_000);

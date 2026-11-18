@@ -2265,10 +2265,13 @@ describe('hypermedia client: Content-Security-Policy', () => {
       for (const attr of e.attributes) {
         expect(attr.name.startsWith('on'), `${e.localName} ${attr.name}`).toBe(false);
         expect(attr.name, e.localName).not.toBe('style');
-        expect(attr.value.trim().toLowerCase().startsWith('javascript:'), `${e.localName} ${attr.name}`).toBe(false);
+        // A script URL in any of the schemes a browser runs or renders, as code scanning reads such a check.
+        const value = attr.value.trim().toLowerCase();
+        expect(['javascript:', 'data:', 'vbscript:'].some(scheme => value.startsWith(scheme)), `${e.localName} ${attr.name}`).toBe(false);
       }
     }
-    // The script writes markup too; a style attribute there would be refused under style-src.
-    expect(PARSED.querySelector('script')!.textContent!.includes(' style=')).toBe(false);
+    // The script writes markup too; a style attribute there, after any white space, would be refused
+    // under style-src. This reads the script's JavaScript source, not the page's tags.
+    expect(/\sstyle=/.test(PARSED.querySelector('script')!.textContent!)).toBe(false);
   });
 });

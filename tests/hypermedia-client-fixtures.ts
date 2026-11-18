@@ -1322,6 +1322,14 @@ export function sharedDescriptors(base: string): Record<string, string> {
         'hydra:target': { '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/num-target{?q}`,
           'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' } }] },
         scopedExpects: { type: 'object', additionalProperties: false } })] },
+    // A body schema beside its own @id under a write whose type's scoped context, which does not
+    // propagate, sets "default" to null: JSON-LD reads the schema, a node under the write, in the
+    // context before it, where "default" is a hint, so it says the read #d is destructive.
+    '/hidden-type-revert': { '@context': { ...CTX, default: 'iep:destructiveHint', T: { '@id': 'iep:T', '@context': { default: null } } },
+      '@id': `${base}/hidden-type-revert`, 'iep:affordance': [
+        op('w', 'urn:hidden:write', 'POST', 'Hiding write', { '@type': ['iep:Affordance', 'T'], ...target('/num-target'),
+          'hydra:expects': { '@id': '#d', type: 'object', properties: { m: { type: 'string' } }, default: true } }),
+        op('d', 'urn:hidden:read', 'GET', 'Hidden read', target('/purge'))] },
     // A hint on a node written inside an object read as JSON, not JSON-LD: one that is no JSON Schema,
     // outside hydra:expects, is read as JSON-LD; HIDDEN_NODES are refused whole.
     '/hidden-meta': { '@context': { hydra: HYDRA, iep: IEP, ex: 'https://ex.example/' }, '@id': `${base}/hidden-meta`,
@@ -1477,12 +1485,19 @@ export const HIDDEN_NODES: ReadonlyArray<readonly [path: string, hidden: Record<
   ['/hidden-literal', { 'iep:readOnlyHint': false }, keywordTerm('iep:readOnlyHint')],
   // A remote context, which may name any keyword as a term.
   ['/hidden-remote', { description: { '@id': '#d', 'iep:destructiveHint': true } }, REMOTE_SCHEMA, [HYDRA_CONTEXT, CTX]],
+  // A type the schema itself names whose scoped context, which JSON-LD applies to the schema's own
+  // keys, makes a keyword a property: beside its own @id a hint, or a node under it.
+  ['/hidden-type-default', { '@id': '#d', '@type': 'T', default: true }, keywordTerm('default'),
+    { ...CTX, T: { '@id': 'iep:T', '@context': { default: 'iep:destructiveHint' } } }],
+  ['/hidden-type-node', { '@type': 'T', default: { '@id': '#d', 'iep:destructiveHint': true } }, keywordTerm('default'),
+    { ...CTX, T: { '@id': 'iep:T', '@context': { default: 'iep:x' } } }],
 ];
 
 /** Documents each client refuses whole, as [path, the problem it names]; nothing is listed or sent. */
 export const DOCUMENT_REFUSALS: ReadonlyArray<readonly [path: string, problem: string]> = [
   ...HIDDEN_NODES.map(([path, , problem]) => [path, problem] as const),
   ['/scoped-schema', keywordTerm('additionalProperties')],
+  ['/hidden-type-revert', keywordTerm('default')],
   ['/nested-graph', 'This document holds a @graph inside a node, which this client does not read, so it is not read.'],
   ['/nested-included', 'This document holds @included inside a node that is not at its top or in a @graph, which this client does not read, so it is not read.'],
   ['/reverse', 'This document uses @reverse, which this client does not read, so it is not read.'],
@@ -2414,6 +2429,36 @@ export const EXPANSION_CASES: ReadonlyArray<readonly [path: string, rel: string]
 ];
 
 /**
+ * Turtle that hmc.py hands to rdflib, which expands each prefixed name and relative IRI as it
+ * parses, before this client reads a byte of what it writes, as [path, the Turtle, what hmc.py is
+ * refused with]. hmc.py charges what rdflib would make of it first, against the budgets JSON-LD's
+ * IRIs and each step's work count against, so each is refused by name, whether rdflib is installed
+ * or not. With rdflib 7.6, prefix-controls took 1.77 GB at 3,000 controls and ended in an unnamed
+ * MemoryError, and a list of 100,000 numbers took 340 MB and 6 s.
+ *   - prefix-controls, prefix-targets: 3,000 controls whose action, or target, is a prefixed name
+ *     of one 100,000-character prefix;
+ *   - base-ids: 3,000 controls whose relative IRIs a 100,000-character @base resolves;
+ *   - prefix-chain: a prefix declared 4,000 times, each time as itself and ten more characters;
+ *   - list: one list of 100,000 numbers, each of which rdflib makes a node and two triples of.
+ */
+export function turtleCostCases(): ReadonlyArray<readonly [path: string, turtle: string, problem: string]> {
+  const range = (n: number) => Array.from({ length: n }, (_, i) => i);
+  const head = `@prefix iep: <${IEP}> .\n@prefix hydra: <${HYDRA}> .\n`;
+  const long = `https://x.example/${'a'.repeat(100000)}/`;
+  const controls = (action: (i: number) => string, target: (i: number) => string) => range(3000).map(i =>
+    `<#c${i}> a iep:Affordance ; iep:action ${action(i)} ; hydra:method "GET" ; hydra:target ${target(i)} .\n`).join('');
+  const list = `<#s> <#p> (${' 1'.repeat(100000)} ) .\n`;
+  return [
+    ['/ttl/prefix-controls', `@prefix p: <${long}> .\n${head}${controls(i => `p:c${i}`, () => '</api>')}`, EXPANSION_PROBLEM],
+    ['/ttl/prefix-targets', `@prefix p: <${long}> .\n${head}${controls(i => `<urn:c${i}>`, i => `p:t${i}`)}`, EXPANSION_PROBLEM],
+    ['/ttl/base-ids', `@base <${long}> .\n${head}${controls(i => `<urn:c${i}>`, i => `<t${i}>`)}`, EXPANSION_PROBLEM],
+    ['/ttl/prefix-chain', `@prefix p: <https://x.example/> .\n${'@prefix p: p:aaaaaaaaaa .\n'.repeat(4000)}${head}<#c> a iep:Affordance .\n`,
+      EXPANSION_PROBLEM],
+    ['/ttl/list', `${head}${list}`, workProblem(Buffer.byteLength(`${head}${list}`))],
+  ];
+}
+
+/**
  * Documents of a few dozen kilobytes in which one list of choices, or one default, description or
  * pattern, serves many inputs, which the form would offer and a check would name once for each, as
  * [path, the control's name, the problem that keeps it from being invoked]. Before, 400 inputs
@@ -2454,6 +2499,8 @@ export const WORK_FLOOR = 2_000_000;
 /** What a client refuses a document or a control with once its work passes what `bytes` allows. */
 export const workProblem = (bytes: number) => `This document asks for more work than its size allows ` +
   `(${Math.max(WORK_FLOOR, WORK_PER_BYTE * bytes)} units for ${bytes} bytes); nothing was sent.`;
+/** The name of the variable /work/expr-explode explodes: 20,000 characters. */
+const LONG_VARIABLE = 'v'.repeat(20000);
 /** Where a document's work is refused: see WORK_CASES. */
 export type WorkStep = 'read' | 'list' | 'list --json' | 'control' | 'request';
 /**
@@ -2482,6 +2529,10 @@ export type WorkStep = 'read' | 'list' | 'list --json' | 'control' | 'request';
  *     mappings: list copied the template's fields into each control's (1.3 GB for 2 MB at 12,000);
  *   - template-repeat: one template that writes its one variable 20,000 times, whose default is
  *     5,000 characters: its dry run planned a 100 MB address (12 s);
+ *   - expr-repeat: one expression that names its one variable 20,000 times, whose default is
+ *     50,000 characters, which each client expanded whole before charging it (1 GB);
+ *   - expr-explode: one exploded variable whose name is 20,000 characters and whose default is
+ *     a list of 50,000 values, which writes the name once for each value (1 GB);
  *   - honest: 300 controls, each with its own shape of ten properties, which every step reads.
  */
 export const WORK_CASES: ReadonlyArray<readonly [path: string, rel: string, refused: readonly WorkStep[], dryRun: string | null,
@@ -2492,6 +2543,8 @@ export const WORK_CASES: ReadonlyArray<readonly [path: string, rel: string, refu
   ['/work/name-shared', 'urn:c0', ['list', 'list --json'], `two input fields are both named '${'n'.repeat(50000)}'`, null],
   ['/work/joined', 'urn:c2499', ['list', 'list --json'], null, null],
   ['/work/template-repeat', 'urn:c', ['request'], null, { q: 'x'.repeat(5000) }],
+  ['/work/expr-repeat', 'urn:c', ['request'], null, { q: 'x'.repeat(50000) }],
+  ['/work/expr-explode', 'urn:c', ['request'], null, { [LONG_VARIABLE]: Array(50000).fill('x') }],
   ['/work/honest', 'urn:c299', [], null, null],
 ];
 
@@ -2661,6 +2714,17 @@ export function costDescriptors(base: string): Record<string, string> {
       ...get('urn:c', 'C'), 'hydra:target': { '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/api/${'{q}'.repeat(20000)}`,
         'hydra:mapping': [{ 'hydra:variable': 'q' }] },
       'hydra:expects': { type: 'object', properties: { q: { type: 'string', default: 'x'.repeat(5000) } } } }] },
+    // One expression that names its one variable 20,000 times, with a default of 50,000 characters.
+    '/work/expr-repeat': { '@context': CTX, '@id': `${base}/work/expr-repeat`, 'iep:affordance': [{ '@id': '#c', '@type': 'iep:Affordance',
+      ...get('urn:c', 'C'), 'hydra:target': { '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/api{?${Array(20000).fill('q').join(',')}}`,
+        'hydra:mapping': [{ 'hydra:variable': 'q' }] },
+      'hydra:expects': { type: 'object', properties: { q: { type: 'string', default: 'x'.repeat(50000) } } } }] },
+    // One exploded variable of a 20,000-character name whose default is a list of 50,000 values.
+    '/work/expr-explode': { '@context': CTX, '@id': `${base}/work/expr-explode`, 'iep:affordance': [{ '@id': '#c', '@type': 'iep:Affordance',
+      ...get('urn:c', 'C'), 'hydra:target': { '@type': 'hydra:IriTemplate', 'hydra:template': `${base}/api{?${LONG_VARIABLE}*}`,
+        'hydra:mapping': [{ 'hydra:variable': LONG_VARIABLE }] },
+      'hydra:expects': { type: 'object', properties: { [LONG_VARIABLE]: { type: 'array', items: { type: 'string' },
+        default: Array(50000).fill('x') } } } }] },
     // 300 writes, each expecting a shape of its own with ten described properties.
     '/work/honest': { '@context': CTX, '@id': `${base}/work/honest`,
       'iep:affordance': range(300).map(i => ({ '@id': `#c${i}`, '@type': 'iep:Affordance', ...get(`urn:c${i}`, `Write ${i}`), 'hydra:method': 'POST',

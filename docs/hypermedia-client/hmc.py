@@ -26,7 +26,7 @@ import textwrap
 import urllib.error
 import urllib.parse
 import urllib.request
-from collections.abc import Iterator, Sequence
+from collections.abc import Callable, Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -939,7 +939,8 @@ EXPANSION_PROBLEM = ("This document's prefixes, terms, @vocab and @base expand i
 # is shown or written (_control_texts, _field_texts), or that a template
 # expands to or a request holds; CONTROL_WORK for each control read or shown;
 # FIELD_WORK for each field a control uses, however many controls share it,
-# and for each field shown; and one for each value checked. A document of n
+# and for each field shown; one for each value checked; and, for Turtle, which
+# rdflib reads first, TURTLE_TERM_WORK for each term (_turtle_charges). A document of n
 # bytes (its text in UTF-8, as received) allows WORK_PER_BYTE * n units, and
 # WORK_FLOOR at least; checking values also allows WORK_PER_BYTE units for
 # each byte given, and building a request for each byte of the values it
@@ -1053,12 +1054,16 @@ class _Budget:
     def charge(self, value: Any, out: Any) -> Any:
         """An expansion's result, charged when it is one: text other than the value expanded."""
         if self.charging and isinstance(out, str) and out != value:
-            length = _utf16_length(out)
-            self.iris -= length
-            if self.iris < 0:
-                raise ValueError(EXPANSION_PROBLEM)
-            _spend(length)
+            self.expanded(_utf16_length(out))
         return out
+
+    def expanded(self, length: int) -> None:
+        """Charges `length` units of text an expansion makes, against this
+        document's IRI budget and the step's work."""
+        self.iris -= length
+        if self.iris < 0:
+            raise ValueError(EXPANSION_PROBLEM)
+        _spend(length)
 
 
 def _json_schema_like(item: dict[str, Any], expected: bool = False) -> bool:
@@ -1824,13 +1829,29 @@ class Context:
             hit = keyed.get(id(item))
             from_map = hit[1] if hit is not None and hit[0] is item else None
             if from_map is None and _json_schema_like(item, expected):
-                ctx._rename_aliases(item)
-                _schema_hides(ctx, item)
+                # JSON-LD reads a schema's own keys, as any node's, in the context
+                # before a type's scoped context that does not propagate, and then
+                # in the scoped contexts its own types name, which a type the schema
+                # names may give a keyword: it is checked there, and where it sits.
+                own = ctx
+                if own.previous is not None and not own._keeps_context(item):
+                    own = own.previous
+                    if scoped is not unset:
+                        own = own.scoped_child(scoped, True)
+                own._rename_aliases(item)
+                typed = own
+                for kind in sorted((t for t in as_list(item.get("@type")) if isinstance(t, str) and t in own.scoped), key=_utf16_key):
+                    typed = typed.scoped_child(own.scoped[kind], False)
+                if typed is not own:
+                    typed._rename_aliases(item)
+                _schema_hides(typed, item)
+                if ctx is not typed:
+                    _schema_hides(ctx, item)
                 schemas.add(id(item))
                 if "@id" in item:
-                    item["@id"] = ctx.expand_iri(item["@id"], document_relative=True)
+                    item["@id"] = typed.expand_iri(item["@id"], document_relative=True)
                 if "@type" in item:
-                    item["@type"] = ctx._expand_typed(item["@type"], True)
+                    item["@type"] = own._expand_typed(item["@type"], True)
                 continue
             if ctx.previous is not None and (from_map.get("revert", False) if from_map is not None else not ctx._keeps_context(item)):
                 ctx = ctx.previous
@@ -4879,6 +4900,184 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
     raise RuntimeError(f"Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from {url} (tried {tried})")
 
 
+# How rdflib's Turtle parser ends a prefix's name, and a word: a prefixed
+# name, a number, a keyword or a blank node's label (a backslash in one escapes
+# the character after it). _turtle_charges reads Turtle with them.
+_TURTLE_NAME_STOP = frozenset("\t\r\n !\"#$&'()*,+/;<=>?@[\\]^`{|}~:")
+_TURTLE_WORD_STOP = _TURTLE_NAME_STOP - {":"}
+_TURTLE_SPACE = frozenset(" \t\r\n")
+# What each term of Turtle costs to read beyond the IRIs it expands to: a word,
+# an IRI, a string, and each "[", "(", "!" and "^", of which rdflib makes a
+# node or a triple, and keeps them, before this client reads a byte.
+TURTLE_TERM_WORK = 256
+
+
+def _turtle_skip(text: str, i: int) -> int:
+    """Where the next token starts, as rdflib's parser skips space: spaces,
+    tabs, line breaks, and comments, each to the line feed after it."""
+    n = len(text)
+    while i < n:
+        if text[i] in _TURTLE_SPACE:
+            i += 1
+        elif text[i] == "#":
+            end = text.find("\n", i)
+            i = n if end < 0 else end + 1
+        else:
+            break
+    return i
+
+
+def _turtle_word_end(text: str, i: int, stop: frozenset[str]) -> int:
+    """Where a run of characters rdflib reads as one name ends: at the first
+    character of `stop`, a backslash escaping the character after it."""
+    n = len(text)
+    while i < n:
+        if text[i] == "\\":
+            i += 2
+        elif text[i] in stop:
+            break
+        else:
+            i += 1
+    return min(i, n)
+
+
+def _turtle_string_end(text: str, i: int) -> int:
+    """Where the string that starts at `i` ends, as rdflib's parser reads it:
+    a backslash escapes the character after it, a short string ends at its
+    quote, and a long one at three, four or five of them; -1 where rdflib
+    stops reading, at the end of the text or a line break in a short string."""
+    quote = text[i]
+    long = text.startswith(quote * 3, i)
+    j = i + (3 if long else 1)
+    stops = re.compile(r"[\\" + quote + "]" if long else r"[\\\r\n" + quote + "]")
+    while True:
+        found = stops.search(text, j)
+        if found is None:
+            return -1
+        j = found.start()
+        ch = text[j]
+        if ch == "\\":
+            j += 2
+        elif ch != quote:
+            return -1
+        elif not long:
+            return j + 1
+        else:
+            for run in (5, 4, 3):
+                if text.startswith(quote * run, j):
+                    return j + run
+            j += 1
+
+
+def _turtle_absolute(ref: str) -> bool:
+    """Whether rdflib resolves an IRI as written, not against the base: a
+    colon before any slash, and no escape that could put one before it."""
+    colon = ref.find(":")
+    slash = ref.find("/")
+    return "\\" not in ref and colon >= 0 and (slash < 0 or colon < slash)
+
+
+def _turtle_charges(text: str, base: str) -> None:
+    """Charges what rdflib would make of Turtle beyond its text before rdflib
+    reads it, as JSON-LD's IRIs are charged as they are read (_Budget): each
+    prefixed name its prefix's expansion, each relative IRI the base it is
+    resolved against, and each prefix and base declared what it resolves to,
+    against IRI_BUDGET_PER_UNIT units for each of the text's and
+    IRI_BUDGET_FIXED, refused past it with EXPANSION_PROBLEM; and each term
+    TURTLE_TERM_WORK units of the step's work (_spend). The text is read as
+    rdflib's parser reads it, comments, strings and IRIs whole, and each
+    charge is at least what rdflib makes: a prefixed name, the longest
+    expansion of any prefix declared so far; a relative IRI, the longest base
+    so far; a declaration, all its text could resolve to. So a prefix or base
+    written once and long, or declared again and again, is refused before
+    rdflib expands it, and nothing is read."""
+    budget = _Budget(_utf16_length(text))
+    n = len(text)
+    base_len = _utf16_length(base)
+    longest = 0
+
+    def declared(i: int, prefix: bool) -> None:
+        # The prefix or base a keyword ending at i declares, read as rdflib's
+        # parser reads one: a prefix's name and colon, then an IRI or a prefixed name.
+        nonlocal base_len, longest
+        j = _turtle_skip(text, i)
+        if prefix:
+            j = _turtle_word_end(text, j, _TURTLE_NAME_STOP)
+            if j >= n or text[j] != ":":
+                return
+            j = _turtle_skip(text, _turtle_word_end(text, j + 1, _TURTLE_WORD_STOP))
+        if j < n and text[j] == "<":
+            end = text.find(">", j + 1)
+            if end < 0:
+                return
+            ref = text[j + 1:end]
+            length = _utf16_length(ref) if _turtle_absolute(ref) else base_len + _utf16_length(ref) + 2
+            written = _turtle_absolute(ref)
+        else:
+            colon = _turtle_word_end(text, j, _TURTLE_NAME_STOP)
+            if colon >= n or text[colon] != ":":
+                return
+            length = longest + _utf16_length(text[colon + 1:_turtle_word_end(text, colon + 1, _TURTLE_WORD_STOP)])
+            written = False
+        if not written:
+            budget.expanded(length)
+        if prefix:
+            longest = max(longest, length)
+        else:
+            base_len = max(base_len, length)
+
+    i = 0
+    while i < n:
+        c = text[i]
+        if c in _TURTLE_SPACE or c == "#":
+            i = _turtle_skip(text, i)
+        elif c == "<":
+            end = text.find(">", i + 1)
+            if end < 0:
+                break
+            ref = text[i + 1:end]
+            if not _turtle_absolute(ref):
+                budget.expanded(base_len + _utf16_length(ref) + 2)
+            _spend(TURTLE_TERM_WORK)
+            i = end + 1
+        elif c in "\"'":
+            i = _turtle_string_end(text, i)
+            if i < 0:
+                break
+            _spend(TURTLE_TERM_WORK)
+        elif c == "@":
+            j = i + 1
+            while j < n and (text[j].isascii() and (text[j].isalnum() or text[j] == "-")):
+                j += 1
+            keyword = text[i + 1:j].lower()
+            for name in ("prefix", "base"):
+                if keyword.startswith(name):
+                    declared(i + 1 + len(name), name == "prefix")
+            i = j
+        elif c == "?":
+            # A variable, which rdflib makes an IRI of from the base.
+            budget.expanded(base_len + 1)
+            i += 1
+        elif c in "[(!^":
+            _spend(TURTLE_TERM_WORK)
+            i += 1
+        elif c in _TURTLE_WORD_STOP:
+            i += 1
+        else:
+            j = _turtle_word_end(text, i, _TURTLE_WORD_STOP)
+            word = text[i:j]
+            colons = word.count(":")
+            if colons:
+                budget.expanded(colons * longest + _utf16_length(word))
+            # A statement's closing "." is no term.
+            if word.strip("."):
+                _spend(TURTLE_TERM_WORK)
+            last = word.rsplit(".", 1)[-1].lower()
+            if last in ("prefix", "base"):
+                declared(j, last == "prefix")
+            i = j
+
+
 def parse_turtle_via_rdflib(text: str, url: str) -> Any:
     try:
         from rdflib import Graph  # type: ignore
@@ -4895,14 +5094,19 @@ def parse_turtle_via_rdflib(text: str, url: str) -> Any:
 
 def parse_descriptor(text: str, content_type: str, url: str, fetched_from: str | None = None, size: int | None = None) -> Descriptor:
     """The descriptor a text holds, read in one step of work (_working) that
-    its size in bytes, as received, sets: `size` for Turtle read again as the
-    JSON-LD rdflib writes. The page's parseDescriptor is the same."""
+    its size in bytes, as received, sets; Turtle is charged what rdflib would
+    make of it (_turtle_charges), then read as the JSON-LD rdflib writes, in
+    the same step. The page's parseDescriptor is the same, but for Turtle,
+    which it does not read."""
     size = _utf8_length(text) if size is None else size
     kind = classify_payload(text, content_type)
-    if kind == "turtle":
-        return parse_descriptor(json.dumps(parse_turtle_via_rdflib(text, fetched_from or url)), "application/ld+json", url, fetched_from,
-                                size)
     with _working(size):
+        if kind == "turtle":
+            # rdflib expands Turtle's IRIs and builds its triples before this
+            # client reads them, so what it would make is charged first.
+            _turtle_charges(text, fetched_from or url)
+            text = json.dumps(parse_turtle_via_rdflib(text, fetched_from or url))
+            kind, content_type = "jsonld", "application/ld+json"
         if kind == "jsonld":
             document = _strict_json(text)
             index = NodeIndex(document, url, fetched_from, _document_numbers(text), _utf16_length(text))
@@ -5059,18 +5263,21 @@ def _prefixed(value: Any, limit: int | None) -> Any:
     return _template_scalar(value)[:limit]
 
 
-def _form_parts(name: str, explode: bool, value: Any, enc_op: str) -> list[str]:
+def _form_parts(name: str, explode: bool, value: Any, enc_op: str, made: Callable[[str], str]) -> list[str]:
+    """The parts a form-style variable ({?x}, {&x}, {;x}) writes, each
+    charged as it is made (`made`): an exploded list writes its name once for
+    each value. The page's templateFormParts is the same."""
     if isinstance(value, dict):
         pairs = [(key, item) for key, item in value.items() if _template_defined(item)]
         if explode:
-            return [f"{_template_encode(key, enc_op)}={_template_encode(item, enc_op)}" for key, item in pairs]
+            return [made(f"{_template_encode(key, enc_op)}={_template_encode(item, enc_op)}") for key, item in pairs]
         flat = [piece for key, item in pairs for piece in (_template_encode(key, enc_op), _template_encode(item, enc_op))]
-        return [f"{name}={','.join(flat)}"]
+        return [made(f"{name}={','.join(flat)}")]
     items = value if isinstance(value, list) else [value]
     encoded = [_template_encode(item, enc_op) for item in items if item is not None and item != ""]
     if explode:
-        return [f"{name}={item}" for item in encoded]
-    return [f"{name}={','.join(encoded)}"]
+        return [made(f"{name}={item}") for item in encoded]
+    return [made(f"{name}={','.join(encoded)}")]
 
 
 def _path_value(explode: bool, value: Any, op: str, enc_op: str) -> str:
@@ -5096,15 +5303,25 @@ def _path_value(explode: bool, value: Any, op: str, enc_op: str) -> str:
 
 def _expand_expr(expr: str, values: dict[str, Any]) -> str:
     """One template expression as RFC 6570 expands it, charged its length
-    (_spend): a template that writes one variable many times costs what it
-    expands to, and stops where that passes the request's budget. The page's
-    expandTemplateExpr is the same."""
-    out = _expand_expr_text(expr, values)
-    _spend(_utf16_length(out))
+    (_spend): each variable's part as it is made, before any is joined, so an
+    expression that names one variable many times, or an exploded list that
+    writes a long name once for each value, stops where what it has made
+    passes the request's budget; and what joins them once it is written. The
+    page's expandTemplateExpr is the same."""
+    charged = [0]
+
+    def made(part: str) -> str:
+        units = _utf16_length(part)
+        charged[0] += units
+        _spend(units)
+        return part
+
+    out = _expand_expr_text(expr, values, made)
+    _spend(_utf16_length(out) - charged[0])
     return out
 
 
-def _expand_expr_text(expr: str, values: dict[str, Any]) -> str:
+def _expand_expr_text(expr: str, values: dict[str, Any], made: Callable[[str], str]) -> str:
     op = ""
     if expr and expr[0] in "+#./;?&":
         op, expr = expr[0], expr[1:]
@@ -5115,11 +5332,11 @@ def _expand_expr_text(expr: str, values: dict[str, Any]) -> str:
     if op in {"?", "&", ";"}:
         parts: list[str] = []
         for name, explode, limit in specs:
-            parts.extend(_form_parts(name, explode, _prefixed(values[name], limit), enc_op))
+            parts.extend(_form_parts(name, explode, _prefixed(values[name], limit), enc_op, made))
         if op == ";":
             return "".join(f";{part}" for part in parts)
         return ("&" if op == "&" else "?") + "&".join(parts)
-    rendered = [_path_value(explode, _prefixed(values[name], limit), op, enc_op) for name, explode, limit in specs]
+    rendered = [made(_path_value(explode, _prefixed(values[name], limit), op, enc_op)) for name, explode, limit in specs]
     if op == "/":
         return "/" + "/".join(rendered)
     if op == ".":
@@ -5902,6 +6119,20 @@ def _enum_keys(sch: dict[str, Any], enums: dict[int, Any], inexact: Any = None) 
     return keyed
 
 
+def _schema_at(at: Any) -> str:
+    """Where in a value a part is, as a problem names it: the field's name, then
+    a JSON Pointer to the part; a name that holds "/" is set apart from it
+    ("d/x at /0")."""
+    tokens: list[str] = []
+    while isinstance(at, tuple):
+        at, token = at
+        tokens.append(str(token))
+    if not tokens:
+        return at
+    tokens.reverse()
+    return (f"{at} at /" if "/" in at else f"{at}/") + "/".join(tokens)
+
+
 def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[int, Any] | None = None,
                   inexact: Any = None) -> None:
     """Checks a JSON Schema field's value against its schema, and each part of
@@ -5920,25 +6151,25 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
     size. A walk with a stack. `enums` keys each enum once for a whole check of a control's
     values; a name that holds "/" is set apart from the pointer after it
     ("d/x at /0"). The page's schemaCheck is the same."""
-    stack: list[tuple[Any, Any, str]] = [(schema, value, name)]
+    # Where each part is: the field's name, or the part it is in and its token,
+    # written out (_schema_at) only for the problem reported, so a long name
+    # is not copied once for each value of a list.
+    stack: list[tuple[Any, Any, Any]] = [(schema, value, name)]
     enums = {} if enums is None else enums
-
-    def step(at: str, token: Any) -> str:
-        return f"{name} at /{token}" if at == name and "/" in name else f"{at}/{token}"
     while stack:
         sch, val, at = stack.pop()
         if sch is False:
-            report(f"{at}: is not allowed by its schema")
+            report(f"{_schema_at(at)}: is not allowed by its schema")
             return
         if not isinstance(sch, dict):
             continue
         if sch.get("readOnly") is True:
-            report(f"{at}: is read-only (readOnly true), so it is not sent")
+            report(f"{_schema_at(at)}: is read-only (readOnly true), so it is not sent")
             return
         if "type" in sch:
             types = as_list(sch["type"])
             if not any(t in types for t in _json_types_of(val)):
-                report(f"{at}: must be a JSON {' or '.join(types)}")
+                report(f"{_schema_at(at)}: must be a JSON {' or '.join(types)}")
                 return
         # An entry that holds an integer past 2^53 may not be what the document
         # wrote, so it admits no value: one that matches only it is refused
@@ -5949,24 +6180,24 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
         if keyed is not None and isinstance(sch.get("enum"), list) and key not in keyed["sure"]:
             if key in keyed["rounded"]:
                 entry, kind = keyed["rounded"][key]
-                report(_rounded_problem(at, _named_text(entry, inexact), kind))
+                report(_rounded_problem(_schema_at(at), _named_text(entry, inexact), kind))
             else:
-                report(f"{at}: must be one of {', '.join(_named_text(entry, inexact) for entry in sch['enum'])}")
+                report(f"{_schema_at(at)}: must be one of {', '.join(_named_text(entry, inexact) for entry in sch['enum'])}")
             return
         if keyed is not None and "const" in sch:
             if key != keyed["const_key"]:
-                report(f"{at}: must be {_named_text(sch['const'], inexact)}")
+                report(f"{_schema_at(at)}: must be {_named_text(sch['const'], inexact)}")
                 return
             if keyed["const_rounded"]:
-                report(_rounded_problem(at, _named_text(sch["const"], inexact), keyed["const_rounded"]))
+                report(_rounded_problem(_schema_at(at), _named_text(sch["const"], inexact), keyed["const_rounded"]))
                 return
         problem = None
         if isinstance(val, str):
             n = len(val)
             if "minLength" in sch and n < _inty(sch["minLength"]):
-                problem = f"{at}: shorter than minLength {_inty(sch['minLength'])}"
+                problem = f"{_schema_at(at)}: shorter than minLength {_inty(sch['minLength'])}"
             elif "maxLength" in sch and n > _inty(sch["maxLength"]):
-                problem = f"{at}: longer than maxLength {_inty(sch['maxLength'])}"
+                problem = f"{_schema_at(at)}: longer than maxLength {_inty(sch['maxLength'])}"
         if _is_number(val):
             # Draft 4 writes an exclusive bound as true beside minimum or maximum.
             low = _bound_number(sch["minimum"]) if "minimum" in sch else None
@@ -5980,32 +6211,32 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
             unsure = next((key for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
                            if key in sch and not isinstance(sch[key], bool) and _inexact_bound(sch[key], inexact)), None)
             if unsure is not None:
-                problem = _inexact_problem(at, unsure, _bound_text(sch[unsure], inexact))
+                problem = _inexact_problem(_schema_at(at), unsure, _bound_text(sch[unsure], inexact))
             elif low is not None and val < low:
-                problem = f"{at}: below minInclusive {_bound_text(sch['minimum'], inexact)}"
+                problem = f"{_schema_at(at)}: below minInclusive {_bound_text(sch['minimum'], inexact)}"
             elif high is not None and val > high:
-                problem = f"{at}: above maxInclusive {_bound_text(sch['maximum'], inexact)}"
+                problem = f"{_schema_at(at)}: above maxInclusive {_bound_text(sch['maximum'], inexact)}"
             elif xlow and xlow[0] is not None and not val > xlow[0]:
-                problem = f"{at}: not above exclusiveMinimum {_bound_text(xlow[1], inexact)}"
+                problem = f"{_schema_at(at)}: not above exclusiveMinimum {_bound_text(xlow[1], inexact)}"
             elif xhigh and xhigh[0] is not None and not val < xhigh[0]:
-                problem = f"{at}: not below exclusiveMaximum {_bound_text(xhigh[1], inexact)}"
-        children: list[tuple[Any, Any, str]] = []
+                problem = f"{_schema_at(at)}: not below exclusiveMaximum {_bound_text(xhigh[1], inexact)}"
+        children: list[tuple[Any, Any, Any]] = []
         if isinstance(val, list):
             if "minItems" in sch and len(val) < _inty(sch["minItems"]):
-                problem = f"{at}: needs at least {_inty(sch['minItems'])} values, got {len(val)}"
+                problem = f"{_schema_at(at)}: needs at least {_inty(sch['minItems'])} values, got {len(val)}"
             elif "maxItems" in sch and len(val) > _inty(sch["maxItems"]):
-                problem = f"{at}: takes at most {_inty(sch['maxItems'])} values, got {len(val)}"
+                problem = f"{_schema_at(at)}: takes at most {_inty(sch['maxItems'])} values, got {len(val)}"
             items = sch.get("items")
             if "items" in sch and isinstance(items, (bool, dict)):
-                children.extend((items, item, step(at, i)) for i, item in enumerate(val))
+                children.extend((items, item, (at, i)) for i, item in enumerate(val))
         elif isinstance(val, dict):
             if isinstance(sch.get("required"), list):
                 missing = next((key for key in sch["required"] if isinstance(key, str) and key not in val), None)
                 if missing is not None:
-                    problem = f'{at}: is missing the key "{missing}"'
+                    problem = f'{_schema_at(at)}: is missing the key "{missing}"'
             props = sch["properties"] if isinstance(sch.get("properties"), dict) else None
             extra = sch["additionalProperties"] if "additionalProperties" in sch else True
-            children.extend((props[key] if props is not None and key in props else extra, val[key], step(at, _pointer_token(key)))
+            children.extend((props[key] if props is not None and key in props else extra, val[key], (at, _pointer_token(key)))
                             for key in _js_keys(val))
         if problem is not None:
             report(problem)
@@ -7243,13 +7474,17 @@ def build_parser() -> argparse.ArgumentParser:
     return parser
 
 
+# What a command that runs out of memory is refused with: a MemoryError names nothing itself.
+MEMORY_PROBLEM = "This needs more memory than this process has, so it was stopped."
+
+
 def main(argv: list[str] | None = None) -> int:
     parser = build_parser()
     args = parser.parse_args(argv)
     try:
         return args.func(args)
     except Exception as exc:  # noqa: BLE001
-        say(f"error: {exc}", file=sys.stderr)
+        say(f"error: {MEMORY_PROBLEM if isinstance(exc, MemoryError) else exc}", file=sys.stderr)
         return 1
 
 

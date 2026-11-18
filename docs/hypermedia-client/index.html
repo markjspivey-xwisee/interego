@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-RfkwXtE3U2kDsnU+UWBpmEwsKt1BS+whD/labn4fkUw='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-I1XxToVUgFvnc+Io41xtsk7uyDI5c0nturked3cRlZ4='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -1225,11 +1225,25 @@ class Ctx {
       // A map's value is a node, whatever keys it has, and keeps the context the map is read in.
       const fromMap = keyed.get(item);
       if (!fromMap && jsonSchemaLike(item, expected)) {
-        ctx.renameAliases(item);
-        schemaHides(ctx, item);
+        // JSON-LD reads a schema's own keys, as any node's, in the context
+        // before a type's scoped context that does not propagate, and then in
+        // the scoped contexts its own types name, which a type the schema names
+        // may give a keyword: it is checked there, and where it sits.
+        let ownCtx = ctx;
+        if (ownCtx.previous && !ownCtx.keepsContext(item)) {
+          ownCtx = ownCtx.previous;
+          if (scoped !== undefined) ownCtx = ownCtx.scopedChild(scoped, true);
+        }
+        ownCtx.renameAliases(item);
+        let typedCtx = ownCtx;
+        const schemaTypes = asList(own(item, "@type") ? item["@type"] : null).filter(t => typeof t === "string" && own(ownCtx.scoped, t)).sort();
+        for (const kind of schemaTypes) typedCtx = typedCtx.scopedChild(ownCtx.scoped[kind], false);
+        if (typedCtx !== ownCtx) typedCtx.renameAliases(item);
+        schemaHides(typedCtx, item);
+        if (ctx !== typedCtx) schemaHides(ctx, item);
         root.schemas.add(item);
-        if (own(item, "@id")) item["@id"] = ctx.expandIri(item["@id"], { base: true });
-        if (own(item, "@type")) item["@type"] = ctx.expandTyped(item["@type"], true);
+        if (own(item, "@id")) item["@id"] = typedCtx.expandIri(item["@id"], { base: true });
+        if (own(item, "@type")) item["@type"] = ownCtx.expandTyped(item["@type"], true);
         continue;
       }
       if (ctx.previous && (fromMap ? fromMap.revert : !ctx.keepsContext(item))) {
@@ -3156,10 +3170,17 @@ function templateSpecs(expr) {
   });
 }
 // A string value cut to its first `limit` characters (not UTF-16 units), as RFC
-// 6570's prefix modifier asks; a list or a map is left whole.
+// 6570's prefix modifier asks; a list or a map is left whole. Only the
+// characters kept are read, so a long value cut short costs what is kept.
 function prefixed(value, limit) {
   if (limit == null || (value != null && typeof value === "object")) return value;
-  return Array.from(templateScalar(value)).slice(0, limit).join("");
+  let out = "";
+  let count = 0;
+  for (const ch of templateScalar(value)) {
+    if (count++ === limit) break;
+    out += ch;
+  }
+  return out;
 }
 function templateVariables(template) {
   const used = new Set();
@@ -3169,15 +3190,23 @@ function templateVariables(template) {
   return used;
 }
 // One template expression as RFC 6570 expands it, charged its length
-// (spendWork): a template that writes one variable many times costs what it
-// expands to, and stops where that passes the request's budget. hmc.py's
+// (spendWork): each variable's part as it is made, before any is joined, so an
+// expression that names one variable many times, or an exploded list that
+// writes a long name once for each value, stops where what it has made passes
+// the request's budget; and what joins them once it is written. hmc.py's
 // _expand_expr is the same.
 function expandTemplateExpr(expr, values) {
-  const out = expandTemplateText(expr, values);
-  spendWork(out.length);
+  let charged = 0;
+  const made = (part) => {
+    charged += part.length;
+    spendWork(part.length);
+    return part;
+  };
+  const out = expandTemplateText(expr, values, made);
+  spendWork(out.length - charged);
   return out;
 }
-function expandTemplateText(expr, values) {
+function expandTemplateText(expr, values, made) {
   let op = "";
   if ("+#./;?&".includes(expr[0])) { op = expr[0]; expr = expr.slice(1); }
   const specs = templateSpecs(expr).filter((spec) => own(values, spec.name) && templateDefined(values[spec.name]));
@@ -3185,27 +3214,32 @@ function expandTemplateText(expr, values) {
   const encOp = (op === "+" || op === "#") ? op : "";
   if (op === "?" || op === "&" || op === ";") {
     const parts = [];
-    for (const spec of specs) parts.push(...templateFormParts(spec, prefixed(values[spec.name], spec.limit), encOp));
+    for (const spec of specs) {
+      for (const part of templateFormParts(spec, prefixed(values[spec.name], spec.limit), encOp, made)) parts.push(part);
+    }
     if (op === ";") return parts.map((part) => ";" + part).join("");
     return (op === "&" ? "&" : "?") + parts.join("&");
   }
-  const rendered = specs.map((spec) => templatePathValue(spec, prefixed(values[spec.name], spec.limit), op, encOp));
+  const rendered = specs.map((spec) => made(templatePathValue(spec, prefixed(values[spec.name], spec.limit), op, encOp)));
   if (op === "/") return "/" + rendered.join("/");
   if (op === ".") return "." + rendered.join(".");
   if (op === "#") return "#" + rendered.join(",");
   return rendered.join(",");
 }
-function templateFormParts(spec, value, encOp) {
+// The parts a form-style variable ({?x}, {&x}, {;x}) writes, each charged as it
+// is made (`made`): an exploded list writes its name once for each value.
+// hmc.py's _form_parts is the same.
+function templateFormParts(spec, value, encOp, made) {
   if (value != null && typeof value === "object" && !Array.isArray(value)) {
     const pairs = Object.entries(value).filter(([, item]) => templateDefined(item));
-    if (spec.explode) return pairs.map(([key, item]) => templateEncode(key, encOp) + "=" + templateEncode(item, encOp));
+    if (spec.explode) return pairs.map(([key, item]) => made(templateEncode(key, encOp) + "=" + templateEncode(item, encOp)));
     const flat = pairs.flatMap(([key, item]) => [templateEncode(key, encOp), templateEncode(item, encOp)]);
-    return [spec.name + "=" + flat.join(",")];
+    return [made(spec.name + "=" + flat.join(","))];
   }
   const items = (Array.isArray(value) ? value : [value]).filter((item) => item != null && item !== "");
   const encoded = items.map((item) => templateEncode(item, encOp));
-  if (spec.explode) return encoded.map((item) => spec.name + "=" + item);
-  return [spec.name + "=" + encoded.join(",")];
+  if (spec.explode) return encoded.map((item) => made(spec.name + "=" + item));
+  return [made(spec.name + "=" + encoded.join(","))];
 }
 function templatePathValue(spec, value, op, encOp) {
   if (value != null && typeof value === "object" && !Array.isArray(value)) {
