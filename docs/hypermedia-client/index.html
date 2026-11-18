@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-rytBA0204FLO2RC7VxRBLhpICJ0aSfcHfu/abxCX5Ts='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-tjl6gLhidcLIjk3WCKwUmIeMliGznbRZCefSDm7Olzc='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -228,20 +228,41 @@ function distinct(value, key = asText) {
   }
   return [found, null];
 }
-function one(value, label, problems, what, subject = "this control", tail = "it is not invoked", key = asText) {
+// What distinct reads of a value, and the text a problem names its values by
+// when it has more than one: what one() acts on, which a node's reading keeps
+// (NodeIndex.distinctOf). hmc.py's _distinct_read is the same.
+function distinctRead(value, key = asText) {
   const [found, why] = distinct(value, key);
+  return [found, why, found.length > 1 ? found.map(asText).join(", ") : null];
+}
+function one(value, label, problems, what, subject = "this control", tail = "it is not invoked", key = asText) {
+  return oneOf(distinctRead(value, key), label, problems, what, subject, tail);
+}
+// one() of a value already read (distinctRead). The text of the values a
+// problem names is charged as the problem is written (spendWork): a node that
+// many inputs or mappings name is read once, but each names it in a problem of
+// its own. hmc.py's _one_of is the same.
+function oneOf([found, why, shown], label, problems, what, subject = "this control", tail = "it is not invoked") {
   if (why != null) problems.push(subject + " writes " + label + " as " + why + ", which this client does not read, so " + what + " is not known; " + tail);
-  else if (found.length > 1) problems.push(subject + " names more than one " + label + " (" + found.map(asText).join(", ") + "), so " + what + " is not known; " + tail);
+  else if (found.length > 1) {
+    spendWork(shown.length);
+    problems.push(subject + " names more than one " + label + " (" + shown + "), so " + what + " is not known; " + tail);
+  }
   return found.length ? found[0] : null;
 }
 function countKey(v) { const n = inty(v); return n == null ? asText(v) : String(n); }
+// Values told apart by their truth, as a flag such as hydra:required is read.
+const truthyKey = (v) => String(truthy(v));
+// The readings a node keeps of its values (NodeIndex.distinctOf), one for each key.
+const DISTINCT_KINDS = new Map([[asText, "text"], [countKey, "count"], [truthyKey, "truthy"]]);
 // A count or length facet of an input: a whole number of zero or more, one
-// value of it. One that is no such number (a fraction, text that is none, a
-// negative number, which SHACL fails every value set against) is a problem,
-// not a facet left out. hmc.py's _count is the same.
-function count(value, label, problems, subject) {
+// value of it, read (distinctRead) by countKey. One that is no such number (a
+// fraction, text that is none, a negative number, which SHACL fails every
+// value set against) is a problem, not a facet left out. hmc.py's _count_of is
+// the same.
+function countOf(read, label, problems, subject) {
   const before = problems.length;
-  const found = one(value, label, problems, "what it takes", subject, "this control is not invoked", countKey);
+  const found = oneOf(read, label, problems, "what it takes", subject, "this control is not invoked");
   if (found == null) return null;
   const n = inty(found);
   if ((n == null || n < 0) && problems.length === before) {
@@ -1418,7 +1439,65 @@ class NodeIndex {
     // first node of the list each list node was read in (rdfList).
     this.lists = new Map();
     this.listOwners = new Map();
+    // What is read of a node again and again, kept the first time it is read,
+    // keyed by the node: its keys by the property each names (get), whether it
+    // says anything about itself (nodeOf), its types (typesOf), whether a
+    // shape constrains nothing (trivialShape), what its hints say (hintFlags),
+    // what it says of sh:closed (closedShape), and what reading its values
+    // for a property gives (kept). So a node that many controls, fields or
+    // mappings name costs its keys and values once, not once for each,
+    // however many it has. Nothing changes a node once the document is
+    // indexed, and every key is read in this index's context. hmc.py's
+    // NodeIndex.facts is the same.
+    this.facts = new Map();
+    // Each property shape's and hydra:SupportedProperty's field, built once
+    // per node and builder (cachedField), keyed by the node.
+    this.fields = new Map();
     this._ingest(document, fetchedFrom);
+  }
+  // A node's kept facts (this.facts), its keys by the property each names
+  // among them: each key is listed under itself and, unless it is a keyword,
+  // under the property it expands to.
+  factsOf(node) {
+    let facts = this.facts.get(node);
+    if (facts) return facts;
+    const keys = new Map();
+    for (const key of Object.keys(node)) {
+      const names = [key];
+      if (!key.startsWith("@")) { const pred = this.ctx.expandKey(key); if (pred !== key) names.push(pred); }
+      for (const name of names) { if (!keys.has(name)) keys.set(name, []); keys.get(name).push(key); }
+    }
+    facts = { keys, values: new Map(), reads: new Map(), describes: undefined, types: undefined, trivial: undefined, hints: undefined, closed: undefined };
+    this.facts.set(node, facts);
+    return facts;
+  }
+  // What `read` makes of a node's values for a property, kept for the node
+  // (factsOf) under `kind` where they are an array or an object, so a node
+  // that many inputs or mappings name costs reading its values once, however
+  // many it holds and however many name it. `read` is given the values alone,
+  // and each kind is one reading of them. hmc.py's NodeIndex.kept is the same.
+  kept(node, predicate, kind, read) {
+    const raw = this.get(node, predicate);
+    if (!isMap(node) || raw == null || typeof raw !== "object") return read(raw);
+    const reads = this.factsOf(node).reads;
+    const key = kind + " " + predicate;
+    if (!reads.has(key)) reads.set(key, read(raw));
+    return reads.get(key);
+  }
+  // A node's values for a property as distinctRead reads them, told apart by
+  // their text, their count (countKey) or their truth (truthyKey), kept (kept).
+  distinctOf(node, predicate, key = asText) {
+    const kind = DISTINCT_KINDS.get(key);
+    if (kind === undefined) return distinctRead(this.get(node, predicate), key);
+    return this.kept(node, predicate, kind, raw => distinctRead(raw, key));
+  }
+  // The first value of a node's property that reads as one value (label), kept (kept).
+  labelOf(node, predicate) { return this.kept(node, predicate, "label", label); }
+  // Whether a node object says something about its node (describes), kept.
+  describes(node) {
+    const facts = this.factsOf(node);
+    if (facts.describes === undefined) facts.describes = describes(node);
+    return facts.describes;
   }
   // Indexes every node object in the document: first the ones at its top, in
   // its @graph (and in each named graph's @graph within it) and in @included, in
@@ -1525,14 +1604,28 @@ class NodeIndex {
   // Only when no key names it is a key the context does not define (no term,
   // alias or null, and no compact or absolute IRI) read by the property's local
   // name, as a plain JSON document's "target" is.
+  // The keys that name the property are looked up among the node's kept facts
+  // (factsOf), and the values of several kept once joined, so reading a node
+  // costs its keys once however many times it is read. Nothing a caller is
+  // given is changed.
   get(node, predicate) {
     if (!node) return null;
-    const keys = [];
-    for (const key of Object.keys(node)) {
-      if (key === predicate || (!key.startsWith("@") && this.ctx.expandKey(key) === predicate)) keys.push(key);
+    if (isMap(node)) {
+      const facts = this.factsOf(node);
+      const keys = facts.keys.get(predicate);
+      if (keys && keys.length === 1) return node[keys[0]];
+      if (keys) {
+        if (!facts.values.has(predicate)) facts.values.set(predicate, keys.slice().sort().flatMap(key => asList(node[key])));
+        return facts.values.get(predicate);
+      }
+    } else {
+      const keys = [];
+      for (const key of Object.keys(node)) {
+        if (key === predicate || (!key.startsWith("@") && this.ctx.expandKey(key) === predicate)) keys.push(key);
+      }
+      if (keys.length === 1) return node[keys[0]];
+      if (keys.length) return keys.sort().flatMap(key => asList(node[key]));
     }
-    if (keys.length === 1) return node[keys[0]];
-    if (keys.length) return keys.sort().flatMap(key => asList(node[key]));
     const want = localName(predicate);
     const ctx = this.ctx;
     if (want && own(node, want) && !want.startsWith("@") && !want.includes(":") &&
@@ -1550,7 +1643,13 @@ class NodeIndex {
     if (ident && typeof ident === "object" && !Array.isArray(ident) && Object.keys(ident).some(k => k !== "@id")) return ident;
     return null;
   }
-  typesOf(node) { return literals(this.get(node, P.type) || (node && node["@type"])).map(x => String(this.ctx.expandIri(x, { vocab: true }))); }
+  // A node's types, kept (factsOf): one list, which no caller changes.
+  typesOf(node) {
+    if (!isMap(node)) return literals(this.get(node, P.type) || (node && node["@type"])).map(x => String(this.ctx.expandIri(x, { vocab: true })));
+    const facts = this.factsOf(node);
+    if (facts.types === undefined) facts.types = literals(this.get(node, P.type) || node["@type"]).map(x => String(this.ctx.expandIri(x, { vocab: true })));
+    return facts.types;
+  }
   // The node an RDF list value names, written in place or by its @id, when it
   // has an rdf:first or rdf:rest; else null.
   listNode(item) {
@@ -1759,21 +1858,29 @@ const SHAPE_NOTES = new Set([P.type, P.label, P.comment, P.shName, P.shDesc]);
 // nothing, which every node conforms to, so it is met without being checked. A
 // shape it does not describe, or one that says anything else, is not. hmc.py's
 // _trivial_shape is the same.
+// Read once for each shape, however many inputs name it (factsOf).
 function trivialShape(index, ref) {
   const node = nodeOf(index, ref);
   if (!node) return false;
-  return Object.keys(node).every(key => key.startsWith("@") ? key === "@id" || key === "@type" : SHAPE_NOTES.has(index.ctx.expandKey(key)));
+  const facts = index.factsOf(node);
+  if (facts.trivial === undefined) {
+    facts.trivial = Object.keys(node).every(key => key.startsWith("@") ? key === "@id" || key === "@type" : SHAPE_NOTES.has(index.ctx.expandKey(key)));
+  }
+  return facts.trivial;
 }
 // Reads the facets of one input (a SHACL property shape, a hydra:
 // SupportedProperty, or a shape whose own datatype makes a request body), each
-// one it acts on as one value, adding to `problems` what one() and count()
-// find. `subject` names the input in a problem. hmc.py's _Facets is the same.
+// one it acts on as one value, adding to `problems` what oneOf() and countOf()
+// find. `subject` names the input in a problem. What its one(), count() and
+// describe() read is kept for the node (NodeIndex.distinctOf, labelOf), so a
+// node many inputs name, such as a hydra:property, costs its values once.
+// hmc.py's _Facets is the same.
 function facets(index, node, problems, subject) {
   const f = {
     subject,
-    one: (predicate, name, key) => one(index.get(node, predicate), name, problems, "what it takes", subject, "this control is not invoked", key),
+    one: (predicate, name, key = asText) => oneOf(index.distinctOf(node, predicate, key), name, problems, "what it takes", subject, "this control is not invoked"),
     text: (predicate, name) => asText(f.one(predicate, name)) || null,
-    count: (predicate, name) => count(index.get(node, predicate), name, problems, subject),
+    count: (predicate, name) => countOf(index.distinctOf(node, predicate, countKey), name, problems, subject),
     // The entries of its sh:in, or null where it names none: an empty list is
     // sh:in given, which allows no value (emptyOf).
     enumValues: () => {
@@ -1833,7 +1940,7 @@ function facets(index, node, problems, subject) {
     // The first description that reads as one value, of the first predicate that gives one: shown, never acted on.
     describe: (...predicates) => {
       for (const predicate of predicates) {
-        const found = label(index.get(node, predicate));
+        const found = index.labelOf(node, predicate);
         if (found != null && found !== "") return asText(found);
       }
       return null;
@@ -1873,7 +1980,7 @@ function supportedField(index, ref, problems) {
   // Hydra's context types hydra:property as @vocab, so a plain "schema:text" names an IRI.
   else if (typeof head === "string") iri = index.ctx.lookup(head, true);
   const named = typeof iri === "string" && !!iri && !iri.startsWith("_:");
-  const shownLabel = propNode ? label(index.get(propNode, P.label)) : null;
+  const shownLabel = propNode ? index.labelOf(propNode, P.label) : null;
   const shown = label(index.get(sp, P.shName)) || (named ? localName(iri) : null) || shownLabel;
   const f = facets(index, sp, problems, subjectOf(shown, null));
   if (new Set(props.map(p => isMap(p) && typeof p["@id"] === "string" ? asText(p["@id"]) : JSON.stringify(p))).size > 1) {
@@ -1893,10 +2000,10 @@ function supportedField(index, ref, problems) {
   const jsonKind = isRdfJson(datatype) ? "json" : null;
   const multi = isMulti(jsonKind, minCount, maxCount, false);
   const extra = f.extra();
-  const required = truthy(f.one(P.required, "hydra:required", v => String(truthy(v)))) === true || (minCount || 0) >= 1 || extra.hasValue != null;
+  const required = truthy(f.one(P.required, "hydra:required", truthyKey)) === true || (minCount || 0) >= 1 || extra.hasValue != null;
   // Hydra's hydra:writable false says a client does not change the property, so a
   // value given for it is refused; a value that is not true reads as false.
-  const writable = f.one(P.writable, "hydra:writable", v => String(truthy(v)));
+  const writable = f.one(P.writable, "hydra:writable", truthyKey);
   const enumVals = f.enumValues();
   const description = f.describe(P.shDesc, P.comment, P.desc) || (propNode ? facets(index, propNode, problems, f.subject).describe(P.comment) : null);
   const field = {
@@ -2038,7 +2145,7 @@ function shapeFields(index, shapeRef) {
   }
   if (!present(props)) {
     if (present(supported)) {
-      const built = onceEach(index, supported).map(item => supportedField(index, item, problems)).filter(Boolean);
+      const built = onceEach(index, supported).map(item => cachedField(index, item, problems, supportedField)).filter(Boolean);
       const shared = sharedListProblem(built);
       if (shared) problems.push(shared);
       return { fields: built, problems };
@@ -2072,39 +2179,65 @@ function shapeFields(index, shapeRef) {
       problems.push("the shape names a sh:property " + asText(rawId(pref)) + ", which this document does not describe, so what it takes is not known; this control is not invoked");
       continue;
     }
-    const f = facets(index, node, problems, subjectOf(label(index.get(node, P.shName)), label(index.get(node, P.shPath))));
-    const path = f.text(P.shPath, "sh:path") || "";
-    if (path && complexPath(index, path)) {
-      problems.push(f.subject + " writes sh:path as a complex SHACL path, which this client does not read, so what it takes is not known; this control is not invoked");
-    }
-    const name = f.one(P.shName, "sh:name");
-    const enumVals = f.enumValues();
-    const minCount = f.count(P.shMin, "sh:minCount");
-    const maxCount = f.count(P.shMax, "sh:maxCount");
-    const datatype = f.text(P.shDt, "sh:datatype");
-    const extra = f.extra();
-    const jsonKind = shaclJsonKind(index, node, datatype, maxCount, extra.nodeKind);
-    const multi = isMulti(jsonKind, minCount, maxCount, true);
-    // Node values go in one JSON array (or, for one at most, one object), so its length is their count.
-    const counted = jsonKind === "array" || jsonKind === "object";
-    fields.push({
-      name: fieldName(asText(name) || null, path, null), path: path || null,
-      datatype, jsonKind, minCount, maxCount,
-      minItems: counted ? minCount : null, maxItems: counted ? maxCount : null,
-      pattern: f.text(P.shPat, "sh:pattern"),
-      defaultValue: f.defaults(multi),
-      maxLength: f.count(P.shMaxLen, "sh:maxLength"), minLength: f.count(P.shMinLen, "sh:minLength"),
-      description: f.describe(P.shDesc, P.comment, P.desc) || "",
-      enum: enumVals || [], inGiven: enumVals != null, empty: emptyOf(enumVals, extra),
-      minInclusive: f.one(P.shMinI, "sh:minInclusive"), maxInclusive: f.one(P.shMaxI, "sh:maxInclusive"),
-      minExclusive: extra.minExclusive, maxExclusive: extra.maxExclusive, hasValue: extra.hasValue, nodeKind: extra.nodeKind,
-      unchecked: extra.unchecked, required: (minCount || 0) >= 1 || extra.hasValue != null, rawBody: false, multi,
-      inList: index.listHead(index.get(node, P.shIn))
-    });
+    fields.push(cachedField(index, node, problems, propertyField));
   }
   const shared = sharedListProblem(fields);
   if (shared) problems.push(shared);
   return { fields, problems };
+}
+// The field one SHACL property shape gives, adding to `problems` what
+// reading its facets gives. hmc.py's _property_field is the same.
+function propertyField(index, node, problems) {
+  const f = facets(index, node, problems, subjectOf(label(index.get(node, P.shName)), label(index.get(node, P.shPath))));
+  const path = f.text(P.shPath, "sh:path") || "";
+  if (path && complexPath(index, path)) {
+    problems.push(f.subject + " writes sh:path as a complex SHACL path, which this client does not read, so what it takes is not known; this control is not invoked");
+  }
+  const name = f.one(P.shName, "sh:name");
+  const enumVals = f.enumValues();
+  const minCount = f.count(P.shMin, "sh:minCount");
+  const maxCount = f.count(P.shMax, "sh:maxCount");
+  const datatype = f.text(P.shDt, "sh:datatype");
+  const extra = f.extra();
+  const jsonKind = shaclJsonKind(index, node, datatype, maxCount, extra.nodeKind);
+  const multi = isMulti(jsonKind, minCount, maxCount, true);
+  // Node values go in one JSON array (or, for one at most, one object), so its length is their count.
+  const counted = jsonKind === "array" || jsonKind === "object";
+  return {
+    name: fieldName(asText(name) || null, path, null), path: path || null,
+    datatype, jsonKind, minCount, maxCount,
+    minItems: counted ? minCount : null, maxItems: counted ? maxCount : null,
+    pattern: f.text(P.shPat, "sh:pattern"),
+    defaultValue: f.defaults(multi),
+    maxLength: f.count(P.shMaxLen, "sh:maxLength"), minLength: f.count(P.shMinLen, "sh:minLength"),
+    description: f.describe(P.shDesc, P.comment, P.desc) || "",
+    enum: enumVals || [], inGiven: enumVals != null, empty: emptyOf(enumVals, extra),
+    minInclusive: f.one(P.shMinI, "sh:minInclusive"), maxInclusive: f.one(P.shMaxI, "sh:maxInclusive"),
+    minExclusive: extra.minExclusive, maxExclusive: extra.maxExclusive, hasValue: extra.hasValue, nodeKind: extra.nodeKind,
+    unchecked: extra.unchecked, required: (minCount || 0) >= 1 || extra.hasValue != null, rawBody: false, multi,
+    inList: index.listHead(index.get(node, P.shIn))
+  };
+}
+// The field a property shape or a hydra:SupportedProperty gives, built once per
+// node and builder however many shapes or classes name it, with the problems
+// reading it gave, added to `problems` each time: shapes that name one node
+// share one field, so its facets are read once, not once for each shape or
+// class. A node one shape names as a property shape and a class as a supported
+// property is read by each builder as its own kind, since the two read it
+// differently. hmc.py's _cached_field is the same.
+function cachedField(index, ref, problems, build) {
+  const node = nodeOf(index, ref);
+  if (!node) return build(index, ref, problems);
+  let built = index.fields.get(node);
+  if (!built) { built = new Map(); index.fields.set(node, built); }
+  let hit = built.get(build);
+  if (!hit) {
+    const own = [];
+    hit = [build(index, ref, own), own];
+    built.set(build, hit);
+  }
+  problems.push(...hit[1]);
+  return hit[0];
 }
 // The values of a shape's sh:property or a class's hydra:supportedProperty,
 // each node they name once: RDF reads a value given twice as one, so a node
@@ -2149,7 +2282,8 @@ function sharedShapeFields(index, shapeRef) {
   const shape = isJsonSchema(jsonValue(shapeRef)) ? null : index.node(jsonValue(shapeRef));
   const build = () => {
     const { fields, problems } = shapeFields(index, shapeRef);
-    for (const f of fields) { f.inexact = index.inexact; f.roundedDefault = roundedDefault(f, index.inexact); }
+    // A field many shapes share (cachedField) is read for rounding once.
+    for (const f of fields) if (f.inexact !== index.inexact) { f.inexact = index.inexact; f.roundedDefault = roundedDefault(f, index.inexact); }
     return { fields, problems, duplicate: duplicateProblem(fields) };
   };
   if (!shape) return build();
@@ -2190,10 +2324,11 @@ function addressOf(index, node) {
         problems.push("this control names a hydra:mapping " + asText(rawId(item)) + ", which this document does not describe, so where it sends is not known; it is not invoked");
         continue;
       }
-      const variable = one(index.get(mn, P.variable), "hydra:variable in one hydra:mapping", problems, "where it sends");
+      // A mapping node many mappings name is read once (NodeIndex.distinctOf).
+      const variable = oneOf(index.distinctOf(mn, P.variable), "hydra:variable in one hydra:mapping", problems, "where it sends");
       // Hydra's context types hydra:property as @vocab, so a plain "schema:query" names an IRI.
-      const prop = one(index.get(mn, P.property), "hydra:property in one hydra:mapping", problems, "which input fills it");
-      const required = one(index.get(mn, P.required), "hydra:required in one hydra:mapping", problems, "which inputs it needs", undefined, undefined, v => String(truthy(v)));
+      const prop = oneOf(index.distinctOf(mn, P.property), "hydra:property in one hydra:mapping", problems, "which input fills it");
+      const required = oneOf(index.distinctOf(mn, P.required, truthyKey), "hydra:required in one hydra:mapping", problems, "which inputs it needs");
       mappings.push({
         variable: asTextOrNull(variable),
         property: asTextOrNull(typeof prop === "string" ? index.ctx.lookup(prop, true) : prop),
@@ -2351,7 +2486,7 @@ function mergeMappings(fields, mappings) {
 function nodeOf(index, item) {
   if (item == null || (isMap(item) && (own(item, "@value") || own(item, "@list")))) return null;
   const found = index.node(item);
-  return found && describes(found) ? found : null;
+  return found && index.describes(found) ? found : null;
 }
 // The label of a blank node a value names, or null.
 function blankLabel(item) {
@@ -2399,7 +2534,10 @@ const HINTS = [["destructiveHint", "iep:destructiveHint"], ["readOnlyHint", "iep
 // destructive true or read-only false is destructive or writing, and so is a
 // value that is no boolean (hintValue). True and false both, or a value in a
 // form the reader does not read, is a problem. Read only to fail closed:
-// neither hint ever makes a control safe. hmc.py's _hint_flags is the same.
+// neither hint ever makes a control safe. What each object says is read once
+// for each node however many controls name it (hintSummary), and each it reads
+// is charged one unit (spendWork), so a node many controls name costs its
+// keys once and one unit for each. hmc.py's _hint_flags is the same.
 function hintFlags(index, node) {
   const objects = [node];
   const missing = [];
@@ -2431,18 +2569,13 @@ function hintFlags(index, node) {
   const unread = { destructiveHint: false, readOnlyHint: false };
   const why = { destructiveHint: null, readOnlyHint: null };
   for (const obj of objects) {
-    for (const [key, val] of Object.entries(obj)) {
-      if (key.startsWith("@")) continue;
-      const names = index ? [localName(key), localName(index.ctx.expandKey(key))] : [localName(key)];
-      for (const [hint] of HINTS) {
-        if (!names.includes(hint)) continue;
-        for (const item of asList(val)) {
-          const [kind, value] = hintValue(item);
-          if (kind === "bool") found[hint].add(value);
-          else if (kind === "unread") unread[hint] = true;
-          else if (kind === "form" && why[hint] == null) why[hint] = value;
-        }
-      }
+    const summary = hintSummary(index, obj);
+    spendWork(1);
+    for (const [hint] of HINTS) {
+      const read = summary[hint];
+      for (const value of read.found) found[hint].add(value);
+      if (read.unread) unread[hint] = true;
+      if (read.why != null && why[hint] == null) why[hint] = read.why;
     }
   }
   const problems = [];
@@ -2455,6 +2588,39 @@ function hintFlags(index, node) {
   const destructive = d.has(true) || unread.destructiveHint || why.destructiveHint != null ? true : (d.size ? false : null);
   const readOnly = r.has(false) || unread.readOnlyHint || why.readOnlyHint != null ? false : (r.size ? true : null);
   return { destructive, readOnly, problems };
+}
+// What one object says under its own keys, each whose name ends in
+// destructiveHint or readOnlyHint, about each hint: the booleans it gives,
+// whether it gives a value read as the unsafe one, and the first form it gives
+// that this client does not read, in the order of its keys. Built once for each
+// node however many controls name it (factsOf) and charged (spendWork) when it
+// is built: one unit for each key it has and each value under a hint. With no
+// index (a HyperMarkdown block's hints) it is built each time it is read.
+// hmc.py's _hint_summary is the same.
+function hintSummary(index, obj) {
+  const facts = index ? index.factsOf(obj) : null;
+  if (facts && facts.hints) return facts.hints;
+  const summary = { destructiveHint: { found: new Set(), unread: false, why: null }, readOnlyHint: { found: new Set(), unread: false, why: null } };
+  const keys = Object.keys(obj);
+  let units = keys.length;
+  for (const key of keys) {
+    if (key.startsWith("@")) continue;
+    const names = index ? [localName(key), localName(index.ctx.expandKey(key))] : [localName(key)];
+    for (const [hint] of HINTS) {
+      if (!names.includes(hint)) continue;
+      const read = summary[hint];
+      for (const item of asList(obj[key])) {
+        units++;
+        const [kind, value] = hintValue(item);
+        if (kind === "bool") read.found.add(value);
+        else if (kind === "unread") read.unread = true;
+        else if (kind === "form" && read.why == null) read.why = value;
+      }
+    }
+  }
+  spendWork(units);
+  if (facts) facts.hints = summary;
+  return summary;
 }
 // The problem that keeps a control's values from being told apart: two fields
 // of one name, or a name one field's value may be given under (aliasesOf) that
@@ -2781,13 +2947,10 @@ function controlInputs(index, node, expectsRaw, expects, mappings) {
       }
     }
     const closed = fields.length > given && shape && !isJsonSchema(schema) ? index.node(jsonValue(expectsRaw)) : null;
-    if (closed && asList(index.get(closed, SHACL + "closed")).some(v => v != null && truthy(label(v)) !== false)) {
-      const [ignored, why, several] = index.listValues(index.get(closed, SHACL + "ignoredProperties"));
-      if (several || why != null) {
-        extra.push("the shape writes sh:ignoredProperties as " + (several ? "more than one list" : why) +
-          ", which this client does not read, so what it sends is not known; this control is not invoked");
-      }
-      const kept = new Set(ignored.map(asText));
+    const read = closed ? closedShape(index, closed) : null;
+    if (read && read.closed) {
+      if (read.problem != null) extra.push(read.problem);
+      const kept = read.kept;
       for (let i = given; i < fields.length; i++) if (!fields[i].path || !kept.has(fields[i].path)) fields[i] = { ...fields[i], closedOut: true };
     }
     problem = inlineProblem || duplicateProblem(fields) || (extra.length ? extra[0] : null);
@@ -2798,6 +2961,28 @@ function controlInputs(index, node, expectsRaw, expects, mappings) {
   // _charged_inputs is the same.
   spendWork(FIELD_WORK * fields.length);
   return { fields, warning, problem };
+}
+// Whether a shape is closed (a sh:closed that is not false), the properties
+// its sh:ignoredProperties names, and the problem reading those gives: read
+// once for each shape however many controls name it (factsOf), so a long
+// sh:ignoredProperties costs its length once, not once for each control that
+// joins its template's variables to the shape. hmc.py's _closed_shape is the same.
+function closedShape(index, node) {
+  const facts = index.factsOf(node);
+  if (facts.closed === undefined) {
+    const closed = asList(index.get(node, SHACL + "closed")).some(v => v != null && truthy(label(v)) !== false);
+    let kept = new Set(), problem = null;
+    if (closed) {
+      const [ignored, why, several] = index.listValues(index.get(node, SHACL + "ignoredProperties"));
+      if (several || why != null) {
+        problem = "the shape writes sh:ignoredProperties as " + (several ? "more than one list" : why) +
+          ", which this client does not read, so what it sends is not known; this control is not invoked";
+      }
+      kept = new Set(ignored.map(asText));
+    }
+    facts.closed = { closed, kept, problem };
+  }
+  return facts.closed;
 }
 // The problem a required input that allows no value gives: an empty list of
 // the values it allows (emptyText), or sh:maxCount 0. No request it makes can

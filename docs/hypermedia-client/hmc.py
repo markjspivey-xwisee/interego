@@ -409,17 +409,36 @@ def _distinct(value: Any, key: Any = None) -> tuple[list[Any], str | None]:
     return found, None
 
 
+def _distinct_read(value: Any, key: Any = None) -> tuple[list[Any], str | None, str | None]:
+    """What _distinct reads of a value, and the text a problem names its
+    values by when it has more than one: what _one acts on, which a node's
+    reading keeps (NodeIndex.distinct_of). The page's distinctRead is the
+    same."""
+    found, why = _distinct(value, key)
+    return found, why, (", ".join(_text(v) for v in found) if len(found) > 1 else None)
+
+
 def _one(value: Any, label: str, problems: list[str], what: str, subject: str = "this control",
          tail: str = "it is not invoked", key: Any = None) -> Any:
     """The one value of a property the reader acts on, or None when it has
     none. More than one distinct value, or one it cannot read, adds a problem
     that names the property to `problems` (the first value read, if any, is
     still returned, to show). The page's one is the same."""
-    found, why = _distinct(value, key)
+    return _one_of(_distinct_read(value, key), label, problems, what, subject, tail)
+
+
+def _one_of(read: tuple[list[Any], str | None, str | None], label: str, problems: list[str], what: str,
+            subject: str = "this control", tail: str = "it is not invoked") -> Any:
+    """_one of a value already read (_distinct_read). The text of the values a
+    problem names is charged as the problem is written (_spend): a node that
+    many inputs or mappings name is read once, but each names it in a problem
+    of its own. The page's oneOf is the same."""
+    found, why, shown = read
     if why is not None:
         problems.append(f"{subject} writes {label} as {why}, which this client does not read, so {what} is not known; {tail}")
     elif len(found) > 1:
-        problems.append(f"{subject} names more than one {label} ({', '.join(_text(v) for v in found)}), so {what} is not known; {tail}")
+        _spend(_utf16_length(shown or ""))
+        problems.append(f"{subject} names more than one {label} ({shown}), so {what} is not known; {tail}")
     return found[0] if found else None
 
 
@@ -428,13 +447,19 @@ def _count_key(value: Any) -> str:
     return _text(value) if number is None else str(number)
 
 
-def _count(value: Any, label: str, problems: list[str], subject: str) -> int | None:
+def _truthy_key(value: Any) -> str:
+    """Values told apart by their truth, as a flag such as hydra:required is read."""
+    return str(truthy(value))
+
+
+def _count_of(read: tuple[list[Any], str | None, str | None], label: str, problems: list[str], subject: str) -> int | None:
     """A count or length facet of an input: a whole number of zero or more,
-    one value of it. One that is no such number (a fraction, text that is
-    none, a negative number, which SHACL fails every value set against) is a
-    problem, not a facet left out. The page's count is the same."""
+    one value of it, read (_distinct_read) by _count_key. One that is no such
+    number (a fraction, text that is none, a negative number, which SHACL
+    fails every value set against) is a problem, not a facet left out. The
+    page's countOf is the same."""
     before = len(problems)
-    found = _one(value, label, problems, "what it takes", subject, "this control is not invoked", _count_key)
+    found = _one_of(read, label, problems, "what it takes", subject, "this control is not invoked")
     if found is None:
         return None
     number = _inty(found)
@@ -2422,6 +2447,26 @@ class RequestPlan:
 _NOT_DESCRIPTION = frozenset({"@id", "@context", "@index", "@graph", "@included"})
 
 
+class _Facts:
+    """What is read of one node again and again (NodeIndex.facts): its keys
+    by the property each names, the values of several joined, what reading
+    its values for a property gives (NodeIndex.kept), its types, whether it
+    is a shape that constrains nothing, its hints' summary, and what it says
+    of sh:closed."""
+
+    __slots__ = ("node", "keys", "values", "reads", "types", "trivial", "hints", "closed")
+
+    def __init__(self, node: dict[str, Any], keys: dict[str, list[str]]) -> None:
+        self.node = node
+        self.keys = keys
+        self.values: dict[str, list[Any]] = {}
+        self.reads: dict[tuple[str, str], Any] = {}
+        self.types: list[str] | None = None
+        self.trivial: bool | None = None
+        self.hints: dict[str, _HintRead] | None = None
+        self.closed: _ClosedRead | None = None
+
+
 def _describes(item: dict[str, Any]) -> bool:
     """Whether a node object says something about its node: a key other than
     its @id, @context, @index, @graph or @included."""
@@ -2496,7 +2541,67 @@ class NodeIndex:
         # keyed by the node's or the mappings' id(), which is kept.
         self.fields: dict[tuple[int, Any], tuple[Any, Field | None, list[str]]] = {}
         self.mapped: dict[int, tuple[Any, _TemplateFields]] = {}
+        # What is read of a node again and again, kept the first time it is
+        # read, keyed by the node's id() with the node kept (_Facts): its keys
+        # by the property each names (get), its types (types_of), whether a
+        # shape constrains nothing (_trivial_shape), what its hints say
+        # (_hint_flags), what it says of sh:closed (_closed_shape), and what
+        # reading its values for a property gives (kept). So a node that many
+        # controls, fields or mappings name costs its keys and values once, not
+        # once for each, however many it has. Nothing changes a node once the
+        # document is indexed, and every key is read in this index's context.
+        # The page's NodeIndex.facts is the same; it also keeps whether a node
+        # describes itself, which _describes finds at its first keys and the
+        # page's describes lists every key for.
+        self.facts: dict[int, _Facts] = {}
         self._ingest_document(document, fetched_from)
+
+    def facts_of(self, node: dict[str, Any]) -> "_Facts":
+        """A node's kept facts (self.facts), its keys by the property each
+        names among them: each key is listed under itself and, unless it is a
+        keyword, under the property it expands to."""
+        facts = self.facts.get(id(node))
+        if facts is not None and facts.node is node:
+            return facts
+        keys: dict[str, list[str]] = {}
+        for key in node:
+            keys.setdefault(key, []).append(key)
+            if not key.startswith("@"):
+                pred = self.ctx.expand_key(key)
+                if pred != key:
+                    keys.setdefault(pred, []).append(key)
+        facts = self.facts[id(node)] = _Facts(node, keys)
+        return facts
+
+    def kept(self, node: Any, predicate: str, kind: str, read: Any) -> Any:
+        """What `read` makes of a node's values for a property, kept for the
+        node (facts_of) under `kind` where they are an array or an object, so
+        a node that many inputs or mappings name costs reading its values
+        once, however many it holds and however many name it. `read` is given
+        the values alone, and each kind is one reading of them. The page's
+        kept is the same."""
+        raw = self.get(node, predicate)
+        if not isinstance(node, dict) or not isinstance(raw, (list, dict)):
+            return read(raw)
+        reads = self.facts_of(node).reads
+        key = (kind, predicate)
+        if key not in reads:
+            reads[key] = read(raw)
+        return reads[key]
+
+    def distinct_of(self, node: Any, predicate: str, key: Any = None) -> tuple[list[Any], str | None, str | None]:
+        """A node's values for a property as _distinct_read reads them, told
+        apart by their text, their count (_count_key) or their truth
+        (_truthy_key), kept (kept). The page's distinctOf is the same."""
+        key = key or _text
+        kind = _DISTINCT_KINDS.get(key)
+        if kind is None:
+            return _distinct_read(self.get(node, predicate), key)
+        return self.kept(node, predicate, kind, lambda raw: _distinct_read(raw, key))
+
+    def label_of(self, node: Any, predicate: str) -> Any:
+        """The first value of a node's property that reads as one value (_label), kept (kept)."""
+        return self.kept(node, predicate, "label", _label)
 
     def _ingest_document(self, document: Any, fetched_from: str | None) -> None:
         """Indexes every node object in the document: first the ones at its
@@ -2621,15 +2726,29 @@ class NodeIndex:
         value first. Only when no key names it is a key the context does not
         define (no term, alias or null, and no compact or absolute IRI) read by
         the property's local name, as a plain JSON document's "target" is. The
-        page's get is the same."""
+        page's get is the same. The keys that name the property are looked up
+        among the node's kept facts (facts_of), and the values of several kept
+        once joined, so reading a node costs its keys once however many times
+        it is read. Nothing a caller is given is changed."""
         if not node:
             return None
-        keys = [key for key in node
-                if key == predicate or (not key.startswith("@") and self.ctx.expand_key(key) == predicate)]
-        if len(keys) == 1:
-            return node[keys[0]]
-        if keys:
-            return [value for key in sorted(keys, key=_utf16_key) for value in as_list(node[key])]
+        if isinstance(node, dict):
+            facts = self.facts_of(node)
+            keys = facts.keys.get(predicate)
+            if keys is not None and len(keys) == 1:
+                return node[keys[0]]
+            if keys:
+                joined = facts.values.get(predicate)
+                if joined is None:
+                    joined = facts.values[predicate] = [value for key in sorted(keys, key=_utf16_key) for value in as_list(node[key])]
+                return joined
+        else:
+            keys = [key for key in node
+                    if key == predicate or (not key.startswith("@") and self.ctx.expand_key(key) == predicate)]
+            if len(keys) == 1:
+                return node[keys[0]]
+            if keys:
+                return [value for key in sorted(keys, key=_utf16_key) for value in as_list(node[key])]
         want = local_name(predicate)
         ctx = self.ctx
         if (want and want in node and not want.startswith("@") and ":" not in want
@@ -2653,7 +2772,13 @@ class NodeIndex:
         return None
 
     def types_of(self, node: dict[str, Any] | None) -> list[str]:
-        return [str(self.ctx.expand_iri(x, vocab=True)) for x in literals(self.get(node, P_TYPE) or (node or {}).get("@type"))]
+        """A node's types, kept (facts_of): one list, which no caller changes."""
+        if not isinstance(node, dict):
+            return [str(self.ctx.expand_iri(x, vocab=True)) for x in literals(self.get(node, P_TYPE) or (node or {}).get("@type"))]
+        facts = self.facts_of(node)
+        if facts.types is None:
+            facts.types = [str(self.ctx.expand_iri(x, vocab=True)) for x in literals(self.get(node, P_TYPE) or node.get("@type"))]
+        return facts.types
 
     def _list_node(self, item: Any) -> dict[str, Any] | None:
         """The node an RDF list value names, written in place or by its @id,
@@ -2862,6 +2987,10 @@ def _text(value: Any) -> str:
     return str(value)
 
 
+# The readings a node keeps of its values (NodeIndex.distinct_of), one for each key.
+_DISTINCT_KINDS = {_text: "text", _count_key: "count", _truthy_key: "truthy"}
+
+
 def _json_value(value: Any) -> Any:
     """A JSON literal written as a value object, {"@type": "@json", "@value": v}, as v."""
     if isinstance(value, list):
@@ -3012,28 +3141,35 @@ def _trivial_shape(index: NodeIndex, ref: Any) -> bool:
     node = _node_of(index, ref)
     if node is None:
         return False
-    return all(key in ("@id", "@type") if key.startswith("@") else index.ctx.expand_key(key) in _SHAPE_NOTES for key in node)
+    # Read once for each shape, however many inputs name it (facts_of).
+    facts = index.facts_of(node)
+    if facts.trivial is None:
+        facts.trivial = all(key in ("@id", "@type") if key.startswith("@") else index.ctx.expand_key(key) in _SHAPE_NOTES
+                            for key in node)
+    return facts.trivial
 
 
 class _Facets:
     """Reads the facets of one input (a SHACL property shape, a hydra:
     SupportedProperty, or a shape whose own datatype makes a request body),
-    each one it acts on as one value, adding to `problems` what _one and
-    _count find. `subject` names the input in a problem. The page's facets is
-    the same."""
+    each one it acts on as one value, adding to `problems` what _one_of and
+    _count_of find. `subject` names the input in a problem. What its one,
+    count and describe read is kept for the node (NodeIndex.distinct_of,
+    label_of), so a node many inputs name, such as a hydra:property, costs its
+    values once. The page's facets is the same."""
 
     def __init__(self, index: NodeIndex, node: dict[str, Any], problems: list[str], subject: str) -> None:
         self.index, self.node, self.problems, self.subject = index, node, problems, subject
 
     def one(self, predicate: str, label: str, key: Any = None) -> Any:
-        return _one(self.index.get(self.node, predicate), label, self.problems, "what it takes", self.subject,
-                    "this control is not invoked", key)
+        return _one_of(self.index.distinct_of(self.node, predicate, key), label, self.problems, "what it takes", self.subject,
+                       "this control is not invoked")
 
     def text(self, predicate: str, label: str) -> str | None:
         return _text(self.one(predicate, label)) or None
 
     def count(self, predicate: str, label: str) -> int | None:
-        return _count(self.index.get(self.node, predicate), label, self.problems, self.subject)
+        return _count_of(self.index.distinct_of(self.node, predicate, _count_key), label, self.problems, self.subject)
 
     def enum(self) -> list[Any] | None:
         """The entries of its sh:in, or None where it names none: an empty
@@ -3112,7 +3248,7 @@ class _Facets:
     def describe(self, *predicates: str) -> str | None:
         """The first description that reads as one value, of the first predicate that gives one: shown, never acted on."""
         for predicate in predicates:
-            found = _label(self.index.get(self.node, predicate))
+            found = self.index.label_of(self.node, predicate)
             if found is not None and found != "":
                 return _text(found)
         return None
@@ -3159,7 +3295,7 @@ def _supported_field(index: NodeIndex, ref: Any, problems: list[str]) -> Field |
         # Hydra's context types hydra:property as @vocab, so a plain "schema:text" names an IRI.
         iri = index.ctx.lookup(head, True) if isinstance(head, str) else None
     named = isinstance(iri, str) and bool(iri) and not iri.startswith("_:")
-    shown_label = _label(index.get(prop_node, P_LABEL)) if prop_node else None
+    shown_label = index.label_of(prop_node, P_LABEL) if prop_node else None
     shown = _label(index.get(sp, P_SH_NAME)) or (local_name(iri) if named else None) or shown_label
     facets = _Facets(index, sp, problems, _subject(shown, None))
     if len({_text(p.get("@id")) if isinstance(p, dict) and isinstance(p.get("@id"), str) else _js_json(p) for p in props}) > 1:
@@ -3181,11 +3317,11 @@ def _supported_field(index: NodeIndex, ref: Any, problems: list[str]) -> Field |
     json_kind = "json" if _is_rdf_json(datatype) else None
     multi = _is_multi(json_kind, min_count, max_count, False)
     extra = facets.extra()
-    required = (truthy(facets.one(P_REQUIRED, "hydra:required", lambda v: str(truthy(v)))) is True or (min_count or 0) >= 1
+    required = (truthy(facets.one(P_REQUIRED, "hydra:required", _truthy_key)) is True or (min_count or 0) >= 1
                 or extra["has_value"] is not None)
     # Hydra's hydra:writable false says a client does not change the property, so
     # a value given for it is refused; a value that is not true reads as false.
-    writable = facets.one(P_WRITABLE, "hydra:writable", lambda v: str(truthy(v)))
+    writable = facets.one(P_WRITABLE, "hydra:writable", _truthy_key)
     enum = facets.enum()
     description = facets.describe(P_SH_DESC, P_COMMENT, P_DESC) or (
         _Facets(index, prop_node, problems, facets.subject).describe(P_COMMENT) if prop_node else None)
@@ -3406,8 +3542,8 @@ def _cached_field(index: NodeIndex, ref: Any, problems: list[str], build: Any) -
     node one shape names as a property shape and a class as a supported
     property is read by each builder as its own kind, since the two read it
     differently (path, name, required, writable): a field built one way is
-    never the other's. The page builds a control's fields only when it is
-    opened, so it needs no such cache."""
+    never the other's. So a node many shapes or classes name is read once,
+    not once for each. The page's cachedField is the same."""
     node = _node_of(index, ref)
     if node is None:
         return build(index, ref, problems)
@@ -3534,11 +3670,12 @@ def _address_of(index: NodeIndex, node: dict[str, Any]) -> tuple[str | None, lis
                 problems.append(f"this control names a hydra:mapping {_text(raw_id(item))}, which this document does not describe, so "
                                 "where it sends is not known; it is not invoked")
                 continue
-            variable = _one(index.get(mn, P_VARIABLE), "hydra:variable in one hydra:mapping", problems, "where it sends")
+            # A mapping node many mappings name is read once (NodeIndex.distinct_of).
+            variable = _one_of(index.distinct_of(mn, P_VARIABLE), "hydra:variable in one hydra:mapping", problems, "where it sends")
             # Hydra's context types hydra:property as @vocab, so a plain "schema:query" names an IRI.
-            prop = _one(index.get(mn, P_PROPERTY), "hydra:property in one hydra:mapping", problems, "which input fills it")
-            required = _one(index.get(mn, P_REQUIRED), "hydra:required in one hydra:mapping", problems, "which inputs it needs",
-                            key=lambda v: str(truthy(v)))
+            prop = _one_of(index.distinct_of(mn, P_PROPERTY), "hydra:property in one hydra:mapping", problems, "which input fills it")
+            required = _one_of(index.distinct_of(mn, P_REQUIRED, _truthy_key), "hydra:required in one hydra:mapping", problems,
+                               "which inputs it needs")
             found.append({
                 "variable": _text(variable) or None,
                 "property": _text(index.ctx.lookup(prop, True) if isinstance(prop, str) else prop) or None,
@@ -3762,8 +3899,11 @@ def _hint_flags(index: NodeIndex | None, node: dict[str, Any]) -> tuple[bool | N
     included: any destructive true or read-only false is destructive or
     writing, and so is a value that is no boolean (_hint_value). True and
     false both, or a value in a form the reader does not read, is a problem.
-    Read only to fail closed: neither hint ever makes a control safe. The
-    page's hintFlags is the same."""
+    Read only to fail closed: neither hint ever makes a control safe. What
+    each object says is read once for each node however many controls name it
+    (_hint_summary), and each it reads is charged one unit (_spend), so a node
+    many controls name costs its keys once and one unit for each. The page's
+    hintFlags is the same."""
     objects = [node]
     missing: list[str] = []
     for key, val in node.items():
@@ -3799,21 +3939,15 @@ def _hint_flags(index: NodeIndex | None, node: dict[str, Any]) -> tuple[bool | N
     unread = {hint: False for hint, _ in _HINTS}
     why: dict[str, str | None] = {hint: None for hint, _ in _HINTS}
     for obj in objects:
-        for key, val in obj.items():
-            if key.startswith("@"):
-                continue
-            names = {local_name(key), local_name(index.ctx.expand_key(key))} if index else {local_name(key)}
-            for hint, _ in _HINTS:
-                if hint not in names:
-                    continue
-                for item in as_list(val):
-                    kind, value = _hint_value(item)
-                    if kind == "bool":
-                        found[hint].add(value)
-                    elif kind == "unread":
-                        unread[hint] = True
-                    elif kind == "form" and why[hint] is None:
-                        why[hint] = value
+        summary = _hint_summary(index, obj)
+        _spend(1)
+        for hint, _ in _HINTS:
+            read = summary[hint]
+            found[hint] |= read.found
+            if read.unread:
+                unread[hint] = True
+            if read.why is not None and why[hint] is None:
+                why[hint] = read.why
     destructive = found["destructiveHint"]
     writes = found["readOnlyHint"]
     destructive_flag = (True if True in destructive or unread["destructiveHint"] or why["destructiveHint"]
@@ -3821,6 +3955,54 @@ def _hint_flags(index: NodeIndex | None, node: dict[str, Any]) -> tuple[bool | N
     read_only = (False if False in writes or unread["readOnlyHint"] or why["readOnlyHint"]
                  else (True if writes else None))
     return destructive_flag, read_only, _hint_problems(found, why) + missing
+
+
+class _HintRead:
+    """What one object says about one hint (_hint_summary)."""
+
+    __slots__ = ("found", "unread", "why")
+
+    def __init__(self) -> None:
+        self.found: set[bool] = set()
+        self.unread = False
+        self.why: str | None = None
+
+
+def _hint_summary(index: NodeIndex | None, obj: dict[str, Any]) -> dict[str, _HintRead]:
+    """What one object says under its own keys, each whose name ends in
+    destructiveHint or readOnlyHint, about each hint: the booleans it gives,
+    whether it gives a value read as the unsafe one, and the first form it
+    gives that this client does not read, in the order of its keys. Built
+    once for each node however many controls name it (facts_of) and charged
+    (_spend) when it is built: one unit for each key it has and each value
+    under a hint. With no index (a HyperMarkdown block's hints) it is built
+    each time it is read. The page's hintSummary is the same."""
+    facts = index.facts_of(obj) if index is not None else None
+    if facts is not None and facts.hints is not None:
+        return facts.hints
+    summary = {hint: _HintRead() for hint, _ in _HINTS}
+    units = len(obj)
+    for key, val in obj.items():
+        if key.startswith("@"):
+            continue
+        names = {local_name(key), local_name(index.ctx.expand_key(key))} if index else {local_name(key)}
+        for hint, _ in _HINTS:
+            if hint not in names:
+                continue
+            read = summary[hint]
+            for item in as_list(val):
+                units += 1
+                kind, value = _hint_value(item)
+                if kind == "bool":
+                    read.found.add(value)
+                elif kind == "unread":
+                    read.unread = True
+                elif kind == "form" and read.why is None:
+                    read.why = value
+    _spend(units)
+    if facts is not None:
+        facts.hints = summary
+    return summary
 
 
 def _aliases(fld: Field) -> list[str]:
@@ -4248,8 +4430,10 @@ def _shared_shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field],
     def build() -> tuple[list[Field], list[str]]:
         fields, problems = _shape_fields(index, shape_ref)
         for fld in fields:
-            fld.inexact = index.inexact
-            fld.rounded_default = _rounded_default(fld, index.inexact)
+            # A field many shapes share (_cached_field) is read for rounding once.
+            if fld.inexact is not index.inexact:
+                fld.inexact = index.inexact
+                fld.rounded_default = _rounded_default(fld, index.inexact)
         return fields, problems
     if shape is None:
         fields, problems = build()
@@ -4376,18 +4560,51 @@ def _read_control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: An
                 one.required, one.min_count = added.required, 1 if added.required else 0
                 fields[i] = one
         closed = index.node(_json_value(expects_raw)) if len(fields) > given and shape is not None and not _is_json_schema(schema) else None
-        if closed is not None and any(v is not None and truthy(_label(v)) is not False for v in as_list(index.get(closed, SHACL + "closed"))):
-            ignored, why, several = index.list_values(index.get(closed, SHACL + "ignoredProperties"))
-            if several or why is not None:
-                extra.append(f"the shape writes sh:ignoredProperties as {'more than one list' if several else why}, which this client does "
-                             "not read, so what it sends is not known; this control is not invoked")
-            kept = {_text(item) for item in ignored}
+        read = _closed_shape(index, closed) if closed is not None else None
+        if read is not None and read.closed:
+            if read.problem is not None:
+                extra.append(read.problem)
+            kept = read.kept
             for i in range(given, len(fields)):
                 if not fields[i].path or fields[i].path not in kept:
                     fields[i] = copy.copy(fields[i])
                     fields[i].closed_out = True
         problem = inline_problem or _duplicate_problem(fields) or (extra[0] if extra else None)
     return fields, problem or _unsatisfiable(fields), warning
+
+
+class _ClosedRead:
+    """What a shape says of sh:closed (_closed_shape)."""
+
+    __slots__ = ("closed", "kept", "problem")
+
+    def __init__(self, closed: bool, kept: set[str], problem: str | None) -> None:
+        self.closed = closed
+        self.kept = kept
+        self.problem = problem
+
+
+def _closed_shape(index: NodeIndex, node: dict[str, Any]) -> _ClosedRead:
+    """Whether a shape is closed (a sh:closed that is not false), the
+    properties its sh:ignoredProperties names, and the problem reading those
+    gives: read once for each shape however many controls name it
+    (facts_of), so a long sh:ignoredProperties costs its length once, not
+    once for each control that joins its template's variables to the shape.
+    The page's closedShape is the same."""
+    facts = index.facts_of(node)
+    if facts.closed is None:
+        flags = index.get(node, SHACL + "closed")
+        closed = any(v is not None and truthy(_label(v)) is not False for v in as_list(flags))
+        kept: set[str] = set()
+        problem = None
+        if closed:
+            ignored, why, several = index.list_values(index.get(node, SHACL + "ignoredProperties"))
+            if several or why is not None:
+                problem = (f"the shape writes sh:ignoredProperties as {'more than one list' if several else why}, which this client "
+                           "does not read, so what it sends is not known; this control is not invoked")
+            kept = {_text(item) for item in ignored}
+        facts.closed = _ClosedRead(closed, kept, problem)
+    return facts.closed
 
 
 def _unsatisfiable(fields: Any) -> str | None:

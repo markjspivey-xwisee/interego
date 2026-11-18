@@ -2688,6 +2688,45 @@ export type WorkStep = 'read' | 'list' | 'list --json' | 'control' | 'request';
  *   - expr-explode: one exploded variable whose name is 20,000 characters and whose default is
  *     a list of 50,000 values, which writes the name once for each value (1 GB);
  *   - honest: 300 controls, each with its own shape of ten properties, which every step reads.
+ * And sharedNodeDocuments', in which many controls, inputs or mappings name one node by reference, a
+ * node of thousands of keys or values (SHARED_NODE_SIZES), which each client read again for each
+ * that names it: before, the page's list took 8 to 27 s, past its budget, and hmc.py's 5 to 25 s.
+ * Each now reads the node, and reading its values for a property, once, and each that names it
+ * costs a constant. The first three are the review's; the rest are each other place the same read
+ * was made, found by looking for it:
+ *   - hint-shared, hint-string, hint-list: 3,000 reads whose annotations name one read-only node of
+ *     3,000 keys, by an object, by a string under a term typed @id, or 3,000 times in one @list:
+ *     each control scanned every key for hints. Listed, each a safe read, since an honest document
+ *     may share one annotation node: its hints are read, and charged, once;
+ *   - target-keys, target-types, search-keys: 2,000 reads whose hydra:target, or hydra:search,
+ *     names one node of 4,500 keys, or of 9,000 types, each read in full to see whether it is a
+ *     template; listed;
+ *   - mapping-keys: a template of 3,000 mappings that all name one mapping node of 3,000 keys,
+ *     read in full for each; listed;
+ *   - property-keys: 1,500 shapes, one for each write, that name one property node of 3,000 keys,
+ *     whose field the page built again for each shape (hmc.py built it once); listed;
+ *   - supported-keys, range-values, comment-values: 1,000 supported properties naming one
+ *     hydra:property node of 20,000 keys, 20,000 rdfs:range values, or 20,000 rdfs:comment values
+ *     before the one it reads, read for each; refused, as two inputs that fill one property;
+ *   - node-notes: 3,000 properties whose sh:node names one shape of 20,000 notes, each read to see
+ *     whether it constrains anything; listed, with 3,000 inputs;
+ *   - path-keys: 1,000 properties whose sh:path names one node of 9,000 keys, read to see whether
+ *     it is a complex path; refused, as two inputs of one path;
+ *   - list-keys: 3,000 properties whose sh:in names one list node of 12,000 keys; refused, as one
+ *     list two inputs share (SHARED_COST_CASES' shared-list);
+ *   - closed-ignored: 1,500 writes whose template's variable joins one closed shape with 3,000
+ *     sh:ignoredProperties, read again for each by hmc.py's list; listed;
+ *   - mapping-values: a template of 6,000 mappings that name one mapping node of 24,000
+ *     hydra:variable values, read for each; listed;
+ *   - property-values: 1,500 shapes that name one property node of 6,000 values for each facet,
+ *     read again for each shape by the page; listed;
+ *   - default-rounded: 1,500 shapes that name one property node whose default is 30,000 numbers,
+ *     in a document with a number its double rounds, each searched for a rounded number again for
+ *     each shape; listed;
+ *   - range-distinct, mapping-distinct: as range-values and mapping-values, with every value
+ *     distinct, so that each that names the node is refused naming all of them: their problems
+ *     grow as the product (hmc.py took 177 MB), and each is charged as it is written, so the
+ *     document is refused whole as it is read.
  */
 export const WORK_CASES: ReadonlyArray<readonly [path: string, rel: string, refused: readonly WorkStep[], dryRun: string | null,
   sent: Record<string, unknown> | null]> = [
@@ -2700,6 +2739,26 @@ export const WORK_CASES: ReadonlyArray<readonly [path: string, rel: string, refu
   ['/work/expr-repeat', 'urn:c', ['request'], null, { q: 'x'.repeat(50000) }],
   ['/work/expr-explode', 'urn:c', ['request'], null, { [LONG_VARIABLE]: Array(50000).fill('x') }],
   ['/work/honest', 'urn:c299', [], null, null],
+  ['/work/hint-shared', 'urn:c2999', [], null, null],
+  ['/work/hint-string', 'urn:c2999', [], null, null],
+  ['/work/hint-list', 'urn:c0', [], null, null],
+  ['/work/target-keys', 'urn:c1999', [], null, null],
+  ['/work/target-types', 'urn:c1999', [], null, null],
+  ['/work/search-keys', 'urn:c1999', [], null, null],
+  ['/work/mapping-keys', 'urn:c0', [], null, null],
+  ['/work/property-keys', 'urn:c1499', [], null, null],
+  ['/work/supported-keys', 'urn:c0', [], "the input fields 'f0' and 'f1' both take a value named 'p'", null],
+  ['/work/node-notes', 'urn:c0', [], null, null],
+  ['/work/path-keys', 'urn:c0', [], "the input fields 'f0' and 'f1' both take a value named 'path'", null],
+  ['/work/list-keys', 'urn:c0', [], 'the inputs "f0" and "f1" share one sh:in list', null],
+  ['/work/closed-ignored', 'urn:c1499', [], null, null],
+  ['/work/range-values', 'urn:c0', [], "the input fields 'f0' and 'f1' both take a value named 'p'", null],
+  ['/work/comment-values', 'urn:c0', [], "the input fields 'f0' and 'f1' both take a value named 'p'", null],
+  ['/work/mapping-values', 'urn:c0', [], null, null],
+  ['/work/property-values', 'urn:c1499', [], null, null],
+  ['/work/default-rounded', 'urn:c1499', [], null, null],
+  ['/work/range-distinct', 'urn:c0', ['read'], null, null],
+  ['/work/mapping-distinct', 'urn:c0', ['read'], null, null],
 ];
 
 /** Each COST_CASES path's document as the text served; build it once per test file. */
@@ -2886,8 +2945,92 @@ export function costDescriptors(base: string): Record<string, string> {
       '@graph': range(300).map(i => ({ '@id': `#S${i}`, '@type': 'sh:NodeShape', 'sh:property': range(10).map(j => ({
         'sh:path': { '@id': `urn:p:${i}:${j}` }, 'sh:name': `f${j}`, 'sh:maxCount': 1, 'sh:datatype': { '@id': 'xsd:string' },
         'sh:description': `Field ${j} of write ${i}, which an honest document describes in a sentence.`, 'sh:defaultValue': `v${j}` })) })) },
+    ...sharedNodeDocuments(base),
   };
-  return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc)]));
+  return Object.fromEntries(Object.entries(docs).map(([path, doc]) => [path, JSON.stringify(doc).replace('"INEXACT-NUMBER"', '9007199254740993')]));
+}
+
+/**
+ * The size of each of sharedNodeDocuments' documents, as [uses, size]: how many controls, inputs or
+ * mappings name the one node, and how many keys or values that node holds.
+ */
+const SHARED_NODE_SIZES = {
+  hint: [3000, 3000], hintList: [3000, 3000], target: [2000, 4500], types: [2000, 9000], search: [2000, 4500], mapping: [3000, 3000],
+  property: [1500, 3000], supported: [1000, 20000], notes: [3000, 20000], path: [1000, 9000], list: [3000, 12000], closed: [1500, 3000],
+  range: [1000, 20000], comment: [1000, 20000], mappingValues: [6000, 24000], propertyValues: [1500, 6000], rounded: [1500, 30000],
+  rangeDistinct: [3000, 3000], mappingDistinct: [6000, 6000],
+} as const;
+
+/**
+ * WORK_CASES' documents in which many controls, inputs or mappings name one node by reference, a
+ * node of thousands of keys or values: each client read the node, or its values, again for each
+ * that names it, and now reads it once (SHARED_NODE_SIZES sets each one's size).
+ */
+function sharedNodeDocuments(base: string): Record<string, unknown> {
+  const range = (n: number) => Array.from({ length: n }, (_, i) => i);
+  // A node's own keys, n of them, that say nothing either client acts on.
+  const keys = (n: number) => Object.fromEntries(range(n).map(j => [`urn:x:p${j}`, j]));
+  const read = (i: number, extra: Record<string, unknown>): Record<string, unknown> => ({ '@id': `#c${i}`, '@type': 'iep:Affordance',
+    'iep:action': { '@id': `urn:c${i}` }, 'hydra:method': 'GET', 'hydra:title': `C${i}`, 'hydra:target': { '@id': `${base}/api` }, ...extra });
+  const write = (i: number, extra: Record<string, unknown>) => ({ ...read(i, extra), 'hydra:method': 'POST' });
+  const doc = (path: string, controls: unknown[], graph: unknown[], context: Record<string, unknown> = CTX) =>
+    ({ '@context': context, '@id': `${base}${path}`, 'iep:affordance': controls, '@graph': graph });
+  // n reads that each name one read-only annotation node of k keys under `key`, as `ref` names it.
+  const hinted = (path: string, [n, k]: readonly [number, number], ref: (i: number) => Record<string, unknown>, context: Record<string, unknown> = CTX) =>
+    doc(path, range(n).map(i => read(i, ref(i))), [{ '@id': '#ann', 'iep:readOnlyHint': true, ...keys(k) }], context);
+  // One write expecting a hydra:Class of n supported properties that each name one hydra:property node.
+  const supported = (path: string, n: number, property: Record<string, unknown>, extra: Record<string, unknown> = {}) =>
+    doc(path, [write(0, { 'hydra:expects': { '@id': '#C' } })], [{ '@id': '#C', '@type': 'hydra:Class', 'hydra:supportedProperty': range(n).map(i =>
+      ({ 'hydra:property': { '@id': '#p' }, 'sh:name': `f${i}`, ...extra })) }, { '@id': '#p', ...property }]);
+  // n writes, each expecting a shape of its own that names one property node.
+  const shapes = (path: string, n: number, property: Record<string, unknown>) => doc(path, range(n).map(i => write(i, { 'hydra:expects': { '@id': `#S${i}` } })),
+    [...range(n).map(i => ({ '@id': `#S${i}`, '@type': 'sh:NodeShape', 'sh:property': { '@id': '#P' } })), { '@id': '#P', ...property }]);
+  // One write expecting one shape of n properties that each say `input(i)`, beside `more`.
+  const properties = (path: string, n: number, input: (i: number) => Record<string, unknown>, more: unknown[], context: Record<string, unknown> = CTX) =>
+    doc(path, [write(0, { 'hydra:expects': { '@id': '#S' } })],
+      [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:property': range(n).map(i => ({ 'sh:name': `f${i}`, ...input(i) })) }, ...more], context);
+  // One read whose template has n mappings that all name one mapping node.
+  const mappings = (path: string, n: number, mapping: Record<string, unknown>) =>
+    doc(path, [read(0, { 'hydra:template': `${base}/api{?q}`, 'hydra:mapping': range(n).map(() => ({ '@id': '#m' })) })], [{ '@id': '#m', ...mapping }]);
+  const s = SHARED_NODE_SIZES;
+  return {
+    '/work/hint-shared': hinted('/work/hint-shared', s.hint, () => ({ 'urn:x:annotations': { '@id': '#ann' } })),
+    '/work/hint-string': hinted('/work/hint-string', s.hint, () => ({ annotations: '#ann' }),
+      { ...CTX, annotations: { '@id': 'urn:x:annotations', '@type': '@id' } }),
+    '/work/hint-list': hinted('/work/hint-list', [1, s.hintList[1]], () => ({ 'urn:x:annotations': { '@list': range(s.hintList[0]).map(() => '#ann') } })),
+    '/work/target-keys': doc('/work/target-keys', range(s.target[0]).map(i => read(i, { 'hydra:target': { '@id': '#t' } })), [{ '@id': '#t', ...keys(s.target[1]) }]),
+    '/work/target-types': doc('/work/target-types', range(s.types[0]).map(i => read(i, { 'hydra:target': { '@id': '#t' } })),
+      [{ '@id': '#t', '@type': range(s.types[1]).map(j => `urn:x:T${j}`) }]),
+    '/work/search-keys': doc('/work/search-keys', range(s.search[0]).map(i => {
+      const control = read(i, { 'hydra:search': { '@id': '#T' } });
+      delete control['hydra:target'];
+      return control;
+    }), [{ '@id': '#T', 'hydra:template': `${base}/api{?q}`, 'hydra:mapping': [{ 'hydra:variable': 'q' }], ...keys(s.search[1]) }]),
+    '/work/mapping-keys': mappings('/work/mapping-keys', s.mapping[0], { 'hydra:variable': 'q', ...keys(s.mapping[1]) }),
+    '/work/property-keys': shapes('/work/property-keys', s.property[0], { 'sh:path': { '@id': 'urn:x:m' }, 'sh:name': 'm', ...keys(s.property[1]) }),
+    '/work/supported-keys': supported('/work/supported-keys', s.supported[0], { 'rdfs:label': 'p', ...keys(s.supported[1]) }),
+    '/work/node-notes': properties('/work/node-notes', s.notes[0], i => ({ 'sh:path': { '@id': `urn:x:p${i}` }, 'sh:node': { '@id': '#T' } }),
+      [{ '@id': '#T', ...Object.fromEntries(range(s.notes[1]).map(j => [`c${j}`, 0])) }],
+      { ...CTX, ...Object.fromEntries(range(s.notes[1]).map(j => [`c${j}`, 'rdfs:comment'])) }),
+    '/work/path-keys': properties('/work/path-keys', s.path[0], () => ({ 'sh:path': { '@id': 'urn:x:path' } }), [{ '@id': 'urn:x:path', ...keys(s.path[1]) }]),
+    '/work/list-keys': properties('/work/list-keys', s.list[0], i => ({ 'sh:path': { '@id': `urn:x:p${i}` }, 'sh:in': { '@id': '#L' } }),
+      [{ '@id': '#L', 'rdf:first': 'a', 'rdf:rest': { '@id': 'rdf:nil' }, ...keys(s.list[1]) }]),
+    '/work/closed-ignored': doc('/work/closed-ignored', range(s.closed[0]).map(i => write(i, { 'hydra:expects': { '@id': '#S' },
+      'hydra:template': `${base}/api{?v${i}}`, 'hydra:mapping': [{ 'hydra:variable': `v${i}`, 'hydra:property': { '@id': `urn:x:v${i}` } }] })),
+    [{ '@id': '#S', '@type': 'sh:NodeShape', 'sh:closed': true, 'sh:property': [{ 'sh:path': { '@id': 'urn:x:m' }, 'sh:name': 'm' }],
+      'sh:ignoredProperties': range(s.closed[1]).map(j => ({ '@id': `urn:x:v${j}` })) }]),
+    '/work/range-values': supported('/work/range-values', s.range[0], { 'rdfs:range': range(s.range[1]).map(() => ({ '@id': 'xsd:string' })) }),
+    '/work/comment-values': supported('/work/comment-values', s.comment[0], { 'rdfs:comment': [...range(s.comment[1]).map(() => ({ '@list': [] })), 'c'] },
+      { 'sh:datatype': { '@id': 'xsd:string' } }),
+    '/work/mapping-values': mappings('/work/mapping-values', s.mappingValues[0], { 'hydra:variable': range(s.mappingValues[1]).map(() => 'q') }),
+    '/work/property-values': shapes('/work/property-values', s.propertyValues[0], Object.fromEntries(
+      [['sh:path', { '@id': 'urn:x:m' }], ['sh:name', 'm'], ['sh:maxCount', 1], ['sh:datatype', { '@id': 'xsd:string' }], ['sh:description', { '@list': [] }]]
+        .map(([key, value]) => [key, range(s.propertyValues[1]).map(() => value)]))),
+    '/work/default-rounded': shapes('/work/default-rounded', s.rounded[0], { 'sh:path': { '@id': 'urn:x:m' }, 'sh:name': 'm',
+      'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:defaultValue': range(s.rounded[1]).map(() => 0), 'urn:x:n': 'INEXACT-NUMBER' }),
+    '/work/range-distinct': supported('/work/range-distinct', s.rangeDistinct[0], { 'rdfs:range': range(s.rangeDistinct[1]).map(j => ({ '@id': `urn:x:type:${j}` })) }),
+    '/work/mapping-distinct': mappings('/work/mapping-distinct', s.mappingDistinct[0], { 'hydra:variable': range(s.mappingDistinct[1]).map(j => `q${j}`) }),
+  };
 }
 
 /**

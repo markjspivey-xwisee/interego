@@ -703,6 +703,13 @@ once took 3.1 s on a busy CI runner. Those rows now allow 3 s, or 1 ms for
 each 80 bytes of the document where that is more, as the budget grows with the
 document; the refusals and the size of what is shown are still checked exactly.
 
+Both clients read a node that many controls, inputs or mappings name once for
+each document: its keys, its hints, and what its values for a property read
+as. Before, 3,000 controls naming one annotation node of 3,000 keys took the
+page 15 s, and naming a target, template, mapping, property or list node, or a
+shape's ignored properties, was alike. Each hint scan is charged once, and so
+is the text of the values each problem lists as it is written.
+
 ## 2026-11-18 — Practice Evidence: a voice check for the role-play player
 
 `applications/practice-evidence/tools/voice-check.mjs` runs a whole practice in
