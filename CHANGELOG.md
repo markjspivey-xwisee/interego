@@ -68,6 +68,49 @@ remove: the checks it waited for were themselves queued for a runner that
 afternoon, so they ended later than twenty minutes after the push. One run is
 not a measurement of the average.
 
+## 2026-11-17 — CI: a push to a pull request cancels the runs on the head it replaced
+
+Jobs were waiting for a runner, not running slowly. Over the last 1000 runs
+(2026-11-16 03:39Z to 2026-11-17 15:23Z; 481 of them read job by job, 1181
+jobs) a job waited a median of 2.5 minutes to start, 44 minutes at the 90th
+percentile and 97 at worst. The wait is bursty: between 05:00Z and 09:00Z on
+the 17th the hourly median was 19 to 35 minutes, and outside bursts it is
+zero. Only 3 of the 1000 runs were re-runs, so retries are not the cost.
+
+One pull request head starts a median of 10 workflows (23 at most) and about
+180 runner-minutes. 29 of the workflows a pull request can start had no
+concurrency group, Bridge Typecheck (35 job-minutes over six jobs) and
+Mutation Gate (one 31-minute job) among them, so a head that a later push
+replaced ran every one of them to its end, in front of the new head's checks
+in the queue. Branches in the window took up to nine pushes.
+
+Each of those 29 now declares
+
+```yaml
+concurrency:
+  group: ${{ github.workflow }}-${{ github.event.pull_request.number || github.run_id }}
+  cancel-in-progress: true
+```
+
+A pull request's runs of one workflow share a group, so a new push cancels the
+one in flight. Every other event (a master push, a dispatch, a schedule) is
+grouped by its own run id: nothing there is cancelled or held, and
+auto-deploy still reads every master run to its conclusion.
+
+`tests/workflow-pr-runs-cancel-superseded.test.ts` reads the workflow
+directory and fails for a pull request workflow with no such group, so the
+thirtieth workflow cannot be added without one. Three keep their run and are
+listed there with why: `nightly-emergent.yml` (observational; its note says a
+half-finished run still leaves artifacts), and `i2idlx-native-diagnostic.yml`
+and `i2idlx-orchestra-history.yml`, which hold a group without cancelling and
+are left as the I2IDL-X lane set them. Those two queue a new head behind the
+old one, which is worth that lane's second look.
+
+**Not in this change.** How much queue time this removes is not measured yet;
+it needs a day of runs after it lands. The three steps that hold a runner
+while waiting for other workflows (jev-harness 27.6 minutes on average, the
+auto-deploy gate 17.7, the I2IDL-X UI oracle 12.1) are untouched.
+
 ## 2026-11-17 — Practice Evidence: a reviewed result is timestamped in the session it is sent in
 
 Found on the first end-to-end run against the deployed bridges. The passed or
