@@ -18,7 +18,7 @@ import { controlsDocument, controlsUrl, offersOf } from '../src/xapix/controls.j
 import { lintXapixProfile } from '../src/xapix/lint.js';
 import { IEP_DECORATIONS, XAPIX_PROFILE_ID, xapix } from '../src/xapix/namespace.js';
 import { projectionCategory } from '../src/xapix/statement.js';
-import { buildFoxxiProfileDoc, FOXXI_PROFILE_ID, OFFERED_AFTER_A_FAILED_ATTEMPT } from '../src/xapi-profile.js';
+import { buildFoxxiProfileDoc, buildFoxxiProfileDocV1, FOXXI_EVIDENCE_LINKS, FOXXI_PROFILE_ID, FOXXI_PROFILE_VERSION_ID, OFFERED_AFTER_A_FAILED_ATTEMPT } from '../src/xapi-profile.js';
 import { PROFILE_GENERATED_AT } from '../src/xapi-lrs.js';
 import { foxxiAffordances } from '../affordances.js';
 
@@ -45,7 +45,7 @@ beforeAll(async () => {
   app.use(express.json({ limit: '2mb' }));
   mountXapixRoutes(app, server, {
     base: BASE,
-    links: async () => { lookupsAsked++; return { ...(glossaryUp ? { designIdea: (iri: string) => iri === DESIGN_IDEA } : {}), affordance: (iri: string) => served(iri) !== undefined }; },
+    links: async () => { lookupsAsked++; return { ...(glossaryUp ? { designIdea: (iri: string) => iri === DESIGN_IDEA || Object.values(FOXXI_EVIDENCE_LINKS).includes(iri) } : {}), affordance: (iri: string) => served(iri) !== undefined }; },
     describeAffordance,
   });
   http = app.listen(0, '127.0.0.1');
@@ -166,15 +166,42 @@ describe('what Foxxi\'s profile offers after a failed attempt', () => {
 
   it('names affordances the bridge serves to a learner', () => {
     for (const action of OFFERED_AFTER_A_FAILED_ATTEMPT) expect(served(action), action).toBeDefined();
-    expect(lintXapixProfile(foxxi, builtInKept().find(k => k.profile === FOXXI_PROFILE_ID)!.examples, { affordance: iri => served(iri) !== undefined })).toEqual([]);
+    expect(lintXapixProfile(foxxi, builtInKept().find(k => k.profile === FOXXI_PROFILE_VERSION_ID)!.examples, { affordance: iri => served(iri) !== undefined })).toEqual([]);
   });
 
   it('changes nothing a plain processor reads: the profile still lints, and the same statements follow the template', () => {
-    const kept = builtInKept().find(k => k.profile === FOXXI_PROFILE_ID)!;
+    const kept = builtInKept().find(k => k.profile === FOXXI_PROFILE_VERSION_ID)!;
     expect(new ProfileAuthoring(server, { hostedUnder: `${BASE}/p/` }).lintDocument(foxxi, kept.examples, kept.external)).toEqual([]);
     const r = validates(failedLesson(), foxxi.templates.filter(t => t.deprecated !== true));
     expect(r.templates).toEqual([LESSON_FAILED]);
     expect(r.findings).toEqual([]);
+  });
+});
+
+describe('what Foxxi\'s profile says its statements are evidence of', () => {
+  const foxxi = buildFoxxiProfileDoc({ generatedAt: PROFILE_GENERATED_AT }) as unknown as Json & { concepts: Json[] };
+  const stated = foxxi.concepts.filter(c => c[xapix('evidences')] !== undefined);
+
+  it('is three links, each on one of Foxxi\'s own concepts and each to an I2IDL concept IRI', () => {
+    expect(Object.fromEntries(stated.map(c => [c.id, (c[xapix('evidences')] as Json[]).map(t => t['@id'])]))).toEqual(
+      Object.fromEntries(Object.entries(FOXXI_EVIDENCE_LINKS).map(([concept, idea]) => [concept, [idea]])));
+    expect(stated.length).toBe(3);
+    for (const idea of Object.values(FOXXI_EVIDENCE_LINKS)) expect(idea).toMatch(/^https:\/\/id\.i2idl\.org\/concepts\/[a-z-]+$/);
+  });
+
+  it('passes rule X9 when the release holds those concepts, and is found when it does not', () => {
+    const kept = builtInKept().find(k => k.profile === FOXXI_PROFILE_VERSION_ID)!.examples;
+    const release = new Set(Object.values(FOXXI_EVIDENCE_LINKS));
+    const affordance = (iri: string) => served(iri) !== undefined;
+    expect(lintXapixProfile(foxxi, kept, { designIdea: iri => release.has(iri), affordance })).toEqual([]);
+    const without = lintXapixProfile(foxxi, kept, { designIdea: () => false, affordance });
+    expect(without.map(f => f.code)).toEqual(['xapix-link-target', 'xapix-link-target', 'xapix-link-target']);
+    expect(without.map(f => f.at).sort()).toEqual(Object.keys(FOXXI_EVIDENCE_LINKS).sort());
+  });
+
+  it('is not said by version 1, which was served before the links were proposed', () => {
+    const v1 = buildFoxxiProfileDocV1({ generatedAt: PROFILE_GENERATED_AT }) as unknown as { concepts: Json[] };
+    expect(v1.concepts.filter(c => c[xapix('evidences')] !== undefined)).toEqual([]);
   });
 });
 
