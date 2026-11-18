@@ -293,11 +293,13 @@ describe('how the player opens a visit in a session that may already be open', (
     const show = (id) => { shown.push(id); }, setChip = () => {}, P = {}, window = { __rolePlay: {} };
     const askReviewed = async () => ({ state: 'none' }), recordReviewed = async () => {}, reviewUnknown = () => {};
     ${cut('async function begin(){', '// ---------- start ----------')}
-    return { openVisit, postReviewed, nextTs, why: () => trackErr, begin, shown, message: () => $('rvmsg').textContent, tryAgain: () => $('rvretry').onclick() };
+    return { openVisit, postReviewed, nextTs, why: () => trackErr, begin, shown, message: () => $('rvmsg').textContent, tryAgain: () => $('rvretry').onclick(),
+      failQueue: (why) => { chain = Promise.reject(new Error(why)); chain.catch(() => {}); trackErr = why; }, queueOpen: () => chain.then(() => true, () => false) };
   `)(lrs.fetch, { lrs: 'https://lrs.example/xapi', authorization: 'Basic token', contextTemplate: { extensions: { [SESSION_EXT]: SESSION } } },
     REG, { verbs: { initialized: INITIALIZED } }, () => ({ objectType: 'Activity', id: 'https://lms.example/au' })) as {
       openVisit(): Promise<boolean>; postReviewed(st: St): Promise<string>; nextTs(): string; why(): string | null;
       begin(): Promise<void>; shown: string[]; message(): string; tryAgain(): Promise<void>;
+      failQueue(why: string): void; queueOpen(): Promise<boolean>;
     };
   const outcome = (verb: string): St => ({ id: `id-outcome-${verb}`, verb: { id: `http://adlnet.gov/expapi/verbs/${verb}` }, result: { success: verb === 'passed' }, context: { registration: REG } });
   const initializedIn = (lrs: Lrs, session = SESSION): number =>
@@ -417,6 +419,23 @@ describe('how the player opens a visit in a session that may already be open', (
     expect(lrs.posts).toEqual([]);
     expect(initializedIn(lrs)).toBe(1);
     expect(v.shown).toEqual(['s-reviewed', 's-welcome']);
+    // The earlier failure is not left standing once the visit is open.
+    expect(v.why()).toBeNull();
+  });
+
+  it('sends again after a try whose initialized was stored and whose answer was lost', async () => {
+    // The record took initialized, the answers never arrived, and the send gave up: the queue that
+    // every later statement waits on is failed, and the page holds the reason.
+    const lrs = new Lrs([stored('launched', '2026-11-17T16:04:39.000Z'), stored('initialized', '2026-11-17T16:04:43.000Z')]);
+    const v = visit(lrs);
+    v.failQueue('Failed to fetch');
+    expect(await v.queueOpen()).toBe(false);
+    await v.begin();
+    // The session has its initialized, so none is sent, and what follows is not held up behind the failed send.
+    expect(lrs.posts).toEqual([]);
+    expect(v.shown).toEqual(['s-welcome']);
+    expect(await v.queueOpen()).toBe(true);
+    expect(v.why()).toBeNull();
   });
 
   it('has one place that sends initialized', () => {

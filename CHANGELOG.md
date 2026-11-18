@@ -13,6 +13,10 @@ and starts its clock after the session's latest statement. When the record canno
 be read, no practice is started and the learner is offered another try. Before,
 a practice began whether or not the record took its initialized.
 
+Opening a visit also clears a send that failed earlier when the session turns out
+to have its initialized already. Without that, a try whose initialized was stored
+and whose answer was lost left every later statement queued behind the failure.
+
 Not changed: the practice itself starts over on the fresh load. What the earlier
 load recorded (a consent, some exchanges) stays in the session. Practice Evidence
 reads every exchange of the session as one conversation: over the scenario's turn

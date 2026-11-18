@@ -578,9 +578,12 @@ async function openVisit(){
   if (sessionOpened) return true;
   const so = await sessionSoFar();
   if (so === null) { trackErr = "the learning record could not be read"; return false; }
-  if (so.initialized) { if (so.last > lastTs) lastTs = so.last; sessionOpened = true; return true; }
   if (so.last > lastTs) lastTs = so.last;
-  chain = Promise.resolve(); trackErr = null;   // a send that failed earlier does not hold up this one
+  // A send that failed earlier does not hold up what is sent from here on. That holds too when the
+  // session turns out to have its initialized: an earlier try may have stored it and lost the answer,
+  // and everything sent after it queues behind that failed send.
+  chain = Promise.resolve(); trackErr = null;
+  if (so.initialized) { sessionOpened = true; return true; }
   sessionOpened = (await send("initialized", "initialized", scenarioAct(), null, true, false, visitStart)) !== null;
   return sessionOpened;
 }
