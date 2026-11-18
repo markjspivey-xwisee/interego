@@ -375,3 +375,86 @@ describe('how the player opens a visit in a session that may already be open', (
     expect(v.why()).toBe('the learning record could not be read');
   });
 });
+
+describe('which preview speech can offer a role-play reply', () => {
+  interface SpeechPart { text: string; final: boolean }
+  const reply = 'To recap, the duplicate charge was refunded today and will appear in 5 to 7 business days.';
+  const replay = (parts: SpeechPart[], error?: string, afterError: SpeechPart[] = []) => {
+    const begin = page.indexOf('const STOP = new Set(');
+    const end = page.indexOf('// ---------- play ----------', begin);
+    if (begin < 0 || end <= begin) throw new Error('voice matching source not found');
+    const makeElement = () => ({
+      textContent: '', innerHTML: '', className: '', style: {},
+      children: [] as { textContent: string; onclick?: () => void }[],
+      classList: new Set<string>(),
+      appendChild(el: { textContent: string; onclick?: () => void }) { this.children.push(el); },
+    });
+    // The real listener and matcher run, not a browser or audio recognizer. There is no LRS.
+    const heard = makeElement(), mic = makeElement(), picks: { index: number; said: string }[] = [];
+    const choices = [makeElement(), makeElement()].map((el) => {
+      const classes = el.classList;
+      return { ...el, classList: { add: (x: string) => classes.add(x), remove: (x: string) => classes.delete(x), has: (x: string) => classes.has(x) } };
+    });
+    const state: { active?: Speech } = {};
+    class Speech {
+      constructor() { state.active = this; }
+      start() {}
+      onresult?: (event: unknown) => void;
+      onerror?: (event: unknown) => void;
+      onend?: () => void;
+    }
+    const record = (index: number, said: string) => picks.push({ index, said });
+    const doc = { querySelectorAll: () => choices, createElement: makeElement };
+    const elements = { heard, mic: { classList: { add() {}, remove() {} } } };
+    new Function('SR', 'S', '$', 'document', 'window', 'stageObj', 'pick',
+      'let rec = null, listening = false, pending = null;\n' + page.slice(begin, end) + '\nlisten();'
+    )(Speech, { language: 'en-US' }, (id: keyof typeof elements) => elements[id], doc, {},
+      () => ({ choices: [{ text: reply }, { text: 'Contact a manager to discuss the statement.' }] }), record);
+    const { active } = state;
+    if (!active) throw new Error('listener did not start');
+    const events = (pieces: SpeechPart[]) => ({
+      results: pieces.map(({text, final}) => Object.assign([{ transcript: text }], { isFinal: final })),
+    });
+    active.onresult?.(events(parts));
+    if (error) {
+      active.onerror?.({ error });
+      if (afterError.length) active.onresult?.(events(afterError));
+    }
+    active.onend?.();
+    const confirm = heard.children.find((el) => el.textContent === 'Use the highlighted reply');
+    return {heard: heard.textContent, highlight: choices.findIndex((el) => el.classList.has('match')), confirm, picks};
+  };
+
+  it('does not highlight or select an interim-only transcript', () => {
+    const got = replay([{ text: reply, final: false }]);
+    expect(got.highlight).toBe(-1);
+    expect(got.confirm).toBeUndefined();
+    expect(got.heard).toContain('No final speech');
+    expect(got.picks).toEqual([]);
+  });
+
+  it('retains the recognition error instead of highlighting provisional or later text', () => {
+    const got = replay([{ text: reply, final: false }], 'network', [{ text: reply, final: true }]);
+    expect(got.highlight).toBe(-1);
+    expect(got.confirm).toBeUndefined();
+    expect(got.heard).toContain("Didn't catch that.");
+    expect(got.picks).toEqual([]);
+  });
+
+  it('joins separated final words and excludes interim suffixes', () => {
+    const got = replay([{ text: 'To recap, the duplicate charge', final: true },
+      { text: 'was refunded today and will appear in 5 to 7 business days.', final: true },
+      { text: 'talk to a manager later', final: false }]);
+    expect(got.highlight).toBe(0);
+    expect(got.picks).toEqual([]);
+    got.confirm?.onclick?.();
+    expect(got.picks).toEqual([{ index: 0, said: reply }]);
+  });
+
+  it('a normal final transcript remains an offer, with no selection before the learner confirms', () => {
+    const got = replay([{ text: reply, final: true }]);
+    expect(got.highlight).toBe(0);
+    expect(got.confirm).toBeDefined();
+    expect(got.picks).toEqual([]);
+  });
+});

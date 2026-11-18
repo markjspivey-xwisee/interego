@@ -1,5 +1,9 @@
 # Changelog
 
+## 2026-11-18 — Preview speech waits for a final transcript before suggesting a reply
+
+- **practice-evidence:** The role-play player continues to show provisional speech as it is heard, but suggests a reply only from finalized segments. A recognition error clears provisional text instead of offering a reply. Learners still confirm or tap a reply; matching and scoring rules are unchanged.
+
 ## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
 
 A Quoted descriptor repeats someone else's claim without endorsing it. The

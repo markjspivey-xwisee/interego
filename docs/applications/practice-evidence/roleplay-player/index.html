@@ -330,13 +330,23 @@ function bestMatch(said, choices){
 function listen(){
   if (!SR) return;
   if (listening && rec){ rec.stop(); return; }
-  rec = new SR(); rec.lang = S.language || "en-US"; rec.interimResults = true; rec.maxAlternatives = 1;
+  const active = rec = new SR(); rec.lang = S.language || "en-US"; rec.interimResults = true; rec.maxAlternatives = 1;
+  pending = null; let recognitionFailed = false;
+  document.querySelectorAll(".choice").forEach(el => el.classList.remove("match"));
   let finalText = "";
-  rec.onresult = e => { let t = ""; for (const r of e.results) t += r[0].transcript; finalText = t; $("heard").textContent = "“" + t + "”"; };
-  rec.onerror = e => { listening = false; $("mic").classList.remove("live");
+  rec.onresult = e => { if (rec !== active || recognitionFailed) return;
+    const parts = Array.from(e.results);
+    const transcript = list => list.map(r => r[0]?.transcript?.trim()).filter(Boolean).join(" ");
+    finalText = transcript(parts.filter(r => r.isFinal));
+    $("heard").textContent = "“" + transcript(parts) + "”"; };
+  rec.onerror = e => { if (rec !== active) return;
+    recognitionFailed = true; finalText = ""; listening = false; $("mic").classList.remove("live");
     $("heard").textContent = e.error === "not-allowed" || e.error === "service-not-allowed" ? "The microphone isn't available here. Tap a reply below instead." : "Didn't catch that. Try again, or tap a reply."; };
-  rec.onend = () => { listening = false; $("mic").classList.remove("live");
-    if (!finalText) return; const ch = stageObj().choices; const i = bestMatch(finalText, ch);
+  rec.onend = () => { if (rec !== active) return;
+    listening = false; $("mic").classList.remove("live");
+    if (recognitionFailed) return;
+    if (!finalText) { $("heard").textContent = "No final speech was captured. Try again, or tap a reply."; return; }
+    const ch = stageObj().choices; const i = bestMatch(finalText, ch);
     document.querySelectorAll(".choice").forEach(el => el.classList.remove("match"));
     if (i < 0) { $("heard").textContent = "“" + finalText + "” · That didn't match a reply. Try again, or tap one."; return; }
     pending = {i, said: finalText};
