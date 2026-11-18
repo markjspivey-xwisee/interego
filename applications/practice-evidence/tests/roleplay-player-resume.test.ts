@@ -22,7 +22,7 @@ const cut = (from: string, to: string): string => {
 };
 type St = { verb: { id: string }; object: { id: string; definition?: { extensions?: Record<string, unknown> } }; result?: { response?: string; extensions?: Record<string, unknown> } };
 interface Scenario {
-  personas: { id: string; firstLine: string; stages: { choices: { text: string; best?: boolean }[] }[] }[];
+  personas: { id: string; firstLine: string; stages: { id?: string; choices: { id?: string; text: string; best?: boolean }[]; variant?: { id?: string; choices: { id?: string; text: string }[] } }[] }[];
   rubric: { criteria: { id: string }[] };
   xapi: { verbs: Record<string, string>; extensions: Record<string, string> };
   resultAfterReview?: boolean;
@@ -36,6 +36,7 @@ interface Load {
   start(who: number): void;
   pick(i: number, said: string | null): void;
   carryOn(): Promise<boolean>;
+  repeatedIds(s: unknown): string[];
   state(): { persona: string | null; stage: number; mood: number; picks: { i: number; said: string; stage: number }[] };
   sent: St[]; shown: string[]; finishes: number;
   title(): string; message(): string; note(): string;
@@ -51,6 +52,7 @@ const load = (held: St[], S: Scenario = scenario): Load => new Function('S', 'he
   const scenarioAct = () => ({ objectType: 'Activity', id: AU });
   const assess = (sc) => ({ points: sc.reduce((n, x) => n + x, 0), max: CRITS.reduce((n, c) => n + topVal(c), 0), pass: true, minTotal: 0, required: [] });
   const send = (verbKey, _label, object, result) => { const st = { verb: { id: X.verbs[verbKey] }, object, result }; sent.push(st); return Promise.resolve('id'); };
+  ${cut('function repeatedIds(s){', 'function checkScenario(s){')}
   ${cut('const STOP = new Set(', 'function listen(){')}
   ${cut('function hangUp(){', '// ---------- play ----------')}
   ${cut('let sel = null, stage = 0', 'function evidence(ci){')}
@@ -61,7 +63,7 @@ const load = (held: St[], S: Scenario = scenario): Load => new Function('S', 'he
   const finish = async () => { out.finishes++; };
   return {
     start: (who) => { persona = S.personas[who]; sel = persona.id; mood = persona.startMood ?? 50; stage = 0; picks = []; variantAt = -1; },
-    pick, carryOn, sent, shown,
+    pick, carryOn, sent, shown, repeatedIds,
     get finishes() { return out.finishes; },
     state: () => ({ persona: persona && persona.id, stage, mood, picks: picks.map((p) => ({ i: p.i, said: p.said, stage: p.stage })) }),
     title: () => $('rvtitle').textContent, message: () => $('rvmsg').textContent, note: () => $('heard').textContent,
@@ -104,23 +106,109 @@ describe('a practice opened again part way through', () => {
     expect(again.sent.every((s) => s.verb.id === V['turn'])).toBe(true);
   });
 
-  it('takes a spoken exchange up by the reply recorded beside it, not by matching its words again', async () => {
-    const MATCHED = scenario.xapi.extensions['matchedReply']!;
+  const EXT = scenario.xapi.extensions;
+  const MATCHED = EXT['matchedReply']!, STEP = EXT['stepId']!, REPLY = EXT['replyId']!;
+  /** The scenario as it would be with the given changes made to a deep copy of it. */
+  const edited = (change: (s: Scenario) => void): Scenario => { const copy = JSON.parse(JSON.stringify(scenario)) as Scenario; change(copy); return copy; };
+  /** The scenario with some of its extensions left out, as an older one had it. */
+  const without = (...keys: string[]): Scenario => edited((s) => { for (const k of keys) delete s.xapi.extensions[k]; });
+  const firstBest = scenario.personas[0]!.stages[0]!.choices[BEST[0]!]!;
+
+  it('gives every step and every reply of the sample scenario an id of its own', () => {
+    expect(STEP).toBe('https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/step-id');
+    expect(REPLY).toBe('https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#replyId');
     expect(MATCHED).toBe('https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/matched-or-tapped-reply');
-    // Heard as two words only, and accepted by the learner as the best reply: the words alone name no reply.
+    const ids: string[] = [];
+    for (const who of scenario.personas) for (const st of who.stages) for (const step of [st, ...(st.variant ? [st.variant] : [])]) {
+      expect(typeof step.id).toBe('string');
+      ids.push(step.id!);
+      for (const c of step.choices) { expect(typeof c.id).toBe('string'); ids.push(c.id!); }
+    }
+    expect(ids.length).toBeGreaterThan(100);
+    expect(new Set(ids).size).toBe(ids.length);
+    // The page refuses a scenario that uses an id twice, and names it.
+    const l = load([]);
+    expect(l.repeatedIds(scenario)).toEqual([]);
+    expect(l.repeatedIds(edited((s) => { s.personas[1]!.stages[2]!.choices[0]!.id = firstBest.id!; }))).toEqual([firstBest.id]);
+    expect(l.repeatedIds(without())).toEqual([]);
+    // A scenario with no ids at all is still a scenario.
+    expect(l.repeatedIds(edited((s) => { for (const who of s.personas) for (const st of who.stages) { delete st.id; for (const c of st.choices) delete c.id; delete st.variant; } }))).toEqual([]);
+  });
+
+  it('records the step and the reply of an exchange by id, tapped or spoken', () => {
+    const l = load([]);
+    l.start(0);
+    l.pick(BEST[0]!, 'being charged');
+    l.pick(BEST[1]!, null);
+    const [spoken, tapped] = turns(l.sent) as [St, St];
+    expect(spoken.object.definition!.extensions![STEP]).toBe('dana-1');
+    expect(spoken.result).toEqual({ response: 'being charged', extensions: { [MATCHED]: firstBest.text, [REPLY]: 'dana-1-b' } });
+    expect(tapped.object.definition!.extensions![STEP]).toBe('dana-2');
+    expect(tapped.result).toEqual({ response: scenario.personas[0]!.stages[1]!.choices[BEST[1]!]!.text, extensions: { [REPLY]: 'dana-2-b' } });
+  });
+
+  it('takes an exchange up by its ids, whatever the wording has become', async () => {
     const first = load([]);
     first.start(0);
     first.pick(BEST[0]!, 'being charged');
-    const [spoken] = turns(first.sent) as [St];
-    expect(spoken.result).toEqual({ response: 'being charged', extensions: { [MATCHED]: scenario.personas[0]!.stages[0]!.choices[BEST[0]!]!.text } });
-    const again = load([verb('initialized'), spoken]);
+    first.pick(BEST[1]!, null);
+    const held = [verb('initialized'), ...turns(first.sent)];
+    // Between the two visits the scenario is edited: the customer's opening line, and both replies taken.
+    const reworded = edited((s) => {
+      s.personas[0]!.firstLine = 'Hello. I think I have been billed twice for the same thing.';
+      s.personas[0]!.stages[0]!.choices[BEST[0]!]!.text = 'I am sorry about the double charge. I will sort it out now.';
+      s.personas[0]!.stages[1]!.choices[BEST[1]!]!.text = 'I can see the two charges on your account.';
+    });
+    const again = load(held, reworded);
     expect(await again.carryOn()).toBe(true);
-    expect(again.state().picks).toEqual([{ i: BEST[0], said: 'being charged', stage: 0 }]);
     expect(again.shown).toEqual(['s-call']);
+    expect(again.sent).toEqual([]);
+    // The same replies at the same steps, and the spoken one still as the words that were heard.
+    expect(again.state().picks).toEqual([{ i: BEST[0], said: 'being charged', stage: 0 }, { i: BEST[1], said: '', stage: 1 }]);
+    expect(again.state().persona).toBe('dana');
 
-    // An exchange from a scenario that records no reply beside the words: they are matched again. Words
-    // that name no reply by any matching stop it there. (Which words those are depends on the matching.)
-    const bare: Scenario = { ...scenario, xapi: { ...scenario.xapi, extensions: Object.fromEntries(Object.entries(scenario.xapi.extensions).filter(([k]) => k !== 'matchedReply')) } };
+    // The same exchanges recorded without ids, as before this change, are lost by that edit: nothing is sent.
+    const old = load([], without('stepId', 'replyId'));
+    old.start(0);
+    old.pick(BEST[0]!, 'being charged');
+    old.pick(BEST[1]!, null);
+    expect(turns(old.sent)[0]!.result).toEqual({ response: 'being charged', extensions: { [MATCHED]: firstBest.text } });
+    const lost = load([verb('initialized'), ...turns(old.sent)], reworded);
+    expect(await lost.carryOn()).toBe(true);
+    expect(lost.title()).toBe("This practice can't be carried on here");
+    expect(lost.sent).toEqual([]);
+    // With the wording as it was, they are found by the recorded reply's text, as before.
+    const kept = load([verb('initialized'), ...turns(old.sent)]);
+    expect(await kept.carryOn()).toBe(true);
+    expect(kept.state().picks).toEqual([{ i: BEST[0], said: 'being charged', stage: 0 }, { i: BEST[1], said: '', stage: 1 }]);
+  });
+
+  it('does not guess at an exchange whose ids the scenario does not have at that step', async () => {
+    const first = load([]);
+    first.start(0);
+    first.pick(BEST[0]!, null);
+    const [one] = turns(first.sent) as [St];
+    const withResult = (ext: Record<string, unknown>): St => ({ ...one, result: { response: one.result!.response!, extensions: ext } });
+    const withStep = (id: string): St => ({ ...one, object: { id: one.object.id, definition: { extensions: { ...one.object.definition!.extensions, [STEP]: id } } } });
+    const cases: [string, St][] = [
+      // The text is the reply's own, and still the id decides.
+      ['a reply id no step has', withResult({ [REPLY]: 'dana-1-z' })],
+      ['a reply id of another step', withResult({ [REPLY]: 'dana-2-b' })],
+      ['a step id of another step', withStep('dana-2')],
+      ['a step id of another customer', withStep('sam-1')],
+    ];
+    for (const [name, st] of cases) {
+      const again = load([verb('initialized'), st]);
+      expect(await again.carryOn(), name).toBe(true);
+      expect(again.title(), name).toBe("This practice can't be carried on here");
+      expect(again.sent, name).toEqual([]);
+      expect(again.state().picks, name).toEqual([]);
+    }
+  });
+
+  it('matches a spoken exchange again only when nothing was recorded beside its words', async () => {
+    // A scenario that records neither ids nor the matched reply. Words that name no reply by any matching stop it there.
+    const bare = without('stepId', 'replyId', 'matchedReply');
     const old = load([], bare);
     old.start(0);
     old.pick(BEST[0]!, 'the weather has been lovely');
@@ -129,11 +217,13 @@ describe('a practice opened again part way through', () => {
     expect(await stuck.carryOn()).toBe(true);
     expect(stuck.title()).toBe("This practice can't be carried on here");
     expect(stuck.sent).toEqual([]);
-
-    // A recorded reply that is not one of the step's replies is not guessed at.
-    const wrong = load([verb('initialized'), { ...spoken, result: { response: 'being charged', extensions: { [MATCHED]: 'Some other reply.' } } }]);
-    expect(await wrong.carryOn()).toBe(true);
-    expect(wrong.title()).toBe("This practice can't be carried on here");
+    // Words that are the reply are matched, and the practice is carried on.
+    const said = load([], bare);
+    said.start(0);
+    said.pick(BEST[0]!, firstBest.text.toLowerCase().replace(/[^a-z' ]/g, ''));
+    const found = load([verb('initialized'), ...turns(said.sent)], bare);
+    expect(await found.carryOn()).toBe(true);
+    expect(found.state().picks.map((x) => x.i)).toEqual([BEST[0]]);
   });
 
   it('carries on as the customer the earlier load was talking to, whoever that was', async () => {
