@@ -136,6 +136,49 @@ function outcomesDescriptor(base: string) {
 }
 
 /** Each path's document as the text served. */
+/** A shape whose one property, status, takes one value and has these facets as well. */
+const statusShape = (facets: Record<string, unknown>) => ({ '@type': 'sh:NodeShape',
+  'sh:property': { 'sh:path': { '@id': 'urn:p:status' }, 'sh:name': 'status', 'sh:maxCount': 1, ...facets } });
+/**
+ * The shapes /empty-lists names, as [id, the action of the control that expects it, its title, the
+ * shape]: lists given empty, written each way JSON-LD may write one (a list object, an array,
+ * rdf:nil compact and full, and a list of nulls JSON-LD drops), and zeros a falsy test would skip.
+ */
+const EMPTY_SHAPES: ReadonlyArray<readonly [id: string, rel: string, title: string, shape: Record<string, unknown>]> = [
+  ['IL', 'urn:empty:in-list', 'Empty in list', statusShape({ 'sh:in': { '@list': [] } })],
+  ['IA', 'urn:empty:in-array', 'Empty in array', statusShape({ 'sh:in': [] })],
+  ['IN', 'urn:empty:in-nil', 'Empty in nil', statusShape({ 'sh:in': { '@id': 'rdf:nil' } })],
+  ['IF', 'urn:empty:in-nil-full', 'Empty in full nil', statusShape({ 'sh:in': { '@id': `${RDF}nil` } })],
+  ['IU', 'urn:empty:in-nulls', 'Empty in of nulls', statusShape({ 'sh:in': { '@list': [null] } })],
+  ['ID', 'urn:empty:in-default', 'Empty in default', statusShape({ 'sh:in': { '@list': [] }, 'sh:defaultValue': 'x' })],
+  ['IR', 'urn:empty:in-required', 'Empty in required', statusShape({ 'sh:in': { '@list': [] }, 'sh:minCount': 1 })],
+  ['IH', 'urn:empty:in-has-value', 'Empty in has value', statusShape({ 'sh:in': { '@list': [] }, 'sh:hasValue': 'a' })],
+  ['IM', 'urn:empty:in-many', 'Empty in list field', { '@type': 'sh:NodeShape',
+    'sh:property': { 'sh:path': { '@id': 'urn:p:status' }, 'sh:name': 'status', 'sh:in': { '@list': [] } } }],
+  ['IX', 'urn:empty:in-integer', 'Empty in integer', statusShape({ 'sh:in': [], 'sh:datatype': { '@id': 'xsd:integer' } })],
+  ['IB', 'urn:empty:in-body', 'Empty in body', { '@type': 'sh:NodeShape', 'sh:in': { '@list': [] } }],
+  ['HC', 'urn:empty:in-class', 'Empty in class', { '@type': 'hydra:Class',
+    'hydra:supportedProperty': { 'hydra:property': { '@id': 'urn:p:status' }, 'sh:maxCount': 1, 'sh:in': { '@list': [] } } }],
+  ['HR', 'urn:empty:in-class-required', 'Empty in required class', { '@type': 'hydra:Class',
+    'hydra:supportedProperty': { 'hydra:property': { '@id': 'urn:p:status' }, 'sh:maxCount': 1, 'hydra:required': true, 'sh:in': [] } }],
+  ['OL', 'urn:empty:or-list', 'Empty or', statusShape({ 'sh:or': { '@list': [] } })],
+  ['OA', 'urn:empty:or-array', 'Empty or array', statusShape({ 'sh:or': [] })],
+  ['XA', 'urn:empty:xone-array', 'Empty xone', statusShape({ 'sh:xone': [] })],
+  ['LA', 'urn:empty:language-array', 'Empty languageIn', statusShape({ 'sh:languageIn': [] })],
+  ['LN', 'urn:empty:language-nil', 'Empty languageIn nil', statusShape({ 'sh:languageIn': { '@id': 'rdf:nil' } })],
+  ['OR', 'urn:empty:or-required', 'Empty or required', statusShape({ 'sh:or': { '@list': [] }, 'sh:minCount': 1 })],
+  ['AL', 'urn:empty:and-list', 'Empty and', statusShape({ 'sh:and': { '@list': [] } })],
+  ['AN', 'urn:empty:and-nil', 'Empty and nil', statusShape({ 'sh:and': { '@id': 'rdf:nil' } })],
+  ['NO', 'urn:empty:node-or', 'Shape empty or', { ...statusShape({}), 'sh:or': [] }],
+  ['NA', 'urn:empty:node-and', 'Shape empty and', { ...statusShape({}), 'sh:and': { '@list': [] } }],
+  ['ZR', 'urn:empty:zero-required', 'Required none', statusShape({ 'sh:maxCount': 0, 'sh:minCount': 1 })],
+  ['PA', 'urn:empty:property-array', 'No properties listed', { '@type': 'sh:NodeShape', 'sh:property': [] }],
+  ['SA', 'urn:empty:supported-array', 'No supported properties listed', { '@type': 'hydra:Class', 'hydra:supportedProperty': [] }],
+  ['ML', 'urn:empty:max-length-zero', 'Length zero', statusShape({ 'sh:maxLength': 0 })],
+  ['MZ', 'urn:empty:max-zero', 'Bound zero', statusShape({ 'sh:maxInclusive': 0, 'sh:datatype': { '@id': 'xsd:integer' } })],
+  ['DZ', 'urn:empty:default-zero', 'Default zero', statusShape({ 'sh:defaultValue': 0, 'sh:datatype': { '@id': 'xsd:integer' } })],
+];
+
 export function sharedDescriptors(base: string): Record<string, string> {
   const docs: Record<string, unknown> = {
     // A GET marked destructive in four ways a client once missed: the MCP annotations shape nested
@@ -1345,6 +1388,35 @@ export function sharedDescriptors(base: string): Record<string, string> {
       op('t', 'urn:temporal', 'POST', 'Dates and times', { ...target('/num-target'), 'hydra:expects': { '@id': '#T' } })],
     '@graph': [{ '@id': '#T', '@type': 'sh:NodeShape', 'sh:property': TEMPORAL_TYPES.map(type =>
       ({ 'sh:path': { '@id': `urn:p:${type}` }, 'sh:name': type, 'sh:maxCount': 1, 'sh:datatype': { '@id': `xsd:${type}` } })) }] },
+    // Lists given empty and zeros: an empty sh:in, sh:or, sh:xone or sh:languageIn allows no value,
+    // an empty sh:and asks nothing, an empty enum allows no value at any depth, and a required input
+    // that allows none keeps its control from being invoked; allOf, anyOf, oneOf and prefixItems
+    // hold one schema or more; and a zero bounds, as any number does. EMPTY_CASES read them.
+    '/empty-lists': { '@context': CTX, '@id': `${base}/empty-lists`, 'iep:affordance': [
+      ...EMPTY_SHAPES.map(([id, rel, title]) => op(id, rel, 'POST', title, { ...target('/num-target'), 'hydra:expects': { '@id': `#${id}` } })),
+      op('im', 'urn:empty:in-mapped', 'POST', 'Empty in mapped required', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{?status}`,
+        'hydra:mapping': [{ 'hydra:variable': 'status', 'hydra:property': { '@id': 'urn:p:status' }, 'hydra:required': true }] },
+      'hydra:expects': { '@id': '#IL' } }),
+      op('iv', 'urn:empty:enum-variable', 'POST', 'Empty enum variable', { 'hydra:target': { '@type': 'hydra:IriTemplate',
+        'hydra:template': `${base}/num-target{?q}`,
+        'hydra:mapping': [{ 'hydra:variable': 'q', 'hydra:property': { '@id': 'urn:p:q' }, 'hydra:required': true }] },
+      'hydra:expects': { type: 'object', additionalProperties: { enum: [] } } }),
+      schemaOp('je', 'urn:empty:enum', 'POST', 'Empty enum', { m: { type: 'string', enum: [] } }),
+      schemaOp('jd', 'urn:empty:enum-default', 'POST', 'Empty enum default', { m: { type: 'string', enum: [], default: 'x' } }),
+      op('jr', 'urn:empty:enum-required', 'POST', 'Empty enum required', { ...target('/num-target'),
+        'hydra:expects': { type: 'object', properties: { m: { type: 'string', enum: [] } }, required: ['m'] } }),
+      schemaOp('ji', 'urn:empty:enum-items', 'POST', 'Empty enum items', { m: { type: 'array', items: { enum: [] } } }),
+      schemaOp('jc', 'urn:empty:const-null', 'POST', 'Const null', { m: { const: null } }),
+      op('jq', 'urn:empty:required-none', 'POST', 'None required', { ...target('/num-target'),
+        'hydra:expects': { type: 'object', properties: { m: { type: 'string' } }, required: [] } }),
+      schemaOp('ja', 'urn:empty:any-of', 'POST', 'Empty anyOf', { m: { type: 'string', anyOf: [] } }),
+      schemaOp('jo', 'urn:empty:one-of', 'POST', 'Object oneOf', { m: { type: 'string', oneOf: {} } }),
+      schemaOp('jl', 'urn:empty:all-of', 'POST', 'Empty allOf items', { m: { type: 'array', items: { allOf: [] } } }),
+      schemaOp('jp', 'urn:empty:prefix-items', 'POST', 'Empty prefixItems', { m: { type: 'array', prefixItems: [] } }),
+      schemaOp('jz', 'urn:empty:zeros', 'POST', 'Schema zeros', { n: { type: 'integer', maximum: 0, default: 0 },
+        s: { type: 'string', maxLength: 0 }, a: { type: 'array', maxItems: 0 } }),
+    ], '@graph': EMPTY_SHAPES.map(([id, , , shape]) => ({ '@id': `#${id}`, ...shape })) },
     // A document nested deeper than either client reads.
     '/deep-document': { '@context': CTX, '@id': `${base}/deep-document`, 'rdfs:comment': nested(300) },
   };
@@ -2254,6 +2326,88 @@ export const RULE_CASES: ReadonlyArray<ValueCase> = [
     [path, 'urn:shared-node:class', 'Class write', {}, { error: "missing required field 'shname'" }],
     [path, 'urn:shared-node:class', 'Class write', { shname: '7' }, { error: 'shname: is not writable (hydra:writable false), so it is not sent' }],
   ] as const),
+];
+
+/** What each client says of a value for an input whose list of allowed values, `list`, is empty. */
+const noValue = (name: string, list: string, of = 'shape') => `${name}: its ${of} allows no value (${list} is empty), so it is not sent`;
+/** The problem that keeps a control from being invoked whose required input allows no value. */
+const requiredNone = (name: string, why: string) => `the input "${name}" is required, but ${why}; this control is not invoked`;
+/** The problem that keeps a control from being invoked whose schema writes `key` as no list of schemas. */
+const notSchemas = (key: string) => `the input "m" writes ${key} as something other than a list of one or more schemas, which this ` +
+  'client does not read, so what it takes is not known; this control is not invoked';
+
+/**
+ * Lists given empty, for /empty-lists, read alike by each client as their standards read them:
+ *   - an empty sh:in (a list object, an array, rdf:nil, a list of nulls) allows no value, given or
+ *     default, in a shape's property, a class's supported property, a list field and a body sent
+ *     whole, and so do an empty sh:or, sh:xone and sh:languageIn; an empty sh:and asks nothing;
+ *   - an empty enum allows no value at any depth of a schema, while an empty "required" asks
+ *     nothing and a const of null allows null alone;
+ *   - an input that is required (by sh:minCount, sh:hasValue, hydra:required, a mapping or a
+ *     schema's "required") and allows no value, or takes at most 0 values, keeps its control from
+ *     being invoked; an optional one given nothing sends nothing;
+ *   - allOf, anyOf, oneOf and prefixItems written as no list of one schema or more are a form JSON
+ *     Schema does not allow, and keep the control from being invoked;
+ *   - an empty sh:property or hydra:supportedProperty gives a control with no input, and a zero
+ *     length, bound, count or default is one, never a facet left out.
+ */
+export const EMPTY_CASES: ReadonlyArray<ValueCase> = [
+  ['/empty-lists', 'urn:empty:in-list', 'Empty in list', { status: 'anything' }, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-list', 'Empty in list', {}, { body: {} }],
+  ['/empty-lists', 'urn:empty:in-array', 'Empty in array', { status: 'anything' }, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-nil', 'Empty in nil', { status: 'anything' }, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-nil', 'Empty in nil', { status: `${RDF}nil` }, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-nil-full', 'Empty in full nil', { status: 'anything' }, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-nulls', 'Empty in of nulls', { status: 'anything' }, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-default', 'Empty in default', {}, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-required', 'Empty in required', {}, { error: requiredNone('status', 'its shape allows no value (sh:in is empty)') }],
+  ['/empty-lists', 'urn:empty:in-required', 'Empty in required', { status: 'a' },
+    { error: requiredNone('status', 'its shape allows no value (sh:in is empty)') }],
+  ['/empty-lists', 'urn:empty:in-has-value', 'Empty in has value', { status: 'a' },
+    { error: requiredNone('status', 'its shape allows no value (sh:in is empty)') }],
+  ['/empty-lists', 'urn:empty:in-many', 'Empty in list field', { status: 'a' }, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-integer', 'Empty in integer', { status: '1' }, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-body', 'Empty in body', { body: 'a' }, { error: requiredNone('body', 'its shape allows no value (sh:in is empty)') }],
+  ['/empty-lists', 'urn:empty:in-class', 'Empty in class', { status: 'a' }, { error: noValue('status', 'sh:in') }],
+  ['/empty-lists', 'urn:empty:in-class', 'Empty in class', {}, { body: {} }],
+  ['/empty-lists', 'urn:empty:in-class-required', 'Empty in required class', {},
+    { error: requiredNone('status', 'its shape allows no value (sh:in is empty)') }],
+  ['/empty-lists', 'urn:empty:in-mapped', 'Empty in mapped required', {}, { error: requiredNone('status', 'its shape allows no value (sh:in is empty)') }],
+  ['/empty-lists', 'urn:empty:or-list', 'Empty or', { status: 'x' }, { error: noValue('status', 'sh:or') }],
+  ['/empty-lists', 'urn:empty:or-array', 'Empty or array', { status: 'x' }, { error: noValue('status', 'sh:or') }],
+  ['/empty-lists', 'urn:empty:xone-array', 'Empty xone', { status: 'x' }, { error: noValue('status', 'sh:xone') }],
+  ['/empty-lists', 'urn:empty:language-array', 'Empty languageIn', { status: 'x' }, { error: noValue('status', 'sh:languageIn') }],
+  ['/empty-lists', 'urn:empty:language-nil', 'Empty languageIn nil', { status: 'x' }, { error: noValue('status', 'sh:languageIn') }],
+  ['/empty-lists', 'urn:empty:or-required', 'Empty or required', {}, { error: requiredNone('status', 'its shape allows no value (sh:or is empty)') }],
+  ['/empty-lists', 'urn:empty:and-list', 'Empty and', { status: 'x' }, { body: { status: 'x' } }],
+  ['/empty-lists', 'urn:empty:and-nil', 'Empty and nil', { status: 'x' }, { body: { status: 'x' } }],
+  ['/empty-lists', 'urn:empty:node-or', 'Shape empty or', { status: 'x' },
+    { error: 'the shape names sh:or, which this client does not check, so what it sends is not known; this control is not invoked' }],
+  ['/empty-lists', 'urn:empty:node-and', 'Shape empty and', { status: 'x' }, { body: { status: 'x' } }],
+  ['/empty-lists', 'urn:empty:zero-required', 'Required none', {}, { error: requiredNone('status', 'it takes at most 0 values') }],
+  ['/empty-lists', 'urn:empty:property-array', 'No properties listed', {}, { body: {} }],
+  ['/empty-lists', 'urn:empty:supported-array', 'No supported properties listed', {}, { body: {} }],
+  ['/empty-lists', 'urn:empty:max-length-zero', 'Length zero', { status: 'x' }, { error: 'status: longer than maxLength 0' }],
+  ['/empty-lists', 'urn:empty:max-zero', 'Bound zero', { status: '1' }, { error: 'status: above maxInclusive 0' }],
+  ['/empty-lists', 'urn:empty:default-zero', 'Default zero', {}, { body: { status: 0 } }],
+  ['/empty-lists', 'urn:empty:enum', 'Empty enum', { m: 'x' }, { error: noValue('m', 'enum', 'schema') }],
+  ['/empty-lists', 'urn:empty:enum', 'Empty enum', {}, { body: {} }],
+  ['/empty-lists', 'urn:empty:enum-default', 'Empty enum default', {}, { error: noValue('m', 'enum', 'schema') }],
+  ['/empty-lists', 'urn:empty:enum-required', 'Empty enum required', {}, { error: requiredNone('m', 'its schema allows no value (enum is empty)') }],
+  ['/empty-lists', 'urn:empty:enum-items', 'Empty enum items', { m: '["x"]' }, { error: noValue('m/0', 'enum', 'schema') }],
+  ['/empty-lists', 'urn:empty:enum-items', 'Empty enum items', { m: '[]' }, { body: { m: [] } }],
+  ['/empty-lists', 'urn:empty:enum-variable', 'Empty enum variable', {}, { error: requiredNone('q', 'its schema allows no value (enum is empty)') }],
+  ['/empty-lists', 'urn:empty:const-null', 'Const null', { m: 'x' }, { error: 'm: must be null' }],
+  ['/empty-lists', 'urn:empty:const-null', 'Const null', { m: 'null' }, { body: { m: null } }],
+  ['/empty-lists', 'urn:empty:required-none', 'None required', { m: 'x' }, { body: { m: 'x' } }],
+  ['/empty-lists', 'urn:empty:any-of', 'Empty anyOf', {}, { error: notSchemas('anyOf') }],
+  ['/empty-lists', 'urn:empty:one-of', 'Object oneOf', {}, { error: notSchemas('oneOf') }],
+  ['/empty-lists', 'urn:empty:all-of', 'Empty allOf items', {}, { error: notSchemas('items/allOf') }],
+  ['/empty-lists', 'urn:empty:prefix-items', 'Empty prefixItems', {}, { error: notSchemas('prefixItems') }],
+  ['/empty-lists', 'urn:empty:zeros', 'Schema zeros', {}, { body: { n: 0 } }],
+  ['/empty-lists', 'urn:empty:zeros', 'Schema zeros', { n: '1' }, { error: 'n: above maxInclusive 0' }],
+  ['/empty-lists', 'urn:empty:zeros', 'Schema zeros', { s: 'x' }, { error: 's: longer than maxLength 0' }],
+  ['/empty-lists', 'urn:empty:zeros', 'Schema zeros', { a: '[1]' }, { error: 'a: takes at most 0 values, got 1' }],
 ];
 
 /**

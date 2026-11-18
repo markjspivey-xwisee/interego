@@ -2060,6 +2060,11 @@ class Field:
     # template variable a closed shape does not name, which takes no value.
     in_list: Any = None
     closed_out: bool = False
+    # Whether the field's sh:in is given, even as an empty list; and the
+    # constraint whose empty list allows it no value (_empty_of: "sh:in",
+    # "sh:or", "sh:xone", "sh:languageIn", or a JSON Schema's "enum"), or None.
+    in_given: bool = False
+    empty: str | None = None
     # Whether its default holds a number reading JSON may have rounded
     # (_rounded_default), which is refused rather than sent; and the doubles of
     # the numbers its document writes with digits their doubles drop, so an
@@ -2313,8 +2318,10 @@ class Descriptor:
     def to_public(self) -> dict[str, Any]:
         """The descriptor as list --json writes it. Each field is written
         once, in fields, however many controls or shapes share it, and each
-        sh:in list once, in inLists, which a field names as "in" by its place;
-        each list of fields once, in fieldLists, as the places of its fields.
+        sh:in list once, in inLists, which a field names as "in" by its place,
+        an empty one (an sh:in or an enum given with no entry, which allows no
+        value) among them, and None for a field that names none; each list of
+        fields once, in fieldLists, as the places of its fields.
         Each control names its own list's place as fieldList, or None for a
         control that is not invoked, whose fields are not written, and as
         templateFields the place of its template's fields, which follow its
@@ -2338,7 +2345,8 @@ class Descriptor:
                 _spend(FIELD_WORK + _field_texts(fld))
                 public = fld.to_public()
                 choices = fld.enum
-                if choices:
+                # An empty list is given: it allows no value, which no list leaves unsaid.
+                if choices or fld.in_given or fld.empty == "enum":
                     seen = in_at.get(id(choices))
                     if seen is None or seen[0] is not choices:
                         seen = in_at[id(choices)] = (choices, len(in_lists))
@@ -2703,13 +2711,37 @@ class NodeIndex:
         items = [item for item in as_list(raw) if item is not None]
         return self._list_node(items[0]) if len(items) == 1 else None
 
+    def names_nil(self, item: Any) -> bool:
+        """Whether a value names rdf:nil, the empty RDF list: an IRI, written
+        as a string or as a node's @id, that is rdf:nil once expanded, as a
+        list's rdf:rest is read. The page's namesNil is the same."""
+        iri = (None if "@value" in item or "@list" in item else item.get("@id")) if isinstance(item, dict) else item
+        return isinstance(iri, str) and self.ctx.lookup(iri) == P_NIL
+
+    def empty_list(self, raw: Any) -> bool:
+        """Whether a list value is the empty list, which allows nothing in
+        sh:in, sh:or, sh:xone and sh:languageIn and asks nothing in sh:and:
+        written as an array with no value in it, a JSON-LD list object with
+        none ({"@list": []}, a null dropped as JSON-LD drops it), or rdf:nil.
+        One with more than one value is more than one list, which is not
+        empty. The page's emptyList is the same."""
+        items = [item for item in as_list(raw) if item is not None]
+        if not items:
+            return True
+        if len(items) > 1:
+            return False
+        item = items[0]
+        if isinstance(item, dict) and "@list" in item:
+            return all(ok and value is None for ok, value in (_value_of(member) for member in as_list(item["@list"])))
+        return self.names_nil(item)
+
     def list_values(self, raw: Any) -> tuple[list[Any], str | None, bool]:
         """The members of a list value such as sh:in's: a JSON-LD list object
-        ({"@list": [...]}), an RDF list of rdf:first / rdf:rest nodes, or a
-        plain array of values; why it could not be read, or None; and whether
-        it holds more than one list. A member is read as _value_of reads one,
-        so {"@value": v} is v and {"@id": i} is i. The page's listValues is the
-        same."""
+        ({"@list": [...]}), an RDF list of rdf:first / rdf:rest nodes or
+        rdf:nil, or a plain array of values; why it could not be read, or
+        None; and whether it holds more than one list. A member is read as
+        _value_of reads one, so {"@value": v} is v and {"@id": i} is i. The
+        page's listValues is the same."""
         items = [item for item in as_list(raw) if item is not None]
         lists = [item for item in items if isinstance(item, dict) and "@list" in item]
         if lists:
@@ -2717,7 +2749,8 @@ class NodeIndex:
                 return [], None, True
             members = as_list(lists[0]["@list"])
         else:
-            heads = [item for item in items if self._list_node(item) is not None]
+            # rdf:nil is the empty list, as it ends a list: no member, never the IRI as one.
+            heads = [item for item in items if self._list_node(item) is not None or self.names_nil(item)]
             if heads:
                 if len(items) > 1:
                     return [], None, True
@@ -2947,6 +2980,21 @@ _SHAPE_NODE_UNREAD = ("class", "or", "and", "xone", "not", "node", "sparql", "qu
 _SHAPE_NODE_VALUE = ("datatype", "minLength", "maxLength", "in", "hasValue", "nodeKind", "pattern", "languageIn",
                      "minInclusive", "maxInclusive", "minExclusive", "maxExclusive")
 _NODE_KINDS = frozenset({"IRI", "Literal", "BlankNode", "BlankNodeOrIRI", "IRIOrLiteral", "BlankNodeOrLiteral"})
+# The SHACL parameters whose value is a list. One is given when it is written
+# at all, as an array with no value in it among the rest, so an empty list is
+# read as SHACL reads it, never as no constraint: sh:in (), sh:or (),
+# sh:xone () and sh:languageIn () allow no value, and sh:and () asks nothing.
+# The page's LIST_PARAMS and shaclGiven are the same.
+_LIST_PARAMS = frozenset({"in", "or", "and", "xone", "languageIn"})
+
+
+def _shacl_given(index: NodeIndex, node: Any, key: str) -> bool:
+    raw = index.get(node, SHACL + key)
+    if key not in _LIST_PARAMS:
+        return _present(raw)
+    return raw is not None and not (key == "and" and index.empty_list(raw))
+
+
 # What a shape may say of itself that constrains nothing: its type, label,
 # comment, name and description.
 _SHAPE_NOTES = frozenset({P_TYPE, P_LABEL, P_COMMENT, P_SH_NAME, P_SH_DESC})
@@ -2983,10 +3031,12 @@ class _Facets:
     def count(self, predicate: str, label: str) -> int | None:
         return _count(self.index.get(self.node, predicate), label, self.problems, self.subject)
 
-    def enum(self) -> list[Any]:
+    def enum(self) -> list[Any] | None:
+        """The entries of its sh:in, or None where it names none: an empty
+        list is sh:in given, which allows no value (_empty_of)."""
         raw = self.index.get(self.node, P_SH_IN)
         if raw is None:
-            return []
+            return None
         found, why, several = self.index.list_values(raw)
         if several:
             self.problems.append(f"{self.subject} names more than one sh:in, so what it takes is not known; this control is not invoked")
@@ -3017,12 +3067,19 @@ class _Facets:
         is refused, never sent unchecked (sh:node only when the shape it names
         constrains something, sh:uniqueLang and sh:closed unless false); and those that relate the input to others or
         count its conforming values, which keep the control from being invoked.
-        A sh:nodeKind is one of SHACL's six. The page's facets.extra is the
-        same."""
+        A sh:nodeKind is one of SHACL's six. A list parameter whose list is
+        empty is read as SHACL reads it (_shacl_given): sh:and () asks nothing,
+        and sh:or (), sh:xone () and sh:languageIn () allow no value, named in
+        "empty". The page's facets.extra is the same."""
         index, node = self.index, self.node
         unchecked: list[str] = []
+        empty: list[str] = []
         for key in _SHAPE_UNCHECKED:
-            if _present(index.get(node, SHACL + key)):
+            if not _shacl_given(index, node, key):
+                continue
+            if key in _LIST_PARAMS and index.empty_list(index.get(node, SHACL + key)):
+                empty.append("sh:" + key)
+            else:
                 unchecked.append("sh:" + key)
         # sh:uniqueLang and sh:closed constrain nothing when false.
         for key in ("uniqueLang", "closed"):
@@ -3045,7 +3102,7 @@ class _Facets:
             else:
                 self.problems.append(f"{self.subject} names a sh:nodeKind this client does not read ({kind_text}), so what it takes "
                                      "is not known; this control is not invoked")
-        return {"unchecked": unchecked, "node_kind": node_kind, "has_value": self.one(P_SH_HASVALUE, "sh:hasValue"),
+        return {"unchecked": unchecked, "empty": empty, "node_kind": node_kind, "has_value": self.one(P_SH_HASVALUE, "sh:hasValue"),
                 "min_exclusive": self.one(P_SH_MINE, "sh:minExclusive"), "max_exclusive": self.one(P_SH_MAXE, "sh:maxExclusive")}
 
     def describe(self, *predicates: str) -> str | None:
@@ -3061,6 +3118,21 @@ def _subject(name: Any, path: Any) -> str:
     """How a problem names an input: by the name the field would get from the
     first name and path that read as one value."""
     return f'the input "{_field_name(name, path if isinstance(path, str) else None, None)}"'
+
+
+def _empty_of(enum: list[Any] | None, extra: dict[str, Any]) -> str | None:
+    """The constraint whose empty list allows a field no value, or None: its
+    sh:in given with no entry, or an empty sh:or, sh:xone or sh:languageIn
+    (extra's "empty"). A JSON Schema field's is an enum with no entry at the
+    top of its schema (_schema_field). The page's emptyOf is the same."""
+    if enum is not None and not any(entry is not None for entry in enum):
+        return "sh:in"
+    return extra["empty"][0] if extra["empty"] else None
+
+
+def _empty_text(fld: Field) -> str:
+    """How a problem says a field allows no value. The page's emptyText is the same."""
+    return f"{'its schema' if fld.json_schema else 'its shape'} allows no value ({fld.empty} is empty)"
 
 
 def _supported_field(index: NodeIndex, ref: Any, problems: list[str]) -> Field | None:
@@ -3121,7 +3193,7 @@ def _supported_field(index: NodeIndex, ref: Any, problems: list[str]) -> Field |
         default=facets.defaults(multi),
         max_length=facets.count(P_SH_MAXLEN, "sh:maxLength"), min_length=facets.count(P_SH_MINLEN, "sh:minLength"),
         description=description,
-        enum=enum,
+        enum=enum or [], in_given=enum is not None, empty=_empty_of(enum, extra),
         min_inclusive=facets.one(P_SH_MINI, "sh:minInclusive"), max_inclusive=facets.one(P_SH_MAXI, "sh:maxInclusive"),
         min_exclusive=extra["min_exclusive"], max_exclusive=extra["max_exclusive"], has_value=extra["has_value"],
         node_kind=extra["node_kind"], unchecked=extra["unchecked"], not_writable=writable is not None and truthy(writable) is not True,
@@ -3190,6 +3262,8 @@ def _schema_field(name: str, prop0: Any, required: bool, problems: list[str]) ->
         pattern=_text(prop.get("pattern")) or None, default=None if prop.get("readOnly") is True else prop.get("default"),
         max_length=_inty(prop.get("maxLength")), min_length=_inty(prop.get("minLength")),
         description=prop.get("description"), enum=list(enum) if isinstance(enum, list) else [],
+        # An enum given with no entry allows no value: not one with no enum.
+        empty="enum" if isinstance(enum, list) and not enum else None,
         min_inclusive=prop.get("minimum"), max_inclusive=prop.get("maximum"),
         required=required,
         json_schema=True, schema=prop0, schema_types=written, nullable=written is not None and "null" in written,
@@ -3260,12 +3334,12 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
         return fields, problems
     # A constraint on the shape as a whole constrains the body it describes, which no field checks.
     for key in _SHAPE_NODE_UNREAD:
-        if _present(index.get(shape, SHACL + key)):
+        if _shacl_given(index, shape, key):
             problems.append(f"the shape names sh:{key}, which this client does not check, so what it sends is not known; this "
                             "control is not invoked")
     props = index.get(shape, P_SH_PROP)
     supported = None if _present(props) else index.get(shape, P_SUPPROP)
-    valued = [key for key in _SHAPE_NODE_VALUE if _present(index.get(shape, SHACL + key))]
+    valued = [key for key in _SHAPE_NODE_VALUE if _shacl_given(index, shape, key)]
     if _present(props) or _present(supported):
         # A value constraint on a shape with properties is on the body those make, which no input checks.
         for key in valued:
@@ -3285,7 +3359,7 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
             name = "query" if ("query" in label.lower() or "sparql" in label.lower()) else "body"
             datatype = facets.text(P_SH_DT, "sh:datatype") or XSD + "string"
             extra = facets.extra()
-            fields.append(Field(
+            body = Field(
                 name=name,
                 path=shape.get("@id") if isinstance(shape, dict) else None,
                 datatype=datatype, json_kind="json" if _is_rdf_json(datatype) else None,
@@ -3298,7 +3372,11 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
                 max_inclusive=facets.one(P_SH_MAXI, "sh:maxInclusive"),
                 min_exclusive=extra["min_exclusive"], max_exclusive=extra["max_exclusive"], has_value=extra["has_value"],
                 node_kind=extra["node_kind"], unchecked=extra["unchecked"],
-            ))
+            )
+            body.in_given = body.enum is not None
+            body.empty = _empty_of(body.enum, extra)
+            body.enum = body.enum or []
+            fields.append(body)
         return fields, problems
     for pref in _once_each(index, props):
         node = _node_of(index, pref)
@@ -3367,7 +3445,7 @@ def _property_field(index: NodeIndex, node: dict[str, Any], problems: list[str])
         max_length=facets.count(P_SH_MAXLEN, "sh:maxLength"),
         min_length=facets.count(P_SH_MINLEN, "sh:minLength"),
         description=facets.describe(P_SH_DESC, P_COMMENT, P_DESC),
-        enum=enum,
+        enum=enum or [], in_given=enum is not None, empty=_empty_of(enum, extra),
         min_inclusive=facets.one(P_SH_MINI, "sh:minInclusive"),
         max_inclusive=facets.one(P_SH_MAXI, "sh:maxInclusive"),
         min_exclusive=extra["min_exclusive"], max_exclusive=extra["max_exclusive"], has_value=extra["has_value"],
@@ -4262,7 +4340,9 @@ def _read_control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: An
         shaped = None if shape is None or _is_json_schema(schema) else index.node(_json_value(expects_raw))
         if (template.fields and not typed and not (shaped is not None and _present(index.get(shaped, SHACL + "closed")))
                 and _joins_as_is(fields, template)):
-            return _Joined(fields, template), inline_problem or _joined_duplicate_problem(fields, template), warning
+            # The template's own fields each take a value, so only these may allow none.
+            return (_Joined(fields, template), inline_problem or _joined_duplicate_problem(fields, template) or _unsatisfiable(fields),
+                    warning)
         if index.listing is not None:
             # While list builds every control's, each field this builds is charged (Descriptor.listing).
             index.listing[0] -= len(fields) + len(mappings)
@@ -4303,7 +4383,23 @@ def _read_control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: An
                     fields[i] = copy.copy(fields[i])
                     fields[i].closed_out = True
         problem = inline_problem or _duplicate_problem(fields) or (extra[0] if extra else None)
-    return fields, problem, warning
+    return fields, problem or _unsatisfiable(fields), warning
+
+
+def _unsatisfiable(fields: Any) -> str | None:
+    """The problem a required input that allows no value gives: an empty list
+    of the values it allows (_empty_text), or sh:maxCount 0. No request it
+    makes can be sent, so the control is not invoked, never offered with a
+    form that can only refuse. None where each required input can take a
+    value. The page's unsatisfiable is the same."""
+    for fld in fields:
+        if not fld.required and not (fld.min_count or 0) >= 1:
+            continue
+        if fld.empty:
+            return f'the input "{fld.name}" is required, but {_empty_text(fld)}; this control is not invoked'
+        if fld.max_count == 0:
+            return f'the input "{fld.name}" is required, but it takes at most 0 values; this control is not invoked'
+    return None
 
 
 def _shared_schema_problem(first: str, second: str, schema: Any) -> str | None:
@@ -5873,6 +5969,11 @@ _UNCHECKED_KEYWORDS = (
     "$ref", "$dynamicRef", "$recursiveRef",
 )
 _COUNT_KEYWORDS = ("minLength", "maxLength", "minItems", "maxItems")
+# The keywords JSON Schema writes as a list of one schema or more, which
+# neither client checks: an empty list, or anything but a list of schemas, is
+# a form JSON Schema does not allow, never a constraint that is absent. The
+# page's SCHEMA_LISTS is the same.
+_SCHEMA_LISTS = ("allOf", "anyOf", "oneOf", "prefixItems")
 
 
 def _read_schema(prop: Any, subject: str) -> tuple[list[str], list[str]]:
@@ -5925,6 +6026,10 @@ def _read_schema(prop: Any, subject: str) -> tuple[list[str], list[str]]:
                 bad(where(key), "a number or a boolean")
         if "readOnly" in schema and not isinstance(schema["readOnly"], bool):
             bad(where("readOnly"), "a boolean")
+        for key in _SCHEMA_LISTS:
+            if key in schema and not (isinstance(schema[key], list) and schema[key]
+                                      and all(isinstance(x, (bool, dict)) for x in schema[key])):
+                bad(where(key), "a list of one or more schemas")
         for key in _UNCHECKED_KEYWORDS:
             if key in schema and not (key == "uniqueItems" and schema[key] is False):
                 unchecked.append(where(key))
@@ -6171,6 +6276,10 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
             if not any(t in types for t in _json_types_of(val)):
                 report(f"{_schema_at(at)}: must be a JSON {' or '.join(types)}")
                 return
+        # An enum with no entry allows no value, so none is compared with it.
+        if isinstance(sch.get("enum"), list) and not sch["enum"]:
+            report(f"{_schema_at(at)}: its schema allows no value (enum is empty), so it is not sent")
+            return
         # An entry that holds an integer past 2^53 may not be what the document
         # wrote, so it admits no value: one that matches only it is refused
         # naming it. An enum's entries and a const are keyed once for the whole
@@ -6609,8 +6718,9 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
     checked as the document gives it, never as the choice its text names; it
     is checked by _check_schema. Any other field's value is checked by its
     facets, its sh:in by `choices` (_shape_choices, read once per field). A
-    field that takes no value (sh:maxCount 0), or a template variable a closed
-    shape does not name, refuses any; a default is first checked to be of the
+    field that takes no value (sh:maxCount 0, or an empty sh:in, sh:or,
+    sh:xone or sh:languageIn), or a template variable a closed shape does not
+    name, refuses any; a default is first checked to be of the
     kind its field takes, and a JSON Schema field's default is the value the
     document gives, never trimmed, read as a number or a boolean, or parsed as
     JSON: its schema checks it as it is. `enums` keys each enum once for a
@@ -6625,6 +6735,10 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
         return None
     if fld.closed_out:
         report(f"{fld.name}: is not allowed by its shape, which is closed (sh:closed true), so it is not sent")
+        return None
+    # A list of allowed values that is empty allows none; a JSON Schema's enum is its schema's to check, at any depth.
+    if fld.empty and not fld.json_schema:
+        report(f"{fld.name}: {_empty_text(fld)}, so it is not sent")
         return None
     if not fld.multi and fld.max_count == 0 and fld.max_items is None:
         report(f"{fld.name}: takes at most 0 values, got 1")

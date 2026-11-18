@@ -17,7 +17,7 @@ import { fileURLToPath } from 'node:url';
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES, fetchRoutes,
   hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED, LOAD_HEADERS,
-  OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, RULE_CASES,
+  OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, RULE_CASES, EMPTY_CASES,
   WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, turtleCostCases,
   type HopHeaders } from './hypermedia-client-fixtures.js';
 
@@ -508,17 +508,26 @@ describe('hmc.py: through an HTTP proxy its environment names', () => {
 });
 
 describe('hmc.py: SHACL sh:in lists', () => {
-  it('reads the members of a JSON-LD list, an RDF list and a plain array, and accepts them', async () => {
+  it('reads the members of a JSON-LD list, an RDF list and a plain array, accepts them, and refuses a value for an empty list', async () => {
     const d = await hmc(['describe', `${base}/list-enum`, 'urn:list-enum']);
     expect(d.code, d.stderr).toBe(0);
     const fields = (JSON.parse(d.stdout) as { fields: Array<{ name: string; in: unknown[] }> }).fields;
     expect(Object.fromEntries(fields.map(f => [f.name, f.in]))).toEqual({
       status: ['draft', 'published'], wrapped: ['low', `${base}/high`], nodes: ['one', 'two'], plain: ['red', 'blue'], empty: [],
     });
-    const r = await hmc(['invoke', `${base}/list-enum`, 'urn:list-enum', '--field', 'status=draft', '--field', 'wrapped=low',
-      '--field', 'nodes=two', '--field', 'plain=blue', '--field', 'empty=anything']);
+    // list --json names the empty list as the field's, never null, which says it names none.
+    const doc = await listed('/list-enum');
+    const named = Object.fromEntries(doc.fields.map(f => [f.name, f.in === null ? null : doc.inLists[f.in]]));
+    expect(named).toEqual({ status: ['draft', 'published'], wrapped: ['low', `${base}/high`], nodes: ['one', 'two'], plain: ['red', 'blue'], empty: [] });
+    const chosen = ['--field', 'status=draft', '--field', 'wrapped=low', '--field', 'nodes=two', '--field', 'plain=blue'];
+    // An empty list allows no value: one given for it is refused, and nothing is sent.
+    const refused = await hmc(['invoke', `${base}/list-enum`, 'urn:list-enum', ...chosen, '--field', 'empty=anything']);
+    expect(refused.code, refused.stderr).toBe(2);
+    expect(problems(refused.stderr)).toEqual(['empty: its shape allows no value (sh:in is empty), so it is not sent']);
+    expect(seen.some(line => line.includes('empty=anything'))).toBe(false);
+    const r = await hmc(['invoke', `${base}/list-enum`, 'urn:list-enum', ...chosen]);
     expect(r.code, r.stderr).toBe(0);
-    expect(seen).toContain('GET /list-ok?status=draft&wrapped=low&nodes=two&plain=blue&empty=anything');
+    expect(seen).toContain('GET /list-ok?status=draft&wrapped=low&nodes=two&plain=blue');
   });
 });
 
@@ -1195,7 +1204,7 @@ describe('hmc.py: the address sent is the address printed', () => {
 describe('hmc.py: values a request can carry, and lengths in code points', () => {
   const sentTo = () => seen.filter(s => / \/num-target(\?|$)/.test(s)).length;
 
-  it.each([...VALUE_CASES, ...CHOICE_CASES, ...SWEEP_CASES, ...RULE_CASES])('reads %s %s (%s) as the page does: case %#', async (path, rel, _title, fields, outcome) => {
+  it.each([...VALUE_CASES, ...CHOICE_CASES, ...SWEEP_CASES, ...RULE_CASES, ...EMPTY_CASES])('reads %s %s (%s) as the page does: case %#', async (path, rel, _title, fields, outcome) => {
     if ('body' in outcome) {
       const { r, request } = await dry(path, rel, fields);
       expect(r.code, r.stderr).toBe(0);

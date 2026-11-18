@@ -26,7 +26,7 @@ import { JSDOM, VirtualConsole } from 'jsdom';
 import { describe, expect, it, vi } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES,
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
-  LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES,
+  LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES, EMPTY_CASES,
   WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
@@ -219,7 +219,7 @@ const XSD = 'http://www.w3.org/2001/XMLSchema#';
 const RDF_NIL = 'http://www.w3.org/1999/02/22-rdf-syntax-ns#nil';
 // sh:in written each way JSON-LD allows: a list object, the same in a one-element array with
 // @value and @id members, an RDF list of rdf:first / rdf:rest nodes, and a plain array. An empty
-// list object restricts nothing, as an empty enum does. These fixtures' fields take one value each,
+// list object allows no value, as an empty enum does. These fixtures' fields take one value each,
 // so each carries sh:maxCount 1, as Interego's own shapes write one; with no sh:maxCount a property
 // takes a list.
 const listEnum = { '@context': CTX, '@id': `${HOST}/list-enum`,
@@ -1025,7 +1025,7 @@ describe('hypermedia client: rendering details', () => {
 });
 
 describe('hypermedia client: SHACL sh:in lists', () => {
-  it('offers the members of a JSON-LD list, an RDF list and a plain array, and accepts them', async () => {
+  it('offers the members of a JSON-LD list, an RDF list and a plain array, accepts them, and refuses a value for an empty list', async () => {
     const t = load(`?url=${encodeURIComponent(HOST + '/list-enum')}&autoload=1`);
     try {
       const { document } = t;
@@ -1039,16 +1039,23 @@ describe('hypermedia client: SHACL sh:in lists', () => {
       expect(options('wrapped')).toEqual(['', 'low', `${HOST}/high`]);
       expect(options('nodes')).toEqual(['', 'one', 'two']);
       expect(options('plain')).toEqual(['', 'red', 'blue']);
-      // An empty list offers nothing to choose from, so the field is free text.
+      // An empty list allows no value: no choice is made up for it, so no empty select sends "", and
+      // its input says so; a value given is refused, and the field left empty sends nothing.
       expect(options('empty')).toBeNull();
-      expect(document.querySelector('#invokeForm input[data-field="empty"]')).not.toBeNull();
+      const empty = document.querySelector<HTMLInputElement>('#invokeForm input[data-field="empty"]')!;
+      expect(empty.closest('.field')!.querySelector('.hint')!.textContent).toContain('its shape allows no value (sh:in is empty)');
       const chosen: Record<string, string> = { status: 'draft', wrapped: 'low', nodes: 'two', plain: 'blue', empty: 'anything' };
       for (const el of document.querySelectorAll<HTMLInputElement>('#invokeForm [data-field]')) el.value = chosen[el.dataset['field']!]!;
+      click(t, button(document, 'dry'));
+      await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toContain('Validation failed'));
+      expect(listed(document)).toEqual(['empty: its shape allows no value (sh:in is empty), so it is not sent']);
+      empty.value = '';
       click(t, button(document, 'dry'));
       await vi.waitFor(() => expect(document.getElementById('result')!.textContent).toContain('Dry run'));
       const shown = document.getElementById('result')!.textContent!;
       expect(shown).not.toContain('Validation failed');
-      expect(shown).toContain(`${HOST}/body/plain?status=draft&wrapped=low&nodes=two&plain=blue&empty=anything`);
+      expect(shown).toContain(`${HOST}/body/plain?status=draft&wrapped=low&nodes=two&plain=blue`);
+      expect(shown).not.toContain('empty=');
       assertInert(t, 'list enum');
     } finally { t.dom.window.close(); }
   });
@@ -1976,7 +1983,7 @@ describe('hypermedia client: values a request can carry, and lengths in code poi
   // A choice is set in the form only where the form offers it: a select is given one of its options,
   // and a value no option holds, or a list of them, is given by the link alone, as is a value for a
   // control the page shows no form for.
-  it.each([...CHOICE_CASES, ...SWEEP_CASES, ...RULE_CASES])('reads %s %s (%s) as hmc.py does, by a link and by the form: case %#', async (path, rel, title, fields, outcome) => {
+  it.each([...CHOICE_CASES, ...SWEEP_CASES, ...RULE_CASES, ...EMPTY_CASES])('reads %s %s (%s) as hmc.py does, by a link and by the form: case %#', async (path, rel, title, fields, outcome) => {
     // A control refused as it is read shows its problem in place of a form, and a link builds none.
     const query = Object.entries(fields).map(([k, v]) => `&field.${encodeURIComponent(k)}=${encodeURIComponent(v)}`).join('');
     const opened = load(`?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1${query}`);

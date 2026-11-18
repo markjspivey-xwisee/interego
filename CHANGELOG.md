@@ -684,6 +684,14 @@ for the problem it reports, and names running out of memory. Of 5 new shared
 rows, all failed in each client before, and so did 5 Turtle rows. The CSP hash
 moves.
 
+A nineteenth review found that both clients read an empty `sh:in` as no
+constraint, so any value was sent. A list given empty is now the empty list:
+an empty `sh:in`, `sh:or`, `sh:xone`, `sh:languageIn` or `enum` allows no
+value, an empty `sh:and` asks nothing, `rdf:nil` is no entry, and a required
+input that allows none keeps its control from being invoked. An empty `allOf`,
+`anyOf`, `oneOf` or `prefixItems` is malformed. Of 52 new shared rows, 36
+failed in each client before. The CSP hash moves.
+
 ## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
 
 A Quoted descriptor repeats someone else's claim without endorsing it. The
