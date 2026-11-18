@@ -360,15 +360,20 @@ function listen(){
   // A recogniser that has been replaced by a later one says nothing more: its end, arriving late,
   // would otherwise switch off the microphone the learner has just switched on.
   const mine = rec, stale = () => rec !== mine;
-  const finals = []; let failed = false, quiet = null;
+  const finals = []; let failed = false, quiet = null, unsettled = false;
   const hush = ms => { clearTimeout(quiet); quiet = setTimeout(() => { try { mine.stop(); } catch(e){} }, ms); };
   rec.onresult = e => { if (stale()) return; let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) { const r = e.results[i], t = r[0].transcript.trim(); if (r.isFinal) { if (t) finals.push(t); } else interim += " " + t; }
+    unsettled = interim.trim() !== "";
     $("heard").textContent = "“" + (finals.join(" ") + interim).trim() + "”"; hush(LISTEN_QUIET_MS); };
   rec.onerror = e => { failed = true; clearTimeout(quiet); if (stale()) return; listening = false; $("mic").classList.remove("live");
     $("heard").textContent = e.error === "not-allowed" || e.error === "service-not-allowed" ? "The microphone isn't available here. Tap a reply below instead." : "Didn't catch that. Try again, or tap a reply."; };
   rec.onend = () => { clearTimeout(quiet); if (stale()) return; listening = false; $("mic").classList.remove("live");
     if (failed) return;
+    // Ended with words still unsettled after ones that were settled: what is settled is only the
+    // start of what was said. "I'm refunding it today" followed by an unsettled "actually no I
+    // cannot" is not the first half alone. Nothing is offered, and the learner says it again.
+    if (unsettled) { $("heard").textContent = "Didn't catch all of that. Try again, or tap a reply."; return; }
     const finalText = finals.join(" ");
     if (!finalText) { $("heard").textContent = "Didn't catch that. Try again, or tap a reply."; return; }
     const ch = stageObj().choices; const i = bestMatch(finalText, ch);

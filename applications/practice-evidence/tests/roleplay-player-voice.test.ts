@@ -161,7 +161,31 @@ describe('how the player listens to a spoken reply', () => {
     r.end();
     expect(p.offered()).toBeUndefined();
     expect(p.highlighted()).toBe(-1);
-    expect(p.heard()).toBe("Didn't catch that. Try again, or tap a reply.");
+    expect(p.heard()).toBe("Didn't catch all of that. Try again, or tap a reply.");
+  });
+
+  it('offers nothing for a settled start whose continuation never settled', () => {
+    const p = player(refunding);
+    p.listen();
+    const r = Recogniser.last!;
+    r.hear("I'm refunding the duplicate $19 today", true);
+    r.hear('actually no I cannot refund it', false);
+    r.end();
+    // The settled half alone is the refund reply; the whole of what was said is its opposite.
+    expect(p.offered()).toBeUndefined();
+    expect(p.highlighted()).toBe(-1);
+    expect(p.heard()).toBe("Didn't catch all of that. Try again, or tap a reply.");
+
+    // Settled in full, the same words are matched as a whole, and are no reply.
+    const q = player(refunding);
+    q.listen();
+    const s = Recogniser.last!;
+    s.hear("I'm refunding the duplicate $19 today", true);
+    s.hear('actually no I cannot refund it', false);
+    s.hear('actually no I cannot refund it', true);
+    vi.advanceTimersByTime(2000);
+    expect(q.offered()).toBeUndefined();
+    expect(q.heard()).toContain("That didn't match a reply");
   });
 
   it('offers nothing after an error, whatever was heard before it', () => {

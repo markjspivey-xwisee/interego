@@ -8,7 +8,9 @@ The recogniser stopped at the first pause, about half a second, so a reply said
 in two breaths was heard as its first words: "to recap", "I can see both". The
 player now keeps it listening through pauses and ends the reply itself, after two
 seconds with nothing new heard, or when the learner taps the microphone again.
-Only words the recogniser settled on are matched. If it ends on unsettled words,
+Only words the recogniser settled on are matched, and only when all of them
+settled: a settled start with an unsettled continuation is not matched as the
+start alone. If it ends on unsettled words,
 or on an error, no reply is offered; before, the confirmation could appear after
 a network error. A recogniser the learner has replaced with a later one is
 ignored: its late end no longer switches off the one that is listening.
