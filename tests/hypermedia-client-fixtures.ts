@@ -3461,14 +3461,20 @@ export const RESPONSE_MAX = 8 * 1024 * 1024;
 export const RESPONSE_TOO_LARGE = `This response is larger than ${RESPONSE_MAX} bytes, so it was not read, and nothing of it is shown.`;
 /**
  * What laying out a response of n bytes may add: LAYOUT_PER_BYTE units for each of its bytes, and
- * LAYOUT_FLOOR at least. The page's table of a SPARQL result counts a unit for each cell (its head
- * and each row included) and each character a cell shows; indenting JSON, in either client, counts
- * each character it adds. Past that the response is shown as its text, as a body neither client
- * recognises is, after a note naming why (tableAsText, jsonAsText).
+ * LAYOUT_FLOOR at least. The page's table of a SPARQL result counts CELL_UNITS for each cell (its
+ * head's and each row included) and a unit for each character a cell shows; indenting JSON, in
+ * either client, counts each character it adds. Past that the response is shown as its text, as a
+ * body neither client recognises is, after a note naming why (tableAsText, jsonAsText).
  */
 export const LAYOUT_PER_BYTE = 8;
 export const LAYOUT_FLOOR = 10_000;
 export const layoutBound = (bytes: number) => Math.max(LAYOUT_FLOOR, LAYOUT_PER_BYTE * bytes);
+/**
+ * What one cell of the page's table counts beyond the characters it shows: the markup of an empty
+ * one, `<td></td>`. A head's cell and a row count as much, so a table has fewer elements than its
+ * response has bytes, however few of those bytes it shows.
+ */
+export const CELL_UNITS = 9;
 export const tableAsText = (rows: number, columns: number, bytes: number) =>
   `This result's table would have ${rows} row(s) x ${columns} column(s), more than a response of ${bytes} bytes is shown as; it is shown as text.`;
 export const jsonAsText = (added: number, bytes: number) =>
@@ -3492,7 +3498,13 @@ let shownMemo: ReadonlyArray<ShownCase> | null = null;
  *   - indented: JSON of 40 arrays each nested 255 deep, which indenting wrote as 5 MB for 20 KB;
  *   - too-deep: JSON nested 5,000 deep, which neither client reads as JSON, so it is its text;
  *   - geo: honest GeoJSON, nested seven deep, still indented;
- *   - largest, too-large: text of RESPONSE_MAX bytes, shown, and of one byte more, not read.
+ *   - largest, too-large: text of RESPONSE_MAX bytes, shown, and of one byte more, not read;
+ *   - long-names: 50 variables of 4,000 characters and 80,000 empty bindings, 440 KB, which the page
+ *     looked up by name in each row, each lookup costing the name's length (24 s);
+ *   - long-names-table: 2 variables of 16,000 characters, one no binding names, and a short one,
+ *     with 8,000 bindings, whose table fits: each name was looked up in each row, twice;
+ *   - padded: 400 variables and 400 empty bindings after 20,000 bytes of whitespace, which the page
+ *     built as 160,000 cells, 7 for each byte, the bytes it never shows counted for them.
  * hmc.py shows no table: it writes a SPARQL result as the JSON it is, indented by the same rule.
  */
 export function shownCases(): ReadonlyArray<ShownCase> {
@@ -3502,6 +3514,8 @@ export function shownCases(): ReadonlyArray<ShownCase> {
   // What indenting JSON adds: JSON.stringify(value, null, 2) beyond JSON.stringify(value).
   const added = (text: string) => { const v: unknown = JSON.parse(text); return JSON.stringify(v, null, 2).length - JSON.stringify(v).length; };
   const vars = Array.from({ length: 1000 }, (_, i) => `v${i}`);
+  // `count` variable names of `length` characters each, told apart by their first characters.
+  const named = (count: number, length: number) => Array.from({ length: count }, (_, i) => `v${i}`.padEnd(length, 'n'));
   const dense = Array.from({ length: 300 }, (_, i) => ({ s: { type: 'uri', value: `https://data.example/s/${i}` },
     p: { type: 'uri', value: 'https://data.example/p' }, o: { type: 'literal', value: `value ${i}` } }));
   const geo = { type: 'FeatureCollection', features: Array.from({ length: 20 }, (_, f) => ({ type: 'Feature', properties: { name: `f${f}` },
@@ -3523,6 +3537,11 @@ export function shownCases(): ReadonlyArray<ShownCase> {
     build('geo', 'application/geo+json', JSON.stringify(geo), 'json', 'json', none),
     build('largest', 'text/plain', 'x'.repeat(RESPONSE_MAX), 'text', 'text', none),
     build('too-large', 'text/plain', 'x'.repeat(RESPONSE_MAX + 1), 'nothing', 'nothing', () => RESPONSE_TOO_LARGE),
+    build('long-names', SPARQL, sparql(named(50, 4000), Array(80000).fill({})), 'text', 'json', bytes => tableAsText(80000, 50, bytes), none),
+    build('long-names-table', SPARQL, sparql([...named(2, 16000), 's'], Array.from({ length: 8000 }, (_, i) =>
+      i < 2 ? { [i ? 's' : named(2, 16000)[1]!]: { type: 'uri', value: `https://data.example/bound/${i}` } } : {})), 'table', 'json', none),
+    build('padded', SPARQL, sparql(vars.slice(0, 400), Array(400).fill({})) + ' '.repeat(20000), 'text', 'json',
+      bytes => tableAsText(400, 400, bytes), none),
   ];
   return shownMemo;
 }

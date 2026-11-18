@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-T8OjmL+rMWH3aMaMceZv5jwRHzHg1q1PTusgY0wEGQg='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-rLu3tWtw0WdopOxO5IE8rnUNqrw0nYGVjQR+o89ulk0='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -4942,15 +4942,19 @@ async function readResponse(res) {
 // shown as received, escaped, with each https URL in it a link. Laying it out (a
 // SPARQL JSON result as a table, other JSON indented) may add LAYOUT_PER_BYTE
 // units for each of its bytes, and LAYOUT_FLOOR at least (layoutBound): a table
-// counts one for each cell, its head and each row included, and one for each
-// character a cell shows, and indenting counts each character it adds. Past that
-// the response is shown as its text, after a note naming why (tableAsText,
+// counts CELL_UNITS for each cell, its head's and each row included, and one for
+// each character a cell shows, and indenting counts each character it adds. Past
+// that the response is shown as its text, after a note naming why (tableAsText,
 // jsonAsText), so neither a product of a result's rows and columns, nor a value
-// a column names again, nor JSON's depth sets what is shown. hmc.py, which shows
-// no table, indents JSON by the same rule: its _LAYOUT_PER_BYTE, _LAYOUT_FLOOR,
-// _indent_size and _json_as_text are the same.
+// a column names again, nor bytes a table never shows, nor JSON's depth sets
+// what is shown. hmc.py, which shows no table, indents JSON by the same rule:
+// its _LAYOUT_PER_BYTE, _LAYOUT_FLOOR, _indent_size and _json_as_text are the same.
 const LAYOUT_PER_BYTE = 8;
 const LAYOUT_FLOOR = 10000;
+// What a cell counts beyond the characters it shows: the markup of an empty one,
+// <td></td>. A head's cell (<th></th>) and a row (<tr></tr>) count as much, so a
+// table has fewer elements than its response has bytes, however few it shows.
+const CELL_UNITS = 9;
 function layoutBound(size) { return Math.max(LAYOUT_FLOOR, LAYOUT_PER_BYTE * size); }
 function tableAsText(rows, columns, size) {
   return "This result's table would have " + rows + " row(s) x " + columns + " column(s), more than a response of " + size +
@@ -4977,21 +4981,37 @@ function indentSize(value) {
   }
   return total;
 }
-// The text one cell of a SPARQL result's table shows: its binding's value.
-function cellText(row, v) {
-  const cell = own(row, v) ? row[v] : null;
-  return asText(cell && typeof cell === "object" ? cell.value : cell);
-}
-// Whether a SPARQL result's table fits within `bound`: counted cell by cell, so
-// the count stops as soon as it passes it, never after the whole product.
-function tableFits(vars, bindings, bound) {
+// What a SPARQL result's table shows: for each binding, the text of each column,
+// its value for the variable the column names (empty where it binds none), or
+// null when the table would count more than `bound` (layoutBound). It is counted
+// as it is read, so the count stops as soon as it passes the bound, never after
+// the whole product of rows and columns. A row's own keys are each looked up once
+// among the columns, which are mapped from their variables once, so a row costs
+// the time of its keys, never of each variable's name: a column a row binds
+// nothing for is left empty without a lookup, and a key two columns name fills both.
+function tableTexts(vars, bindings, bound) {
+  const columns = new Map();
   let total = 0;
-  for (const v of vars) if ((total += 1 + v.length) > bound) return false;
-  for (const row of bindings) {
-    if (++total > bound) return false;
-    for (const v of vars) if ((total += 1 + cellText(row, v).length) > bound) return false;
+  for (let i = 0; i < vars.length; i++) {
+    if ((total += CELL_UNITS + vars[i].length) > bound) return null;
+    const at = columns.get(vars[i]);
+    if (at) at.push(i); else columns.set(vars[i], [i]);
   }
-  return true;
+  const rows = [];
+  for (const row of bindings) {
+    if ((total += CELL_UNITS * (1 + vars.length)) > bound) return null;
+    const texts = new Array(vars.length).fill("");
+    for (const key of Object.getOwnPropertyNames(row)) {
+      const at = columns.get(key);
+      if (!at) continue;
+      const cell = row[key];
+      const text = asText(cell && typeof cell === "object" ? cell.value : cell);
+      if ((total += at.length * text.length) > bound) return null;
+      for (const i of at) texts[i] = text;
+    }
+    rows.push(texts);
+  }
+  return rows;
 }
 // A note on the body reads as the outcome does: as a success only when it is one.
 // `size` is the response's bytes, as received.
@@ -5004,13 +5024,14 @@ function renderBody(contentType, body, parsed, done, size) {
   if (parsed && parsed.head && parsed.results && Array.isArray(parsed.results.bindings)) {
     const bindings = parsed.results.bindings.filter(row => row && typeof row === "object");
     const vars = (Array.isArray(parsed.head.vars) ? parsed.head.vars : Object.keys(bindings[0] || {})).map(asText);
-    if (!tableFits(vars, bindings, layoutBound(size))) return asTextAfter(tableAsText(bindings.length, vars.length, size));
+    const rows = tableTexts(vars, bindings, layoutBound(size));
+    if (!rows) return asTextAfter(tableAsText(bindings.length, vars.length, size));
     const html = [`<div class="${note}">SPARQL result: ${bindings.length} row(s)</div><table class="sparql"><thead><tr>`];
     for (const v of vars) html.push("<th>" + esc(v) + "</th>");
     html.push("</tr></thead><tbody>");
-    for (const row of bindings) {
+    for (const texts of rows) {
       html.push("<tr>");
-      for (const v of vars) { const val = cellText(row, v); html.push("<td>" + iriSpan(val, val) + "</td>"); }
+      for (const val of texts) html.push("<td>" + iriSpan(val, val) + "</td>");
       html.push("</tr>");
     }
     html.push("</tbody></table>");

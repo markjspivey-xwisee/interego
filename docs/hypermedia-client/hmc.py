@@ -7617,7 +7617,10 @@ def invoke_plan(plan: RequestPlan, *, confirm: bool = False, dry_run: bool | Non
             note = _json_as_text(added, size)
             parsed = None
     result["response"] = {"status": answer.status, "headers": answer.headers, "contentType": content_type,
-                          "bodyText": text, "body": parsed, "note": note, "url": plan.url, "landed": answer.landed}
+                          "bodyText": text, "body": parsed, "url": plan.url, "landed": answer.landed}
+    # `note` is given only with a note, so a response shown as it is reads as it did before there were notes.
+    if note is not None:
+        result["response"]["note"] = note
     if not follow and answer.status in REDIRECT_STATUSES:
         # Only a Location with something in it is one, as _WebOnlyRedirects
         # reads it; it is named as resolved against the address it came from.

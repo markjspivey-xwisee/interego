@@ -510,6 +510,8 @@ describe('hmc.py: what a response is shown as grows with its size, not with the 
     expect([json.code, json.stderr, json.timedOut]).toEqual([0, '', false]);
     const out = JSON.parse(json.stdout) as { done: boolean; outcome: string; response: { bodyText: string | null; body: unknown; note?: string | null } };
     expect([out.done, out.outcome, out.response.note ?? null]).toEqual([true, invokeDone(url, 200), c.hmcNote]);
+    // A response with no note has no `note`, so an honest response's --json is what it was before there were notes.
+    expect('note' in out.response, 'note given').toBe(c.hmcNote !== null);
     expect(out.response.bodyText).toBe(c.hmc === 'nothing' ? null : c.body);
     expect(out.response.body).toEqual(c.hmc === 'json' ? JSON.parse(c.body) : null);
     expect(json.stdout.length, '--json written').toBeLessThanOrEqual(layoutBound(c.bytes) + 8 * c.bytes + 20_000);

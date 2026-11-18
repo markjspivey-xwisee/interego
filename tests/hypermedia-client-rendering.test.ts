@@ -28,7 +28,7 @@ import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_C
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
   LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES, EMPTY_CASES,
   WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, layoutBound, shownCases,
-  type HopHeaders } from './hypermedia-client-fixtures.js';
+  CELL_UNITS, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -915,8 +915,11 @@ describe('hypermedia client: what a response is shown as grows with its size, no
   // Each /shown control, invoked by a link: the page shows its answer as a table, indented JSON or
   // its text, or nothing of it, as shownCases says, with the note hmc.py writes for the same rule.
   // What is shown is counted: the elements and characters in the result, against what laying out
-  // a response of its size may add (layoutBound), with its text and the request's beside it. Time
-  // grows with the response as the work rows' does: 3 s, or 1 ms for each 80 bytes where that is more.
+  // a response of its size may add (layoutBound), with its text and the request's beside it; a
+  // table's cell, row and head cell each count CELL_UNITS of it, so it has fewer elements than the
+  // response has bytes. A table shows each binding's value in the column of each variable that
+  // names it, and nothing in the others. Time grows with the response as the work rows' does: 3 s,
+  // or 1 ms for each 80 bytes where that is more.
   it.each(shownCases().map(c => [c.name] as const))('shows /shown/%s within what its size allows', async name => {
     const c = shownCases().find(one => one.name === name)!;
     const started = Date.now();
@@ -940,8 +943,18 @@ describe('hypermedia client: what a response is shown as grows with its size, no
       if (parsed) {
         expect(tables[0]!.querySelectorAll('tbody tr')).toHaveLength(parsed.results.bindings.length);
         expect(tables[0]!.querySelectorAll('td')).toHaveLength(parsed.results.bindings.length * parsed.head.vars.length);
+        // The columns each variable heads, found once; each binding's own keys fill theirs.
+        const columns = new Map<string, number[]>();
+        parsed.head.vars.forEach((v, i) => columns.set(v, [...columns.get(v) ?? [], i]));
+        const expected = parsed.results.bindings.map(row => {
+          const texts: string[] = parsed.head.vars.map(() => '');
+          for (const [key, cell] of Object.entries(row as Record<string, { value: string }>)) for (const i of columns.get(key) ?? []) texts[i] = cell.value;
+          return texts;
+        });
+        expect([...tables[0]!.querySelectorAll('thead th')].map(th => th.textContent)).toEqual(parsed.head.vars);
+        expect([...tables[0]!.querySelectorAll('tbody tr')].map(tr => [...tr.children].map(td => td.textContent))).toEqual(expected);
       }
-      expect(result.querySelectorAll('*').length, 'elements shown').toBeLessThanOrEqual(layoutBound(c.bytes));
+      expect(result.querySelectorAll('*').length, 'elements shown').toBeLessThanOrEqual(Math.floor(layoutBound(c.bytes) / CELL_UNITS) + 50);
       expect(result.textContent!.length, 'characters shown')
         .toBeLessThanOrEqual(c.page === 'nothing' ? 5_000 : layoutBound(c.bytes) + 6 * c.bytes + 5_000);
       assertInert(t, name);
