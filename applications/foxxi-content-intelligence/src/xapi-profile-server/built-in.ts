@@ -16,15 +16,19 @@
  * cmi5's verbs and activity types, which those specifications fix; they are named here as
  * external terms and are not concepts of Foxxi's profile.
  */
-import { buildFoxxiProfileDoc, FOXXI_EXTERNAL_TERMS, FOXXI_PROFILE_ID } from '../xapi-profile.js';
+import { buildFoxxiProfileDoc, buildFoxxiProfileDocV1, FOXXI_EXTERNAL_TERMS, FOXXI_PROFILE_V1_ID, FOXXI_PROFILE_VERSION_ID } from '../xapi-profile.js';
 import { PROFILE_GENERATED_AT } from '../xapi-lrs.js';
 import { buildXapixProfileDoc, buildXapixProfileDocV1, XAPIX_PROFILE_V1_ID, XAPIX_PROFILE_VERSION_ID } from '../xapix/profile.js';
-import { foxxiProfileExamples, xapixProfileExamples, xapixProfileV1Examples } from '../built-in-profile-examples.js';
+import { foxxiProfileExamples, foxxiProfileV1Examples, xapixProfileExamples, xapixProfileV1Examples } from '../built-in-profile-examples.js';
 import type { ExternalTerm, ProfileExamples } from './lint.js';
 import type { Json } from './rdf.js';
 
 export function builtInProfiles(): Json[] {
   return [
+    // Version 1 of Foxxi's profile stays held beside the current one, for the same reason the
+    // xapi-x profile's does: a projection stored before 2026-11-17 names its descriptor in Foxxi's
+    // own key, and is judged against the version it was written under.
+    buildFoxxiProfileDocV1({ generatedAt: PROFILE_GENERATED_AT }) as unknown as Json,
     buildFoxxiProfileDoc({ generatedAt: PROFILE_GENERATED_AT }) as unknown as Json,
     // Version 1 stays held beside the current one: statements written before the projection
     // category existed are judged against it, and its IRI has been served since it was published.
@@ -40,7 +44,8 @@ export function builtInProfiles(): Json[] {
  */
 export function builtInKept(): Array<{ profile: string; examples: ProfileExamples; external: ExternalTerm[] }> {
   return [
-    { profile: FOXXI_PROFILE_ID, examples: foxxiProfileExamples(), external: FOXXI_EXTERNAL_TERMS.map(t => ({ ...t })) },
+    { profile: FOXXI_PROFILE_V1_ID, examples: foxxiProfileV1Examples(), external: FOXXI_EXTERNAL_TERMS.map(t => ({ ...t })) },
+    { profile: FOXXI_PROFILE_VERSION_ID, examples: foxxiProfileExamples(), external: FOXXI_EXTERNAL_TERMS.map(t => ({ ...t })) },
     { profile: XAPIX_PROFILE_V1_ID, examples: xapixProfileV1Examples(), external: [] },
     { profile: XAPIX_PROFILE_VERSION_ID, examples: xapixProfileExamples(), external: [] },
   ];

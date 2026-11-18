@@ -29,9 +29,33 @@ import type { Json } from './xapi-profile-server/processor.js';
 const ADL = 'http://adlnet.gov/expapi', W3 = 'https://w3id.org/xapi/adl/verbs';
 const json = (v: unknown): Json => JSON.parse(JSON.stringify(v)) as Json;
 
-/** Foxxi's own profile: an example for each of its templates and each of its primary patterns. */
-export function foxxiProfileExamples(): ProfileExamples {
+/** Foxxi's own profile, current version: an example for each of its templates and each of its primary patterns. */
+export function foxxiProfileExamples(): ProfileExamples { return foxxiExamples(2); }
+
+/**
+ * Foxxi's profile, version 1: the same statements as the projector wrote them until 2026-11-17,
+ * with Foxxi's own keys for the descriptor, the one it supersedes and "not endorsed" beside the
+ * `iep#` ones. Each is today's projection with those keys put back, which is all that differs.
+ */
+export function foxxiProfileV1Examples(): ProfileExamples { return foxxiExamples(1); }
+
+/** A projection as version 1 had it: Foxxi's own three keys restored from what the statement still says. */
+function asVersion1(statement: Record<string, unknown>): Record<string, unknown> {
+  const s = json(statement) as { result?: { extensions?: Json }; context?: { extensions?: Json; contextActivities?: { other?: Array<{ id?: string }> } } };
+  const source = s.result?.extensions?.['https://markjspivey-xwisee.github.io/interego/ns/iep#sourceDescriptor'];
+  if (typeof source !== 'string' || !s.context) return statement;
+  const superseded = s.context.contextActivities?.other?.[0]?.id;
+  const quoted = s.result?.extensions?.['https://markjspivey-xwisee.github.io/interego/ns/iep#modalStatus'] === 'Quoted';
+  s.context.extensions = { ...s.context.extensions, [`${FOXXI_NS}substrateDescriptorIri`]: source,
+    ...(superseded ? { [`${FOXXI_NS}supersededDescriptor`]: superseded } : {}), ...(quoted ? { [`${FOXXI_NS}endorsed`]: false } : {}) };
+  return s as Record<string, unknown>;
+}
+
+function foxxiExamples(version: 1 | 2): ProfileExamples {
   const T = (name: string) => `${FOXXI_PROFILE_ID}/templates/${name}`;
+  // What version 2 renamed: the descriptor-projection templates and the patterns over them.
+  const D = (kind: string) => version === 1 ? `${kind}-descriptor` : `${kind}-projection`;
+  const as = (statement: Record<string, unknown>) => version === 1 ? asVersion1(statement) : statement;
   const C = 'https://example.org/courses/made-up';
   const learner = { mbox: 'mailto:fictional-learner@example.org' };
   const registration = '33333333-3333-4333-8333-333333333333';
@@ -42,6 +66,7 @@ export function foxxiProfileExamples(): ProfileExamples {
   const projected = (entry: Partial<MeshDiscoverEntry>) => projectMeshEntry({
     descriptorUrl: 'https://pod.example/fictional-agent/context-graphs/1790000000000.ttl', describes: ['urn:graph:made-up-1790000000000'],
     conformsTo: ['https://example.org/types/RefundDecision'], modalStatus: 'Asserted', ...entry }, 'https://pod.example/fictional-agent/')!.statement;
+  const projection = (entry: Partial<MeshDiscoverEntry>) => as(projected(entry));
   // An ingested run names its task and its time from the clock; the example is given both.
   const run = { ...ingestExternalRun({ agentDid: 'did:web:example.org:agents:fictional', task: { id: 'urn:made-up:task:sort-the-invoices', name: 'Sort the made-up invoices' },
     toolCalls: [{ tool: 'made_up_tool', success: true }], outcome: { success: true, quality: 0.9 } }).statements[0], timestamp: '2026-11-15T12:00:00.000Z' };
@@ -79,12 +104,12 @@ export function foxxiProfileExamples(): ProfileExamples {
     'experienced-activity': st(`${ADL}/verbs/experienced`, course),
     'experienced-performance': st(`${ADL}/verbs/experienced`, `${ADL}/activities/performance`),
     // And what the emitters build.
-    'performed-descriptor': projected({ verb: `${FOXXI_NS}performed` }),
-    'intended-descriptor': projected({ modalStatus: 'Hypothetical' }),
-    'considered-descriptor': projected({ modalStatus: 'Counterfactual' }),
-    'quoted-descriptor': projected({ modalStatus: 'Quoted' }),
-    'production-performance-completed': projected({ success: true }),
-    'production-performance-failed': projected({ success: false }),
+    [D('performed')]: projection({ verb: `${FOXXI_NS}performed` }),
+    [D('intended')]: projection({ modalStatus: 'Hypothetical' }),
+    [D('considered')]: projection({ modalStatus: 'Counterfactual' }),
+    [D('quoted')]: projection({ modalStatus: 'Quoted' }),
+    'production-performance-completed': projection({ success: true }),
+    'production-performance-failed': projection({ success: false }),
     'performed-production': run,
     'voided-statement': { actor: learner, verb: { id: `${ADL}/verbs/voided` }, object: { objectType: 'StatementRef', id: '11111111-1111-4111-8111-111111111111' } },
   };
@@ -93,8 +118,8 @@ export function foxxiProfileExamples(): ProfileExamples {
     ...Object.entries(alone).map(([name, statement]) => example(name, [T(name)], statement)),
     // A descriptor that revises another is a descriptor too, and a retracted one is a voiding too:
     // these two templates add a determining property to another's, so their examples claim both.
-    example('superseding-descriptor', [T('performed-descriptor'), T('superseding-descriptor')],
-      projected({ verb: `${FOXXI_NS}performed`, supersedes: ['https://pod.example/fictional-agent/context-graphs/1780000000000.ttl'] })),
+    example(D('superseding'), [T(D('performed')), T(D('superseding'))],
+      projection({ verb: `${FOXXI_NS}performed`, supersedes: ['https://pod.example/fictional-agent/context-graphs/1780000000000.ttl'] })),
     example('voided-descriptor', [T('voided-descriptor'), T('voided-statement')], projected({ modalStatus: 'Retracted' })),
   ];
   const sequence = (pattern: string, ...members: string[]): ExampleSequence => ({ id: pattern, pattern: `${FOXXI_PROFILE_ID}/patterns/${pattern}`, statements: members });
@@ -102,8 +127,8 @@ export function foxxiProfileExamples(): ProfileExamples {
     sequence('course-session', 'launched', 'initialized', 'slide-viewed', 'asked', 'retrieved', 'scene-completed', 'slide-viewed', 'passed', 'terminated'),
     sequence('composition-attempt', 'question-answered', 'fragment-experienced', 'fragment-experienced', 'composition-completed'),
     sequence('credentialing', 'passed', 'credentialed'),
-    sequence('agent-performance-stream', 'performed-descriptor', 'intended-descriptor', 'considered-descriptor', 'quoted-descriptor'),
-    sequence('revision-arc', 'performed-descriptor', 'superseding-descriptor'),
+    sequence(version === 1 ? 'agent-performance-stream' : 'projection-stream', D('performed'), D('intended'), D('considered'), D('quoted')),
+    sequence(version === 1 ? 'revision-arc' : 'projection-revision-arc', D('performed'), D('superseding')),
   ];
   return { statements, sequences };
 }
