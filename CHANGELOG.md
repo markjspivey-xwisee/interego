@@ -27,6 +27,29 @@ both for one profile version and then stop.
 **Not done.** Nobody at I2IDL has reviewed the links. `content-delivery.ts`
 still writes Foxxi's key for a delivered artifact; it is not the projector.
 
+## 2026-11-18 — Role-play player: one initialized when a practice is opened again
+
+The LMS continues an open cmi5 session when a course is opened again. Opened part
+way through a practice, the player loaded afresh and sent a second initialized
+into that session; cmi5 has one, first (9.3). #952 fixed this for a visit that
+records a reviewed result and left the practice path as it was.
+
+A practice now opens its visit the same way: the player reads what the learning
+record holds of its session, sends initialized only when the session has none,
+and starts its clock after the session's latest statement. When the record cannot
+be read, no practice is started and the learner is offered another try. Before,
+a practice began whether or not the record took its initialized.
+
+Opening a visit also clears a send that failed earlier when the session turns out
+to have its initialized already. Without that, a try whose initialized was stored
+and whose answer was lost left every later statement queued behind the failure.
+
+Not changed: the practice itself starts over on the fresh load. What the earlier
+load recorded (a consent, some exchanges) stays in the session. Practice Evidence
+reads every exchange of the session as one conversation: over the scenario's turn
+limit it refuses the registration, and under it the earlier exchanges are part of
+what the reviewer reads.
+
 ## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
 
 A Quoted descriptor repeats someone else's claim without endorsing it. The
@@ -45,6 +68,39 @@ and projects as executed work.
 **Not done.** Foxxi's projector still writes its own `foxxi:` descriptor keys
 beside the `iep#` ones. Stopping needs a new version of Foxxi's profile, whose
 templates require those keys; the xapi-x README says what depends on them.
+
+## 2026-11-18 — General guest opt-in: an application served from another Railway project
+
+`tools/general-guest-opt-in.mjs` could only opt in an application whose own
+service is in the fleet's Railway project, because it sets that service's door
+and switch as well as identity's entry. Hallowmarch is served from a Railway
+project of its own, which the fleet's token does not reach.
+
+- An application marked `elsewhere` gets the identity half only: the token
+  check, identity's general guest on and a door stated, an entry already there
+  for the application's origin, then `generalGuest` and
+  `generalGuestReturnPath` added to that entry. Its own service is never looked
+  up, read or written.
+- The run ends by printing what the operator sets by hand on the application's
+  service: the variable names, and the door origin identity states (which
+  identity already publishes at `/.well-known/play-provisional`). It says what
+  it could not check: that the application holds the key of the service agent
+  the entry names.
+- Two applications added: `hallowmarch-preview`
+  (`https://march-native-preview-production.up.railway.app`) and `hallowmarch`
+  (`https://march-production-f6d9.up.railway.app`), return path
+  `/guest/general/return`. Each origin is its own entry at identity, so the
+  preview is opted in apart from the live game. Both are choices of the
+  workflow, and a test holds the workflow's choices to the tool's list.
+
+Unchanged: the merged value is checked by the same parser before it is sent, no
+other entry or field changes, an unticked `apply` writes nothing, nothing is
+deployed, and no entry, key or account is created. Where identity has no entry
+for the origin the run refuses. `foxxi-workbench` behaves as before.
+
+Tests: `node --test tests/general-guest-opt-in.test.mjs`, synthetic values
+only; the stand-in fleet fails a test if any service but identity is touched
+for an application elsewhere.
 
 ## 2026-11-18 — Foxxi: a dashboard guest's record is sealed, and the guest rule no longer breaks the workbench guest
 
