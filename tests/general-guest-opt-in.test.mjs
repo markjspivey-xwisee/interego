@@ -177,7 +177,7 @@ for (const name of ['hallowmarch-preview', 'hallowmarch']) {
     await optIn({ gql: f.gql, application: name, apply: true, log: f.log });
     const all = f.lines.join('\n');
     for (const secret of [SECRET, OTHER, OTHER_ENTRY.agentDid, HM_ENTRY.agentDid, HM_ENTRY.podUrl, MINE.agentDid, APP.origin]) assert.ok(!all.includes(secret), secret);
-    assert.ok(all.includes(DOOR));
+    assert.ok(f.lines.some(line => line === `  HM_GENERAL_GUEST_DOOR_ORIGIN=${DOOR}`), 'the door is printed as the value to set');
   });
 
   test(`${name}: refused before any write`, async (t) => {
