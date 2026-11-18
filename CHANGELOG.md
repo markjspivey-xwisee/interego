@@ -1,5 +1,26 @@
 # Changelog
 
+## 2026-11-18 — Role-play player: a practice opened again is carried on, not started over
+
+The LMS continues an open cmi5 session when a course is opened again. Opened part
+way through a practice, the player started the conversation again from its first
+step, in the same session. The session then held the exchanges of both, and
+Practice Evidence reads a session's exchanges as one conversation.
+
+The player now reads the exchanges its earlier load recorded and puts the
+conversation back where they left it: same customer, same step, same mood. It
+sends nothing to get there, and does not ask for consent again. A practice whose
+exchanges were all recorded goes on to its scores. One that was already scored is
+not started again; its session is ended if it was left open.
+
+Where what the session holds cannot be carried on (some scores and not others,
+exchanges out of order, or ones this scenario does not have) nothing is sent and
+no practice starts, and the page says so.
+
+Not changed: a reply that was spoken is found again by matching the saved words a
+second time, because the sample scenario's profile records no reply beside them.
+Times shown for the conversation are counted from the reopening.
+
 ## 2026-11-18 — Role-play player: one initialized when a practice is opened again
 
 The LMS continues an open cmi5 session when a course is opened again. Opened part

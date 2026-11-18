@@ -388,11 +388,69 @@ function renderStage(){
   $("heard").textContent = SR ? "Tap the mic and say your reply, or tap one below." : "";
   pending = null; speak(s.line, mood);
 }
+/* Takes reply `i` at the current step: the pick is kept and the conversation moves on a step.
+   Nothing is sent and nothing is drawn. Returns the step as it stood and the reply taken. */
+function take(i, said){
+  const s = stageObj(); const c = s.choices[i];
+  picks.push({stage, variant: variantAt===stage, i, effects:c.effects||{}, best:!!c.best, text:c.text, note:c.note||"", said: said||"", goal:s.goal, evidenceFor: s.evidenceFor||[], bestText: (s.choices.find(x=>x.best)||c).text});
+  mood = Math.max(0, Math.min(100, mood + (c.mood||0)));
+  stage++;
+  if (stage < persona.stages.length && variantApplies(persona.stages[stage].variant)) variantAt = stage;
+  return {s, c};
+}
+/* The exchanges an earlier load of this page recorded in this session, in order: the other person's
+   line, what the learner said, and the reply it was matched to when it was spoken. null when they
+   are not exchanges 1 to n, each once. */
+function exchangesHeld(statements){
+  const at = [];
+  for (const st of statements) {
+    if (!(st.verb && st.verb.id === X.verbs.turn)) continue;
+    const m = /\/turn\/(\d+)$/.exec((st.object && st.object.id) || ""); if (!m) return null;
+    const def = (st.object.definition || {}).extensions || {}, res = st.result || {}, n = Number(m[1]);
+    if (at[n - 1] || typeof res.response !== "string") return null;
+    at[n - 1] = {line: def[X.extensions.counterpartLine], response: res.response, matched: ((res.extensions || {})[X.extensions.matchedReply]) || null};
+  }
+  for (let i = 0; i < at.length; i++) if (!at[i]) return null;
+  return at;
+}
+/* Puts the conversation back where those exchanges left it, sending nothing. Which customer it was
+   is not recorded apart, so each is tried: the conversation is taken up only as the one customer
+   whose every line, and every reply at its step, is what was recorded. false when none is, or more
+   than one: a scenario changed since, say. Nothing is then taken up. */
+/* Which reply an exchange was, at the step the conversation stands at. A tapped reply is recorded
+   as its own text. A spoken one is recorded as the words heard, with the reply beside it where the
+   scenario's profile has a place for that; where it has none, the words are matched again, the way
+   they were matched when they were spoken. null when that names no one reply. */
+function replyOf(s, x){
+  const want = x.matched || x.response, found = s.choices.map((c, i) => c.text === want ? i : -1).filter(i => i >= 0);
+  if (found.length === 1) return {i: found[0], said: x.matched ? x.response : ""};
+  if (found.length > 1 || x.matched) return null;
+  const i = bestMatch(x.response, s.choices);
+  return i < 0 ? null : {i, said: x.response};
+}
+function takeUp(exchanges){
+  const fits = [];
+  for (const who of S.personas) {
+    persona = who; mood = who.startMood ?? 50; stage = 0; picks = []; variantAt = -1;
+    let ok = true;
+    for (const x of exchanges) {
+      if (stage >= who.stages.length) { ok = false; break; }
+      const s = stageObj(), was = replyOf(s, x);
+      if (s.line !== x.line || was === null) { ok = false; break; }
+      take(was.i, was.said);
+    }
+    if (ok) fits.push(who);
+  }
+  if (fits.length !== 1) { persona = null; picks = []; stage = 0; variantAt = -1; return false; }
+  const who = fits[0];
+  persona = who; sel = who.id; mood = who.startMood ?? 50; stage = 0; picks = []; variantAt = -1;
+  for (const x of exchanges) { const was = replyOf(stageObj(), x); take(was.i, was.said); }
+  return true;
+}
 function pick(i, said){
   if (finished) return;
   if (listening && rec) try{ rec.abort(); }catch(e){}
-  const s = stageObj(); const c = s.choices[i];
-  picks.push({stage, variant: variantAt===stage, i, effects:c.effects||{}, best:!!c.best, text:c.text, note:c.note||"", said: said||"", goal:s.goal, evidenceFor: s.evidenceFor||[], bestText: (s.choices.find(x=>x.best)||c).text});
+  const {s, c} = take(i, said);
   if (X.verbs.turn && X.extensions.counterpartLine) {
     const n = picks.length, def = {name: L("Exchange " + n), extensions:{[X.extensions.counterpartLine]: s.line}};
     if (X.activityTypes.turn) def.type = X.activityTypes.turn;
@@ -401,10 +459,7 @@ function pick(i, said){
     if (said && X.extensions.matchedReply) res.extensions = {[X.extensions.matchedReply]: c.text};
     send("turn", "took a turn", {objectType:"Activity", id: activityId + "/turn/" + n, definition: def}, res, false, true);
   }
-  mood = Math.max(0, Math.min(100, mood + (c.mood||0)));
-  stage++;
   if (stage >= persona.stages.length) return finish();
-  if (variantApplies(persona.stages[stage].variant)) variantAt = stage;
   renderStage();
 }
 function evidence(ci){
@@ -542,10 +597,10 @@ const SESSION_READ_PAGES = 5;
    and this page then loads afresh, knowing nothing of what its earlier load sent. */
 async function sessionSoFar(){
   const sid = ((cfg.contextTemplate || {}).extensions || {})[CMI5_SESSION];
-  if (!sid) return {initialized: false, last: 0};
+  if (!sid) return {initialized: false, last: 0, statements: []};
   const h = {"X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization};
   let url = cfg.lrs + "/statements?registration=" + encodeURIComponent(registration) + "&limit=200";
-  let initialized = false, last = 0;
+  let initialized = false, last = 0; const statements = [];
   try {
     // The record answers in pages. A registration is one conversation and a result, so one page
     // is the usual case; a longer one is followed by the link the record gives, a few pages at most.
@@ -557,9 +612,10 @@ async function sessionSoFar(){
       for (const s of b.statements) {
         if (!(s && s.context && s.context.extensions && s.context.extensions[CMI5_SESSION] === sid)) continue;
         if (s.verb && s.verb.id === X.verbs.initialized) initialized = true;
+        statements.push(s);
         last = Math.max(last, Date.parse(s.timestamp) || 0);
       }
-      if (!b.more) return {initialized: initialized, last: last};
+      if (!b.more) return {initialized: initialized, last: last, statements: statements};
       // The link is the record's own, and is followed only on the record's own origin.
       const next = new URL(b.more, cfg.lrs);
       if (next.origin !== new URL(cfg.lrs).origin) return null;
@@ -574,10 +630,12 @@ async function sessionSoFar(){
    is not sent again, and this visit's clock starts after the latest statement of the session, so
    what is stamped now sorts after what was sent then. If the record cannot be read, nothing is
    sent: a second initialized would be worse than a visit that has to be tried again. */
+let sessionHeld = [];   // this session's statements as the learning record held them when the visit was opened
 async function openVisit(){
   if (sessionOpened) return true;
   const so = await sessionSoFar();
   if (so === null) { trackErr = "the learning record could not be read"; return false; }
+  sessionHeld = so.statements;
   if (so.last > lastTs) lastTs = so.last;
   // A send that failed earlier does not hold up what is sent from here on. That holds too when the
   // session turns out to have its initialized: an earlier try may have stored it and lost the answer,
@@ -667,7 +725,43 @@ async function begin(){
     return;
   }
   setChip(P.contextKind === "agent-test" ? "Tracked (agent test)" : "Tracked", "ok");
+  if (await carryOn()) return;
   show("s-welcome");
+}
+/* A practice already under way in this session, from an earlier load of this page, is carried on
+   from where it stopped. true when this visit is settled here and no new practice is to start.
+   Until 2026-11-18 a fresh load started the conversation again in the same session, so the session
+   held the exchanges of both, and the review read them as one conversation.
+   - Exchanges and no score: the conversation is taken up at its next step. The consent the earlier
+     load recorded stands; it is not asked again.
+   - Every criterion scored: the practice was finished. The session is ended if it was not, and
+     nothing else is sent.
+   - Anything else (some scores, exchanges that are not this scenario's): nothing is sent. Starting
+     again here would put a second conversation in the session, and what is there cannot be finished. */
+async function carryOn(){
+  if (!(X.verbs.turn && X.extensions.counterpartLine)) return false;
+  const scored = sessionHeld.filter(st => st.verb && st.verb.id === X.verbs.scored).length;
+  const exchanges = exchangesHeld(sessionHeld);
+  if (scored === 0 && exchanges !== null && exchanges.length === 0) return false;
+  const stuck = why => { show("s-reviewed"); setChip("Not continued", "warn"); $("rvretry").classList.add("hide");
+    $("rvtitle").textContent = "This practice can't be carried on here";
+    $("rvmsg").textContent = "An earlier visit left a practice part way in this session, and " + why + ". Nothing more was recorded. Ask for the course to be assigned again."; return true; };
+  if (scored > 0) {
+    if (scored !== CRITS.length) return stuck("only some of its scores were saved");
+    show("s-reviewed"); $("rvretry").classList.add("hide");
+    $("rvtitle").textContent = "Your practice is saved";
+    $("rvmsg").textContent = "You finished this practice in an earlier visit. " + (S.resultAfterReview === true ? "It is waiting for a reviewer to sign it off. Open this course again once it has been reviewed." : "Nothing more is needed here.");
+    if (!sessionHeld.some(st => st.verb && st.verb.id === X.verbs.terminated)) await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);
+    $("rvtrack").textContent = trackErr ? "This visit didn't save (" + trackErr + ")." : "";
+    return true;
+  }
+  if (exchanges === null) return stuck("its exchanges could not be read in order");
+  if (!takeUp(exchanges)) return stuck("its exchanges are not ones this scenario has");
+  callStart = Date.now();
+  if (stage >= persona.stages.length) { await finish(); return true; }
+  show("s-call"); renderStage();
+  $("heard").textContent = "Carrying on from step " + (stage + 1) + ", where you left off. " + $("heard").textContent;
+  return true;
 }
 
 // ---------- start ----------
