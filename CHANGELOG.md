@@ -710,6 +710,12 @@ page 15 s, and naming a target, template, mapping, property or list node, or a
 shape's ignored properties, was alike. Each hint scan is charged once, and so
 is the text of the values each problem lists as it is written.
 
+An RDF list that many closed shapes name as their ignored properties is now
+made a set once, not once for each shape: 1,500 shapes sharing one list of
+5,000 made hmc.py's list build 820 MB. The kept readings of a node's values
+are now tested to stay apart by kind, and two of the page's slowest work rows
+use fewer controls.
+
 ## 2026-11-18 — Practice Evidence: a voice check for the role-play player
 
 `applications/practice-evidence/tools/voice-check.mjs` runs a whole practice in

@@ -2528,9 +2528,11 @@ class NodeIndex:
         self.shapes: dict[int, tuple[Any, list[Field], list[str], str | None, Any]] = {}
         # Each RDF list's members, read once, keyed by its first node's id()
         # with the node kept; and the id() of the first node of the list each
-        # list node was read in (rdf_list).
+        # list node was read in (rdf_list). Beside them, each RDF list's
+        # members' text as a set, made once and keyed the same way (list_texts).
         self.lists: dict[int, tuple[Any, tuple[list[Any], str | None]]] = {}
         self.list_owners: dict[int, int] = {}
+        self.list_sets: dict[int, tuple[Any, set[str]]] = {}
         # Each control's inputs, built once for all the controls that read
         # them from the same shape and mappings (_control_inputs), so they share
         # one list of fields; keyed by what they are read from, which is kept.
@@ -2897,6 +2899,23 @@ class NodeIndex:
             if value is not None:
                 out.append(value)
         return out, None, False
+
+    def list_texts(self, raw: Any) -> tuple[set[str], str | None, bool]:
+        """The text of each member of a list value (list_values) as a set, why
+        it could not be read, and whether it holds more than one list. An RDF
+        list's set is made once, kept beside its members (rdf_list) and keyed
+        by its first node as they are, so many shapes whose
+        sh:ignoredProperties names one list cost its length once, not once
+        for each shape. No caller changes the set. The page's listTexts is
+        the same."""
+        members, why, several = self.list_values(raw)
+        first = None if several else self.list_head(raw)
+        if first is None:
+            return {_text(item) for item in members}, why, several
+        hit = self.list_sets.get(id(first))
+        if hit is None or hit[0] is not first:
+            hit = self.list_sets[id(first)] = (first, {_text(item) for item in members})
+        return hit[1], why, several
 
 
 _MAX_SAFE_INTEGER = 2 ** 53 - 1
@@ -4589,8 +4608,9 @@ def _closed_shape(index: NodeIndex, node: dict[str, Any]) -> _ClosedRead:
     properties its sh:ignoredProperties names, and the problem reading those
     gives: read once for each shape however many controls name it
     (facts_of), so a long sh:ignoredProperties costs its length once, not
-    once for each control that joins its template's variables to the shape.
-    The page's closedShape is the same."""
+    once for each control that joins its template's variables to the shape,
+    and an RDF list many shapes name is made a set once (list_texts), not
+    once for each shape. The page's closedShape is the same."""
     facts = index.facts_of(node)
     if facts.closed is None:
         flags = index.get(node, SHACL + "closed")
@@ -4598,11 +4618,10 @@ def _closed_shape(index: NodeIndex, node: dict[str, Any]) -> _ClosedRead:
         kept: set[str] = set()
         problem = None
         if closed:
-            ignored, why, several = index.list_values(index.get(node, SHACL + "ignoredProperties"))
+            kept, why, several = index.list_texts(index.get(node, SHACL + "ignoredProperties"))
             if several or why is not None:
                 problem = (f"the shape writes sh:ignoredProperties as {'more than one list' if several else why}, which this client "
                            "does not read, so what it sends is not known; this control is not invoked")
-            kept = {_text(item) for item in ignored}
         facts.closed = _ClosedRead(closed, kept, problem)
     return facts.closed
 

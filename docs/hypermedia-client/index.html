@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-tjl6gLhidcLIjk3WCKwUmIeMliGznbRZCefSDm7Olzc='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-RhPEYV+Iyr1vFhRN46orDSis3SwabzxDZvhvMg6Hgts='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -1436,9 +1436,12 @@ class NodeIndex {
     this.templates = new Map();
     this.shapes = new Map();
     // Each RDF list's members, read once, keyed by its first node, and the
-    // first node of the list each list node was read in (rdfList).
+    // first node of the list each list node was read in (rdfList). Beside
+    // them, each RDF list's members' text as a set, made once and keyed the
+    // same way (listTexts).
     this.lists = new Map();
     this.listOwners = new Map();
+    this.listSets = new Map();
     // What is read of a node again and again, kept the first time it is read,
     // keyed by the node: its keys by the property each names (get), whether it
     // says anything about itself (nodeOf), its types (typesOf), whether a
@@ -1751,6 +1754,19 @@ class NodeIndex {
       if (value != null) out.push(value);
     }
     return [out, null, false];
+  }
+  // The text of each member of a list value (listValues) as a set, why it
+  // could not be read, and whether it holds more than one list. An RDF list's
+  // set is made once, kept beside its members (rdfList) and keyed by its first
+  // node as they are, so many shapes whose sh:ignoredProperties names one list
+  // cost its length once, not once for each shape. No caller changes the set.
+  // hmc.py's list_texts is the same.
+  listTexts(raw) {
+    const [members, why, several] = this.listValues(raw);
+    const first = several ? null : this.listHead(raw);
+    if (!first) return [new Set(members.map(asText)), why, several];
+    if (!this.listSets.has(first)) this.listSets.set(first, new Set(members.map(asText)));
+    return [this.listSets.get(first), why, several];
   }
 }
 
@@ -2966,19 +2982,21 @@ function controlInputs(index, node, expectsRaw, expects, mappings) {
 // its sh:ignoredProperties names, and the problem reading those gives: read
 // once for each shape however many controls name it (factsOf), so a long
 // sh:ignoredProperties costs its length once, not once for each control that
-// joins its template's variables to the shape. hmc.py's _closed_shape is the same.
+// joins its template's variables to the shape, and an RDF list many shapes name
+// is made a set once (listTexts), not once for each shape. hmc.py's
+// _closed_shape is the same.
 function closedShape(index, node) {
   const facts = index.factsOf(node);
   if (facts.closed === undefined) {
     const closed = asList(index.get(node, SHACL + "closed")).some(v => v != null && truthy(label(v)) !== false);
     let kept = new Set(), problem = null;
     if (closed) {
-      const [ignored, why, several] = index.listValues(index.get(node, SHACL + "ignoredProperties"));
+      let why, several;
+      [kept, why, several] = index.listTexts(index.get(node, SHACL + "ignoredProperties"));
       if (several || why != null) {
         problem = "the shape writes sh:ignoredProperties as " + (several ? "more than one list" : why) +
           ", which this client does not read, so what it sends is not known; this control is not invoked";
       }
-      kept = new Set(ignored.map(asText));
     }
     facts.closed = { closed, kept, problem };
   }

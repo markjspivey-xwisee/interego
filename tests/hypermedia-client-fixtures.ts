@@ -1170,6 +1170,12 @@ export function sharedDescriptors(base: string): Record<string, string> {
       schemaOp('sp', 'urn:rules:space-number-schema', 'POST', 'Schema number space default', { m: { type: 'number', default: '  ' } }),
       // An integer field's value past 2^53, which a JSON number cannot carry exactly, in either client.
       op('ip', 'urn:rules:integer-past-safe', 'POST', 'Integers past 2^53', { ...target('/num-target'), 'hydra:expects': { '@id': '#IP' } }),
+      // A supported property with no sh:name whose hydra:property is a blank node is named by that
+      // node's rdfs:label, which each client reads twice, for what the field shows and for its name.
+      ...([['lt', 'tagged', 'Language-tagged label', { '@value': 'title', '@language': 'en' }], ['la', 'array', 'Array label', ['title']]] as const)
+        .map(([id, kind, title, label]) => op(id, `urn:rules:${kind}-label`, 'POST', title, { ...target('/num-target'), 'hydra:expects': {
+          '@type': 'hydra:Class', 'hydra:supportedProperty': [{ '@type': 'hydra:SupportedProperty',
+            'hydra:property': { '@type': 'rdf:Property', 'rdfs:label': label } }] } })),
     ], '@graph': [
       { '@id': '#XT', '@type': 'sh:NodeShape', 'sh:property': { 'sh:path': { '@id': 'urn:p:m' }, 'sh:name': 'm', 'sh:maxCount': 1,
         'sh:defaultValue': '' } },
@@ -2118,7 +2124,10 @@ const inlinePlace = (name: string, what: string) => `the input "${name}" ${what}
  *   - a default that holds a number reading JSON may have rounded (an integer past 2^53, or the
  *     double of a number the document writes with more digits than it keeps) is refused at any
  *     depth, but in a double field, and JSON text given or written as a default that holds a
- *     number its double would change is refused naming the number.
+ *     number its double would change is refused naming the number;
+ *   - a supported property with no sh:name whose hydra:property is a blank node is named by that
+ *     node's rdfs:label, written with a language or as an array alike, though it is read both for
+ *     what the field shows and for its name.
  */
 export const RULE_CASES: ReadonlyArray<ValueCase> = [
   ['/rules', 'urn:rules:schema-default', 'String default 1', {}, { error: 'm: must be a JSON string' }],
@@ -2326,6 +2335,8 @@ export const RULE_CASES: ReadonlyArray<ValueCase> = [
     [path, 'urn:shared-node:class', 'Class write', {}, { error: "missing required field 'shname'" }],
     [path, 'urn:shared-node:class', 'Class write', { shname: '7' }, { error: 'shname: is not writable (hydra:writable false), so it is not sent' }],
   ] as const),
+  ['/rules', 'urn:rules:tagged-label', 'Language-tagged label', { title: 'x' }, { body: { title: 'x' } }],
+  ['/rules', 'urn:rules:array-label', 'Array label', { title: 'x' }, { body: { title: 'x' } }],
 ];
 
 /** What each client says of a value for an input whose list of allowed values, `list`, is empty. */
@@ -2698,9 +2709,10 @@ export type WorkStep = 'read' | 'list' | 'list --json' | 'control' | 'request';
  *     3,000 keys, by an object, by a string under a term typed @id, or 3,000 times in one @list:
  *     each control scanned every key for hints. Listed, each a safe read, since an honest document
  *     may share one annotation node: its hints are read, and charged, once;
- *   - target-keys, target-types, search-keys: 2,000 reads whose hydra:target, or hydra:search,
- *     names one node of 4,500 keys, or of 9,000 types, each read in full to see whether it is a
- *     template; listed;
+ *   - target-keys, target-types, search-keys: 1,000 reads whose hydra:target names one node of
+ *     12,000 keys or of 18,000 types, and 2,000 whose hydra:search names one of 4,500 keys, each
+ *     read in full to see whether it is a template; listed. A thousand uses keep the page's
+ *     ordinary cost of its controls well within the time allowed;
  *   - mapping-keys: a template of 3,000 mappings that all name one mapping node of 3,000 keys,
  *     read in full for each; listed;
  *   - property-keys: 1,500 shapes, one for each write, that name one property node of 3,000 keys,
@@ -2716,6 +2728,10 @@ export type WorkStep = 'read' | 'list' | 'list --json' | 'control' | 'request';
  *     list two inputs share (SHARED_COST_CASES' shared-list);
  *   - closed-ignored: 1,500 writes whose template's variable joins one closed shape with 3,000
  *     sh:ignoredProperties, read again for each by hmc.py's list; listed;
+ *   - closed-shared: 1,500 writes, each expecting a closed shape of its own, whose
+ *     sh:ignoredProperties all name one RDF list of 5,000 members: each shape made a set of the
+ *     whole list's text again, which hmc.py's list did for every control (820 MB, past the 512 MB
+ *     it is given); listed;
  *   - mapping-values: a template of 6,000 mappings that name one mapping node of 24,000
  *     hydra:variable values, read for each; listed;
  *   - property-values: 1,500 shapes that name one property node of 6,000 values for each facet,
@@ -2742,8 +2758,8 @@ export const WORK_CASES: ReadonlyArray<readonly [path: string, rel: string, refu
   ['/work/hint-shared', 'urn:c2999', [], null, null],
   ['/work/hint-string', 'urn:c2999', [], null, null],
   ['/work/hint-list', 'urn:c0', [], null, null],
-  ['/work/target-keys', 'urn:c1999', [], null, null],
-  ['/work/target-types', 'urn:c1999', [], null, null],
+  ['/work/target-keys', 'urn:c999', [], null, null],
+  ['/work/target-types', 'urn:c999', [], null, null],
   ['/work/search-keys', 'urn:c1999', [], null, null],
   ['/work/mapping-keys', 'urn:c0', [], null, null],
   ['/work/property-keys', 'urn:c1499', [], null, null],
@@ -2759,6 +2775,7 @@ export const WORK_CASES: ReadonlyArray<readonly [path: string, rel: string, refu
   ['/work/default-rounded', 'urn:c1499', [], null, null],
   ['/work/range-distinct', 'urn:c0', ['read'], null, null],
   ['/work/mapping-distinct', 'urn:c0', ['read'], null, null],
+  ['/work/closed-shared', 'urn:c1499', [], null, null],
 ];
 
 /** Each COST_CASES path's document as the text served; build it once per test file. */
@@ -2955,10 +2972,10 @@ export function costDescriptors(base: string): Record<string, string> {
  * mappings name the one node, and how many keys or values that node holds.
  */
 const SHARED_NODE_SIZES = {
-  hint: [3000, 3000], hintList: [3000, 3000], target: [2000, 4500], types: [2000, 9000], search: [2000, 4500], mapping: [3000, 3000],
+  hint: [3000, 3000], hintList: [3000, 3000], target: [1000, 12000], types: [1000, 18000], search: [2000, 4500], mapping: [3000, 3000],
   property: [1500, 3000], supported: [1000, 20000], notes: [3000, 20000], path: [1000, 9000], list: [3000, 12000], closed: [1500, 3000],
   range: [1000, 20000], comment: [1000, 20000], mappingValues: [6000, 24000], propertyValues: [1500, 6000], rounded: [1500, 30000],
-  rangeDistinct: [3000, 3000], mappingDistinct: [6000, 6000],
+  rangeDistinct: [3000, 3000], mappingDistinct: [6000, 6000], closedShared: [1500, 5000],
 } as const;
 
 /**
@@ -3030,6 +3047,14 @@ function sharedNodeDocuments(base: string): Record<string, unknown> {
       'sh:datatype': { '@id': 'xsd:decimal' }, 'sh:defaultValue': range(s.rounded[1]).map(() => 0), 'urn:x:n': 'INEXACT-NUMBER' }),
     '/work/range-distinct': supported('/work/range-distinct', s.rangeDistinct[0], { 'rdfs:range': range(s.rangeDistinct[1]).map(j => ({ '@id': `urn:x:type:${j}` })) }),
     '/work/mapping-distinct': mappings('/work/mapping-distinct', s.mappingDistinct[0], { 'hydra:variable': range(s.mappingDistinct[1]).map(j => `q${j}`) }),
+    // Each write expects a closed shape of its own, and every shape's sh:ignoredProperties names one
+    // RDF list, whose first member is the property the template's one variable fills.
+    '/work/closed-shared': doc('/work/closed-shared', range(s.closedShared[0]).map(i => write(i, { 'hydra:target': { '@id': '#T' },
+      'hydra:expects': { '@id': `#S${i}` } })), [
+      { '@id': '#T', 'hydra:template': `${base}/api{?v}`, 'hydra:mapping': [{ 'hydra:variable': 'v', 'hydra:property': { '@id': 'urn:x:v' } }] },
+      ...range(s.closedShared[0]).map(i => ({ '@id': `#S${i}`, 'sh:closed': true, 'sh:ignoredProperties': { '@id': '#I0' } })),
+      ...range(s.closedShared[1]).map(j => ({ '@id': `#I${j}`, 'rdf:first': j ? `u${j}` : { '@id': 'urn:x:v' },
+        'rdf:rest': { '@id': j === s.closedShared[1] - 1 ? 'rdf:nil' : `#I${j + 1}` } }))]),
   };
 }
 
