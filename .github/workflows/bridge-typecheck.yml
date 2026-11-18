@@ -108,6 +108,9 @@ on:
       # the assertion about it never executed: exactly the "a gate cannot re-run for the file
       # it guards" class the `.github/workflows/**` entry above was widened for.
       - 'CHANGELOG.md'
+      # The entry files tests/changelog-lint.test.ts holds to their names and headings. A pull
+      # request that adds only an entry file still has to run the test that reads it.
+      - 'changelog/**'
       - 'package.json'
       - 'package-lock.json'
       - '.gitattributes'
