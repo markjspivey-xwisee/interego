@@ -121,6 +121,7 @@ describe('how the player listens to a spoken reply', () => {
     return {
       listen, picked,
       heard: (): string => $('heard').textContent || ($('heard').children[0]?.textContent ?? ''),
+      micLive: (): boolean => $('mic').classes.has('live'),
       offered: (): El | undefined => $('heard').children.find((c) => c.textContent === 'Use the highlighted reply'),
       highlighted: (): number => choiceEls.findIndex((c) => c.classes.has('match')),
     };
@@ -199,5 +200,29 @@ describe('how the player listens to a spoken reply', () => {
     expect(p.heard()).toBe("“I cannot refund the duplicate today” · That didn't match a reply. Try again, or tap one.");
     expect(p.offered()).toBeUndefined();
     expect(p.highlighted()).toBe(-1);
+  });
+
+  it('takes nothing from a recogniser the learner has replaced with a later one', () => {
+    const p = player(refunding);
+    p.listen();
+    const old = Recogniser.last!;
+    // The first fails, and its end is slow to arrive. The learner taps the microphone again.
+    old.onerror?.({ error: 'network' });
+    expect(p.micLive()).toBe(false);
+    p.listen();
+    const now = Recogniser.last!;
+    expect(now).not.toBe(old);
+    expect(p.micLive()).toBe(true);
+    // Now the first one's leftovers arrive: a result, and its end.
+    old.onresult?.({ resultIndex: 0, results: [{ isFinal: true, 0: { transcript: "I'm refunding the duplicate $19 today" } }] });
+    old.onend?.();
+    expect(p.micLive()).toBe(true);
+    expect(p.offered()).toBeUndefined();
+    expect(p.heard()).toBe('Listening…');
+    // The one that is listening still works.
+    now.hear("I'm refunding the duplicate $19 today it will post to your card in 5 to 7 business days", true);
+    vi.advanceTimersByTime(2000);
+    expect(p.highlighted()).toBe(2);
+    expect(p.micLive()).toBe(false);
   });
 });

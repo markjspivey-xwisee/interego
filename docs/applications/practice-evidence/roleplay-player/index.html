@@ -357,14 +357,17 @@ function listen(){
   rec.continuous = true;
   // Only what the recogniser settled on counts. Words still being worked out are shown while the
   // learner speaks and are not matched: if it ends on them, or on an error, nothing is offered.
+  // A recogniser that has been replaced by a later one says nothing more: its end, arriving late,
+  // would otherwise switch off the microphone the learner has just switched on.
+  const mine = rec, stale = () => rec !== mine;
   const finals = []; let failed = false, quiet = null;
-  const hush = ms => { clearTimeout(quiet); quiet = setTimeout(() => { try { rec.stop(); } catch(e){} }, ms); };
-  rec.onresult = e => { let interim = "";
+  const hush = ms => { clearTimeout(quiet); quiet = setTimeout(() => { try { mine.stop(); } catch(e){} }, ms); };
+  rec.onresult = e => { if (stale()) return; let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) { const r = e.results[i], t = r[0].transcript.trim(); if (r.isFinal) { if (t) finals.push(t); } else interim += " " + t; }
     $("heard").textContent = "“" + (finals.join(" ") + interim).trim() + "”"; hush(LISTEN_QUIET_MS); };
-  rec.onerror = e => { failed = true; listening = false; clearTimeout(quiet); $("mic").classList.remove("live");
+  rec.onerror = e => { failed = true; clearTimeout(quiet); if (stale()) return; listening = false; $("mic").classList.remove("live");
     $("heard").textContent = e.error === "not-allowed" || e.error === "service-not-allowed" ? "The microphone isn't available here. Tap a reply below instead." : "Didn't catch that. Try again, or tap a reply."; };
-  rec.onend = () => { listening = false; clearTimeout(quiet); $("mic").classList.remove("live");
+  rec.onend = () => { clearTimeout(quiet); if (stale()) return; listening = false; $("mic").classList.remove("live");
     if (failed) return;
     const finalText = finals.join(" ");
     if (!finalText) { $("heard").textContent = "Didn't catch that. Try again, or tap a reply."; return; }
