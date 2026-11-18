@@ -505,13 +505,9 @@ async function finish(){
   CRITS.forEach((c,i) => send("scored", "scored",
     {objectType:"Activity", id: c.activityId, definition:{type: X.activityTypes.criterion, name: L(c.title || c.id), description: L(c.description), extensions:{[X.extensions.criterionKey]: c.xapiKey || c.id, [X.extensions.concepts]: c.concepts || []}}},
     {score:{raw:sc[i], min:lowVal(c), max:topVal(c), scaled: Math.round(sc[i]/topVal(c)*10000)/10000}, response: evidence(i)}, false, true));
-  const crit = {}; CRITS.forEach((c,i)=>crit[c.xapiKey || c.id]=sc[i]);
   // cmi5 allows one completed per registration. Where the result is a reviewer's to decide, it is sent
   // after the review, in a later session of this registration (see recordReviewed), never from here.
-  if (!deferred) send("completed", "completed", scenarioAct(),
-    {completion:true, success:a.pass, score:{raw:total, min:0, max:max, scaled: Math.round(total/max*10000)/10000}, duration: dur,
-     response: role().replace(/^./, m=>m.toUpperCase()) + ": " + persona.name + " (" + (persona.mood||"") + "). Final mood: " + moodWord(mood) + ".",
-     extensions:{[X.extensions.passBar]:{minTotal:a.minTotal, maxTotal:max, noZeroOn:a.required, minPercent:(S.rubric.passRule||{}).minPercent}, [X.extensions.criterionScores]:crit}}, true, false);
+  if (!deferred) sendCompleted();
   await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);
   window.__rolePlaySent = sent;
   $("trackstatus").textContent = trackErr ? "Some results didn't save (" + trackErr + ")."
@@ -728,14 +724,26 @@ async function begin(){
   if (await carryOn()) return;
   show("s-welcome");
 }
+/* The completed statement of a practice the player decides for itself, from the picks as they stand. */
+function sendCompleted(){
+  const sc = scores(), a = assess(sc), total = a.points, max = a.max, dur = iso(Date.now() - callStart);
+  const crit = {}; CRITS.forEach((c,i)=>crit[c.xapiKey || c.id]=sc[i]);
+  return send("completed", "completed", scenarioAct(),
+    {completion:true, success:a.pass, score:{raw:total, min:0, max:max, scaled: Math.round(total/max*10000)/10000}, duration: dur,
+     response: role().replace(/^./, m=>m.toUpperCase()) + ": " + persona.name + " (" + (persona.mood||"") + "). Final mood: " + moodWord(mood) + ".",
+     extensions:{[X.extensions.passBar]:{minTotal:a.minTotal, maxTotal:max, noZeroOn:a.required, minPercent:(S.rubric.passRule||{}).minPercent}, [X.extensions.criterionScores]:crit}}, true, false);
+}
 /* A practice already under way in this session, from an earlier load of this page, is carried on
    from where it stopped. true when this visit is settled here and no new practice is to start.
    Until 2026-11-18 a fresh load started the conversation again in the same session, so the session
    held the exchanges of both, and the review read them as one conversation.
    - Exchanges and no score: the conversation is taken up at its next step. The consent the earlier
      load recorded stands; it is not asked again.
-   - Every criterion scored: the practice was finished. The session is ended if it was not, and
-     nothing else is sent.
+   - Every criterion scored: the practice was finished. The session is ended if it was not. Where
+     the player decides the result itself, its completed is sent first if the session has none:
+     the earlier load queued it after the scores and may have been closed between the two. It is
+     worked out from the recorded exchanges, as the earlier load would have. Where a reviewer
+     decides, nothing but the end of the session is sent.
    - Anything else (some scores, exchanges that are not this scenario's): nothing is sent. Starting
      again here would put a second conversation in the session, and what is there cannot be finished. */
 async function carryOn(){
@@ -748,10 +756,18 @@ async function carryOn(){
     $("rvmsg").textContent = "An earlier visit left a practice part way in this session, and " + why + ". Nothing more was recorded. Ask for the course to be assigned again."; return true; };
   if (scored > 0) {
     if (scored !== CRITS.length) return stuck("only some of its scores were saved");
+    const ended = sessionHeld.some(st => st.verb && st.verb.id === X.verbs.terminated);
+    const owed = S.resultAfterReview !== true && !ended && !sessionHeld.some(st => st.verb && st.verb.id === X.verbs.completed);
+    if (owed) {
+      // The scores are there and the result is not. It can only be sent as the result of these exchanges.
+      if (exchanges === null || !takeUp(exchanges) || stage < persona.stages.length) return stuck("its scores were saved and its result was not, and the result cannot be worked out from what was saved");
+      callStart = Date.now();
+      if ((await sendCompleted()) === null) return stuck("its result could not be saved" + (trackErr ? " (" + trackErr + ")" : ""));
+    }
     show("s-reviewed"); $("rvretry").classList.add("hide");
     $("rvtitle").textContent = "Your practice is saved";
     $("rvmsg").textContent = "You finished this practice in an earlier visit. " + (S.resultAfterReview === true ? "It is waiting for a reviewer to sign it off. Open this course again once it has been reviewed." : "Nothing more is needed here.");
-    if (!sessionHeld.some(st => st.verb && st.verb.id === X.verbs.terminated)) await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);
+    if (!ended) await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);
     $("rvtrack").textContent = trackErr ? "This visit didn't save (" + trackErr + ")." : "";
     return true;
   }

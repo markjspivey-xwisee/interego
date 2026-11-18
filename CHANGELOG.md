@@ -11,7 +11,9 @@ The player now reads the exchanges its earlier load recorded and puts the
 conversation back where they left it: same customer, same step, same mood. It
 sends nothing to get there, and does not ask for consent again. A practice whose
 exchanges were all recorded goes on to its scores. One that was already scored is
-not started again; its session is ended if it was left open.
+not started again; its session is ended if it was left open. Where the player
+decides the result itself and the earlier load saved the scores without it, the
+result is worked out from the recorded exchanges and sent before the session ends.
 
 Where what the session holds cannot be carried on (some scores and not others,
 exchanges out of order, or ones this scenario does not have) nothing is sent and

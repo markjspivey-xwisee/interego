@@ -49,9 +49,11 @@ const load = (held: St[], S: Scenario = scenario): Load => new Function('S', 'he
   const show = (id) => { shown.push(id); }, setChip = () => {}, iso = () => 'PT1S', L = (t) => ({ 'en-US': t }), SR = null;
   const lowVal = (c) => Math.min(...c.levels.map((l) => l.value)), topVal = (c) => Math.max(...c.levels.map((l) => l.value));
   const scenarioAct = () => ({ objectType: 'Activity', id: AU });
+  const assess = (sc) => ({ points: sc.reduce((n, x) => n + x, 0), max: CRITS.reduce((n, c) => n + topVal(c), 0), pass: true, minTotal: 0, required: [] });
   const send = (verbKey, _label, object, result) => { const st = { verb: { id: X.verbs[verbKey] }, object, result }; sent.push(st); return Promise.resolve('id'); };
   ${cut('const STOP = new Set(', 'function listen(){')}
   ${cut('let sel = null, stage = 0', 'function evidence(ci){')}
+  ${cut('function sendCompleted(){', '/* A practice already under way')}
   ${cut('async function carryOn(){', '// ---------- start ----------')}
   // The screen and the end of a practice are not what is checked here.
   renderStage = () => { $('heard').textContent = 'Tap the mic and say your reply, or tap one below.'; };
@@ -139,6 +141,40 @@ describe('a practice opened again part way through', () => {
     const ended = load([verb('initialized'), ...turns(first.sent), ...scored, verb('terminated')]);
     expect(await ended.carryOn()).toBe(true);
     expect(ended.sent).toEqual([]);
+  });
+
+  it('sends a result the earlier load scored and did not get to send, where the player decides it', async () => {
+    // A scenario whose result is the player's own: completed follows the scores, and the page was closed between them.
+    const own: Scenario = { ...scenario, resultAfterReview: false };
+    const first = load([], own);
+    first.start(0);
+    for (const i of BEST) first.pick(i, null);
+    const scored = scenario.rubric.criteria.map(() => verb('scored'));
+    const again = load([verb('initialized'), ...turns(first.sent), ...scored], own);
+    expect(await again.carryOn()).toBe(true);
+    expect(again.sent.map((s) => s.verb.id)).toEqual([V['completed'], V['terminated']]);
+    const completed = again.sent[0]!.result as { completion: boolean; score: { raw: number; max: number } };
+    // Worked out from the recorded exchanges: the best path scores the top of every criterion.
+    expect(completed.completion).toBe(true);
+    expect(completed.score.raw).toBe(completed.score.max);
+    expect(again.title()).toBe('Your practice is saved');
+
+    // Its completed is there already: only the end of the session is sent. And never a second one.
+    const had = load([verb('initialized'), ...turns(first.sent), ...scored, verb('completed')], own);
+    expect(await had.carryOn()).toBe(true);
+    expect(had.sent.map((s) => s.verb.id)).toEqual([V['terminated']]);
+
+    // The scores are there and the exchanges that would give the result are not all there: nothing is sent.
+    const short = load([verb('initialized'), ...turns(first.sent).slice(0, 3), ...scored], own);
+    expect(await short.carryOn()).toBe(true);
+    expect(short.title()).toBe("This practice can't be carried on here");
+    expect(short.sent).toEqual([]);
+
+    // Where a reviewer decides the result, no completed is ever sent from here.
+    const reviewed = load([verb('initialized'), ...turns(first.sent), ...scored]);
+    expect(scenario.resultAfterReview).toBe(true);
+    expect(await reviewed.carryOn()).toBe(true);
+    expect(reviewed.sent.map((s) => s.verb.id)).toEqual([V['terminated']]);
   });
 
   it('sends nothing and starts nothing when what the session holds cannot be carried on', async () => {
