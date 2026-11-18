@@ -1,5 +1,32 @@
 # Changelog
 
+## 2026-11-17 — Foxxi's profile, version 2: a projection names its descriptor one way, and three concepts say what they evidence
+
+Foxxi's projector wrote the same three facts twice: under the `iep#` keys the
+xapi-x profile declares, and under Foxxi's own. xapi-x decision 6 was to write
+both for one profile version and then stop.
+
+- **Version 2 of Foxxi's profile** (`.../xapi/profile/v/2`) is the current
+  version. Five projection templates and the four patterns over them have
+  successors that require `iep#sourceDescriptor`, `iep#modalStatus` and
+  `iep#projectionLossy`, and select on the `xapix:Projection` category. The old
+  ones stay in the document, deprecated.
+- **Version 1 is still held** on the profile server, with its examples, so a
+  statement stored under it is still judged by it.
+- **The projector no longer writes** `foxxi:substrateDescriptorIri`,
+  `foxxi:supersededDescriptor` or `foxxi:endorsed` on a projection. **This
+  changes what the projector sends.** A voiding statement keeps the first two:
+  it is not a projection and has no `iep#` keys.
+- **The learner record** reads `iep#sourceDescriptor` first and Foxxi's key
+  second, so a statement from either version is found.
+- **Three evidence links** (`xapix:evidences`) on Foxxi's own concepts, each
+  to a concept of the I2IDL glossary: `credentialed` to Digital credential,
+  `concept-graph-node` to Concept map, `composition` to Personalization. Each
+  is a proposal until reviewed.
+
+**Not done.** Nobody at I2IDL has reviewed the links. `content-delivery.ts`
+still writes Foxxi's key for a delivered artifact; it is not the projector.
+
 ## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
 
 A Quoted descriptor repeats someone else's claim without endorsing it. The

@@ -1,6 +1,8 @@
 import { FOXXI_NS } from './foxxi-vocab.js';
 import { IEP_DECORATIONS, MODAL_STATUSES, xapix } from './xapix/namespace.js';
 
+const XAPIX_PROJECTION_TYPE = xapix('Projection');
+
 // ── What tells one kind of Foxxi statement from another ───────────────────────────────────────
 //
 // The specification matches a statement to a template on its determining properties only (verb,
@@ -91,6 +93,11 @@ export { FOXXI_NS } from './foxxi-vocab.js';
 // profile's `id` dereferences to itself. Its `templates/*`, `patterns/*`
 // and `v/*` children resolve under it (the bridge serves those too).
 export const FOXXI_PROFILE_ID = 'https://foxxi-bridge.interego.xwisee.com/xapi/profile';
+/** Version 1, as it was served until 2026-11-17. Still held: statements stored under it are judged against it. */
+export const FOXXI_PROFILE_V1_ID = `${FOXXI_PROFILE_ID}/v/1`;
+/** The current version. Its descriptor-projection templates ask for the `iep#` keys and no longer for Foxxi's own. */
+export const FOXXI_PROFILE_VERSION_ID = `${FOXXI_PROFILE_ID}/v/2`;
+export const FOXXI_PROFILE_V2_GENERATED_AT = '2026-11-17T00:00:00.000Z';
 
 const ADL = 'http://adlnet.gov/expapi';
 
@@ -234,6 +241,40 @@ const projectionDecorationRules = (statuses: ReadonlyArray<typeof MODAL_STATUSES
   { location: 'result.extensions["' + IEP_DECORATIONS.modalStatus + '"]', presence: 'recommended', any: [...statuses] },
   { location: 'result.extensions["' + IEP_DECORATIONS.projectionLossy + '"]', presence: 'recommended', all: [true, false] },
 ];
+
+/**
+ * The same three keys, required. Version 2's projection templates use these: every projection the
+ * projector writes has carried the keys since 2026-11-16, and under version 2 they are the only
+ * place a projection names its descriptor (xapix/README.md, decision 6).
+ */
+const projectionRules = (statuses: ReadonlyArray<typeof MODAL_STATUSES[number]>): Array<{ location: string; presence?: string; any?: unknown[]; all?: unknown[] }> => [
+  { location: 'result.extensions["' + IEP_DECORATIONS.sourceDescriptor + '"]', presence: 'included' },
+  { location: 'result.extensions["' + IEP_DECORATIONS.modalStatus + '"]', presence: 'included', any: [...statuses] },
+  { location: 'result.extensions["' + IEP_DECORATIONS.projectionLossy + '"]', presence: 'included', all: [true, false] },
+];
+const T = (name: string) => `${FOXXI_PROFILE_ID}/templates/${name}`;
+const P = (name: string) => `${FOXXI_PROFILE_ID}/patterns/${name}`;
+
+/**
+ * What version 2 replaces. A template's rules do not change under its IRI, so each
+ * descriptor-projection template that required `foxxi:substrateDescriptorIri` (or told itself
+ * apart by `foxxi:supersededDescriptor`, or asked for `foxxi:endorsed`) has a successor with a
+ * new IRI, and so does each pattern that named one. The old ones stay in the document,
+ * deprecated: their IRIs resolve, and version 1 still judges with them.
+ */
+export const FOXXI_REPLACED_IN_V2: Readonly<Record<string, string>> = {
+  [T('performed-descriptor')]: T('performed-projection'),
+  [T('intended-descriptor')]: T('intended-projection'),
+  [T('considered-descriptor')]: T('considered-projection'),
+  [T('quoted-descriptor')]: T('quoted-projection'),
+  [T('superseding-descriptor')]: T('superseding-projection'),
+  [P('agent-performance-stream')]: P('projection-stream'),
+  [P('agent-act')]: P('projection-act'),
+  [P('revision-arc')]: P('projection-revision-arc'),
+  [P('revisions')]: P('projection-revisions'),
+};
+const deprecatedInV2 = (id: string): boolean => Object.hasOwn(FOXXI_REPLACED_IN_V2, id);
+const sinceV2 = (id: string): boolean => Object.values(FOXXI_REPLACED_IN_V2).includes(id);
 
 const templates = [
   // ── Composition plays (composition-play.ts) ──────────────────────────
@@ -488,6 +529,63 @@ const templates = [
       { location: 'context.extensions["' + FOXXI_NS + 'substrateDescriptorIri"]', presence: 'included' },
     ],
   },
+  // ── Version 2: the same five, asking for the iep# keys ───────────────
+  // A projection names its descriptor in `iep#sourceDescriptor`, states its modal status in
+  // `iep#modalStatus` and says whether it lost anything. Foxxi's own keys for the same things
+  // (substrateDescriptorIri, supersededDescriptor, endorsed) are not asked for, and the projector
+  // no longer writes them on a projection. Each selects on the `xapix:Projection` category.
+  {
+    id: T('performed-projection'),
+    prefLabel: { en: 'performed-projection' },
+    definition: { en: 'An agent performed a unit of work by asserting a context descriptor. The statement is a projection of that descriptor: it names it in iep#sourceDescriptor and states its modal status. objectActivityType is unconstrained: it is the descriptor\'s own conformsTo IRI, passed through. Replaces performed-descriptor.' },
+    verb: `${FOXXI_NS}performed`,
+    contextCategoryActivityType: [XAPIX_PROJECTION_TYPE],
+    rules: [
+      { location: 'context.extensions["' + FOXXI_NS + 'actorKind"]', any: ['agent'] },
+      ...projectionRules(['Asserted', 'Quoted']),
+    ],
+  },
+  {
+    id: T('intended-projection'),
+    prefLabel: { en: 'intended-projection' },
+    definition: { en: 'A Hypothetical context descriptor projects as an `intended` act: the agent recorded an intention or a plan, not a settled performance. Replaces intended-descriptor.' },
+    verb: `${FOXXI_NS}verbs/intended`,
+    contextCategoryActivityType: [XAPIX_PROJECTION_TYPE],
+    rules: [...projectionRules(['Hypothetical'])],
+  },
+  {
+    id: T('considered-projection'),
+    prefLabel: { en: 'considered-projection' },
+    definition: { en: 'A Counterfactual context descriptor projects as a `considered` act: a road not taken. Replaces considered-descriptor.' },
+    verb: `${FOXXI_NS}verbs/considered`,
+    contextCategoryActivityType: [XAPIX_PROJECTION_TYPE],
+    rules: [...projectionRules(['Counterfactual'])],
+  },
+  {
+    id: T('quoted-projection'),
+    prefLabel: { en: 'quoted-projection' },
+    definition: { en: 'A Quoted context descriptor projects as a `quoted` act: the agent repeated a claim someone else made and did not endorse it. The modal status says so; it says no outcome, so the statement carries no success, completion or score. Replaces quoted-descriptor.' },
+    verb: `${FOXXI_NS}verbs/quoted`,
+    contextCategoryActivityType: [XAPIX_PROJECTION_TYPE],
+    rules: [
+      { location: 'result.success', presence: 'excluded' },
+      { location: 'result.completion', presence: 'excluded' },
+      { location: 'result.score', presence: 'excluded' },
+      ...projectionRules(['Quoted']),
+    ],
+  },
+  {
+    id: T('superseding-projection'),
+    prefLabel: { en: 'superseding-projection' },
+    definition: { en: 'A performed-projection whose descriptor revises or closes an earlier one (iep:supersedes). It names the statements it replaces in xapix:supersedesStatement and the superseded descriptor as an activity in contextActivities.other. Replaces superseding-descriptor.' },
+    verb: `${FOXXI_NS}performed`,
+    contextCategoryActivityType: [XAPIX_PROJECTION_TYPE],
+    contextOtherActivityType: [SUPERSEDED_DESCRIPTOR_TYPE],
+    rules: [
+      { location: 'context.extensions["' + xapix('supersedesStatement') + '"]', presence: 'included' },
+      { location: 'context.statement', presence: 'included' },
+    ],
+  },
   {
     id: `${FOXXI_PROFILE_ID}/templates/voided-descriptor`,
     prefLabel: { en: 'voided-descriptor' },
@@ -621,7 +719,7 @@ const templates = [
  *  source token, because the resulting statement would match no template. Data-driven from the
  *  templates, so it stays correct as the profile evolves. */
 export function verbRequiresObjectType(verbIri: string): boolean {
-  const ts = templates.filter(t => (t as { verb?: string }).verb === verbIri);
+  const ts = liveTemplates.filter(t => (t as { verb?: string }).verb === verbIri);
   return ts.length > 0 && ts.every(t => (t as { objectActivityType?: unknown }).objectActivityType != null);
 }
 
@@ -641,7 +739,7 @@ export function verbIsDeclared(verbIri: string): boolean {
  * rules, so it cannot disagree with what the profile then checks.
  */
 export function modalStatusesVerbCanSay(verbIri: string): string[] | undefined {
-  const said = templates.filter(t => (t as { verb?: string }).verb === verbIri)
+  const said = liveTemplates.filter(t => (t as { verb?: string }).verb === verbIri)
     .flatMap(t => ((t as { rules?: Array<{ location: string; any?: unknown[] }> }).rules ?? []))
     .filter(r => r.location.includes(IEP_DECORATIONS.modalStatus) && Array.isArray(r.any))
     .flatMap(r => r.any as string[]);
@@ -797,7 +895,39 @@ const patterns = [
     primary: false,
     oneOrMore: `${FOXXI_PROFILE_ID}/templates/superseding-descriptor`,
   },
+  // ── Version 2: the same four, over the projection templates ─────────
+  {
+    id: P('projection-stream'),
+    prefLabel: { en: 'projection-stream' },
+    definition: { en: 'The domain-agnostic baseline: an agent\'s stream of context-descriptor acts, each a projection of its descriptor, whatever vertical authored them. Replaces agent-performance-stream.' },
+    primary: true,
+    oneOrMore: P('projection-act'),
+  },
+  {
+    id: P('projection-act'),
+    prefLabel: { en: 'projection-act' },
+    definition: { en: 'One context-descriptor act by an agent: performed, intended, considered, quoted or voided. Replaces agent-act.' },
+    primary: false,
+    alternates: [T('performed-projection'), T('intended-projection'), T('considered-projection'), T('quoted-projection'), T('voided-descriptor')],
+  },
+  {
+    id: P('projection-revision-arc'),
+    prefLabel: { en: 'projection-revision-arc' },
+    definition: { en: 'An assert-then-supersede arc: a performed-projection followed by one or more superseding-projections revising or closing it. Replaces revision-arc.' },
+    primary: true,
+    sequence: [T('performed-projection'), P('projection-revisions')],
+  },
+  {
+    id: P('projection-revisions'),
+    prefLabel: { en: 'projection-revisions' },
+    definition: { en: 'The projections that revise or close the first, one or more. Replaces revisions.' },
+    primary: false,
+    oneOrMore: T('superseding-projection'),
+  },
 ];
+
+/** The templates that judge today: version 2's, without the ones it deprecates. */
+const liveTemplates = templates.filter(t => !deprecatedInV2(t.id));
 
 // ── Profile document ────────────────────────────────────────────────
 
@@ -875,6 +1005,8 @@ export const FOXXI_EXTERNAL_TERMS: ReadonlyArray<{ id: string; type: string }> =
   // Named by the `interacted` and `experienced-performance` templates; never listed above.
   { id: `${ADL}/activities/interaction`, type: 'ActivityType' },
   { id: `${ADL}/activities/performance`, type: 'ActivityType' },
+  // The marker version 2's projection templates select on. The xapi-x profile declares it.
+  { id: XAPIX_PROJECTION_TYPE, type: 'ActivityType' },
 ];
 
 // ── Statement-template conformance (xAPI Profile spec §5) ───────────
@@ -958,7 +1090,7 @@ export function validateAgainstProfileTemplates(stmt: Record<string, unknown>): 
   // matching any listed type selects it.
   const oatMatches = (oat: string | string[] | undefined): boolean =>
     !oat || (Array.isArray(oat) ? oat.includes(objType as string) : oat === objType);
-  const matched = templates.filter(t =>
+  const matched = liveTemplates.filter(t =>
     (t as { verb?: string }).verb === verb &&
     oatMatches((t as { objectActivityType?: string | string[] }).objectActivityType));
   // Compute each matched template's rule violations independently.
@@ -999,8 +1131,76 @@ export function validateAgainstProfileTemplates(stmt: Record<string, unknown>): 
   return { verb, verbDeclared, applicable: matched.length > 0, matchedTemplates: matched.map(t => t.id), violations };
 }
 
+/**
+ * What a statement using one of Foxxi's concepts is evidence of, as a design idea of the I2IDL
+ * Digital Learning Glossary (xapix/README.md, section 4). The meaning is narrow: a statement with
+ * this verb, or about an activity of this type, is evidence that the idea was enacted. It does not
+ * say the concept is the idea.
+ *
+ * Each is a proposal about a concept that is I2IDL's, Hypothetical until reviewed, as every link
+ * I2IDL-X proposes is. The IRIs are I2IDL's own, read from its release on 2026-11-17.
+ *
+ * Not proposed, on purpose: `verbs/retrieved` is the system fetching passages for an answer, not a
+ * learner recalling something, so it is no evidence of retrieval practice.
+ */
+export const FOXXI_EVIDENCE_LINKS: Readonly<Record<string, string>> = {
+  // A credential was issued and can be verified: a digital credential exists.
+  [`${FOXXI_NS}verbs/credentialed`]: 'https://id.i2idl.org/concepts/digital-credential',
+  // The activity is a node of a graph of how a course's concepts connect.
+  [`${FOXXI_NS}activities/concept-graph-node`]: 'https://id.i2idl.org/concepts/concept-map',
+  // A composition is resolved for one learner: content and sequence adjusted to that learner.
+  [`${FOXXI_NS}activities/composition`]: 'https://id.i2idl.org/concepts/personalization',
+};
+const withEvidence = (concept: Record<string, unknown>): Record<string, unknown> => {
+  const idea = FOXXI_EVIDENCE_LINKS[String(concept.id)];
+  return idea ? { ...concept, [xapix('evidences')]: [{ '@id': idea }] } : concept;
+};
+
+const foxxiConcepts = (): Array<Record<string, unknown>> => [
+  ...verbs.filter(v => isFoxxisOwn(v.id)).map(v => ({ ...v, type: 'Verb' })),
+  ...activityTypes.filter(a => isFoxxisOwn(a.id)).map(a => ({ ...a, type: 'ActivityType' })),
+  ...extensions.map(e => ({ ...e, type: 'ContextExtension' })),
+];
+
+/**
+ * Foxxi's profile at its current version, version 2. `generatedAt` is when version 1 was
+ * generated, as every caller has always passed it; version 2's own time is fixed here.
+ *
+ * Every term is in the scheme of version 2. What version 2 replaces is kept, marked deprecated,
+ * so its IRI still resolves and says so; it judges nothing.
+ */
 export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Record<string, unknown> {
+  const stamp = <X extends { id: string }>(parts: readonly X[]): Array<Record<string, unknown>> =>
+    parts.map(p => ({ ...p, inScheme: FOXXI_PROFILE_VERSION_ID, ...(deprecatedInV2(p.id) ? { deprecated: true } : {}) }));
+  const doc = buildProfileDoc({
+    ...FOXXI_ABOUT,
+    generatedAt: FOXXI_PROFILE_V2_GENERATED_AT,
+    concepts: foxxiConcepts().map(c => ({ ...withEvidence(c), inScheme: FOXXI_PROFILE_VERSION_ID })),
+    templates: stamp(templates),
+    patterns: stamp(patterns),
+  });
+  return {
+    ...doc,
+    versions: [
+      { id: FOXXI_PROFILE_VERSION_ID, wasRevisionOf: [FOXXI_PROFILE_V1_ID], generatedAtTime: FOXXI_PROFILE_V2_GENERATED_AT },
+      { id: FOXXI_PROFILE_V1_ID, generatedAtTime: versionInfo.generatedAt },
+    ],
+  };
+}
+
+/** Version 1: the profile without what version 2 added. Held so a statement stored under it can still be judged by it. */
+export function buildFoxxiProfileDocV1(versionInfo: { generatedAt: string }): Record<string, unknown> {
   return buildProfileDoc({
+    ...FOXXI_ABOUT,
+    generatedAt: versionInfo.generatedAt,
+    concepts: foxxiConcepts(),
+    templates: templates.filter(t => !sinceV2(t.id)),
+    patterns: patterns.filter(p => !sinceV2(p.id)),
+  });
+}
+
+/** What both versions say about the profile itself. */
+const FOXXI_ABOUT = {
     id: FOXXI_PROFILE_ID,
     prefLabel: { en: 'Foxxi Content Intelligence — xAPI Profile' },
     definition: {
@@ -1008,13 +1208,4 @@ export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Reco
     },
     seeAlso: 'https://github.com/markjspivey-xwisee/interego/blob/master/applications/foxxi-content-intelligence/CONFORMANCE.md',
     author: { type: 'Organization', name: 'Interego — Foxxi Content Intelligence', url: new URL(FOXXI_PROFILE_ID).origin },
-    generatedAt: versionInfo.generatedAt,
-    concepts: [
-      ...verbs.filter(v => isFoxxisOwn(v.id)).map(v => ({ ...v, type: 'Verb' })),
-      ...activityTypes.filter(a => isFoxxisOwn(a.id)).map(a => ({ ...a, type: 'ActivityType' })),
-      ...extensions.map(e => ({ ...e, type: 'ContextExtension' })),
-    ],
-    templates,
-    patterns,
-  });
-}
+};

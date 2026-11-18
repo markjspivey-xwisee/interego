@@ -16,11 +16,14 @@ import { ingestExternalRun } from '../src/agent-run-ingest.js';
 import { buildPerformanceStatement, momOutcomeVerb, recordedActivityType } from '../src/performance-statement.js';
 
 const doc = buildFoxxiProfileDoc({ generatedAt: '2026-07-22T00:00:00.000Z' }) as { id: string; concepts: Json[]; templates: Json[]; patterns: Json[] };
+// What judges: the current version without the terms it keeps only as deprecated. A deprecated
+// template stays in the document so its IRI resolves, and no statement is held to it.
+const live = { templates: doc.templates.filter(t => t['deprecated'] !== true), patterns: doc.patterns.filter(p => p['deprecated'] !== true) };
 const T = (name: string) => `${doc.id}/templates/${name}`;
 /** Every template some statement in this file followed, and every statement checked: the last tests read them. */
 const followed = new Set<string>(), checked: Json[] = [];
 const check = (statement: unknown) => {
-  const result = validates(statement as Json, doc.templates);
+  const result = validates(statement as Json, live.templates);
   checked.push(statement as Json);
   if (result.outcome === 'success') for (const t of result.templates) followed.add(t);
   return result;
@@ -34,20 +37,20 @@ const learner = { mbox: 'mailto:fictional-learner@example.org' };
 
 describe('a descriptor projection', () => {
   it('follows the descriptor template for its verb, and the performance template when it is an outcome', () => {
-    expect(check(projected({ verb: `${FOXXI_NS}performed` }))).toMatchObject({ outcome: 'success', templates: [T('performed-descriptor')] });
+    expect(check(projected({ verb: `${FOXXI_NS}performed` }))).toMatchObject({ outcome: 'success', templates: [T('performed-projection')] });
     expect(check(projected({ success: true }))).toMatchObject({ outcome: 'success', templates: [T('production-performance-completed')] });
     expect(check(projected({ success: false }))).toMatchObject({ outcome: 'success', templates: [T('production-performance-failed')] });
     expect(check(projected({ modalStatus: 'Hypothetical' })).outcome).toBe('success');
     expect(check(projected({ modalStatus: 'Counterfactual' })).outcome).toBe('success');
     // A Quoted descriptor is not an outcome, whatever its envelope carried.
-    expect(check(projected({ modalStatus: 'Quoted' }))).toMatchObject({ outcome: 'success', templates: [T('quoted-descriptor')] });
-    expect(check(projected({ modalStatus: 'Quoted', success: true }))).toMatchObject({ outcome: 'success', templates: [T('quoted-descriptor')] });
+    expect(check(projected({ modalStatus: 'Quoted' }))).toMatchObject({ outcome: 'success', templates: [T('quoted-projection')] });
+    expect(check(projected({ modalStatus: 'Quoted', success: true }))).toMatchObject({ outcome: 'success', templates: [T('quoted-projection')] });
   });
 
   it('that revises another follows both the descriptor and the superseding template', () => {
     const r = check(projected({ verb: `${FOXXI_NS}performed`, supersedes: ['https://pod.example/fictional-agent/context-graphs/1780000000000.ttl'] }));
     expect(r.outcome).toBe('success');
-    expect([...r.templates].sort()).toEqual([T('performed-descriptor'), T('superseding-descriptor')].sort());
+    expect([...r.templates].sort()).toEqual([T('performed-projection'), T('superseding-projection')].sort());
   });
 
   it('that is retracted follows both voiding templates', () => {
@@ -223,7 +226,7 @@ describe('every template has a statement that follows it, and only it', () => {
 
   it('leaves no template of the profile without one', () => {
     // Runs after every other test in the file, so it reads what they all followed.
-    expect(doc.templates.map(t => String(t['id'])).filter(id => !followed.has(id))).toEqual([]);
+    expect(live.templates.map(t => String(t['id'])).filter(id => !followed.has(id))).toEqual([]);
   });
 
   it('follows each primary pattern, and a failed course session is a course session', () => {
@@ -231,25 +234,25 @@ describe('every template has a statement that follows it, and only it', () => {
     const e = (...names: string[]) => names.map(n => examples[n]!);
     const session = (outcome: string) => e('launched', 'initialized', 'slide-viewed', 'asked', 'retrieved', 'scene-completed', 'slide-viewed', outcome, 'terminated');
     for (const outcome of ['completed', 'passed', 'course-failed'])
-      expect(follows(session(outcome), doc.templates, doc.patterns), outcome).toEqual({ follows: true, pattern: P('course-session'), reasons: [] });
+      expect(follows(session(outcome), live.templates, live.patterns), outcome).toEqual({ follows: true, pattern: P('course-session'), reasons: [] });
     // A question with no retrieval after it, and a session with no outcome, are not one.
-    expect(follows(e('launched', 'initialized', 'asked', 'completed', 'terminated'), doc.templates, doc.patterns).follows).toBe(false);
-    expect(follows(e('launched', 'initialized', 'slide-viewed', 'terminated'), doc.templates, doc.patterns).follows).toBe(false);
-    expect(follows(e('question-answered', 'fragment-experienced', 'fragment-experienced', 'question-answered', 'question-answered', 'fragment-experienced', 'composition-completed'), doc.templates, doc.patterns))
+    expect(follows(e('launched', 'initialized', 'asked', 'completed', 'terminated'), live.templates, live.patterns).follows).toBe(false);
+    expect(follows(e('launched', 'initialized', 'slide-viewed', 'terminated'), live.templates, live.patterns).follows).toBe(false);
+    expect(follows(e('question-answered', 'fragment-experienced', 'fragment-experienced', 'question-answered', 'question-answered', 'fragment-experienced', 'composition-completed'), live.templates, live.patterns))
       .toEqual({ follows: true, pattern: P('composition-attempt'), reasons: [] });
-    expect(follows(e('passed', 'credentialed'), doc.templates, doc.patterns)).toEqual({ follows: true, pattern: P('credentialing'), reasons: [] });
+    expect(follows(e('passed', 'credentialed'), live.templates, live.patterns)).toEqual({ follows: true, pattern: P('credentialing'), reasons: [] });
     const first = projected({ verb: `${FOXXI_NS}performed` });
     const acts = [first, projected({ modalStatus: 'Hypothetical' }), projected({ modalStatus: 'Counterfactual' }), projected({ modalStatus: 'Quoted' })];
-    expect(follows(acts as Json[], doc.templates, doc.patterns)).toEqual({ follows: true, pattern: P('agent-performance-stream'), reasons: [] });
+    expect(follows(acts as Json[], live.templates, live.patterns)).toEqual({ follows: true, pattern: P('projection-stream'), reasons: [] });
     // A revision is also a stream of acts, and `follows` names the first primary pattern that fits,
     // so the revision arc is matched directly: the first act, then what supersedes it, nothing left over.
     const revision = [first, projected({ verb: `${FOXXI_NS}performed`, supersedes: ['https://pod.example/fictional-agent/context-graphs/1780000000000.ttl'] })] as Json[];
-    const judged = revision.map(statement => ({ statement, templates: validates(statement, doc.templates).templates }));
-    const [outcome, left] = matches(judged, P('revision-arc'), elementsOf(doc.templates, doc.patterns));
+    const judged = revision.map(statement => ({ statement, templates: validates(statement, live.templates).templates }));
+    const [outcome, left] = matches(judged, P('projection-revision-arc'), elementsOf(live.templates, live.patterns));
     expect([outcome, left.length]).toEqual(['success', 0]);
-    expect(matches(judged.slice(0, 1), P('revision-arc'), elementsOf(doc.templates, doc.patterns))[0]).not.toBe('success');
-    expect(doc.patterns.filter(p => p['primary'] === true).map(p => String(p['id'])).sort())
-      .toEqual(['agent-performance-stream', 'composition-attempt', 'course-session', 'credentialing', 'revision-arc'].map(P).sort());
+    expect(matches(judged.slice(0, 1), P('projection-revision-arc'), elementsOf(live.templates, live.patterns))[0]).not.toBe('success');
+    expect(live.patterns.filter(p => p['primary'] === true).map(p => String(p['id'])).sort())
+      .toEqual(['composition-attempt', 'course-session', 'credentialing', 'projection-revision-arc', 'projection-stream'].map(P).sort());
   });
 
   it('defines every term a statement carries and every part of the profile', () => {
@@ -263,7 +266,7 @@ describe('every template has a statement that follows it, and only it', () => {
     }
     expect(carried.size).toBeGreaterThan(20);
     expect([...carried].filter(id => !declared.has(id))).toEqual([]);
-    for (const part of [...doc.concepts, ...doc.templates, ...doc.patterns]) {
+    for (const part of [...doc.concepts, ...live.templates, ...live.patterns]) {
       expect((part['prefLabel'] as { en?: string } | undefined)?.en, String(part['id'])).toBeTruthy();
       expect((part['definition'] as { en?: string } | undefined)?.en, String(part['id'])).toBeTruthy();
     }
