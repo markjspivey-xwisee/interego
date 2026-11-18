@@ -209,7 +209,10 @@ describe('changelog entries are one file each, under changelog/', () => {
     // not run on master), so a pull request opened before this convention that lands with an
     // entry in CHANGELOG.md does not turn master red: it is the next pull request that takes
     // master in and is asked to move its own.
-    const base = git(['merge-base', 'origin/master', 'HEAD']);
+    // origin/master where there is one; a clone whose default branch has no remote-tracking ref
+    // (a bare local clone) still has master itself.
+    const tracked = git(['merge-base', 'origin/master', 'HEAD']);
+    const base = tracked.ok ? tracked : git(['merge-base', 'master', 'HEAD']);
     if (!base.ok) {
       // ★ A SHALLOW CLONE HAS NO MERGE-BASE TO ASK FOR, AND IT IS NOT THE RUN THIS BELONGS TO.
       // base-without-verticals.yml runs this file too: its checkout takes the default depth of
@@ -217,10 +220,13 @@ describe('changelog entries are one file each, under changelog/', () => {
       // CI, on every pull request, for a reason that has nothing to do with the changelog
       // (found in review of #964, before it ran). The run that carries this assertion is Bridge
       // Typecheck's suite, a full clone, and the test below holds that depth in place. So a
-      // shallow clone passes here, and a FULL clone in CI that still cannot resolve origin/master
-      // is refused: there, "could not check" must not read as "fine".
+      // shallow clone passes here, and a FULL clone that still cannot find master is refused,
+      // wherever it runs: there, "could not check" must not read as "fine". (It asked the
+      // environment whether this was CI at first. That made it the second test module to read
+      // that variable, which applications/_shared/tests/shared-live-externals.test.ts counts,
+      // and the answer never mattered: a full clone with no master is wrong anywhere.)
       const shallow = git(['rev-parse', '--is-shallow-repository']).out === 'true';
-      if (!shallow && process.env['GITHUB_ACTIONS'] === 'true') throw new Error('origin/master does not resolve in this full clone, so whether this pull request adds an entry to CHANGELOG.md cannot be checked.');
+      if (!shallow) throw new Error('neither origin/master nor master resolves in this full clone, so whether this branch adds an entry to CHANGELOG.md cannot be checked. Fetch master.');
       return;
     }
     const diff = git(['diff', '--unified=0', base.out, '--', 'CHANGELOG.md']);
