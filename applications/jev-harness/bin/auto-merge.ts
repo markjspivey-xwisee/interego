@@ -25,8 +25,8 @@
  * a green job that says so, not a red one — and a conflicting branch is one of those, read
  * before the label goes on. If the merge command still fails, the label is taken back first, so
  * the merge that follows, a person's, is scored as one. When the one condition that fails is that
- * master moved since the run's merge ref was built, the branch is updated (gh pr update-branch) so
- * the next run tests exactly what merges. src/auto-merge.ts is the policy.
+ * master moved since the run's merge ref was built, the branch is updated only if its head
+ * still matches the tested head, so the next run tests exactly what merges. src/auto-merge.ts is the policy.
  */
 
 import { execFileSync } from 'node:child_process';
@@ -121,9 +121,9 @@ async function main(): Promise<void> {
   // push starts the run that decides again, and the report says so in the same breath.
   let note: string | undefined;
   const failing = decision.reasons.filter((r) => r.startsWith('fails:'));
-  if (failing.length === 1 && failing[0]!.includes('master moved') && mergeable === 'MERGEABLE' && !process.argv.includes('--dry-run')) {
+  if (head && failing.length === 1 && failing[0]!.includes('master moved') && mergeable === 'MERGEABLE' && !process.argv.includes('--dry-run')) {
     try {
-      execFileSync('gh', ['pr', 'update-branch', pr, '--repo', repo], { stdio: 'inherit' });
+      execFileSync('gh', ['api', '--method', 'PUT', `repos/${repo}/pulls/${pr}/update-branch`, '-f', `expected_head_sha=${head}`], { stdio: 'inherit' });
       note = '  the branch was updated with master; the push starts the run that decides again';
     } catch (err) {
       note = `  the branch could not be updated: ${err instanceof Error ? err.message : String(err)}`;

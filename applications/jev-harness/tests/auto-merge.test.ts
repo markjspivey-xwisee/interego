@@ -325,15 +325,17 @@ describe('★ the merge is held to the commit the checks were read on', () => {
     }
   });
 
-  it('the driver refuses a missing head before it reads or changes anything, and merges only through the pinned command', () => {
+  it('the driver refuses a missing head before it reads or changes anything, and pins both update and merge', () => {
     const bin = readFileSync(fileURLToPath(new URL('../bin/auto-merge.ts', import.meta.url)), 'utf8');
     const main = bin.slice(bin.indexOf('async function main'));
     const refusal = main.indexOf(`testedHead(flag('--head-sha'))`);
     expect(refusal).toBeGreaterThan(-1);
     // Everything with an effect, or that reads the pull request, comes after the refusal.
-    for (const later of ['loadSavedResults(', 'readMergeable(pr', `'update-branch'`, `'--add-label'`, 'mergeCommandArgs(']) {
+    for (const later of ['loadSavedResults(', 'readMergeable(pr', '/update-branch`', `'--add-label'`, 'mergeCommandArgs(']) {
       expect(main.indexOf(later), later).toBeGreaterThan(refusal);
     }
+    expect(bin).toContain("`expected_head_sha=${head}`");
+    expect(bin).not.toMatch(/'pr', 'update-branch'/);
     // One merge command in the driver, and it is the pinned one.
     expect(bin).toContain(`execFileSync('gh', mergeCommandArgs(pr, repo, head ?? '')`);
     expect(bin).not.toMatch(/'pr', 'merge'/);
