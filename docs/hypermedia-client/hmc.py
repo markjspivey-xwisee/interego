@@ -16,6 +16,7 @@ import contextlib
 import copy
 import encodings.idna as _idna_codec
 import heapq
+import http.client
 import ipaddress
 import json
 import math
@@ -5023,16 +5024,27 @@ class Exchange:
 
 def http_exchange(url: str, method: str = "GET", headers: dict[str, str] | None = None,
                   data: bytes | None = None, timeout: int = 60, follow: bool = True,
-                  limit: int | None = None) -> Exchange:
+                  limit: int | None = None, error_body: bool = True) -> Exchange:
     """Sends one request to the URL exactly as _request_url writes it. With
     `follow`, a GET's or HEAD's redirect is followed as fetch follows one (see
     _WebOnlyRedirects); without it, and for any other method, a redirect is
     the answer, on its headers: nothing is sent to its Location, and its body
-    is not read, so the answer's body is empty. With `limit`, the body is read
-    to one byte past it and no further, so a body longer than `limit` is
-    `limit` + 1 bytes long."""
+    is not read, so the answer's body is empty. Without `error_body`, the body
+    of an answer that is not 2xx is not read either. With `limit`, the body is
+    read to one byte past it and no further, so a body longer than `limit` is
+    `limit` + 1 bytes long. A body that ends short of the Content-Length its
+    answer gave, the connection closed, raises IncompleteRead, as the page's
+    fetch fails on it: the answer is not taken as whole."""
     def body_of(answer: Any) -> bytes:
-        return answer.read() if limit is None else answer.read(limit + 1)
+        if limit is None:
+            return answer.read()
+        body = answer.read(limit + 1)
+        # read(amt), unlike read(), stops where the connection closed without
+        # saying so; what it left of the Content-Length says the body was cut.
+        left = getattr(answer, "length", None)
+        if len(body) <= limit and left:
+            raise http.client.IncompleteRead(body, left)
+        return body
     _require_web_url(url)
     url = _request_url(url)
     req_headers = {"User-Agent": USER_AGENT}
@@ -5046,15 +5058,16 @@ def http_exchange(url: str, method: str = "GET", headers: dict[str, str] | None 
             see_other = redirects.see_other_from if redirects else None
             return Exchange(resp.getcode() or 200, _header_values(resp.headers.items()), body_of(resp), see_other or landed, landed)
     except urllib.error.HTTPError as exc:
-        if not follow and exc.code in REDIRECT_STATUSES:
+        if (not follow and exc.code in REDIRECT_STATUSES) or not error_body:
             # A redirect not followed is the answer on its headers: the page's
             # fetch, with redirect: "manual", gets an opaque redirect, which
             # has no body. Its body is not read, so one that never ends does
-            # not hold the request until it times out.
+            # not hold the request until it times out; nor is the body of an
+            # answer the caller reads only for its status.
             exc.close()
             body = b""
         else:
-            body = body_of(exc) if exc.fp else b""
+            body = body_of(exc.fp) if exc.fp else b""
         landed = exc.geturl() or url
         see_other = redirects.see_other_from if redirects else None
         return Exchange(exc.code, _header_values(exc.headers.items() if exc.headers else []), body, see_other or landed, landed)
@@ -5179,11 +5192,14 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
     page's fetchAuthority is the same:
 
     - The address as given is asked first. A request that gets no answer (the
-      connection fails or closes, a redirect is refused or there are more than
-      fetch follows, it times out, or its answer is longer than RESPONSE_MAX
-      bytes) ends the load, and its problem is named.
+      connection fails or closes, its body included, a redirect is refused or
+      there are more than fetch follows, or it times out) ends the load, and
+      its problem is named.
     - An answer counts when its status is 2xx, as fetch's res.ok has it, and
-      its body is one classify_payload reads. One that is not JSON-LD is asked
+      its body, read to RESPONSE_MAX bytes and no further, is one
+      classify_payload reads. The body of an answer that is not 2xx is not
+      read, since it does not count whatever it holds, and one longer than
+      RESPONSE_MAX bytes does not count. One that is not JSON-LD is asked
       for again as ?format=jsonld, unless the address names a format hmc.py
       reads (Turtle only with rdflib, as the page never reads it). That retry
       is optional: its answer comes first when it is JSON-LD, and the first
@@ -5193,10 +5209,13 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
       load_descriptor names it with the first answer (_authority_refused).
     - When the address names no format and its answer does not count,
       ?format=jsonld, turtle and markdown are asked in turn until one does; a
-      request among them that gets no answer ends the load, named."""
+      request among them that gets no answer ends the load, named. When none
+      counts and one was longer than RESPONSE_MAX bytes, the first such is
+      named (_document_too_large)."""
     url = _strip_fragment(url)
     accept = "application/ld+json, application/json;q=0.9, text/turtle;q=0.8, text/markdown;q=0.4, */*;q=0.1"
     tried: list[str] = []
+    too_large: list[str] = []
     # The address names a format when any "format" parameter in it has a value, as the page's fetchAuthority reads it.
     existing = any(key == "format" and val for key, val in urllib.parse.parse_qsl(urllib.parse.urlsplit(url).query, keep_blank_values=True))
 
@@ -5205,15 +5224,15 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
         # The address the text came from is where it landed after redirects,
         # which its relative IRIs resolve against: /dir answered by /dir/ puts
         # "items" at /dir/items. The page's fetchAuthority does the same.
-        # Read as an invoke's response is, to RESPONSE_MAX bytes and no
-        # further, whatever its status: past that it is not read, and the
-        # request ends as one that gets no answer does, named. The page's
-        # fetchText does the same.
-        answer = http_exchange(candidate, headers={"Accept": accept}, limit=RESPONSE_MAX)
-        if len(answer.body) > RESPONSE_MAX:
-            raise RuntimeError(_document_too_large(candidate))
+        # The body of an answer that is not 2xx is not read; a 2xx one is read
+        # as an invoke's response is, to RESPONSE_MAX bytes and no further, and
+        # past that it does not count. The page's fetchText does the same.
+        answer = http_exchange(candidate, headers={"Accept": accept}, limit=RESPONSE_MAX, error_body=False)
         status, headers, body, landed = answer.status, answer.headers, answer.body, answer.base
         if not 200 <= status < 300:
+            return None
+        if len(body) > RESPONSE_MAX:
+            too_large.append(candidate)
             return None
         text = _body_text(body)
         content_type = headers.get("content-type", "")
@@ -5238,6 +5257,8 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
             got = attempt(_with_format(url, fmt))
             if got:
                 return [got[1]]
+    if too_large:
+        raise RuntimeError(_document_too_large(too_large[0]))
     raise RuntimeError(f"Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from {url} (tried {tried})")
 
 
@@ -7507,9 +7528,10 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
 
 # A response is read up to RESPONSE_MAX bytes and no further: past that the read
 # stops, and nothing of the response is shown, named (TOO_LARGE), whatever its
-# status says of the request. A descriptor's answer is read so too, and past it
-# the load ends, named (_document_too_large). The page's RESPONSE_MAX, TOO_LARGE
-# and documentTooLarge are the same.
+# status says of the request. A descriptor's 2xx answer is read so too, and past
+# it does not count; a load that ends with none that counts names the first such
+# (_document_too_large). The page's RESPONSE_MAX, TOO_LARGE and documentTooLarge
+# are the same.
 RESPONSE_MAX = 8 * 1024 * 1024
 TOO_LARGE = f"This response is larger than {RESPONSE_MAX} bytes, so it was not read, and nothing of it is shown."
 

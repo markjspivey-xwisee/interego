@@ -30,3 +30,10 @@ characters than the response has bytes. Small honest results that bind
 little, as unmatched OPTIONALs leave them, are tables again: 2 variables by
 370 empty bindings had become text. 100 variables of empty bindings padded to
 256 KiB took 4.1 s against 3.3 s at the old bound, and 0.6 s at the new one.
+
+A descriptor's answer that is not 2xx is no longer read at all, and a 2xx one
+past 8 MiB does not count, so the formats are asked as before: an 8 MiB 404 or
+HTML page with JSON-LD at ?format=jsonld ended the load, and a 404 whose body
+never ends held it. hmc.py took a body cut short of its Content-Length as
+whole, listing two of a document's four controls; it now names it, as the
+page's fetch fails on it, for loads and invokes alike.

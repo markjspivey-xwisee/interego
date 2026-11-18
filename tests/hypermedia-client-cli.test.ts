@@ -282,8 +282,29 @@ beforeAll(async () => {
           `content-length: ${Buffer.byteLength(fetched.body)}\r\nconnection: close\r\n\r\n${fetched.body}`);
         return;
       }
-      // A list of types is that many Content-Type headers.
-      if (fetched) { res.setHeader('content-type', fetched.type); res.writeHead(fetched.status || 200).end(fetched.body); return; }
+      // A body the connection drops: the head gives the whole body's length, and the host sends `cut`
+      // bytes of it and closes.
+      if (fetched && fetched.cut !== undefined) {
+        const whole = Buffer.from(fetched.body);
+        req.socket.end(Buffer.concat([Buffer.from(`HTTP/1.1 ${fetched.status || 200} Answered\r\ncontent-type: ${String(fetched.type)}\r\n` +
+          `content-length: ${whole.length}\r\nconnection: close\r\n\r\n`), whole.subarray(0, fetched.cut)]));
+        return;
+      }
+      // A body that promises more than it sends, and then sends nothing, until the client closes.
+      if (fetched && fetched.endless) {
+        res.writeHead(fetched.status || 200, { 'content-type': String(fetched.type), 'content-length': '1048576' }).write(fetched.body);
+        return;
+      }
+      // A list of types is that many Content-Type headers. A body is written `chunk` bytes at a time.
+      if (fetched) {
+        res.setHeader('content-type', fetched.type);
+        res.writeHead(fetched.status || 200);
+        const whole = Buffer.from(fetched.body);
+        const step = fetched.chunk || whole.length || 1;
+        for (let at = 0; at < whole.length; at += step) res.write(whole.subarray(at, at + step));
+        res.end();
+        return;
+      }
       const route = Object.prototype.hasOwnProperty.call(routes(), url.pathname) ? routes()[url.pathname] : undefined;
       if (!route) { res.writeHead(404, { 'content-type': 'text/plain' }).end('missing'); return; }
       const out = route();
@@ -330,8 +351,8 @@ describe('hmc.py: a load whose requests fail, as the page\'s', () => {
   // With rdflib hmc.py reads Turtle, which the page never does; without it, it is the page's twin here too.
   const READS_TURTLE = spawnSync(PYTHON, ['-I', '-c', 'import rdflib'], { encoding: 'utf8' }).status === 0;
   const PROBLEMS = {
-    'no answer': /^error: .*(Remote end closed connection without response|Connection reset by peer|redirected more than 20 times)/,
-    // An answer past RESPONSE_MAX bytes is read no further, whatever its status.
+    'no answer': /^error: .*(Remote end closed connection without response|Connection reset by peer|redirected more than 20 times|IncompleteRead\(\d+ bytes read, \d+ more expected\))/,
+    // A 2xx answer past RESPONSE_MAX bytes is read no further and does not count; where none counts, the first is named.
     'too large': /^error: The answer to http:\/\/127\.0\.0\.1:\d+\/[\w-]+ is larger than 8388608 bytes, so it was not read\.$/,
     turtle: /^error: This descriptor was served as Turtle\. Install rdflib/,
     'none readable': /^error: Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from /,
@@ -444,6 +465,11 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
       if ('refused' in end) {
         expect([r.code, r.stdout, r.stderr.trim()], where)
           .toEqual([1, '', `error: hmc.py sends requests to http and https URLs only; refused a redirect to ${end.refused}`]);
+        continue;
+      }
+      // A body cut short of its Content-Length is no answer, whatever its status, as fetch rejects reading it.
+      if ('cut' in end) {
+        expect([r.code, r.stdout, r.stderr.trim()], where).toEqual([1, '', `error: IncompleteRead(${end.cut[0]} bytes read, ${end.cut[1]} more expected)`]);
         continue;
       }
       // A Location a URL parser reads otherwise than its text is refused, as such an address is.

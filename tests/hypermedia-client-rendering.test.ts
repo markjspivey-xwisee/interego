@@ -28,7 +28,7 @@ import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_C
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
   LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES, EMPTY_CASES,
   WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, layoutBound, shownCases,
-  tableElements, type HopHeaders } from './hypermedia-client-fixtures.js';
+  tableElements, RESPONSE_MAX, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -369,6 +369,44 @@ function sentHeaders(method: string, headers: Record<string, string>, body: stri
   const length = body != null ? String(Buffer.byteLength(body)) : method === 'POST' || method === 'PUT' ? '0' : null;
   return hopHeaders(length == null ? headers : { ...headers, 'content-length': length });
 }
+/** How the page ended reading one answer's body, as its stream saw it. */
+interface BodyRead { path: string; format: string | null; status: number; size: number; cut: number | null; read: number;
+  end: 'read' | 'cancelled' | 'errored' | null }
+/**
+ * An answer's body as a stream, as fetch's body is: it hands over `chunk` bytes at a time (64 KiB
+ * unless the answer says), and only as the page reads them (a high-water mark of 0), so what the
+ * page reads of it is what `read` records, in `reads`. Where the answer is `cut`, the connection drops there,
+ * and the stream errs as fetch's body does then; an `endless` one hands over its bytes and then
+ * nothing. `end` records whether the page read it to its end, cancelled it, or saw it err.
+ */
+function bodyStream(answer: { body: string; chunk?: number; cut?: number; endless?: true }, at: URL, status: number, reads: BodyRead[]) {
+  const bytes = Buffer.from(answer.body);
+  const until = answer.cut ?? bytes.length;
+  const chunk = answer.chunk ?? 65_536;
+  const record: BodyRead = { path: at.pathname, format: at.searchParams.get('format'), status, size: bytes.length, cut: answer.cut ?? null,
+    read: 0, end: null };
+  reads.push(record);
+  return new ReadableStream<Uint8Array>({
+    pull(controller) {
+      if (record.read < until) {
+        const part = bytes.subarray(record.read, Math.min(until, record.read + chunk));
+        record.read += part.length;
+        controller.enqueue(new Uint8Array(part));
+        return undefined;
+      }
+      if (answer.endless) return new Promise<void>(() => {});
+      if (answer.cut !== undefined) {
+        record.end = 'errored';
+        controller.error(new TypeError('Failed to fetch'));
+      } else {
+        record.end = 'read';
+        controller.close();
+      }
+      return undefined;
+    },
+    cancel() { record.end = 'cancelled'; },
+  }, { highWaterMark: 0 });
+}
 /**
  * A ROUTED address's answer as a browser's fetch gives it: no answer rejects, as a network error
  * does. With `redirect: "manual"` a redirect is an opaque redirect, a response of type
@@ -383,7 +421,7 @@ function sentHeaders(method: string, headers: Record<string, string>, body: stri
  * its 3xx is the answer, followed or not. Each request a host receives, the first and each one a
  * redirect leads to, goes in `hops`, with its method and the HOP_HEADERS it carries.
  */
-function routed(asked: URL, init: RequestInit, hops: Loaded['hops']): Response {
+function routed(asked: URL, init: RequestInit, hops: Loaded['hops'], reads: BodyRead[]): Response {
   let at = asked;
   let method = String(init.method || 'GET').toUpperCase();
   let body = init.body == null ? null : String(init.body);
@@ -412,7 +450,7 @@ function routed(asked: URL, init: RequestInit, hops: Loaded['hops']): Response {
       continue;
     }
     const types = typeof answer.type === 'string' ? [answer.type] : answer.type;
-    const res = new Response(method === 'HEAD' ? null : answer.body, { status: answer.status || 200,
+    const res = new Response(method === 'HEAD' ? null : bodyStream(answer, at, answer.status || 200, reads), { status: answer.status || 200,
       headers: types.map(type => ['content-type', type] as [string, string]) });
     const landed = new URL(at.href);
     landed.hash = '';
@@ -421,10 +459,11 @@ function routed(asked: URL, init: RequestInit, hops: Loaded['hops']): Response {
 }
 
 interface Loaded { dom: JSDOM; document: Document; calls: Array<{ url: string; method: string }>; sent: Array<{ url: string; body: string }>;
-  hops: Array<{ url: string; method: string; body: string | null; headers: HopHeaders }>; pwned: string[]; errors: string[] }
+  hops: Array<{ url: string; method: string; body: string | null; headers: HopHeaders }>; reads: BodyRead[]; pwned: string[]; errors: string[] }
 
 function load(query: string, extra: Record<string, { type: string; text: string }> = {}): Loaded {
-  const calls: Loaded['calls'] = []; const sent: Loaded['sent'] = []; const hops: Loaded['hops'] = []; const pwned: string[] = []; const errors: string[] = [];
+  const calls: Loaded['calls'] = []; const sent: Loaded['sent'] = []; const hops: Loaded['hops'] = []; const reads: BodyRead[] = [];
+  const pwned: string[] = []; const errors: string[] = [];
   const virtualConsole = new VirtualConsole();
   virtualConsole.on('jsdomError', e => errors.push(String(e && (e.stack || e.message) || e)));
   const dom = new JSDOM(HTML, { url: PAGE + query, runScripts: 'dangerously', virtualConsole, beforeParse(window) {
@@ -444,7 +483,7 @@ function load(query: string, extra: Record<string, { type: string; text: string 
           hops.push({ url: u.href, method, body, headers: sentHeaders(method, initHeaders(init), body) });
           throw new TypeError('Failed to fetch');
         }
-        if (Object.prototype.hasOwnProperty.call(ROUTED, u.pathname)) return routed(u, init, hops);
+        if (Object.prototype.hasOwnProperty.call(ROUTED, u.pathname)) return routed(u, init, hops, reads);
         if (u.pathname === '/desc') return respond(JSON.stringify(descriptor), 'application/ld+json');
         if (u.pathname === '/hm') return respond(hyperMarkdown, 'text/markdown');
         if (u.pathname === '/ttl') {
@@ -464,7 +503,7 @@ function load(query: string, extra: Record<string, { type: string; text: string 
       },
     });
   } });
-  return { dom, document: dom.window.document, calls, sent, hops, pwned, errors };
+  return { dom, document: dom.window.document, calls, sent, hops, reads, pwned, errors };
 }
 
 // The page's own markup as a browser parses it: the parser, not a pattern, finds each element.
@@ -739,7 +778,7 @@ describe('hypermedia client: an invoke goes only where its dry run says, and onl
           .toEqual(landedAt ? [...reached, `${method} ${landedAt.origin === HOST ? landedAt.pathname : landedAt.href}`] : reached);
         if (method === 'GET' || method === 'HEAD') expect(sent.map(h => h.headers), title).toEqual(sent.map(() => OUTCOME_READ_HEADERS));
         const status = t.document.getElementById('status')!.textContent;
-        if ('refused' in end || 'loop' in end) {
+        if ('refused' in end || 'loop' in end || 'cut' in end) {
           expect([result.textContent, status], title).toEqual([expect.stringContaining('Failed to fetch'), 'Invoke failed: Failed to fetch']);
           expect(result.querySelector('.ok'), title).toBeNull();
           continue;
@@ -815,7 +854,7 @@ describe('hypermedia client: an invoke goes only where its dry run says, and onl
 describe('hypermedia client: a load whose requests fail, as hmc.py\'s', () => {
   const PROBLEMS = {
     'no answer': /^Failed to fetch$/,
-    // An answer past RESPONSE_MAX bytes is read no further, whatever its status.
+    // A 2xx answer past RESPONSE_MAX bytes is read no further and does not count; where none counts, the first is named.
     'too large': /^The answer to https:\/\/hostile\.example\/[\w-]+ is larger than 8388608 bytes, so it was not read\.$/,
     turtle: /^Descriptor arrived as Turtle, which this page does not parse\./,
     'none readable': /^Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from /,
@@ -828,7 +867,7 @@ describe('hypermedia client: a load whose requests fail, as hmc.py\'s', () => {
     try {
       const { document } = t;
       const status = () => document.getElementById('status')!.textContent!;
-      await vi.waitFor(() => expect(['list', 'error'], status()).toContain(document.documentElement.dataset['ready']));
+      await vi.waitFor(() => expect(['list', 'error'], status()).toContain(document.documentElement.dataset['ready']), { timeout: 10_000 });
       const path = address.split('?')[0]!;
       const requests = t.calls.map(c => new URL(c.url)).filter(u => u.pathname === path);
       const asked = [...new Set(requests.map(u => u.searchParams.get('format')))];
@@ -836,6 +875,13 @@ describe('hypermedia client: a load whose requests fail, as hmc.py\'s', () => {
       // Every request of a load, at each address a redirect leads it to, is a GET with the load's Accept.
       expect(t.hops.map(h => [h.method, h.headers]), status()).toEqual(t.hops.map(() => ['GET', LOAD_HEADERS]));
       if (outcome.requests !== undefined) expect(requests, status()).toHaveLength(outcome.requests);
+      // Each answer's body is read to its end when it is 2xx and RESPONSE_MAX bytes at most. One
+      // that is not 2xx is cancelled unread, since it does not count whatever it holds, and one
+      // longer is cancelled once past RESPONSE_MAX bytes. One the connection drops errs.
+      const expected = (b: BodyRead): [BodyRead['end'], number] => b.cut !== null ? ['errored', b.cut]
+        : b.status < 200 || b.status > 299 ? ['cancelled', 0]
+        : b.size > RESPONSE_MAX ? ['cancelled', Math.min(b.size, RESPONSE_MAX + 65_536)] : ['read', b.size];
+      expect(t.reads.map(b => [b.path, b.format, b.end, b.read]), status()).toEqual(t.reads.map(b => [b.path, b.format, ...expected(b)]));
       if (!('titles' in outcome)) {
         expect(document.documentElement.dataset['ready']).toBe('error');
         if (outcome.problem === 'refused') expect(status()).toBe(outcome.refused);

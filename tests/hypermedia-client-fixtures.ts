@@ -65,7 +65,10 @@ function deepScoped(base: string, path: string, scoped: 'type' | 'property') {
  *     it, as it refuses such an address, and sends nothing there; the page's browser reads the
  *     backslash as a slash and lands at `landed` (resolved against the host), which answers `answer`;
  *   - `loop`: a GET's or HEAD's redirect into a loop, along LOOP. The host receives the request this
- *     many times, 20 redirects followed and the 21st not, as fetch follows them: no answer.
+ *     many times, 20 redirects followed and the 21st not, as fetch follows them: no answer;
+ *   - `cut`: the address answered, and the connection closed `cut[0]` bytes into a body whose
+ *     Content-Length was `cut[1]` bytes more: no answer, as fetch rejects reading it, and hmc.py's
+ *     read raises IncompleteRead.
  * `landed` is written as fetch writes a response's url: no fragment, and `{`, `}` and the backtick
  * percent-encoded.
  */
@@ -74,7 +77,11 @@ export type InvokeEnd =
   | { readonly redirect: 301 | 302 | 303 | 307 | 308; readonly location: string | null }
   | { readonly refused: string }
   | { readonly backslash: string; readonly landed: string; readonly answer: number }
-  | { readonly loop: number };
+  | { readonly loop: number }
+  | { readonly cut: readonly [read: number, more: number] };
+/** A body the connection drops after CUT_AT bytes, short of the Content-Length it was sent with. */
+const CUT_BODY = 'line one\nline two\nline three\n';
+const CUT_AT = 18;
 /**
  * Where a loop row's request goes: the address it is sent to redirects to the second, and the second
  * and the third each to the other, so the 21st request goes to another address than the first.
@@ -121,6 +128,9 @@ const OUTCOMES: ReadonlyArray<readonly [title: string, method: string, answer: s
   ['GET backslash path', 'GET', 'backslash-path', { backslash: '/landing\\b', landed: '/landing/b', answer: 404 }],
   ['GET backslash host', 'GET', 'backslash-host', { backslash: '\\\\other.example/x', landed: 'https://other.example/x', answer: 404 }],
   ['GET 404 HTML', 'GET', '404-html', { answer: 404 }],
+  // An answer whose body the connection drops before its Content-Length, 2xx or not, is no answer.
+  ['GET cut short', 'GET', 'cut', { cut: [CUT_AT, CUT_BODY.length - CUT_AT] }],
+  ['GET 404 cut short', 'GET', '404-cut', { cut: [CUT_AT, CUT_BODY.length - CUT_AT] }],
   ...(['POST', 'GET'] as const).flatMap(method => [200, 300, 404, 500].map(status => [`${method} ${status}`, method, `${status}`, { answer: status }] as const)),
 ];
 const outcomeSlug = (title: string) => title.toLowerCase().replace(/ /g, '-');
@@ -3254,7 +3264,13 @@ export function jsonldRefusals(base: string): ReadonlyArray<readonly [path: stri
  * never finishes), or closes the connection without answering.
  */
 export type HostAnswer =
-  | { readonly status?: number; readonly type: string | readonly string[]; readonly body: string; readonly headBody?: true }
+  | { readonly status?: number; readonly type: string | readonly string[]; readonly body: string; readonly headBody?: true;
+    /** Sent in parts of this many bytes. */
+    readonly chunk?: number;
+    /** Sent with the whole body's Content-Length, but only this many bytes of it before the connection closes. */
+    readonly cut?: number;
+    /** Sent with a Content-Length past the body, which is sent, and then nothing, the connection held open. */
+    readonly endless?: true }
   | { readonly redirect: string; readonly status?: 301 | 302 | 303 | 307 | 308; readonly body?: string; readonly unending?: true }
   | 'no answer';
 
@@ -3291,8 +3307,9 @@ export const LOAD_HEADERS: HopHeaders = {
  * for none), served to both clients. The page's test answers its fetch with them as a browser's fetch
  * would: 'no answer' rejects, and a redirect is followed at most 20 times and only to https, which
  * the page's connect-src allows, while one with an empty Location is no redirect, as Chromium reads
- * it, and its 302 is the answer. hmc.py's test serves them on 127.0.0.1, destroying the socket for
- * 'no answer'.
+ * it, and its 302 is the answer; a body is a stream of `chunk` bytes at a time, and errs where it is
+ * `cut`, as fetch's body does when the connection drops. hmc.py's test serves them on 127.0.0.1,
+ * destroying the socket for 'no answer', and writing a `cut` answer's head and bytes itself.
  */
 export function fetchRoutes(base: string): Record<string, (format: string | null) => HostAnswer> {
   const markdown = (title: string): HostAnswer => ({ type: 'text/markdown', body: ['# Markdown', '',
@@ -3303,6 +3320,8 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
   const turtle: HostAnswer = { type: 'text/turtle', body: '@prefix dct: <http://purl.org/dc/terms/> .\n<> dct:title "From Turtle" .\n' };
   const missing: HostAnswer = { status: 404, type: 'text/plain', body: 'missing' };
   const KEPT = 'Kept markdown read';
+  const FOUR = ['# Markdown', '', ...['One', 'Two', 'Three', 'Four'].flatMap(title => [`:::control md-${title.toLowerCase()}`, `title: ${title}`,
+    'method: GET', `target: ${base}/api`, ':::', ''])].join('\n');
   // A body padded with spaces after it to `bytes` bytes.
   const padded = (body: string, bytes: number) => body + ' '.repeat(bytes - Buffer.byteLength(body));
   const reversed = (path: string): HostAnswer => ({ type: 'application/ld+json',
@@ -3344,13 +3363,32 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     // A load that follows two redirects, a 301 and then a 308, to a document: a GET on each hop.
     '/moved': () => ({ redirect: '/moved-on', status: 301 }),
     '/moved-on': () => ({ redirect: '/bom', status: 308 }),
-    // A descriptor of RESPONSE_MAX bytes, read; one of a byte more, which ends the load, named, as a
-    // request that gets no answer does; and a ?format=jsonld retry answered so, which leaves the first
-    // answer read. Each is JSON-LD a client would read, after whitespace that pads it to its size.
+    // A descriptor of RESPONSE_MAX bytes, read; one of a byte more in every format, which does not
+    // count, so each format is asked and the load ends naming its size; and a ?format=jsonld retry
+    // answered so, which leaves the first answer read. Each is JSON-LD a client would read, after
+    // whitespace that pads it to its size.
     '/largest-doc': () => ({ type: 'application/ld+json', body: padded(text('/largest-doc', 'Largest read'), RESPONSE_MAX) }),
     '/too-large-doc': () => ({ type: 'application/ld+json', body: padded(text('/too-large-doc', 'Too large read'), RESPONSE_MAX + 1) }),
     '/upgrade-too-large': f => f === 'jsonld'
       ? { type: 'application/ld+json', body: padded(text('/upgrade-too-large', 'Upgrade read'), RESPONSE_MAX + 1) } : markdown(KEPT),
+    // Answers that do not count whatever their body holds, so neither client reads it: a 404 of a byte
+    // more than RESPONSE_MAX, and one whose body never ends. And a 2xx page of a byte more, which does
+    // not count either. Each is asked for in other formats, as an answer that does not count is.
+    '/big-not-ok': f => f === 'jsonld' ? jsonld('/big-not-ok', 'Format read')
+      : f === null ? { status: 404, type: 'text/html', body: padded('<p>gone</p>', RESPONSE_MAX + 1) } : missing,
+    '/endless-not-ok': f => f === 'jsonld' ? jsonld('/endless-not-ok', 'Format read')
+      : f === null ? { status: 404, type: 'text/html', body: '<p>', endless: true } : missing,
+    '/big-html': f => f === 'jsonld' ? jsonld('/big-html', 'Format read')
+      : f === null ? { type: 'text/html', body: padded('<p>page</p>', RESPONSE_MAX + 1) } : missing,
+    // A body the connection drops before the Content-Length it was sent with is no answer: HyperMarkdown
+    // of four controls cut after two, which ends the load, and a ?format=jsonld retry cut halfway,
+    // which leaves the first answer read, the retry being optional.
+    '/cut-doc': () => ({ type: 'text/markdown', body: FOUR, cut: FOUR.indexOf(':::control md-three') }),
+    '/upgrade-cut': f => f === 'jsonld'
+      ? { type: 'application/ld+json', body: text('/upgrade-cut', 'Cut read'), cut: Math.floor(text('/upgrade-cut', 'Cut read').length / 2) } : markdown(KEPT),
+    // JSON-LD after a byte order mark, with an é in its title, sent a byte at a time, so the mark and
+    // the é each arrive split across parts.
+    '/split': () => ({ type: 'application/ld+json', body: '\ufeff' + text('/split', 'Split é read'), chunk: 1 }),
     // An address that names Turtle, which a client that cannot read it asks for again as JSON-LD.
     '/named-ttl': f => f === 'jsonld' ? jsonld('/named-ttl', 'Named format read') : f === 'turtle' ? turtle : missing,
     // Where /outcomes' controls send, whatever the method: each redirect status to /landing, a
@@ -3370,6 +3408,8 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     '/answer/backslash-path': () => ({ redirect: '/landing\\b', status: 302 }),
     '/answer/backslash-host': () => ({ redirect: '\\\\other.example/x', status: 302 }),
     '/answer/404-html': () => ({ status: 404, type: 'text/html', body: '<p>gone</p>' }),
+    '/answer/cut': () => ({ type: 'text/plain', body: CUT_BODY, cut: CUT_AT }),
+    '/answer/404-cut': () => ({ status: 404, type: 'text/plain', body: CUT_BODY, cut: CUT_AT }),
     ...Object.fromEntries([200, 300, 404, 500].map(status => [`/answer/${status}`, () => ({ status, type: 'text/plain', body: `answered ${status}` })])),
     '/landing': () => ({ type: 'text/plain', body: LANDING_BODY }),
     '/landing%7B%60%7D': () => ({ type: 'text/plain', body: LANDING_BODY }),
@@ -3383,7 +3423,8 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
  * What both clients make of loading each address above, as [address, outcome]. `asked` is the
  * formats requested there, each the first time it is (null for the address as given), and
  * `requests`, when given, how many requests went there. An outcome lists exactly `titles`, or fails
- * with `problem`: 'no answer' names the request that got none, 'turtle' names the Turtle answer kept,
+ * with `problem`: 'no answer' names the request that got none, 'too large' the first answer longer
+ * than RESPONSE_MAX bytes, where none counts, 'turtle' names the Turtle answer kept,
  * which neither client reads without a Turtle parser, 'none readable' names the address, and
  * 'refused' is the problem of the JSON-LD a retry answered. `refused` is that problem as both
  * clients word it (true where each words it its own way, as JSON.parse and Python's json word a
@@ -3418,8 +3459,14 @@ export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: Fetc
   ['/moved', { asked: [null], titles: ['BOM read'] }],
   ['/named-ttl?format=turtle', { asked: ['turtle', 'jsonld'], titles: ['Named format read'], withTurtle: ['turtle'] }],
   ['/largest-doc', { asked: [null], titles: ['Largest read'] }],
-  ['/too-large-doc', { asked: [null], problem: 'too large' }],
+  ['/too-large-doc', { asked: [null, 'jsonld', 'turtle', 'markdown'], problem: 'too large' }],
   ['/upgrade-too-large', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/big-not-ok', { asked: [null, 'jsonld'], titles: ['Format read'] }],
+  ['/endless-not-ok', { asked: [null, 'jsonld'], titles: ['Format read'] }],
+  ['/big-html', { asked: [null, 'jsonld'], titles: ['Format read'] }],
+  ['/cut-doc', { asked: [null], problem: 'no answer' }],
+  ['/upgrade-cut', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
+  ['/split', { asked: [null], titles: ['Split é read'] }],
 ];
 
 /**
