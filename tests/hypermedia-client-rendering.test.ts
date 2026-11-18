@@ -27,7 +27,7 @@ import { describe, expect, it, vi } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES,
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
   LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES,
-  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, type HopHeaders } from './hypermedia-client-fixtures.js';
+  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -464,7 +464,9 @@ function load(query: string, extra: Record<string, { type: string; text: string 
   return { dom, document: dom.window.document, calls, sent, hops, pwned, errors };
 }
 
-const STYLE = (/<style>([\s\S]*?)<\/style>/.exec(HTML) || [])[1] || '';
+// The page's own markup as a browser parses it: the parser, not a pattern, finds each element.
+const PARSED = new JSDOM(HTML).window.document;
+const STYLE = PARSED.querySelector('style')?.textContent || '';
 const STYLE_CLASSES = new Set([...STYLE.matchAll(/\.([a-z][a-z0-9-]*)/g)].map(m => m[1]!));
 const PAGE_IDS = new Set(['url', 'loadBtn', 'backBtn', 'proxy', 'status', 'meta', 'list', 'detail', 'invokeForm',
   'confirmUnsafe', 'liveBtn', 'result']);
@@ -2188,14 +2190,54 @@ describe('hypermedia client: one list of choices for many inputs', () => {
   }, 60_000);
 });
 
+describe('hypermedia client: one budget of work for each thing a person asks of a document', () => {
+  // The page's list by a link that loads the document, then its control by a link that dry-runs it:
+  // each within the tests' budget, showing a few bytes for each of the document's, sending nothing,
+  // and refused by name where the work its document asks passes what its size allows.
+  it.each(WORK_CASES)('reads %s and dry-runs %s within the budget, or refuses by name where it is past it', async (path, rel, refused, dryRun, sent) => {
+    const size = Buffer.byteLength(COST[path]!);
+    const problem = workProblem(size);
+    for (const query of [`?url=${encodeURIComponent(HOST + path)}&autoload=1`, `?url=${encodeURIComponent(HOST + path)}&invoke=${encodeURIComponent(rel)}&dry=1`]) {
+      const started = Date.now();
+      const t = load(query);
+      try {
+        const { document } = t;
+        const ready = () => document.documentElement.dataset['ready'];
+        await vi.waitFor(() => expect(ready(), document.getElementById('status')!.textContent!).toMatch(/^(list|done|error)$/), { timeout: 60_000 });
+        expect(Date.now() - started, query).toBeLessThan(3_000);
+        expect(document.body.innerHTML.length, 'page shown').toBeLessThan(HTML.length + 8 * size);
+        expect(t.calls.filter(call => call.url.startsWith(`${HOST}/api`)), 'sent').toEqual([]);
+        if (refused.includes('read')) {
+          expect([ready(), document.getElementById('status')!.textContent]).toEqual(['error', problem]);
+          expect(document.querySelectorAll('.card')).toHaveLength(0);
+          continue;
+        }
+        if (query.includes('autoload')) { expect(ready()).toBe('list'); continue; }
+        expect(ready()).toBe('done');
+        const shown = (document.querySelector('#detail .warn')?.textContent || '') + (document.getElementById('result')?.textContent || '');
+        if (refused.includes('control')) {
+          expect(document.getElementById('invokeForm')).toBeNull();
+          expect(document.querySelector('#detail .warn')!.textContent).toContain(problem);
+        } else if (refused.includes('request')) {
+          expect(shown).toContain(workProblem(size + Buffer.byteLength(JSON.stringify(sent))));
+        } else if (dryRun) {
+          expect(shown).toContain(dryRun);
+        } else expect(shown).toContain('Dry run — nothing was sent.');
+      } finally { t.dom.window.close(); }
+    }
+  }, 60_000);
+});
+
 describe('hypermedia client: Content-Security-Policy', () => {
-  const meta = /<meta http-equiv="Content-Security-Policy" content="([^"]+)">/.exec(HTML);
-  const policy = new Map((meta?.[1] || '').split(';').map(d => d.trim().split(/\s+/)).filter(d => d[0]).map(d => [d[0]!, d.slice(1)]));
+  const meta = PARSED.querySelector('meta[http-equiv="Content-Security-Policy"]');
+  const policy = new Map((meta?.getAttribute('content') || '').split(';').map(d => d.trim().split(/\s+/)).filter(d => d[0]).map(d => [d[0]!, d.slice(1)]));
   const sha = (text: string) => `'sha256-${createHash('sha256').update(text, 'utf8').digest('base64')}'`;
 
   it('is declared before any style or script, and is strict', () => {
     expect(meta, 'CSP meta').not.toBeNull();
-    expect(HTML.indexOf('http-equiv="Content-Security-Policy"')).toBeLessThan(HTML.indexOf('<style>'));
+    for (const e of PARSED.querySelectorAll('style, script')) {
+      expect(meta!.compareDocumentPosition(e) & PARSED.defaultView!.Node.DOCUMENT_POSITION_FOLLOWING, e.localName).toBeTruthy();
+    }
     expect(policy.get('default-src')).toEqual(["'none'"]);
     expect(policy.get('connect-src')).toEqual(['https:']);
     expect(policy.get('object-src')).toEqual(["'none'"]);
@@ -2209,9 +2251,8 @@ describe('hypermedia client: Content-Security-Policy', () => {
 
   it('names the exact hash of the inline script and the inline style', () => {
     // Read as a browser reads the file: the parser, not a pattern, decides what is a script or a style.
-    const parsed = new JSDOM(HTML).window.document;
-    const scripts = [...parsed.querySelectorAll('script')].map(e => e.textContent!);
-    const styles = [...parsed.querySelectorAll('style')].map(e => e.textContent!);
+    const scripts = [...PARSED.querySelectorAll('script')].map(e => e.textContent!);
+    const styles = [...PARSED.querySelectorAll('style')].map(e => e.textContent!);
     expect(scripts).toHaveLength(1);
     expect(styles).toHaveLength(1);
     expect(policy.get('script-src')).toEqual([sha(scripts[0]!)]);
@@ -2219,12 +2260,15 @@ describe('hypermedia client: Content-Security-Policy', () => {
   });
 
   it('has no inline event handler, style attribute or script URL that the policy would block', () => {
-    const parsed = new JSDOM(HTML).window.document;
-    for (const e of parsed.querySelectorAll('script, style')) e.remove();
-    const markup = parsed.documentElement.outerHTML;
-    expect(markup).not.toMatch(/\son[a-z]+\s*=/i);
-    expect(markup).not.toMatch(/javascript:/i);
+    // Each attribute of each element the parser builds, read from the DOM.
+    for (const e of PARSED.querySelectorAll('*')) {
+      for (const attr of e.attributes) {
+        expect(attr.name.startsWith('on'), `${e.localName} ${attr.name}`).toBe(false);
+        expect(attr.name, e.localName).not.toBe('style');
+        expect(attr.value.trim().toLowerCase().startsWith('javascript:'), `${e.localName} ${attr.name}`).toBe(false);
+      }
+    }
     // The script writes markup too; a style attribute there would be refused under style-src.
-    expect(HTML).not.toMatch(/\sstyle=/);
+    expect(PARSED.querySelector('script')!.textContent!.includes(' style=')).toBe(false);
   });
 });

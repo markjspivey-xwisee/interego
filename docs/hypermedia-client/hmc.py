@@ -12,6 +12,7 @@ Nothing here is specific to a particular glossary or catalog.
 from __future__ import annotations
 
 import argparse
+import contextlib
 import copy
 import encodings.idna as _idna_codec
 import heapq
@@ -25,6 +26,7 @@ import textwrap
 import urllib.error
 import urllib.parse
 import urllib.request
+from collections.abc import Iterator, Sequence
 from dataclasses import dataclass, field
 from typing import Any
 
@@ -505,13 +507,15 @@ def _js_string(text: str) -> str:
     return _SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), out) if _SURROGATE.search(out) else out
 
 
-def _js_json(value: Any, indent: int | None = None) -> str:
+def _js_json(value: Any, indent: int | None = None, named: dict[float, dict[str, str]] | None = None) -> str:
     """JSON text as the page's JSON.stringify(value, null, indent) writes it:
     each number as JavaScript writes it (a JSON 1.0 is 1, 1e-7 is 1e-7, -0 is
     0) and NaN or an infinity as null; an object's keys in the order
     JavaScript keeps them (see _js_keys); and with `indent`, each member on a
-    line of its own, as json.dumps(indent=) lays it out too. Built with a
-    stack, so a value as deep as json.loads reads costs no recursion."""
+    line of its own, as json.dumps(indent=) lays it out too. With `named`,
+    a number written otherwise than its double is written as its document
+    writes it (_named_text). Built with a stack, so a value as deep as
+    json.loads reads costs no recursion."""
     pad = " " * indent if indent else ""
     parts: list[str] = []
     # Each entry is (True, text written as it is) or (False, a value, its depth).
@@ -526,6 +530,8 @@ def _js_json(value: Any, indent: int | None = None) -> str:
             parts.append("true" if item else "false")
         elif isinstance(item, str):
             parts.append(_js_string(item))
+        elif named is not None and isinstance(item, (int, float)) and _number_name(item, named) is not None:
+            parts.append(str(_number_name(item, named)))
         elif isinstance(item, int):
             parts.append(str(item))
         elif isinstance(item, float):
@@ -925,11 +931,109 @@ IRI_BUDGET_PER_UNIT = 8
 IRI_BUDGET_FIXED = 1_000_000
 EXPANSION_PROBLEM = ("This document's prefixes, terms, @vocab and @base expand its IRIs to far more text than the document holds, "
                      "which this client does not read, so it is not read.")
+# One budget of work for each thing a person asks of a document: reading it,
+# listing it, opening one control (describe, and invoke before it checks a
+# value), checking the values given, and building the request. Work is counted
+# in units: a UTF-16 code unit of text a prefix, a term, @vocab or @base
+# expands to (_Budget.charge), or that a control or a field carries into what
+# is shown or written (_control_texts, _field_texts), or that a template
+# expands to or a request holds; CONTROL_WORK for each control read or shown;
+# FIELD_WORK for each field a control uses, however many controls share it,
+# and for each field shown; and one for each value checked. A document of n
+# bytes (its text in UTF-8, as received) allows WORK_PER_BYTE * n units, and
+# WORK_FLOOR at least; checking values also allows WORK_PER_BYTE units for
+# each byte given, and building a request for each byte of the values it
+# sends, as JSON writes them. Past it, the step stops and is refused by name
+# (_work_problem): the document as it is read or listed, the control as it is
+# opened, the request as it is checked or built; nothing is written in part
+# and nothing is sent. So no shape of document, however its controls share
+# what they name, makes either client do or write more than a few times its
+# size; the specific limits above (CONTEXT_BUDGET, the IRI budget, the
+# listing budget, shared lists and texts refused) still name their own
+# problems first. The page's WORK_PER_BYTE, WORK_FLOOR, CONTROL_WORK,
+# FIELD_WORK and workProblem are the same.
+WORK_PER_BYTE = 64
+WORK_FLOOR = 2_000_000
+CONTROL_WORK = 16
+FIELD_WORK = 8
+
+
+def _work_problem(allowed: int, size: int) -> str:
+    return f"This document asks for more work than its size allows ({allowed} units for {size} bytes); nothing was sent."
+
+
+class WorkExceeded(Exception):
+    """A step's work passed what its document's size allows (_Work). Not a
+    ValueError, so no reading of a value or a document takes it for its own
+    problem: it ends the step."""
+
+
+class _Work:
+    """One step's budget of work: WORK_PER_BYTE units for each of `size`
+    bytes, and WORK_FLOOR at least."""
+
+    def __init__(self, size: int) -> None:
+        self.size = size
+        self.allowed = max(WORK_FLOOR, WORK_PER_BYTE * size)
+        self.left = self.allowed
+
+    def spend(self, units: int) -> None:
+        self.left -= units
+        if self.left < 0:
+            raise WorkExceeded(_work_problem(self.allowed, self.size))
+
+
+# The step under way, whose budget each charge (_spend) counts against; none outside a step.
+_WORK: list[_Work | None] = [None]
+
+
+def _spend(units: int) -> None:
+    work = _WORK[0]
+    if work is not None:
+        work.spend(units)
+
+
+@contextlib.contextmanager
+def _working(size: int) -> Iterator[_Work]:
+    """A step of work for a document of `size` bytes: each charge while it
+    runs is counted against its budget, which a nested step does not share."""
+    previous = _WORK[0]
+    _WORK[0] = work = _Work(size)
+    try:
+        yield work
+    finally:
+        _WORK[0] = previous
+
+
+def _utf8_length(text: str) -> int:
+    """A text's size in bytes, as UTF-8 writes it."""
+    return len(text.encode("utf-8", "surrogatepass"))
+
+
+def _json_size(value: Any) -> int:
+    """What a JSON value a field carries costs to show: its strings' and
+    keys' UTF-16 code units, and one for each other value, array and object.
+    A walk with a stack. The page's jsonSize is the same."""
+    total = 0
+    stack = [value]
+    while stack:
+        item = stack.pop()
+        if isinstance(item, str):
+            total += _utf16_length(item)
+        elif isinstance(item, dict):
+            total += 1 + sum(_utf16_length(str(key)) for key in item)
+            stack.extend(item.values())
+        elif isinstance(item, (list, tuple)):
+            total += 1
+            stack.extend(item)
+        elif item is not None:
+            total += 1
+    return total
 
 
 def _utf16_length(text: str) -> int:
     """A string's length as JavaScript counts it, in UTF-16 code units."""
-    return len(text) if text.isascii() else len(text.encode("utf-16-le")) // 2
+    return len(text) if text.isascii() else len(text.encode("utf-16-le", "surrogatepass")) // 2
 
 
 class _Budget:
@@ -938,6 +1042,8 @@ class _Budget:
         self.iris = IRI_BUDGET_PER_UNIT * size + IRI_BUDGET_FIXED
         # Whether expansions are charged: while a document is read.
         self.charging = False
+        # Whether the document names a remote @context, whose terms this client does not know (REMOTE_SCHEMA).
+        self.remote = False
 
     def spend(self, amount: int) -> None:
         self.left -= amount
@@ -947,9 +1053,11 @@ class _Budget:
     def charge(self, value: Any, out: Any) -> Any:
         """An expansion's result, charged when it is one: text other than the value expanded."""
         if self.charging and isinstance(out, str) and out != value:
-            self.iris -= _utf16_length(out)
+            length = _utf16_length(out)
+            self.iris -= length
             if self.iris < 0:
                 raise ValueError(EXPANSION_PROBLEM)
+            _spend(length)
         return out
 
 
@@ -1003,6 +1111,14 @@ def _in_schema(what: str) -> ValueError:
     return ValueError(f"This document writes {what} in a JSON Schema, which this client does not read as JSON-LD, so it is not read.")
 
 
+# What a document that names a remote @context and writes a JSON Schema in place
+# under hydra:expects is refused with: the remote context may name any of the
+# schema's keywords as a term, which JSON-LD would read, and this client does
+# not fetch it to know. The page's REMOTE_SCHEMA is the same.
+REMOTE_SCHEMA = ("This document names a remote @context, which this client does not fetch, so what the keys of a JSON Schema "
+                 "written in it mean is not known, and it is not read.")
+
+
 def _holds_node(ctx: "Context", value: Any) -> bool:
     """Whether a value written in a JSON Schema holds, at any depth, what
     JSON-LD reads as a node: an object with an @id, with a key the context
@@ -1036,11 +1152,19 @@ def _schema_hides(ctx: "Context", root: dict[str, Any]) -> None:
     that holds what JSON-LD reads and this client, which reads it as JSON
     Schema, does not: at its top, a JSON-LD keyword other than its own @id and
     @type; in it or any schema inside it, a node (_holds_node) under a key that
-    is no JSON Schema keyword or under a JSON-LD keyword; and, in a schema with
-    an @id, a key the context expands to an IRI, which says something of the
-    node it names. A hint written there would otherwise be passed over, as
-    JSON-LD reads it. Each object's keys are taken in sorted order, the schemas
-    inside it after. The page's schemaHides is the same."""
+    is no JSON Schema keyword or under a JSON-LD keyword; a key that is no
+    JSON Schema keyword and that the context expands to an IRI, which JSON-LD
+    reads as a property, of the node the schema names when it has an @id; and,
+    in it or any schema inside it, a JSON Schema keyword the document's context
+    gives a meaning (Context.gives_meaning: a term of that name, or @vocab),
+    which JSON-LD reads as a property, with what is under it. A document that
+    names a remote @context may give any keyword a meaning, so a schema written
+    in place in it is refused (REMOTE_SCHEMA). A hint written there would
+    otherwise be passed over, as JSON-LD reads it. Each object's keys are taken
+    in sorted order, the schemas inside it after. The page's schemaHides is the
+    same."""
+    if ctx.budget.remote:
+        raise ValueError(REMOTE_SCHEMA)
     stack: list[tuple[Any, bool]] = [(root, True)]
     while stack:
         schema, top = stack.pop()
@@ -1061,6 +1185,8 @@ def _schema_hides(ctx: "Context", root: dict[str, Any]) -> None:
                     raise _in_schema(keyword)
                 continue
             if key in _SCHEMA_KEYWORDS:
+                if ctx.gives_meaning(key):
+                    raise _in_schema(f"{_js_string(key)}, a key its @context gives a meaning,")
                 if key in _SCHEMA_MAPS and isinstance(value, dict):
                     inside.extend(value[name] for name in sorted(value, key=_utf16_key))
                 elif key in _SCHEMA_ONE or key in _SCHEMA_MANY:
@@ -1068,8 +1194,9 @@ def _schema_hides(ctx: "Context", root: dict[str, Any]) -> None:
                 continue
             if _holds_node(ctx, value):
                 raise _in_schema(f"a node under {_js_string(key)}")
-            if named and ":" in ctx.expand_key(key):
-                raise _in_schema(f"{_js_string(key)} beside its own @id")
+            if ":" in ctx.expand_key(key):
+                raise _in_schema(f"{_js_string(key)} beside its own @id" if named
+                                 else f"{_js_string(key)}, a key its @context gives a meaning,")
         stack.extend((item, False) for item in reversed(inside))
 
 
@@ -1244,6 +1371,9 @@ class Context:
                 self._made = {}
                 continue
             if not isinstance(item, dict):
+                if isinstance(item, str):
+                    # A remote context: its terms are not known (REMOTE_SCHEMA).
+                    self.budget.remote = True
                 continue
             self.budget.spend(len(item) + 1)
             if "@import" in item:
@@ -1452,6 +1582,15 @@ class Context:
 
     def _keyword(self, key: str) -> str | None:
         return key if key.startswith("@") else self.aliases.get(key)
+
+    def gives_meaning(self, key: str) -> bool:
+        """Whether this context makes a key that is no keyword a property, as
+        JSON-LD reads it: a term of that name, or any key where @vocab is set,
+        unless the key is a term set to null. This client's own names
+        (TERM_FALLBACKS) are not counted: they stand in for a remote context,
+        which a document that names one is refused for (REMOTE_SCHEMA). The
+        page's givesMeaning is the same."""
+        return key not in self.nulled and (key in self.terms or self.vocab is not None)
 
     def _wrapper(self, item: dict[str, Any], member: bool) -> str | None:
         """The key holding what `item` wraps, when it is a @set object or, as
@@ -2016,7 +2155,8 @@ def _built_on_read(name: str) -> property:
         if build is not None:
             try:
                 built = build()
-            except _Unlisted:
+            except BaseException:
+                # Not built (past list's budget, or a step's): built when next read.
                 self.__dict__["_build"] = build
                 raise
             for key, value in zip(_BUILT_ON_READ, built):
@@ -2031,6 +2171,48 @@ def _built_on_read(name: str) -> property:
 
 for _name in _BUILT_ON_READ:
     setattr(Control, _name, _built_on_read(_name))
+
+
+def _control_texts(control: Control) -> int:
+    """The text a control carries into what is shown or written of it, in
+    UTF-16 code units: its @id, name, method, title, description, media type,
+    what it expects and returns, its target, its template and its types. The
+    page's controlTexts is the same."""
+    texts = (control.id, control.rel, control.method, control.title, control.description, control.media_type, control.expects,
+             control.returns, control.target, control.template, *control.types)
+    return sum(_utf16_length(text) for text in texts if isinstance(text, str))
+
+
+def _field_texts(fld: Field) -> int:
+    """The text a field carries into what is shown or written of it: its
+    name, path, datatype, pattern and description, its default and each of
+    its entries (_json_size). The page's fieldTexts is the same."""
+    texts = (fld.name, fld.path, fld.datatype, fld.pattern, fld.description)
+    return (sum(_utf16_length(text) for text in texts if isinstance(text, str)) + _json_size(fld.default)
+            + sum(_json_size(entry) for entry in fld.enum))
+
+
+def _charge_read(control: Control, problems: list[str]) -> None:
+    """Charges a control read from a document (_spend): CONTROL_WORK, the
+    text it carries and the problems reading it gave, however many controls
+    share what they name, as a target or a template. The page's chargeRead
+    is the same."""
+    _spend(CONTROL_WORK + _control_texts(control) + sum(_utf16_length(problem) for problem in problems))
+
+
+def _charge_shown(control: Control) -> None:
+    """Charges showing a control, as the page does when it is opened and
+    describe and invoke do: it builds its fields, then CONTROL_WORK, the text
+    it carries, its problem and its warning; and, for a control that is
+    invoked, FIELD_WORK and the text of each field, one at a time, so a
+    step past its budget stops at the field that passes it. The page's
+    chargeShown is the same."""
+    problem = control.problem
+    warning = control.warning
+    _spend(CONTROL_WORK + _control_texts(control) + _utf16_length(problem or "") + _utf16_length(warning or ""))
+    if not problem:
+        for fld in control.fields:
+            _spend(FIELD_WORK + _field_texts(fld))
 
 
 @dataclass
@@ -2048,6 +2230,8 @@ class Descriptor:
     # retry answered, the authority for this answer, was refused.
     problem: str | None = None
     index: Any = None
+    # Its text's size in bytes as received, which sets each step's budget of work (_Work).
+    size: int = 0
 
     def listing(self) -> list[bool]:
         """Builds each control's fields for list and list --json, in the
@@ -2115,7 +2299,9 @@ class Descriptor:
         templateFields the place of its template's fields, which follow its
         own and which the controls that share the template share (_Joined), or
         None. What is written grows with the document, never with the product
-        of its controls and the fields, lists or texts they share."""
+        of its controls and the fields, lists or texts they share: each field,
+        list and control is charged as it is written (_spend), so one step of
+        work writes all of it or, past its budget, none."""
         fields: list[dict[str, Any]] = []
         field_at: dict[int, tuple[Field, int]] = {}
         in_lists: list[list[Any]] = []
@@ -2128,6 +2314,7 @@ class Descriptor:
         def place_of(fld: Field) -> int:
             hit = field_at.get(id(fld))
             if hit is None or hit[0] is not fld:
+                _spend(FIELD_WORK + _field_texts(fld))
                 public = fld.to_public()
                 choices = fld.enum
                 if choices:
@@ -2145,6 +2332,7 @@ class Descriptor:
         def list_of(items: list[Field]) -> int:
             hit = listed.get(id(items))
             if hit is None or hit[0] is not items:
+                _spend(len(items))
                 places = tuple(place_of(fld) for fld in items)
                 if places not in list_at:
                     list_at[places] = len(field_lists)
@@ -2154,6 +2342,7 @@ class Descriptor:
         controls = []
         for control, whole in zip(self.controls, built):
             public = control.to_public(with_fields=False, unlisted=not whole)
+            _spend(CONTROL_WORK + _control_texts(control) + _utf16_length(public["problem"] or "") + _utf16_length(public["warning"] or ""))
             own = template = None
             if whole and not control.problem:
                 built = control.fields
@@ -2272,7 +2461,7 @@ class NodeIndex:
         # however many shapes name the node (_cached_field), and each template's
         # own fields, built once from its mappings alone (_template_fields);
         # keyed by the node's or the mappings' id(), which is kept.
-        self.fields: dict[int, tuple[Any, Field | None, list[str]]] = {}
+        self.fields: dict[tuple[int, Any], tuple[Any, Field | None, list[str]]] = {}
         self.mapped: dict[int, tuple[Any, _TemplateFields]] = {}
         self._ingest_document(document, fetched_from)
 
@@ -3107,18 +3296,23 @@ def _shape_fields(index: NodeIndex, shape_ref: Any) -> tuple[list[Field], list[s
 
 def _cached_field(index: NodeIndex, ref: Any, problems: list[str], build: Any) -> Field | None:
     """The field a property shape or a hydra:SupportedProperty gives, built
-    once per node however many shapes or classes name it, with the problems
-    reading it gave, added to `problems` each time: many shapes that name one
-    node share one Field, so what is written of it, a long description among
-    the rest, is written once (Descriptor.to_public). The page builds a
-    control's fields only when it is opened, so it needs no such cache."""
+    once per node and builder however many shapes or classes name it, with
+    the problems reading it gave, added to `problems` each time: many shapes
+    that name one node share one Field, so what is written of it, a long
+    description among the rest, is written once (Descriptor.to_public). A
+    node one shape names as a property shape and a class as a supported
+    property is read by each builder as its own kind, since the two read it
+    differently (path, name, required, writable): a field built one way is
+    never the other's. The page builds a control's fields only when it is
+    opened, so it needs no such cache."""
     node = _node_of(index, ref)
     if node is None:
         return build(index, ref, problems)
-    hit = index.fields.get(id(node))
+    key = (id(node), build)
+    hit = index.fields.get(key)
     if hit is None or hit[0] is not node:
         own: list[str] = []
-        hit = index.fields[id(node)] = (node, build(index, ref, own), own)
+        hit = index.fields[key] = (node, build(index, ref, own), own)
     problems.extend(hit[2])
     return hit[1]
 
@@ -3616,16 +3810,34 @@ def _joins_as_is(fields: list[Field], template: _TemplateFields) -> bool:
     return True
 
 
-class _Joined(list):  # type: ignore[type-arg]
+class _Joined(Sequence):  # type: ignore[type-arg]
     """A control's own fields, then its template's (_TemplateFields), as one
-    list: list and list --json name the template's for each control that
-    shares them, and write them once."""
+    sequence that reads both lists in place and copies neither: each control
+    that shares the template holds its own fields and the template, so many
+    controls and many mappings cost their sum, not their product, and list
+    and list --json name the template's fields for each control that shares
+    them, and write them once."""
 
     def __init__(self, own: list[Field], template: _TemplateFields) -> None:
-        super().__init__(own)
-        self.extend(template.fields)
         self.own = own
         self.template = template
+
+    def __len__(self) -> int:
+        return len(self.own) + len(self.template.fields)
+
+    def __getitem__(self, at: Any) -> Any:
+        if isinstance(at, slice):
+            return list(self)[at]
+        size = len(self)
+        if at < 0:
+            at += size
+        if not 0 <= at < size:
+            raise IndexError(at)
+        return self.own[at] if at < len(self.own) else self.template.fields[at - len(self.own)]
+
+    def __iter__(self) -> Iterator[Field]:
+        yield from self.own
+        yield from self.template.fields
 
 
 def _joined_duplicate_problem(own: list[Field], template: _TemplateFields) -> str | None:
@@ -3918,6 +4130,7 @@ def control_from_node(index: NodeIndex, node: dict[str, Any], source: str) -> Co
         conflict=problems[0] if problems else None,
     )
     control.__dict__["_build"] = lambda: _control_inputs(index, node, expects_raw, expects, mappings)
+    _charge_read(control, problems)
     return control
 
 
@@ -3965,7 +4178,7 @@ def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, ex
     result, built once (index.inputs): list writes their fields once."""
     inline = _inline_fields(node)
     if inline is not None:
-        return _read_control_inputs(index, node, expects_raw, expects, mappings)
+        return _charged_inputs(_read_control_inputs(index, node, expects_raw, expects, mappings))
     raw = _json_value(expects_raw)
     if expects_raw is not None and _is_json_schema(raw):
         # A JSON Schema written in place is its text: controls whose schemas
@@ -3980,7 +4193,16 @@ def _control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, ex
     hit = index.inputs.get(key)
     if hit is None or hit[0][0] is not kept or (mappings and hit[0][1] is not mappings):
         hit = index.inputs[key] = ((kept, mappings), _read_control_inputs(index, node, expects_raw, expects, mappings))
-    return hit[1]
+    return _charged_inputs(hit[1])
+
+
+def _charged_inputs(inputs: tuple[Any, str | None, str | None]) -> tuple[Any, str | None, str | None]:
+    """A control's inputs, charged FIELD_WORK for each field it has, a
+    template's it shares and a property's many shapes name among them: each
+    control uses each, however many controls share it. The page's
+    controlInputs charges the same."""
+    _spend(FIELD_WORK * len(inputs[0]))
+    return inputs
 
 
 def _read_control_inputs(index: NodeIndex, node: dict[str, Any], expects_raw: Any, expects: Any,
@@ -4136,6 +4358,7 @@ def extract_controls(index: NodeIndex, source: str) -> list[Control]:
             found[key] = control
             continue
         first.conflict = f"two controls are both named {key}, so which one is meant is not known; this control is not invoked"
+        _spend(_utf16_length(first.conflict))
     controls = list(found.values())
     controls.sort(key=lambda c: (0 if not c.unsafe else 1, c.method, (c.title or c.rel).lower()))
     return controls
@@ -4243,7 +4466,7 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
                                 "invoked")
             else:
                 if isinstance(listed, list) and all(isinstance(item, dict) for item in listed):
-                    inexact = {number for _, number in _changed_numbers(given["fields"][-1])}
+                    inexact = _document_numbers(given["fields"][-1])
                     fields = [_inline_field(item, inexact) for item in listed]
                     unread_key = _inline_key_problem(listed)
                     if unread_key is not None:
@@ -4261,7 +4484,7 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
         # No method is POST here as in a JSON-LD control, as the substrate's HyperMarkdown lift reads it.
         methods = [m for m in dict.fromkeys(_unquote(v).upper() for v in given.get("method", [])) if m]
         method = next((m for m in methods if m not in SAFE_METHODS), None) or (methods[0] if methods else "POST")
-        controls.append(Control(
+        control = Control(
             id=ident if ident.startswith("http") else f"{url}#{ident}",
             rel=rel, method=method,
             title=_text(data.get("title")) or short_rel(rel),
@@ -4271,7 +4494,10 @@ def parse_markdown_descriptor(text: str, url: str, content_type: str) -> Descrip
             fields=fields, source=url, destructive=destructive, read_only=read_only, conflict=problems[0] if problems else None,
             # A block never describes the shape it expects, so only its fields written in place are known.
             warning=_expects_warning(data["expects"], bool(fields)) if isinstance(data.get("expects"), str) and data["expects"] else None,
-        ))
+        )
+        _charge_read(control, problems)
+        _spend(FIELD_WORK * len(fields))
+        controls.append(control)
     title_match = re.search(r"^#[ \t]+(.+)$", text, re.MULTILINE)
     title = title_match.group(1) if title_match else local_name(url) or url
     return Descriptor(
@@ -4667,22 +4893,31 @@ def parse_turtle_via_rdflib(text: str, url: str) -> Any:
     return json.loads(graph.serialize(format="json-ld"))
 
 
-def parse_descriptor(text: str, content_type: str, url: str, fetched_from: str | None = None) -> Descriptor:
+def parse_descriptor(text: str, content_type: str, url: str, fetched_from: str | None = None, size: int | None = None) -> Descriptor:
+    """The descriptor a text holds, read in one step of work (_working) that
+    its size in bytes, as received, sets: `size` for Turtle read again as the
+    JSON-LD rdflib writes. The page's parseDescriptor is the same."""
+    size = _utf8_length(text) if size is None else size
     kind = classify_payload(text, content_type)
-    if kind == "jsonld":
-        document = _strict_json(text)
-        index = NodeIndex(document, url, fetched_from, {number for _, number in _changed_numbers(text)}, _utf16_length(text))
-        title, types, description, see_also = descriptor_meta(index, url, content_type)
-        return Descriptor(
-            url=url, title=title, types=types, description=description,
-            content_type=content_type, controls=extract_controls(index, url),
-            see_also=see_also, raw=document, context=index.ctx, index=index,
-        )
     if kind == "turtle":
-        return parse_descriptor(json.dumps(parse_turtle_via_rdflib(text, fetched_from or url)), "application/ld+json", url, fetched_from)
-    if kind == "markdown":
-        return parse_markdown_descriptor(text, url, content_type)
-    raise RuntimeError(f"Unrecognized descriptor representation ({content_type})")
+        return parse_descriptor(json.dumps(parse_turtle_via_rdflib(text, fetched_from or url)), "application/ld+json", url, fetched_from,
+                                size)
+    with _working(size):
+        if kind == "jsonld":
+            document = _strict_json(text)
+            index = NodeIndex(document, url, fetched_from, _document_numbers(text), _utf16_length(text))
+            title, types, description, see_also = descriptor_meta(index, url, content_type)
+            descriptor = Descriptor(
+                url=url, title=title, types=types, description=description,
+                content_type=content_type, controls=extract_controls(index, url),
+                see_also=see_also, raw=document, context=index.ctx, index=index,
+            )
+        elif kind == "markdown":
+            descriptor = parse_markdown_descriptor(text, url, content_type)
+        else:
+            raise RuntimeError(f"Unrecognized descriptor representation ({content_type})")
+    descriptor.size = size
+    return descriptor
 
 
 def load_descriptor(url: str) -> Descriptor:
@@ -4707,8 +4942,9 @@ def load_descriptor(url: str) -> Descriptor:
             continue
         descriptor.content_type = content_type
         if unread is not None:
-            _authority_refused(descriptor, _request_url(_with_format(_strip_fragment(url), "jsonld")),
-                               classify_payload(text, content_type), unread)
+            with _working(descriptor.size):
+                _authority_refused(descriptor, _request_url(_with_format(_strip_fragment(url), "jsonld")),
+                                   classify_payload(text, content_type), unread)
         return descriptor
     raise unread or RuntimeError(f"No descriptor was read from {url}")
 
@@ -4726,6 +4962,8 @@ def _authority_refused(descriptor: Descriptor, jsonld_url: str, kind: str | None
     for control in descriptor.controls:
         control.conflict = (f"the JSON-LD answer to {jsonld_url} is refused, and what it says of this control is not "
                             f"known, so it is not invoked: {problem}")
+        # Written for each control, so charged for each, as reading the document charges what it names (_charge_read).
+        _spend(_utf16_length(control.conflict))
 
 
 
@@ -4857,6 +5095,16 @@ def _path_value(explode: bool, value: Any, op: str, enc_op: str) -> str:
 
 
 def _expand_expr(expr: str, values: dict[str, Any]) -> str:
+    """One template expression as RFC 6570 expands it, charged its length
+    (_spend): a template that writes one variable many times costs what it
+    expands to, and stops where that passes the request's budget. The page's
+    expandTemplateExpr is the same."""
+    out = _expand_expr_text(expr, values)
+    _spend(_utf16_length(out))
+    return out
+
+
+def _expand_expr_text(expr: str, values: dict[str, Any]) -> str:
     op = ""
     if expr and expr[0] in "+#./;?&":
         op, expr = expr[0], expr[1:]
@@ -5012,7 +5260,7 @@ class _FieldFacts:
 
     def __init__(self, fld: Field, numeric: str | None) -> None:
         self.rdf_json = _is_rdf_json(fld.datatype)
-        self.has_value: tuple[str, Any, str | None, bool] | None = None
+        self.has_value: tuple[str, Any, str | None, Any, str] | None = None
         entry = fld.has_value
         if entry is not None:
             number = None
@@ -5028,8 +5276,10 @@ class _FieldFacts:
                     key = _json_key(entry if not isinstance(entry, str) else _strict_json(entry))
                 except ValueError:
                     pass
-            self.has_value = (_text(entry), number, key, _rounded_entry(fld, entry))
-        self.bounds = [(kind, _bound_number(bound), _scalar_text(bound), _inexact_bound(bound, fld.inexact))
+            # Its text, which a value of no number field matches, and its name, which a problem names it by.
+            self.has_value = (_text(entry), number, key, _rounded_entry(fld, entry),
+                              _named_text(entry, fld.inexact) if _is_number(entry) else _text(entry))
+        self.bounds = [(kind, _bound_number(bound), _bound_text(bound, fld.inexact), _inexact_bound(bound, fld.inexact))
                        for kind, bound in (("minInclusive", fld.min_inclusive), ("maxInclusive", fld.max_inclusive),
                                            ("minExclusive", fld.min_exclusive), ("maxExclusive", fld.max_exclusive))
                        if bound is not None]
@@ -5046,7 +5296,7 @@ def _has_value_matches(facts: _FieldFacts, numeric: str | None, typed: Any) -> b
     and any other value is the entry whose text is its text, as _ShapeChoices
     reads a sh:in entry. The page's hasValueMatches is the same."""
     assert facts.has_value is not None
-    text, number, key, _ = facts.has_value
+    text, number, key = facts.has_value[:3]
     if numeric and _is_number(typed):
         return number is not None and number == typed
     if facts.rdf_json:
@@ -5101,6 +5351,66 @@ def _changed_numbers(text: str, first: bool = False) -> list[tuple[str, float]]:
             if first:
                 break
     return out
+
+
+class _Numbers(set):  # type: ignore[type-arg]
+    """The doubles of the numbers a document writes with digits their doubles
+    drop (_changed_numbers), whose every reading may have been rounded; and,
+    as `written`, the texts each of those doubles, and each infinity, is
+    written with in the document, up to three of other values, so a problem
+    names a number as the document writes it (_named_text), never as the
+    double reading it gave. The page's documentNumbers makes the same."""
+    written: dict[float, dict[str, str]]
+
+
+def _document_numbers(text: str) -> _Numbers:
+    """A JSON text's _Numbers, from two passes over its numbers: the doubles
+    that changed, then every text written of one of them or of an infinity,
+    each value once, by its _decimal_key. The page's documentNumbers is the
+    same."""
+    numbers = _Numbers()
+    numbers.written = {}
+    tokens: list[tuple[str, float]] = []
+    for match in _NUMBER_TOKEN.finditer(text):
+        written = match.group()
+        if written[0] != '"':
+            tokens.append((written, float(written)))
+    numbers.update(number for written, number in tokens
+                   if math.isfinite(number) and _decimal_key(written) != _decimal_key(repr(number)))
+    for written, number in tokens:
+        if number in numbers or not math.isfinite(number):
+            texts = numbers.written.setdefault(number, {})
+            key = _decimal_key(written)
+            if key not in texts and len(texts) < 3:
+                texts[key] = written
+    return numbers
+
+
+def _number_name(number: Any, written: dict[float, dict[str, str]]) -> str | None:
+    """How a problem names a number its document writes otherwise than its
+    double: the one text it is written with, two joined by "or", or two of
+    three or more and "or another"; None for one written as its double."""
+    texts = list(written.get(number, {}).values()) if not isinstance(number, bool) else []
+    if not texts:
+        return None
+    if len(texts) == 1:
+        return texts[0]
+    return f"{texts[0]} or {texts[1]}" if len(texts) == 2 else f"{texts[0]}, {texts[1]} or another"
+
+
+def _named_text(value: Any, numbers: Any) -> str:
+    """A value as a problem names it (_entry_text), each number in it that
+    its document writes otherwise than its double, or past every double,
+    named as written (_Numbers.written): an entry 9007199254740993 is not
+    named 9007199254740992, nor 1e400 null. The page's namedText is the
+    same."""
+    written = getattr(numbers, "written", None)
+    if not written or value is None or isinstance(value, (str, bool)):
+        return _entry_text(value)
+    if _is_number(value):
+        name = _number_name(value, written)
+        return name if name is not None else _entry_text(value)
+    return _js_json(value, named=written)
 
 
 def _changed_problem(name: str, written: str) -> str:
@@ -5472,8 +5782,13 @@ def _schema_choices(fld: Field, problems: list[str], subject: str) -> list[tuple
     if not isinstance(schema, dict) or fld.json_kind:
         return []
     listed = schema["enum"] if isinstance(schema.get("enum"), list) else None
-    if "const" in schema:
-        entries = [v for v in listed if _same_json(v, schema["const"])] if listed is not None else [schema["const"]]
+    if "const" in schema and listed is not None:
+        # The const is keyed once, and each entry compared with its key at the
+        # cost of the entry's size, never the const's (_json_key).
+        const_key = _json_key(schema["const"])
+        entries = [v for v in listed if _json_key(v) == const_key]
+    elif "const" in schema:
+        entries = [schema["const"]]
     else:
         entries = listed or []
     out: list[tuple[str, Any]] = []
@@ -5522,10 +5837,11 @@ class _ShapeChoices:
             kind = _rounded_entry(fld, entry)
             if kind:
                 for key in keys:
-                    self.rounded.setdefault(key, (_text(entry), kind))
+                    self.rounded.setdefault(key, (_named_text(entry, fld.inexact) if _is_number(entry) else _text(entry), kind))
             else:
                 self.keys.update(keys)
-        self.problem = f"{fld.name}: must be one of {', '.join(text for text, _ in _choices_of(fld))}"
+        names = (_named_text(entry, fld.inexact) if _is_number(entry) else text for text, entry in _choices_of(fld))
+        self.problem = f"{fld.name}: must be one of {', '.join(names)}"
 
     def problem_for(self, typed: Any) -> str | None:
         """None when a typed value is an entry, else the problem it gives."""
@@ -5633,16 +5949,16 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
         if keyed is not None and isinstance(sch.get("enum"), list) and key not in keyed["sure"]:
             if key in keyed["rounded"]:
                 entry, kind = keyed["rounded"][key]
-                report(_rounded_problem(at, _entry_text(entry), kind))
+                report(_rounded_problem(at, _named_text(entry, inexact), kind))
             else:
-                report(f"{at}: must be one of {', '.join(_entry_text(entry) for entry in sch['enum'])}")
+                report(f"{at}: must be one of {', '.join(_named_text(entry, inexact) for entry in sch['enum'])}")
             return
         if keyed is not None and "const" in sch:
             if key != keyed["const_key"]:
-                report(f"{at}: must be {_entry_text(sch['const'])}")
+                report(f"{at}: must be {_named_text(sch['const'], inexact)}")
                 return
             if keyed["const_rounded"]:
-                report(_rounded_problem(at, _entry_text(sch["const"]), keyed["const_rounded"]))
+                report(_rounded_problem(at, _named_text(sch["const"], inexact), keyed["const_rounded"]))
                 return
         problem = None
         if isinstance(val, str):
@@ -5664,15 +5980,15 @@ def _check_schema(schema: Any, value: Any, name: str, report: Any, enums: dict[i
             unsure = next((key for key in ("minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum")
                            if key in sch and not isinstance(sch[key], bool) and _inexact_bound(sch[key], inexact)), None)
             if unsure is not None:
-                problem = _inexact_problem(at, unsure, _scalar_text(sch[unsure]))
+                problem = _inexact_problem(at, unsure, _bound_text(sch[unsure], inexact))
             elif low is not None and val < low:
-                problem = f"{at}: below minInclusive {_scalar_text(sch['minimum'])}"
+                problem = f"{at}: below minInclusive {_bound_text(sch['minimum'], inexact)}"
             elif high is not None and val > high:
-                problem = f"{at}: above maxInclusive {_scalar_text(sch['maximum'])}"
+                problem = f"{at}: above maxInclusive {_bound_text(sch['maximum'], inexact)}"
             elif xlow and xlow[0] is not None and not val > xlow[0]:
-                problem = f"{at}: not above exclusiveMinimum {_scalar_text(xlow[1])}"
+                problem = f"{at}: not above exclusiveMinimum {_bound_text(xlow[1], inexact)}"
             elif xhigh and xhigh[0] is not None and not val < xhigh[0]:
-                problem = f"{at}: not below exclusiveMaximum {_scalar_text(xhigh[1])}"
+                problem = f"{at}: not below exclusiveMaximum {_bound_text(xhigh[1], inexact)}"
         children: list[tuple[Any, Any, str]] = []
         if isinstance(val, list):
             if "minItems" in sch and len(val) < _inty(sch["minItems"]):
@@ -5982,6 +6298,12 @@ def coerce_value(fld: Field, value: Any) -> Any:
     return value
 
 
+def _bound_text(bound: Any, numbers: Any) -> str:
+    """A bound as a problem names it: a number as its document writes it
+    (_named_text), text as it is. The page's boundText is the same."""
+    return _named_text(bound, numbers) if _is_number(bound) else _scalar_text(bound)
+
+
 def _scalar_text(value: Any) -> str:
     """A typed value as text, as the page's String() writes it."""
     if isinstance(value, bool):
@@ -6162,9 +6484,9 @@ def _check_value(fld: Field, found: Any, numeric: str | None, report: Any, choic
         report(choice_problem)
     if facts.has_value is not None and not fld.multi:
         if not _has_value_matches(facts, numeric, typed):
-            report(f"{fld.name}: must be {facts.has_value[0]}")
+            report(f"{fld.name}: must be {facts.has_value[4]}")
         elif facts.has_value[3]:
-            report(_rounded_problem(fld.name, facts.has_value[0], facts.has_value[3]))
+            report(_rounded_problem(fld.name, facts.has_value[4], facts.has_value[3]))
     # A bound is compared with a number: a value that is none (text, or a node)
     # is an error, not a pass, as SHACL has a comparison it cannot make. A bound
     # that is no number, such as a date, is not compared, so a value is refused;
@@ -6256,6 +6578,8 @@ def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, Any]) -> 
         nonlocal problems
         problems += 1
         report(message)
+    # Each field checked, and below each of a list's values, is charged (_spend).
+    _spend(1)
     numeric = _numeric_kind(fld)
     required = fld.required or (fld.min_count or 0) >= 1
     facts = _FieldFacts(fld, numeric)
@@ -6304,6 +6628,7 @@ def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, Any]) -> 
         typed_items = []
         choices = _shape_choices(fld, numeric)
         stopped = False
+        _spend(len(items))
         for item in items:
             before = problems
             if isinstance(item, (dict, list)):
@@ -6322,9 +6647,9 @@ def _field_value(fld: Field, found: Any, report: Any, enums: dict[int, Any]) -> 
         # sh:hasValue asks that one of a list's values be the one it names.
         if facts.has_value is not None and not stopped:
             if not any(v is not None and _has_value_matches(facts, numeric, v) for v in typed_items):
-                note(f"{fld.name}: must include {facts.has_value[0]}")
+                note(f"{fld.name}: must include {facts.has_value[4]}")
             elif facts.has_value[3]:
-                note(_rounded_problem(fld.name, facts.has_value[0], facts.has_value[3]))
+                note(_rounded_problem(fld.name, facts.has_value[4], facts.has_value[3]))
         return typed_items, problems == 0
     if isinstance(found, list):
         found = found[-1] if found else None
@@ -6583,6 +6908,8 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
     # (a template that does not give http or https) in its URI form.
     if url:
         url = _request_url(url) if is_web_url(url) else _iri_to_uri(url)
+    # What the request holds is charged: its address and its body.
+    _spend(_utf16_length(url or "") + _utf16_length(body_text or ""))
     return RequestPlan(control=control, transport=transport, method=method, url=url,
                        headers=headers, body=body, body_text=body_text, fields=values,
                        mcp=mcp, notes=notes)
@@ -6663,6 +6990,20 @@ def say(text: Any = "", file: Any = None) -> None:
 
 
 def print_control_table(descriptor: Descriptor) -> None:
+    """Prints what list writes of a descriptor (_control_table)."""
+    print(_control_table(descriptor))
+
+
+def _control_table(descriptor: Descriptor) -> str:
+    """What list writes of a descriptor, built whole before any of it is
+    written, each line charged as it is built (_spend): within one step of
+    work, list writes the whole table or, past it, nothing."""
+    lines: list[str] = []
+
+    def say(text: Any = "") -> None:
+        line = tty_safe(text)
+        _spend(_utf16_length(line) + 1)
+        lines.append(line)
     say(descriptor.title)
     say(descriptor.url)
     if descriptor.types:
@@ -6682,13 +7023,13 @@ def print_control_table(descriptor: Descriptor) -> None:
     first_with: dict[tuple[int, ...], str] = {}
     keyed: dict[int, tuple[Any, tuple[int, ...]]] = {}
 
-    def key_of(items: list[Field]) -> tuple[int, ...]:
+    def key_of(items: Any) -> tuple[int, ...]:
         hit = keyed.get(id(items))
         if hit is None or hit[0] is not items:
             hit = keyed[id(items)] = (items, tuple(id(fld) for fld in items))
         return hit[1]
 
-    def names(items: list[Field]) -> str:
+    def names(items: Any) -> str:
         # * marks a required field, [] one that takes a list of values.
         return ", ".join(("*" if f.required or (f.min_count or 0) >= 1 else "") + f.name + ("[]" if f.multi else "") for f in items)
     tied: list[Any] = []
@@ -6734,6 +7075,7 @@ def print_control_table(descriptor: Descriptor) -> None:
                 if note:
                     say(f"         note: {note}")
         say()
+    return "\n".join(lines)
 
 
 def parse_field_args(items: list[str]) -> dict[str, Any]:
@@ -6754,10 +7096,10 @@ def parse_field_args(items: list[str]) -> dict[str, Any]:
 
 def cmd_list(args: argparse.Namespace) -> int:
     descriptor = load_descriptor(args.url)
-    if args.json:
-        print(_json_out(descriptor.to_public()))
-    else:
-        print_control_table(descriptor)
+    # Listing is one step of work: past its budget nothing is written, and the document is refused by name.
+    with _working(descriptor.size):
+        text = _json_out(descriptor.to_public()) if args.json else _control_table(descriptor)
+    print(text)
     return 0
 
 
@@ -6772,10 +7114,41 @@ def _find_control(descriptor: Descriptor, rel: str) -> Control:
     return found[0]
 
 
+def _open_control(descriptor: Descriptor, control: Control) -> str | None:
+    """Opens a control as the page does when it is selected, in one step of
+    work: builds its fields and charges what showing it costs (_charge_shown).
+    The problem that refuses it when that passes its document's budget
+    (_work_problem), or None. describe writes no fields of a control so
+    refused, and invoke sends nothing, as the page shows it no form."""
+    try:
+        with _working(descriptor.size):
+            _charge_shown(control)
+    except WorkExceeded as exc:
+        return str(exc)
+    return None
+
+
+def _given_size(supplied: dict[str, Any]) -> int:
+    """The bytes of the names and values given for a request (--field), as
+    UTF-8 writes them, which add to what checking them may cost."""
+    return sum(_utf8_length(name) + sum(_utf8_length(value) for value in as_list(given) if isinstance(value, str))
+               for name, given in supplied.items())
+
+
+def _sent_size(values: dict[str, Any]) -> int:
+    """The bytes of the values a request sends, as JSON writes them (as the
+    page's JSON.stringify), which add to what building it may cost."""
+    return _utf8_length(_js_json(values))
+
+
 def cmd_describe(args: argparse.Namespace) -> int:
     descriptor = load_descriptor(args.url)
     control = _find_control(descriptor, args.rel)
-    public = control.to_public()
+    refused = _open_control(descriptor, control)
+    public = control.to_public(with_fields=refused is None)
+    if refused is not None:
+        public["problem"] = refused
+        public["fields"] = None
     public["transport"] = classify_transport(control, descriptor.url)
     print(_json_out(public))
     return 0
@@ -6785,12 +7158,20 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     descriptor = load_descriptor(args.url)
     control = _find_control(descriptor, args.rel)
     supplied = parse_field_args(args.field or [])
-    values, errors = validate_fields(control, supplied)
+    # Opened as the page opens it before it invokes, then its values checked
+    # and its request built, each one step of work: the check's budget counts
+    # the bytes given too, and the request's the bytes of the values it sends.
+    refused = _open_control(descriptor, control)
+    errors = [refused] if refused is not None else []
     if not errors:
         try:
-            plan = resolve_plan(control, values, descriptor.url)
-            result = invoke_plan(plan, confirm=args.confirm, dry_run=True if args.dry_run else None)
-        except UnsendableValue as exc:
+            with _working(descriptor.size + _given_size(supplied)):
+                values, errors = validate_fields(control, supplied)
+            if not errors:
+                with _working(descriptor.size + _sent_size(values)):
+                    plan = resolve_plan(control, values, descriptor.url)
+                result = invoke_plan(plan, confirm=args.confirm, dry_run=True if args.dry_run else None)
+        except (UnsendableValue, WorkExceeded) as exc:
             errors = [str(exc)]
     if errors:
         say("Validation failed:", file=sys.stderr)

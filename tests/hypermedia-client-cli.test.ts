@@ -18,7 +18,7 @@ import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES, fetchRoutes,
   hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED, LOAD_HEADERS,
   OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, RULE_CASES,
-  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, type HopHeaders } from './hypermedia-client-fixtures.js';
+  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 // What list, list --json and describe may write for a document: a dozen bytes for each of its
@@ -230,10 +230,14 @@ interface Run { code: number | null; stdout: string; stderr: string; ms: number;
  * is minimal, with no proxy variables, so requests to 127.0.0.1 go straight there, unless `env`
  * gives some.
  */
-function hmc(args: string[], timeoutMs = 30_000, env: Record<string, string> = {}): Promise<Run> {
+function hmc(args: string[], timeoutMs = 30_000, env: Record<string, string> = {}, memoryMb = 0): Promise<Run> {
   return new Promise(resolve => {
     const started = Date.now();
-    const child = spawn(PYTHON, ['-I', HMC, ...args], { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*', ...env } });
+    // With a memory bound, hmc.py runs with that much address space and no more, so a run that
+    // would build far more than its document holds fails where it starts to, not after it.
+    const argv = memoryMb ? ['-I', '-c', 'import resource, runpy, sys; resource.setrlimit(resource.RLIMIT_AS, (int(sys.argv[1]),) * 2); ' +
+      'sys.argv = sys.argv[2:]; runpy.run_path(sys.argv[0], run_name="__main__")', String(memoryMb * 1024 * 1024), HMC, ...args] : ['-I', HMC, ...args];
+    const child = spawn(PYTHON, argv, { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*', ...env } });
     let stdout = ''; let stderr = ''; let timedOut = false;
     child.stdout.setEncoding('utf8').on('data', d => { stdout += d; });
     child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
@@ -1415,6 +1419,42 @@ describe('hmc.py: a document\'s size, not its shape, sets the cost', () => {
       expect(r.ms, `${args[0]} ${args[2] || ''} run time`).toBeLessThan(3_000);
       expect(r.code, r.stderr).toBe(0);
       expect(Buffer.byteLength(r.stdout), `${args[0]} ${args[2] || ''} output`).toBeLessThan(OUTPUT_PER_BYTE * size + OUTPUT_SLACK);
+    }
+  }, 60_000);
+
+  // Each step hmc.py takes for a document within the tests' budget, in 512 MB, writing a few times
+  // its size; one past what its size allows is refused, naming it, and nothing is written or sent.
+  it.each(WORK_CASES)('lists, describes and dry-runs %s\'s control %s within the budget, or refuses by name where it is past it', async (path, rel, refused, dryRun, sent) => {
+    const size = Buffer.byteLength(cost[path]!);
+    const problem = workProblem(size);
+    const steps = [['list', ['list', `${base}${path}`]], ['list --json', ['list', `${base}${path}`, '--json']],
+      ['control', ['describe', `${base}${path}`, rel]], ['request', ['invoke', `${base}${path}`, rel, '--dry-run']]] as const;
+    for (const [step, args] of steps) {
+      const r = await hmc([...args], 30_000, {}, 512);
+      expect(r.timedOut, `${step}: killed after 30 s`).toBe(false);
+      expect(r.ms, `${step} run time`).toBeLessThan(3_000);
+      expect(Buffer.byteLength(r.stdout) + Buffer.byteLength(r.stderr), `${step} output`).toBeLessThan(OUTPUT_PER_BYTE * size + OUTPUT_SLACK);
+      if (refused.includes('read') || (step.startsWith('list') && refused.includes(step))) {
+        expect([r.code, r.stderr.trim()], step).toEqual([1, `error: ${problem}`]);
+        expect(r.stdout, step).toBe('');
+      } else if (step.startsWith('list')) {
+        expect(r.code, `${step}: ${r.stderr}`).toBe(0);
+      } else if (step === 'control') {
+        expect(r.code, r.stderr).toBe(0);
+        const control = JSON.parse(r.stdout) as { problem: string | null; fields: unknown[] | null };
+        if (refused.includes('control')) expect([control.problem, control.fields]).toEqual([problem, null]);
+        else if (dryRun) expect(control.problem!.startsWith(dryRun)).toBe(true);
+        else expect(control.problem).toBeNull();
+      } else if (refused.includes('control') || refused.includes('request')) {
+        expect(r.code, r.stdout).toBe(2);
+        expect(problems(r.stderr)).toEqual([refused.includes('control') ? problem : workProblem(size + Buffer.byteLength(JSON.stringify(sent)))]);
+      } else if (dryRun) {
+        expect(r.code, r.stdout).toBe(2);
+        expect(problems(r.stderr)[0]!.startsWith(dryRun)).toBe(true);
+      } else {
+        expect(r.code, r.stderr).toBe(0);
+        expect(r.stdout).toMatch(/^Dry run\b/m);
+      }
     }
   }, 60_000);
 

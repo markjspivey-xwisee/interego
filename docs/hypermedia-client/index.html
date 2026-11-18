@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-JGNcpMWWtVBwv0AuDGvpnUOEoDlDVM+An9T+BZF3E20='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-RfkwXtE3U2kDsnU+UWBpmEwsKt1BS+whD/labn4fkUw='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -545,15 +545,94 @@ function spend(budget, amount) {
 const IRI_BUDGET_PER_UNIT = 8;
 const IRI_BUDGET_FIXED = 1000000;
 const EXPANSION_PROBLEM = "This document's prefixes, terms, @vocab and @base expand its IRIs to far more text than the document holds, which this client does not read, so it is not read.";
-function newBudget(size) { return { left: CONTEXT_BUDGET, iris: IRI_BUDGET_PER_UNIT * (size || 0) + IRI_BUDGET_FIXED, charging: false }; }
+// remote: whether the document names a remote @context, whose terms this client does not know (REMOTE_SCHEMA).
+function newBudget(size) { return { left: CONTEXT_BUDGET, iris: IRI_BUDGET_PER_UNIT * (size || 0) + IRI_BUDGET_FIXED, charging: false, remote: false }; }
 // An expansion's result, charged while a document is read when it is one: text
 // other than the value expanded. hmc.py's _Budget.charge is the same.
 function charge(budget, value, out) {
   if (budget.charging && typeof out === "string" && out !== value) {
     budget.iris -= out.length;
     if (budget.iris < 0) throw new Error(EXPANSION_PROBLEM);
+    spendWork(out.length);
   }
   return out;
+}
+// One budget of work for each thing a person asks of a document: reading it,
+// listing it, opening one control, checking the values given, and building
+// the request. Work is counted in units: a UTF-16 code unit of text a prefix,
+// a term, @vocab or @base expands to (charge), or that a control or a field
+// carries into what is shown (controlTexts, fieldTexts), or that a template
+// expands to or a request holds; CONTROL_WORK for each control read or shown;
+// FIELD_WORK for each field a control uses, however many controls share it,
+// and for each field shown; and one for each value checked. A document of n
+// bytes (its text in UTF-8, as received) allows WORK_PER_BYTE * n units, and
+// WORK_FLOOR at least; checking values also allows WORK_PER_BYTE units for
+// each byte given, and building a request for each byte of the values it
+// sends, as JSON writes them. Past it, the step stops and is refused by name
+// (workProblem): the document as it is read or listed, the control as it is
+// opened, the request as it is checked or built; nothing is shown in part and
+// nothing is sent. The specific limits above still name their own problems
+// first. hmc.py's WORK_PER_BYTE, WORK_FLOOR, CONTROL_WORK, FIELD_WORK and
+// _work_problem are the same.
+const WORK_PER_BYTE = 64;
+const WORK_FLOOR = 2000000;
+const CONTROL_WORK = 16;
+const FIELD_WORK = 8;
+function workProblem(allowed, size) {
+  return "This document asks for more work than its size allows (" + allowed + " units for " + size + " bytes); nothing was sent.";
+}
+// A step's work passed what its document's size allows: it ends the step, and
+// no reading of a value takes it for its own problem.
+class WorkError extends Error {}
+// The step under way, whose budget each charge (spendWork) counts against; null outside a step.
+let work = null;
+function spendWork(units) {
+  if (!work) return;
+  work.left -= units;
+  if (work.left < 0) throw new WorkError(workProblem(work.allowed, work.size));
+}
+// Runs fn as a step of work for a document of `size` bytes: each charge while
+// it runs is counted against its budget, which a nested step does not share.
+function withWork(size, fn) {
+  const previous = work;
+  const allowed = Math.max(WORK_FLOOR, WORK_PER_BYTE * size);
+  work = { size, allowed, left: allowed };
+  try { return fn(); } finally { work = previous; }
+}
+// Runs fn outside any step: what the page does for itself alone, such as
+// deciding whether a form shows a default, is not charged to a step of a
+// person's, and hmc.py, which has no form, does none of it.
+function withoutWork(fn) {
+  const previous = work;
+  work = null;
+  try { return fn(); } finally { work = previous; }
+}
+// A text's size in bytes, as UTF-8 writes it (an unpaired surrogate as three).
+function utf8Length(text) {
+  let n = 0;
+  for (let i = 0; i < text.length; i++) {
+    const c = text.charCodeAt(i);
+    if (c < 0x80) n += 1;
+    else if (c < 0x800) n += 2;
+    else if (c >= 0xd800 && c <= 0xdbff && i + 1 < text.length && (text.charCodeAt(i + 1) & 0xfc00) === 0xdc00) { n += 4; i++; }
+    else n += 3;
+  }
+  return n;
+}
+// What a JSON value a field carries costs to show: its strings' and keys'
+// UTF-16 code units, and one for each other value, array and object. A walk
+// with a stack. hmc.py's _json_size is the same.
+function jsonSize(value) {
+  let total = 0;
+  const stack = [value];
+  while (stack.length) {
+    const item = stack.pop();
+    if (typeof item === "string") total += item.length;
+    else if (Array.isArray(item)) { total += 1; for (const x of item) stack.push(x); }
+    else if (item !== null && typeof item === "object") { total += 1; for (const key of Object.keys(item)) { total += key.length; stack.push(item[key]); } }
+    else if (item != null) total += 1;
+  }
+  return total;
 }
 // A JSON Schema written into a document as plain JSON, where hydra:expects
 // names it: an object whose "properties" is an object, or one of JSON Schema's
@@ -581,6 +660,11 @@ const LITERAL_KEYWORDS = new Set(["@type", "@list", "@set", "@index", "@language
 function inSchema(what) {
   return new Error("This document writes " + what + " in a JSON Schema, which this client does not read as JSON-LD, so it is not read.");
 }
+// What a document that names a remote @context and writes a JSON Schema in place
+// under hydra:expects is refused with: the remote context may name any of the
+// schema's keywords as a term, which JSON-LD would read, and this client does
+// not fetch it to know. hmc.py's REMOTE_SCHEMA is the same.
+const REMOTE_SCHEMA = "This document names a remote @context, which this client does not fetch, so what the keys of a JSON Schema written in it mean is not known, and it is not read.";
 // Whether a value written in a JSON Schema holds, at any depth, what JSON-LD
 // reads as a node: an object with an @id, with a key the context expands to an
 // IRI, or with a JSON-LD keyword other than LITERAL_KEYWORDS. A value object is
@@ -606,10 +690,16 @@ function holdsNode(ctx, value) {
 // holds what JSON-LD reads and this client, which reads it as JSON Schema, does
 // not: at its top, a JSON-LD keyword other than its own @id and @type; in it or
 // any schema inside it, a node (holdsNode) under a key that is no JSON Schema
-// keyword or under a JSON-LD keyword; and, in a schema with an @id, a key the
-// context expands to an IRI, which says something of the node it names.
+// keyword or under a JSON-LD keyword; a key that is no JSON Schema keyword and
+// that the context expands to an IRI, which JSON-LD reads as a property, of the
+// node the schema names when it has an @id; and, in it or any schema inside it,
+// a JSON Schema keyword the document's context gives a meaning (givesMeaning: a
+// term of that name, or @vocab), which JSON-LD reads as a property, with what is
+// under it. A document that names a remote @context may give any keyword a
+// meaning, so a schema written in place in it is refused (REMOTE_SCHEMA).
 // hmc.py's _schema_hides is the same.
 function schemaHides(ctx, root) {
+  if (ctx.budget.remote) throw new Error(REMOTE_SCHEMA);
   const stack = [[root, true]];
   while (stack.length) {
     const [schema, top] = stack.pop();
@@ -626,12 +716,13 @@ function schemaHides(ctx, root) {
         continue;
       }
       if (SCHEMA_KEYWORDS.has(key)) {
+        if (ctx.givesMeaning(key)) throw inSchema(JSON.stringify(key) + ", a key its @context gives a meaning,");
         if (SCHEMA_MAPS.has(key) && isMap(value)) { for (const name of Object.keys(value).sort()) inside.push(value[name]); }
         else if (SCHEMA_ONE.has(key) || SCHEMA_MANY.has(key)) inside.push(value);
         continue;
       }
       if (holdsNode(ctx, value)) throw inSchema("a node under " + JSON.stringify(key));
-      if (named && ctx.expandKey(key).includes(":")) throw inSchema(JSON.stringify(key) + " beside its own @id");
+      if (ctx.expandKey(key).includes(":")) throw inSchema(JSON.stringify(key) + (named ? " beside its own @id" : ", a key its @context gives a meaning,"));
     }
     for (let i = inside.length - 1; i >= 0; i--) stack.push([inside[i], false]);
   }
@@ -777,7 +868,11 @@ class Ctx {
         this.vocab = null; this.base = this.documentBase; this.made = new Map();
         continue;
       }
-      if (!item || typeof item !== "object" || Array.isArray(item)) continue;
+      if (!item || typeof item !== "object" || Array.isArray(item)) {
+        // A remote context: its terms are not known (REMOTE_SCHEMA).
+        if (typeof item === "string") this.budget.remote = true;
+        continue;
+      }
       spend(this.budget, Object.keys(item).length + 1);
       // An imported context is fetched by a JSON-LD processor; this reader fetches no context, so it refuses one.
       if (own(item, "@import")) throw new Error(REFUSED.import);
@@ -927,6 +1022,12 @@ class Ctx {
     }
   }
   keyword(key) { return key.startsWith("@") ? key : (own(this.aliases, key) ? this.aliases[key] : null); }
+  // Whether this context makes a key that is no keyword a property, as JSON-LD
+  // reads it: a term of that name, or any key where @vocab is set, unless the
+  // key is a term set to null. This client's own names (TERMS0) are not
+  // counted: they stand in for a remote context, which a document that names
+  // one is refused for (REMOTE_SCHEMA). hmc.py's gives_meaning is the same.
+  givesMeaning(key) { return !own(this.nulled, key) && (own(this.terms, key) || this.vocab != null); }
   // The key holding what `item` wraps, when it is a @set object or, as a value
   // of a property whose values are members (MEMBERS), a @list object or a
   // graph object with no @context or properties of its own; else null. Keys
@@ -2458,6 +2559,43 @@ function expectsOf(index, node, problems) {
 // is read as one value (one()); a problem any of them gives is its `conflict`,
 // so it is listed with the writes and not invoked. hmc.py's control_from_node
 // is the same.
+// The text a control carries into what is shown or written of it, in UTF-16
+// code units: its @id, name, method, title, description, media type, what it
+// expects and returns, its target, its template and its types. hmc.py's
+// _control_texts is the same.
+function controlTexts(c) {
+  let n = 0;
+  for (const text of [c.id, c.rel, c.method, c.title, c.description, c.mediaType, c.expects, c.returns, c.target, c.template, ...(c.types || [])]) {
+    if (typeof text === "string") n += text.length;
+  }
+  return n;
+}
+// The text a field carries into what is shown or written of it: its name,
+// path, datatype, pattern and description, its default and each of its
+// entries (jsonSize). hmc.py's _field_texts is the same.
+function fieldTexts(f) {
+  let n = jsonSize(f.defaultValue);
+  for (const text of [f.name, f.path, f.datatype, f.pattern, f.description]) if (typeof text === "string") n += text.length;
+  for (const entry of asList(f.enum)) n += jsonSize(entry);
+  return n;
+}
+// Charges a control read from a document (spendWork): CONTROL_WORK, the text
+// it carries and the problems reading it gave, however many controls share
+// what they name. hmc.py's _charge_read is the same.
+function chargeRead(c, problems) {
+  spendWork(CONTROL_WORK + controlTexts(c) + problems.reduce((n, p) => n + p.length, 0));
+}
+// Charges showing a control, as opening it does: it builds its fields, then
+// CONTROL_WORK, the text it carries, its problem and its warning; and, for a
+// control that is invoked, FIELD_WORK and the text of each field, one at a
+// time, so a step past its budget stops at the field that passes it. hmc.py's
+// _charge_shown is the same.
+function chargeShown(c) {
+  const problem = c.problem;
+  const warning = c.warning;
+  spendWork(CONTROL_WORK + controlTexts(c) + (problem || "").length + (warning || "").length);
+  if (!problem) for (const f of c.fields) spendWork(FIELD_WORK + fieldTexts(f));
+}
 function controlFromNode(index, node, source) {
   const problems = [];
   // A control that names no method is sent as the substrate's own follower
@@ -2511,6 +2649,7 @@ function controlFromNode(index, node, source) {
   for (const key of ["fields", "problem", "warning"]) {
     Object.defineProperty(control, key, { enumerable: true, get: () => (key === "problem" && control.conflict) || build()[key] });
   }
+  chargeRead(control, problems);
   return control;
 }
 // A control's input fields, from the shape hydra:expects names when the
@@ -2580,6 +2719,10 @@ function controlInputs(index, node, expectsRaw, expects, mappings) {
     }
     problem = inlineProblem || duplicateProblem(fields) || (extra.length ? extra[0] : null);
   }
+  // FIELD_WORK for each field the control has, a template's or a property's
+  // that others share among them: each control uses each. hmc.py's
+  // _charged_inputs is the same.
+  spendWork(FIELD_WORK * fields.length);
   return { fields, warning, problem };
 }
 // The problem with an additionalProperties schema that two or more template
@@ -2640,6 +2783,7 @@ function extractControls(index, source) {
     if (!first) { found.set(key, control); continue; }
     first.conflict = "two controls are both named " + key + ", so which one is meant is not known; this control is not invoked";
     first.unsafe = true;
+    spendWork(first.conflict.length);
   }
   return [...found.values()].sort((a, b) => Number(a.unsafe) - Number(b.unsafe) || a.method.localeCompare(b.method) || a.title.localeCompare(b.title));
 }
@@ -2747,7 +2891,7 @@ function parseMarkdown(text, url, contentType) {
           : "this control block writes fields as text that is not JSON, so what it sends is not known; it is not invoked");
       }
       else if (Array.isArray(listed) && listed.every(isMap)) {
-        const inexact = new Set(changedNumbers(written[written.length - 1]).map(c => c[1]));
+        const inexact = documentNumbers(written[written.length - 1]);
         fields = listed.map(item => inlineField(item, inexact));
         const unreadKey = inlineKeyProblem(listed);
         if (unreadKey != null) problems.push(unreadKey);
@@ -2775,6 +2919,8 @@ function parseMarkdown(text, url, contentType) {
       destructive: hinted.destructive, readOnly: hinted.readOnly, conflict, problem: conflict
     };
     control.unsafe = isUnsafe(control);
+    chargeRead(control, problems);
+    spendWork(FIELD_WORK * fields.length);
     controls.push(control);
   }
   const title = (text.match(/^#[ \t]+(.+)$/m) || [])[1] || localName(url) || url;
@@ -2910,14 +3056,22 @@ async function fetchAuthority(url) {
   }
   throw new Error("Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from " + url);
 }
+// The descriptor a text holds, read in one step of work (withWork) that its
+// size in bytes, as received, sets. hmc.py's parse_descriptor is the same.
 function parseDescriptor(text, contentType, url, fetchedFrom) {
+  const size = utf8Length(text);
+  const descriptor = withWork(size, () => readDescriptor(text, contentType, url, fetchedFrom));
+  descriptor.size = size;
+  return descriptor;
+}
+function readDescriptor(text, contentType, url, fetchedFrom) {
   const kind = classifyPayload(text, contentType);
   if (kind === "jsonld") {
     if (jsonTooDeep(text)) throw new Error("This document nests JSON deeper than " + JSON_DEPTH + " levels, which this client does not read, so it is not read.");
     const document = JSON.parse(text);
     const repeated = repeatedKey(text);
     if (repeated != null) throw new Error('This document repeats the key "' + repeated + '" in one object, so which value it means is not known, and it is not read.');
-    const index = new NodeIndex(document, url, fetchedFrom, new Set(changedNumbers(text).map(c => c[1])), text.length);
+    const index = new NodeIndex(document, url, fetchedFrom, documentNumbers(text), text.length);
     const root = index.root;
     // Shown, never acted on: the first value of each that reads as one.
     const title = asText(label(index.get(root, P.dcTitle)) || label(index.get(root, P.title)) || label(index.get(root, P.label)) || localName(url) || url);
@@ -3014,7 +3168,16 @@ function templateVariables(template) {
   }
   return used;
 }
+// One template expression as RFC 6570 expands it, charged its length
+// (spendWork): a template that writes one variable many times costs what it
+// expands to, and stops where that passes the request's budget. hmc.py's
+// _expand_expr is the same.
 function expandTemplateExpr(expr, values) {
+  const out = expandTemplateText(expr, values);
+  spendWork(out.length);
+  return out;
+}
+function expandTemplateText(expr, values) {
   let op = "";
   if ("+#./;?&".includes(expr[0])) { op = expr[0]; expr = expr.slice(1); }
   const specs = templateSpecs(expr).filter((spec) => own(values, spec.name) && templateDefined(values[spec.name]));
@@ -3158,11 +3321,12 @@ function fieldFacts(field, numeric) {
     let number = null; let key = null;
     if (numeric && (typeof hv === "number" || typeof hv === "string")) { try { number = coerceNumber(field, numeric, String(hv)); } catch {} }
     if (rdfJson) { try { key = jsonKey(typeof hv !== "string" ? hv : strictJson(hv)); } catch {} }
-    hasValue = { text: asText(hv), number, key, rounded: roundedEntry(field, hv) };
+    // Its text, which a value of no number field matches, and its name, which a problem names it by.
+    hasValue = { text: asText(hv), name: typeof hv === "number" ? namedText(hv, field.inexact) : asText(hv), number, key, rounded: roundedEntry(field, hv) };
   }
   const bounds = [["minInclusive", field.minInclusive], ["maxInclusive", field.maxInclusive],
     ["minExclusive", field.minExclusive], ["maxExclusive", field.maxExclusive]].filter(b => b[1] != null)
-    .map(([kind, bound]) => ({ kind, number: boundNumber(bound), text: asText(bound), inexact: inexactBound(bound, field.inexact) }));
+    .map(([kind, bound]) => ({ kind, number: boundNumber(bound), text: boundText(bound, field.inexact), inexact: inexactBound(bound, field.inexact) }));
   return { rdfJson, hasValue, bounds };
 }
 // Whether a value of a field a shape gives (SHACL, Hydra, a template or a
@@ -3215,6 +3379,64 @@ function changedNumbers(text, first) {
   }
   return out;
 }
+// The doubles of the numbers a document writes with digits their doubles drop
+// (changedNumbers), whose every reading may have been rounded, as a Set; and,
+// as its `written`, the texts each of those doubles, and each infinity, is
+// written with in the document, up to three of other values, by its double, so
+// a problem names a number as the document writes it (namedText), never as the
+// double reading it gave. Two passes over its numbers: the doubles that
+// changed, then every text written of one of them or of an infinity, each
+// value once, by its decimalKey. hmc.py's _document_numbers is the same.
+function documentNumbers(text) {
+  const tokens = [];
+  for (const m of text.matchAll(NUMBER_TOKEN)) if (m[0][0] !== '"') tokens.push([m[0], Number(m[0])]);
+  const numbers = new Set(tokens.filter(([w, n]) => Number.isFinite(n) && decimalKey(w) !== decimalKey(String(n))).map(t => t[1]));
+  numbers.written = new Map();
+  for (const [w, n] of tokens) {
+    if (Number.isFinite(n) && !numbers.has(n)) continue;
+    if (!numbers.written.has(n)) numbers.written.set(n, new Map());
+    const texts = numbers.written.get(n); const key = decimalKey(w);
+    if (!texts.has(key) && texts.size < 3) texts.set(key, w);
+  }
+  return numbers;
+}
+// How a problem names a number its document writes otherwise than its double:
+// the one text it is written with, two joined by "or", or two of three or more
+// and "or another"; null for one written as its double. hmc.py's _number_name
+// is the same.
+function numberName(n, written) {
+  const texts = written.has(n) ? [...written.get(n).values()] : [];
+  if (!texts.length) return null;
+  if (texts.length === 1) return texts[0];
+  return texts.length === 2 ? texts[0] + " or " + texts[1] : texts[0] + ", " + texts[1] + " or another";
+}
+// A value as a problem names it (entryText), each number in it that its
+// document writes otherwise than its double, or past every double, named as
+// written: an entry 9007199254740993 is not named 9007199254740992, nor 1e400
+// null. Written as JSON.stringify writes the rest. hmc.py's _named_text is the
+// same.
+function namedText(value, numbers) {
+  const written = numbers && numbers.written;
+  if (!written || !written.size || value == null || typeof value === "string" || typeof value === "boolean") return entryText(value);
+  if (typeof value === "number") { const name = numberName(value, written); return name != null ? name : entryText(value); }
+  const out = []; const stack = [[false, value]];
+  while (stack.length) {
+    const [raw, x] = stack.pop();
+    if (raw) { out.push(x); continue; }
+    const name = typeof x === "number" ? numberName(x, written) : null;
+    if (name != null) { out.push(name); continue; }
+    if (x === null || typeof x !== "object") { out.push(JSON.stringify(x)); continue; }
+    const list = Array.isArray(x);
+    const keys = list ? null : Object.keys(x);
+    const items = list ? x : keys.map(k => x[k]);
+    out.push(list ? "[" : "{"); stack.push([true, list ? "]" : "}"]);
+    for (let i = items.length - 1; i >= 0; i--) { stack.push([false, items[i]]); stack.push([true, (i ? "," : "") + (keys ? JSON.stringify(keys[i]) + ":" : "")]); }
+  }
+  return out.join("");
+}
+// A bound as a problem names it: a number as its document writes it
+// (namedText), text as it is. hmc.py's _bound_text is the same.
+function boundText(bound, numbers) { return typeof bound === "number" ? namedText(bound, numbers) : asText(bound); }
 // What JSON text given for a field, or written as its default, is refused with
 // when it holds a number its double would change: the number as written.
 function changedProblem(name, written) { return name + ": holds " + written + ", which a JSON number would change, so it is not sent"; }
@@ -3455,7 +3677,10 @@ function schemaChoices(field, problems, subject) {
   const s = field.schema;
   if (!isMap(s) || field.jsonKind) return [];
   const listed = Array.isArray(s.enum) ? s.enum : null;
-  const entries = own(s, "const") ? (listed ? listed.filter(v => sameJson(v, s.const)) : [s.const]) : listed;
+  // The const is keyed once, and each entry compared with its key at the cost
+  // of the entry's size, never the const's (jsonKey).
+  const constKey = own(s, "const") && listed ? jsonKey(s.const) : null;
+  const entries = own(s, "const") ? (listed ? listed.filter(v => jsonKey(v) === constKey) : [s.const]) : listed;
   const out = [];
   const byText = new Map();
   for (const v of entries || []) {
@@ -3522,12 +3747,12 @@ function schemaCheck(schema, value, name, report, enums = new Map(), inexact = n
     const keyed = Array.isArray(s.enum) || own(s, "const") ? enumKeys(s, enums, inexact) : null;
     const k = keyed ? jsonKey(v) : null;
     if (Array.isArray(s.enum) && !keyed.sure.has(k)) {
-      if (keyed.rounded.has(k)) { const [entry, kind] = keyed.rounded.get(k); return report(roundedProblem(at, entryText(entry), kind)); }
-      return report(at + ": must be one of " + s.enum.map(entryText).join(", "));
+      if (keyed.rounded.has(k)) { const [entry, kind] = keyed.rounded.get(k); return report(roundedProblem(at, namedText(entry, inexact), kind)); }
+      return report(at + ": must be one of " + s.enum.map(e => namedText(e, inexact)).join(", "));
     }
     if (own(s, "const")) {
-      if (k !== keyed.constKey) return report(at + ": must be " + entryText(s.const));
-      if (keyed.constRounded) return report(roundedProblem(at, entryText(s.const), keyed.constRounded));
+      if (k !== keyed.constKey) return report(at + ": must be " + namedText(s.const, inexact));
+      if (keyed.constRounded) return report(roundedProblem(at, namedText(s.const, inexact), keyed.constRounded));
     }
     if (typeof v === "string") {
       const n = codePoints(v);
@@ -3543,11 +3768,11 @@ function schemaCheck(schema, value, name, report, enums = new Map(), inexact = n
       // A bound whose number may not be the one written is not compared.
       const unsure = ["minimum", "maximum", "exclusiveMinimum", "exclusiveMaximum"]
         .find(key => own(s, key) && typeof s[key] !== "boolean" && inexactBound(s[key], inexact));
-      if (unsure) return report(inexactProblem(at, unsure, asText(s[unsure])));
-      if (low != null && v < low) return report(at + ": below minInclusive " + asText(s.minimum));
-      if (high != null && v > high) return report(at + ": above maxInclusive " + asText(s.maximum));
-      if (xlow && xlow[0] != null && !(v > xlow[0])) return report(at + ": not above exclusiveMinimum " + asText(xlow[1]));
-      if (xhigh && xhigh[0] != null && !(v < xhigh[0])) return report(at + ": not below exclusiveMaximum " + asText(xhigh[1]));
+      if (unsure) return report(inexactProblem(at, unsure, boundText(s[unsure], inexact)));
+      if (low != null && v < low) return report(at + ": below minInclusive " + boundText(s.minimum, inexact));
+      if (high != null && v > high) return report(at + ": above maxInclusive " + boundText(s.maximum, inexact));
+      if (xlow && xlow[0] != null && !(v > xlow[0])) return report(at + ": not above exclusiveMinimum " + boundText(xlow[1], inexact));
+      if (xhigh && xhigh[0] != null && !(v < xhigh[0])) return report(at + ": not below exclusiveMaximum " + boundText(xhigh[1], inexact));
     }
     const children = [];
     if (Array.isArray(v)) {
@@ -3787,10 +4012,10 @@ function shapeChoices(field, numeric) {
     if (numeric && (typeof e === "number" || typeof e === "string")) { try { found.push("n" + String(coerceNumber(field, numeric, String(e)))); } catch {} }
     if (rdfJson) { try { found.push("j" + jsonKey(typeof e !== "string" ? e : strictJson(e))); } catch {} }
     const kind = roundedEntry(field, e);
-    if (kind) { for (const k of found) if (!rounded.has(k)) rounded.set(k, [asText(e), kind]); }
+    if (kind) { for (const k of found) if (!rounded.has(k)) rounded.set(k, [typeof e === "number" ? namedText(e, field.inexact) : asText(e), kind]); }
     else for (const k of found) keys.add(k);
   }
-  const problem = field.name + ": must be one of " + enumOptions(field).join(", ");
+  const problem = field.name + ": must be one of " + choicesOf(field).map(([text, v]) => typeof v === "number" ? namedText(v, field.inexact) : text).join(", ");
   // null when a typed value is an entry, else the problem it gives.
   const problemFor = (typed) => {
     let k;
@@ -3942,8 +4167,8 @@ function checkValue(field, found, numeric, report, choices, fromDefault, enums, 
   const choiceProblem = choices ? choices.problemFor(typed) : null;
   if (choiceProblem) report(choiceProblem);
   if (facts.hasValue && !field.multi) {
-    if (!hasValueMatches(facts, numeric, typed)) report(field.name + ": must be " + facts.hasValue.text);
-    else if (facts.hasValue.rounded) report(roundedProblem(field.name, facts.hasValue.text, facts.hasValue.rounded));
+    if (!hasValueMatches(facts, numeric, typed)) report(field.name + ": must be " + facts.hasValue.name);
+    else if (facts.hasValue.rounded) report(roundedProblem(field.name, facts.hasValue.name, facts.hasValue.rounded));
   }
   // A bound is compared with a number: a value that is none (text, or a node) is
   // an error, not a pass, as SHACL has a comparison it cannot make. A bound that
@@ -4031,6 +4256,8 @@ function defaultKindProblem(field, v) {
 function fieldValue(field, found, report, enums) {
   let problems = 0;
   const note = (message) => { problems++; report(message); };
+  // Each field checked, and below each of a list's values, is charged (spendWork).
+  spendWork(1);
   const numeric = numericKind(field);
   const required = field.required || (field.minCount || 0) >= 1;
   const facts = fieldFacts(field, numeric);
@@ -4063,6 +4290,7 @@ function fieldValue(field, found, report, enums) {
     const typedItems = [];
     const choices = shapeChoices(field, numeric);
     let stopped = false;
+    spendWork(items.length);
     for (const item of items) {
       const before = problems;
       if (item != null && typeof item === "object") note(field.name + ": each value is one " + (localName(field.datatype) || "text") + " value, not JSON");
@@ -4075,8 +4303,8 @@ function fieldValue(field, found, report, enums) {
     }
     // sh:hasValue asks that one of a list's values be the one it names.
     if (facts.hasValue && !stopped) {
-      if (!typedItems.some(v => v != null && hasValueMatches(facts, numeric, v))) note(field.name + ": must include " + facts.hasValue.text);
-      else if (facts.hasValue.rounded) note(roundedProblem(field.name, facts.hasValue.text, facts.hasValue.rounded));
+      if (!typedItems.some(v => v != null && hasValueMatches(facts, numeric, v))) note(field.name + ": must include " + facts.hasValue.name);
+      else if (facts.hasValue.rounded) note(roundedProblem(field.name, facts.hasValue.name, facts.hasValue.rounded));
     }
     return [typedItems, problems === 0];
   }
@@ -4266,6 +4494,8 @@ function resolvePlan(control, values, descriptorUrl) {
   // An address that is sent is shown exactly as it is sent; one that is not
   // (a template that does not give http or https) in its URI form.
   if (url) url = isWebUrl(url) ? requestUrl(url) : iriToUri(url);
+  // What the request holds is charged: its address and its body.
+  spendWork((url || "").length + (bodyText || "").length);
   return { control, transport, method, url, headers, body, bodyText, fields: values, mcp, notes, unsafe: control.unsafe };
 }
 
@@ -4399,7 +4629,13 @@ function methodClass(method) {
   const m = asText(method).toLowerCase();
   return METHOD_CLASSES.has(m) ? m : "other";
 }
+// The list is one step of work: each card is charged what it shows, and past
+// the budget nothing is shown and the document is refused by name.
 function renderList() {
+  if (!state.descriptor) return showList();
+  withWork(state.descriptor.size, showList);
+}
+function showList() {
   const desc = state.descriptor;
   const meta = document.getElementById("meta");
   const list = document.getElementById("list");
@@ -4416,6 +4652,7 @@ function renderList() {
   const unsafe = desc.controls.filter(c => c.unsafe);
   const card = (c) => {
     const transport = classifyTransport(c, desc.url);
+    spendWork(CONTROL_WORK + asText(c.title).length + shortRel(c.rel).length + asText(c.method).length + transport.length);
     const active = state.selected && state.selected.rel === c.rel ? " active" : "";
     return `<article class="card${active}" data-rel="${esc(c.rel)}">
       <div class="row"><span class="badge ${methodClass(c.method)}">${esc(c.method)}</span>
@@ -4516,11 +4753,13 @@ function fillInput(el, field) {
 // Whether a form that holds `given` for a field sends what its default does:
 // both read with no problem, as the same value.
 function holds(field, given) {
-  const quiet = () => {};
-  const [a, held] = fieldValue(field, given, quiet, new Map());
-  if (!held) return false;
-  const [b, ok] = fieldValue(field, null, quiet, new Map());
-  return ok && sameJson(a, b);
+  return withoutWork(() => {
+    const quiet = () => {};
+    const [a, held] = fieldValue(field, given, quiet, new Map());
+    if (!held) return false;
+    const [b, ok] = fieldValue(field, null, quiet, new Map());
+    return ok && sameJson(a, b);
+  });
 }
 // The previous control's form, and its confirmation, go before anything else
 // happens, and a control that cannot be shown leaves a warning, never a form.
@@ -4533,6 +4772,11 @@ function renderDetail() {
   const c = state.selected;
   if (!c || !desc) { el.innerHTML = `<div class="empty">Select a control.</div>`; return; }
   try {
+    // Opening a control is one step of work (chargeShown). One past its budget
+    // shows no form, and stays refused however often it is opened, as each
+    // run of hmc.py's describe and invoke refuses it.
+    if (c.overWork) throw new WorkError(c.overWork);
+    try { withWork(desc.size, () => chargeShown(c)); } catch (err) { if (err instanceof WorkError) c.overWork = err.message; throw err; }
     el.innerHTML = detailHtml(c, desc);
   } catch (err) {
     el.innerHTML = `<div class="warn">This control could not be shown, so it cannot be invoked: ${esc(err && err.message || err)}</div>`;
@@ -4618,6 +4862,17 @@ function detailHtml(c, desc) {
 // What an ?invoke= link gave is read as it gave it, under the names it gave,
 // in place of the inputs it fills, until the person changes one of them.
 function formInputs() { return [...document.querySelectorAll("#invokeForm [data-field]")]; }
+// The bytes of the names and values given for a request (the form and a
+// link), as UTF-8 writes them, which add to what checking them may cost.
+// hmc.py's _given_size is the same.
+function givenSize(supplied) {
+  let n = 0;
+  for (const name of Object.keys(supplied)) {
+    n += utf8Length(name);
+    for (const v of asList(supplied[name])) if (typeof v === "string") n += utf8Length(v);
+  }
+  return n;
+}
 function readForm() {
   const supplied = Object.create(null);
   const fields = state.formFor ? state.formFor.fields : [];
@@ -4680,14 +4935,22 @@ async function runInvoke(forceDry, formControl) {
     setStatus("Nothing was sent: the form on screen is not the selected control's.");
     return;
   }
-  const checked = validateFields(control, readForm());
+  // Its values are checked, then its request built, each one step of work: the
+  // check's budget counts the bytes given too, and the request's the bytes of
+  // the values it sends, as JSON writes them. hmc.py's cmd_invoke is the same.
+  const supplied = readForm();
+  let checked;
+  try { checked = withWork(desc.size + givenSize(supplied), () => validateFields(control, supplied)); } catch (err) {
+    if (!(err instanceof WorkError)) throw err;
+    checked = { values: {}, errors: [err.message] };
+  }
   const errors = checked.errors;
   if (errors.length) {
     showResult(`<div class="warn">Validation failed:<ul>${errors.map(e => "<li>" + esc(e) + "</li>").join("")}</ul></div>`);
     return;
   }
   let plan;
-  try { plan = resolvePlan(control, checked.values, desc.url); } catch (err) {
+  try { plan = withWork(desc.size + utf8Length(JSON.stringify(checked.values)), () => resolvePlan(control, checked.values, desc.url)); } catch (err) {
     const msg = String(err && err.message || err);
     showResult(`<div class="warn">${esc("The request could not be built, so nothing was sent: " + msg)}</div>`);
     setStatus("Invoke failed: " + msg);
@@ -4794,6 +5057,8 @@ function authorityRefused(descriptor, jsonldUrl, kind, err) {
   for (const c of descriptor.controls) {
     c.conflict = c.problem = "the JSON-LD answer to " + jsonldUrl + " is refused, and what it says of this control is not known, so it is not invoked: " + because;
     c.unsafe = true;
+    // Written for each control, so charged for each, as reading the document charges what it names (chargeRead).
+    spendWork(c.conflict.length);
   }
 }
 // The address is checked as it is given, before anything reads it: one a URL
@@ -4823,7 +5088,7 @@ async function loadDescriptorUrl(url, push = true) {
     }
   }
   if (!fetched) throw unread;
-  if (unread) authorityRefused(descriptor, answers[0].url, fetched.kind, unread);
+  if (unread) withWork(descriptor.size, () => authorityRefused(descriptor, answers[0].url, fetched.kind, unread));
   if (push && state.descriptor) state.history.push(state.descriptor.url);
   state.descriptor = descriptor;
   state.selected = null;

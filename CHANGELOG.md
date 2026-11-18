@@ -657,6 +657,22 @@ rows, 50 failed in `hmc.py` and 35 on the page before; the rows that pin a
 list's stop at its first bad value fail in both once the stop is removed. The
 CSP hash moves.
 
+A seventeenth review found more shapes of a small document that made either
+client do or write far more than its size: a comment each of 2,000 fields took,
+a template or a quoted problem written for each control, a template's fields
+copied into each control's, and, found while testing, one variable a template
+repeats 20,000 times. Rather than another specific limit, both clients now count
+each step (reading, listing, opening a control, checking values, building the
+request) against one budget of 64 units per byte of the document, and 2,000,000
+at least, and refuse a step past it by name, sending nothing; on the live
+catalogs no step uses more than 2.1% of it. The review also found a field cache
+that read a node as whichever kind first met it, a hint under a JSON Schema
+keyword that `@vocab` or a term makes a property, and numbers named as the
+doubles reading gave: the cache is keyed by kind, a schema holding a key its
+context gives a meaning (or any under a remote context) is refused, and numbers
+are named as written. Of 31 new shared rows, 25 failed in `hmc.py` and 20 on the
+page before. The CSP hash moves.
+
 ## 2026-11-17 — Native store: a required signed head that is missing is not an empty store
 
 From review of #934. With `requireSignedHead` on, a head with no signature was
