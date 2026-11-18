@@ -19,9 +19,14 @@ Where what the session holds cannot be carried on (some scores and not others,
 exchanges out of order, or ones this scenario does not have) nothing is sent and
 no practice starts, and the page says so.
 
-Not changed: a reply that was spoken is found again by matching the saved words a
-second time, because the sample scenario's profile records no reply beside them.
-Times shown for the conversation are counted from the reopening.
+The sample scenario now records, beside the words of a spoken reply, the reply
+they were matched to, in the role-play profile's `matched-or-tapped-reply`
+extension. The profile already declared it; the scenario did not use it. A spoken
+exchange is taken up again by that recorded reply. Only one recorded before this
+change has its words matched a second time, and stops there if they no longer
+name one reply.
+
+Not changed: times shown for the conversation are counted from the reopening.
 
 ## 2026-11-18 — Role-play player: one initialized when a practice is opened again
 

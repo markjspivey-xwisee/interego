@@ -103,6 +103,38 @@ describe('a practice opened again part way through', () => {
     expect(again.sent.every((s) => s.verb.id === V['turn'])).toBe(true);
   });
 
+  it('takes a spoken exchange up by the reply recorded beside it, not by matching its words again', async () => {
+    const MATCHED = scenario.xapi.extensions['matchedReply']!;
+    expect(MATCHED).toBe('https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/matched-or-tapped-reply');
+    // Heard as two words only, and accepted by the learner as the best reply: the words alone name no reply.
+    const first = load([]);
+    first.start(0);
+    first.pick(BEST[0]!, 'being charged');
+    const [spoken] = turns(first.sent) as [St];
+    expect(spoken.result).toEqual({ response: 'being charged', extensions: { [MATCHED]: scenario.personas[0]!.stages[0]!.choices[BEST[0]!]!.text } });
+    const again = load([verb('initialized'), spoken]);
+    expect(await again.carryOn()).toBe(true);
+    expect(again.state().picks).toEqual([{ i: BEST[0], said: 'being charged', stage: 0 }]);
+    expect(again.shown).toEqual(['s-call']);
+
+    // An exchange from a scenario that records no reply beside the words: they are matched again. Words
+    // that name no reply by any matching stop it there. (Which words those are depends on the matching.)
+    const bare: Scenario = { ...scenario, xapi: { ...scenario.xapi, extensions: Object.fromEntries(Object.entries(scenario.xapi.extensions).filter(([k]) => k !== 'matchedReply')) } };
+    const old = load([], bare);
+    old.start(0);
+    old.pick(BEST[0]!, 'the weather has been lovely');
+    expect(turns(old.sent)[0]!.result).toEqual({ response: 'the weather has been lovely' });
+    const stuck = load([verb('initialized'), ...turns(old.sent)], bare);
+    expect(await stuck.carryOn()).toBe(true);
+    expect(stuck.title()).toBe("This practice can't be carried on here");
+    expect(stuck.sent).toEqual([]);
+
+    // A recorded reply that is not one of the step's replies is not guessed at.
+    const wrong = load([verb('initialized'), { ...spoken, result: { response: 'being charged', extensions: { [MATCHED]: 'Some other reply.' } } }]);
+    expect(await wrong.carryOn()).toBe(true);
+    expect(wrong.title()).toBe("This practice can't be carried on here");
+  });
+
   it('carries on as the customer the earlier load was talking to, whoever that was', async () => {
     for (let who = 0; who < scenario.personas.length; who++) {
       const first = load([]);

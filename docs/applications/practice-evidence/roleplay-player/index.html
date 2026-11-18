@@ -418,9 +418,12 @@ function exchangesHeld(statements){
    whose every line, and every reply at its step, is what was recorded. false when none is, or more
    than one: a scenario changed since, say. Nothing is then taken up. */
 /* Which reply an exchange was, at the step the conversation stands at. A tapped reply is recorded
-   as its own text. A spoken one is recorded as the words heard, with the reply beside it where the
-   scenario's profile has a place for that; where it has none, the words are matched again, the way
-   they were matched when they were spoken. null when that names no one reply. */
+   as its own text. A spoken one is recorded as the words heard, with the reply it was matched to
+   beside it where the scenario names an extension for that (`matchedReply`; the sample scenario
+   does). That recorded reply is what is used: it does not depend on how words are matched today.
+   Only an exchange recorded without it has its words matched again, the way they were matched
+   when they were spoken, and that can come out differently once the matching has changed.
+   null when no one reply is named. */
 function replyOf(s, x){
   const want = x.matched || x.response, found = s.choices.map((c, i) => c.text === want ? i : -1).filter(i => i >= 0);
   if (found.length === 1) return {i: found[0], said: x.matched ? x.response : ""};
