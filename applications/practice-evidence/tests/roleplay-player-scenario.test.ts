@@ -103,7 +103,10 @@ describe('the published role-play player page', () => {
   });
 
   it('sends no completed of its own where the result is a reviewer\'s, and asks the LMS for the reviewed one', () => {
-    expect(page).toContain('if (!deferred) send("completed", "completed"');
+    expect(page).toContain('if (!deferred) sendCompleted();');
+    // The one other place a completed of the player's own is sent is guarded the same way.
+    expect(page).toContain('const owed = S.resultAfterReview !== true && !ended');
+    expect(page.split('sendCompleted()').length - 1).toBe(3);
     expect(page).toContain('new URL("/cmi5/reviewed", cfg.lrs)');
     // The cmi5 credential goes to the LMS as a Bearer; the LRS takes the same token as Basic.
     expect(page).toContain('"Bearer " + cfg.authorization.replace(/^Basic\\s+/, "")');
