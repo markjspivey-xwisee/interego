@@ -183,6 +183,23 @@ describe('a practice opened again part way through', () => {
     expect(kept.state().picks).toEqual([{ i: BEST[0], said: 'being charged', stage: 0 }, { i: BEST[1], said: '', stage: 1 }]);
   });
 
+  it('keeps what the learner said when a scenario records ids and not the matched reply', async () => {
+    // Such a scenario's spoken exchange has the words heard as its answer and the reply's id beside them, and nothing else.
+    const idsOnly = without('matchedReply');
+    const first = load([], idsOnly);
+    first.start(0);
+    first.pick(BEST[0]!, 'being charged twice is frustrating');
+    first.pick(BEST[1]!, null);
+    const [spoken, tapped] = turns(first.sent) as [St, St];
+    expect(spoken.result).toEqual({ response: 'being charged twice is frustrating', extensions: { [REPLY]: 'dana-1-b' } });
+    expect(tapped.result).toEqual({ response: scenario.personas[0]!.stages[1]!.choices[BEST[1]!]!.text, extensions: { [REPLY]: 'dana-2-b' } });
+    const again = load([verb('initialized'), spoken, tapped], idsOnly);
+    expect(await again.carryOn()).toBe(true);
+    // The spoken one comes back as the learner's own words, not as the scripted reply; the tapped one as a tap.
+    expect(again.state().picks).toEqual([{ i: BEST[0], said: 'being charged twice is frustrating', stage: 0 }, { i: BEST[1], said: '', stage: 1 }]);
+    expect(again.state()).toEqual(first.state());
+  });
+
   it('does not guess at an exchange whose ids the scenario does not have at that step', async () => {
     const first = load([]);
     first.start(0);

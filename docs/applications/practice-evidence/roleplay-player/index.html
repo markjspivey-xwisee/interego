@@ -494,7 +494,13 @@ function replyOf(s, x){
   if (x.replyId) {
     if (x.stepId && s.id && x.stepId !== s.id) return null;
     const byId = s.choices.map((c, i) => c.id === x.replyId ? i : -1).filter(i => i >= 0);
-    return byId.length === 1 ? {i: byId[0], said: x.matched ? x.response : ""} : null;
+    if (byId.length !== 1) return null;
+    // Whether the reply was spoken, so that what the learner said is kept as theirs. A scenario that
+    // records the matched reply records it on a spoken exchange only, so its absence is a tap.
+    // One that does not record it leaves the answer itself to tell: a tap's answer is the reply's
+    // text, and anything else was heard. (After an edit to that text a tap reads as spoken there.)
+    const spoken = X.extensions.matchedReply ? !!x.matched : x.response !== s.choices[byId[0]].text;
+    return {i: byId[0], said: spoken ? x.response : ""};
   }
   const want = x.matched || x.response, found = s.choices.map((c, i) => c.text === want ? i : -1).filter(i => i >= 0);
   if (found.length === 1) return {i: found[0], said: x.matched ? x.response : ""};

@@ -12,7 +12,9 @@ extension, and the reply's beside the learner's answer, as `pev:replyId`
 finds each exchange by those ids. An id the step does not have is not guessed at
 from the text. An exchange recorded before this change is still found the old
 way, by the recorded reply's text. A scenario that uses an id twice is refused
-when it loads.
+when it loads. What the learner said aloud is kept as theirs when an exchange is
+found by id, in a scenario that records the matched reply and in one that does
+not.
 
 `tests/roleplay-player-through-import.test.ts` runs the page's two scripts whole
 against a stand-in LMS: a practice is closed after two replies, opened again,
