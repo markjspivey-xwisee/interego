@@ -211,13 +211,30 @@ describe('changelog entries are one file each, under changelog/', () => {
     // master in and is asked to move its own.
     const base = git(['merge-base', 'origin/master', 'HEAD']);
     if (!base.ok) {
-      // "Could not check" must not read as "fine" where the check is the point.
-      if (process.env['GITHUB_ACTIONS'] === 'true') throw new Error('origin/master does not resolve in this clone, so whether this pull request adds an entry to CHANGELOG.md cannot be checked. The suite checks out with fetch-depth: 0 for this.');
+      // ★ A SHALLOW CLONE HAS NO MERGE-BASE TO ASK FOR, AND IT IS NOT THE RUN THIS BELONGS TO.
+      // base-without-verticals.yml runs this file too: its checkout takes the default depth of
+      // one, and it also runs on master pushes. The first version of this test threw there in
+      // CI, on every pull request, for a reason that has nothing to do with the changelog
+      // (found in review of #964, before it ran). The run that carries this assertion is Bridge
+      // Typecheck's suite, a full clone, and the test below holds that depth in place. So a
+      // shallow clone passes here, and a FULL clone in CI that still cannot resolve origin/master
+      // is refused: there, "could not check" must not read as "fine".
+      const shallow = git(['rev-parse', '--is-shallow-repository']).out === 'true';
+      if (!shallow && process.env['GITHUB_ACTIONS'] === 'true') throw new Error('origin/master does not resolve in this full clone, so whether this pull request adds an entry to CHANGELOG.md cannot be checked.');
       return;
     }
     const diff = git(['diff', '--unified=0', base.out, '--', 'CHANGELOG.md']);
     expect(diff.ok).toBe(true);
     const added = diff.out.split('\n').filter((l) => /^\+##\s/.test(l)).map((l) => l.slice(1));
     expect(added, 'CHANGELOG.md takes no new entries. Move each of these, unchanged, into its own file under changelog/ named <date>-<slug>.md (changelog/README.md), and restore CHANGELOG.md to master\'s (git checkout origin/master -- CHANGELOG.md). Two files never conflict; two entries at the top of one file always do.').toEqual([]);
+  });
+
+  it('the suite that carries that assertion is a full clone: Bridge Typecheck checks out every commit', () => {
+    // The assertion above passes on a shallow clone, so it is only as good as the one run that
+    // is not shallow. If this depth is ever dropped, the rule would pass everywhere, unread.
+    const workflow = readFileSync(resolve(REPO, '.github/workflows/bridge-typecheck.yml'), 'utf8');
+    const suiteJob = /^ {2}suite:\n([\s\S]*?)^ {2}[a-z][a-z0-9-]*:\n/m.exec(workflow)?.[1] ?? '';
+    expect(suiteJob).toContain('npx vitest run');
+    expect(suiteJob, 'the suite job must check out with fetch-depth: 0').toMatch(/fetch-depth:\s*0\b/);
   });
 });
