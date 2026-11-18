@@ -967,7 +967,9 @@ describe('hypermedia client: remote text costs linear time', () => {
 
 describe('hypermedia client: what a response is shown as grows with its size, not with the product of its parts', () => {
   // Each /shown control, invoked by a link: the page shows its answer as a table, indented JSON or
-  // its text, or nothing of it, as shownCases says, with the note hmc.py writes for the same rule.
+  // its text, or nothing of it, as shownCases says, after the notes it writes, in order, each with
+  // the words hmc.py writes for the same rule. Past the table's bound the page shows the result as
+  // JSON, as hmc.py does, indented by the same rule, and past that as its text, after both notes.
   // What is shown is counted: the elements in the result, against the most a table of a response
   // of its size may have (tableElements: one for each 8 bytes, and 30,000 at least), and the
   // characters, against what laying out a response of its size may add (layoutBound), with its
@@ -988,8 +990,11 @@ describe('hypermedia client: what a response is shown as grows with its size, no
       const shown: Element[] = [];
       for (let el = result.querySelector('.resp-title')!.nextElementSibling; el; el = el.nextElementSibling) shown.push(el);
       const parsed = c.page === 'table' ? JSON.parse(c.body) as { head: { vars: string[] }; results: { bindings: unknown[] } } : null;
-      const notes = c.page === 'table' ? [`SPARQL result: ${parsed!.results.bindings.length} row(s)`] : c.pageNote ? [c.pageNote] : [];
-      expect(shown.filter(el => el.tagName === 'DIV').map(el => el.textContent)).toEqual(notes);
+      const notes = c.page === 'table' ? [`SPARQL result: ${parsed!.results.bindings.length} row(s)`] : c.pageNotes;
+      // The notes first, each in its words and in order, read as the outcome is, then what is shown.
+      expect(shown.map(el => el.tagName)).toEqual([...notes.map(() => 'DIV'), ...{ table: ['TABLE'], json: ['PRE'], text: ['PRE'], nothing: [] }[c.page]]);
+      expect(shown.filter(el => el.tagName === 'DIV').map(el => [el.className, el.textContent])).toEqual(notes.map(note => ['ok', note]));
+      // JSON is the text JSON.stringify(value, null, 2) writes, character for character, as hmc.py writes it.
       expect(shown.filter(el => el.tagName === 'PRE').map(el => el.textContent))
         .toEqual(c.page === 'json' ? [JSON.stringify(JSON.parse(c.body), null, 2)] : c.page === 'text' ? [c.body] : []);
       const tables = shown.filter(el => el.tagName === 'TABLE');
@@ -1012,6 +1017,28 @@ describe('hypermedia client: what a response is shown as grows with its size, no
       expect(result.textContent!.length, 'characters shown')
         .toBeLessThanOrEqual(c.page === 'nothing' ? 5_000 : layoutBound(c.bytes) + 6 * c.bytes + 5_000);
       assertInert(t, name);
+    } finally { t.dom.window.close(); }
+  }, 120_000);
+
+  it('shows a refused table\'s https values in its JSON as its text linked them: each once, followable', async () => {
+    const c = shownCases().find(one => one.name === 'links-refused')!;
+    const t = load(`?url=${encodeURIComponent(`${HOST}/shown`)}&invoke=${encodeURIComponent('urn:shown:links-refused')}`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'),
+        { timeout: 60_000 });
+      const pre = document.querySelector('#result .resp-title ~ pre')!;
+      const values = (JSON.parse(c.body) as { results: { bindings: Array<{ s: { value: string } }> } }).results.bindings.map(row => row.s.value);
+      // Its table would link each value in both columns "s" heads; its JSON links each once, no more
+      // than its text holds, the links the page showed when it showed its text.
+      const links = [...pre.querySelectorAll('[data-iri]')];
+      expect(links.map(e => e.getAttribute('data-iri'))).toEqual(values);
+      expect(links.length).toBeLessThanOrEqual(c.body.split('https://').length - 1);
+      // Each is followed as before: a click loads it as a descriptor, which this host does not serve,
+      // so the follow ends, named, before the page is closed.
+      click(t, links[1]!);
+      await vi.waitFor(() => expect(document.getElementById('status')!.textContent).toMatch(/^Follow failed: /));
+      expect(t.calls.map(call => call.url)).toContain(values[1]);
     } finally { t.dom.window.close(); }
   }, 120_000);
 });

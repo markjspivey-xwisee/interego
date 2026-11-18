@@ -3545,7 +3545,8 @@ export const layoutBound = (bytes: number) => Math.max(LAYOUT_FLOOR, LAYOUT_PER_
  * The most elements the page's table of a SPARQL result of n bytes may have: one for each
  * TABLE_BYTES_PER_ELEMENT bytes, and TABLE_FLOOR at least, counted by what each part of it builds
  * (tableCount). Its cells show no more characters than the response has bytes, and LAYOUT_FLOOR at
- * least. Past either the response is shown as its text, after a note naming why (tableAsText).
+ * least. Past the table's bound the page shows the result as JSON, as hmc.py does, indented by the
+ * same rule, and past that as its text, each after a note naming why (tableAsJson, then jsonAsText).
  * jsdom builds an element in about 17 us, against the 12.5 us a byte the time rule allows, so a
  * table at the bound takes at most about a fifth of what its size allows, and one at the floor
  * under a third of 3 s, whatever its cells show.
@@ -3571,8 +3572,8 @@ export function tableCount(vars: readonly string[], bindings: ReadonlyArray<Read
   }
   return count;
 }
-export const tableAsText = (rows: number, columns: number, bytes: number) =>
-  `This result's table would have ${rows} row(s) x ${columns} column(s), more than a response of ${bytes} bytes is shown as; it is shown as text.`;
+export const tableAsJson = (rows: number, columns: number, bytes: number) =>
+  `This result's table would have ${rows} row(s) x ${columns} column(s), more than a response of ${bytes} bytes is shown as; it is shown as JSON.`;
 export const jsonAsText = (added: number, bytes: number) =>
   `This JSON, indented, would add ${added} characters, more than a response of ${bytes} bytes is shown as; it is shown as text.`;
 
@@ -3580,19 +3581,24 @@ export const jsonAsText = (added: number, bytes: number) =>
 export type Shown = 'table' | 'json' | 'text' | 'nothing';
 export interface ShownCase {
   readonly name: string; readonly type: string; readonly body: string; readonly bytes: number;
-  readonly page: Shown; readonly hmc: Shown; readonly pageNote: string | null; readonly hmcNote: string | null;
+  readonly page: Shown; readonly hmc: Shown;
+  /** The notes the page writes before what it shows, in order: none, one, or a refused table's and then its JSON's. */
+  readonly pageNotes: readonly string[];
+  /** The note hmc.py writes before what it shows, or null for none: it shows no table, so it writes one note at most. */
+  readonly hmcNote: string | null;
   /** The most the page may take to show it, in ms, where that is less than its size allows. */
   readonly ms?: number;
 }
 let shownMemo: ReadonlyArray<ShownCase> | null = null;
 /**
  * The answers to /shown's GET controls, at /shown/<name>, with how each client shows each and the
- * note it writes first (null for none). Built once: two are 8 MB.
+ * notes it writes first. Built once: two are 8 MB.
  *   - sparse: Codex's, a SPARQL result of 1,000 variables and 1,000 empty bindings, whose table the
- *     page built cell by cell, a million of them, 9 MB of markup for 9 KB;
+ *     page built cell by cell, a million of them, 9 MB of markup for 9 KB: shown as JSON;
  *   - dense: an honest result of 300 rows and 3 columns, every cell bound, still a table;
  *   - repeated: one row of a result that names one variable 1,000 times and binds it to 20,000
- *     characters, which the table showed in each of the 1,000 columns (20 MB for 26 KB);
+ *     characters, which the table showed in each of the 1,000 columns (20 MB for 26 KB): shown as
+ *     JSON, the value once;
  *   - indented: JSON of 40 arrays each nested 255 deep, which indenting wrote as 5 MB for 20 KB;
  *   - too-deep: JSON nested 5,000 deep, which neither client reads as JSON, so it is its text;
  *   - geo: honest GeoJSON, nested seven deep, still indented;
@@ -3601,30 +3607,50 @@ let shownMemo: ReadonlyArray<ShownCase> | null = null;
  *     page once looked up by name in each row, each lookup costing the name's length. Within its
  *     bound, about 5,000 rows, that was 7 s, and the table's bound alone allows that, so the row is
  *     held to 3 s: mapped once, its names cost 0.5 s. (V8 hashes a name of 16,384 characters or more
- *     by its length alone, at no cost, so longer names would not measure the lookup.)
+ *     by its length alone, at no cost, so longer names would not measure the lookup.) Shown as JSON,
+ *     4.8 MB indented, within the same 3 s;
  *   - long-names-table: 2 variables of 16,000 characters, one no binding names, and a short one,
  *     with 7,000 bindings, whose table fits: each name was looked up in each row, twice;
  *   - padded: 400 variables and 400 empty bindings after 20,000 bytes of whitespace, which the page
- *     built as 160,000 cells, 7 for each byte, the bytes it never shows counted for them;
+ *     built as 160,000 cells, 7 for each byte, the bytes it never shows counted for them: shown as
+ *     JSON, which writes none of the whitespace;
  *   - honest-sparse, optional: honest results that bind little, as unmatched OPTIONALs leave them,
  *     2 variables and 500 empty bindings, and 8 variables and 3,000 bindings, one in ten binding one
  *     IRI: tables, as small results are, within TABLE_FLOOR;
  *   - at-bound, past-bound: 100 variables and as many empty bindings as the table's bound allows at
  *     256 KiB, padded with whitespace to exactly the bytes its count allows, a table that takes a
  *     fifth of the time its size allows; and the same result a byte shorter, one element past it,
- *     shown as text;
+ *     shown as JSON;
  *   - links-at-bound, links-past-bound: 5,461 variables all named "a", and one binding of "a" to an
  *     https IRI, shown as a link in each column, the costliest cell, padded to exactly the bound at
  *     256 KiB (a link cell counted 4, since it is about four times an empty cell's cost); and a
- *     byte shorter, shown as text;
+ *     byte shorter, shown as JSON, its link once;
  *   - at-floor, past-floor: 1 variable and 14,998 bindings, one binding it to an http IRI, which
  *     the page shows as text, not a link: exactly TABLE_FLOOR elements, 45 KB; and two binding it,
- *     one element past, shown as text;
+ *     one element past, shown as JSON;
  *   - chars-floor: 2 variables both named "a", and one binding of "a" to 4,000 characters, shown in
  *     both: 8,002 characters of 4 KB, a table only as LAYOUT_FLOOR allows;
  *   - one-column: 1 variable and 87,000 empty bindings, 261 KB, two elements for each 3 bytes, a
- *     table that took longer than its size allows, shown as text.
- * hmc.py shows no table: it writes a SPARQL result as the JSON it is, indented by the same rule.
+ *     table that took longer than its size allows, shown as JSON;
+ *   - sparse-deep: the sparse result, its first 10 bindings each holding beside the variables an
+ *     array nested 250 deep: past the table's bound, and its JSON past what indenting may add, so
+ *     the page writes both notes, in that order, and shows its text, as hmc.py does after the second;
+ *   - one-line: an honest result written as one line, 1 variable and 16,000 bindings, one in 50
+ *     binding it to a literal past ASCII, past TABLE_FLOOR: the page once showed it as one line of
+ *     64 KB, and shows the text hmc.py writes;
+ *   - links-refused: 2 variables both named "s", and 4,000 bindings of "s" to an https IRI, past
+ *     TABLE_FLOOR: its table would show each IRI twice, and its JSON shows each once, as a link, as
+ *     its text did;
+ *   - forms: a result past TABLE_FLOOR that writes its values in the forms JSON allows: text past
+ *     ASCII as it is and as escapes, an https IRI whose h is an escape and whose slashes are
+ *     escaped, a lone surrogate, control characters, a repeated key, a key JavaScript writes
+ *     first, and bindings that are no object (text, the numbers 1.0, 1e20, -0.0, 5e-7 and
+ *     12345678901234567890, null, true, an array), which the table drops and its JSON shows.
+ *     hmc.py wrote text past ASCII as \u escapes, those numbers as Python writes them and
+ *     that key where the response put it, so its text differed from the page's.
+ * hmc.py shows no table. Past the table's bound the page shows the result as JSON, as hmc.py does,
+ * indented by the same rule, and past that as its text: each shows the text JSON.stringify(value,
+ * null, 2) writes, character for character.
  */
 export function shownCases(): ReadonlyArray<ShownCase> {
   if (shownMemo) return shownMemo;
@@ -3641,10 +3667,15 @@ export function shownCases(): ReadonlyArray<ShownCase> {
     geometry: { type: 'Polygon', coordinates: [Array.from({ length: 50 }, (_, i) => [i + 0.5, f + 0.25])] } })) };
   const indented = `[${Array.from({ length: 40 }, () => JSON.stringify(nested(255))).join(',')}]`;
   const none = () => null;
+  // A row: the page's notes (one, or several in order) and hmc.py's, which is the page's one unless given.
   const build = (name: string, type: string, body: string, page: Shown, hmc: Shown,
-    pageNote: (bytes: number) => string | null, hmcNote: (bytes: number) => string | null = pageNote, ms?: number): ShownCase => {
+    pageNote: (bytes: number) => string | readonly string[] | null, hmcNote?: (bytes: number) => string | null, ms?: number): ShownCase => {
     const bytes = Buffer.byteLength(body);
-    return { name, type, body, bytes, page, hmc, pageNote: pageNote(bytes), hmcNote: hmcNote(bytes), ...(ms === undefined ? {} : { ms }) };
+    const notes = pageNote(bytes);
+    const pageNotes = notes === null ? [] : typeof notes === 'string' ? [notes] : notes;
+    if (!hmcNote && pageNotes.length > 1) throw new Error(`${name}: a row whose page writes more than one note names hmc.py's`);
+    return { name, type, body, bytes, page, hmc, pageNotes, hmcNote: hmcNote ? hmcNote(bytes) : pageNotes[0] ?? null,
+      ...(ms === undefined ? {} : { ms }) };
   };
   // A body padded with spaces after it to `bytes` bytes.
   const padTo = (body: string, bytes: number) => body + ' '.repeat(bytes - Buffer.byteLength(body));
@@ -3664,32 +3695,66 @@ export function shownCases(): ReadonlyArray<ShownCase> {
   // the value shown make TABLE_FLOOR exactly.
   const floor = (bound: number) => ({ vars: ['s'], bindings: Array.from({ length: 14_998 }, (_, i) => i < bound ? { s: { type: 'uri', value: 'http://data.example/s' } } : {}) });
   const optional = Array.from({ length: 3000 }, (_, i) => i % 10 ? {} : { [vars[i % 8]!]: { type: 'uri', value: `https://data.example/o/${i}` } });
+  // The rows a result's table would have: its bindings that are objects, as the page reads them.
+  const rowsOf = (text: string) => (JSON.parse(text) as { results: { bindings: unknown[] } }).results.bindings
+    .filter(row => row !== null && typeof row === 'object').length;
+  // The sparse result, its first 10 bindings each holding an array nested 250 deep, 254 levels with
+  // the result's own, within the 256 either client reads.
+  const sparseDeep = sparql(vars, Array.from({ length: 1000 }, (_, i) => i < 10 ? { deep: nested(250) } : {}));
+  // An honest result written as one line: 1 variable and 16,000 bindings, one in 50 binding it to a literal.
+  const oneLine = sparql(['s'], Array.from({ length: 16_000 }, (_, i) => i % 50 ? {} : { s: { type: 'literal', value: `café ${i} 日本` } }));
+  // 2 variables both named "s", and 4,000 bindings of "s" to an https IRI.
+  const linksRefused = sparql(['s', 's'], Array.from({ length: 4000 }, (_, i) => ({ s: { type: 'uri', value: `https://data.example/s/${i}` } })));
+  // A JSON escape of each UTF-16 unit, written out when the text is built, so this source holds none.
+  const u = (...units: number[]) => units.map(unit => `\\u${unit.toString(16).padStart(4, '0')}`).join('');
+  // A result written by hand, since JSON.stringify writes none of these forms: text past ASCII as it
+  // is and as escapes, an https IRI whose h is an escape and whose slashes are escaped, a lone
+  // surrogate, control characters, a key given twice, a key JavaScript writes first, bindings that
+  // are no object, and 16,000 empty ones to pass TABLE_FLOOR, then a character past the BMP, past
+  // the 8,000 characters hmc.py's text mode writes, whose cut counts characters where JavaScript
+  // counts UTF-16 units.
+  const forms = `{"head":{"vars":["s"]},"results":{"bindings":[${[
+    '{"s":{"type":"literal","value":"caf\u00e9 \u65e5\u672c"}}',
+    `{"s":{"type":"literal","value":"caf${u(0xe9)} ${u(0x65e5, 0x672c)} ${u(0x2028)}"}}`,
+    `{"s":{"type":"uri","value":"${u(0x68)}ttps:\\/\\/data.example\\/escaped"}}`,
+    `{"s":{"type":"literal","value":"${u(0xd800)} \\b${u(0x1f)}\\"\\\\"}}`,
+    '{"s":{"type":"literal","value":"first"},"s":{"type":"literal","value":"last"}}',
+    '{"z":"z","1":"one","__proto__":"p","s":{"type":"literal","value":"index"}}',
+    '"text"', '1.0', '1e20', '-0.0', '5e-7', '12345678901234567890', 'null', 'true', '["list"]',
+    ...Array<string>(16_000).fill('{}'),
+    `{"s":{"type":"literal","value":"${u(0xd834, 0xdd1e)} \ud834\udd1e"}}`,
+  ].join(',')}]}}`;
   shownMemo = [
-    build('sparse', SPARQL, sparql(vars, Array(1000).fill({})), 'text', 'json', bytes => tableAsText(1000, 1000, bytes), none),
+    build('sparse', SPARQL, sparql(vars, Array(1000).fill({})), 'json', 'json', bytes => tableAsJson(1000, 1000, bytes), none),
     build('dense', SPARQL, sparql(['s', 'p', 'o'], dense), 'table', 'json', none),
-    build('repeated', SPARQL, sparql(Array(1000).fill('a'), [{ a: { type: 'literal', value: 'x'.repeat(20000) } }]), 'text', 'json',
-      bytes => tableAsText(1, 1000, bytes), none),
+    build('repeated', SPARQL, sparql(Array(1000).fill('a'), [{ a: { type: 'literal', value: 'x'.repeat(20000) } }]), 'json', 'json',
+      bytes => tableAsJson(1, 1000, bytes), none),
     build('indented', 'application/json', indented, 'text', 'text', bytes => jsonAsText(added(indented), bytes)),
     build('too-deep', 'application/json', '['.repeat(5000) + ']'.repeat(5000), 'text', 'text', none),
     build('geo', 'application/geo+json', JSON.stringify(geo), 'json', 'json', none),
     build('largest', 'text/plain', 'x'.repeat(RESPONSE_MAX), 'text', 'text', none),
     build('too-large', 'text/plain', 'x'.repeat(RESPONSE_MAX + 1), 'nothing', 'nothing', () => RESPONSE_TOO_LARGE),
-    build('long-names', SPARQL, sparql(named(50, 16000), Array(400000).fill({})), 'text', 'json', bytes => tableAsText(400000, 50, bytes), none,
+    build('long-names', SPARQL, sparql(named(50, 16000), Array(400000).fill({})), 'json', 'json', bytes => tableAsJson(400000, 50, bytes), none,
       3_000),
     build('long-names-table', SPARQL, sparql([...named(2, 16000), 's'], Array.from({ length: 7000 }, (_, i) =>
       i < 2 ? { [i ? 's' : named(2, 16000)[1]!]: { type: 'uri', value: `https://data.example/bound/${i}` } } : {})), 'table', 'json', none),
-    build('padded', SPARQL, sparql(vars.slice(0, 400), Array(400).fill({})) + ' '.repeat(20000), 'text', 'json',
-      bytes => tableAsText(400, 400, bytes), none),
+    build('padded', SPARQL, sparql(vars.slice(0, 400), Array(400).fill({})) + ' '.repeat(20000), 'json', 'json',
+      bytes => tableAsJson(400, 400, bytes), none),
     build('honest-sparse', SPARQL, sparql(['s', 'o'], Array(500).fill({})), 'table', 'json', none),
     build('optional', SPARQL, sparql(vars.slice(0, 8), optional), 'table', 'json', none),
     build('at-bound', SPARQL, atCount(hundred), 'table', 'json', none),
-    build('past-bound', SPARQL, atCount(hundred, 1), 'text', 'json', bytes => tableAsText(atBound, 100, bytes), none),
+    build('past-bound', SPARQL, atCount(hundred, 1), 'json', 'json', bytes => tableAsJson(atBound, 100, bytes), none),
     build('links-at-bound', SPARQL, atCount(linked), 'table', 'json', none),
-    build('links-past-bound', SPARQL, atCount(linked, 1), 'text', 'json', bytes => tableAsText(1, linked.vars.length, bytes), none),
+    build('links-past-bound', SPARQL, atCount(linked, 1), 'json', 'json', bytes => tableAsJson(1, linked.vars.length, bytes), none),
     build('at-floor', SPARQL, sparql(floor(1).vars, floor(1).bindings), 'table', 'json', none),
-    build('past-floor', SPARQL, sparql(floor(2).vars, floor(2).bindings), 'text', 'json', bytes => tableAsText(14_998, 1, bytes), none),
+    build('past-floor', SPARQL, sparql(floor(2).vars, floor(2).bindings), 'json', 'json', bytes => tableAsJson(14_998, 1, bytes), none),
     build('chars-floor', SPARQL, sparql(['a', 'a'], [{ a: { type: 'literal', value: 'x'.repeat(4000) } }]), 'table', 'json', none),
-    build('one-column', SPARQL, sparql(['s'], Array(87000).fill({})), 'text', 'json', bytes => tableAsText(87000, 1, bytes), none),
+    build('one-column', SPARQL, sparql(['s'], Array(87000).fill({})), 'json', 'json', bytes => tableAsJson(87000, 1, bytes), none),
+    build('sparse-deep', SPARQL, sparseDeep, 'text', 'text', bytes => [tableAsJson(1000, 1000, bytes), jsonAsText(added(sparseDeep), bytes)],
+      bytes => jsonAsText(added(sparseDeep), bytes)),
+    build('one-line', SPARQL, oneLine, 'json', 'json', bytes => tableAsJson(16_000, 1, bytes), none),
+    build('links-refused', SPARQL, linksRefused, 'json', 'json', bytes => tableAsJson(4000, 2, bytes), none),
+    build('forms', SPARQL, forms, 'json', 'json', bytes => tableAsJson(rowsOf(forms), 1, bytes), none),
   ];
   return shownMemo;
 }

@@ -523,7 +523,8 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
 describe('hmc.py: what a response is shown as grows with its size, not with the product of its parts', () => {
   // Each /shown control, invoked: hmc.py shows its answer as indented JSON or its text, or nothing of
   // it, as shownCases says, with the note the page writes for the same rule. It shows no table, so
-  // it writes a SPARQL result as the JSON it is. Text mode writes at most 8,000 characters of a
+  // it writes a SPARQL result as the JSON it is: past the table's bound the page shows the result
+  // as JSON, as hmc.py does, indented by the same rule. Text mode writes at most 8,000 characters of a
   // body; --json writes it whole, so what it writes is counted against what laying out a response
   // of its size may add (layoutBound), with its text, escaped, beside it.
   it.each(shownCases().map(c => [c.name] as const))('shows /shown/%s as the page does, within what its size allows, in text and --json alike', async name => {
@@ -548,6 +549,35 @@ describe('hmc.py: what a response is shown as grows with its size, not with the 
     expect(out.response.bodyText).toBe(c.hmc === 'nothing' ? null : c.body);
     expect(out.response.body).toEqual(c.hmc === 'json' ? JSON.parse(c.body) : null);
     expect(json.stdout.length, '--json written').toBeLessThanOrEqual(layoutBound(c.bytes) + 8 * c.bytes + 20_000);
+  }, 60_000);
+
+  // Text mode writes 8,000 characters of a body, so the whole of what it writes of JSON is read from
+  // the function it writes with (_json_shown), over each /shown answer as served. Each is the text
+  // JSON.stringify(value, null, 2) writes, character for character, which the page shows too: text
+  // past ASCII as it is, numbers as JavaScript writes them, and an object's keys in its order.
+  it('writes each response it shows as JSON as the page shows it, character for character', async () => {
+    const rows = shownCases().filter(c => c.hmc === 'json');
+    const script = ['import json, sys, urllib.request', 'sys.dont_write_bytecode = True', 'sys.path.insert(0, sys.argv[1])', 'import hmc',
+      'for name in sys.argv[3:]:', '    with urllib.request.urlopen(sys.argv[2] + "/shown/" + name) as answer:',
+      '        text = hmc._body_text(answer.read())', '    print(json.dumps([name, hmc._json_shown(hmc._page_json(text))]))'].join('\n');
+    const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+      const child = spawn(PYTHON, ['-I', '-c', script, dirname(HMC), base, ...rows.map(c => c.name)],
+        { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*' } });
+      let stdout = ''; let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', d => { stdout += d; });
+      child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
+      child.on('close', code => resolve({ code, stdout, stderr }));
+    });
+    expect(r.code, r.stderr).toBe(0);
+    const written = new Map(r.stdout.trim().split('\n').map(line => JSON.parse(line) as [string, string]));
+    expect([...written.keys()]).toEqual(rows.map(c => c.name));
+    for (const c of rows) {
+      const shown = JSON.stringify(JSON.parse(c.body), null, 2);
+      const text = written.get(c.name)!;
+      let at = 0;
+      while (at < shown.length && shown[at] === text[at]) at++;
+      expect([text.length, at], `${c.name}: the same up to ${JSON.stringify(shown.slice(Math.max(0, at - 40), at + 40))}`).toEqual([shown.length, shown.length]);
+    }
   }, 60_000);
 });
 

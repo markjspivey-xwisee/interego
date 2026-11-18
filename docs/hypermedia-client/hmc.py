@@ -301,9 +301,11 @@ def _finite_copy(value: Any) -> Any:
 
 
 def _json_out(value: Any, indent: int | None = 2) -> str:
-    """What --json and a shown JSON body print: JSON, always. A remote 1e400
-    reads as an infinity, which json.dumps would write as Infinity; it is
-    written null, as the page's JSON.stringify writes it."""
+    """What --json prints: JSON, always, every character past ASCII escaped. A
+    remote 1e400 reads as an infinity, which json.dumps would write as
+    Infinity; it is written null, as the page's JSON.stringify writes it. A
+    response shown as JSON in text mode is written as the page shows it
+    (_json_shown)."""
     try:
         return json.dumps(value, indent=indent, allow_nan=False)
     except ValueError:
@@ -7546,7 +7548,10 @@ def _document_too_large(url: str) -> str:
 # text, after a note naming why (_json_as_text), so JSON's depth does not set
 # what is written. The page's LAYOUT_PER_BYTE, LAYOUT_FLOOR, indentSize and
 # jsonAsText are the same; the page also lays a SPARQL result out as a table,
-# within a bound of its own, where hmc.py writes it as the JSON it is.
+# within a bound of its own, where hmc.py writes it as the JSON it is. Past the
+# table's bound the page shows the result as JSON, as hmc.py does, indented by
+# the same rule, and past that as its text, after a note of its own first
+# (tableAsJson). JSON shown is the text the page shows (_json_shown).
 _LAYOUT_PER_BYTE = 8
 _LAYOUT_FLOOR = 10000
 
@@ -7582,6 +7587,17 @@ def _indent_size(value: Any) -> int:
         total += len(members) * (2 * depth + 3) + (len(members) if isinstance(item, dict) else 0) + 2 * depth + 1
         stack.extend((member, depth + 1) for member in members)
     return total
+
+
+def _json_shown(value: Any) -> str:
+    """What text mode writes of a response it shows as JSON, before it cuts
+    it to 8,000 characters: the text the page shows, its JSON.stringify(value,
+    null, 2), character for character (_js_json), so text past ASCII is
+    written as it is, each number as JavaScript writes it, and an object's
+    keys in JavaScript's order. json.dumps wrote "caf\\u00e9", 1.0 and 1e+20
+    where the page shows "café", 1 and 100000000000000000000. Its control
+    characters are then shown as escapes, as in all remote text (tty_safe)."""
+    return _js_json(value, 2)
 
 
 def _json_written(value: Any, size: int) -> str:
@@ -7908,7 +7924,7 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     body = resp.get("body")
     text = resp.get("bodyText")
     if isinstance(body, (dict, list)):
-        pretty = _json_out(body)
+        pretty = _json_shown(body)
         say(pretty if len(pretty) < 8000 else pretty[:8000] + "\n…")
     elif text is not None:
         say(text if len(text) < 8000 else text[:8000] + "\n…")
