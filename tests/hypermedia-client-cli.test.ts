@@ -19,7 +19,7 @@ import { ADDRESS_TEXT_PROBLEM, addressTexts, CONTAINER_READS, COST_CASES, costDe
   hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED, LOAD_HEADERS,
   OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, BODY_TEXTS, RULE_CASES, EMPTY_CASES,
   WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, turtleCostCases,
-  type HopHeaders } from './hypermedia-client-fixtures.js';
+  layoutBound, shownCases, type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HMC = fileURLToPath(new URL('../docs/hypermedia-client/hmc.py', import.meta.url));
 // What list, list --json and describe may write for a document: a dozen bytes for each of its
@@ -485,6 +485,35 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
     expect((JSON.parse(json.stdout) as { done: boolean; blocked: string })).toMatchObject({ done: false, blocked: 'mcp-required' });
     expect(seen.slice(before).filter(line => !line.startsWith('GET /defined-terms'))).toEqual([]);
   });
+});
+
+describe('hmc.py: what a response is shown as grows with its size, not with the product of its parts', () => {
+  // Each /shown control, invoked: hmc.py shows its answer as indented JSON or its text, or nothing of
+  // it, as shownCases says, with the note the page writes for the same rule. It shows no table, so
+  // it writes a SPARQL result as the JSON it is. Text mode writes at most 8,000 characters of a
+  // body; --json writes it whole, so what it writes is counted against what laying out a response
+  // of its size may add (layoutBound), with its text, escaped, beside it.
+  it.each(shownCases().map(c => [c.name] as const))('shows /shown/%s as the page does, within what its size allows, in text and --json alike', async name => {
+    const c = shownCases().find(one => one.name === name)!;
+    const url = `${base}/shown/${name}`;
+    const text = await hmc(['invoke', `${base}/shown`, `urn:shown:${name}`]);
+    expect([text.code, text.stderr, text.timedOut]).toEqual([0, '', false]);
+    const lines = text.stdout.split('\n');
+    const at = lines.indexOf(invokeDone(url, 200));
+    expect(at, text.stdout.slice(0, 2_000)).toBeGreaterThan(0);
+    expect(lines[at - 1]).toBe(`HTTP 200  ${c.type}`);
+    const shown = c.hmc === 'json' ? JSON.stringify(JSON.parse(c.body), null, 2) : c.hmc === 'text' ? c.body : null;
+    const written = shown === null ? '' : shown.length < 8_000 ? `${shown}\n` : `${shown.slice(0, 8_000)}\n…\n`;
+    expect(lines.slice(at + 1).join('\n')).toBe(`${c.hmcNote === null ? '' : `${c.hmcNote}\n`}${written}`);
+    expect(text.stdout.length, 'text written').toBeLessThan(10_000);
+    const json = await hmc(['invoke', `${base}/shown`, `urn:shown:${name}`, '--json']);
+    expect([json.code, json.stderr, json.timedOut]).toEqual([0, '', false]);
+    const out = JSON.parse(json.stdout) as { done: boolean; outcome: string; response: { bodyText: string | null; body: unknown; note?: string | null } };
+    expect([out.done, out.outcome, out.response.note ?? null]).toEqual([true, invokeDone(url, 200), c.hmcNote]);
+    expect(out.response.bodyText).toBe(c.hmc === 'nothing' ? null : c.body);
+    expect(out.response.body).toEqual(c.hmc === 'json' ? JSON.parse(c.body) : null);
+    expect(json.stdout.length, '--json written').toBeLessThanOrEqual(layoutBound(c.bytes) + 8 * c.bytes + 20_000);
+  }, 60_000);
 });
 
 describe('hmc.py: through an HTTP proxy its environment names', () => {

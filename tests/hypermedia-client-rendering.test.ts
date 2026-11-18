@@ -27,7 +27,8 @@ import { describe, expect, it, vi } from 'vitest';
 import { ADDRESS_TEXT_PROBLEM, addressTexts, BODY_TEXTS, CONTAINER_READS, COST_CASES, costDescriptors, countCases, DOCUMENT_REFUSALS, dryRuns, FETCH_CASES,
   fetchRoutes, hopHeaders, invokeDone, invokeNotFollowed, invokeNotSuccess, invokeOutcomes, jsonldPlans, jsonldRefusals, LANDING_BODY, LINK_CASES, LISTED,
   LOAD_HEADERS, OUTCOME_READ_HEADERS, sharedDescriptors, sharedMarkdown, UNSAFE_CONTROLS, VALUE_CASES, CHOICE_CASES, SWEEP_CASES, RULE_CASES, EMPTY_CASES,
-  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, type HopHeaders } from './hypermedia-client-fixtures.js';
+  WARNING_CASES, TEMPORAL_CASES, SHARED_COST_CASES, EXPANSION_CASES, EXPANSION_PROBLEM, WORK_CASES, workProblem, layoutBound, shownCases,
+  type HopHeaders } from './hypermedia-client-fixtures.js';
 
 const HTML = readFileSync(new URL('../docs/hypermedia-client/index.html', import.meta.url), 'utf8');
 const PAGE = 'https://markjspivey-xwisee.github.io/interego/hypermedia-client/';
@@ -428,6 +429,8 @@ function load(query: string, extra: Record<string, { type: string; text: string 
   virtualConsole.on('jsdomError', e => errors.push(String(e && (e.stack || e.message) || e)));
   const dom = new JSDOM(HTML, { url: PAGE + query, runScripts: 'dangerously', virtualConsole, beforeParse(window) {
     Object.assign(window, {
+      // jsdom has no TextDecoder, which every browser has and the page reads a response with.
+      TextDecoder,
       pwn: (...args: unknown[]) => { pwned.push(JSON.stringify(args)); },
       fetch: async (input: string, init: RequestInit = {}) => {
         const url = String(input); calls.push({ url, method: String(init.method || 'GET') });
@@ -906,6 +909,44 @@ describe('hypermedia client: remote text costs linear time', () => {
       expect(body.textContent).toBe(`see ${DOTTED_URL}.`);
     } finally { t.dom.window.close(); }
   });
+});
+
+describe('hypermedia client: what a response is shown as grows with its size, not with the product of its parts', () => {
+  // Each /shown control, invoked by a link: the page shows its answer as a table, indented JSON or
+  // its text, or nothing of it, as shownCases says, with the note hmc.py writes for the same rule.
+  // What is shown is counted: the elements and characters in the result, against what laying out
+  // a response of its size may add (layoutBound), with its text and the request's beside it. Time
+  // grows with the response as the work rows' does: 3 s, or 1 ms for each 80 bytes where that is more.
+  it.each(shownCases().map(c => [c.name] as const))('shows /shown/%s within what its size allows', async name => {
+    const c = shownCases().find(one => one.name === name)!;
+    const started = Date.now();
+    const t = load(`?url=${encodeURIComponent(`${HOST}/shown`)}&invoke=${encodeURIComponent(`urn:shown:${name}`)}`);
+    try {
+      const { document } = t;
+      await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'),
+        { timeout: 110_000 });
+      expect(Date.now() - started, 'link to done').toBeLessThan(Math.max(3_000, Math.ceil(c.bytes / 80)));
+      const result = document.getElementById('result')!;
+      expect(result.querySelector('.ok')!.textContent).toBe(invokeDone(`${HOST}/shown/${name}`, 200));
+      const shown: Element[] = [];
+      for (let el = result.querySelector('.resp-title')!.nextElementSibling; el; el = el.nextElementSibling) shown.push(el);
+      const parsed = c.page === 'table' ? JSON.parse(c.body) as { head: { vars: string[] }; results: { bindings: unknown[] } } : null;
+      const notes = c.page === 'table' ? [`SPARQL result: ${parsed!.results.bindings.length} row(s)`] : c.pageNote ? [c.pageNote] : [];
+      expect(shown.filter(el => el.tagName === 'DIV').map(el => el.textContent)).toEqual(notes);
+      expect(shown.filter(el => el.tagName === 'PRE').map(el => el.textContent))
+        .toEqual(c.page === 'json' ? [JSON.stringify(JSON.parse(c.body), null, 2)] : c.page === 'text' ? [c.body] : []);
+      const tables = shown.filter(el => el.tagName === 'TABLE');
+      expect(tables).toHaveLength(c.page === 'table' ? 1 : 0);
+      if (parsed) {
+        expect(tables[0]!.querySelectorAll('tbody tr')).toHaveLength(parsed.results.bindings.length);
+        expect(tables[0]!.querySelectorAll('td')).toHaveLength(parsed.results.bindings.length * parsed.head.vars.length);
+      }
+      expect(result.querySelectorAll('*').length, 'elements shown').toBeLessThanOrEqual(layoutBound(c.bytes));
+      expect(result.textContent!.length, 'characters shown')
+        .toBeLessThanOrEqual(c.page === 'nothing' ? 5_000 : layoutBound(c.bytes) + 6 * c.bytes + 5_000);
+      assertInert(t, name);
+    } finally { t.dom.window.close(); }
+  }, 120_000);
 });
 
 describe('hypermedia client: a confirmation belongs to one control', () => {

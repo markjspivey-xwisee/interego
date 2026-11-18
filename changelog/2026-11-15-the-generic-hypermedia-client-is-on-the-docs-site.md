@@ -713,3 +713,12 @@ made a set once, not once for each shape: 1,500 shapes sharing one list of
 5,000 made hmc.py's list build 820 MB. The kept readings of a node's values
 are now tested to stay apart by kind, and two of the page's slowest work rows
 use fewer controls.
+
+What either client shows of a response now grows with its size, not with a
+product of its parts. The page laid a SPARQL result of 1,000 variables and
+1,000 empty bindings, 9,934 bytes, out as a million table cells, and a value
+one variable named 1,000 times once in each column; JSON nested 255 deep was
+indented to 5 MB for 20 KB in both clients, and so was an MCP payload a dry
+run shows. A layout may add 8 units for each byte, 10,000 at least, or the
+response is shown as its text after a note saying why, and JSON a client
+writes of its own is written unindented. A response is read to 8 MiB.

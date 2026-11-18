@@ -1454,6 +1454,9 @@ export function sharedDescriptors(base: string): Record<string, string> {
     op('d', 'urn:repeat:delete', 'DELETE', 'Repeated method', target('/thing'))] }).replace('"hydra:method":"DELETE"', '"hydra:method":"DELETE","hydra:method":"GET"');
   // NaN is not JSON: the page's JSON.parse refuses it, and hmc.py, whose json.loads would read it, does too.
   out['/outcomes'] = JSON.stringify(outcomesDescriptor(base));
+  // A GET for each response shownCases serves, titled "Shown <name>".
+  out['/shown'] = JSON.stringify({ '@context': CTX, '@id': `${base}/shown`, 'iep:affordance': shownCases().map(c =>
+    op(c.name, `urn:shown:${c.name}`, 'GET', `Shown ${c.name}`, target(`/shown/${c.name}`))) });
   out['/not-json'] = JSON.stringify({ '@context': CTX, '@id': `${base}/not-json`, 'iep:affordance': [
     op('n', 'urn:nan:read', 'GET', 'NaN read', { ...target('/api'), 'hydra:title': 'NAN-HERE' })] }).replace('"NAN-HERE"', 'NaN');
   return out;
@@ -2698,7 +2701,11 @@ export type WorkStep = 'read' | 'list' | 'list --json' | 'control' | 'request';
  *     50,000 characters, which each client expanded whole before charging it (1 GB);
  *   - expr-explode: one exploded variable whose name is 20,000 characters and whose default is
  *     a list of 50,000 values, which writes the name once for each value (1 GB);
- *   - honest: 300 controls, each with its own shape of ten properties, which every step reads.
+ *   - honest: 300 controls, each with its own shape of ten properties, which every step reads;
+ *   - mcp-indented: a write with no transport but MCP whose JSON default holds 40 arrays nested
+ *     240 deep, which the page's dry run showed indented, twice, as the MCP call's payload (10 MB
+ *     for 20 KB), and hmc.py's list --json and describe wrote indented (4.8 MB). Each still plans,
+ *     and what each writes of its own as JSON is indented only within what its size allows.
  * And sharedNodeDocuments', in which many controls, inputs or mappings name one node by reference, a
  * node of thousands of keys or values (SHARED_NODE_SIZES), which each client read again for each
  * that names it: before, the page's list took 8 to 27 s, past its budget, and hmc.py's 5 to 25 s.
@@ -2776,6 +2783,7 @@ export const WORK_CASES: ReadonlyArray<readonly [path: string, rel: string, refu
   ['/work/range-distinct', 'urn:c0', ['read'], null, null],
   ['/work/mapping-distinct', 'urn:c0', ['read'], null, null],
   ['/work/closed-shared', 'urn:c1499', [], null, null],
+  ['/work/mcp-indented', 'urn:c', [], null, null],
 ];
 
 /** Each COST_CASES path's document as the text served; build it once per test file. */
@@ -2955,6 +2963,10 @@ export function costDescriptors(base: string): Record<string, string> {
         'hydra:mapping': [{ 'hydra:variable': LONG_VARIABLE }] },
       'hydra:expects': { type: 'object', properties: { [LONG_VARIABLE]: { type: 'array', items: { type: 'string' },
         default: Array(50000).fill('x') } } } }] },
+    // A write with no transport but MCP whose JSON default holds 40 arrays nested 240 deep.
+    '/work/mcp-indented': { '@context': CTX, '@id': `${base}/work/mcp-indented`, 'iep:affordance': [{ '@id': '#c', '@type': 'iep:Affordance',
+      'iep:action': { '@id': 'urn:c' }, 'hydra:method': 'POST', 'hydra:title': 'C',
+      'hydra:expects': { type: 'object', properties: { data: { type: 'object', default: { n: Array(40).fill(nested(240)) } } } } }] },
     // 300 writes, each expecting a shape of its own with ten described properties.
     '/work/honest': { '@context': CTX, '@id': `${base}/work/honest`,
       'iep:affordance': range(300).map(i => ({ '@id': `#c${i}`, '@type': 'iep:Affordance', ...get(`urn:c${i}`, `Write ${i}`), 'hydra:method': 'POST',
@@ -3353,6 +3365,8 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     '/landing': () => ({ type: 'text/plain', body: LANDING_BODY }),
     '/landing%7B%60%7D': () => ({ type: 'text/plain', body: LANDING_BODY }),
     '/landing-body': () => ({ type: 'text/plain', body: LANDING_BODY, headBody: true }),
+    // What /shown's controls read: responses whose layout once grew faster than their size, and honest ones.
+    ...Object.fromEntries(shownCases().map(c => [`/shown/${c.name}`, () => ({ type: c.type, body: c.body })])),
   };
 }
 
@@ -3437,4 +3451,78 @@ export function invokeNotFollowed(method: string, url: string, status: number | 
   const asGet = method !== 'GET' && method !== 'HEAD' && (status === null || status === 303 || (method === 'POST' && (status === 301 || status === 302)));
   return `Not done: ${url} ${answered}. The ${method} was not re-sent${asGet ? ', or turned into a GET' : ''}: ` +
     `a request goes only to the address its dry run shows. Whether ${url} acted on it is not known.`;
+}
+
+/**
+ * The most of a response either client reads, in bytes: past it the read stops, and nothing of the
+ * response is shown, named (RESPONSE_TOO_LARGE), whatever its status says of the request.
+ */
+export const RESPONSE_MAX = 8 * 1024 * 1024;
+export const RESPONSE_TOO_LARGE = `This response is larger than ${RESPONSE_MAX} bytes, so it was not read, and nothing of it is shown.`;
+/**
+ * What laying out a response of n bytes may add: LAYOUT_PER_BYTE units for each of its bytes, and
+ * LAYOUT_FLOOR at least. The page's table of a SPARQL result counts a unit for each cell (its head
+ * and each row included) and each character a cell shows; indenting JSON, in either client, counts
+ * each character it adds. Past that the response is shown as its text, as a body neither client
+ * recognises is, after a note naming why (tableAsText, jsonAsText).
+ */
+export const LAYOUT_PER_BYTE = 8;
+export const LAYOUT_FLOOR = 10_000;
+export const layoutBound = (bytes: number) => Math.max(LAYOUT_FLOOR, LAYOUT_PER_BYTE * bytes);
+export const tableAsText = (rows: number, columns: number, bytes: number) =>
+  `This result's table would have ${rows} row(s) x ${columns} column(s), more than a response of ${bytes} bytes is shown as; it is shown as text.`;
+export const jsonAsText = (added: number, bytes: number) =>
+  `This JSON, indented, would add ${added} characters, more than a response of ${bytes} bytes is shown as; it is shown as text.`;
+
+/** How a client shows a response: as a table (the page only), as indented JSON, as its text, or nothing of it. */
+export type Shown = 'table' | 'json' | 'text' | 'nothing';
+export interface ShownCase {
+  readonly name: string; readonly type: string; readonly body: string; readonly bytes: number;
+  readonly page: Shown; readonly hmc: Shown; readonly pageNote: string | null; readonly hmcNote: string | null;
+}
+let shownMemo: ReadonlyArray<ShownCase> | null = null;
+/**
+ * The answers to /shown's GET controls, at /shown/<name>, with how each client shows each and the
+ * note it writes first (null for none). Built once: two are 8 MB.
+ *   - sparse: Codex's, a SPARQL result of 1,000 variables and 1,000 empty bindings, whose table the
+ *     page built cell by cell, a million of them, 9 MB of markup for 9 KB;
+ *   - dense: an honest result of 300 rows and 3 columns, every cell bound, still a table;
+ *   - repeated: one row of a result that names one variable 1,000 times and binds it to 20,000
+ *     characters, which the table showed in each of the 1,000 columns (20 MB for 26 KB);
+ *   - indented: JSON of 40 arrays each nested 255 deep, which indenting wrote as 5 MB for 20 KB;
+ *   - too-deep: JSON nested 5,000 deep, which neither client reads as JSON, so it is its text;
+ *   - geo: honest GeoJSON, nested seven deep, still indented;
+ *   - largest, too-large: text of RESPONSE_MAX bytes, shown, and of one byte more, not read.
+ * hmc.py shows no table: it writes a SPARQL result as the JSON it is, indented by the same rule.
+ */
+export function shownCases(): ReadonlyArray<ShownCase> {
+  if (shownMemo) return shownMemo;
+  const SPARQL = 'application/sparql-results+json';
+  const sparql = (vars: readonly string[], bindings: readonly object[]) => JSON.stringify({ head: { vars }, results: { bindings } });
+  // What indenting JSON adds: JSON.stringify(value, null, 2) beyond JSON.stringify(value).
+  const added = (text: string) => { const v: unknown = JSON.parse(text); return JSON.stringify(v, null, 2).length - JSON.stringify(v).length; };
+  const vars = Array.from({ length: 1000 }, (_, i) => `v${i}`);
+  const dense = Array.from({ length: 300 }, (_, i) => ({ s: { type: 'uri', value: `https://data.example/s/${i}` },
+    p: { type: 'uri', value: 'https://data.example/p' }, o: { type: 'literal', value: `value ${i}` } }));
+  const geo = { type: 'FeatureCollection', features: Array.from({ length: 20 }, (_, f) => ({ type: 'Feature', properties: { name: `f${f}` },
+    geometry: { type: 'Polygon', coordinates: [Array.from({ length: 50 }, (_, i) => [i + 0.5, f + 0.25])] } })) };
+  const indented = `[${Array.from({ length: 40 }, () => JSON.stringify(nested(255))).join(',')}]`;
+  const none = () => null;
+  const build = (name: string, type: string, body: string, page: Shown, hmc: Shown,
+    pageNote: (bytes: number) => string | null, hmcNote: (bytes: number) => string | null = pageNote): ShownCase => {
+    const bytes = Buffer.byteLength(body);
+    return { name, type, body, bytes, page, hmc, pageNote: pageNote(bytes), hmcNote: hmcNote(bytes) };
+  };
+  shownMemo = [
+    build('sparse', SPARQL, sparql(vars, Array(1000).fill({})), 'text', 'json', bytes => tableAsText(1000, 1000, bytes), none),
+    build('dense', SPARQL, sparql(['s', 'p', 'o'], dense), 'table', 'json', none),
+    build('repeated', SPARQL, sparql(Array(1000).fill('a'), [{ a: { type: 'literal', value: 'x'.repeat(20000) } }]), 'text', 'json',
+      bytes => tableAsText(1, 1000, bytes), none),
+    build('indented', 'application/json', indented, 'text', 'text', bytes => jsonAsText(added(indented), bytes)),
+    build('too-deep', 'application/json', '['.repeat(5000) + ']'.repeat(5000), 'text', 'text', none),
+    build('geo', 'application/geo+json', JSON.stringify(geo), 'json', 'json', none),
+    build('largest', 'text/plain', 'x'.repeat(RESPONSE_MAX), 'text', 'text', none),
+    build('too-large', 'text/plain', 'x'.repeat(RESPONSE_MAX + 1), 'nothing', 'nothing', () => RESPONSE_TOO_LARGE),
+  ];
+  return shownMemo;
 }

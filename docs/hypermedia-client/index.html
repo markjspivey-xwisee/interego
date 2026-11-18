@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-RhPEYV+Iyr1vFhRN46orDSis3SwabzxDZvhvMg6Hgts='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-T8OjmL+rMWH3aMaMceZv5jwRHzHg1q1PTusgY0wEGQg='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -4914,26 +4914,111 @@ function renderMarkdown(src) {
   return html;
 }
 const HTML_SOURCE_MAX = 20000;
+// A response is read up to RESPONSE_MAX bytes and no further: past that the
+// read stops, and nothing of the response is shown, named (TOO_LARGE), whatever
+// its status says of the request. hmc.py's RESPONSE_MAX and TOO_LARGE are the same.
+const RESPONSE_MAX = 8 * 1024 * 1024;
+const TOO_LARGE = "This response is larger than " + RESPONSE_MAX + " bytes, so it was not read, and nothing of it is shown.";
+// A response's text as res.text() reads it (UTF-8, a leading byte order mark
+// dropped), read only up to RESPONSE_MAX bytes: past that `text` is null.
+// `size` is the bytes read. hmc.py's http_exchange reads one alike.
+async function readResponse(res) {
+  if (!res.body) return { text: "", size: 0 };
+  const reader = res.body.getReader();
+  const decoder = new TextDecoder();
+  const parts = [];
+  let size = 0;
+  for (;;) {
+    const { done, value } = await reader.read();
+    if (done) break;
+    size += value.byteLength;
+    if (size > RESPONSE_MAX) { reader.cancel().catch(() => {}); return { text: null, size }; }
+    parts.push(decoder.decode(value, { stream: true }));
+  }
+  parts.push(decoder.decode());
+  return { text: parts.join(""), size };
+}
+// What a response is shown as grows at most linearly with its size. Its text is
+// shown as received, escaped, with each https URL in it a link. Laying it out (a
+// SPARQL JSON result as a table, other JSON indented) may add LAYOUT_PER_BYTE
+// units for each of its bytes, and LAYOUT_FLOOR at least (layoutBound): a table
+// counts one for each cell, its head and each row included, and one for each
+// character a cell shows, and indenting counts each character it adds. Past that
+// the response is shown as its text, after a note naming why (tableAsText,
+// jsonAsText), so neither a product of a result's rows and columns, nor a value
+// a column names again, nor JSON's depth sets what is shown. hmc.py, which shows
+// no table, indents JSON by the same rule: its _LAYOUT_PER_BYTE, _LAYOUT_FLOOR,
+// _indent_size and _json_as_text are the same.
+const LAYOUT_PER_BYTE = 8;
+const LAYOUT_FLOOR = 10000;
+function layoutBound(size) { return Math.max(LAYOUT_FLOOR, LAYOUT_PER_BYTE * size); }
+function tableAsText(rows, columns, size) {
+  return "This result's table would have " + rows + " row(s) x " + columns + " column(s), more than a response of " + size +
+    " bytes is shown as; it is shown as text.";
+}
+function jsonAsText(added, size) {
+  return "This JSON, indented, would add " + added + " characters, more than a response of " + size + " bytes is shown as; it is shown as text.";
+}
+// The characters JSON.stringify(value, null, 2) writes beyond JSON.stringify(value):
+// each member of an array or object that has one on a line of its own, one level
+// deeper, an object's ": " for ":", and the closing bracket on a line of its own.
+// An object's member that is undefined is not written. A walk with a stack,
+// linear in the value.
+function indentSize(value) {
+  let total = 0;
+  const stack = [[value, 0]];
+  while (stack.length) {
+    const [item, depth] = stack.pop();
+    if (item === null || typeof item !== "object") continue;
+    const members = Array.isArray(item) ? item : Object.keys(item).map(key => item[key]).filter(member => member !== undefined);
+    if (!members.length) continue;
+    total += members.length * (2 * depth + 3) + (Array.isArray(item) ? 0 : members.length) + 2 * depth + 1;
+    for (const member of members) stack.push([member, depth + 1]);
+  }
+  return total;
+}
+// The text one cell of a SPARQL result's table shows: its binding's value.
+function cellText(row, v) {
+  const cell = own(row, v) ? row[v] : null;
+  return asText(cell && typeof cell === "object" ? cell.value : cell);
+}
+// Whether a SPARQL result's table fits within `bound`: counted cell by cell, so
+// the count stops as soon as it passes it, never after the whole product.
+function tableFits(vars, bindings, bound) {
+  let total = 0;
+  for (const v of vars) if ((total += 1 + v.length) > bound) return false;
+  for (const row of bindings) {
+    if (++total > bound) return false;
+    for (const v of vars) if ((total += 1 + cellText(row, v).length) > bound) return false;
+  }
+  return true;
+}
 // A note on the body reads as the outcome does: as a success only when it is one.
-function renderBody(contentType, body, parsed, done) {
+// `size` is the response's bytes, as received.
+function renderBody(contentType, body, parsed, done, size) {
   const ct = (contentType || "").toLowerCase();
   const note = done ? "ok" : "warn";
   body = asText(body);
+  // What is shown of a body no layout fits: its text, as a body that is not recognised is.
+  const asTextAfter = (why) => `<div class="${note}">${esc(why)}</div><pre>${linkify(body)}</pre>`;
   if (parsed && parsed.head && parsed.results && Array.isArray(parsed.results.bindings)) {
     const bindings = parsed.results.bindings.filter(row => row && typeof row === "object");
     const vars = (Array.isArray(parsed.head.vars) ? parsed.head.vars : Object.keys(bindings[0] || {})).map(asText);
-    let html = `<div class="${note}">SPARQL result: ${bindings.length} row(s)</div><table class="sparql"><thead><tr>`;
-    html += vars.map(v => "<th>" + esc(v) + "</th>").join("") + "</tr></thead><tbody>";
+    if (!tableFits(vars, bindings, layoutBound(size))) return asTextAfter(tableAsText(bindings.length, vars.length, size));
+    const html = [`<div class="${note}">SPARQL result: ${bindings.length} row(s)</div><table class="sparql"><thead><tr>`];
+    for (const v of vars) html.push("<th>" + esc(v) + "</th>");
+    html.push("</tr></thead><tbody>");
     for (const row of bindings) {
-      html += "<tr>" + vars.map(v => {
-        const cell = Object.prototype.hasOwnProperty.call(row, v) ? row[v] : null;
-        const val = asText(cell && typeof cell === "object" ? cell.value : cell);
-        return "<td>" + iriSpan(val, val) + "</td>";
-      }).join("") + "</tr>";
+      html.push("<tr>");
+      for (const v of vars) { const val = cellText(row, v); html.push("<td>" + iriSpan(val, val) + "</td>"); }
+      html.push("</tr>");
     }
-    return html + "</tbody></table>";
+    html.push("</tbody></table>");
+    return html.join("");
   }
   if (parsed && (ct.includes("json") || typeof parsed === "object")) {
+    const added = indentSize(parsed);
+    if (added > layoutBound(size)) return asTextAfter(jsonAsText(added, size));
     return "<pre>" + linkify(JSON.stringify(parsed, null, 2)) + "</pre>";
   }
   if (ct.includes("html")) {
@@ -5273,7 +5358,8 @@ async function runInvoke(forceDry, formControl) {
     return;
   }
   let plan;
-  try { plan = withWork(desc.size + utf8Length(JSON.stringify(checked.values)), () => resolvePlan(control, checked.values, desc.url)); } catch (err) {
+  const sentSize = desc.size + utf8Length(JSON.stringify(checked.values));
+  try { plan = withWork(sentSize, () => resolvePlan(control, checked.values, desc.url)); } catch (err) {
     const msg = String(err && err.message || err);
     showResult(`<div class="warn">${esc("The request could not be built, so nothing was sent: " + msg)}</div>`);
     setStatus("Invoke failed: " + msg);
@@ -5285,10 +5371,13 @@ async function runInvoke(forceDry, formControl) {
   // handed is not shown; sending it is refused below, naming why.
   let via = null;
   if (proxyBase() && plan.transport === "http" && plan.url) { try { via = viaProxy(plan.url); } catch {} }
-  let html = `<details ${dry ? "open" : ""}><summary>Request (${esc(plan.method)} ${esc(plan.transport)})</summary><pre>${linkify(JSON.stringify({
-    method: plan.method, transport: plan.transport, url: plan.url, ...(via ? { via } : {}), headers: plan.headers,
-    body: plan.body, notes: plan.notes, mcp: plan.mcp, dryRun: dry
-  }, null, 2))}</pre></details>`;
+  // The request is shown as JSON, indented only while that adds no more than
+  // its size allows (layoutBound): an MCP call's payload, a value given
+  // included, is written in it twice. hmc.py's _json_written is the same.
+  const request = { method: plan.method, transport: plan.transport, url: plan.url, ...(via ? { via } : {}), headers: plan.headers,
+    body: plan.body, notes: plan.notes, mcp: plan.mcp, dryRun: dry };
+  const requestText = indentSize(request) > layoutBound(sentSize) ? JSON.stringify(request) : JSON.stringify(request, null, 2);
+  let html = `<details ${dry ? "open" : ""}><summary>Request (${esc(plan.method)} ${esc(plan.transport)})</summary><pre>${linkify(requestText)}</pre></details>`;
   if (dry) {
     showResult(html + `<div class="warn">Dry run — nothing was sent.</div>`);
     return;
@@ -5343,17 +5432,20 @@ async function runInvoke(forceDry, formControl) {
       document.documentElement.dataset.ready = "1";
       return;
     }
-    const text = await res.text();
+    // Read up to RESPONSE_MAX bytes; past that, nothing of it is shown.
+    const read = await readResponse(res);
+    const text = read.text;
     let parsed = null;
     // A response nested too deep is shown as its text, as one that is not JSON is.
-    try { parsed = parseJson(text); } catch {}
+    if (text != null) try { parsed = parseJson(text); } catch {}
     // A GET or HEAD that followed a redirect got its answer where it landed.
     const landed = res.redirected && typeof res.url === "string" && res.url ? res.url : plan.url;
     const outcome = answerOutcome(plan.url, res.status, landed);
     state.lastResponse = { status: res.status, contentType: res.headers.get("content-type") || "", text, parsed, url: landed };
     html += `<div class="${outcome.done ? "ok" : "warn"}">${esc(outcome.message)}</div>` +
       `<h3 class="resp-title">Response HTTP ${esc(res.status)} · ${esc(state.lastResponse.contentType)}</h3>` +
-      renderBody(state.lastResponse.contentType, text, parsed, outcome.done);
+      (text == null ? `<div class="${outcome.done ? "ok" : "warn"}">${esc(TOO_LARGE)}</div>`
+        : renderBody(state.lastResponse.contentType, text, parsed, outcome.done, read.size));
     showResult(html);
     setStatus(outcome.message);
     document.title = "Hypermedia Client — " + desc.title;
