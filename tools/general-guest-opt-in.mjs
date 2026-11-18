@@ -23,7 +23,17 @@
  *
  * ★ NOTHING IS DEPLOYED (`skipDeploys: true`). Without `apply` nothing is written.
  *
- * Printed: variable NAMES and the application's own origin. Never a value or another entry.
+ * AN APPLICATION WHOSE SERVICE IS NOT IN THE FLEET'S RAILWAY PROJECT (`elsewhere`: Hallowmarch,
+ * which has a Railway project of its own). The token reaches the fleet's project only, so for
+ * such an application this tool does the identity half and nothing more: 1 (identity's service
+ * alone), 2, the entry half of 3, and 4. It never looks for, reads or writes the application's
+ * service, so it cannot check that the application holds its service agent's key: identity's entry
+ * naming that agent is the only evidence it has. It ends by printing what the operator sets on the
+ * application's own service: the variable NAMES, and the door origin identity states.
+ *
+ * Printed: variable NAMES and the application's own origin; for an application elsewhere, also the
+ * door origin identity states, which identity publishes at /.well-known/play-provisional. Never
+ * another value or another entry.
  */
 import { pathToFileURL } from 'node:url';
 import { TARGET, ProvisionRefusal, IDENTITY_SERVICE, checkPlayClients, checkDoorOrigin, isGuestReturnPath } from './coached-world-guest-provision.mjs';
@@ -35,6 +45,25 @@ export { TARGET, ProvisionRefusal, IDENTITY_SERVICE };
  * door's return; `needs` is the variable that holds its guest service key; `doorVar` and
  * `switchVar` are its own settings.
  */
+function hallowmarchElsewhere(service) {
+  return Object.freeze({
+    where: `the ${service} service of Hallowmarch's own Railway project`,
+    doorVar: 'HM_GENERAL_GUEST_DOOR_ORIGIN',
+    switchVar: 'HM_GENERAL_GUEST',
+    // What that server also refuses to start without once the switch is on. Names only: the
+    // values are that deployment's own and this tool cannot see them.
+    alsoNeeds: Object.freeze([
+      'HM_PUBLIC_ORIGIN or RAILWAY_PUBLIC_DOMAIN  (this origin: the grant\'s audience)',
+      'HM_GENERAL_GUEST_CLIENT_IP_HEADER  (the header that deployment\'s proxy states the client address in)',
+      'HM_GAMING_BOOTSTRAP or the manual service identity  (the service agent identity\'s entry names signs the grant)',
+    ]),
+  });
+}
+
+/**
+ * `elsewhere`, in place of `service`/`needs`/`doorVar`/`switchVar`: the application's service is
+ * not in the fleet's Railway project. Only identity's entry is written for it.
+ */
 export const APPLICATIONS = Object.freeze({
   // applications/foxxi-content-intelligence/src/i2idlx-learning-auth.ts (GENERAL_GUEST_RETURN_PATH)
   // and src/i2idlx-general-guest.ts.
@@ -45,6 +74,20 @@ export const APPLICATIONS = Object.freeze({
     needs: 'FOXXI_I2IDLX_GUEST_SERVICE_PRIVATE_KEY',
     doorVar: 'FOXXI_I2IDLX_GENERAL_GUEST_DOOR_ORIGIN',
     switchVar: 'FOXXI_I2IDLX_GENERAL_GUEST',
+  }),
+  // The Hallowmarch game (github.com/markjspivey-xwisee/hallowmarch, server/gaming/general-guest.js:
+  // GENERAL_GUEST_PATHS.return; server/gaming/README.md, "Interego's general guest"). Its services
+  // are in its own Railway project, so only identity's entry is written here. Each deployment is
+  // its own origin, so its own entry at identity: the preview is opted in apart from the live game.
+  'hallowmarch-preview': Object.freeze({
+    origin: 'https://march-native-preview-production.up.railway.app',
+    returnPath: '/guest/general/return',
+    elsewhere: hallowmarchElsewhere('march-native-preview'),
+  }),
+  hallowmarch: Object.freeze({
+    origin: 'https://march-production-f6d9.up.railway.app',
+    returnPath: '/guest/general/return',
+    elsewhere: hallowmarchElsewhere('march'),
   }),
 });
 
@@ -80,7 +123,9 @@ export async function optIn({ gql, application, apply = false, log = () => {} })
   const project = await gql('query($p:String!){project(id:$p){services{edges{node{id name}}}}}', { p: TARGET.projectId });
   const services = (project?.project?.services?.edges ?? []).map((e) => e?.node).filter(Boolean);
   const ids = {};
-  for (const name of [app.service, IDENTITY_SERVICE]) {
+  const foreign = app.elsewhere !== undefined;
+  // An application elsewhere has no service here: it is never looked up, read or written.
+  for (const name of foreign ? [IDENTITY_SERVICE] : [app.service, IDENTITY_SERVICE]) {
     const found = services.filter((s) => s.name === name);
     if (found.length !== 1) refuse(`expected exactly one service named ${name}, found ${found.length}`);
     ids[name] = found[0].id;
@@ -92,8 +137,9 @@ export async function optIn({ gql, application, apply = false, log = () => {} })
     const all = record(d?.variables) ?? {};
     return { names: new Set(Object.keys(all)), values: Object.fromEntries(wanted.filter((n) => typeof all[n] === 'string').map((n) => [n, all[n]])) };
   };
-  const done = { [app.service]: { set: [], kept: [] }, [IDENTITY_SERVICE]: { set: [], kept: [] } };
+  const done = { ...(foreign ? {} : { [app.service]: { set: [], kept: [] } }), [IDENTITY_SERVICE]: { set: [], kept: [] } };
   const write = async (service, name, value) => {
+    if (!Object.hasOwn(ids, service)) refuse(`${service} is not a service this run may write`);
     const r = await gql('mutation($input:VariableUpsertInput!){variableUpsert(input:$input)}', {
       input: { projectId: TARGET.projectId, environmentId: TARGET.environmentId, serviceId: ids[service], name, value, skipDeploys: true },
     });
@@ -109,13 +155,13 @@ export async function optIn({ gql, application, apply = false, log = () => {} })
   };
 
   const identity = await read(IDENTITY_SERVICE, ['PROVISIONAL_PLAY_CLIENTS', 'PROVISIONAL_GENERAL_GUEST', 'GENERAL_GUEST_DOOR_ORIGIN']);
-  const mine = await read(app.service, [app.doorVar, app.switchVar]);
+  const mine = foreign ? undefined : await read(app.service, [app.doorVar, app.switchVar]);
 
   // 2 and 3. Everything that can be refused is refused before any write.
   if (identity.values.PROVISIONAL_GENERAL_GUEST !== '1') refuse('identity does not have the general guest on (PROVISIONAL_GENERAL_GUEST); turn it on there first');
   const door = checkDoorOrigin(identity.values.GENERAL_GUEST_DOOR_ORIGIN ?? '');
   if (door === new URL(app.origin).origin) refuse('the door identity states is this application\'s own origin');
-  if (!mine.names.has(app.needs)) refuse(`${app.service} has no ${app.needs}; its own guests are not set up, and this tool creates no key`);
+  if (!foreign && !mine.names.has(app.needs)) refuse(`${app.service} has no ${app.needs}; its own guests are not set up, and this tool creates no key`);
   const merged = optInPlayClients(identity.values.PROVISIONAL_PLAY_CLIENTS, app.origin, app.returnPath);
 
   // 4. Identity.
@@ -127,13 +173,25 @@ export async function optIn({ gql, application, apply = false, log = () => {} })
     if (apply) await write(IDENTITY_SERVICE, 'PROVISIONAL_PLAY_CLIENTS', merged.value);
   }
   // 5. The application: the door before the switch, since the switch without a door stops it at start.
-  await settle(app.service, mine, app.doorVar, door);
-  await settle(app.service, mine, app.switchVar, '1');
+  if (!foreign) {
+    await settle(app.service, mine, app.doorVar, door);
+    await settle(app.service, mine, app.switchVar, '1');
+  }
 
-  const redeploy = [IDENTITY_SERVICE, app.service];
+  const redeploy = foreign ? [IDENTITY_SERVICE] : [IDENTITY_SERVICE, app.service];
   if (!apply) log('dry run: nothing written. Re-run with apply ticked to write the above.');
   else log(`${redeploy.some((s) => done[s].set.length > 0) ? 'Written without deploying' : 'Nothing needed writing in this run'}. Redeploy, in this order: ${redeploy.join(', then ')}.`);
-  return { applied: apply, services: done, redeploy: apply ? redeploy : [] };
+  const operator = foreign ? { where: app.elsewhere.where, set: [[app.elsewhere.doorVar, door], [app.elsewhere.switchVar, '1']], alsoNeeds: [...app.elsewhere.alsoNeeds] } : undefined;
+  if (operator) {
+    log(`${app.origin} is not served from this Railway project, so nothing of it was read, checked or written here.`);
+    log(`Not checked: that it holds the key of the service agent identity's entry names for it.`);
+    log(`To be set by hand on ${operator.where}, in this order, ${apply ? 'once identity is redeployed' : 'after an applied run and identity\'s redeploy'}:`);
+    for (const [name, value] of operator.set) log(`  ${name}=${value}`);
+    log('Already needed there, or it will not start with the switch on (names only):');
+    for (const name of operator.alsoNeeds) log(`  ${name}`);
+    log('Then redeploy that service. Until its switch is on, the opt-in at identity shows no guest door to anyone there.');
+  }
+  return { applied: apply, services: done, redeploy: apply ? redeploy : [], ...(operator ? { operator } : {}) };
 }
 
 async function main() {
