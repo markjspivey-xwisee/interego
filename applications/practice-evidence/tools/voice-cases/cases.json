@@ -1,0 +1,14 @@
+{
+  "note": "Cases for `voice-check.mjs --cases`, against the sample scenario (double-charged subscription). `expect` is the 0-based reply the page should highlight, or null for none. Several of these record behaviour that is wrong today: the check fails on them until the player is changed.",
+  "path": [1, 1, 2, 0, 1],
+  "cases": [
+    { "name": "step 3, the best reply read out", "step": 3, "expect": 2, "say": "I'm refunding the duplicate $19 today. It will post to your card in 5 to 7 business days." },
+    { "name": "step 3, the opposite of the best reply", "step": 3, "expect": null, "say": "I cannot refund the duplicate today." },
+    { "name": "step 3, one word", "step": 3, "expect": null, "say": "Refund." },
+    { "name": "step 3, a paraphrase of the best reply", "step": 3, "expect": 2, "say": "I've put the second nineteen dollar charge back on your card today, and you should see it within a week." },
+    { "name": "step 5, a 550 ms pause after the first two words", "step": 5, "expect": 1, "ssml": "To recap: <break time=\"550ms\"/> the duplicate $19 from order BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Is there anything else I can help with?" },
+    { "name": "step 5, a 1100 ms pause after the first two words", "step": 5, "expect": 1, "ssml": "To recap: <break time=\"1100ms\"/> the duplicate $19 from order BN-4472 is refunded today and posts in 5 to 7 business days, plus a free month. Is there anything else I can help with?" },
+    { "name": "step 5, only the first two words", "step": 5, "expect": null, "say": "To recap." },
+    { "name": "step 1, nothing to do with the call", "step": 1, "expect": null, "say": "The weather has been lovely this week." }
+  ]
+}
