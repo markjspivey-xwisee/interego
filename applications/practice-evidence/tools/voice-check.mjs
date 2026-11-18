@@ -49,7 +49,8 @@ function speak(text, n) {
 
 const browser = await chromium.launch({ channel: 'chrome', headless: false, args: ['--mute-audio', '--autoplay-policy=no-user-gesture-required'] });
 const steps = [];
-let ending = '';
+/** The results screen, once the practice has reached it: its score as shown, and its opening text. */
+let results = null;
 try {
   const page = await (await browser.newContext()).newPage();
   await page.goto(url);
@@ -101,12 +102,19 @@ try {
     await page.click('#heard button');
     await page.waitForTimeout(3500);
   }
-  ending = (await page.evaluate(() => document.body.innerText)).replace(/\s+/g, ' ').slice(0, 240);
+  // Only the results screen counts as finished. The call screen also says "Step 2 of 5", so a
+  // practice left part way (fewer picks than the scenario has steps) is not read as one that ended.
+  results = await page.evaluate(() => {
+    const el = document.getElementById('s-results');
+    if (!el || el.classList.contains('hide')) return null;
+    const text = el.innerText.replace(/\s+/g, ' ').trim(), m = /(\d+)\s*of\s*(\d+)/.exec(text);
+    return { score: m ? Number(m[1]) : null, outOf: m ? Number(m[2]) : null, text: text.slice(0, 240) };
+  });
 } finally {
   await browser.close();
   rmSync(work, { recursive: true, force: true });
 }
 
-const ok = steps.length === picks.length && steps.every((s) => s.matched === s.wanted) && /\bof \d+\b/.test(ending);
-process.stdout.write(JSON.stringify({ url, checkedAt: new Date().toISOString(), result: ok ? 'every spoken reply matched, and the practice reached its score' : 'FAILED', steps, ending }, null, 1) + '\n');
+const ok = steps.length === picks.length && steps.every((s) => s.matched === s.wanted) && results !== null && results.score !== null;
+process.stdout.write(JSON.stringify({ url, checkedAt: new Date().toISOString(), result: ok ? 'every spoken reply matched, and the practice reached its score' : results === null ? 'FAILED: the practice did not reach its results screen' : 'FAILED', steps, results }, null, 1) + '\n');
 process.exit(ok ? 0 : 1);
