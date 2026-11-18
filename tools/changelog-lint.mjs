@@ -63,7 +63,7 @@
  * Exit: 0 clean, 1 on any failure.
  */
 
-import { readFileSync } from 'node:fs';
+import { existsSync, readFileSync, readdirSync } from 'node:fs';
 import { spawnSync } from 'node:child_process';
 import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
@@ -256,8 +256,33 @@ export function changelogFailures(text, resolves, countSince) {
   return failures;
 }
 
+/**
+ * ── ★ ENTRIES ARE ONE FILE EACH SINCE 2026-11-18, AND THIS GATE READS THEM ───────────────────
+ *
+ * Every pull request used to write its entry at the top of CHANGELOG.md, so every merge to
+ * master conflicted with every open pull request, at the same line. Each resolution was a push,
+ * and each push restarted every check on that pull request: on 2026-11-17 one pull request took
+ * six such pushes, about fifty checks each, before it could land. A new entry is now its own
+ * file under `changelog/` (changelog/README.md says how), and two files never conflict.
+ *
+ * Both of this gate's checks follow the entries there. A citation written in an entry file is
+ * a citation in the changelog, so the files are read as part of the text. And a merge whose
+ * pull request added an entry file has documented what it carried, so `changelog/` is beside
+ * CHANGELOG.md in the path the backlog count looks at; left out, every merge from here on
+ * would count as undocumented and the ceiling would be reached in days.
+ */
+export const ENTRY_DIR = 'changelog';
+
+/** The entry files, oldest first: every `.md` under changelog/ but its README. */
+export function entryFiles(root = ROOT) {
+  const dir = join(root, ENTRY_DIR);
+  if (!existsSync(dir)) return [];
+  return readdirSync(dir).filter((f) => f.endsWith('.md') && f !== 'README.md').sort().map((f) => join(dir, f));
+}
+
 function main() {
-  const text = readFileSync(CHANGELOG, 'utf8');
+  // CHANGELOG.md, then every entry file: one text, so one set of claims.
+  const text = [readFileSync(CHANGELOG, 'utf8'), ...entryFiles().map((f) => readFileSync(f, 'utf8'))].join('\n');
 
   // Refused, not skipped. Under `fetch-depth: 1` every hash fails to resolve and the backlog
   // is uncountable, so the gate would report catastrophe for a reason that has nothing to do
@@ -306,7 +331,7 @@ function main() {
     if (!anchors(sha)) return null;
     const total = git(['rev-list', '--count', `${sha}..HEAD`]);
     if (total.status !== 0) return null;
-    const documentedSteps = git(['log', '--first-parent', '--format=%H', `${sha}..HEAD`, '--', 'CHANGELOG.md']);
+    const documentedSteps = git(['log', '--first-parent', '--format=%H', `${sha}..HEAD`, '--', 'CHANGELOG.md', ENTRY_DIR]);
     if (documentedSteps.status !== 0) return null;
     let documented = 0;
     for (const step of documentedSteps.out.split('\n').map((l) => l.trim()).filter(Boolean)) {

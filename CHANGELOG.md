@@ -11705,6 +11705,10 @@ Telemetry now suppresses public per-event descriptor publication while retaining
 
 Notable changes to @interego/core. Dates are UTC.
 
+**This file takes no new entries.** Since 2026-11-18 an entry is its own file under
+[`changelog/`](changelog/), so that two open pull requests never write to the same line;
+[`changelog/README.md`](changelog/README.md) says how and why. Everything up to that date is here.
+
 Format: [Keep a Changelog](https://keepachangelog.com/en/1.1.0/) with RFC 2119-style
 capability descriptions. The README describes what the system IS, this file describes
 what changed and when.
