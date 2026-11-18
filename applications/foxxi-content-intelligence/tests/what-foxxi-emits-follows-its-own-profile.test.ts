@@ -9,7 +9,7 @@
  * typed context activity the templates select on (src/xapi-profile.ts).
  */
 import { describe, it, expect } from 'vitest';
-import { buildFoxxiProfileDoc, descriptorProjectionCategory, performanceRecordCategory, performanceCategoriesFor, outcomeResultFor, isLearningActivityType, FOXXI_NS } from '../src/xapi-profile.js';
+import { buildFoxxiProfileDoc, foxxiJudgingTemplates, descriptorProjectionCategory, performanceRecordCategory, performanceCategoriesFor, outcomeResultFor, isLearningActivityType, FOXXI_NS } from '../src/xapi-profile.js';
 import { elementsOf, follows, matches, validates, type Json } from '../src/xapi-profile-server/processor.js';
 import { projectMeshEntry } from '../src/mesh-event-projector.js';
 import { ingestExternalRun } from '../src/agent-run-ingest.js';
@@ -36,6 +36,18 @@ const ADL = 'http://adlnet.gov/expapi';
 const learner = { mbox: 'mailto:fictional-learner@example.org' };
 
 describe('a descriptor projection', () => {
+  it('is judged by the templates that judge, which is what the validate route of the bridge reads', () => {
+    const judging = foxxiJudgingTemplates({ generatedAt: '2026-07-22T00:00:00.000Z' }) as Json[];
+    expect(judging).toEqual(live.templates);
+    expect(judging.length).toBeLessThan(doc.templates.length);
+    for (const entry of [{ verb: `${FOXXI_NS}performed` }, { modalStatus: 'Hypothetical' }, { modalStatus: 'Counterfactual' }, { modalStatus: 'Quoted' }] as const) {
+      const statement = projected(entry) as Json;
+      expect(validates(statement, judging).outcome, JSON.stringify(entry)).toBe('success');
+      // Held to the whole array, the deprecated template it also matches refuses it for a key that is no longer written.
+      expect(validates(statement, doc.templates).outcome, JSON.stringify(entry)).toBe('invalid');
+    }
+  });
+
   it('follows the descriptor template for its verb, and the performance template when it is an outcome', () => {
     expect(check(projected({ verb: `${FOXXI_NS}performed` }))).toMatchObject({ outcome: 'success', templates: [T('performed-projection')] });
     expect(check(projected({ success: true }))).toMatchObject({ outcome: 'success', templates: [T('production-performance-completed')] });

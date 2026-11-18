@@ -42,7 +42,7 @@ import { rateLimit } from 'express-rate-limit';
 import { SignerHourlyLimit, openHostingRequest, openHostingSettings } from '../src/open-hosting.js';
 import { ProfileServer, ProfileServerError, mountProfileServerReads, mountProfileServerWrites, MAX_PROFILE_BYTES, type ProfileRecord } from '../src/xapi-profile-server/service.js';
 import { validates as profileValidates } from '../src/xapi-profile-server/processor.js';
-import { buildFoxxiProfileDoc as ownXapiProfileDoc, FOXXI_PROFILE_ID as OWN_XAPI_PROFILE_ID } from '../src/xapi-profile.js';
+import { foxxiJudgingTemplates as ownXapiJudgingTemplates, FOXXI_PROFILE_ID as OWN_XAPI_PROFILE_ID } from '../src/xapi-profile.js';
 import { ProfileAuthoring } from '../src/xapi-profile-server/authoring.js';
 import { builtInProfiles, builtInKept } from '../src/xapi-profile-server/built-in.js';
 import { mountProfileAuthoring, mountProfileHosting } from '../src/xapi-profile-server/authoring-http.js';
@@ -6615,8 +6615,9 @@ const app = createVerticalBridge({
       // verdict accepts any one template selected by verb and object type.
       let specification: Record<string, unknown>;
       try {
-        const own = ownXapiProfileDoc({ generatedAt: OWN_XAPI_PROFILE_GENERATED_AT }) as { templates?: unknown[] };
-        const s = profileValidates(readInstance(req) as never, (own.templates ?? []) as never);
+        // Only the templates that judge: version 2 keeps the ones it replaced, deprecated, and a
+        // statement is not held to those.
+        const s = profileValidates(readInstance(req) as never, ownXapiJudgingTemplates({ generatedAt: OWN_XAPI_PROFILE_GENERATED_AT }) as never);
         specification = { outcome: s.outcome, templates: s.templates, findings: s.findings, ...(s.skipped.length ? { notChecked: s.skipped } : {}) };
       } catch (e) { specification = { outcome: 'not-evaluated', reason: (e as Error).message }; }
       res.json({

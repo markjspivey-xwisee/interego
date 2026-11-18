@@ -1188,6 +1188,17 @@ export function buildFoxxiProfileDoc(versionInfo: { generatedAt: string }): Reco
   };
 }
 
+/**
+ * The statement templates of Foxxi's profile that judge a statement: the current version's,
+ * without the ones it keeps only as deprecated. A deprecated template stays in the document so
+ * its IRI resolves; held to it, a projection written today would be refused for lacking a key
+ * the profile no longer asks for. Anything that validates a statement against Foxxi's profile
+ * outside the profile server reads its templates from here, not from the document's whole array.
+ */
+export function foxxiJudgingTemplates(versionInfo: { generatedAt: string }): Array<Record<string, unknown>> {
+  return (buildFoxxiProfileDoc(versionInfo).templates as Array<Record<string, unknown>>).filter(t => t.deprecated !== true);
+}
+
 /** Version 1: the profile without what version 2 added. Held so a statement stored under it can still be judged by it. */
 export function buildFoxxiProfileDocV1(versionInfo: { generatedAt: string }): Record<string, unknown> {
   return buildProfileDoc({
