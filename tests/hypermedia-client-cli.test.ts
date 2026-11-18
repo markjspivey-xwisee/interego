@@ -331,6 +331,8 @@ describe('hmc.py: a load whose requests fail, as the page\'s', () => {
   const READS_TURTLE = spawnSync(PYTHON, ['-I', '-c', 'import rdflib'], { encoding: 'utf8' }).status === 0;
   const PROBLEMS = {
     'no answer': /^error: .*(Remote end closed connection without response|Connection reset by peer|redirected more than 20 times)/,
+    // An answer past RESPONSE_MAX bytes is read no further, whatever its status.
+    'too large': /^error: The answer to http:\/\/127\.0\.0\.1:\d+\/[\w-]+ is larger than 8388608 bytes, so it was not read\.$/,
     turtle: /^error: This descriptor was served as Turtle\. Install rdflib/,
     'none readable': /^error: Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from /,
   } as const;

@@ -815,6 +815,8 @@ describe('hypermedia client: an invoke goes only where its dry run says, and onl
 describe('hypermedia client: a load whose requests fail, as hmc.py\'s', () => {
   const PROBLEMS = {
     'no answer': /^Failed to fetch$/,
+    // An answer past RESPONSE_MAX bytes is read no further, whatever its status.
+    'too large': /^The answer to https:\/\/hostile\.example\/[\w-]+ is larger than 8388608 bytes, so it was not read\.$/,
     turtle: /^Descriptor arrived as Turtle, which this page does not parse\./,
     'none readable': /^Could not fetch a JSON-LD, Turtle, or HyperMarkdown descriptor from /,
   } as const;

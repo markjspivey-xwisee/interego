@@ -3303,6 +3303,8 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
   const turtle: HostAnswer = { type: 'text/turtle', body: '@prefix dct: <http://purl.org/dc/terms/> .\n<> dct:title "From Turtle" .\n' };
   const missing: HostAnswer = { status: 404, type: 'text/plain', body: 'missing' };
   const KEPT = 'Kept markdown read';
+  // A body padded with spaces after it to `bytes` bytes.
+  const padded = (body: string, bytes: number) => body + ' '.repeat(bytes - Buffer.byteLength(body));
   const reversed = (path: string): HostAnswer => ({ type: 'application/ld+json',
     body: text(path, 'Reverse read', { '@reverse': { 'hydra:operation': { '@id': `${base}${path}` } } }) });
   return {
@@ -3342,6 +3344,13 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     // A load that follows two redirects, a 301 and then a 308, to a document: a GET on each hop.
     '/moved': () => ({ redirect: '/moved-on', status: 301 }),
     '/moved-on': () => ({ redirect: '/bom', status: 308 }),
+    // A descriptor of RESPONSE_MAX bytes, read; one of a byte more, which ends the load, named, as a
+    // request that gets no answer does; and a ?format=jsonld retry answered so, which leaves the first
+    // answer read. Each is JSON-LD a client would read, after whitespace that pads it to its size.
+    '/largest-doc': () => ({ type: 'application/ld+json', body: padded(text('/largest-doc', 'Largest read'), RESPONSE_MAX) }),
+    '/too-large-doc': () => ({ type: 'application/ld+json', body: padded(text('/too-large-doc', 'Too large read'), RESPONSE_MAX + 1) }),
+    '/upgrade-too-large': f => f === 'jsonld'
+      ? { type: 'application/ld+json', body: padded(text('/upgrade-too-large', 'Upgrade read'), RESPONSE_MAX + 1) } : markdown(KEPT),
     // An address that names Turtle, which a client that cannot read it asks for again as JSON-LD.
     '/named-ttl': f => f === 'jsonld' ? jsonld('/named-ttl', 'Named format read') : f === 'turtle' ? turtle : missing,
     // Where /outcomes' controls send, whatever the method: each redirect status to /landing, a
@@ -3384,7 +3393,7 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
  */
 export type FetchOutcome = { readonly asked: ReadonlyArray<string | null>; readonly withTurtle?: ReadonlyArray<string | null>;
   readonly requests?: number; readonly refused?: string | true }
-  & ({ readonly titles: readonly string[] } | { readonly problem: 'no answer' | 'turtle' | 'none readable' | 'refused' });
+  & ({ readonly titles: readonly string[] } | { readonly problem: 'no answer' | 'too large' | 'turtle' | 'none readable' | 'refused' });
 const REVERSE = 'This document uses @reverse, which this client does not read, so it is not read.';
 export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: FetchOutcome]> = [
   ['/upgrade-lost', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
@@ -3408,6 +3417,9 @@ export const FETCH_CASES: ReadonlyArray<readonly [address: string, outcome: Fetc
   ['/empty-location', { asked: [null, 'jsonld'], requests: 2, titles: ['Format read'] }],
   ['/moved', { asked: [null], titles: ['BOM read'] }],
   ['/named-ttl?format=turtle', { asked: ['turtle', 'jsonld'], titles: ['Named format read'], withTurtle: ['turtle'] }],
+  ['/largest-doc', { asked: [null], titles: ['Largest read'] }],
+  ['/too-large-doc', { asked: [null], problem: 'too large' }],
+  ['/upgrade-too-large', { asked: [null, 'jsonld'], titles: ['Kept markdown read'] }],
 ];
 
 /**

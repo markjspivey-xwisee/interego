@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-rLu3tWtw0WdopOxO5IE8rnUNqrw0nYGVjQR+o89ulk0='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-8Df0lN3LBy5AZOcSedD9EZpS9V//THV0HzCAjI+ytto='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -3289,10 +3289,15 @@ function viaProxy(url) {
 // is the proxy's own address, so the requested URL stands. fetch does not say
 // whether a redirect was a 303 See Other, after which JSON-LD keeps the
 // requested URL; hmc.py can tell, and does.
+//
+// The answer is read as an invoke's response is (readResponse), to RESPONSE_MAX
+// bytes and no further, whatever its status: past that it is not read, and the
+// request ends as one that gets no answer does, named (documentTooLarge).
 async function fetchText(url, accept) {
   const proxied = viaProxy(url);
   const res = await fetch(proxied, { headers: { Accept: accept || "*/*" } });
-  const text = await res.text();
+  const { text } = await readResponse(res);
+  if (text == null) throw new Error(documentTooLarge(url));
   const ct = res.headers.get("content-type") || "";
   const landed = !proxyBase() && typeof res.url === "string" && /^https:\/\//.test(res.url) ? res.url : url;
   return { ok: res.ok, status: res.status, contentType: ct, text, url, landed };
@@ -3300,7 +3305,8 @@ async function fetchText(url, accept) {
 // The answers to read for a descriptor address, in the order to read them, as
 // hmc.py's fetch_authority gives them. The address as given is asked first, and
 // a request that gets no answer (fetch rejects: the connection fails, a
-// redirect goes past 20 or off https) ends the load, named. An answer counts
+// redirect goes past 20 or off https; or the answer is longer than
+// RESPONSE_MAX bytes) ends the load, named. An answer counts
 // when it is 2xx and its body is one classifyPayload reads.
 async function fetchAuthority(url) {
   url = stripFrag(url);
@@ -4916,9 +4922,12 @@ function renderMarkdown(src) {
 const HTML_SOURCE_MAX = 20000;
 // A response is read up to RESPONSE_MAX bytes and no further: past that the
 // read stops, and nothing of the response is shown, named (TOO_LARGE), whatever
-// its status says of the request. hmc.py's RESPONSE_MAX and TOO_LARGE are the same.
+// its status says of the request. A descriptor's answer is read so too, and past
+// it the load ends, named (documentTooLarge). hmc.py's RESPONSE_MAX, TOO_LARGE
+// and _document_too_large are the same.
 const RESPONSE_MAX = 8 * 1024 * 1024;
 const TOO_LARGE = "This response is larger than " + RESPONSE_MAX + " bytes, so it was not read, and nothing of it is shown.";
+function documentTooLarge(url) { return "The answer to " + url + " is larger than " + RESPONSE_MAX + " bytes, so it was not read."; }
 // A response's text as res.text() reads it (UTF-8, a leading byte order mark
 // dropped), read only up to RESPONSE_MAX bytes: past that `text` is null.
 // `size` is the bytes read. hmc.py's http_exchange reads one alike.

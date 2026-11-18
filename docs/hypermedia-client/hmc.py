@@ -5010,8 +5010,10 @@ def _web_opener(redirects: _WebOnlyRedirects | None) -> urllib.request.OpenerDir
 @dataclass
 class Exchange:
     """A request's answer: its status, headers and body; `base`, the address
-    the answer is the document at (see http_request); and `landed`, the address
-    that gave it, after any redirects followed."""
+    the answer is the document at: the URL after any redirects, as JSON-LD
+    takes a document's base from, except that a 303 See Other leaves it at the
+    URL that answered 303; and `landed`, the address that gave it, after any
+    redirects followed."""
     status: int
     headers: dict[str, str]
     body: bytes
@@ -5056,16 +5058,6 @@ def http_exchange(url: str, method: str = "GET", headers: dict[str, str] | None 
         landed = exc.geturl() or url
         see_other = redirects.see_other_from if redirects else None
         return Exchange(exc.code, _header_values(exc.headers.items() if exc.headers else []), body, see_other or landed, landed)
-
-
-def http_request(url: str, method: str = "GET", headers: dict[str, str] | None = None,
-                 data: bytes | None = None, timeout: int = 60) -> tuple[int, dict[str, str], bytes, str]:
-    """The status, headers and body of a request, and the address the answer
-    is the document at: the URL after any redirects, as JSON-LD takes a
-    document's base from, except that a 303 See Other leaves it at the URL that
-    answered 303. The URL is sent exactly as _request_url writes it."""
-    answer = http_exchange(url, method, headers, data, timeout)
-    return answer.status, answer.headers, answer.body, answer.base
 
 
 def invoke_done(url: str, status: int, landed: str) -> tuple[bool, str]:
@@ -5188,7 +5180,8 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
 
     - The address as given is asked first. A request that gets no answer (the
       connection fails or closes, a redirect is refused or there are more than
-      fetch follows, or it times out) ends the load, and its problem is named.
+      fetch follows, it times out, or its answer is longer than RESPONSE_MAX
+      bytes) ends the load, and its problem is named.
     - An answer counts when its status is 2xx, as fetch's res.ok has it, and
       its body is one classify_payload reads. One that is not JSON-LD is asked
       for again as ?format=jsonld, unless the address names a format hmc.py
@@ -5212,7 +5205,14 @@ def fetch_authority(url: str) -> list[tuple[str, str, str]]:
         # The address the text came from is where it landed after redirects,
         # which its relative IRIs resolve against: /dir answered by /dir/ puts
         # "items" at /dir/items. The page's fetchAuthority does the same.
-        status, headers, body, landed = http_request(candidate, headers={"Accept": accept})
+        # Read as an invoke's response is, to RESPONSE_MAX bytes and no
+        # further, whatever its status: past that it is not read, and the
+        # request ends as one that gets no answer does, named. The page's
+        # fetchText does the same.
+        answer = http_exchange(candidate, headers={"Accept": accept}, limit=RESPONSE_MAX)
+        if len(answer.body) > RESPONSE_MAX:
+            raise RuntimeError(_document_too_large(candidate))
+        status, headers, body, landed = answer.status, answer.headers, answer.body, answer.base
         if not 200 <= status < 300:
             return None
         text = _body_text(body)
@@ -7507,9 +7507,17 @@ def resolve_plan(control: Control, values: dict[str, Any], descriptor_url: str) 
 
 # A response is read up to RESPONSE_MAX bytes and no further: past that the read
 # stops, and nothing of the response is shown, named (TOO_LARGE), whatever its
-# status says of the request. The page's RESPONSE_MAX and TOO_LARGE are the same.
+# status says of the request. A descriptor's answer is read so too, and past it
+# the load ends, named (_document_too_large). The page's RESPONSE_MAX, TOO_LARGE
+# and documentTooLarge are the same.
 RESPONSE_MAX = 8 * 1024 * 1024
 TOO_LARGE = f"This response is larger than {RESPONSE_MAX} bytes, so it was not read, and nothing of it is shown."
+
+
+def _document_too_large(url: str) -> str:
+    return f"The answer to {url} is larger than {RESPONSE_MAX} bytes, so it was not read."
+
+
 # What a response is shown as grows at most linearly with its size. Its text is
 # written as received; indenting its JSON may add _LAYOUT_PER_BYTE characters
 # for each of its bytes, and _LAYOUT_FLOOR at least. Past that it is shown as its

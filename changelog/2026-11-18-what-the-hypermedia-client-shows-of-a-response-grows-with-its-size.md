@@ -17,3 +17,8 @@ text, and now take 0.2 s. Each cell, row and head cell also counts 9 units,
 the markup of an empty cell, so a table has fewer elements than its response
 has bytes: 400 by 400 empty bindings after 20 KB of whitespace were 160,000
 cells. hmc.py's --json gives a response's note only when it has one.
+
+A descriptor's answer is now read to 8 MiB too, in both clients, whatever its
+status: one longer is not read, and the request ends as one that gets no
+answer does, named, so a ?format=jsonld retry answered so leaves the first
+answer read.
