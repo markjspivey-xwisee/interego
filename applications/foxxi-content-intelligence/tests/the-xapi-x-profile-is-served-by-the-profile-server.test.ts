@@ -59,8 +59,9 @@ afterAll(async () => { await new Promise(resolve => http.close(resolve)); });
 
 describe('the xapi-x profile on the profile server', () => {
   it('is built in beside Foxxi\'s own, as the document its source builds', () => {
-    expect(builtInProfiles().map(p => (p as { id: string }).id)).toEqual([FOXXI_PROFILE_ID, XAPIX_PROFILE_ID, XAPIX_PROFILE_ID]);
-    expect(builtInProfiles().slice(1)).toEqual([buildXapixProfileDocV1(), buildXapixProfileDoc()]);
+    // Each profile in its two versions, the earlier first.
+    expect(builtInProfiles().map(p => (p as { id: string }).id)).toEqual([FOXXI_PROFILE_ID, FOXXI_PROFILE_ID, XAPIX_PROFILE_ID, XAPIX_PROFILE_ID]);
+    expect(builtInProfiles().slice(2)).toEqual([buildXapixProfileDocV1(), buildXapixProfileDoc()]);
     expect(server.isBuiltIn(XAPIX_PROFILE_ID)).toBe(true);
     expect(server.dataset.get(XAPIX_PROFILE_ID)?.version).toBe(XAPIX_PROFILE_VERSION_ID);
   });
