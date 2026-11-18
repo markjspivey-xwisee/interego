@@ -18,6 +18,14 @@ Seen on its first run, and not changed here: the recogniser stops at the first
 pause, so the text saved as what the learner said can be the opening words only
 ("to recap"), and that fragment still matches the full reply and takes its score.
 
+With `--cases <dir>` the check plays one recording per case to the recogniser at
+a given step and records what came back, final and interim, the reply the page
+highlighted and whether it offered to use it, without accepting it. The eight
+cases in `tools/voice-cases/` are spoken here. Two fail today, on purpose: "I
+cannot refund the duplicate today" highlights the reply that refunds it, and "to
+recap" alone highlights the full recap. A pause of 550 ms was enough to end the
+recogniser after "to recap".
+
 ## 2026-11-17 — A trajectory step can be Quoted, and is not counted as work the agent did
 
 A Quoted descriptor repeats someone else's claim without endorsing it. The
