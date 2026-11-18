@@ -5,7 +5,7 @@
 import { describe, expect, it } from 'vitest';
 import { readFileSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
-import { AUTO_MERGE_POLICY, AUTO_MERGED_LABEL, autoMergeDecision, reviewVerdictEvidence, waitWordsFromArgv } from '../src/auto-merge.js';
+import { AUTO_MERGE_POLICY, AUTO_MERGED_LABEL, autoMergeDecision, mergeCommandArgs, reviewVerdictEvidence, testedHead, waitWordsFromArgv } from '../src/auto-merge.js';
 
 const earned = { cells: [{ kind: 'navigation', liveSamples: 3 }, { kind: 'review-verdict', liveSamples: 25, liveAgreement: { agree: 23, conservative: 1, disagree: 1 } }] };
 const all = { verdict: 'auto-ok', selectionResult: 'success', armed: true, tokenPresent: true, calibration: earned, mergeable: 'MERGEABLE', base: { tested: 'aaaaaaaa1', current: 'aaaaaaaa1' }, suite: { result: 'success', gates: true }, checks: { result: 'success', gates: true } };
@@ -301,5 +301,48 @@ describe('★ the driver\'s arguments become the two words: a switch gates unles
     for (const name of ['--suite-result', '--suite-gates', '--suite-url', '--checks-result', '--checks-gates', '--checks-detail']) {
       expect(bin, name).not.toContain(`flag('${name}')`);
     }
+  });
+});
+
+describe('★ the merge is held to the commit the checks were read on', () => {
+  const HEAD = '0123456789abcdef0123456789abcdef01234567';
+
+  it('names the tested head to GitHub, which refuses the merge when the branch has moved past it', () => {
+    expect(mergeCommandArgs('12', 'someone/somewhere', HEAD)).toEqual(
+      ['pr', 'merge', '12', '--repo', 'someone/somewhere', '--merge', '--match-head-commit', HEAD]);
+  });
+
+  it('takes a full sha and nothing else for a tested head', () => {
+    expect(testedHead(HEAD)).toBe(HEAD);
+    for (const not of [undefined, '', 'HEAD', HEAD.slice(0, 7), HEAD.slice(1), `${HEAD}0`, HEAD.toUpperCase(), `${HEAD} --admin`, `--admin`, ` ${HEAD}`]) {
+      expect(testedHead(not), String(not)).toBeUndefined();
+    }
+  });
+
+  it('builds no merge command without one', () => {
+    for (const not of ['', 'HEAD', HEAD.slice(0, 7), `${HEAD} --admin`]) {
+      expect(() => mergeCommandArgs('12', 'someone/somewhere', not), not).toThrow(/full commit sha/);
+    }
+  });
+
+  it('the driver refuses a missing head before it reads or changes anything, and merges only through the pinned command', () => {
+    const bin = readFileSync(fileURLToPath(new URL('../bin/auto-merge.ts', import.meta.url)), 'utf8');
+    const main = bin.slice(bin.indexOf('async function main'));
+    const refusal = main.indexOf(`testedHead(flag('--head-sha'))`);
+    expect(refusal).toBeGreaterThan(-1);
+    // Everything with an effect, or that reads the pull request, comes after the refusal.
+    for (const later of ['loadSavedResults(', 'readMergeable(pr', `'update-branch'`, `'--add-label'`, 'mergeCommandArgs(']) {
+      expect(main.indexOf(later), later).toBeGreaterThan(refusal);
+    }
+    // One merge command in the driver, and it is the pinned one.
+    expect(bin).toContain(`execFileSync('gh', mergeCommandArgs(pr, repo, head ?? '')`);
+    expect(bin).not.toMatch(/'pr', 'merge'/);
+  });
+
+  it('the workflow hands the driver the head its checks were waited on', () => {
+    const workflow = readFileSync(fileURLToPath(new URL('../../../.github/workflows/jev-harness.yml', import.meta.url)), 'utf8');
+    const head = '${{ github.event.pull_request.head.sha }}';
+    expect(workflow).toContain(`node tools/wait-for-workflow-run.mjs "${head}"`);
+    expect(workflow).toContain(`--head-sha "${head}"`);
   });
 });
