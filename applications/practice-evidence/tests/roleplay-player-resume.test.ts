@@ -52,6 +52,7 @@ const load = (held: St[], S: Scenario = scenario): Load => new Function('S', 'he
   const assess = (sc) => ({ points: sc.reduce((n, x) => n + x, 0), max: CRITS.reduce((n, c) => n + topVal(c), 0), pass: true, minTotal: 0, required: [] });
   const send = (verbKey, _label, object, result) => { const st = { verb: { id: X.verbs[verbKey] }, object, result }; sent.push(st); return Promise.resolve('id'); };
   ${cut('const STOP = new Set(', 'function listen(){')}
+  ${cut('function hangUp(){', '// ---------- play ----------')}
   ${cut('let sel = null, stage = 0', 'function evidence(ci){')}
   ${cut('function sendCompleted(){', '/* A practice already under way')}
   ${cut('async function carryOn(){', '// ---------- start ----------')}
