@@ -5,6 +5,7 @@
  *     --calibration-url <bridge>/jev-harness/calibration --reputation-url <bridge>/jev-harness/reputation \
  *     --armed true|false --token-present true|false --selection-result success|failure|cancelled|skipped \
  *     --base-sha <the base sha this run's merge ref was built from> \
+ *     --head-sha <the head sha the checks were read on> \
  *     --suite-result <success|absent|failure|...> [--suite-gates true|false] [--suite-url <run page>] \
  *     --checks-result <success|failure|timeout|untrusted|error|pending> [--checks-gates true|false] \
  *     [--checks-detail <what failed or was still running>] \
@@ -15,7 +16,8 @@
  * bridge, the pull request's mergeability from GitHub, the two words the wait before it wrote
  * (the whole suite, and every other check on the head: tools/wait-for-workflow-run.mjs), and
  * the switches the workflow passes; prints every condition and the decision;
- * labels the pull request AUTO_MERGED_LABEL and merges it with `gh pr merge --merge` only when
+ * labels the pull request AUTO_MERGED_LABEL and merges it with `gh pr merge --merge
+ * --match-head-commit <the head sha>` (GitHub refuses a head pushed after the checks were read) only when
  * every condition holds and --dry-run is absent (GH_TOKEN must then be the merge token, not
  * the run's own). The label goes on first, because the close-time job reads it the moment the
  * merge closes the pull request, and an automatic merge must never be scored as a person's
@@ -28,7 +30,7 @@
  */
 
 import { execFileSync } from 'node:child_process';
-import { AUTO_MERGED_LABEL, autoMergeDecision, waitWordsFromArgv, type AutoMergeInputs } from '../src/auto-merge.js';
+import { AUTO_MERGED_LABEL, autoMergeDecision, mergeCommandArgs, testedHead, waitWordsFromArgv, type AutoMergeInputs } from '../src/auto-merge.js';
 import { loadSavedResults } from '../src/pr-comment.js';
 
 function flag(name: string): string | undefined {
@@ -79,7 +81,14 @@ async function main(): Promise<void> {
   const calibrationUrl = flag('--calibration-url');
   const reputationUrl = flag('--reputation-url');
   if (!pr || !repo || !dir || !calibrationUrl) {
-    console.error('usage: --pr <n> --repo <owner/name> --dir <results dir> --calibration-url <url> [--reputation-url <url>] --armed true|false --token-present true|false --selection-result <result> --base-sha <sha> --suite-result <word> [--suite-gates true|false] [--suite-url <url>] --checks-result <word> [--checks-gates true|false] [--checks-detail <line>] [--require-human-review true|false] [--dry-run]');
+    console.error('usage: --pr <n> --repo <owner/name> --dir <results dir> --calibration-url <url> [--reputation-url <url>] --armed true|false --token-present true|false --selection-result <result> --base-sha <sha> --head-sha <sha> --suite-result <word> [--suite-gates true|false] [--suite-url <url>] --checks-result <word> [--checks-gates true|false] [--checks-detail <line>] [--require-human-review true|false] [--dry-run]');
+    process.exit(2);
+  }
+  // The head the checks were read on. Asked for before anything is read or changed: without it
+  // the merge could not be held to the commit that was tested, so nothing is attempted.
+  const head = testedHead(flag('--head-sha'));
+  if (!head && !process.argv.includes('--dry-run')) {
+    console.error(`--head-sha must be the full commit sha the checks were read on, and this is not one: ${JSON.stringify(flag('--head-sha') ?? null)}`);
     process.exit(2);
   }
   const gate = loadSavedResults(dir).find((r) => r.verb === 'review-gate');
@@ -132,7 +141,7 @@ async function main(): Promise<void> {
     process.exit(1);
   }
   try {
-    execFileSync('gh', ['pr', 'merge', pr, '--repo', repo, '--merge'], { stdio: 'inherit' });
+    execFileSync('gh', mergeCommandArgs(pr, repo, head ?? ''), { stdio: 'inherit' });
   } catch (err) {
     // The label went on for a merge that did not happen. Take it back, so the merge that follows
     // — a person's, or the next run's — is scored as what it is.

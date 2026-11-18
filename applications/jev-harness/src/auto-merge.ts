@@ -104,6 +104,25 @@ export const AUTO_MERGE_POLICY = {
 /** The label an automatic merge carries, so the close-time job records no human decision for it. */
 export const AUTO_MERGED_LABEL = 'jev-harness:auto-merged';
 
+/**
+ * The commit the checks were read on, when it is written as a full sha; undefined for anything
+ * else. The driver refuses to act without one, so a missing or mangled value never reaches GitHub.
+ */
+export function testedHead(value: string | undefined): string | undefined {
+  return value !== undefined && /^[0-9a-f]{40}$/.test(value) ? value : undefined;
+}
+
+/**
+ * The arguments of the merge command. `--match-head-commit` makes GitHub refuse the merge when
+ * the branch's head is no longer the commit named: the checks were read on that commit, and a
+ * push that lands between the decision and the merge would otherwise be merged untested.
+ */
+export function mergeCommandArgs(pr: string, repo: string, head: string): string[] {
+  const sha = testedHead(head);
+  if (!sha) throw new Error(`the tested head must be a full commit sha, and this is not one: ${JSON.stringify(head)}`);
+  return ['pr', 'merge', pr, '--repo', repo, '--merge', '--match-head-commit', sha];
+}
+
 export type AutoMergePolicy = { readonly minLiveSamples: number; readonly minAgreement: number; readonly maxDisagreement: number };
 
 export interface CalibrationCellLike {
