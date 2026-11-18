@@ -13,7 +13,9 @@ settled: a settled start with an unsettled continuation is not matched as the
 start alone. If it ends on unsettled words,
 or on an error, no reply is offered; before, the confirmation could appear after
 a network error. A recogniser the learner has replaced with a later one is
-ignored: its late end no longer switches off the one that is listening.
+ignored: its late end no longer switches off the one that is listening. Tapping
+a written reply lets go of the recogniser before aborting it, so words it still
+had queued are not offered against the next step.
 
 The matching took any overlap of words: "to recap" was the whole recap, and "I
 cannot refund the duplicate today" was the reply that refunds it. A spoken reply

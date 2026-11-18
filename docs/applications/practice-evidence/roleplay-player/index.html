@@ -362,7 +362,9 @@ function listen(){
   const mine = rec, stale = () => rec !== mine;
   const finals = []; let failed = false, quiet = null, unsettled = false;
   const hush = ms => { clearTimeout(quiet); quiet = setTimeout(() => { try { mine.stop(); } catch(e){} }, ms); };
-  rec.onresult = e => { if (stale()) return; let interim = "";
+  // Nothing is taken after an error either: a result arriving behind it would put words over the
+  // message the error left, and start the quiet timer again.
+  rec.onresult = e => { if (stale() || failed) return; let interim = "";
     for (let i = e.resultIndex; i < e.results.length; i++) { const r = e.results[i], t = r[0].transcript.trim(); if (r.isFinal) { if (t) finals.push(t); } else interim += " " + t; }
     unsettled = interim.trim() !== "";
     $("heard").textContent = "“" + (finals.join(" ") + interim).trim() + "”"; hush(LISTEN_QUIET_MS); };
@@ -387,6 +389,16 @@ function listen(){
   };
   try { window.speechSynthesis && speechSynthesis.cancel(); rec.start(); listening = true; $("mic").classList.add("live"); $("heard").textContent = "Listening…"; hush(LISTEN_WAIT_MS); }
   catch(e){ $("heard").textContent = "The microphone isn't available here. Tap a reply below instead."; }
+}
+/* Lets go of the recogniser that is listening, before anything else is done with the step. It is
+   let go of first and aborted second: what it still has queued (a result, its end, an error) then
+   arrives at a recogniser that is no longer the page's, and is ignored. Aborted first, its queued
+   end could offer the last step's words against the next step's replies. */
+function hangUp(){
+  const old = rec;
+  if (!old) return;
+  rec = null; listening = false; $("mic").classList.remove("live");
+  try { old.abort(); } catch(e){}
 }
 
 // ---------- play ----------
@@ -430,7 +442,7 @@ function renderStage(){
 }
 function pick(i, said){
   if (finished) return;
-  if (listening && rec) try{ rec.abort(); }catch(e){}
+  hangUp();
   const s = stageObj(); const c = s.choices[i];
   picks.push({stage, variant: variantAt===stage, i, effects:c.effects||{}, best:!!c.best, text:c.text, note:c.note||"", said: said||"", goal:s.goal, evidenceFor: s.evidenceFor||[], bestText: (s.choices.find(x=>x.best)||c).text});
   if (X.verbs.turn && X.extensions.counterpartLine) {

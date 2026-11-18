@@ -10,11 +10,11 @@ import { readFileSync } from 'node:fs';
 import { afterEach, beforeEach, describe, expect, it, vi } from 'vitest';
 
 const DIR = new URL('../../../docs/applications/practice-evidence/roleplay-player/', import.meta.url);
-const page = readFileSync(new URL('index.html', DIR), 'utf8');
+const source = readFileSync(new URL('index.html', DIR), 'utf8');
 const cut = (from: string, to: string): string => {
-  const a = page.indexOf(from), b = page.indexOf(to, a);
+  const a = source.indexOf(from), b = source.indexOf(to, a);
   if (a < 0 || b < 0) throw new Error(`the player page no longer holds: ${a < 0 ? from : to}`);
-  return page.slice(a, b);
+  return source.slice(a, b);
 };
 interface Choice { text: string }
 interface Stage { choices: Choice[]; variant?: { choices: Choice[] } }
@@ -90,6 +90,9 @@ describe('how the player listens to a spoken reply', () => {
     start(): void { /* listening */ }
     /** As a browser does: a stop settles nothing new here, and ends the recognition. */
     stop(): void { this.stopped = true; this.end(); }
+    aborted = false;
+    /** An abort whose error and end are still to come: the test delivers them when it chooses. */
+    abort(): void { this.aborted = true; }
     hear(transcript: string, isFinal: boolean): void {
       // A settled result takes the place of the unsettled one before it, as in the browser.
       if (this.results.length > 0 && !this.results[this.results.length - 1]!.isFinal) this.results.pop();
@@ -112,14 +115,15 @@ describe('how the player listens to a spoken reply', () => {
     const els: Record<string, El> = {}, choiceEls = choices.map(() => el()), picked: { i: number; said: string }[] = [];
     const $ = (id: string): El => (els[id] ??= el());
     const document = { querySelectorAll: (q: string): El[] => (q === '.choice' ? choiceEls : []), createElement: (): El => el() };
-    const listen = new Function('SR', '$', 'document', 'window', 'stageObj', 'pick', 'S', 'setTimeout', 'clearTimeout', `
+    const page = new Function('SR', '$', 'document', 'window', 'stageObj', 'pick', 'S', 'setTimeout', 'clearTimeout', `
       let rec = null, listening = false, pending = null;
       ${MATCHING}
       ${cut('const LISTEN_QUIET_MS', '// ---------- play ----------')}
-      return listen;
-    `)(Recogniser, $, document, {}, () => ({ choices }), (i: number, said: string) => { picked.push({ i, said }); }, { language: 'en-US' }, setTimeout, clearTimeout) as () => void;
+      return { listen, hangUp };
+    `)(Recogniser, $, document, {}, () => ({ choices }), (i: number, said: string) => { picked.push({ i, said }); }, { language: 'en-US' }, setTimeout, clearTimeout) as { listen(): void; hangUp(): void };
+    const { listen, hangUp } = page;
     return {
-      listen, picked,
+      listen, hangUp, picked,
       heard: (): string => $('heard').textContent || ($('heard').children[0]?.textContent ?? ''),
       micLive: (): boolean => $('mic').classes.has('live'),
       offered: (): El | undefined => $('heard').children.find((c) => c.textContent === 'Use the highlighted reply'),
@@ -248,5 +252,49 @@ describe('how the player listens to a spoken reply', () => {
     vi.advanceTimersByTime(2000);
     expect(p.highlighted()).toBe(2);
     expect(p.micLive()).toBe(false);
+  });
+
+  it('takes no result that arrives behind an error', () => {
+    const p = player(refunding);
+    p.listen();
+    const r = Recogniser.last!;
+    r.onerror?.({ error: 'network' });
+    expect(p.heard()).toBe("Didn't catch that. Try again, or tap a reply.");
+    r.hear("I'm refunding the duplicate $19 today it will post to your card in 5 to 7 business days", true);
+    // The message stands, and no timer was started to end a reply that is not being heard.
+    expect(p.heard()).toBe("Didn't catch that. Try again, or tap a reply.");
+    vi.advanceTimersByTime(10_000);
+    expect(r.stopped).toBe(false);
+    r.end();
+    expect(p.offered()).toBeUndefined();
+  });
+
+  it('lets go of the recogniser when a reply is tapped, so what it had queued touches nothing', () => {
+    // The learner speaks, the words settle, and before the recogniser ends they tap a written reply.
+    const p = player(refunding);
+    p.listen();
+    const old = Recogniser.last!;
+    old.hear("I'm refunding the duplicate $19 today it will post to your card in 5 to 7 business days", true);
+    p.hangUp();
+    expect(old.aborted).toBe(true);
+    expect(p.micLive()).toBe(false);
+    const shown = p.heard();
+    // The page is on its next step now. The old recogniser's queue arrives: a result, the abort's error, its end.
+    old.hear('and a free month', true);
+    old.onerror?.({ error: 'aborted' });
+    old.onend?.();
+    vi.advanceTimersByTime(10_000);
+    expect(p.offered()).toBeUndefined();
+    expect(p.highlighted()).toBe(-1);
+    expect(p.heard()).toBe(shown);
+    // And the microphone can be used at once, without waiting for the old one's end.
+    p.listen();
+    expect(Recogniser.last).not.toBe(old);
+    expect(p.micLive()).toBe(true);
+  });
+
+  it('lets go of the recogniser in the one place a reply is taken', () => {
+    expect(source.includes('function pick(i, said){\n  if (finished) return;\n  hangUp();')).toBe(true);
+    expect(source.includes('rec.abort()')).toBe(false);
   });
 });
