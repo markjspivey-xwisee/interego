@@ -28,8 +28,8 @@ name: Mutation Gate
 # widening both.
 #
 # So this runs on every pull request with no path filter, like lint.yml and the conformance
-# runner, which are here for the same reason. Six minutes is cheaper than one audit round
-# finding one decorative gate.
+# runner, which are here for the same reason. It was six minutes when that was written and thirty
+# by 2026-11-17, as the table grew; the job below is cut across runners for that, not filtered.
 #
 # ── WHY NOT ON MASTER PUSHES (since 2026-09-21) ────────────────────────────────────────────
 #
@@ -62,8 +62,22 @@ jobs:
     # drift with a green tick beside it, the same argument that removed "47 files pinned" from
     # the ESLint job. The authoritative list is MUTANTS in tools/mutation-gate.data.mjs, which
     # the harness prints on every run.
-    name: "Every refusal gate fails on its own defect"
+    #
+    # ★ FIVE RUNNERS SINCE 2026-11-17. One job applied every mutant in turn: 30.0 minutes on average
+    # over 20 runs, the longest check on a pull request and so the one the gated auto-merge waits
+    # for. Mutants are independent (each starts from the pristine tree), so the table is dealt
+    # across runners by position: `--shard=i/n` applies every n-th mutant. Every mutant still runs
+    # on every pull request; nothing is filtered. tools/mutation-gate.shard.mjs is the cut, and
+    # tests/mutation-gate-shards.test.ts refuses a list here that is not 1/n … n/n once each or
+    # that leaves a shard empty. The shard is in the name so a red one says which.
+    name: "Every refusal gate fails on its own defect (${{ matrix.shard }})"
     runs-on: ubuntu-latest
+    timeout-minutes: 30
+    strategy:
+      # One shard's red says nothing about the others' mutants: let them finish and report.
+      fail-fast: false
+      matrix:
+        shard: ['1/5', '2/5', '3/5', '4/5', '5/5']
     steps:
       - uses: actions/checkout@v6
       - uses: actions/setup-node@v6
@@ -74,7 +88,7 @@ jobs:
       # has already produced false survivors in this tree.
       - run: npm run build
       - name: Apply each known defect and require its gate to go red
-        run: npm run mutation-gate
+        run: npm run mutation-gate -- --shard=${{ matrix.shard }}
       # The harness restores every file it touched from an in-memory copy, in a `finally`. If
       # that ever stops working, the next job on this runner would silently test mutated source
       # — so prove the tree came back rather than assuming it.
