@@ -19,8 +19,8 @@ import { lintProfile, type ExampleSequence, type ExampleStatement, type External
 import { xapiProfileServerAffordances } from '../src/xapi-profile-server/affordances.js';
 import type { Json as PJson } from '../src/xapi-profile-server/processor.js';
 import type { Json } from '../src/xapi-profile-server/rdf.js';
-import { buildFoxxiProfileDoc, FOXXI_EXTERNAL_TERMS } from '../src/xapi-profile.js';
-import { foxxiProfileExamples } from '../src/built-in-profile-examples.js';
+import { buildFoxxiProfileDoc, buildFoxxiProfileDocV1, FOXXI_EXTERNAL_TERMS } from '../src/xapi-profile.js';
+import { foxxiProfileExamples, foxxiProfileV1Examples } from '../src/built-in-profile-examples.js';
 import { IEP_DECORATIONS } from '../src/xapix/namespace.js';
 import { loadPackFile } from '../../coached-world/src/pack.js';
 import { buildProfile as buildWorldProfile } from '../../coached-world/src/profile.js';
@@ -422,14 +422,17 @@ async function roundTrip(doc: Obj, ex: ProfileExamples, external: ExternalTerm[]
 const example = (id: string, follows: string[], statement: unknown): ExampleStatement => ({ id, follows, statement: json<PJson>(statement) });
 
 describe('Foxxi\'s own profile goes through author, lint, publish and host with no findings', () => {
-  const doc = buildFoxxiProfileDoc({ generatedAt: '2026-07-22T00:00:00.000Z' }) as Obj & { templates: Obj[]; patterns: Obj[]; concepts: Obj[] };
+  // Written here as a first publication, so it is the profile's first version that goes through:
+  // one version, nothing deprecated. The current version revises it and is held built in.
+  const doc = buildFoxxiProfileDocV1({ generatedAt: '2026-07-22T00:00:00.000Z' }) as Obj & { templates: Obj[]; patterns: Obj[]; concepts: Obj[] };
   const T = (name: string) => `${doc.id as string}/templates/${name}`;
-  // The examples the deployment keeps with the profile (src/built-in-profile-examples.ts).
-  const { statements, sequences } = foxxiProfileExamples();
+  // The examples the deployment keeps with that version (src/built-in-profile-examples.ts).
+  const { statements, sequences } = foxxiProfileV1Examples();
 
   it('has an example for each of its templates and primary patterns, and the lint finds nothing', async () => {
-    expect(statements.length).toBe(doc.templates.length);
-    expect(sequences.length).toBe(doc.patterns.filter(p => p.primary === true).length);
+    // Of the terms that judge: version 2 keeps what it replaced, marked deprecated, and those need no example.
+    expect(statements.length).toBe(doc.templates.filter(t => t.deprecated !== true).length);
+    expect(sequences.length).toBe(doc.patterns.filter(p => p.primary === true && p.deprecated !== true).length);
     // Its templates name verbs and activity types ADL and cmi5 define, and the four keys the xapi-x
     // profile declares. The profile declares none of them. Unvouched, on a server that holds no
     // other profile, the lint says so; they are their publishers' terms, so they are named as
