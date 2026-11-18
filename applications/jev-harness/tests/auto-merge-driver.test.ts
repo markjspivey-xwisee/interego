@@ -11,7 +11,7 @@ afterEach(() => {
   vi.doUnmock('../src/pr-comment.js');
 });
 
-async function run(options: { staleBase?: boolean; updateError?: string; mergeError?: string; armed?: boolean } = {}) {
+async function run(options: { staleBase?: boolean; updateError?: string | Error; mergeError?: string; armed?: boolean } = {}) {
   vi.resetModules();
   const calls: string[][] = [];
   const exec = vi.fn((_command: string, args: string[]) => {
@@ -19,7 +19,7 @@ async function run(options: { staleBase?: boolean; updateError?: string; mergeEr
     if (args[0] === 'api' && args[1] === 'repos/fictional/repo/branches/master') return options.staleBase ? 'c'.repeat(40) : BASE;
     calls.push(args);
     if (args[0] === 'api' && args.includes('PUT')) {
-      if (options.updateError) throw new Error(options.updateError);
+      if (options.updateError) throw options.updateError;
       return '';
     }
     if (args[0] === 'pr' && args[1] === 'edit') return '';
@@ -56,17 +56,20 @@ describe('the automatic driver uses the tested head for every branch effect', ()
     expect(r.exit).not.toHaveBeenCalled();
   });
 
-  it('stops on a stale-head refusal with no retry, label or merge', async () => {
-    const r = await run({ staleBase: true, updateError: 'HTTP 422: expected head changed' });
+  it('stops after a failed pinned update with no retry, label or merge', async () => {
+    // With inherited stderr, GitHub's response is in the job log. The Error's
+    // message only names the failed command, as execFileSync does.
+    const diagnostic = 'Command failed: gh ' + update.join(' ');
+    const r = await run({ staleBase: true, updateError: new Error(diagnostic) });
     expect(r.calls).toEqual([update]);
-    expect(r.log).toHaveBeenCalledWith(expect.stringContaining('could not be updated: HTTP 422: expected head changed'));
+    expect(r.log).toHaveBeenCalledWith(expect.stringContaining('could not be updated: ' + diagnostic));
     expect(r.exit).not.toHaveBeenCalled();
   });
 
-  it('retains unrelated validation diagnostics', async () => {
-    const r = await run({ staleBase: true, updateError: 'HTTP 422: unrelated branch validation' });
+  it('reports a non-Error failure without retrying the update', async () => {
+    const r = await run({ staleBase: true, updateError: 'fixture update refusal' });
     expect(r.calls).toEqual([update]);
-    expect(r.log).toHaveBeenCalledWith(expect.stringContaining('HTTP 422: unrelated branch validation'));
+    expect(r.log).toHaveBeenCalledWith(expect.stringContaining('could not be updated: fixture update refusal'));
   });
 
   it('makes no branch effect when unarmed', async () => {
@@ -88,5 +91,6 @@ describe('the automatic driver uses the tested head for every branch effect', ()
     expect(r.calls[2]).toEqual(['pr', 'edit', '42', '--repo', 'fictional/repo', '--remove-label', 'jev-harness:auto-merged']);
     expect(r.error).toHaveBeenCalledWith(expect.stringContaining('merge command failed'));
     expect(r.exit).toHaveBeenCalledWith(1);
+    expect(r.log).not.toHaveBeenCalledWith(expect.stringContaining('merged, labelled'));
   });
 });

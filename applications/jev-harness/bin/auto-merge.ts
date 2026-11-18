@@ -152,7 +152,7 @@ async function main(): Promise<void> {
       undone = `and the label ${AUTO_MERGED_LABEL} could not be taken back either (${undo instanceof Error ? undo.message : String(undo)})`;
     }
     console.error(`  the merge command failed, ${undone}: ${err instanceof Error ? err.message : String(err)}`);
-    process.exit(1);
+    return process.exit(1);
   }
   console.log(`  merged, labelled ${AUTO_MERGED_LABEL}`);
 }
