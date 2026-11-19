@@ -11,8 +11,12 @@ import { ethers } from 'ethers';
 import {
   DELEGATE_RECEIPT_FORMAT, MemoryReceiptLedger, addressStatedBy, admitDelegateReceipt,
   delegateReceiptBody, digestOf, receiptBodyProblem, receiptText, signDelegateReceipt,
-  type AdmitReceiptArgs, type DelegateReceiptBody, type SignedDelegateReceipt,
+  type AdmitReceiptArgs, type DelegateReceiptBody, type OwnerSignedStanding, type SignedDelegateReceipt,
 } from '@interego/core/delegate-receipt';
+import {
+  createOwnerProfile, createSignedDelegationCredential, verifyDelegation,
+  type AuthorizedAgentData, type DelegationSigner, type DelegationVerifier, type IRI,
+} from '@interego/core';
 import { checkDelegation, delegateLabel, type DelegateRegistryPort } from '@interego/core/delegate';
 import { createEncryptedEnvelope, generateKeyPair, openEncryptedEnvelope } from '@interego/core/crypto';
 
@@ -342,5 +346,93 @@ describe('a local two-party run: sealed assignment out, signed receipt back, no 
     expect(revoked.why).toMatch(/revoked/);
     // The principal's pod holds the assignment and nothing the worker wrote.
     expect([...pods.get(PRINCIPAL_POD)!.keys()]).toEqual(['assignments/job-7']);
+  });
+});
+
+describe('a caller may require the delegation the principal signed', () => {
+  const signed = (over: Partial<OwnerSignedStanding> = {}): OwnerSignedStanding =>
+    ({ valid: true, owner: PRINCIPAL, trustLevel: 'CryptographicallyVerified', ...over });
+
+  it('admits when the principal signed it, and asks about the signer on the principal\'s pod', async () => {
+    const asked: string[] = [];
+    const a = await admit(await receipt(), { ownerSigned: (agentId, pod) => { asked.push(agentId + ' on ' + pod); return signed(); } });
+    expect(a.why).toBeNull();
+    expect(a.ok).toBe(true);
+    expect(asked).toEqual([WORKER + ' on ' + PRINCIPAL_POD]);
+    expect(a.checks.some((c) => /signed the delegation of/.test(c.text))).toBe(true);
+    expect(a.checks.some((c) => /rests on the roster row alone/.test(c.text))).toBe(false);
+  });
+
+  it('says so when standing rests on the row alone', async () => {
+    const a = await admit(await receipt());
+    expect(a.ok).toBe(true);
+    expect(a.checks.some((c) => /rests on the roster row alone/.test(c.text))).toBe(true);
+  });
+
+  it('refuses a row with no valid signed delegation behind it', async () => {
+    const a = await admit(await receipt(), { ownerSigned: () => signed({ valid: false, reason: 'No credential on the pod' }) });
+    expect(a.ok).toBe(false);
+    expect(a.why).toMatch(/No valid signed delegation.*No credential on the pod/);
+    // The row is still there and still reads as current: the two findings are separate lines.
+    expect(a.row?.agentId).toBe(WORKER);
+  });
+
+  it('refuses a delegation that is recorded but not signed', async () => {
+    const a = await admit(await receipt(), { ownerSigned: () => signed({ trustLevel: 'SelfAsserted' }) });
+    expect(a.why).toMatch(/recorded but not signed/);
+    expect((await admit(await receipt(), { ownerSigned: () => ({ valid: true, owner: PRINCIPAL }) })).why).toMatch(/recorded but not signed/);
+  });
+
+  it('refuses a delegation signed by somebody other than the expected principal', async () => {
+    const a = await admit(await receipt(), { ownerSigned: () => signed({ owner: 'https://identity.example.test/users/u-pk-bbbbbbbbbbbb/profile#me' }) });
+    expect(a.why).toMatch(/from somebody other than/);
+    expect((await admit(await receipt(), { ownerSigned: () => ({ valid: true, trustLevel: 'CryptographicallyVerified' }) })).why).toMatch(/from somebody other than/);
+  });
+
+  it('does not read a check that could not run as a pass', async () => {
+    const thrown = await admit(await receipt(), { ownerSigned: () => { throw new Error('the pod did not answer'); } });
+    expect(thrown.ok).toBe(false);
+    expect(thrown.checks.find((c) => c.mark === 'q')?.text).toMatch(/could not be checked: the pod did not answer/);
+    const nothing = await admit(await receipt(), { ownerSigned: () => null as unknown as OwnerSignedStanding });
+    expect(nothing.ok).toBe(false);
+    expect(nothing.checks.find((c) => c.mark === 'q')?.text).toMatch(/could not be checked/);
+  });
+
+  it('does not use up a nonce when the signed delegation is missing', async () => {
+    const ledger = new MemoryReceiptLedger(() => NOW.getTime());
+    const r = await receipt();
+    expect((await admit(r, { ledger, ownerSigned: () => signed({ valid: false }) })).ok).toBe(false);
+    expect((await admit(r, { ledger, ownerSigned: () => signed() })).ok).toBe(true);
+  });
+
+  it('works with the substrate\'s own verifyDelegation, a credential the principal signed with a real key', async () => {
+    // The principal's wallet signs the delegation; the verifier pins that wallet's address, so a
+    // credential signed by any other key does not verify whatever its proof block claims.
+    const principalWallet = ethers.Wallet.createRandom();
+    const POD_URL = 'https://store.example.test/' + PRINCIPAL_POD + '/';
+    const row: AuthorizedAgentData = { agentId: WORKER as IRI, delegatedBy: PRINCIPAL as IRI, scope: 'ReadOnly', validFrom: '2026-11-01T00:00:00.000Z', label: delegateLabel('factory worker') };
+    const profile = createOwnerProfile(PRINCIPAL as IRI, 'A fictional principal', [row]);
+    const signerOf = (w: { address: string; signMessage(m: string): Promise<string> }): DelegationSigner => async (payload) =>
+      ({ signature: await w.signMessage(payload), signerAddress: w.address, verificationMethod: ('did:ethr:' + w.address) as IRI });
+    const verifier: DelegationVerifier = async (payload, proof) => {
+      try { return ethers.verifyMessage(payload, proof.proofValue) === principalWallet.address; } catch { return false; }
+    };
+    const check = (credential: unknown) => (agentId: string) => verifyDelegation(agentId as IRI, POD_URL, async () => profile, {
+      fetchCredential: async () => credential as never, verifier,
+    });
+
+    const good = await createSignedDelegationCredential(profile, row, POD_URL as IRI, signerOf(principalWallet));
+    const admitted = await admit(await receipt(), { ownerSigned: check(good) });
+    expect(admitted.why).toBeNull();
+    expect(admitted.ok).toBe(true);
+
+    // Signed by a different key, with the proof block naming the principal's address anyway.
+    const forged = await createSignedDelegationCredential(profile, row, POD_URL as IRI, signerOf(stranger));
+    const lied = { ...forged, proof: { ...forged.proof!, signerAddress: principalWallet.address } };
+    for (const bad of [forged, lied, null]) {
+      const refused = await admit(await receipt(), { ownerSigned: check(bad) });
+      expect(refused.ok).toBe(false);
+      expect(refused.why).toMatch(/No valid signed delegation|recorded but not signed/);
+    }
   });
 });
