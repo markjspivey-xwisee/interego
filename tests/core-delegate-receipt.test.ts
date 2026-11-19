@@ -229,6 +229,14 @@ describe('admitting a receipt keeps signature, standing, footing and custody apa
     expect(again.why).toMatch(/already admitted once/);
   });
 
+  it('keeps two agents whose ids differ only in case apart in the ledger', () => {
+    const ledger = new MemoryReceiptLedger(() => NOW.getTime());
+    const until = NOW.getTime() + 1000;
+    expect(ledger.admit('https://identity.example.test/users/Alice/profile#me', NONCE, until)).toBe(true);
+    expect(ledger.admit('https://identity.example.test/users/alice/profile#me', NONCE, until)).toBe(true);
+    expect(ledger.admit('https://identity.example.test/users/Alice/profile#me', NONCE, until)).toBe(false);
+  });
+
   it('does not use up a nonce on a receipt it refused for another reason', async () => {
     const ledger = new MemoryReceiptLedger(() => NOW.getTime());
     const r = await receipt();

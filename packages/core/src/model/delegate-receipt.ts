@@ -247,7 +247,9 @@ export class MemoryReceiptLedger implements ReceiptLedger {
   admit(signer: string, nonce: string, forgetAfterMs: number): boolean {
     const now = this.clock();
     for (const [k, until] of this.seen) if (until <= now) this.seen.delete(k);
-    const key = signer.toLowerCase() + '|' + nonce;
+    // The signer exactly as written. Standing compares agent ids exactly, and two ids that differ
+    // only in case are two agents, so folding case here would let one use up the other's nonce.
+    const key = signer + '|' + nonce;
     if (this.seen.has(key)) return false;
     this.seen.set(key, forgetAfterMs);
     return true;

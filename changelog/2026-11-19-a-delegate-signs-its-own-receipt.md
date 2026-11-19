@@ -24,7 +24,7 @@ adds the receipt and its admission:
 - Signing, recovering and resolving an agent's key are ports, so the module
   imports no signing library and loads in a browser bundle.
 
-**Tested.** `tests/core-delegate-receipt.test.ts`, 24 cases with keys made in
+**Tested.** `tests/core-delegate-receipt.test.ts`, 25 cases with keys made in
 the test: admission for `ReadOnly` and `DiscoverOnly` delegates where
 `checkDelegation` says no; refusals for an unseated, non-delegate, revoked,
 expired or not-yet-started signer, an unreadable roster, a roster on somebody
