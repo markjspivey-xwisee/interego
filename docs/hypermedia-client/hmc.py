@@ -301,9 +301,12 @@ def _finite_copy(value: Any) -> Any:
 
 
 def _json_out(value: Any, indent: int | None = 2) -> str:
-    """What --json and a shown JSON body print: JSON, always. A remote 1e400
-    reads as an infinity, which json.dumps would write as Infinity; it is
-    written null, as the page's JSON.stringify writes it."""
+    """What --json, list --json and describe print, and text mode's mcp:
+    block: JSON, always, every character past ASCII escaped (_json_written
+    chooses the indent). A remote 1e400 reads as an infinity, which json.dumps
+    would write as Infinity; it is written null, as the page's JSON.stringify
+    writes it. A response shown as JSON in text mode is written as the page
+    shows it (_json_shown)."""
     try:
         return json.dumps(value, indent=indent, allow_nan=False)
     except ValueError:
@@ -533,54 +536,73 @@ def _js_string(text: str) -> str:
     return _SURROGATE.sub(lambda m: "\\u%04x" % ord(m.group()), out) if _SURROGATE.search(out) else out
 
 
-def _js_json(value: Any, indent: int | None = None, named: dict[float, dict[str, str]] | None = None) -> str:
+def _js_members(item: Any, inner: str, colon: str) -> Iterator[tuple[str, Any]]:
+    """Each member of an array or object as _js_json writes it, one at a
+    time: the text before it (a comma, the line it starts, an object's key),
+    and the member."""
+    if isinstance(item, dict):
+        for at, key in enumerate(_js_keys(item)):
+            yield ("," if at else "") + inner + _js_string(str(key)) + colon, item[key]
+    else:
+        for at, one in enumerate(item):
+            yield ("," if at else "") + inner, one
+
+
+def _js_json(value: Any, indent: int | None = None, named: dict[float, dict[str, str]] | None = None,
+             limit: int | None = None) -> str:
     """JSON text as the page's JSON.stringify(value, null, indent) writes it:
     each number as JavaScript writes it (a JSON 1.0 is 1, 1e-7 is 1e-7, -0 is
     0) and NaN or an infinity as null; an object's keys in the order
     JavaScript keeps them (see _js_keys); and with `indent`, each member on a
     line of its own, as json.dumps(indent=) lays it out too. With `named`,
     a number written otherwise than its double is written as its document
-    writes it (_named_text). Built with a stack, so a value as deep as
-    json.loads reads costs no recursion."""
+    writes it (_named_text). With `limit`, it stops once it has written that
+    many characters, so it writes the whole text's start, at least `limit`
+    characters of it or all of it, at the cost of what it writes, not of the
+    value. Built with a stack, which takes each container's members as it
+    writes them, so a value as deep as json.loads reads costs no recursion."""
     pad = " " * indent if indent else ""
+    colon = ": " if pad else ":"
     parts: list[str] = []
-    # Each entry is (True, text written as it is) or (False, a value, its depth).
-    stack: list[tuple[bool, Any, int]] = [(False, value, 0)]
-    while stack:
-        written, item, depth = stack.pop()
-        if written:
-            parts.append(item)
-        elif item is None:
-            parts.append("null")
-        elif isinstance(item, bool):
-            parts.append("true" if item else "false")
-        elif isinstance(item, str):
-            parts.append(_js_string(item))
-        elif named is not None and isinstance(item, (int, float)) and _number_name(item, named) is not None:
-            parts.append(str(_number_name(item, named)))
-        elif isinstance(item, int):
-            parts.append(str(item))
-        elif isinstance(item, float):
-            parts.append(_js_number_text(item) if math.isfinite(item) else "null")
-        elif isinstance(item, (dict, list, tuple)):
-            if isinstance(item, dict):
-                members = [(_js_string(str(key)) + (": " if pad else ":"), item[key]) for key in _js_keys(item)]
-                opening, closing = "{", "}"
-            else:
-                members = [("", one) for one in item]
-                opening, closing = "[", "]"
-            if not members:
-                parts.append(opening + closing)
+    written = 0
+    # Each entry is (0, text written as it is), (1, a value, its depth), or (2,
+    # the members of an array or object yet to be written (_js_members), its depth).
+    stack: list[tuple[int, Any, int]] = [(1, value, 0)]
+    while stack and (limit is None or written < limit):
+        kind, item, depth = stack.pop()
+        if kind == 2:
+            member = next(item, None)
+            if member is None:
                 continue
-            inner = "\n" + pad * (depth + 1) if pad else ""
-            stack.append((True, ("\n" + pad * depth if pad else "") + closing, depth))
-            for at in range(len(members) - 1, -1, -1):
-                name, one = members[at]
-                stack.append((False, one, depth + 1))
-                stack.append((True, ("," if at else "") + inner + name, depth))
-            stack.append((True, opening, depth))
+            stack.append((2, item, depth))
+            stack.append((1, member[1], depth + 1))
+            text = member[0]
+        elif kind == 0:
+            text = item
+        elif item is None:
+            text = "null"
+        elif isinstance(item, bool):
+            text = "true" if item else "false"
+        elif isinstance(item, str):
+            text = _js_string(item)
+        elif named is not None and isinstance(item, (int, float)) and _number_name(item, named) is not None:
+            text = str(_number_name(item, named))
+        elif isinstance(item, int):
+            text = str(item)
+        elif isinstance(item, float):
+            text = _js_number_text(item) if math.isfinite(item) else "null"
+        elif isinstance(item, (dict, list, tuple)):
+            opening, closing = ("{", "}") if isinstance(item, dict) else ("[", "]")
+            if not item:
+                text = opening + closing
+            else:
+                stack.append((0, ("\n" + pad * depth if pad else "") + closing, depth))
+                stack.append((2, _js_members(item, "\n" + pad * (depth + 1) if pad else "", colon), depth))
+                text = opening
         else:
-            parts.append(_js_string(str(item)))
+            text = _js_string(str(item))
+        parts.append(text)
+        written += len(text)
     return "".join(parts)
 
 
@@ -7546,7 +7568,10 @@ def _document_too_large(url: str) -> str:
 # text, after a note naming why (_json_as_text), so JSON's depth does not set
 # what is written. The page's LAYOUT_PER_BYTE, LAYOUT_FLOOR, indentSize and
 # jsonAsText are the same; the page also lays a SPARQL result out as a table,
-# within a bound of its own, where hmc.py writes it as the JSON it is.
+# within a bound of its own, where hmc.py writes it as the JSON it is. Past the
+# table's bound the page shows the result as JSON, as hmc.py does, indented by
+# the same rule, and past that as its text, after a note of its own first
+# (tableAsJson). JSON shown is the text the page shows (_json_shown).
 _LAYOUT_PER_BYTE = 8
 _LAYOUT_FLOOR = 10000
 
@@ -7582,6 +7607,19 @@ def _indent_size(value: Any) -> int:
         total += len(members) * (2 * depth + 3) + (len(members) if isinstance(item, dict) else 0) + 2 * depth + 1
         stack.extend((member, depth + 1) for member in members)
     return total
+
+
+def _json_shown(value: Any, limit: int | None = None) -> str:
+    """What text mode writes of a response it shows as JSON, before it cuts
+    it to 8,000 characters: the text the page shows, its JSON.stringify(value,
+    null, 2), character for character (_js_json), so text past ASCII is
+    written as it is, each number as JavaScript writes it, and an object's
+    keys in JavaScript's order. json.dumps wrote "caf\\u00e9", 1.0 and 1e+20
+    where the page shows "café", 1 and 100000000000000000000. Its control
+    characters are then shown as escapes, as in all remote text (tty_safe).
+    With `limit`, only the text's start is written, `limit` characters of it
+    at least (_js_json), so text mode costs what it writes, not the response."""
+    return _js_json(value, 2, limit=limit)
 
 
 def _json_written(value: Any, size: int) -> str:
@@ -7908,7 +7946,8 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     body = resp.get("body")
     text = resp.get("bodyText")
     if isinstance(body, (dict, list)):
-        pretty = _json_out(body)
+        # Built only as far as the 8,000 characters shown: at least that many, all the cut below needs.
+        pretty = _json_shown(body, 8001)
         say(pretty if len(pretty) < 8000 else pretty[:8000] + "\n…")
     elif text is not None:
         say(text if len(text) < 8000 else text[:8000] + "\n…")
@@ -7945,9 +7984,23 @@ MEMORY_PROBLEM = "This needs more memory than this process has, so it was stoppe
 
 
 def main(argv: list[str] | None = None) -> int:
-    parser = build_parser()
-    args = parser.parse_args(argv)
+    # A character the output cannot encode (Windows output sent to a file or a pipe, in cp1252; a
+    # Latin-1 locale; PYTHONIOENCODING), or a lone surrogate in remote text, which no output can, is
+    # written as a backslash escape, as a control character is (tty_safe), not raised after a
+    # request was sent and answered, which would exit 1. An output that cannot be set so (closed
+    # or detached by a caller in this process) is left as it is, and fails, if it does, as it did.
+    # The parser is built within the same handling as the command, since Python 3.14's argparse
+    # asks the output whether it is a terminal as it builds one, so such an output's failure is
+    # named and returns 1 on every version. A usage error still exits 2, as argparse exits.
+    for stream in (sys.stdout, sys.stderr):
+        reconfigure = getattr(stream, "reconfigure", None)
+        if callable(reconfigure):
+            try:
+                reconfigure(errors="backslashreplace")
+            except (ValueError, OSError, TypeError):
+                pass
     try:
+        args = build_parser().parse_args(argv)
         return args.func(args)
     except Exception as exc:  # noqa: BLE001
         say(f"error: {MEMORY_PROBLEM if isinstance(exc, MemoryError) else exc}", file=sys.stderr)
