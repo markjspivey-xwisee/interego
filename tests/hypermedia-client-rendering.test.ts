@@ -975,7 +975,8 @@ describe('hypermedia client: what a response is shown as grows with its size, no
   // characters, against what laying out a response of its size may add (layoutBound), with its
   // text and the request's beside it. A table shows each binding's value in the column of each
   // variable that names it, and nothing in the others. Time grows with the response as the work
-  // rows' does: 3 s, or 1 ms for each 80 bytes where that is more, unless the row says less.
+  // rows' does: 3 s, or 1 ms for each 80 bytes where that is more, unless the row says less. A row
+  // answered with no 2xx is no success, and neither its outcome nor any note reads as one.
   it.each(shownCases().map(c => [c.name] as const))('shows /shown/%s within what its size allows', async name => {
     const c = shownCases().find(one => one.name === name)!;
     const started = Date.now();
@@ -986,17 +987,26 @@ describe('hypermedia client: what a response is shown as grows with its size, no
         { timeout: 110_000 });
       expect(Date.now() - started, 'link to done').toBeLessThan(c.ms ?? Math.max(3_000, Math.ceil(c.bytes / 80)));
       const result = document.getElementById('result')!;
-      expect(result.querySelector('.ok')!.textContent).toBe(invokeDone(`${HOST}/shown/${name}`, 200));
+      const read = c.status ? 'warn' : 'ok';
+      expect(result.querySelector(`.${read}`)!.textContent)
+        .toBe(c.status ? invokeNotSuccess(`${HOST}/shown/${name}`, c.status) : invokeDone(`${HOST}/shown/${name}`, 200));
+      if (c.status) expect(result.querySelector('.ok'), 'read as a success').toBeNull();
       const shown: Element[] = [];
       for (let el = result.querySelector('.resp-title')!.nextElementSibling; el; el = el.nextElementSibling) shown.push(el);
       const parsed = c.page === 'table' ? JSON.parse(c.body) as { head: { vars: string[] }; results: { bindings: unknown[] } } : null;
       const notes = c.page === 'table' ? [`SPARQL result: ${parsed!.results.bindings.length} row(s)`] : c.pageNotes;
       // The notes first, each in its words and in order, read as the outcome is, then what is shown.
       expect(shown.map(el => el.tagName)).toEqual([...notes.map(() => 'DIV'), ...{ table: ['TABLE'], json: ['PRE'], text: ['PRE'], nothing: [] }[c.page]]);
-      expect(shown.filter(el => el.tagName === 'DIV').map(el => [el.className, el.textContent])).toEqual(notes.map(note => ['ok', note]));
+      expect(shown.filter(el => el.tagName === 'DIV').map(el => [el.className, el.textContent])).toEqual(notes.map(note => [read, note]));
       // JSON is the text JSON.stringify(value, null, 2) writes, character for character, as hmc.py writes it.
       expect(shown.filter(el => el.tagName === 'PRE').map(el => el.textContent))
         .toEqual(c.page === 'json' ? [JSON.stringify(JSON.parse(c.body), null, 2)] : c.page === 'text' ? [c.body] : []);
+      // A refused table's JSON links no more https URLs than the response's text holds: a value
+      // written escaped (https:\/\/), which its text shows as no link, is no link in its JSON either.
+      if (c.page === 'json' && c.pageNotes.some(note => note.endsWith('it is shown as JSON.'))) {
+        expect(shown.find(el => el.tagName === 'PRE')!.querySelectorAll('[data-iri]').length, 'links shown')
+          .toBeLessThanOrEqual(c.body.split('https://').length - 1);
+      }
       const tables = shown.filter(el => el.tagName === 'TABLE');
       expect(tables).toHaveLength(c.page === 'table' ? 1 : 0);
       if (parsed) {

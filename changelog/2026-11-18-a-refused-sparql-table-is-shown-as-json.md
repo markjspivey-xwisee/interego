@@ -13,6 +13,11 @@ json.dumps, so text past ASCII came out as \u escapes, 1.0 stayed 1.0, 1e20
 came out as 1e+20, and a key such as "1" stayed where the response put it,
 where the page writes it first. It now writes what the page shows.
 
-The JSON is linear in the response: the largest test result, 400,000 empty
-bindings in 2 MB, is 4.8 MB of indented JSON, shown in under 0.8 s, and a
-refused result of 8 MiB takes at most 18 s of the 105 s its size allows.
+The JSON grows with the response, within the time its size allows.
+
+A refused result's JSON links no more https URLs than its text holds, so a
+value written escaped (https:\/\/) is text in it, as in its text: it linked
+each, one for each dozen bytes, past jsdom's default heap at 8 MiB. hmc.py's
+text mode writes a character its output cannot hold as a backslash escape,
+where it failed after the answer and exited 1, and builds only the 8,000
+characters of JSON it shows.

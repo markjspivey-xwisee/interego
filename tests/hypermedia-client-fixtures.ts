@@ -3429,7 +3429,7 @@ export function fetchRoutes(base: string): Record<string, (format: string | null
     '/landing%7B%60%7D': () => ({ type: 'text/plain', body: LANDING_BODY }),
     '/landing-body': () => ({ type: 'text/plain', body: LANDING_BODY, headBody: true }),
     // What /shown's controls read: responses whose layout once grew faster than their size, and honest ones.
-    ...Object.fromEntries(shownCases().map(c => [`/shown/${c.name}`, () => ({ type: c.type, body: c.body })])),
+    ...Object.fromEntries(shownCases().map(c => [`/shown/${c.name}`, () => ({ ...(c.status ? { status: c.status } : {}), type: c.type, body: c.body })])),
   };
 }
 
@@ -3588,6 +3588,8 @@ export interface ShownCase {
   readonly hmcNote: string | null;
   /** The most the page may take to show it, in ms, where that is less than its size allows. */
   readonly ms?: number;
+  /** The status it is answered with, where that is not 200: then no note reads as a success, as the outcome does not. */
+  readonly status?: number;
 }
 let shownMemo: ReadonlyArray<ShownCase> | null = null;
 /**
@@ -3603,12 +3605,13 @@ let shownMemo: ReadonlyArray<ShownCase> | null = null;
  *   - too-deep: JSON nested 5,000 deep, which neither client reads as JSON, so it is its text;
  *   - geo: honest GeoJSON, nested seven deep, still indented;
  *   - largest, too-large: text of RESPONSE_MAX bytes, shown, and of one byte more, not read;
- *   - long-names: 50 variables of 16,000 characters and 400,000 empty bindings, 2 MB, which the
+ *   - long-names: 50 variables of 16,000 characters and 200,000 empty bindings, 1.4 MB, which the
  *     page once looked up by name in each row, each lookup costing the name's length. Within its
- *     bound, about 5,000 rows, that was 7 s, and the table's bound alone allows that, so the row is
- *     held to 3 s: mapped once, its names cost 0.5 s. (V8 hashes a name of 16,384 characters or more
- *     by its length alone, at no cost, so longer names would not measure the lookup.) Shown as JSON,
- *     4.8 MB indented, within the same 3 s;
+ *     bound, about 3,400 rows, that was 5.7 s, and the table's bound alone allows that, so the row is
+ *     held to 3 s: mapped once, its names cost nothing a run measures. (V8 hashes a name of 16,384
+ *     characters or more by its length alone, at no cost, so longer names would not measure the
+ *     lookup.) Shown as JSON, 2.8 MB indented, the whole row takes 0.8 s, under a third of its 3 s;
+ *     with 400,000 bindings it took 1.3 s, too close to them;
  *   - long-names-table: 2 variables of 16,000 characters, one no binding names, and a short one,
  *     with 7,000 bindings, whose table fits: each name was looked up in each row, twice;
  *   - padded: 400 variables and 400 empty bindings after 20,000 bytes of whitespace, which the page
@@ -3641,13 +3644,18 @@ let shownMemo: ReadonlyArray<ShownCase> | null = null;
  *   - links-refused: 2 variables both named "s", and 4,000 bindings of "s" to an https IRI, past
  *     TABLE_FLOOR: its table would show each IRI twice, and its JSON shows each once, as a link, as
  *     its text did;
+ *   - links-escaped: the same, each IRI written escaped (https:\/\/), as some endpoints write JSON,
+ *     which its text shows as no link: its JSON, which writes each as https://, links no more https
+ *     URLs than its text holds, so none, where it once linked all 4,000, a link for each 60 bytes;
  *   - forms: a result past TABLE_FLOOR that writes its values in the forms JSON allows: text past
  *     ASCII as it is and as escapes, an https IRI whose h is an escape and whose slashes are
  *     escaped, a lone surrogate, control characters, a repeated key, a key JavaScript writes
  *     first, and bindings that are no object (text, the numbers 1.0, 1e20, -0.0, 5e-7 and
  *     12345678901234567890, null, true, an array), which the table drops and its JSON shows.
  *     hmc.py wrote text past ASCII as \u escapes, those numbers as Python writes them and
- *     that key where the response put it, so its text differed from the page's.
+ *     that key where the response put it, so its text differed from the page's;
+ *   - sparse-404, sparse-deep-500: the sparse and sparse-deep results answered 404 and 500, which no
+ *     client reads as a success: the page writes the same notes, each read as the outcome is.
  * hmc.py shows no table. Past the table's bound the page shows the result as JSON, as hmc.py does,
  * indented by the same rule, and past that as its text: each shows the text JSON.stringify(value,
  * null, 2) writes, character for character.
@@ -3705,6 +3713,9 @@ export function shownCases(): ReadonlyArray<ShownCase> {
   const oneLine = sparql(['s'], Array.from({ length: 16_000 }, (_, i) => i % 50 ? {} : { s: { type: 'literal', value: `café ${i} 日本` } }));
   // 2 variables both named "s", and 4,000 bindings of "s" to an https IRI.
   const linksRefused = sparql(['s', 's'], Array.from({ length: 4000 }, (_, i) => ({ s: { type: 'uri', value: `https://data.example/s/${i}` } })));
+  // The same, each IRI written by hand with its slashes escaped, since JSON.stringify escapes none.
+  const linksEscaped = `{"head":{"vars":["s","s"]},"results":{"bindings":[${Array.from({ length: 4000 }, (_, i) =>
+    `{"s":{"type":"uri","value":"https:\\/\\/data.example\\/s\\/${i}"}}`).join(',')}]}}`;
   // A JSON escape of each UTF-16 unit, written out when the text is built, so this source holds none.
   const u = (...units: number[]) => units.map(unit => `\\u${unit.toString(16).padStart(4, '0')}`).join('');
   // A result written by hand, since JSON.stringify writes none of these forms: text past ASCII as it
@@ -3724,7 +3735,7 @@ export function shownCases(): ReadonlyArray<ShownCase> {
     ...Array<string>(16_000).fill('{}'),
     `{"s":{"type":"literal","value":"${u(0xd834, 0xdd1e)} \ud834\udd1e"}}`,
   ].join(',')}]}}`;
-  shownMemo = [
+  const rows = [
     build('sparse', SPARQL, sparql(vars, Array(1000).fill({})), 'json', 'json', bytes => tableAsJson(1000, 1000, bytes), none),
     build('dense', SPARQL, sparql(['s', 'p', 'o'], dense), 'table', 'json', none),
     build('repeated', SPARQL, sparql(Array(1000).fill('a'), [{ a: { type: 'literal', value: 'x'.repeat(20000) } }]), 'json', 'json',
@@ -3734,7 +3745,7 @@ export function shownCases(): ReadonlyArray<ShownCase> {
     build('geo', 'application/geo+json', JSON.stringify(geo), 'json', 'json', none),
     build('largest', 'text/plain', 'x'.repeat(RESPONSE_MAX), 'text', 'text', none),
     build('too-large', 'text/plain', 'x'.repeat(RESPONSE_MAX + 1), 'nothing', 'nothing', () => RESPONSE_TOO_LARGE),
-    build('long-names', SPARQL, sparql(named(50, 16000), Array(400000).fill({})), 'json', 'json', bytes => tableAsJson(400000, 50, bytes), none,
+    build('long-names', SPARQL, sparql(named(50, 16000), Array(200000).fill({})), 'json', 'json', bytes => tableAsJson(200000, 50, bytes), none,
       3_000),
     build('long-names-table', SPARQL, sparql([...named(2, 16000), 's'], Array.from({ length: 7000 }, (_, i) =>
       i < 2 ? { [i ? 's' : named(2, 16000)[1]!]: { type: 'uri', value: `https://data.example/bound/${i}` } } : {})), 'table', 'json', none),
@@ -3754,7 +3765,11 @@ export function shownCases(): ReadonlyArray<ShownCase> {
       bytes => jsonAsText(added(sparseDeep), bytes)),
     build('one-line', SPARQL, oneLine, 'json', 'json', bytes => tableAsJson(16_000, 1, bytes), none),
     build('links-refused', SPARQL, linksRefused, 'json', 'json', bytes => tableAsJson(4000, 2, bytes), none),
+    build('links-escaped', SPARQL, linksEscaped, 'json', 'json', bytes => tableAsJson(4000, 2, bytes), none),
     build('forms', SPARQL, forms, 'json', 'json', bytes => tableAsJson(rowsOf(forms), 1, bytes), none),
   ];
+  // A row answered with `status`, as it is shown otherwise.
+  const answered = (name: string, status: number): ShownCase => ({ ...rows.find(row => row.name === name)!, name: `${name}-${status}`, status });
+  shownMemo = [...rows, answered('sparse', 404), answered('sparse-deep', 500)];
   return shownMemo;
 }

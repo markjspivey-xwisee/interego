@@ -56,6 +56,8 @@ const ESC = '\x1b]0;PWNED-TITLE\x07\x1b[31mRED\x1b[0m\x1b]52;c;cHduZWQ=\x07\r\x9
 const CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/;
 // A local file a descriptor must not be able to make hmc.py read.
 const SECRET = 'HMC-LOCAL-FILE-SECRET';
+// Text past Latin-1: past the BMP too, and an é Latin-1 holds.
+const WIDE = 'caf\u00e9 \u65e5\u672c \ud834\udd1e';
 const XSD = 'http://www.w3.org/2001/XMLSchema#';
 let dir = '';
 let secretUrl = '';
@@ -83,6 +85,11 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       [{ '@id': `${base}/long-name#S`, '@type': 'sh:NodeShape', 'sh:property': [{ 'sh:path': `${base}/p`, 'sh:name': LONG_NAME },
         { 'sh:path': `${base}/p2`, 'sh:name': 'rest-param-query-limit' }] }])),
     '/ok': () => ({ type: 'text/plain', body: 'fine' }),
+    // A GET of text and one of JSON, each answered with WIDE.
+    '/wide': json(descriptor('wide', ['text', 'json'].map(kind => ({ '@id': `${base}/wide#${kind}`, '@type': 'iep:Affordance',
+      'iep:action': `urn:wide:${kind}`, 'hydra:method': 'GET', 'hydra:title': `Wide ${kind}`, 'hydra:target': `${base}/wide-${kind}` })))),
+    '/wide-text': () => ({ type: 'text/plain; charset=utf-8', body: WIDE }),
+    '/wide-json': () => ({ type: 'application/json', body: JSON.stringify({ name: WIDE }) }),
     // A HEAD and a GET to a host reached through the proxy, which redirects to this host, reached
     // directly, which redirects back to the proxied host.
     '/via-proxy': json(descriptor('via-proxy', ['HEAD', 'GET'].map(method => ({ '@id': `${base}/via-proxy#${method}`,
@@ -530,20 +537,22 @@ describe('hmc.py: what a response is shown as grows with its size, not with the 
   it.each(shownCases().map(c => [c.name] as const))('shows /shown/%s as the page does, within what its size allows, in text and --json alike', async name => {
     const c = shownCases().find(one => one.name === name)!;
     const url = `${base}/shown/${name}`;
+    // A row answered with no 2xx is no success: it exits 4, and shows what it shows of any other.
+    const outcome = c.status ? invokeNotSuccess(url, c.status) : invokeDone(url, 200);
     const text = await hmc(['invoke', `${base}/shown`, `urn:shown:${name}`]);
-    expect([text.code, text.stderr, text.timedOut]).toEqual([0, '', false]);
+    expect([text.code, text.stderr, text.timedOut]).toEqual([c.status ? 4 : 0, '', false]);
     const lines = text.stdout.split('\n');
-    const at = lines.indexOf(invokeDone(url, 200));
+    const at = lines.indexOf(outcome);
     expect(at, text.stdout.slice(0, 2_000)).toBeGreaterThan(0);
-    expect(lines[at - 1]).toBe(`HTTP 200  ${c.type}`);
+    expect(lines[at - 1]).toBe(`HTTP ${c.status ?? 200}  ${c.type}`);
     const shown = c.hmc === 'json' ? JSON.stringify(JSON.parse(c.body), null, 2) : c.hmc === 'text' ? c.body : null;
     const written = shown === null ? '' : shown.length < 8_000 ? `${shown}\n` : `${shown.slice(0, 8_000)}\n…\n`;
     expect(lines.slice(at + 1).join('\n')).toBe(`${c.hmcNote === null ? '' : `${c.hmcNote}\n`}${written}`);
     expect(text.stdout.length, 'text written').toBeLessThan(10_000);
     const json = await hmc(['invoke', `${base}/shown`, `urn:shown:${name}`, '--json']);
-    expect([json.code, json.stderr, json.timedOut]).toEqual([0, '', false]);
+    expect([json.code, json.stderr, json.timedOut]).toEqual([c.status ? 4 : 0, '', false]);
     const out = JSON.parse(json.stdout) as { done: boolean; outcome: string; response: { bodyText: string | null; body: unknown; note?: string | null } };
-    expect([out.done, out.outcome, out.response.note ?? null]).toEqual([true, invokeDone(url, 200), c.hmcNote]);
+    expect([out.done, out.outcome, out.response.note ?? null]).toEqual([!c.status, outcome, c.hmcNote]);
     // A response with no note has no `note`, so an honest response's --json is what it was before there were notes.
     expect('note' in out.response, 'note given').toBe(c.hmcNote !== null);
     expect(out.response.bodyText).toBe(c.hmc === 'nothing' ? null : c.body);
@@ -557,9 +566,11 @@ describe('hmc.py: what a response is shown as grows with its size, not with the 
   // past ASCII as it is, numbers as JavaScript writes them, and an object's keys in its order.
   it('writes each response it shows as JSON as the page shows it, character for character', async () => {
     const rows = shownCases().filter(c => c.hmc === 'json');
-    const script = ['import json, sys, urllib.request', 'sys.dont_write_bytecode = True', 'sys.path.insert(0, sys.argv[1])', 'import hmc',
-      'for name in sys.argv[3:]:', '    with urllib.request.urlopen(sys.argv[2] + "/shown/" + name) as answer:',
-      '        text = hmc._body_text(answer.read())', '    print(json.dumps([name, hmc._json_shown(hmc._page_json(text))]))'].join('\n');
+    // A row answered with no 2xx is read as any other: urllib raises its answer, which holds its body.
+    const script = ['import json, sys, urllib.error, urllib.request', 'sys.dont_write_bytecode = True', 'sys.path.insert(0, sys.argv[1])', 'import hmc',
+      'for name in sys.argv[3:]:', '    try:', '        answer = urllib.request.urlopen(sys.argv[2] + "/shown/" + name)',
+      '    except urllib.error.HTTPError as refused:', '        answer = refused',
+      '    with answer:', '        text = hmc._body_text(answer.read())', '    print(json.dumps([name, hmc._json_shown(hmc._page_json(text))]))'].join('\n');
     const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
       const child = spawn(PYTHON, ['-I', '-c', script, dirname(HMC), base, ...rows.map(c => c.name)],
         { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*' } });
@@ -578,6 +589,34 @@ describe('hmc.py: what a response is shown as grows with its size, not with the 
       while (at < shown.length && shown[at] === text[at]) at++;
       expect([text.length, at], `${c.name}: the same up to ${JSON.stringify(shown.slice(Math.max(0, at - 40), at + 40))}`).toEqual([shown.length, shown.length]);
     }
+  }, 60_000);
+});
+
+describe('hmc.py: text mode on an output that cannot hold every character', () => {
+  // Windows output sent to a file or a pipe (cp1252), a Latin-1 locale, or PYTHONIOENCODING gives
+  // hmc.py an output that holds no 日本. Text mode writes a character its output cannot hold as a
+  // backslash escape, as it writes a control character as one, so an answer is shown whole and the
+  // exit says what it answered. It wrote "Done", then failed on the body and exited 1, which a
+  // script reads as a failure, and may send again.
+  const escaped = (text: string) => [...text].map(ch => {
+    const at = ch.codePointAt(0)!;
+    return at < 0x100 ? ch : at < 0x10000 ? `\\u${at.toString(16).padStart(4, '0')}` : `\\U${at.toString(16).padStart(8, '0')}`;
+  }).join('');
+  it.each([['text', WIDE], ['json', JSON.stringify({ name: WIDE }, null, 2)]] as const)('shows a %s answer past Latin-1 on a Latin-1 output, escaped, and exits 0', async (kind, shown) => {
+    const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+      const child = spawn(PYTHON, ['-I', '-c', 'import runpy, sys; sys.stdout.reconfigure(encoding="latin-1"); sys.argv = sys.argv[1:]; ' +
+        'runpy.run_path(sys.argv[0], run_name="__main__")', HMC, 'invoke', `${base}/wide`, `urn:wide:${kind}`],
+      { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*' } });
+      let stdout = ''; let stderr = '';
+      child.stdout.setEncoding('latin1').on('data', d => { stdout += d; });
+      child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
+      child.on('close', code => resolve({ code, stdout, stderr }));
+    });
+    expect([r.code, r.stderr]).toEqual([0, '']);
+    const lines = r.stdout.split('\n');
+    const at = lines.indexOf(invokeDone(`${base}/wide-${kind}`, 200));
+    expect(at, r.stdout).toBeGreaterThan(0);
+    expect(lines.slice(at + 1).join('\n')).toBe(`${escaped(shown)}\n`);
   }, 60_000);
 });
 

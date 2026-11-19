@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-ev6KjHb+6UVxmcLVYu/8iU7QZx64h7RbqX2wLwjgfzI='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-cSHjhQV4Rp0rj4Vz1a+yVsmSCwsiPNQ3QMwpe5rECls='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -4876,18 +4876,28 @@ function trimTrailingPunctuation(s) {
   while (end > 0 && ".,;".includes(s[end - 1])) end--;
   return s.slice(0, end);
 }
-function linkify(src) {
+// What linkify reads as a URL in text.
+const URL_IN_TEXT = /https?:\/\/[^\s<>"'`)\]},]+/g;
+// Text with each https URL in it a link, the first `links` of them: past those, an
+// https URL is shown as its text.
+function linkify(src, links = Infinity) {
   src = asText(src);
-  const re = /https?:\/\/[^\s<>"'`)\]},]+/g;
   let html = "";
   let last = 0;
-  for (const match of src.matchAll(re)) {
+  for (const match of src.matchAll(URL_IN_TEXT)) {
     const raw = match[0];
     const clean = trimTrailingPunctuation(raw);
-    html += esc(src.slice(last, match.index)) + iriSpan(clean, clean) + esc(raw.slice(clean.length));
+    const shown = /^https:/i.test(clean) && links-- <= 0 ? esc(clean) : iriSpan(clean, clean);
+    html += esc(src.slice(last, match.index)) + shown + esc(raw.slice(clean.length));
     last = match.index + raw.length;
   }
   return html + esc(src.slice(last));
+}
+// The https URLs linkify reads in text, the most it links there: a scan.
+function httpsUrls(src) {
+  let count = 0;
+  for (const match of asText(src).matchAll(URL_IN_TEXT)) if (/^https:/i.test(match[0])) count++;
+  return count;
 }
 // A small Markdown subset: fenced code, # to ### headings, - and * list items,
 // **bold**, [label](https URL), bare URLs and paragraphs. Text is escaped
@@ -5085,7 +5095,10 @@ function renderBody(contentType, body, parsed, done, size) {
   if (parsed && (ct.includes("json") || typeof parsed === "object")) {
     const added = indentSize(parsed);
     if (added > layoutBound(size)) return refused + asTextAfter(jsonAsText(added, size));
-    return refused + "<pre>" + linkify(JSON.stringify(parsed, null, 2)) + "</pre>";
+    // A refused result's JSON, shown where its text was, links no more https URLs than its text
+    // holds: a value written escaped (https:\/\/), which its text shows as no link, would
+    // otherwise be one in its JSON, a link for each dozen bytes of a response that held none.
+    return refused + "<pre>" + linkify(JSON.stringify(parsed, null, 2), refused ? httpsUrls(body) : Infinity) + "</pre>";
   }
   if (ct.includes("html")) {
     // Shown as source. The page does not render a remote HTML document, in a frame or otherwise.
