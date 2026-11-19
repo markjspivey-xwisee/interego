@@ -29,3 +29,8 @@ Python writes U+3000 and Go writes >, reads as one URL in its text and two in
 its JSON, and its last IRIs went unlinked. hmc.py writes a lone surrogate in
 remote text as an escape on any output, where a UTF-8 one wrote it as a raw
 byte or failed.
+
+hmc.py builds its parser within the handling that names a failure, since
+Python 3.14's argparse asks the output whether it is a terminal as it builds
+one: over a closed output main() raised there, where it now names the failure
+and returns 1, as it does on earlier versions.

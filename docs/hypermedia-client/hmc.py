@@ -7989,6 +7989,9 @@ def main(argv: list[str] | None = None) -> int:
     # written as a backslash escape, as a control character is (tty_safe), not raised after a
     # request was sent and answered, which would exit 1. An output that cannot be set so (closed
     # or detached by a caller in this process) is left as it is, and fails, if it does, as it did.
+    # The parser is built within the same handling as the command, since Python 3.14's argparse
+    # asks the output whether it is a terminal as it builds one, so such an output's failure is
+    # named and returns 1 on every version. A usage error still exits 2, as argparse exits.
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
@@ -7996,9 +7999,8 @@ def main(argv: list[str] | None = None) -> int:
                 reconfigure(errors="backslashreplace")
             except (ValueError, OSError, TypeError):
                 pass
-    parser = build_parser()
-    args = parser.parse_args(argv)
     try:
+        args = build_parser().parse_args(argv)
         return args.func(args)
     except Exception as exc:  # noqa: BLE001
         say(f"error: {MEMORY_PROBLEM if isinstance(exc, MemoryError) else exc}", file=sys.stderr)
