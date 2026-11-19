@@ -12,7 +12,7 @@ import {
   SEALED_OBJECT_TYPE, SEALED_UNOPENED_SUMMARY, buildNotification, deliverNotification, inboxItemFrom,
   readAllInboxItems, sealNotification, sealedEnvelopeOf, unsealedNotification,
 } from '../agent-mesh.js';
-import { inboxRecipientKey, openInboxEnvelope, openManagedEnvelope } from '../managed-recipient.js';
+import { currentRegistryKeys, inboxRecipientKey, openInboxEnvelope, openManagedEnvelope } from '../managed-recipient.js';
 
 let passed = 0;
 const failures: string[] = [];
@@ -169,6 +169,52 @@ async function main(): Promise<void> {
     && sealedEnvelopeOf({ object: { type: 'Note', 'iep:envelope': 'e30=' } }) === null
     && inboxItemFrom(url!, { object: { type: SEALED_OBJECT_TYPE } })?.content === undefined,
     'an object that only looks sealed is not opened');
+
+  console.log('which registry keys are recipients');
+  // ★★ THE SECOND DEFECT FOUND IN REVIEW, REPRODUCED. The seal asked only whether a registry row
+  // was revoked, so a delegation that ended in 2021 and one not due to begin until 2099 both had
+  // new notifications wrapped to their keys, and both keys opened them.
+  const NOW = new Date('2026-11-19T12:00:00.000Z');
+  const current = generateKeyPair();
+  const expired = generateKeyPair();
+  const future = generateKeyPair();
+  const revoked = generateKeyPair();
+  const undated = generateKeyPair();
+  const garbled = generateKeyPair();
+  const openEnded = generateKeyPair();
+  const rows = [
+    { encryptionPublicKey: current.publicKey, validFrom: '2026-01-01T00:00:00.000Z', validUntil: '2027-01-01T00:00:00.000Z' },
+    { encryptionPublicKey: openEnded.publicKey, validFrom: '2026-01-01T00:00:00.000Z' },
+    { encryptionPublicKey: expired.publicKey, validFrom: '2020-01-01T00:00:00.000Z', validUntil: '2021-01-01T00:00:00.000Z' },
+    { encryptionPublicKey: future.publicKey, validFrom: '2099-01-01T00:00:00.000Z' },
+    { encryptionPublicKey: revoked.publicKey, validFrom: '2026-01-01T00:00:00.000Z', revoked: true },
+    { encryptionPublicKey: undated.publicKey },
+    { encryptionPublicKey: garbled.publicKey, validFrom: '2026-01-01T00:00:00.000Z', validUntil: 'next spring' },
+    { encryptionPublicKey: relay.publicKey, validFrom: '2026-01-01T00:00:00.000Z' },
+    { validFrom: '2026-01-01T00:00:00.000Z' },
+    { encryptionPublicKey: current.publicKey, validFrom: '2026-06-01T00:00:00.000Z' },
+  ];
+  const chosen = currentRegistryKeys(rows, NOW, relay.publicKey);
+  ok(chosen.length === 2 && chosen.includes(current.publicKey) && chosen.includes(openEnded.publicKey),
+    '★★ only rows in force now are recipients: unrevoked, begun, not ended, and each key once',
+    JSON.stringify(chosen.length));
+  const sealedNow = sealNotification({ ...notification('r'), id: `${POD}inbox/r.jsonld` }, [podKey.publicKey, ...chosen], relay);
+  const env = sealedEnvelopeOf(sealedNow)!;
+  ok(openEncryptedEnvelope(env, current) !== null && openEncryptedEnvelope(env, openEnded) !== null,
+    'a current key and an open-ended current key open what is sealed now');
+  for (const [who, key] of [['an expired', expired], ['a not-yet-valid', future], ['a revoked', revoked], ['an undated', undated], ['an unreadably dated', garbled]] as const) {
+    ok(openEncryptedEnvelope(env, key) === null, `★★ ${who} row's key does not open what is sealed now`);
+  }
+  ok(openEncryptedEnvelope(env, relay) === null, 'and the fleet key is not a recipient even when a row lists it');
+  const one = [rows[0]!];
+  ok(currentRegistryKeys(one, new Date('2026-01-01T00:00:00.000Z'), relay.publicKey).includes(current.publicKey)
+    && !currentRegistryKeys(one, new Date('2027-01-01T00:00:00.000Z'), relay.publicKey).includes(current.publicKey)
+    && !currentRegistryKeys(one, new Date('2025-12-31T23:59:59.999Z'), relay.publicKey).includes(current.publicKey),
+    'a row is in force from its start and stops at its end, not after it');
+  // Control: the rule this replaces — unrevoked and keyed — admits the expired and future rows.
+  const before = rows.filter((r) => !r.revoked && r.encryptionPublicKey && r.encryptionPublicKey !== relay.publicKey).map((r) => r.encryptionPublicKey);
+  ok(before.includes(expired.publicKey) && before.includes(future.publicKey),
+    'control: the rule this replaces did choose the expired and the not-yet-valid row');
 
   console.log(`\n${passed} passed, ${failures.length} failed`);
   for (const f of failures) console.log(`  - ${f}`);

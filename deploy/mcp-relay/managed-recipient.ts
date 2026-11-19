@@ -136,3 +136,40 @@ export function openInboxEnvelope(context: InboxKeyContext, envelope: EncryptedE
   if (segments.length !== 3 || segments[1] !== 'inbox') return null;
   return openEncryptedEnvelope(envelope, inboxRecipientKey(context.root, own));
 }
+
+/** A registry row as far as choosing notification recipients needs it. */
+export interface RegistryKeyRow {
+  readonly revoked?: boolean;
+  readonly encryptionPublicKey?: string;
+  readonly validFrom?: string;
+  readonly validUntil?: string;
+}
+
+/**
+ * The registry keys a notification delivered at `now` is also sealed to.
+ *
+ * ★ A ROW THAT IS NOT IN FORCE IS NOT A RECIPIENT. The first version asked only whether a row
+ * was revoked, so a delegation that expired in 2021 and one not due to start until 2099 both had
+ * new notifications wrapped to their keys, and both keys opened them. Found in review of #976.
+ * A row counts only when it is unrevoked, names a key, says when it began, that time has come,
+ * and its end — if it states one — has not. A `validFrom` or `validUntil` that does not read as
+ * a time is not a row in force: it is a row that does not say, and that is not permission.
+ *
+ * The fleet key is never returned, whatever a legacy row lists.
+ */
+export function currentRegistryKeys(rows: readonly RegistryKeyRow[], now: Date, fleetPublicKey: string): string[] {
+  const at = now.getTime();
+  const keys = new Set<string>();
+  for (const row of rows) {
+    if (row.revoked === true || typeof row.encryptionPublicKey !== 'string' || !row.encryptionPublicKey) continue;
+    if (row.encryptionPublicKey === fleetPublicKey) continue;
+    const from = typeof row.validFrom === 'string' && row.validFrom ? Date.parse(row.validFrom) : Number.NaN;
+    if (Number.isNaN(from) || from > at) continue;
+    if (row.validUntil !== undefined) {
+      const until = typeof row.validUntil === 'string' && row.validUntil ? Date.parse(row.validUntil) : Number.NaN;
+      if (Number.isNaN(until) || until <= at) continue;
+    }
+    keys.add(row.encryptionPublicKey);
+  }
+  return [...keys];
+}
