@@ -51,7 +51,6 @@
 import { canonicalJson } from '../canonical-json.js';
 import {
   AGENT_ID_RX,
-  agentPodOf,
   isDelegateRow,
   readDelegates,
   type Check,
@@ -402,10 +401,8 @@ export async function admitDelegateReceipt(args: AdmitReceiptArgs): Promise<Rece
   if (body.custodian !== args.storedOn) {
     add('n', 'The receipt says it is kept on pod ' + body.custodian + ' and was read from pod ' + args.storedOn + '.');
   } else {
-    const own = agentPodOf(body.signer);
     add('y', 'The receipt was read from the pod it says it is kept on, ' + body.custodian
-      + (body.custodian === args.expect.principalPod ? ', which is the principal\'s pod.'
-        : own === body.custodian ? ', which is the signer\'s own pod.' : '.'));
+      + (body.custodian === args.expect.principalPod ? ', which is the principal\'s pod.' : '.'));
   }
 
   // The assignment the reader is waiting on, and no other.

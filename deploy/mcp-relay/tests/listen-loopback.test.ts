@@ -220,6 +220,11 @@ async function main(): Promise<void> {
       // the `::` binding rather than assert a claim about it. Exempted by name so the
       // exemption is visible, rather than by a pattern that would quietly cover others.
       if (file.endsWith('listen-loopback.test.ts')) continue;
+      // And one file whose `.listen()` is not a socket at all: the role-play player's speech
+      // recogniser is started with `listen()`, and this suite drives that method on a stub. It
+      // opens no server. Exempted by name, for the same reason as above; a server added to that
+      // file would need this line revisited.
+      if (file.endsWith('roleplay-player-voice.test.ts')) continue;
       // The path is passed so a .mjs/.cjs file is parsed as JavaScript, not TypeScript.
       const src = stripComments(readFileSync(file, 'utf8'), file);
       for (const m of src.matchAll(/\.listen\(([^)]*)\)/g)) {
