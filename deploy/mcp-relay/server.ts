@@ -126,6 +126,7 @@ import {
   InboxPageError,
   INBOX_DEFAULT_LIMIT,
   INBOX_MAX_LIMIT,
+  sealNotification,
   type NotificationInput,
   type PodRootPresence,
 } from './agent-mesh.js';
@@ -8708,6 +8709,28 @@ function resolveTargetPodUrl(
  * the thing probed and the thing written are the same resource rather than two that usually
  * agree.
  */
+/**
+ * The seal for a notification about to be written into `internalPodUrl`'s inbox.
+ *
+ * Sealed to this relay's own key, which the relay will open only for the authenticated owner of
+ * the pod the envelope is fetched from (relay-key-gate.ts), and to every key that pod's own
+ * registry lists for an unrevoked agent, so a recipient that holds its own key can open the
+ * envelope without the relay. A registry that cannot be read costs those extra recipients and
+ * nothing else: the notification is still sealed, to the relay's key.
+ */
+async function notificationSealFor(internalPodUrl: string): Promise<(notif: Readonly<Record<string, unknown>>) => Record<string, unknown>> {
+  const keys = [relayAgentKey.publicKey];
+  try {
+    const profile = await readAgentRegistry(internalPodUrl, { fetch: solidFetch });
+    for (const a of profile?.authorizedAgents ?? []) {
+      if (!a.revoked && a.encryptionPublicKey) keys.push(a.encryptionPublicKey);
+    }
+  } catch (err) {
+    log(`[agent-mesh] the registry of ${internalPodUrl} could not be read (${(err as Error).message}); sealing to the relay key only`);
+  }
+  return (notif) => sealNotification(notif, keys, relayAgentKey);
+}
+
 async function storePodRootPresence(internalPodUrl: string): Promise<PodRootPresence> {
   return podRootPresence(internalPodUrl, solidFetch);
 }
@@ -9013,13 +9036,14 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
   // host-form duplicate that lacks them).
   const card = cardMatches.find(e => (e.channels?.length ?? 0) > 0) ?? cardMatches[0];
   const channels = (card?.channels ?? []) as ReachChannel[];
+  const seal = await notificationSealFor(internalPod);
   const results = await reachFanOut(
     channels,
     { summary, from, ...(typeof args.content === 'string' ? { content: args.content } : {}), ...(typeof args.about === 'string' ? { about: args.about } : {}) },
     // ★ `presence` is the answer this handler ALREADY got, thirty lines up, above the fan-out.
     // `deliverNotification` refuses an absent pod on its own now; handing it the verdict already
     // in hand is what keeps the cost at exactly ONE HEAD per send rather than two.
-    { deliverLdn: () => deliverNotification(internalPod, notif, idSlug, solidFetch, (m) => log(m), presence) },
+    { deliverLdn: () => deliverNotification(internalPod, notif, idSlug, solidFetch, (m) => log(m), presence, seal) },
   );
   const ldn = results.find(r => r.type === 'ldn');
   // `delivered: true` must mean the recipient's REAL (polled) inbox was reached, not that
@@ -9549,7 +9573,9 @@ async function handleReadInbox(args: ToolArgs): Promise<string> {
   }
   let page;
   try {
-    page = pageInboxItems(await readAllInboxItems(internal, solidFetch), paging.options);
+    // Sealed notifications are opened with the key this relay may use for the caller: its own,
+    // and only on the caller's own pod. One this caller has no key for is listed as unopened.
+    page = pageInboxItems(await readAllInboxItems(internal, solidFetch, await envelopeOpenerFor(args)), paging.options);
   } catch (err) {
     if (err instanceof InboxPageError) return JSON.stringify({ error: `read_inbox: ${err.message}` });
     throw err;
@@ -14318,7 +14344,7 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
     res.status(502).json({ accepted: false, error: 'undeliverable', detail: `this relay cannot address "${card.url}" on its own store, so nothing was written` });
     return;
   }
-  const url = await deliverNotification(cardPod, notif, idSlug, solidFetch, (mm) => log(mm));
+  const url = await deliverNotification(cardPod, notif, idSlug, solidFetch, (mm) => log(mm), undefined, await notificationSealFor(cardPod));
   res.status(url ? 202 : 502).json({
     accepted: url !== null,
     stored: url,
