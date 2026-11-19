@@ -1097,6 +1097,31 @@ function privateDocumentPod({ parts }) {
 }
 
 /**
+ * ★ A POD'S INBOX IS READ BY ITS OWNER.
+ *
+ * Every other container on a pod is listed and read anonymously, and that is deliberate: what is
+ * private there is sealed, and the gate is not what keeps it private. An inbox is different in
+ * what its LISTING says. Each member is one message to this pod's owner, named by the time it
+ * arrived, so the container alone tells anybody how often this person is written to and when.
+ * Notifications written before the relay sealed them are also still there in plaintext, with
+ * their sender and body, and sealing new ones does not reach back to those.
+ *
+ * So the inbox container and everything in it are read as a private document is: by the pod's
+ * owner or by the operator. This is a second layer under the envelope and not a replacement for
+ * it. Nothing that reads an inbox on a person's behalf comes through this gate without their
+ * bearer: the relay's `read_inbox` reads the store over the private network.
+ *
+ * ★ WRITES ARE UNCHANGED. A delivery into an inbox is a write, and it is authorised exactly as
+ * every other write to that pod already is.
+ */
+const PRIVATE_POD_CONTAINERS = new Set(['inbox']);
+
+/** The pod whose owner-read container this path is in, or is; null when it is in none. */
+function privateContainerPod({ parts }) {
+  return parts.length >= 2 && PRIVATE_POD_CONTAINERS.has(String(parts[1]).toLowerCase()) ? parts[0] : null;
+}
+
+/**
  * The pod whose private document a POST would create by naming it in its `Slug` header: CSS takes
  * the Slug as the new resource's name when it is free. Read as leniently as the path is, so any
  * segment of the Slug that names one counts.
@@ -1219,6 +1244,7 @@ const server = createServer(async (req, res) => {
         : {}),
       gating: 'writes, and reads of each pod\'s private documents',
       privateDocuments: [...PRIVATE_POD_DOCUMENTS],
+      ownerReadContainers: [...PRIVATE_POD_CONTAINERS],
       privateDocumentWriters: 'operator',
       upstream: CSS_INTERNAL_URL,
       perUserBearers: Boolean(IDENTITY_URL) || Boolean(RELAY_VERIFY_URL && RELAY_INTROSPECTION_SECRET),
@@ -1257,7 +1283,8 @@ const server = createServer(async (req, res) => {
   let provisionalBody;
   const isWrite = WRITE_METHODS.has(method);
   // A read of a pod's private document is authorized as a write to that pod is.
-  const privatePod = isWrite ? null : privateDocumentPod(target);
+  const privateContainer = isWrite ? null : privateContainerPod(target);
+  const privatePod = isWrite ? null : (privateDocumentPod(target) ?? privateContainer);
   // A write that would change or create a pod's private document: the operator's alone.
   const privateWrite = isWrite
     ? (privateDocumentPod(target) ?? slugPrivateDocumentPod(target, method, req.headers['slug']))
@@ -1281,7 +1308,9 @@ const server = createServer(async (req, res) => {
         }
         : {
           error: 'anonymous read denied',
-          detail: `${upstreamUrl.pathname} is the identity server's sign-in record for this pod; it is readable with its owner's bearer, and a user sees their own through the identity server's GET /auth-methods/me.`,
+          detail: privateContainer
+            ? `${upstreamUrl.pathname} is in this pod's inbox, which only the pod's owner reads; send the owner's bearer, or read it through the relay's read_inbox.`
+            : `${upstreamUrl.pathname} is the identity server's sign-in record for this pod; it is readable with its owner's bearer, and a user sees their own through the identity server's GET /auth-methods/me.`,
         }));
       return;
     }
@@ -1334,7 +1363,7 @@ const server = createServer(async (req, res) => {
           error: `cross-pod ${act} denied`,
           detail: isWrite
             ? `bearer is scoped to userId="${userId}" but the request is forwarded to pod "${pod ?? '(root)'}"; user bearers can only write to /<userId>/...`
-            : `bearer is scoped to userId="${userId}" but ${upstreamUrl.pathname} is pod "${pod}"'s sign-in record; only its owner reads it`,
+            : `bearer is scoped to userId="${userId}" but ${upstreamUrl.pathname} is ${privateContainer ? `in pod "${pod}"'s inbox` : `pod "${pod}"'s sign-in record`}; only its owner reads it`,
         }));
         return;
       }
@@ -1611,6 +1640,7 @@ if (process.env.CSS_GATE_AUTOSTART !== '0') server.listen(PORT, () => {
   } else {
     console.log(`[css-gate]   • per-user bearers DISABLED (neither IDENTITY_URL nor RELAY_VERIFY_URL+SECRET set)`);
   }
+  console.log(`[css-gate] a pod's {${[...PRIVATE_POD_CONTAINERS].join(',')}}/ container and its members are read with the owner's or the operator's bearer; writes to them are authorised as any other write`);
   console.log(`[css-gate] read methods (GET/HEAD/OPTIONS) pass through anonymously, except /<pod>/{${[...PRIVATE_POD_DOCUMENTS].join(',')}} (owner or operator bearer); writes to those are the operator's alone`);
 });
 

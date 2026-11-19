@@ -199,3 +199,58 @@ test('the operator writes it; the user keeps writing everything else in its pod'
     assert.deepEqual(r.upstream.map((u) => u.url), [path]);
   }
 });
+
+// ── A pod's inbox is read by its owner ───────────────────────────────────────────────────────
+//
+// The listing of an inbox says how often its owner is written to and when, and notifications
+// stored before the relay sealed them are still there in plaintext. So the container and its
+// members are read as a private document is. Writes into it are authorised as before.
+
+test('★★ a pod\'s inbox is not readable anonymously, however it is spelled', async () => {
+  for (const [method, path] of [
+    ['GET', '/alice/inbox/'], ['HEAD', '/alice/inbox/'], ['GET', '/alice/inbox'],
+    ['GET', '/alice/inbox/1795000000000-abc.jsonld'], ['HEAD', '/alice/inbox/1795000000000-abc.jsonld'],
+    ['GET', '/alice/inbox/?x=1'], ['GET', '/alice/INBOX/1.jsonld'], ['GET', '/alice/in%62ox/1.jsonld'],
+    ['GET', '/alice/x/../inbox/1.jsonld'], ['GET', '/alice/%2e%2e/alice/inbox/'],
+    ['GET', '/alice%2Finbox/1.jsonld'], ['GET', '//alice/inbox/'], ['GET', '/alice\\inbox\\1.jsonld'],
+    ['GET', '/alice/inbox/.meta'], ['GET', '/alice/inbox/.acl'], ['GET', '/alice/inbox/sub/2.jsonld'],
+  ]) {
+    const r = await send(method, path);
+    assert.equal(r.status, 401, `${method} ${path} → ${r.status}`);
+    assert.deepEqual(r.upstream, [], `${method} ${path} must not reach CSS`);
+  }
+  const said = await send('GET', '/alice/inbox/1.jsonld');
+  assert.match(String(said.json?.detail), /inbox/);
+});
+
+test('the owner and the operator read an inbox; another user does not', async () => {
+  for (const path of ['/alice/inbox/', '/alice/inbox/1.jsonld']) {
+    const own = await send('GET', path, BEARER.alice);
+    assert.equal(own.status, 200, path);
+    assert.deepEqual(own.upstream.map((u) => [u.url, u.authorization]), [[path, undefined]], path);
+  }
+  assert.equal((await send('GET', '/bob/inbox/', BEARER.operator)).status, 200);
+  const other = await send('GET', '/bob/inbox/1.jsonld', BEARER.alice);
+  assert.equal(other.status, 403);
+  assert.equal(other.json?.error, 'cross-pod read denied');
+  assert.match(String(other.json?.detail), /inbox/);
+  assert.deepEqual(other.upstream, []);
+  assert.equal((await send('GET', '/alice/inbox/', 'Bearer not-a-token')).status, 401);
+});
+
+test('only the inbox directly under a pod is owner-read', async () => {
+  for (const path of ['/alice/inboxes/1.jsonld', '/alice/sub/inbox/1.jsonld', '/alice/outbox/1.jsonld', '/inbox/', '/alice/inbox.ttl']) {
+    const r = await send('GET', path);
+    assert.equal(r.status, 200, path);
+    assert.deepEqual(r.upstream.map((u) => u.url), [path], path);
+  }
+});
+
+test('a write into an inbox is authorised as any other write to that pod', async () => {
+  assert.equal((await send('PUT', '/alice/inbox/1.jsonld')).status, 401);
+  const own = await send('PUT', '/alice/inbox/1.jsonld', BEARER.alice);
+  assert.equal(own.status, 200);
+  assert.deepEqual(own.upstream.map((u) => u.url), ['/alice/inbox/1.jsonld']);
+  assert.equal((await send('PUT', '/bob/inbox/1.jsonld', BEARER.operator)).status, 200);
+  assert.equal((await send('PUT', '/bob/inbox/1.jsonld', BEARER.alice)).status, 403);
+});
