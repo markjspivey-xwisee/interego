@@ -15,9 +15,17 @@ where the page writes it first. It now writes what the page shows.
 
 The JSON grows with the response, within the time its size allows.
 
-A refused result's JSON links no more https URLs than its text holds, so a
-value written escaped (https:\/\/) is text in it, as in its text: it linked
-each, one for each dozen bytes, past jsdom's default heap at 8 MiB. hmc.py's
-text mode writes a character its output cannot hold as a backslash escape,
-where it failed after the answer and exited 1, and builds only the 8,000
-characters of JSON it shows.
+A refused result's JSON links no more https URLs than its text writes
+https://, so a result whose values are all written escaped (https:\/\/) shows
+them as text in it, as in its text: it linked each, one for each dozen bytes,
+past jsdom's default heap at 8 MiB. hmc.py's text mode writes a character its
+output cannot hold as a backslash escape, where it failed after the answer and
+exited 1, and stops building JSON once it has the 8,000 characters it shows,
+at the end of the value that reaches past them.
+
+That bound counts each https:// the text writes, not the URLs it reads: an
+honest result that writes a character between two URLs as an escape, as
+Python writes U+3000 and Go writes >, reads as one URL in its text and two in
+its JSON, and its last IRIs went unlinked. hmc.py writes a lone surrogate in
+remote text as an escape on any output, where a UTF-8 one wrote it as a raw
+byte or failed.

@@ -1001,8 +1001,9 @@ describe('hypermedia client: what a response is shown as grows with its size, no
       // JSON is the text JSON.stringify(value, null, 2) writes, character for character, as hmc.py writes it.
       expect(shown.filter(el => el.tagName === 'PRE').map(el => el.textContent))
         .toEqual(c.page === 'json' ? [JSON.stringify(JSON.parse(c.body), null, 2)] : c.page === 'text' ? [c.body] : []);
-      // A refused table's JSON links no more https URLs than the response's text holds: a value
-      // written escaped (https:\/\/), which its text shows as no link, is no link in its JSON either.
+      // A refused table's JSON links no more https URLs than the response's text writes https://,
+      // so a result whose values are all written escaped (https:\/\/), no link in its text, shows
+      // none in its JSON either. It is a count, not tied to values.
       if (c.page === 'json' && c.pageNotes.some(note => note.endsWith('it is shown as JSON.'))) {
         expect(shown.find(el => el.tagName === 'PRE')!.querySelectorAll('[data-iri]').length, 'links shown')
           .toBeLessThanOrEqual(c.body.split('https://').length - 1);
@@ -1030,17 +1031,23 @@ describe('hypermedia client: what a response is shown as grows with its size, no
     } finally { t.dom.window.close(); }
   }, 120_000);
 
-  it('shows a refused table\'s https values in its JSON as its text linked them: each once, followable', async () => {
-    const c = shownCases().find(one => one.name === 'links-refused')!;
-    const t = load(`?url=${encodeURIComponent(`${HOST}/shown`)}&invoke=${encodeURIComponent('urn:shown:links-refused')}`);
+  // Its table would link each value in both columns "s" heads; its JSON links each once, no more
+  // than its text writes https://. links-parted's text reads two URLs as one where a character
+  // between them is written as an escape (\u3000, \u003e), and its JSON reads them as two; its text
+  // writes https:// for each, so its JSON links each, where a count of the URLs its text reads, one
+  // short for each such pair, left its last 2 IRIs unlinked.
+  it.each(['links-refused', 'links-parted'])('links each https value /shown/%s\'s refused table shows in its JSON: once, followable', async name => {
+    const c = shownCases().find(one => one.name === name)!;
+    const t = load(`?url=${encodeURIComponent(`${HOST}/shown`)}&invoke=${encodeURIComponent(`urn:shown:${name}`)}`);
     try {
       const { document } = t;
       await vi.waitFor(() => expect(document.documentElement.dataset['ready'], document.getElementById('status')!.textContent!).toBe('done'),
         { timeout: 60_000 });
       const pre = document.querySelector('#result .resp-title ~ pre')!;
-      const values = (JSON.parse(c.body) as { results: { bindings: Array<{ s: { value: string } }> } }).results.bindings.map(row => row.s.value);
-      // Its table would link each value in both columns "s" heads; its JSON links each once, no more
-      // than its text holds, the links the page showed when it showed its text.
+      // Each IRI, and each https URL a literal holds, in order.
+      const values = (JSON.parse(c.body) as { results: { bindings: Array<{ s: { type: string; value: string } }> } }).results.bindings
+        .flatMap(row => row.s.type === 'uri' ? [row.s.value] : row.s.value.split(/[\s<>]+/).filter(part => part.startsWith('https://')));
+      expect(values.length, 'values').toBe(name === 'links-parted' ? 4004 : 4000);
       const links = [...pre.querySelectorAll('[data-iri]')];
       expect(links.map(e => e.getAttribute('data-iri'))).toEqual(values);
       expect(links.length).toBeLessThanOrEqual(c.body.split('https://').length - 1);

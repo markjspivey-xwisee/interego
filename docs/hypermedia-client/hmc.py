@@ -7946,7 +7946,7 @@ def cmd_invoke(args: argparse.Namespace) -> int:
     body = resp.get("body")
     text = resp.get("bodyText")
     if isinstance(body, (dict, list)):
-        # Written as far as the 8,000 characters shown and one more, which says more was cut.
+        # Built only as far as the 8,000 characters shown: at least that many, all the cut below needs.
         pretty = _json_shown(body, 8001)
         say(pretty if len(pretty) < 8000 else pretty[:8000] + "\n…")
     elif text is not None:
@@ -7985,12 +7985,17 @@ MEMORY_PROBLEM = "This needs more memory than this process has, so it was stoppe
 
 def main(argv: list[str] | None = None) -> int:
     # A character the output cannot encode (Windows output sent to a file or a pipe, in cp1252; a
-    # Latin-1 locale; PYTHONIOENCODING) is written as a backslash escape, as a control character is
-    # (tty_safe), not raised after a request was sent and answered, which would exit 1.
+    # Latin-1 locale; PYTHONIOENCODING), or a lone surrogate in remote text, which no output can, is
+    # written as a backslash escape, as a control character is (tty_safe), not raised after a
+    # request was sent and answered, which would exit 1. An output that cannot be set so (closed
+    # or detached by a caller in this process) is left as it is, and fails, if it does, as it did.
     for stream in (sys.stdout, sys.stderr):
         reconfigure = getattr(stream, "reconfigure", None)
         if callable(reconfigure):
-            reconfigure(errors="backslashreplace")
+            try:
+                reconfigure(errors="backslashreplace")
+            except (ValueError, OSError, TypeError):
+                pass
     parser = build_parser()
     args = parser.parse_args(argv)
     try:

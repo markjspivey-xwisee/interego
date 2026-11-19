@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-cSHjhQV4Rp0rj4Vz1a+yVsmSCwsiPNQ3QMwpe5rECls='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-rqdoTbpLad3uQ4CiqG6yp7UtZJBM7OPmhKejuDY7NCI='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -4893,10 +4893,13 @@ function linkify(src, links = Infinity) {
   }
   return html + esc(src.slice(last));
 }
-// The https URLs linkify reads in text, the most it links there: a scan.
-function httpsUrls(src) {
+// How often text writes "https://", the start of each https URL linkify links: a scan.
+// It counts each such start, not the URLs the text reads, since a character written as an escape
+// (U+3000 as \u3000, > as \u003e) can part two URLs in the JSON its text reads as one.
+function httpsStarts(src) {
+  src = asText(src);
   let count = 0;
-  for (const match of asText(src).matchAll(URL_IN_TEXT)) if (/^https:/i.test(match[0])) count++;
+  for (let at = src.indexOf("https://"); at !== -1; at = src.indexOf("https://", at + 8)) count++;
   return count;
 }
 // A small Markdown subset: fenced code, # to ### headings, - and * list items,
@@ -5096,9 +5099,11 @@ function renderBody(contentType, body, parsed, done, size) {
     const added = indentSize(parsed);
     if (added > layoutBound(size)) return refused + asTextAfter(jsonAsText(added, size));
     // A refused result's JSON, shown where its text was, links no more https URLs than its text
-    // holds: a value written escaped (https:\/\/), which its text shows as no link, would
-    // otherwise be one in its JSON, a link for each dozen bytes of a response that held none.
-    return refused + "<pre>" + linkify(JSON.stringify(parsed, null, 2), refused ? httpsUrls(body) : Infinity) + "</pre>";
+    // writes https://, the first that many: JSON.stringify writes https:\/\/ as https://, so a
+    // result whose values are all written escaped, no link in its text, would otherwise get a link
+    // for each dozen of its bytes. It is a count, not tied to values: of a result that writes some
+    // values each way, the first that many are linked.
+    return refused + "<pre>" + linkify(JSON.stringify(parsed, null, 2), refused ? httpsStarts(body) : Infinity) + "</pre>";
   }
   if (ct.includes("html")) {
     // Shown as source. The page does not render a remote HTML document, in a frame or otherwise.

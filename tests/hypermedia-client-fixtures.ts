@@ -3646,7 +3646,11 @@ let shownMemo: ReadonlyArray<ShownCase> | null = null;
  *     its text did;
  *   - links-escaped: the same, each IRI written escaped (https:\/\/), as some endpoints write JSON,
  *     which its text shows as no link: its JSON, which writes each as https://, links no more https
- *     URLs than its text holds, so none, where it once linked all 4,000, a link for each 60 bytes;
+ *     URLs than its text writes https://, so none, where it once linked all 4,000, a link for each 60 bytes;
+ *   - links-parted: 2 literals, each of two https URLs parted by a character written as an escape
+ *     (\u3000 as Python writes it, \u003e and \u003c as Go writes > and <), then 4,000 https IRIs: its
+ *     text reads each pair as one URL, its JSON as two, and its JSON links all 4,004, each written
+ *     https:// in its text, where counting its text's URLs left the last 2 IRIs unlinked;
  *   - forms: a result past TABLE_FLOOR that writes its values in the forms JSON allows: text past
  *     ASCII as it is and as escapes, an https IRI whose h is an escape and whose slashes are
  *     escaped, a lone surrogate, control characters, a repeated key, a key JavaScript writes
@@ -3718,6 +3722,14 @@ export function shownCases(): ReadonlyArray<ShownCase> {
     `{"s":{"type":"uri","value":"https:\\/\\/data.example\\/s\\/${i}"}}`).join(',')}]}}`;
   // A JSON escape of each UTF-16 unit, written out when the text is built, so this source holds none.
   const u = (...units: number[]) => units.map(unit => `\\u${unit.toString(16).padStart(4, '0')}`).join('');
+  // An honest result written by hand: two literals, each holding two https URLs parted by a
+  // character written as an escape, as Python's json.dumps writes U+3000 and Go writes < and >, so
+  // its text reads each pair as one URL and its JSON as two, then 4,000 bindings of "s" to an https IRI.
+  const linksParted = `{"head":{"vars":["s","s"]},"results":{"bindings":[${[
+    `{"s":{"type":"literal","value":"see https://a.example/1${u(0x3000)}https://a.example/2"}}`,
+    `{"s":{"type":"literal","value":"${u(0x3c)}https://a.example/3${u(0x3e, 0x3c)}https://a.example/4${u(0x3e)}"}}`,
+    ...Array.from({ length: 4000 }, (_, i) => JSON.stringify({ s: { type: 'uri', value: `https://data.example/s/${i}` } })),
+  ].join(',')}]}}`;
   // A result written by hand, since JSON.stringify writes none of these forms: text past ASCII as it
   // is and as escapes, an https IRI whose h is an escape and whose slashes are escaped, a lone
   // surrogate, control characters, a key given twice, a key JavaScript writes first, bindings that
@@ -3766,6 +3778,7 @@ export function shownCases(): ReadonlyArray<ShownCase> {
     build('one-line', SPARQL, oneLine, 'json', 'json', bytes => tableAsJson(16_000, 1, bytes), none),
     build('links-refused', SPARQL, linksRefused, 'json', 'json', bytes => tableAsJson(4000, 2, bytes), none),
     build('links-escaped', SPARQL, linksEscaped, 'json', 'json', bytes => tableAsJson(4000, 2, bytes), none),
+    build('links-parted', SPARQL, linksParted, 'json', 'json', bytes => tableAsJson(4002, 2, bytes), none),
     build('forms', SPARQL, forms, 'json', 'json', bytes => tableAsJson(rowsOf(forms), 1, bytes), none),
   ];
   // A row answered with `status`, as it is shown otherwise.
