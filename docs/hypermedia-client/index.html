@@ -2,7 +2,7 @@
 <html lang="en">
 <head>
   <meta charset="utf-8">
-  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-xZ+e1ohoKr4ahF9ih4foOGmXQpjxPz9dnh3pW3fOv9w='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
+  <meta http-equiv="Content-Security-Policy" content="default-src 'none'; script-src 'sha256-rqdoTbpLad3uQ4CiqG6yp7UtZJBM7OPmhKejuDY7NCI='; style-src 'sha256-SSMdy9+Oivgo9wsZld+eXWgtniAn6fI6EKo7d/89e3w='; connect-src https:; object-src 'none'; base-uri 'none'; form-action 'none'">
   <meta name="viewport" content="width=device-width, initial-scale=1">
   <title>Hypermedia Client</title>
   <style>
@@ -4876,18 +4876,31 @@ function trimTrailingPunctuation(s) {
   while (end > 0 && ".,;".includes(s[end - 1])) end--;
   return s.slice(0, end);
 }
-function linkify(src) {
+// What linkify reads as a URL in text.
+const URL_IN_TEXT = /https?:\/\/[^\s<>"'`)\]},]+/g;
+// Text with each https URL in it a link, the first `links` of them: past those, an
+// https URL is shown as its text.
+function linkify(src, links = Infinity) {
   src = asText(src);
-  const re = /https?:\/\/[^\s<>"'`)\]},]+/g;
   let html = "";
   let last = 0;
-  for (const match of src.matchAll(re)) {
+  for (const match of src.matchAll(URL_IN_TEXT)) {
     const raw = match[0];
     const clean = trimTrailingPunctuation(raw);
-    html += esc(src.slice(last, match.index)) + iriSpan(clean, clean) + esc(raw.slice(clean.length));
+    const shown = /^https:/i.test(clean) && links-- <= 0 ? esc(clean) : iriSpan(clean, clean);
+    html += esc(src.slice(last, match.index)) + shown + esc(raw.slice(clean.length));
     last = match.index + raw.length;
   }
   return html + esc(src.slice(last));
+}
+// How often text writes "https://", the start of each https URL linkify links: a scan.
+// It counts each such start, not the URLs the text reads, since a character written as an escape
+// (U+3000 as \u3000, > as \u003e) can part two URLs in the JSON its text reads as one.
+function httpsStarts(src) {
+  src = asText(src);
+  let count = 0;
+  for (let at = src.indexOf("https://"); at !== -1; at = src.indexOf("https://", at + 8)) count++;
+  return count;
 }
 // A small Markdown subset: fenced code, # to ### headings, - and * list items,
 // **bold**, [label](https URL), bare URLs and paragraphs. Text is escaped
@@ -4974,12 +4987,14 @@ async function readResponse(res) {
 // LAYOUT_FLOOR at least. An honest result shows each name and value it holds
 // once, so it shows fewer characters than it has bytes, and a cell it binds takes
 // some 30 bytes of it, 40 for a link, so it is a table at any size unless many of
-// its cells are empty, and within TABLE_FLOOR even then. Past either bound the
-// response is shown as its text, after a note naming why (tableAsText, jsonAsText), so
-// neither a product of a result's rows and columns, nor a value a column names
-// again, nor bytes a table never shows, nor JSON's depth sets what is shown.
-// hmc.py, which shows no table, indents JSON by the same rule: its
-// _LAYOUT_PER_BYTE, _LAYOUT_FLOOR, _indent_size and _json_as_text are the same.
+// its cells are empty, and within TABLE_FLOOR even then. Past the table's bound
+// the page shows the result as JSON, as hmc.py does, indented by the same rule,
+// and past that as its text, each after a note naming why (tableAsJson, then
+// jsonAsText), so neither a product of a result's rows and columns, nor a value a
+// column names again, nor bytes a table never shows, nor JSON's depth sets what
+// is shown. hmc.py, which shows no table, indents JSON by the same rule: its
+// _LAYOUT_PER_BYTE, _LAYOUT_FLOOR, _indent_size and _json_as_text are the same,
+// and it writes the text JSON.stringify(value, null, 2) writes (_json_shown).
 const LAYOUT_PER_BYTE = 8;
 const LAYOUT_FLOOR = 10000;
 const TABLE_BYTES_PER_ELEMENT = 8;
@@ -4988,9 +5003,9 @@ function layoutBound(size) { return Math.max(LAYOUT_FLOOR, LAYOUT_PER_BYTE * siz
 function tableBound(size) {
   return { elements: Math.max(TABLE_FLOOR, Math.floor(size / TABLE_BYTES_PER_ELEMENT)), chars: Math.max(LAYOUT_FLOOR, size) };
 }
-function tableAsText(rows, columns, size) {
+function tableAsJson(rows, columns, size) {
   return "This result's table would have " + rows + " row(s) x " + columns + " column(s), more than a response of " + size +
-    " bytes is shown as; it is shown as text.";
+    " bytes is shown as; it is shown as JSON.";
 }
 function jsonAsText(added, size) {
   return "This JSON, indented, would add " + added + " characters, more than a response of " + size + " bytes is shown as; it is shown as text.";
@@ -5058,26 +5073,37 @@ function renderBody(contentType, body, parsed, done, size) {
   body = asText(body);
   // What is shown of a body no layout fits: its text, as a body that is not recognised is.
   const asTextAfter = (why) => `<div class="${note}">${esc(why)}</div><pre>${linkify(body)}</pre>`;
+  // The note a result whose table is refused is shown after, before what the JSON below shows of it.
+  let refused = "";
   if (parsed && parsed.head && parsed.results && Array.isArray(parsed.results.bindings)) {
     const bindings = parsed.results.bindings.filter(row => row && typeof row === "object");
     const vars = (Array.isArray(parsed.head.vars) ? parsed.head.vars : Object.keys(bindings[0] || {})).map(asText);
     const rows = tableTexts(vars, bindings, tableBound(size));
-    if (!rows) return asTextAfter(tableAsText(bindings.length, vars.length, size));
-    const html = [`<div class="${note}">SPARQL result: ${bindings.length} row(s)</div><table class="sparql"><thead><tr>`];
-    for (const v of vars) html.push("<th>" + esc(v) + "</th>");
-    html.push("</tr></thead><tbody>");
-    for (const texts of rows) {
-      html.push("<tr>");
-      for (const val of texts) html.push("<td>" + iriSpan(val, val) + "</td>");
-      html.push("</tr>");
+    if (rows) {
+      const html = [`<div class="${note}">SPARQL result: ${bindings.length} row(s)</div><table class="sparql"><thead><tr>`];
+      for (const v of vars) html.push("<th>" + esc(v) + "</th>");
+      html.push("</tr></thead><tbody>");
+      for (const texts of rows) {
+        html.push("<tr>");
+        for (const val of texts) html.push("<td>" + iriSpan(val, val) + "</td>");
+        html.push("</tr>");
+      }
+      html.push("</tbody></table>");
+      return html.join("");
     }
-    html.push("</tbody></table>");
-    return html.join("");
+    // Past the table's bound the result is shown as JSON, as any parsed JSON is below, the
+    // bindings that are not objects with the rest: a result is an object, so it goes there.
+    refused = `<div class="${note}">${esc(tableAsJson(bindings.length, vars.length, size))}</div>`;
   }
   if (parsed && (ct.includes("json") || typeof parsed === "object")) {
     const added = indentSize(parsed);
-    if (added > layoutBound(size)) return asTextAfter(jsonAsText(added, size));
-    return "<pre>" + linkify(JSON.stringify(parsed, null, 2)) + "</pre>";
+    if (added > layoutBound(size)) return refused + asTextAfter(jsonAsText(added, size));
+    // A refused result's JSON, shown where its text was, links no more https URLs than its text
+    // writes https://, the first that many: JSON.stringify writes https:\/\/ as https://, so a
+    // result whose values are all written escaped, no link in its text, would otherwise get a link
+    // for each dozen of its bytes. It is a count, not tied to values: of a result that writes some
+    // values each way, the first that many are linked.
+    return refused + "<pre>" + linkify(JSON.stringify(parsed, null, 2), refused ? httpsStarts(body) : Infinity) + "</pre>";
   }
   if (ct.includes("html")) {
     // Shown as source. The page does not render a remote HTML document, in a frame or otherwise.

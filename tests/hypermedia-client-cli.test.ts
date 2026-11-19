@@ -56,6 +56,11 @@ const ESC = '\x1b]0;PWNED-TITLE\x07\x1b[31mRED\x1b[0m\x1b]52;c;cHduZWQ=\x07\r\x9
 const CONTROL = /[\x00-\x08\x0b-\x1f\x7f-\x9f]/;
 // A local file a descriptor must not be able to make hmc.py read.
 const SECRET = 'HMC-LOCAL-FILE-SECRET';
+// Text past Latin-1: past the BMP too, and an é Latin-1 holds.
+const WIDE = 'caf\u00e9 \u65e5\u672c \ud834\udd1e';
+// The title of /wide's control of each kind: WIDE, and for "missing" a lone surrogate after it,
+// which JSON writes as an escape and no output can hold.
+const WIDE_TITLE = (kind: string) => `Wide ${kind} ${WIDE}${kind === 'missing' ? ' \udc9b' : ''}`;
 const XSD = 'http://www.w3.org/2001/XMLSchema#';
 let dir = '';
 let secretUrl = '';
@@ -83,6 +88,13 @@ function routes(): Record<string, () => { status?: number; type?: string; body?:
       [{ '@id': `${base}/long-name#S`, '@type': 'sh:NodeShape', 'sh:property': [{ 'sh:path': `${base}/p`, 'sh:name': LONG_NAME },
         { 'sh:path': `${base}/p2`, 'sh:name': 'rest-param-query-limit' }] }])),
     '/ok': () => ({ type: 'text/plain', body: 'fine' }),
+    // A GET of text and one of JSON, each answered with WIDE, and one answered 404 with WIDE, each
+    // titled with it too, the last with a lone surrogate after it (WIDE_TITLE).
+    '/wide': json(descriptor('wide', ['text', 'json', 'missing'].map(kind => ({ '@id': `${base}/wide#${kind}`, '@type': 'iep:Affordance',
+      'iep:action': `urn:wide:${kind}`, 'hydra:method': 'GET', 'hydra:title': WIDE_TITLE(kind), 'hydra:target': `${base}/wide-${kind}` })))),
+    '/wide-text': () => ({ type: 'text/plain; charset=utf-8', body: WIDE }),
+    '/wide-json': () => ({ type: 'application/json', body: JSON.stringify({ name: WIDE }) }),
+    '/wide-missing': () => ({ status: 404, type: 'text/plain; charset=utf-8', body: WIDE }),
     // A HEAD and a GET to a host reached through the proxy, which redirects to this host, reached
     // directly, which redirects back to the proxied host.
     '/via-proxy': json(descriptor('via-proxy', ['HEAD', 'GET'].map(method => ({ '@id': `${base}/via-proxy#${method}`,
@@ -523,31 +535,168 @@ describe('hmc.py: an invoke goes only where its dry run says, and only a 2xx is 
 describe('hmc.py: what a response is shown as grows with its size, not with the product of its parts', () => {
   // Each /shown control, invoked: hmc.py shows its answer as indented JSON or its text, or nothing of
   // it, as shownCases says, with the note the page writes for the same rule. It shows no table, so
-  // it writes a SPARQL result as the JSON it is. Text mode writes at most 8,000 characters of a
+  // it writes a SPARQL result as the JSON it is: past the table's bound the page shows the result
+  // as JSON, as hmc.py does, indented by the same rule. Text mode writes at most 8,000 characters of a
   // body; --json writes it whole, so what it writes is counted against what laying out a response
   // of its size may add (layoutBound), with its text, escaped, beside it.
   it.each(shownCases().map(c => [c.name] as const))('shows /shown/%s as the page does, within what its size allows, in text and --json alike', async name => {
     const c = shownCases().find(one => one.name === name)!;
     const url = `${base}/shown/${name}`;
+    // A row answered with no 2xx is no success: it exits 4, and shows what it shows of any other.
+    const outcome = c.status ? invokeNotSuccess(url, c.status) : invokeDone(url, 200);
     const text = await hmc(['invoke', `${base}/shown`, `urn:shown:${name}`]);
-    expect([text.code, text.stderr, text.timedOut]).toEqual([0, '', false]);
+    expect([text.code, text.stderr, text.timedOut]).toEqual([c.status ? 4 : 0, '', false]);
     const lines = text.stdout.split('\n');
-    const at = lines.indexOf(invokeDone(url, 200));
+    const at = lines.indexOf(outcome);
     expect(at, text.stdout.slice(0, 2_000)).toBeGreaterThan(0);
-    expect(lines[at - 1]).toBe(`HTTP 200  ${c.type}`);
+    expect(lines[at - 1]).toBe(`HTTP ${c.status ?? 200}  ${c.type}`);
     const shown = c.hmc === 'json' ? JSON.stringify(JSON.parse(c.body), null, 2) : c.hmc === 'text' ? c.body : null;
     const written = shown === null ? '' : shown.length < 8_000 ? `${shown}\n` : `${shown.slice(0, 8_000)}\n…\n`;
     expect(lines.slice(at + 1).join('\n')).toBe(`${c.hmcNote === null ? '' : `${c.hmcNote}\n`}${written}`);
     expect(text.stdout.length, 'text written').toBeLessThan(10_000);
     const json = await hmc(['invoke', `${base}/shown`, `urn:shown:${name}`, '--json']);
-    expect([json.code, json.stderr, json.timedOut]).toEqual([0, '', false]);
+    expect([json.code, json.stderr, json.timedOut]).toEqual([c.status ? 4 : 0, '', false]);
     const out = JSON.parse(json.stdout) as { done: boolean; outcome: string; response: { bodyText: string | null; body: unknown; note?: string | null } };
-    expect([out.done, out.outcome, out.response.note ?? null]).toEqual([true, invokeDone(url, 200), c.hmcNote]);
+    expect([out.done, out.outcome, out.response.note ?? null]).toEqual([!c.status, outcome, c.hmcNote]);
     // A response with no note has no `note`, so an honest response's --json is what it was before there were notes.
     expect('note' in out.response, 'note given').toBe(c.hmcNote !== null);
     expect(out.response.bodyText).toBe(c.hmc === 'nothing' ? null : c.body);
     expect(out.response.body).toEqual(c.hmc === 'json' ? JSON.parse(c.body) : null);
     expect(json.stdout.length, '--json written').toBeLessThanOrEqual(layoutBound(c.bytes) + 8 * c.bytes + 20_000);
+  }, 60_000);
+
+  // Text mode writes 8,000 characters of a body, so the whole of what it writes of JSON is read from
+  // the function it writes with (_json_shown), over each /shown answer as served. Each is the text
+  // JSON.stringify(value, null, 2) writes, character for character, which the page shows too: text
+  // past ASCII as it is, numbers as JavaScript writes them, and an object's keys in its order.
+  // Text mode builds only the start it shows: _json_shown with a limit of 8,001 writes the whole
+  // text's start, at least that many characters of it, and stops at the end of the value that
+  // reaches them, so of long-names, 2.8 MB indented, it builds some 16,000. invoke, run in the same
+  // process over long-names, builds no JSON longer than that, read from each text _js_json returns.
+  it('writes each response it shows as JSON as the page shows it, character for character, building only the start it shows', async () => {
+    const rows = shownCases().filter(c => c.hmc === 'json');
+    // A row answered with no 2xx is read as any other: urllib raises its answer, which holds its body.
+    const script = ['import contextlib, io, json, sys, urllib.error, urllib.request', 'sys.dont_write_bytecode = True', 'sys.path.insert(0, sys.argv[1])', 'import hmc',
+      'for name in sys.argv[3:]:', '    try:', '        answer = urllib.request.urlopen(sys.argv[2] + "/shown/" + name)',
+      '    except urllib.error.HTTPError as refused:', '        answer = refused',
+      '    with answer:', '        text = hmc._body_text(answer.read())', '    value = hmc._page_json(text)',
+      '    print(json.dumps([name, hmc._json_shown(value), hmc._json_shown(value, 8001)]))',
+      'longest = [0]', 'js_json = hmc._js_json',
+      'def recorded(*args, **kwargs):', '    text = js_json(*args, **kwargs)', '    longest[0] = max(longest[0], len(text))', '    return text',
+      'hmc._js_json = recorded', 'shown = io.StringIO()',
+      'with contextlib.redirect_stdout(shown):', '    code = hmc.main(["invoke", sys.argv[2] + "/shown", "urn:shown:long-names"])',
+      'print(json.dumps(["invoke long-names", code, longest[0], len(shown.getvalue())]))'].join('\n');
+    const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+      const child = spawn(PYTHON, ['-I', '-c', script, dirname(HMC), base, ...rows.map(c => c.name)],
+        { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*' } });
+      let stdout = ''; let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', d => { stdout += d; });
+      child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
+      child.on('close', code => resolve({ code, stdout, stderr }));
+    });
+    expect(r.code, r.stderr).toBe(0);
+    const lines = r.stdout.trim().split('\n');
+    const invoked = JSON.parse(lines.pop()!) as [string, number, number, number];
+    const written = new Map(lines.map(line => { const [name, ...texts] = JSON.parse(line) as [string, string, string]; return [name, texts]; }));
+    expect([...written.keys()]).toEqual(rows.map(c => c.name));
+    for (const c of rows) {
+      const shown = JSON.stringify(JSON.parse(c.body), null, 2);
+      const [text, start] = written.get(c.name)!;
+      let at = 0;
+      while (at < shown.length && shown[at] === text![at]) at++;
+      expect([text!.length, at], `${c.name}: the same up to ${JSON.stringify(shown.slice(Math.max(0, at - 40), at + 40))}`).toEqual([shown.length, shown.length]);
+      // Its start: the whole text's first characters, 8,001 of them at least, or all of it.
+      expect(shown.startsWith(start!), `${c.name}: a start of the whole`).toBe(true);
+      expect(start!.length, `${c.name}: start's length`).toBeGreaterThanOrEqual(Math.min(8_001, shown.length));
+    }
+    // long-names' start ends at the end of the name of 16,000 characters that reaches past 8,001:
+    // its JSON is 2.8 MB indented, of which text mode builds some 16,000 characters.
+    const longNames = written.get('long-names')!;
+    expect(longNames[0]!.length, 'long-names, whole').toBeGreaterThan(2_000_000);
+    expect(longNames[1]!.length, 'long-names, start').toBeLessThan(20_000);
+    // invoke shows long-names as it does any answer, and builds no JSON longer than its start.
+    expect(invoked.slice(0, 2), 'invoke long-names').toEqual(['invoke long-names', 0]);
+    expect(invoked[2], 'the longest JSON invoke built').toBeLessThan(20_000);
+    expect(invoked[3], 'what invoke wrote').toBeLessThan(10_000);
+  }, 60_000);
+});
+
+describe('hmc.py: text mode on an output that cannot hold every character', () => {
+  // Windows output sent to a file or a pipe (cp1252), a Latin-1 locale, or PYTHONIOENCODING gives
+  // hmc.py an output that holds no 日本. Text mode writes a character its output cannot hold as a
+  // backslash escape, as it writes a control character as one, so an answer is shown whole and the
+  // exit says what it answered. It wrote "Done", then failed on the body and exited 1, which a
+  // script reads as a failure, and may send again. So with a listing, an answer that is no
+  // success, and the mark that says an answer was cut.
+  const escaped = (text: string) => [...text].map(ch => {
+    const at = ch.codePointAt(0)!;
+    return at < 0x100 ? ch : at < 0x10000 ? `\\u${at.toString(16).padStart(4, '0')}` : `\\U${at.toString(16).padStart(8, '0')}`;
+  }).join('');
+  /** hmc.py run with `args` on a Latin-1 stdout, read as Latin-1. */
+  const latin1 = (args: string[]) => new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+    const child = spawn(PYTHON, ['-I', '-c', 'import runpy, sys; sys.stdout.reconfigure(encoding="latin-1"); sys.argv = sys.argv[1:]; ' +
+      'runpy.run_path(sys.argv[0], run_name="__main__")', HMC, ...args],
+    { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*' } });
+    let stdout = ''; let stderr = '';
+    child.stdout.setEncoding('latin1').on('data', d => { stdout += d; });
+    child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
+    child.on('close', code => resolve({ code, stdout, stderr }));
+  });
+  it.each([['text', 200, WIDE], ['json', 200, JSON.stringify({ name: WIDE }, null, 2)], ['missing', 404, WIDE]] as const)(
+    'shows a %s answer (%i) past Latin-1 on a Latin-1 output, escaped, and exits as it was answered', async (kind, status, shown) => {
+      const r = await latin1(['invoke', `${base}/wide`, `urn:wide:${kind}`]);
+      expect([r.code, r.stderr]).toEqual([status === 200 ? 0 : 4, '']);
+      const lines = r.stdout.split('\n');
+      const at = lines.indexOf((status === 200 ? invokeDone : invokeNotSuccess)(`${base}/wide-${kind}`, status));
+      expect(at, r.stdout).toBeGreaterThan(0);
+      expect(lines.slice(at + 1).join('\n')).toBe(`${escaped(shown)}\n`);
+    }, 60_000);
+
+  it('lists controls titled past Latin-1 on a Latin-1 output, escaped, and exits 0', async () => {
+    const r = await latin1(['list', `${base}/wide`]);
+    expect([r.code, r.stderr]).toEqual([0, '']);
+    const lines = r.stdout.split('\n');
+    for (const kind of ['text', 'json', 'missing']) expect(lines.filter(line => line.endsWith(` ${escaped(WIDE_TITLE(kind))}`)), r.stdout).toHaveLength(1);
+  }, 60_000);
+
+  it('cuts a long answer past Latin-1 on a Latin-1 output with its mark escaped, and exits 0', async () => {
+    const c = shownCases().find(one => one.name === 'forms')!;
+    const url = `${base}/shown/forms`;
+    const r = await latin1(['invoke', `${base}/shown`, 'urn:shown:forms']);
+    expect([r.code, r.stderr]).toEqual([0, '']);
+    const lines = r.stdout.split('\n');
+    const at = lines.indexOf(invokeDone(url, 200));
+    expect(at, r.stdout.slice(0, 2_000)).toBeGreaterThan(0);
+    const shown = JSON.stringify(JSON.parse(c.body), null, 2);
+    expect(shown.length).toBeGreaterThan(8_000);
+    expect(lines.slice(at + 1).join('\n')).toBe(`${c.hmcNote === null ? '' : `${escaped(c.hmcNote)}\n`}${escaped(shown.slice(0, 8_000))}\n\\u2026\n`);
+  }, 60_000);
+
+  // A lone surrogate in remote text was written, on a UTF-8 output, as the byte it stands for (0x9b
+  // for \udc9b, a C1 control tty_safe never saw), or failed: it is written as a backslash escape too.
+  it('writes a lone surrogate in remote text as a backslash escape on a UTF-8 output too', async () => {
+    const r = await hmc(['list', `${base}/wide`]);
+    expect([r.code, r.stderr]).toEqual([0, '']);
+    expect(r.stdout.split('\n').filter(line => line.endsWith(` Wide missing ${WIDE} \\udc9b`)), r.stdout).toHaveLength(1);
+    expect(r.stdout).not.toContain('\ufffd');
+  }, 60_000);
+
+  // main() sets its output to write escapes; an output a caller in the same process has closed
+  // cannot be set so, and is left as it is: writing to it fails as it did before, named, exit 1.
+  it('leaves an output it cannot set as it is: main() over a closed stdout names the failure and returns 1', async () => {
+    const script = ['import io, json, sys', 'sys.dont_write_bytecode = True', 'sys.path.insert(0, sys.argv[1])', 'import hmc',
+      'closed = io.TextIOWrapper(io.BytesIO())', 'closed.close()', 'saved, said = sys.stdout, io.StringIO()', 'sys.stdout, sys.stderr = closed, said',
+      'try:', '    code = hmc.main(["list", sys.argv[2] + "/wide"])', 'finally:', '    sys.stdout, sys.stderr = saved, sys.__stderr__',
+      'print(json.dumps([code, said.getvalue()]))'].join('\n');
+    const r = await new Promise<{ code: number | null; stdout: string; stderr: string }>(resolve => {
+      const child = spawn(PYTHON, ['-I', '-c', script, dirname(HMC), base], { env: { PATH: process.env['PATH'] || '', LANG: 'C.UTF-8', NO_PROXY: '*', no_proxy: '*' } });
+      let stdout = ''; let stderr = '';
+      child.stdout.setEncoding('utf8').on('data', d => { stdout += d; });
+      child.stderr.setEncoding('utf8').on('data', d => { stderr += d; });
+      child.on('close', code => resolve({ code, stdout, stderr }));
+    });
+    expect([r.code, r.stderr]).toEqual([0, '']);
+    expect(JSON.parse(r.stdout)).toEqual([1, 'error: I/O operation on closed file.\n']);
   }, 60_000);
 });
 
