@@ -24,7 +24,7 @@
  * serves every standard we abstract.
  */
 
-import type { FetchFn } from '@interego/core';
+import { createEncryptedEnvelope, type EncryptedEnvelope, type EncryptionKeyPair, type FetchFn } from '@interego/core';
 
 const INBOX_CONTAINER = 'inbox/';
 /** The substrate's own resolving vocabulary namespace. */
@@ -96,6 +96,116 @@ export function buildNotification(input: NotificationInput, idSlug: string): Rec
   };
 }
 
+// ── Sealing ────────────────────────────────────────────────────────────────
+//
+// ★ A NOTIFICATION IS PRIVATE CONTENT AND WAS STORED AS PLAINTEXT. The store serves reads to
+// anybody, by design: confidentiality on a pod comes from encryption, not from who may fetch.
+// `publish_context` has always sealed what it writes. This module did not, so who wrote to whom,
+// the summary and the whole body of every agent-to-agent message sat in the recipient's inbox
+// readable by URL. Measured against the deployed gate on 2026-11-19, with no credentials: the
+// inbox container answered 200 with its listing and a notification answered with its full body.
+//
+// So what is written is an envelope. What stays outside it is only what locating and ordering
+// an item needs: its own URL, the recipient (whose inbox it is in anyway) and the time. The
+// sender, the activity type, the summary, the body and what it is about are inside.
+//
+// The vocabulary is the substrate's existing one for an encrypted value — nothing is minted.
+
+/** The `type` of the object a sealed notification carries. */
+export const SEALED_OBJECT_TYPE = 'iep:EncryptedValue';
+
+const toBase64 = (text: string): string => Buffer.from(text, 'utf8').toString('base64');
+const fromBase64 = (text: string): string => Buffer.from(text, 'base64').toString('utf8');
+
+/**
+ * Seal a built notification to `recipientPublicKeys`.
+ *
+ * `id`, `to` and `published` are kept; `actor`, `type`, `summary` and `object` are sealed. The
+ * outer `type` is always `Create`, so the kind of activity is not readable from outside either.
+ * With no recipient there is nobody who could open it, and that is refused rather than written.
+ */
+export function sealNotification(
+  notif: Readonly<Record<string, unknown>>,
+  recipientPublicKeys: readonly string[],
+  sender: EncryptionKeyPair,
+): Record<string, unknown> {
+  const recipients = [...new Set(recipientPublicKeys.filter((k) => typeof k === 'string' && k.length > 0))];
+  if (recipients.length === 0) throw new Error('a notification cannot be sealed to no recipient');
+  // `id` is sealed too, so an opened notification can be held to the resource it was read from.
+  const inner = { id: notif['id'], type: notif['type'], actor: notif['actor'], summary: notif['summary'], object: notif['object'] };
+  const envelope = createEncryptedEnvelope(JSON.stringify(inner), recipients, sender);
+  return {
+    '@context': notif['@context'],
+    id: notif['id'],
+    type: 'Create',
+    to: notif['to'],
+    published: notif['published'],
+    'iep:encrypted': true,
+    object: {
+      type: SEALED_OBJECT_TYPE,
+      'iep:encryptionAlgorithm': envelope.algorithm,
+      'iep:envelope': toBase64(JSON.stringify(envelope)),
+    },
+  };
+}
+
+/** The envelope inside a stored notification, or null when it is not a sealed one. */
+export function sealedEnvelopeOf(stored: unknown): EncryptedEnvelope | null {
+  if (!stored || typeof stored !== 'object' || Array.isArray(stored)) return null;
+  const obj = (stored as Record<string, unknown>)['object'];
+  if (!obj || typeof obj !== 'object' || Array.isArray(obj)) return null;
+  const o = obj as Record<string, unknown>;
+  if (o['type'] !== SEALED_OBJECT_TYPE || typeof o['iep:envelope'] !== 'string') return null;
+  try {
+    const envelope = JSON.parse(fromBase64(o['iep:envelope'])) as EncryptedEnvelope;
+    return envelope && typeof envelope === 'object' && Array.isArray(envelope.wrappedKeys) ? envelope : null;
+  } catch {
+    return null;
+  }
+}
+
+/** What an inbox reader shows for a sealed notification it has no key for. */
+export const SEALED_UNOPENED_SUMMARY = 'Sealed notification: this reader holds no key that opens it.';
+
+/**
+ * A sealed notification as it reads once opened, or as it reads when it could not be.
+ *
+ * ★ THE OUTSIDE WINS FOR WHAT THE OUTSIDE CARRIES. `id`, `to` and `published` are taken from the
+ * stored document and never from the plaintext, so what was sealed cannot rename the resource it
+ * is in or move itself in time. An envelope that does not open, or opens to something that is
+ * not an object, reads as unopened: it is listed, with a summary that says so, and no body.
+ *
+ * ★ AND WHAT WAS SEALED MUST HAVE BEEN SEALED FOR THIS RESOURCE. The outside of an envelope can
+ * be rewritten by whoever can write the document; the inside cannot. So when `readFrom` is
+ * given, the `id` inside has to name the same pod and the same file as the URL the envelope was
+ * read from, or it reads as unopened. The pod key already refuses a copy into another pod; this
+ * refuses one moved or renamed within a pod, and does not depend on which spelling of the
+ * store's origin either URL uses.
+ */
+function podAndFile(url: unknown): string | null {
+  if (typeof url !== 'string') return null;
+  try {
+    const segments = new URL(url).pathname.split('/').filter(Boolean);
+    return segments.length >= 2 ? `${segments[0]}/${segments[segments.length - 1]}` : null;
+  } catch { return null; }
+}
+
+export function unsealedNotification(
+  stored: Readonly<Record<string, unknown>>, plaintext: string | null, readFrom?: string,
+): Record<string, unknown> {
+  const outer = { id: stored['id'], to: stored['to'], published: stored['published'] };
+  let inner: unknown = null;
+  if (plaintext !== null) { try { inner = JSON.parse(plaintext); } catch { inner = null; } }
+  const unopened = { ...outer, type: 'Create', summary: SEALED_UNOPENED_SUMMARY };
+  if (!inner || typeof inner !== 'object' || Array.isArray(inner)) return unopened;
+  const i = inner as Record<string, unknown>;
+  if (readFrom !== undefined && (podAndFile(i['id']) === null || podAndFile(i['id']) !== podAndFile(readFrom))) return unopened;
+  return { type: i['type'], actor: i['actor'], summary: i['summary'], object: i['object'], ...outer };
+}
+
+/** Opens an envelope fetched from `url`, or answers null when this reader may not or cannot. */
+export type EnvelopeOpener = (envelope: EncryptedEnvelope, url: string) => string | null | Promise<string | null>;
+
 /**
  * What the STORE says about a pod root: it holds it, it definitely does not, or this process
  * cannot tell.
@@ -161,6 +271,8 @@ export async function deliverNotification(
   fetchFn: FetchFn = defaultFetch(),
   log: (m: string) => void = () => {},
   presence?: PodRootPresence,
+  /** Applied to the notification once its id is its own URL; what it returns is what is stored. */
+  seal?: (notif: Readonly<Record<string, unknown>>) => Record<string, unknown>,
 ): Promise<string | null> {
   const known = presence ?? await podRootPresence(targetPodUrl, fetchFn);
   if (known.exists === false) {
@@ -174,11 +286,19 @@ export async function deliverNotification(
   // nothing, in every notification the substrate delivered. buildNotification cannot
   // mint it (it does not know the target pod); this is the first point that does.
   notif['id'] = url;
+  let stored: Record<string, unknown> = notif;
+  if (seal) {
+    // A notification that cannot be sealed is not written in the clear instead.
+    try { stored = seal(notif); } catch (err) {
+      log(`[agent-mesh] deliver refused: the notification for ${url} could not be sealed (${(err as Error).message})`);
+      return null;
+    }
+  }
   try {
     const r = await fetchFn(url, {
       method: 'PUT',
       headers: { 'Content-Type': 'application/ld+json' },
-      body: JSON.stringify(notif, null, 2),
+      body: JSON.stringify(stored, null, 2),
     });
     if (!r.ok) { log(`[agent-mesh] deliver PUT ${url} -> ${r.status} ${r.statusText}`); return null; }
     log(`[agent-mesh] delivered notification to ${url}`);
@@ -331,12 +451,15 @@ export async function readInbox(
   podUrl: string,
   fetchFn: FetchFn = defaultFetch(),
   limit = 50,
+  open?: EnvelopeOpener,
 ): Promise<InboxItem[]> {
-  return (await readAllInboxItems(podUrl, fetchFn)).slice(0, limit);
+  return (await readAllInboxItems(podUrl, fetchFn, open)).slice(0, limit);
 }
 
 /** Every readable item of a pod's inbox, in {@link compareInboxItems} order. */
-export async function readAllInboxItems(podUrl: string, fetchFn: FetchFn = defaultFetch()): Promise<InboxItem[]> {
+export async function readAllInboxItems(
+  podUrl: string, fetchFn: FetchFn = defaultFetch(), open?: EnvelopeOpener,
+): Promise<InboxItem[]> {
   const urls = await listInbox(podUrl, fetchFn);
   const items: InboxItem[] = [];
   await Promise.allSettled(urls.map(async url => {
@@ -350,6 +473,12 @@ export async function readAllInboxItems(podUrl: string, fetchFn: FetchFn = defau
       let d: any = JSON.parse(await r.text());
       if (typeof d === 'string') { try { d = JSON.parse(d); } catch { /* keep as-is */ } }
       if (Array.isArray(d)) d = d.find((x: any) => x && typeof x === 'object' && (x.type || x.summary || x.object)) ?? d[0] ?? {};
+      const envelope = sealedEnvelopeOf(d);
+      if (envelope) {
+        let plaintext: string | null = null;
+        if (open) { try { plaintext = await open(envelope, url); } catch { plaintext = null; } }
+        d = unsealedNotification(d, plaintext, url);
+      }
       const item = inboxItemFrom(url, d);
       if (item) items.push(item);
     } catch { /* skip */ }
