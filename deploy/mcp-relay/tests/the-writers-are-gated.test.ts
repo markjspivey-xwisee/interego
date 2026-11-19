@@ -759,8 +759,16 @@ console.log('\n3. driven: notify_agent will not create the pod it is delivering 
     check('§3 ★★ the probe costs exactly ONE extra request: HEAD on the pod root',
       reqs.filter(r => r.startsWith('HEAD')).length === 1
       && reqs.includes(`HEAD /${VICTIM}/`)
-      && reqs.length === 2,
+      // Three requests in all, and the third is not the probe's: a notification is now stored
+      // sealed, and the seal reads the recipient pod's own registry for the keys to wrap to.
+      && reqs.includes(`GET /${VICTIM}/agents`)
+      && reqs.length === 3,
       JSON.stringify(reqs));
+    // ★ AND WHAT THAT THIRD REQUEST BUYS: the bytes written to the inbox are an envelope.
+    const written = pod.stored.get(reqs.find(r => r.startsWith(`PUT /${VICTIM}/inbox/`))!.slice('PUT '.length)) ?? '';
+    check('§3 ★★ what the delivery wrote is sealed: the summary is not in the stored bytes',
+      written.includes('iep:EncryptedValue') && !written.includes('a probe addressed to a pod that is really there'),
+      written.slice(0, 200));
 
     // (d) FAIL-OPEN ON ANYTHING THAT IS NOT A DEFINITE NO. This is the conjunct that makes the
     // change safe to ship: a store hiccup must not become a delivery outage.

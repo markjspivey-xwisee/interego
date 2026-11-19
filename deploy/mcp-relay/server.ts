@@ -126,6 +126,7 @@ import {
   InboxPageError,
   INBOX_DEFAULT_LIMIT,
   INBOX_MAX_LIMIT,
+  sealNotification,
   type NotificationInput,
   type PodRootPresence,
 } from './agent-mesh.js';
@@ -152,7 +153,7 @@ import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-
 import { winnowDiscoverResults } from './discover-winnow.js';
 import { createConformanceGate } from './conformance-gate.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
-import { managedRecipientPublicKeys, managedRecipientKey, openManagedEnvelope } from './managed-recipient.js';
+import { managedRecipientPublicKeys, managedRecipientKey, openManagedEnvelope, inboxRecipientKey, openInboxEnvelope, storePodName } from './managed-recipient.js';
 import { ENVELOPE_SHARING_IRI, SHARE_ENVELOPE_ACTION, envelopeSharingResource, recipientGrantUrl, createRecipientGrant, openRecipientGrant, managedGrantRecipientKey, persistRecipientGrants, type RecipientGrant } from './envelope-sharing.js';
 // The /ns dereference surface — ~540 lines of route + projection logic that could not be
 // imported (and so could not be unit-tested) while it sat in this file. It carries the
@@ -8708,6 +8709,37 @@ function resolveTargetPodUrl(
  * the thing probed and the thing written are the same resource rather than two that usually
  * agree.
  */
+/**
+ * The seal for a notification about to be written into `internalPodUrl`'s inbox.
+ *
+ * Sealed to THAT POD's inbox key (managed-recipient.ts), which the relay opens only for the pod's
+ * authenticated owner, and to every key the pod's own registry lists for an unrevoked agent, so
+ * a recipient that holds its own key can open the envelope without the relay.
+ *
+ * ★ NEVER TO THE FLEET KEY, including when the registry lists it. Legacy registry rows advertise
+ * the relay's one key for every agent; a notification wrapped to it could be copied into another
+ * user's inbox and read back there. So that key is dropped from the registry's list, and a pod
+ * this relay cannot name is not sealed for at all — the delivery is refused, not written clear.
+ *
+ * A registry that cannot be read costs the extra recipients and nothing else.
+ */
+async function notificationSealFor(internalPodUrl: string): Promise<(notif: Readonly<Record<string, unknown>>) => Record<string, unknown>> {
+  const podName = storePodName(internalPodUrl, STORE_ORIGINS);
+  const keys = podName ? [inboxRecipientKey(relayAgentKey, podName).publicKey] : [];
+  try {
+    const profile = await readAgentRegistry(internalPodUrl, { fetch: solidFetch });
+    for (const a of profile?.authorizedAgents ?? []) {
+      if (!a.revoked && a.encryptionPublicKey && a.encryptionPublicKey !== relayAgentKey.publicKey) keys.push(a.encryptionPublicKey);
+    }
+  } catch (err) {
+    log(`[agent-mesh] the registry of ${internalPodUrl} could not be read (${(err as Error).message}); sealing to the pod's inbox key only`);
+  }
+  return (notif) => {
+    if (!podName) throw new Error(`"${internalPodUrl}" names no pod on this store`);
+    return sealNotification(notif, keys, relayAgentKey);
+  };
+}
+
 async function storePodRootPresence(internalPodUrl: string): Promise<PodRootPresence> {
   return podRootPresence(internalPodUrl, solidFetch);
 }
@@ -9013,13 +9045,14 @@ async function handleNotifyAgent(args: ToolArgs): Promise<string> {
   // host-form duplicate that lacks them).
   const card = cardMatches.find(e => (e.channels?.length ?? 0) > 0) ?? cardMatches[0];
   const channels = (card?.channels ?? []) as ReachChannel[];
+  const seal = await notificationSealFor(internalPod);
   const results = await reachFanOut(
     channels,
     { summary, from, ...(typeof args.content === 'string' ? { content: args.content } : {}), ...(typeof args.about === 'string' ? { about: args.about } : {}) },
     // ★ `presence` is the answer this handler ALREADY got, thirty lines up, above the fan-out.
     // `deliverNotification` refuses an absent pod on its own now; handing it the verdict already
     // in hand is what keeps the cost at exactly ONE HEAD per send rather than two.
-    { deliverLdn: () => deliverNotification(internalPod, notif, idSlug, solidFetch, (m) => log(m), presence) },
+    { deliverLdn: () => deliverNotification(internalPod, notif, idSlug, solidFetch, (m) => log(m), presence, seal) },
   );
   const ldn = results.find(r => r.type === 'ldn');
   // `delivered: true` must mean the recipient's REAL (polled) inbox was reached, not that
@@ -9549,7 +9582,11 @@ async function handleReadInbox(args: ToolArgs): Promise<string> {
   }
   let page;
   try {
-    page = pageInboxItems(await readAllInboxItems(internal, solidFetch), paging.options);
+    // Sealed notifications are opened with the inbox key of the CALLER'S OWN pod, taken from
+    // verified session identity, and only when fetched from that pod's inbox. One sealed for
+    // another pod does not open, wherever it was copied to, and is listed as unopened.
+    const inboxKeys = { root: relayAgentKey, ownPodUrl: await callerOwnPod(args), storeOrigins: STORE_ORIGINS };
+    page = pageInboxItems(await readAllInboxItems(internal, solidFetch, (envelope, url) => openInboxEnvelope(inboxKeys, envelope, url)), paging.options);
   } catch (err) {
     if (err instanceof InboxPageError) return JSON.stringify({ error: `read_inbox: ${err.message}` });
     throw err;
@@ -14318,7 +14355,7 @@ app.post('/agents/:localPart/inbox', async (req, res) => {
     res.status(502).json({ accepted: false, error: 'undeliverable', detail: `this relay cannot address "${card.url}" on its own store, so nothing was written` });
     return;
   }
-  const url = await deliverNotification(cardPod, notif, idSlug, solidFetch, (mm) => log(mm));
+  const url = await deliverNotification(cardPod, notif, idSlug, solidFetch, (mm) => log(mm), undefined, await notificationSealFor(cardPod));
   res.status(url ? 202 : 502).json({
     accepted: url !== null,
     stored: url,
