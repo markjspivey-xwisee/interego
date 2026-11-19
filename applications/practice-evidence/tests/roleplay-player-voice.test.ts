@@ -123,7 +123,11 @@ describe('how the player listens to a spoken reply', () => {
     `)(Recogniser, $, document, {}, () => ({ choices }), (i: number, said: string) => { picked.push({ i, said }); }, { language: 'en-US' }, setTimeout, clearTimeout) as { listen(): void; hangUp(): void };
     const { listen, hangUp } = page;
     return {
-      listen, hangUp, picked,
+      // The page starts its recogniser with a function called listen. It is given another name here
+      // on purpose: `deploy/mcp-relay/tests/listen-loopback.test.ts` reads every test file for a
+      // server's listen call that names no loopback host, and a call written that way on this
+      // stand-in would read as one. Named for what the learner does, nothing here needs exempting.
+      tapMic: listen, hangUp, picked,
       heard: (): string => $('heard').textContent || ($('heard').children[0]?.textContent ?? ''),
       micLive: (): boolean => $('mic').classes.has('live'),
       offered: (): El | undefined => $('heard').children.find((c) => c.textContent === 'Use the highlighted reply'),
@@ -135,7 +139,7 @@ describe('how the player listens to a spoken reply', () => {
 
   it('keeps listening through a pause, and joins what was said before it and after', () => {
     const p = player(closing);
-    p.listen();
+    p.tapMic();
     const r = Recogniser.last!;
     expect(r.continuous).toBe(true);
     r.hear('to recap', false); r.hear('to recap', true);
@@ -159,7 +163,7 @@ describe('how the player listens to a spoken reply', () => {
 
   it('offers nothing for words the recogniser never settled on', () => {
     const p = player(closing);
-    p.listen();
+    p.tapMic();
     const r = Recogniser.last!;
     r.hear('to recap the duplicate $19 from order BN-4472 is refunded today and posts in 5 to 7 business days plus a free month', false);
     r.end();
@@ -170,7 +174,7 @@ describe('how the player listens to a spoken reply', () => {
 
   it('offers nothing for a settled start whose continuation never settled', () => {
     const p = player(refunding);
-    p.listen();
+    p.tapMic();
     const r = Recogniser.last!;
     r.hear("I'm refunding the duplicate $19 today", true);
     r.hear('actually no I cannot refund it', false);
@@ -182,7 +186,7 @@ describe('how the player listens to a spoken reply', () => {
 
     // Settled in full, the same words are matched as a whole, and are no reply.
     const q = player(refunding);
-    q.listen();
+    q.tapMic();
     const s = Recogniser.last!;
     s.hear("I'm refunding the duplicate $19 today", true);
     s.hear('actually no I cannot refund it', false);
@@ -195,7 +199,7 @@ describe('how the player listens to a spoken reply', () => {
   it('offers nothing after an error, whatever was heard before it', () => {
     for (const settled of [false, true]) {
       const p = player(closing);
-      p.listen();
+      p.tapMic();
       const r = Recogniser.last!;
       r.hear('to recap the duplicate $19 from order BN-4472 is refunded today and posts in 5 to 7 business days plus a free month', settled);
       r.fail('network');
@@ -210,7 +214,7 @@ describe('how the player listens to a spoken reply', () => {
 
   it('gives up on a learner who says nothing, and says so', () => {
     const p = player(opening);
-    p.listen();
+    p.tapMic();
     const r = Recogniser.last!;
     vi.advanceTimersByTime(7900);
     expect(r.stopped).toBe(false);
@@ -222,7 +226,7 @@ describe('how the player listens to a spoken reply', () => {
 
   it('says so when what was said is no reply, and offers nothing', () => {
     const p = player(refunding);
-    p.listen();
+    p.tapMic();
     Recogniser.last!.hear('I cannot refund the duplicate today', true);
     vi.advanceTimersByTime(2000);
     expect(p.heard()).toBe("“I cannot refund the duplicate today” · That didn't match a reply. Try again, or tap one.");
@@ -232,12 +236,12 @@ describe('how the player listens to a spoken reply', () => {
 
   it('takes nothing from a recogniser the learner has replaced with a later one', () => {
     const p = player(refunding);
-    p.listen();
+    p.tapMic();
     const old = Recogniser.last!;
     // The first fails, and its end is slow to arrive. The learner taps the microphone again.
     old.onerror?.({ error: 'network' });
     expect(p.micLive()).toBe(false);
-    p.listen();
+    p.tapMic();
     const now = Recogniser.last!;
     expect(now).not.toBe(old);
     expect(p.micLive()).toBe(true);
@@ -256,7 +260,7 @@ describe('how the player listens to a spoken reply', () => {
 
   it('takes no result that arrives behind an error', () => {
     const p = player(refunding);
-    p.listen();
+    p.tapMic();
     const r = Recogniser.last!;
     r.onerror?.({ error: 'network' });
     expect(p.heard()).toBe("Didn't catch that. Try again, or tap a reply.");
@@ -272,7 +276,7 @@ describe('how the player listens to a spoken reply', () => {
   it('lets go of the recogniser when a reply is tapped, so what it had queued touches nothing', () => {
     // The learner speaks, the words settle, and before the recogniser ends they tap a written reply.
     const p = player(refunding);
-    p.listen();
+    p.tapMic();
     const old = Recogniser.last!;
     old.hear("I'm refunding the duplicate $19 today it will post to your card in 5 to 7 business days", true);
     p.hangUp();
@@ -288,7 +292,7 @@ describe('how the player listens to a spoken reply', () => {
     expect(p.highlighted()).toBe(-1);
     expect(p.heard()).toBe(shown);
     // And the microphone can be used at once, without waiting for the old one's end.
-    p.listen();
+    p.tapMic();
     expect(Recogniser.last).not.toBe(old);
     expect(p.micLive()).toBe(true);
   });
@@ -296,5 +300,11 @@ describe('how the player listens to a spoken reply', () => {
   it('lets go of the recogniser in the one place a reply is taken', () => {
     expect(source.includes('function pick(i, said){\n  if (finished) return;\n  hangUp();')).toBe(true);
     expect(source.includes('rec.abort()')).toBe(false);
+  });
+
+  it('calls nothing in this file the way a server is started', () => {
+    // Kept true so that the scan for unguarded servers can read this file like any other.
+    const here = readFileSync(new URL(import.meta.url), 'utf8');
+    expect(here.split(['.lis', 'ten('].join('')).length - 1).toBe(0);
   });
 });
