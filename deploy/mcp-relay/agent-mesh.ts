@@ -131,7 +131,8 @@ export function sealNotification(
 ): Record<string, unknown> {
   const recipients = [...new Set(recipientPublicKeys.filter((k) => typeof k === 'string' && k.length > 0))];
   if (recipients.length === 0) throw new Error('a notification cannot be sealed to no recipient');
-  const inner = { type: notif['type'], actor: notif['actor'], summary: notif['summary'], object: notif['object'] };
+  // `id` is sealed too, so an opened notification can be held to the resource it was read from.
+  const inner = { id: notif['id'], type: notif['type'], actor: notif['actor'], summary: notif['summary'], object: notif['object'] };
   const envelope = createEncryptedEnvelope(JSON.stringify(inner), recipients, sender);
   return {
     '@context': notif['@context'],
@@ -173,15 +174,32 @@ export const SEALED_UNOPENED_SUMMARY = 'Sealed notification: this reader holds n
  * stored document and never from the plaintext, so what was sealed cannot rename the resource it
  * is in or move itself in time. An envelope that does not open, or opens to something that is
  * not an object, reads as unopened: it is listed, with a summary that says so, and no body.
+ *
+ * ★ AND WHAT WAS SEALED MUST HAVE BEEN SEALED FOR THIS RESOURCE. The outside of an envelope can
+ * be rewritten by whoever can write the document; the inside cannot. So when `readFrom` is
+ * given, the `id` inside has to name the same pod and the same file as the URL the envelope was
+ * read from, or it reads as unopened. The pod key already refuses a copy into another pod; this
+ * refuses one moved or renamed within a pod, and does not depend on which spelling of the
+ * store's origin either URL uses.
  */
-export function unsealedNotification(stored: Readonly<Record<string, unknown>>, plaintext: string | null): Record<string, unknown> {
+function podAndFile(url: unknown): string | null {
+  if (typeof url !== 'string') return null;
+  try {
+    const segments = new URL(url).pathname.split('/').filter(Boolean);
+    return segments.length >= 2 ? `${segments[0]}/${segments[segments.length - 1]}` : null;
+  } catch { return null; }
+}
+
+export function unsealedNotification(
+  stored: Readonly<Record<string, unknown>>, plaintext: string | null, readFrom?: string,
+): Record<string, unknown> {
   const outer = { id: stored['id'], to: stored['to'], published: stored['published'] };
   let inner: unknown = null;
   if (plaintext !== null) { try { inner = JSON.parse(plaintext); } catch { inner = null; } }
-  if (!inner || typeof inner !== 'object' || Array.isArray(inner)) {
-    return { ...outer, type: 'Create', summary: SEALED_UNOPENED_SUMMARY };
-  }
+  const unopened = { ...outer, type: 'Create', summary: SEALED_UNOPENED_SUMMARY };
+  if (!inner || typeof inner !== 'object' || Array.isArray(inner)) return unopened;
   const i = inner as Record<string, unknown>;
+  if (readFrom !== undefined && (podAndFile(i['id']) === null || podAndFile(i['id']) !== podAndFile(readFrom))) return unopened;
   return { type: i['type'], actor: i['actor'], summary: i['summary'], object: i['object'], ...outer };
 }
 
@@ -459,7 +477,7 @@ export async function readAllInboxItems(
       if (envelope) {
         let plaintext: string | null = null;
         if (open) { try { plaintext = await open(envelope, url); } catch { plaintext = null; } }
-        d = unsealedNotification(d, plaintext);
+        d = unsealedNotification(d, plaintext, url);
       }
       const item = inboxItemFrom(url, d);
       if (item) items.push(item);

@@ -12,7 +12,7 @@ import {
   SEALED_OBJECT_TYPE, SEALED_UNOPENED_SUMMARY, buildNotification, deliverNotification, inboxItemFrom,
   readAllInboxItems, sealNotification, sealedEnvelopeOf, unsealedNotification,
 } from '../agent-mesh.js';
-import { openManagedEnvelope } from '../managed-recipient.js';
+import { inboxRecipientKey, openInboxEnvelope, openManagedEnvelope } from '../managed-recipient.js';
 
 let passed = 0;
 const failures: string[] = [];
@@ -37,8 +37,8 @@ function store() {
     });
     if (method === 'HEAD') return res(200);
     if (method === 'PUT') { docs.set(url, String(init?.body ?? '')); return res(201); }
-    if (url === `${POD}inbox/`) {
-      const members = [...docs.keys()].map((u) => `<${u}>`).join(', ');
+    if (url.endsWith('/inbox/')) {
+      const members = [...docs.keys()].filter((u) => u.startsWith(url)).map((u) => `<${u}>`).join(', ');
       return res(200, members ? `<${url}> <http://www.w3.org/ns/ldp#contains> ${members} .` : `<${url}> a <http://www.w3.org/ns/ldp#Container> .`);
     }
     return docs.has(url) ? res(200, docs.get(url)!) : res(404);
@@ -89,22 +89,58 @@ async function main(): Promise<void> {
   }
 
   console.log('whom the relay opens it for');
-  // The rule the relay applies to its OWN key, from managed-recipient.ts and relay-key-gate.ts:
-  // the same functions read_inbox's opener calls. Sealed to the relay key alone here, so nothing
-  // but that rule decides.
+  // The relay's own rule, from managed-recipient.ts: the same function read_inbox's opener calls.
+  // Sealed to the POD's inbox key alone here, so nothing but that rule decides.
+  const ORIGINS = new Set(['http://store.test']);
+  const VICTIM_POD = 'u-pk-aaaaaaaaaaaa';
+  const ATTACKER = 'http://store.test/u-pk-cccccccccccc/';
+  const podKey = inboxRecipientKey(relay, VICTIM_POD);
   const k = store();
   const kUrl = await deliverNotification(POD, notification('k'), 'k', k.fetchFn, () => {}, undefined,
-    (n) => sealNotification(n, [relay.publicKey], relay));
-  const contextFor = (ownPodUrl: string | undefined) => ({
-    root: relay, ownPodUrl, identityUrl: 'https://identity.test', storeOrigins: new Set(['http://store.test']),
-  });
-  const asOwner = await readAllInboxItems(POD, k.fetchFn, (e, u) => openManagedEnvelope(contextFor(POD), e, u));
+    (n) => sealNotification(n, [podKey.publicKey], relay));
+  const readAs = (inboxOf: string, ownPodUrl: string | undefined) => readAllInboxItems(inboxOf, k.fetchFn,
+    (e, u) => openInboxEnvelope({ root: relay, ownPodUrl, storeOrigins: ORIGINS }, e, u));
+  const asOwner = await readAs(POD, POD);
   ok(asOwner[0]?.url === kUrl && asOwner[0]?.content === SECRET_BODY, '★ the relay opens it for the authenticated owner of that pod');
-  for (const [who, own] of [['another user of the same relay', 'http://store.test/u-pk-cccccccccccc/'], ['a caller with no pod', undefined]] as const) {
-    const got = await readAllInboxItems(POD, k.fetchFn, (e, u) => openManagedEnvelope(contextFor(own), e, u));
+  for (const [who, own] of [['another user of the same relay', ATTACKER], ['a caller with no pod', undefined], ['a caller whose pod is on another store', 'http://elsewhere.test/u-pk-aaaaaaaaaaaa/']] as const) {
+    const got = await readAs(POD, own);
     ok(got[0]?.summary === SEALED_UNOPENED_SUMMARY && got[0]?.content === undefined,
-      `★ and not for ${who}, though the relay holds the key`);
+      `★ and not for ${who}, though the relay holds the root key`);
   }
+  ok(inboxRecipientKey(relay, VICTIM_POD).publicKey === podKey.publicKey
+    && inboxRecipientKey(relay, 'u-pk-cccccccccccc').publicKey !== podKey.publicKey
+    && podKey.publicKey !== relay.publicKey,
+    'a pod\'s inbox key is stable, is its own, and is not the relay\'s one key');
+
+  console.log('a copy does not open');
+  // ★★ THE DEFECT FOUND IN REVIEW, REPRODUCED. The first version sealed to the relay's one key
+  // and let the URL an envelope was fetched from decide who it was opened for. An envelope does
+  // not know where it is stored: a user copied another's sealed notification into their own
+  // inbox, rewrote the outside to match, and the relay read it back to them.
+  const stolen = JSON.parse(k.docs.get(kUrl!)!) as Record<string, unknown>;
+  const copyUrl = `${ATTACKER}inbox/k.jsonld`;
+  k.docs.set(copyUrl, JSON.stringify({ ...stolen, id: copyUrl, to: ['did:web:identity.test:agents:x-u-pk-cccccccccccc'] }));
+  const copied = await readAs(ATTACKER, ATTACKER);
+  ok(copied.length === 1 && copied[0]!.summary === SEALED_UNOPENED_SUMMARY && copied[0]!.content === undefined && copied[0]!.actor === undefined,
+    '★★ a sealed notification copied into another user\'s inbox does not open for that user');
+  ok(openManagedEnvelope({ root: relay, ownPodUrl: ATTACKER, identityUrl: 'https://identity.test', storeOrigins: ORIGINS },
+    sealedEnvelopeOf(stolen)!, copyUrl) === null
+    && openEncryptedEnvelope(sealedEnvelopeOf(stolen)!, relay) === null,
+    '★★ and not through the relay\'s one key either: the envelope was never wrapped to it');
+  // The version that WAS vulnerable, kept as the control: sealed to the relay's one key, the same
+  // copy opens under the old rule. So the two checks above are measuring the fix.
+  const fleetSealed = sealNotification({ ...notification('v'), id: `${POD}inbox/v.jsonld` }, [relay.publicKey], relay);
+  ok(openManagedEnvelope({ root: relay, ownPodUrl: ATTACKER, identityUrl: 'https://identity.test', storeOrigins: ORIGINS },
+    sealedEnvelopeOf(fleetSealed)!, `${ATTACKER}inbox/v.jsonld`) !== null,
+    'control: an envelope wrapped to the relay\'s one key does open for whoever holds the copy');
+  // Moved or renamed inside the owner's own pod: the key opens it, the sealed id does not match.
+  k.docs.set(`${POD}inbox/renamed.jsonld`, JSON.stringify({ ...stolen, id: `${POD}inbox/renamed.jsonld` }));
+  const renamed = (await readAs(POD, POD)).find((i) => i.url.endsWith('renamed.jsonld'));
+  ok(renamed?.summary === SEALED_UNOPENED_SUMMARY && renamed?.content === undefined,
+    '★ a sealed notification renamed inside its own pod reads as unopened');
+  ok(openInboxEnvelope({ root: relay, ownPodUrl: POD, storeOrigins: ORIGINS }, sealedEnvelopeOf(stolen)!, `${POD}context-graphs/k.jsonld`) === null
+    && openInboxEnvelope({ root: relay, ownPodUrl: POD, storeOrigins: ORIGINS }, sealedEnvelopeOf(stolen)!, `${POD}inbox/sub/k.jsonld`) === null,
+    'the pod key opens only what was fetched from that pod\'s inbox');
 
   console.log('what a seal may not do');
   const unsealedTo = store();
@@ -113,6 +149,10 @@ async function main(): Promise<void> {
   ok(refused === null && unsealedTo.docs.size === 0, '★ a notification that cannot be sealed is not written in the clear instead');
   const forged = unsealedNotification({ id: url, to: ['x'], published: '2026-11-19T06:00:00.000Z' },
     JSON.stringify({ id: 'http://elsewhere.test/1', published: '1999-01-01T00:00:00.000Z', type: 'Offer', actor: SENDER, summary: 's', object: {} }));
+  ok(unsealedNotification({ id: url }, JSON.stringify({ id: 'http://elsewhere.test/x/1.jsonld', summary: 's' }), url!)['summary'] === SEALED_UNOPENED_SUMMARY
+    && unsealedNotification({ id: url }, JSON.stringify({ summary: 's' }), url!)['summary'] === SEALED_UNOPENED_SUMMARY
+    && unsealedNotification({ id: url }, JSON.stringify({ id: url!.replace('http://store.test', 'https://public.test'), summary: 's' }), url!)['summary'] === 's',
+    '★ what was sealed for another resource, or for none, reads as unopened; another spelling of the store does not matter');
   ok(forged['id'] === url && forged['published'] === '2026-11-19T06:00:00.000Z',
     '★ what was sealed cannot rename the resource it is in or move itself in time');
   ok(unsealedNotification({ id: url }, 'not json')['summary'] === SEALED_UNOPENED_SUMMARY

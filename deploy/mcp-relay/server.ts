@@ -153,7 +153,7 @@ import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-
 import { winnowDiscoverResults } from './discover-winnow.js';
 import { createConformanceGate } from './conformance-gate.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
-import { managedRecipientPublicKeys, managedRecipientKey, openManagedEnvelope } from './managed-recipient.js';
+import { managedRecipientPublicKeys, managedRecipientKey, openManagedEnvelope, inboxRecipientKey, openInboxEnvelope, storePodName } from './managed-recipient.js';
 import { ENVELOPE_SHARING_IRI, SHARE_ENVELOPE_ACTION, envelopeSharingResource, recipientGrantUrl, createRecipientGrant, openRecipientGrant, managedGrantRecipientKey, persistRecipientGrants, type RecipientGrant } from './envelope-sharing.js';
 // The /ns dereference surface — ~540 lines of route + projection logic that could not be
 // imported (and so could not be unit-tested) while it sat in this file. It carries the
@@ -8712,23 +8712,32 @@ function resolveTargetPodUrl(
 /**
  * The seal for a notification about to be written into `internalPodUrl`'s inbox.
  *
- * Sealed to this relay's own key, which the relay will open only for the authenticated owner of
- * the pod the envelope is fetched from (relay-key-gate.ts), and to every key that pod's own
- * registry lists for an unrevoked agent, so a recipient that holds its own key can open the
- * envelope without the relay. A registry that cannot be read costs those extra recipients and
- * nothing else: the notification is still sealed, to the relay's key.
+ * Sealed to THAT POD's inbox key (managed-recipient.ts), which the relay opens only for the pod's
+ * authenticated owner, and to every key the pod's own registry lists for an unrevoked agent, so
+ * a recipient that holds its own key can open the envelope without the relay.
+ *
+ * ★ NEVER TO THE FLEET KEY, including when the registry lists it. Legacy registry rows advertise
+ * the relay's one key for every agent; a notification wrapped to it could be copied into another
+ * user's inbox and read back there. So that key is dropped from the registry's list, and a pod
+ * this relay cannot name is not sealed for at all — the delivery is refused, not written clear.
+ *
+ * A registry that cannot be read costs the extra recipients and nothing else.
  */
 async function notificationSealFor(internalPodUrl: string): Promise<(notif: Readonly<Record<string, unknown>>) => Record<string, unknown>> {
-  const keys = [relayAgentKey.publicKey];
+  const podName = storePodName(internalPodUrl, STORE_ORIGINS);
+  const keys = podName ? [inboxRecipientKey(relayAgentKey, podName).publicKey] : [];
   try {
     const profile = await readAgentRegistry(internalPodUrl, { fetch: solidFetch });
     for (const a of profile?.authorizedAgents ?? []) {
-      if (!a.revoked && a.encryptionPublicKey) keys.push(a.encryptionPublicKey);
+      if (!a.revoked && a.encryptionPublicKey && a.encryptionPublicKey !== relayAgentKey.publicKey) keys.push(a.encryptionPublicKey);
     }
   } catch (err) {
-    log(`[agent-mesh] the registry of ${internalPodUrl} could not be read (${(err as Error).message}); sealing to the relay key only`);
+    log(`[agent-mesh] the registry of ${internalPodUrl} could not be read (${(err as Error).message}); sealing to the pod's inbox key only`);
   }
-  return (notif) => sealNotification(notif, keys, relayAgentKey);
+  return (notif) => {
+    if (!podName) throw new Error(`"${internalPodUrl}" names no pod on this store`);
+    return sealNotification(notif, keys, relayAgentKey);
+  };
 }
 
 async function storePodRootPresence(internalPodUrl: string): Promise<PodRootPresence> {
@@ -9573,9 +9582,11 @@ async function handleReadInbox(args: ToolArgs): Promise<string> {
   }
   let page;
   try {
-    // Sealed notifications are opened with the key this relay may use for the caller: its own,
-    // and only on the caller's own pod. One this caller has no key for is listed as unopened.
-    page = pageInboxItems(await readAllInboxItems(internal, solidFetch, await envelopeOpenerFor(args)), paging.options);
+    // Sealed notifications are opened with the inbox key of the CALLER'S OWN pod, taken from
+    // verified session identity, and only when fetched from that pod's inbox. One sealed for
+    // another pod does not open, wherever it was copied to, and is listed as unopened.
+    const inboxKeys = { root: relayAgentKey, ownPodUrl: await callerOwnPod(args), storeOrigins: STORE_ORIGINS };
+    page = pageInboxItems(await readAllInboxItems(internal, solidFetch, (envelope, url) => openInboxEnvelope(inboxKeys, envelope, url)), paging.options);
   } catch (err) {
     if (err instanceof InboxPageError) return JSON.stringify({ error: `read_inbox: ${err.message}` });
     throw err;
