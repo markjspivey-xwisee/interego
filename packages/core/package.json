@@ -21,6 +21,10 @@
       "import": "./dist/model/delegate.js",
       "types": "./dist/model/delegate.d.ts"
     },
+    "./delegate-receipt": {
+      "import": "./dist/model/delegate-receipt.js",
+      "types": "./dist/model/delegate-receipt.d.ts"
+    },
     "./relay": {
       "import": "./dist/relay/index.js",
       "types": "./dist/relay/index.d.ts"
