@@ -17,7 +17,7 @@
 
 import { describe, it, expect } from 'vitest';
 import {
-  DELEGATE_LABEL_PREFIX, DELEGATE_SURFACE, WRITE_ELIGIBLE_SCOPES, DELEGATION_SCOPES,
+  DELEGATE_LABEL_PREFIX, DELEGATE_SURFACE, agentPodOf, WRITE_ELIGIBLE_SCOPES, DELEGATION_SCOPES,
   delegateAgentId, delegateLabel, delegateNameProblem, delegatePlan, isDelegateRow,
   judgeAuthorship, authorshipLine, footingLine, footingActivityIri, footingTurtle,
   parseDelegateLabel, publishDelegation, readDelegates,
@@ -531,5 +531,71 @@ describe('a delegate name is refused rather than repaired', () => {
   it('the id is a function of the key and one shared surface, never an application', () => {
     expect(delegateAgentId('identity.interego.xwisee.com', 'u-eth-111111111111')).toBe(D1);
     expect(DELEGATE_SURFACE).not.toMatch(/desktop|discord|artifact|electron|workspace/i);
+  });
+});
+
+// ── agentPodOf reads an id in one pass ───────────────────────────────────────────────────────
+//
+// It used to do so with a pattern that took time in the square of the input's length on an id
+// built to defeat it. These cases hold the hand-written reading to the old pattern's answers,
+// and then hand it the input the old pattern was slow on.
+
+/** The reading this replaced, kept here only as the oracle. Never run on the long input below. */
+function before(agentId: string): string | null {
+  const m = /agents:[a-z0-9-]*?(u-[a-z0-9-]+)$/i.exec(agentId) ?? /\/users\/([^/]+)\/profile/.exec(agentId);
+  const seg = m?.[1];
+  if (!seg) return null;
+  return /[\s<>"{}|\\^`#?/]/.test(seg) ? null : seg.toLowerCase();
+}
+
+const CASES = [
+  'did:web:identity.example.test:agents:interego-delegate-u-eth-111111111111',
+  'did:web:identity.example.test:agents:u-pk-33d42e6b33dc',
+  'did:web:identity.example.test:AGENTS:Claude-U-PK-33D42E6B33DC',
+  'did:web:identity.example.test:agents:chatgpt-u-pk-731e988c2c5b',
+  'did:web:identity.example.test:agents:menu-u-eth-aaaaaaaaaaaa',
+  'did:web:identity.example.test:agents:u-',
+  'did:web:identity.example.test:agents:claude-u-',
+  'did:web:identity.example.test:agents:u-u-',
+  'did:web:identity.example.test:agents:no-pod-here',
+  'did:web:identity.example.test:agents:',
+  'did:web:identity.example.test:agents:claude-u-pk-1:extra',
+  'did:web:agents:first-u-pk-1:agents:second-u-pk-2',
+  'did:web:identity.example.test:agents:claude-u-pk_1',
+  'did:web:identity.example.test:agents:claude-u-pk-1 ',
+  'agents:u-a',
+  // İ lowercases to two code units, which would shift an index taken from a lowercased copy.
+  'did:web:İİİİ.example.test:agents:claude-u-pk-33d42e6b33dc',
+  'u-pk-1',
+  '',
+  'https://identity.example.test/users/u-pk-aaaaaaaaaaaa/profile#me',
+  'https://identity.example.test/users/Alice/profile',
+  'https://identity.example.test/users//profile',
+  'https://identity.example.test/users/a b/profile',
+  'https://identity.example.test/agents:x/users/u-pk-1/profile#me',
+  'did:ethr:0x1111111111111111111111111111111111111111',
+];
+
+describe('agentPodOf', () => {
+  it('reads what the pattern it replaced read', () => {
+    for (const id of CASES) expect(agentPodOf(id), JSON.stringify(id)).toBe(before(id));
+  });
+
+  it('reads the pod of a delegate, a session agent and a WebID', () => {
+    expect(agentPodOf('did:web:identity.example.test:agents:interego-delegate-u-eth-111111111111')).toBe('u-eth-111111111111');
+    expect(agentPodOf('did:web:identity.example.test:agents:u-pk-33d42e6b33dc')).toBe('u-pk-33d42e6b33dc');
+    expect(agentPodOf('https://identity.example.test/users/u-pk-aaaaaaaaaaaa/profile#me')).toBe('u-pk-aaaaaaaaaaaa');
+    expect(agentPodOf('did:ethr:0x1111111111111111111111111111111111111111')).toBeNull();
+    expect(agentPodOf(null)).toBeNull();
+    expect(agentPodOf(42)).toBeNull();
+  });
+
+  it('answers at once on the input the old pattern was slow on', () => {
+    // 'agents:' then many 'u-', then one character outside the class so nothing reaches the end.
+    const hostile = 'agents:' + 'u-'.repeat(200_000) + '!';
+    const started = performance.now();
+    expect(agentPodOf(hostile)).toBeNull();
+    expect(agentPodOf('agents:' + 'u-'.repeat(200_000) + 'x')).toBe(('u-'.repeat(200_000) + 'x'));
+    expect(performance.now() - started).toBeLessThan(1000);
   });
 });

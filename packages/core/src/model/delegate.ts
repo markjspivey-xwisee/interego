@@ -131,11 +131,38 @@ export const AGENT_ID_RX = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"'{}|\\^`]+$/;
  */
 export function agentPodOf(agentId: unknown): string | null {
   if (typeof agentId !== 'string' || !agentId) return null;
-  const m = /agents:[a-z0-9-]*?(u-[a-z0-9-]+)$/i.exec(agentId)
-    ?? /\/users\/([^/]+)\/profile/.exec(agentId);
-  const seg = m?.[1];
+  const seg = podAfterAgents(agentId) ?? /\/users\/([^/]+)\/profile/.exec(agentId)?.[1];
   if (!seg) return null;
   return /[\s<>"{}|\\^`#?/]/.test(seg) ? null : seg.toLowerCase();
+}
+
+/**
+ * The `u-…` pod at the end of `…agents:<surface>-<pod>`, or undefined.
+ *
+ * ★ BY HAND, IN ONE PASS, BECAUSE THE PATTERN IT REPLACES WAS QUADRATIC. This was
+ * `/agents:[a-z0-9-]*?(u-[a-z0-9-]+)$/i`. On an id that does not end in a pod, the engine retries
+ * the lazy prefix from every `u-` it passed, so a long run of `u-u-u-…` followed by one character
+ * outside the class cost time in the square of its length — and an agent id is text somebody else
+ * wrote. The reading is unchanged: the tail after the LAST `agents:` (the class has no `:`, so no
+ * earlier one could reach the end), all of it letters, digits and hyphens, taken from its FIRST
+ * `u-` that has something after it.
+ */
+function podAfterAgents(agentId: string): string | undefined {
+  // Seven characters at a time, not a lowercased copy of the whole id: lowercasing can change a
+  // string's length, and an index into the copy would then point somewhere else in the original.
+  let at = -1;
+  for (let i = agentId.length - 7; i >= 0; i--) {
+    if (agentId.charCodeAt(i + 6) === 58 && agentId.slice(i, i + 7).toLowerCase() === 'agents:') { at = i; break; }
+  }
+  if (at < 0) return undefined;
+  const tail = agentId.slice(at + 'agents:'.length);
+  for (let i = 0; i < tail.length; i++) {
+    const c = tail.charCodeAt(i);
+    const ok = (c >= 48 && c <= 57) || (c >= 65 && c <= 90) || (c >= 97 && c <= 122) || c === 45;
+    if (!ok) return undefined;
+  }
+  const u = tail.toLowerCase().indexOf('u-');
+  return u >= 0 && u + 2 < tail.length ? tail.slice(u) : undefined;
 }
 
 // ── Naming ───────────────────────────────────────────────────

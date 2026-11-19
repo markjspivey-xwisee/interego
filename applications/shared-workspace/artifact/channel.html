@@ -1582,11 +1582,30 @@ var WSPC = (() => {
   function agentPodOf(agentId) {
     if (typeof agentId !== "string" || !agentId)
       return null;
-    const m = /agents:[a-z0-9-]*?(u-[a-z0-9-]+)$/i.exec(agentId) ?? /\/users\/([^/]+)\/profile/.exec(agentId);
-    const seg = m?.[1];
+    const seg = podAfterAgents(agentId) ?? /\/users\/([^/]+)\/profile/.exec(agentId)?.[1];
     if (!seg)
       return null;
     return /[\s<>"{}|\\^`#?/]/.test(seg) ? null : seg.toLowerCase();
+  }
+  function podAfterAgents(agentId) {
+    let at = -1;
+    for (let i = agentId.length - 7; i >= 0; i--) {
+      if (agentId.charCodeAt(i + 6) === 58 && agentId.slice(i, i + 7).toLowerCase() === "agents:") {
+        at = i;
+        break;
+      }
+    }
+    if (at < 0)
+      return void 0;
+    const tail = agentId.slice(at + "agents:".length);
+    for (let i = 0; i < tail.length; i++) {
+      const c = tail.charCodeAt(i);
+      const ok = c >= 48 && c <= 57 || c >= 65 && c <= 90 || c >= 97 && c <= 122 || c === 45;
+      if (!ok)
+        return void 0;
+    }
+    const u = tail.toLowerCase().indexOf("u-");
+    return u >= 0 && u + 2 < tail.length ? tail.slice(u) : void 0;
   }
   var DELEGATE_LABEL_PREFIX = "delegate ";
   var DELEGATE_NAME_MAX = 48;
