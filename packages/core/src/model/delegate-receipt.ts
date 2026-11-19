@@ -25,7 +25,9 @@
  *   1. SIGNATURE — the receipt's exact text was signed by the key bound to the agent it names.
  *   2. STANDING  — that agent is, right now, an unrevoked delegate on the principal's own pod.
  *                  Read from the roster ({@link readDelegates}); the scope is not consulted,
- *                  because standing is not permission to write.
+ *                  because standing is not permission to write. A caller may also require
+ *                  the delegation the principal SIGNED, so standing does not rest on a row
+ *                  alone — see `ownerSigned`.
  *   3. FOOTING   — the receipt says on whose behalf the act was done, and it is the principal
  *                  the reader expected. The two kinds a writer may state are the ones
  *                  `model/delegate.ts` defines; a receipt cannot leave it unsaid.
@@ -255,6 +257,17 @@ export class MemoryReceiptLedger implements ReceiptLedger {
   }
 }
 
+/**
+ * What a check of the principal's signed delegation answered. The fields this module reads from
+ * the result of `verifyDelegation`; any object with them will do.
+ */
+export interface OwnerSignedStanding {
+  readonly valid: boolean;
+  readonly owner?: string;
+  readonly trustLevel?: 'CryptographicallyVerified' | 'SelfAsserted';
+  readonly reason?: string;
+}
+
 /** What admitting a receipt established, one line per question. */
 export interface ReceiptAdmission {
   /** True only when every line is a finding in favour. A `q` never makes this true. */
@@ -296,6 +309,22 @@ export interface AdmitReceiptArgs {
    * null, the binding is not established and the receipt is not admitted.
    */
   readonly resolveAddress?: (agentId: string) => string | null | Promise<string | null>;
+  /**
+   * The delegation the principal SIGNED for this agent, checked by the caller.
+   *
+   * ★ THE ROSTER ROW IS A DOCUMENT; THIS IS A SIGNATURE. Standing is read from a row on the
+   * principal's pod, which only the pod's owner is meant to write. Whoever operates the store or
+   * the relay can write it too, and so can anything holding a write on that pod. A caller that
+   * needs standing to rest on the principal's own key supplies this: typically
+   * `(agentId, pod) => verifyDelegation(agentId, podUrl, fetchProfile, { fetchCredential, verifier })`
+   * from `model/delegation.ts`, whose result has this shape.
+   *
+   * When supplied, admission ALSO requires that it answer valid, cryptographically verified, and
+   * for the expected principal. A throw, or an answer that is none of those, is a refusal or a
+   * "not established" — never a pass. When omitted, standing rests on the row alone and the
+   * standing line says so.
+   */
+  readonly ownerSigned?: (agentId: string, principalPod: string) => Promise<OwnerSignedStanding> | OwnerSignedStanding;
   readonly ledger: ReceiptLedger;
   readonly maxAgeMs?: number;
   readonly maxSkewMs?: number;
@@ -384,7 +413,32 @@ export async function admitDelegateReceipt(args: AdmitReceiptArgs): Promise<Rece
     } else {
       row = found;
       add('y', body.signer + ' is a current delegate of ' + args.expect.principal + ' (scope ' + (found.scope || 'not stated')
-        + ', which is not consulted: standing is not permission to write).');
+        + ', which is not consulted: standing is not permission to write)'
+        + (args.ownerSigned ? '.' : '. This rests on the roster row alone; no signed delegation was asked for.'));
+    }
+  }
+
+  // 2b. STANDING, SIGNED — when the caller asks for it, the principal's own signature on the
+  // delegation, and not only the row that records it.
+  if (args.ownerSigned) {
+    let signed: OwnerSignedStanding | null = null;
+    let failed: string | null = null;
+    try {
+      signed = await args.ownerSigned(body.signer, args.expect.principalPod);
+    } catch (e) {
+      failed = String((e as { message?: unknown })?.message ?? e);
+    }
+    if (failed !== null || !signed || typeof signed !== 'object') {
+      add('q', 'Whether ' + args.expect.principal + ' signed a delegation for ' + body.signer + ' could not be checked'
+        + (failed !== null ? ': ' + failed : '') + '.');
+    } else if (signed.valid !== true) {
+      add('n', 'No valid signed delegation of ' + body.signer + ' was found' + (signed.reason ? ': ' + signed.reason : '') + '.');
+    } else if (signed.trustLevel !== 'CryptographicallyVerified') {
+      add('n', 'The delegation of ' + body.signer + ' is recorded but not signed: it is ' + (signed.trustLevel ?? 'of no stated trust level') + '.');
+    } else if (signed.owner !== args.expect.principal) {
+      add('n', 'The signed delegation of ' + body.signer + ' is from somebody other than ' + args.expect.principal + '.', signed.owner ?? 'it names no owner');
+    } else {
+      add('y', args.expect.principal + ' signed the delegation of ' + body.signer + '.');
     }
   }
 
