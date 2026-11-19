@@ -90,6 +90,14 @@ describe('a delegate signs its own receipt', () => {
     expect(await digestOf('')).toBe(ethers.sha256(ethers.toUtf8Bytes('""')).slice(2));
   });
 
+  it('computes the assignment digest the Factory fixture expects', async () => {
+    // The five-field assignment digest agreed with the standalone Factory, and its golden value.
+    // What the digest covers is the assigner's to define; this pins that the two sides hash the
+    // same bytes to the same value.
+    const assignment = { owner: 'did:example:principal', kind: 'foxxi-source-version.v1', id: 'fixture-1', inputHash: 'a'.repeat(64), assignmentVersion: 1 };
+    expect(await digestOf(assignment)).toBe('7524feaf0cbebc8919fcdfccde86883e1139e5a19b270740ace824ded71a9a7a');
+  });
+
   it('will not write a receipt that leaves its footing unsaid, or carries a field the format does not define', async () => {
     const r = await receipt();
     expect(receiptBodyProblem(r.body)).toBeNull();

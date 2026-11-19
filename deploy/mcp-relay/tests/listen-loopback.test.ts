@@ -214,27 +214,39 @@ async function main(): Promise<void> {
     };
     walk(repoRoot);
 
+    // ★ One suite's `.listen()` is not a socket: the role-play player's speech recogniser is
+    // started with `listen()`, and its suite drives that method on a stub. The allowance is for
+    // THAT, not for the file. It holds only while the file names nothing that can open a socket,
+    // so a server added to it later is scanned like any other, and the fixtures below prove it.
+    const SPEECH_SUITE = 'roleplay-player-voice.test.ts';
+    const CAN_OPEN_A_SOCKET = /['"](?:node:)?(?:http|https|http2|net|tls|dgram)['"]|['"]express['"]|listen-loopback|loopback\.mjs|createServer\s*\(/;
+    const offendersIn = (file: string, raw: string): string[] => {
+      // The path is passed so a .mjs/.cjs file is parsed as JavaScript, not TypeScript.
+      const src = stripComments(raw, file);
+      if (file.endsWith(SPEECH_SUITE) && !CAN_OPEN_A_SOCKET.test(src)) return [];
+      const found: string[] = [];
+      for (const m of src.matchAll(/\.listen\(([^)]*)\)/g)) {
+        // A host argument is the whole point. `listen-loopback.ts` and `tck-sut.ts` both
+        // name it explicitly; anything else is binding the LAN by omission.
+        if (!/['"]127\.0\.0\.1['"]/.test(m[1] ?? '')) found.push(`${file}: .listen(${m[1]})`);
+      }
+      return found;
+    };
     const offenders: string[] = [];
     for (const file of suites) {
       // This file is the one place the unguarded form is called ON PURPOSE, to reproduce
       // the `::` binding rather than assert a claim about it. Exempted by name so the
       // exemption is visible, rather than by a pattern that would quietly cover others.
       if (file.endsWith('listen-loopback.test.ts')) continue;
-      // And one file whose `.listen()` is not a socket at all: the role-play player's speech
-      // recogniser is started with `listen()`, and this suite drives that method on a stub. It
-      // opens no server. Exempted by name, for the same reason as above; a server added to that
-      // file would need this line revisited.
-      if (file.endsWith('roleplay-player-voice.test.ts')) continue;
-      // The path is passed so a .mjs/.cjs file is parsed as JavaScript, not TypeScript.
-      const src = stripComments(readFileSync(file, 'utf8'), file);
-      for (const m of src.matchAll(/\.listen\(([^)]*)\)/g)) {
-        // A host argument is the whole point. `listen-loopback.ts` and `tck-sut.ts` both
-        // name it explicitly; anything else is binding the LAN by omission.
-        if (!/['"]127\.0\.0\.1['"]/.test(m[1] ?? '')) {
-          offenders.push(`${file.slice(repoRoot.length + 1)}: .listen(${m[1]})`);
-        }
-      }
+      offenders.push(...offendersIn(file.slice(repoRoot.length + 1), readFileSync(file, 'utf8')));
     }
+    const speech = 'const p = player();\np.listen();\n';
+    ok(offendersIn('x/' + SPEECH_SUITE, speech).length === 0
+      && offendersIn('x/other.test.ts', speech).length === 1,
+      '★ the speech suite\'s listen() is allowed there and nowhere else');
+    ok(offendersIn('x/' + SPEECH_SUITE, 'import { createServer } from \'node:http\';\n' + speech + 'createServer().listen(0);\n').length === 2
+      && offendersIn('x/' + SPEECH_SUITE, 'import express from \'express\';\nexpress().listen(0);\n').length === 1,
+      '★ …and a server added to the speech suite is scanned like any other');
     // A scan that finds nothing because it LOOKED at nothing is the failure mode this
     // whole guard exists to prevent, so the population is asserted too. The two
     // vertical-bridge suites are outside this directory by construction: if the walk ever
