@@ -153,7 +153,7 @@ import { normalizeCssUrl, assertPublicPodUrl, publicStoreSpelling } from './url-
 import { winnowDiscoverResults } from './discover-winnow.js';
 import { createConformanceGate } from './conformance-gate.js';
 import { mayUseRelayKey } from './relay-key-gate.js';
-import { managedRecipientPublicKeys, managedRecipientKey, openManagedEnvelope, inboxRecipientKey, openInboxEnvelope, storePodName } from './managed-recipient.js';
+import { managedRecipientPublicKeys, managedRecipientKey, openManagedEnvelope, inboxRecipientKey, openInboxEnvelope, storePodName, currentRegistryKeys } from './managed-recipient.js';
 import { ENVELOPE_SHARING_IRI, SHARE_ENVELOPE_ACTION, envelopeSharingResource, recipientGrantUrl, createRecipientGrant, openRecipientGrant, managedGrantRecipientKey, persistRecipientGrants, type RecipientGrant } from './envelope-sharing.js';
 // The /ns dereference surface — ~540 lines of route + projection logic that could not be
 // imported (and so could not be unit-tested) while it sat in this file. It carries the
@@ -8721,6 +8721,8 @@ function resolveTargetPodUrl(
  * user's inbox and read back there. So that key is dropped from the registry's list, and a pod
  * this relay cannot name is not sealed for at all — the delivery is refused, not written clear.
  *
+ * A registry row is a recipient only while it is in force: unrevoked, begun, and not ended.
+ *
  * A registry that cannot be read costs the extra recipients and nothing else.
  */
 async function notificationSealFor(internalPodUrl: string): Promise<(notif: Readonly<Record<string, unknown>>) => Record<string, unknown>> {
@@ -8728,9 +8730,8 @@ async function notificationSealFor(internalPodUrl: string): Promise<(notif: Read
   const keys = podName ? [inboxRecipientKey(relayAgentKey, podName).publicKey] : [];
   try {
     const profile = await readAgentRegistry(internalPodUrl, { fetch: solidFetch });
-    for (const a of profile?.authorizedAgents ?? []) {
-      if (!a.revoked && a.encryptionPublicKey && a.encryptionPublicKey !== relayAgentKey.publicKey) keys.push(a.encryptionPublicKey);
-    }
+    // Only rows in force now: unrevoked, begun, and not ended. See currentRegistryKeys.
+    keys.push(...currentRegistryKeys(profile?.authorizedAgents ?? [], new Date(), relayAgentKey.publicKey));
   } catch (err) {
     log(`[agent-mesh] the registry of ${internalPodUrl} could not be read (${(err as Error).message}); sealing to the pod's inbox key only`);
   }

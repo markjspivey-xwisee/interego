@@ -679,6 +679,30 @@ async function main(): Promise<void> {
       }
     }
 
+    // ── A notification through the booted relay: sealed in the store, read back by its owner ──
+    //
+    // Last, so the fifty fixture notifications the sections above count are not disturbed. This
+    // is the one check that runs the whole path in a real relay process: the handler chooses the
+    // recipient keys, the bytes land in the store, and `read_inbox` opens them with the key it
+    // derives for the authenticated caller's own pod.
+    console.log('\nA notification sent through the relay is stored sealed and read back by its owner');
+    {
+      const SUMMARY = 'roundtrip-summary-7f3a';
+      const BODY = 'roundtrip-body-91c2 that must not sit in the store in the clear';
+      const sent = sc(await call('notify_agent', { to: `${pod.base}/${USER_ID}/`, summary: SUMMARY, content: BODY }));
+      const written = [...stored.entries()].find(([k]) => k.startsWith(`/${USER_ID}/inbox/`) && !/\/n-\d{3}\.jsonld$/.test(k));
+      const raw = written?.[1].body ?? '';
+      ok(sent['delivered'] === true && written !== undefined, 'the relay delivered it into the inbox', JSON.stringify(sent).slice(0, 300));
+      ok(raw.includes('iep:EncryptedValue') && !raw.includes(SUMMARY) && !raw.includes('roundtrip-body-91c2'),
+        '★ what the store holds is an envelope: neither the summary nor the body is in its bytes', raw.slice(0, 200));
+      const back = sc(await call('read_inbox', { limit: 5 }));
+      const items = (back['items'] ?? []) as unknown as Array<Record<string, unknown>>;
+      const mine = items.find(i => i['summary'] === SUMMARY);
+      ok(mine !== undefined && mine['content'] === BODY && typeof mine['actor'] === 'string',
+        '★ and its owner reads it back through read_inbox with its summary, body and sender',
+        JSON.stringify(items.map(i => i['summary'])).slice(0, 300));
+    }
+
     for (const [k, v] of Object.entries(sizes)) console.log(`  ${k.padEnd(26)} ${JSON.stringify(v)}`);
     const out = process.env['RELAY_RESULT_SIZES_OUT'];
     if (out) writeFileSync(out, JSON.stringify(sizes, null, 2));
