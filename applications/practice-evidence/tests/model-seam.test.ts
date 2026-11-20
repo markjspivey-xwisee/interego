@@ -9,8 +9,8 @@ import { fileURLToPath } from 'node:url';
 import { dirname, join } from 'node:path';
 import { importWallet, sha256 } from '@interego/core';
 import {
-  anthropicTextModel, disclosureOf, resolveTextModel, scriptedTextModel, TextModelCallFailed,
-  ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL, type TextModel, type TextModelRequest,
+  anthropicTextModel, disclosureOf, openAiTextModel, resolveTextModel, scriptedTextModel, TextModelCallFailed,
+  ANTHROPIC_API_VERSION, ANTHROPIC_MESSAGES_URL, OPENAI_RESPONSES_URL, type TextModel, type TextModelRequest,
 } from '../src/model.js';
 import { createPevHandlers, type PevDeps } from '../bridge/handlers.js';
 import { demoScenarioInput, inMemoryPod } from '../demo/run.js';
@@ -58,6 +58,140 @@ async function failure(p: Promise<unknown>): Promise<TextModelCallFailed> {
   }
   throw new Error('expected the call to fail');
 }
+
+/** A Responses API answer, in the shape OpenAI's reference gave on 2026-11-20. */
+const okOpenAi = (over: Record<string, unknown> = {}): Response => new Response(JSON.stringify({
+  id: 'resp_1', object: 'response', status: 'completed', incomplete_details: null, error: null, model: 'gpt-test-2026-10-01',
+  output: [{ type: 'message', id: 'msg_1', status: 'completed', role: 'assistant', content: [{ type: 'output_text', text: 'Fine.', annotations: [] }] }],
+  usage: { input_tokens: 12, input_tokens_details: { cached_tokens: 0 }, output_tokens: 3, output_tokens_details: { reasoning_tokens: 0 }, total_tokens: 15 }, ...over,
+}), { status: 200, headers: { 'content-type': 'application/json' } });
+
+describe('the OpenAI Responses request', () => {
+  const model = (fetchImpl: typeof fetch, o: { retryBaseMs?: number } = {}): TextModel => openAiTextModel({ apiKey: KEY, model: 'gpt-test', keySource: 'bridge-env', fetchImpl, ...o });
+
+  it('POSTs exactly model, instructions, input, max_output_tokens and store: false, with the key as a Bearer and a JSON type', async () => {
+    const { fetchImpl, calls } = fakeProvider(() => okOpenAi());
+    await model(fetchImpl).complete({ ...REQ, messages: [{ role: 'user', content: 'Hello.' }, { role: 'assistant', content: 'Hi.' }, { role: 'user', content: 'About Thursday.' }] });
+    expect(calls).toHaveLength(1);
+    const c = calls[0]!;
+    expect(c.url).toBe(OPENAI_RESPONSES_URL);
+    expect(OPENAI_RESPONSES_URL).toBe('https://api.openai.com/v1/responses');
+    expect(c.init.method).toBe('POST');
+    const headers = new Headers(c.init.headers);
+    expect(headers.get('authorization')).toBe(`Bearer ${KEY}`);
+    expect(headers.get('content-type')).toBe('application/json');
+    // Nothing of the other provider's goes with it.
+    expect([headers.get('x-api-key'), headers.get('anthropic-version')]).toEqual([null, null]);
+    expect(c.body).toEqual({
+      model: 'gpt-test', instructions: 'You speak as Sam.', max_output_tokens: 200, store: false,
+      input: [{ role: 'user', content: 'Hello.' }, { role: 'assistant', content: 'Hi.' }, { role: 'user', content: 'About Thursday.' }],
+    });
+    for (const k of ['temperature', 'top_p', 'reasoning', 'tools', 'tool_choice', 'previous_response_id', 'stream', 'background', 'fallbacks']) expect(c.body).not.toHaveProperty(k);
+  });
+
+  it('reads the text of message items only, the model the provider returned, measured usage, and is disclosed as openai', async () => {
+    const { fetchImpl } = fakeProvider(() => okOpenAi({ output: [
+      { type: 'reasoning', id: 'rs_1', summary: [{ type: 'summary_text', text: 'internal' }] },
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'First.' }, { type: 'refusal', refusal: 'not this part' }, { type: 'output_text', text: 'Second.' }] },
+      { type: 'function_call', name: 'x', arguments: '{}' }, null, 'text',
+      { type: 'message', role: 'assistant', content: [{ type: 'output_text', text: 'Third.' }] },
+    ] }));
+    const m = model(fetchImpl);
+    const r = await m.complete(REQ);
+    expect(r.text).toBe('First.\nSecond.\nThird.');
+    expect([r.model, m.requestedModel, m.provider, m.route]).toEqual(['gpt-test-2026-10-01', 'gpt-test', 'openai', 'bridge-model']);
+    expect(r.usage).toEqual({ inputTokens: 12, outputTokens: 3 });
+    expect([r.stopReason, r.stopCategory]).toEqual(['completed', null]);
+    expect(disclosureOf(m, r, 'h'.repeat(64))).toMatchObject({ provider: 'openai', model: 'gpt-test-2026-10-01', requestedModel: 'gpt-test', keySource: 'bridge-env', route: 'bridge-model', promptTemplateHash: 'h'.repeat(64), stopReason: 'completed' });
+    const unmeasured = await model(fakeProvider(() => okOpenAi({ usage: { input_tokens: 5 } })).fetchImpl).complete(REQ);
+    expect(unmeasured.usage).toBeUndefined();
+  });
+
+  it('says how the call stopped in the words the handlers act on', async () => {
+    const stop = async (over: Record<string, unknown>): Promise<(string | null | undefined)[]> => {
+      const r = await model(fakeProvider(() => okOpenAi(over)).fetchImpl).complete(REQ);
+      return [r.stopReason, r.stopCategory, r.text];
+    };
+    // Cut off at the cap, which counts reasoning as well as the answer: there may be no text at all.
+    expect(await stop({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' }, output: [] })).toEqual(['max_tokens', null, '']);
+    expect(await stop({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } })).toEqual(['max_tokens', null, 'Fine.']);
+    // Filtered by the provider, or declined by the model with nothing else said.
+    expect(await stop({ status: 'incomplete', incomplete_details: { reason: 'content_filter' }, output: [] })).toEqual(['refusal', 'content_filter', '']);
+    expect(await stop({ output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'I cannot help with that.' }] }] })).toEqual(['refusal', null, '']);
+    // A refusal part beside an answer is not a refusal of the answer.
+    expect(await stop({ output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'x' }, { type: 'output_text', text: 'Fine.' }] }] })).toEqual(['completed', null, 'Fine.']);
+    // A message item that says it is unfinished is not part of the answer; one that says nothing of itself is.
+    expect(await stop({ output: [{ type: 'message', status: 'incomplete', content: [{ type: 'output_text', text: 'Half a' }] }, { type: 'message', status: 'completed', content: [{ type: 'output_text', text: 'Whole.' }] }, { type: 'message', content: [{ type: 'output_text', text: 'Unmarked.' }] }] })).toEqual(['completed', null, 'Whole.\nUnmarked.']);
+  });
+
+  it('takes no text from a response that is not completed, whatever text came with it', async () => {
+    // A 200 whose body says the response failed, was cancelled, is not finished, or says nothing of its state.
+    const not: [Record<string, unknown>, string][] = [
+      [{ status: 'failed', error: { code: 'server_error', message: `boom ${KEY}` } }, 'failed'],
+      [{ status: 'cancelled' }, 'cancelled'],
+      [{ status: 'in_progress' }, 'in_progress'],
+      [{ status: 'queued' }, 'queued'],
+      [{ status: 'incomplete', incomplete_details: { reason: 'max_messages' } }, 'incomplete'],
+      [{ status: 'incomplete', incomplete_details: { reason: 'steered' } }, 'incomplete'],
+      [{ status: 'incomplete', incomplete_details: null }, 'incomplete'],
+      [{ status: 'some-new-state' }, 'not one this bridge knows'],
+      [{ status: undefined }, 'in no stated state'],
+      [{ status: 7 }, 'in no stated state'],
+    ];
+    for (const [over, said] of not) {
+      const p = fakeProvider(() => okOpenAi(over));
+      const e = await failure(model(p.fetchImpl, { retryBaseMs: 1 }).complete(REQ));
+      expect([e.message, e.providerErrorType, e.status, e.timedOut], JSON.stringify(over)).toEqual([`OpenAI Responses API: the response is ${said}, not completed`, 'response-not-completed', null, false]);
+      // Not retried: the provider answered, and its answer is that there is none.
+      expect(p.calls).toHaveLength(1);
+      expect(JSON.stringify([e.message, e.providerMessage])).not.toContain(KEY);
+    }
+  });
+
+  it('fails as a call to OpenAI: the status and type, a 429\'s wait, a 5xx retried and a 4xx not, and never the key', async () => {
+    const oaError = (status: number, type: string, message: string, headers: Record<string, string> = {}): Response =>
+      new Response(JSON.stringify({ error: { message, type, param: null, code: null } }), { status, headers: { 'content-type': 'application/json', ...headers } });
+    const bad = fakeProvider(() => oaError(401, 'invalid_request_error', `Incorrect API key provided: ${KEY}`));
+    const e = await failure(model(bad.fetchImpl).complete(REQ));
+    expect([e.status, e.providerErrorType, e.message, bad.calls.length]).toEqual([401, 'invalid_request_error', 'OpenAI Responses API answered 401 (invalid_request_error)', 1]);
+    expect(e.providerMessage).toBe('Incorrect API key provided: [key]');
+    const limited = await failure(model(fakeProvider(() => oaError(429, 'rate_limit_exceeded', 'slow down', { 'retry-after': '7' })).fetchImpl).complete(REQ));
+    expect([limited.status, limited.retryAfterSeconds]).toEqual([429, 7]);
+    const flaky = fakeProvider((n) => (n < 3 ? oaError(503, 'server_error', 'overloaded') : okOpenAi()));
+    expect((await model(flaky.fetchImpl, { retryBaseMs: 1 }).complete(REQ)).text).toBe('Fine.');
+    expect(flaky.calls).toHaveLength(3);
+    const down = fakeProvider(() => oaError(500, 'server_error', 'boom'));
+    const d = await failure(model(down.fetchImpl, { retryBaseMs: 1 }).complete(REQ));
+    expect([d.status, d.message, down.calls.length]).toEqual([500, 'OpenAI Responses API: HTTP 500 server_error', 3]);
+    const hung = await failure(model(fakeProvider(() => 'never').fetchImpl).complete({ ...REQ, timeoutMs: 40 }));
+    expect([hung.timedOut, hung.message]).toEqual([true, 'OpenAI Responses API: no answer within 40 ms']);
+    const noModel = await failure(model(fakeProvider(() => okOpenAi({ model: '' })).fetchImpl).complete(REQ));
+    expect(noModel.providerErrorType).toBe('response-shape');
+    const notJson = await failure(model(fakeProvider(() => new Response('<html>', { status: 200 })).fetchImpl).complete(REQ));
+    expect(notJson.message).toBe('the provider answered with a body that is not JSON');
+    for (const x of [e, limited, d, hung]) expect(JSON.stringify([x.message, x.providerMessage])).not.toContain(KEY);
+  });
+
+  it('is the bridge\'s model only where the operator names the provider, and a key for one provider is not sent to the other', () => {
+    const server = readFileSync(join(dirname(fileURLToPath(import.meta.url)), '..', 'bridge', 'server.ts'), 'utf8');
+    expect(server).toContain("const llmProvider = env('PEV_LLM_PROVIDER') ?? 'anthropic';");
+    // Anything but the two names stops the bridge: the provider is not guessed.
+    expect(server).toMatch(/if \(llmProvider !== 'anthropic' && llmProvider !== 'openai'\) \{\n\s+warn\([^\n]+\n\s+process\.exitCode = 1;\n\s+return;/);
+    expect(server).toContain("const llmKey = env('PEV_LLM_API_KEY') ?? (llmProvider === 'anthropic' ? env('ANTHROPIC_API_KEY') : undefined);");
+    expect(server).toContain("? (llmProvider === 'openai' ? openAiTextModel : anthropicTextModel)({ apiKey: llmKey, model: llmModel, keySource: 'bridge-env' }) : undefined;");
+    // The speech key is the speech service's: the model route does not fall back to it.
+    expect(server.match(/PEV_VOICE_OPENAI_API_KEY'\)/g)).toHaveLength(1);
+  });
+
+  it('leaves a per-request key with Anthropic', async () => {
+    const byok = fakeProvider(() => ok());
+    const got = resolveTextModel(undefined, { llm_api_key: KEY, llm_model: 'claude-test' }, byok.fetchImpl);
+    if (!('model' in got)) throw new Error('expected a model');
+    expect(got.model.provider).toBe('anthropic');
+    await got.model.complete(REQ);
+    expect(byok.calls[0]!.url).toBe(ANTHROPIC_MESSAGES_URL);
+  });
+});
 
 describe('the Anthropic Messages request', () => {
   it('POSTs exactly model, max_tokens, system and messages, with the key, the API version and a JSON type', async () => {
@@ -295,6 +429,38 @@ describe('a model failure reaches the caller as a status, and nothing is recorde
     expect(declined['category']).toBe('cyber');
     refusedWith(await say({ model: bridgeModel(() => ok({ stop_reason: 'max_tokens' })) }), 502, 'model-output-cut-off');
     refusedWith(await say({ model: bridgeModel(() => providerError(500, 'api_error', 'boom')) }), 502, 'model-unreachable');
+    expect(snapshot()).toBe(before);
+  }, 60_000);
+
+  it('maps the same failures the same way when the bridge\'s model is OpenAI\'s, and an exhausted quota as billing', async () => {
+    const before = snapshot();
+    const openAi = (answer: (n: number) => Response | 'never'): TextModel =>
+      openAiTextModel({ apiKey: KEY, model: 'claude-test', keySource: 'bridge-env', fetchImpl: fakeProvider(answer).fetchImpl, retryBaseMs: 1 });
+    const oaError = (status: number, type: string, headers: Record<string, string> = {}): Response =>
+      new Response(JSON.stringify({ error: { message: `no: ${KEY}`, type, param: null, code: type } }), { status, headers });
+    refusedWith(await say({ model: openAi(() => oaError(401, 'invalid_request_error')) }), 503, 'bridge-model-key-not-accepted');
+    const limited = await say({ model: openAi(() => oaError(429, 'rate_limit_exceeded', { 'retry-after': '4' })) });
+    refusedWith(limited, 503, 'model-rate-limited');
+    expect(limited['retryAfterSeconds']).toBe(4);
+    const spent = await say({ model: openAi(() => oaError(429, 'insufficient_quota')) });
+    refusedWith(spent, 503, 'model-billing');
+    expect(spent['providerErrorType']).toBe('insufficient_quota');
+    refusedWith(await say({ model: openAi(() => oaError(404, 'invalid_request_error')) }), 503, 'bridge-model-misconfigured');
+    refusedWith(await say({ model: openAi(() => oaError(500, 'server_error')) }), 502, 'model-unreachable');
+    const declined = await say({ model: openAi(() => okOpenAi({ status: 'incomplete', incomplete_details: { reason: 'content_filter' }, output: [] })) });
+    refusedWith(declined, 502, 'model-declined');
+    expect(declined['category']).toBe('content_filter');
+    refusedWith(await say({ model: openAi(() => okOpenAi({ status: 'incomplete', incomplete_details: { reason: 'max_output_tokens' } })) }), 502, 'model-output-cut-off');
+    const empty = await say({ model: openAi(() => okOpenAi({ output: [{ type: 'reasoning', id: 'rs_1', summary: [] }] })) });
+    refusedWith(empty, 502, 'model-output-empty');
+    expect(empty['disclosure']).toMatchObject({ provider: 'openai', model: 'gpt-test-2026-10-01', requestedModel: 'claude-test' });
+    // A response that is not completed is no line, however usable the text in it looks: nothing is written.
+    for (const over of [{ status: 'failed', error: { code: 'server_error' } }, { status: 'cancelled' }, { status: 'in_progress' }, { status: 'incomplete', incomplete_details: { reason: 'max_messages' } }, { status: undefined }]) {
+      const r = await say({ model: openAi(() => okOpenAi({ ...over, output: [{ type: 'message', content: [{ type: 'output_text', text: 'A perfectly usable line.' }] }] })) });
+      refusedWith(r, 502, 'model-unreachable');
+      expect(r['providerErrorType']).toBe('response-not-completed');
+      expect(JSON.stringify(r)).not.toContain('A perfectly usable line.');
+    }
     expect(snapshot()).toBe(before);
   }, 60_000);
 

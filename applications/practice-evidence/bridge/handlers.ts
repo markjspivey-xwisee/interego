@@ -1351,7 +1351,8 @@ function modelFailure(e: unknown, model: TextModel, t: Timeouts): Declined {
       ? decline(400, 'The provider did not accept the key sent with this request; nothing was recorded.', 'byok-key-not-accepted', undefined, extra())
       : decline(503, 'The provider did not accept this bridge\'s model key; the operator sets PEV_LLM_API_KEY.', 'bridge-model-key-not-accepted', { env: 'PEV_LLM_API_KEY' }, extra());
   }
-  if (s === 402) return decline(503, 'The model provider reports a billing problem on this key; nothing was recorded.', 'model-billing', undefined, extra(provider));
+  // OpenAI says an exhausted quota as a 429 of this type; waiting does not mend it, so it is not a rate limit.
+  if (s === 402 || (s === 429 && e.providerErrorType === 'insufficient_quota')) return decline(503, 'The model provider reports a billing problem on this key; nothing was recorded.', 'model-billing', undefined, extra(provider));
   if (s === 429) {
     return decline(503, 'The model provider is rate-limiting this key; try again later.', 'model-rate-limited', undefined, extra({ retryAfterSeconds: e.retryAfterSeconds }));
   }
