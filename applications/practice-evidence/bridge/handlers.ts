@@ -2283,7 +2283,11 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
     const disclosure: InferenceDisclosure = {
       provider: 'assignable-unit', model: c.launch.activityId, keySource: 'none', route: 'scripted', promptTemplateHash: LAUNCHED_JUDGMENT_TEMPLATE_HASH,
     };
-    const j = assembleJudgment(spec, turns, {
+    // A unit that sent no score has judged nothing. Its conversation is taken as ended, and waits
+    // for a judgment the way one held on this bridge does (pev.judge_attempt, or a registered
+    // judge's packet); no judgment is made up for it here.
+    const scored = c.scores.length > 0;
+    const j = !scored ? null : assembleJudgment(spec, turns, {
       criteria: c.scores.map((sc) => ({
         criterionId: sc.criterionId, level: sc.levelId, quotes: [],
         rationale: sc.note ?? `Scored ${sc.raw} by the assignable unit, which gave no note and no quote (statement ${sc.statementId}).`,
@@ -2295,7 +2299,7 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
     });
     const body: AttemptBody = {
       v: 1, kind: 'attempt', podUrl: s.pod, keyKind: ctx.deps.platformKeyKind, platformSigner: ctx.platform.address, at,
-      attemptIri: iri, state: 'judged', evidenceKind: 'practice',
+      attemptIri: iri, state: j ? 'judged' : 'ended', evidenceKind: 'practice',
       scenario: {
         scenarioIri: sIri, version: sb.version, scenarioHash: sb.scenarioHash, rubricHash: sb.rubricHash,
         descriptorUrl: h.rec.descriptorUrl, title: spec.title, statusAtStart: sb.status,
@@ -2304,7 +2308,7 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
       learner: { ...s.actor, kind: roles.of(s.signer).has('agent') ? 'agent' : 'person' },
       attemptNumber: n, coached: s.payload['coached'] === true, authorTest: isAuthor,
       startedAt: c.startedAt, endedAt: c.endedAt, endedBy: 'learner', turns, counterpartControlledBy: counterpartControl(turns), transcriptHash: tHash,
-      judgments: [j], reviews: [], reopenings: [],
+      judgments: j ? [j] : [], reviews: [], reopenings: [],
       lmsLaunch: { ...c.launch, unitSent: c.unitSent, launchModeFrom: c.launchModeFrom, statementIds: c.statementIds },
       startEnvelope: s.stored, acts: [actOf(s, 'importLaunchedAttempt')],
     };
@@ -2315,10 +2319,12 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
       assessmentUse: spec.assessmentUse, rubricRatified: sb.status === 'ratified', scenario: body.scenario,
       registration: c.launch.registration, lmsSessionId: c.launch.sessionId, launchMode: c.launch.launchMode, launchModeFrom: c.launchModeFrom,
       turnsRead: turns.length, statementsRead: c.statementIds.length, counterpartControlledBy: body.counterpartControlledBy,
-      unitJudgment: { judgeId, route: 'scripted', criteria: j.criteria.length, unverifiedCriteria: j.unverifiedCriteria },
+      ...(j ? { unitJudgment: { judgeId, route: 'scripted', criteria: j.criteria.length, unverifiedCriteria: j.unverifiedCriteria } } : { unitJudgment: null }),
       taken: {
         fromLrs: li.endpoint,
-        onTrust: 'The lines and the scores are what the LRS returned for the registration; the other person\'s lines and the scores are the assignable unit\'s own. A reviewer decides every level.',
+        onTrust: j
+          ? 'The lines and the scores are what the LRS returned for the registration; the other person\'s lines and the scores are the assignable unit\'s own. A reviewer decides every level.'
+          : 'The lines are what the LRS returned for the registration; the other person\'s lines are the assignable unit\'s own. The unit sent no score, so the conversation is taken as ended and is not judged yet: a judgment is asked for as for any ended attempt, and a reviewer then decides every level.',
       },
       nextActions: nextFor(ctx, body, s, roles.of(s.signer), false, stakes), recorded: true,
     };
