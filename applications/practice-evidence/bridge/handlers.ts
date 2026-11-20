@@ -88,6 +88,7 @@ import {
   buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, CMI5_SESSION_EXT, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
   type ProjectionFormat,
 } from '../src/projections.js';
+import { voiceCallInstructions, VOICE_CALL_PROMPT_TEMPLATE_HASH, type VoiceService } from '../src/voice-call.js';
 import { launchNotVerified, readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary, type LmsAuthority, launchedActorIsSigner } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
@@ -190,7 +191,13 @@ export interface PevDeps {
    */
   readonly bridgeModelFor?: 'anyone' | 'registered';
   /** Per-hour limits held in this process: model calls on the operator's key, and attempts started. */
-  readonly budgets?: { readonly modelCallsPerHour?: HourlyLimit; readonly attemptsPerHour?: HourlyLimit };
+  readonly budgets?: { readonly modelCallsPerHour?: HourlyLimit; readonly attemptsPerHour?: HourlyLimit; readonly voiceCallsPerHour?: HourlyLimit };
+  /**
+   * The realtime speech service a live call is placed with (pev.live_call_session). Absent: the
+   * act is refused with 501. server.ts reads PEV_VOICE_OPENAI_API_KEY, PEV_VOICE_MODEL,
+   * PEV_VOICE_NAME and PEV_VOICE_TRANSCRIPTION_MODEL, all four or none.
+   */
+  readonly voice?: VoiceService;
   /**
    * How long a record read from the pod and found trusted where it sits is reused by later acts
    * without reading it again (ms, default RECORD_CACHE_TTL_MS; 0 reuses nothing). Where it sits is
@@ -247,10 +254,17 @@ export interface LaunchImport {
 
 /** A per-hour limit for one signer and for everyone together. */
 export interface HourlyLimit { readonly perSigner: number; readonly total: number }
-export const DEFAULT_BUDGETS: { readonly modelCallsPerHour: HourlyLimit; readonly attemptsPerHour: HourlyLimit } = {
+export const DEFAULT_BUDGETS: { readonly modelCallsPerHour: HourlyLimit; readonly attemptsPerHour: HourlyLimit; readonly voiceCallsPerHour: HourlyLimit } = {
   modelCallsPerHour: { perSigner: 120, total: 2000 },
   attemptsPerHour: { perSigner: 20, total: 500 },
+  // Live calls opened on the operator's speech key. Here "per signer" is per registration: the LMS
+  // signs for every learner, so its own address would be one count for all of them.
+  voiceCallsPerHour: { perSigner: 4, total: 60 },
 };
+/** How long a call credential may be used to start a call (seconds). The call itself outlives it. */
+export const VOICE_CREDENTIAL_SECONDS = 120;
+/** The most the speech model may say in one reply (tokens). A customer on a call speaks briefly. */
+export const VOICE_REPLY_MAX_TOKENS = 600;
 
 const HOUR_MS = 3_600_000;
 
@@ -392,6 +406,7 @@ interface Ctx {
   readonly served: readonly string[] | null;
   readonly modelBudget: HourlyBudget;
   readonly attemptBudget: HourlyBudget;
+  readonly voiceBudget: HourlyBudget;
   readonly ledger: NonceLedger;
   readonly maxAgeMs: number;
   readonly lock: <T>(key: string, fn: () => Promise<T>) => Promise<T>;
@@ -524,6 +539,7 @@ function makeContext(deps: PevDeps): Ctx {
     served,
     modelBudget: new HourlyBudget(deps.budgets?.modelCallsPerHour ?? DEFAULT_BUDGETS.modelCallsPerHour),
     attemptBudget: new HourlyBudget(deps.budgets?.attemptsPerHour ?? DEFAULT_BUDGETS.attemptsPerHour),
+    voiceBudget: new HourlyBudget(deps.budgets?.voiceCallsPerHour ?? DEFAULT_BUDGETS.voiceCallsPerHour),
     ledger: new NonceLedger(2 * maxAgeMs),
     maxAgeMs,
     lock: createGraphLocks(),
@@ -3240,6 +3256,92 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
  * same result fixed again for that session, provided the LRS shows the first session ended with
  * none of them in it. Only the session changes; the ids, the verbs, the score and the time do not.
  */
+/**
+ * Opens a live voice call for a unit an LMS launched (pev.live_call_session).
+ *
+ * The learner in a launched unit holds a cmi5 credential and no key this bridge can check. The LMS
+ * that issued the credential can check it, so the LMS asks, signing as itself, and vouches for the
+ * registration and the session; that is the same footing as pev.launched_statements by
+ * registration. What this bridge adds is the two things only it has: what the scenario version
+ * says the other person is like, and the operator's key for the speech service.
+ *
+ * It writes nothing. A call that is opened and never held leaves no record here. The exchanges of
+ * a call that is held are the unit's to write to the learning record, and are taken afterwards
+ * with pev.import_launched_attempt.
+ */
+async function liveCallSession(call: Call, args: Record<string, unknown>): Promise<Out> {
+  const { ctx } = call;
+  const voice = ctx.deps.voice;
+  const li = ctx.deps.launchImport;
+  if (!voice) throw decline(501, 'This bridge has no speech service configured; a live call cannot be opened here.', 'voice-not-configured');
+  if (!li) throw decline(501, 'This bridge is not set up to take attempts from an LMS, so it opens no call for one.', 'launch-import-not-configured');
+  const s = await signedAct(call, args, 'liveCallSession', {
+    checks: (p) => {
+      needText(p, 'scenarioIri', 200);
+      needInt(p, 'scenarioVersion', 1, 1_000_000);
+      if (!REGISTRATION_UUID.test(needText(p, 'registration', 36))) throw decline(400, 'registration must be the UUID the LMS issued.', 'registration-not-a-uuid');
+      needText(p, 'sessionId', 200);
+    },
+  });
+  const roles = (await rolesOn(call, s.pod)).of(s.signer);
+  // Registered with the role by an admin, and bound to an issuer by the operator. Either without the other speaks for nobody.
+  if (!roles.has('lms') || roles.has('agent')) throw decline(403, 'Only the LMS that launched a unit opens a live call for it.', 'not-the-lms');
+  const issuer = li.lmsIssuers ? Object.entries(li.lmsIssuers).find(([principal]) => principalKey(principal) === principalKey(s.signer))?.[1] : undefined;
+  if (issuer === undefined) throw decline(403, 'This principal holds the role lms, and this bridge is not told which LMS it speaks for.', 'lms-issuer-unbound');
+
+  const sIri = String(s.payload['scenarioIri']);
+  const h = await scenarioHead(call, s.pod, sIri);
+  if (!h) throw decline(404, 'No scenario with this IRI is on this pod.', 'scenario-not-found');
+  const sb = h.body;
+  if (s.payload['scenarioVersion'] !== sb.version) {
+    throw decline(409, `The scenario is now at version ${sb.version}; read the scenario again.`, 'scenario-revised', undefined, { currentVersion: sb.version });
+  }
+  if (sb.status === 'draft') throw decline(409, 'This scenario is a draft; learners practise published versions only.', 'scenario-not-published');
+  const spec = sb.scenario;
+
+  // A registration holds one conversation. One already taken as an attempt has had its call.
+  const registration = String(s.payload['registration']).toLowerCase();
+  const every = await attemptBodies(call, s.pod, 'whether this registration was already taken');
+  if (every.bodies.some((b) => b.lmsLaunch !== undefined && b.lmsLaunch.registration.toLowerCase() === registration && b.lmsLaunch.endpoint === li.endpoint)) {
+    throw decline(409, 'This registration was already taken as an attempt; it holds one conversation.', 'registration-already-imported');
+  }
+  if (!every.complete) {
+    throw decline(503, 'Not every attempt on this pod could be read, so this bridge cannot tell whether the registration was already taken; no call was opened.', 'registration-use-unknown', undefined, every.limit);
+  }
+  const taken = ctx.voiceBudget.take(`registration:${registration}`, ctx.now().getTime());
+  if (!taken.ok) {
+    throw decline(429,
+      taken.scope === 'signer'
+        ? `${ctx.voiceBudget.limit.perSigner} calls have been opened for this registration in the last hour; try again in ${taken.retryAfterSeconds} s.`
+        : `${ctx.voiceBudget.limit.total} calls have been opened on this bridge in the last hour; try again in ${taken.retryAfterSeconds} s.`,
+      'voice-budget-spent', undefined, { scope: taken.scope === 'signer' ? 'registration' : 'total', retryAfterSeconds: taken.retryAfterSeconds });
+  }
+  // The speech service is told who the call is for only as a digest: it can tell two calls of one
+  // registration apart from two registrations, and learns no registration and no learner.
+  const opened = await voice.open({
+    instructions: voiceCallInstructions(spec), language: spec.language, safetyId: sha256(`${issuer}|${registration}`).slice(0, 32),
+    expiresInSeconds: VOICE_CREDENTIAL_SECONDS, maxOutputTokens: VOICE_REPLY_MAX_TOKENS,
+  });
+  if (!opened.ok) {
+    throw decline(502, 'The speech service did not open a call; nothing was recorded and the call can be asked for again.', opened.reason === 'unreachable' ? 'voice-service-unreachable' : 'voice-service-refused',
+      undefined, { ...(opened.status !== undefined ? { serviceStatus: opened.status } : {}) });
+  }
+  return {
+    registration, sessionId: String(s.payload['sessionId']),
+    scenario: { scenarioIri: sIri, version: sb.version, title: spec.title, statusAtStart: sb.status },
+    // What the unit needs to carry the call and to say truthfully what the learner is talking to.
+    call: {
+      provider: voice.provider, model: voice.model, voice: voice.voice, transcriptionModel: voice.transcriptionModel,
+      connect: voice.connect, credential: opened.credential,
+      counterpartName: spec.counterpart.name, firstLine: spec.firstLine, language: spec.language, turnLimit: spec.turnLimit,
+      promptTemplateHash: VOICE_CALL_PROMPT_TEMPLATE_HASH,
+    },
+    disclosure: 'The other person on this call is an AI speech model, not a person. What you say is transcribed by a second model, and that text, with the model\'s own words, is what is saved and later judged. No audio is kept by this bridge.',
+    recorded: false,
+    note: 'Nothing was recorded. The unit writes each exchange of the call to the learning record and ends its session; the learner then takes the registration with pev.import_launched_attempt, unscored, to be judged and reviewed.',
+  };
+}
+
 async function launchedStatementsAct(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
   const s = await signedAct(call, args, 'launchedStatements', {
@@ -3773,6 +3875,7 @@ export function createPevHandlers(deps: PevDeps): Record<string, AffordanceHandl
     'pev.scenario_results': run(scenarioResultsAct),
     'pev.project_attempt': run(projectAttempt),
     'pev.launched_statements': run(launchedStatementsAct),
+    'pev.live_call_session': run(liveCallSession),
     'pev.holder_copy': run(holderCopy),
     'pev.export_record': run(exportRecord),
     'pev.redact_attempt': run(redactAttempt),
