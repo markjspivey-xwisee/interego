@@ -487,6 +487,7 @@ import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keep
 import type { StoredStatement } from '../src/statement-store.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
+import { attachLiveCallRoute, liveCallServiceAsk } from '../src/cmi5-live-call.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
 import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, takenDownPackages, type PackageAbout, cmi5PackageUnits } from '../src/scorm-hosting.js';
@@ -11717,6 +11718,39 @@ attachReviewedStatementsRoute(app, {
   session: cmi5BearerSession,
   ...(reviewAsk ? { ask: reviewAsk } : {}),
   limiter: forwardedRateLimit({ windowMs: 60_000, limit: 30, identifier: 'cmi5-reviewed' }),
+});
+
+// ── A live voice call for a launched activity (src/cmi5-live-call.ts) ─────────────────────────────
+//
+// An activity that is a conversation by voice asks here, with its cmi5 credential, for a call. This
+// LMS asks the practice service, signing with its own key; the practice service holds the speech
+// service's key and decides what the speech model is told. Where to ask is a setting: all three of
+// FOXXI_LIVE_CALL_URL (the service's act), FOXXI_LIVE_CALL_POD (the pod it keeps its records on)
+// and FOXXI_LIVE_CALL_ACTION (the action IRI that act is signed for), with FOXXI_BRIDGE_PRIVATE_KEY
+// as the signing key. Without them the route answers 501. No audio passes through this bridge.
+const liveCallAsk = (() => {
+  const url = process.env.FOXXI_LIVE_CALL_URL ?? '';
+  const podUrl = process.env.FOXXI_LIVE_CALL_POD ?? '';
+  const action = process.env.FOXXI_LIVE_CALL_ACTION ?? '';
+  const key = process.env.FOXXI_BRIDGE_PRIVATE_KEY ?? '';
+  if (!url && !podUrl && !action) return undefined;
+  const https = (v: string): boolean => { try { return new URL(v).protocol === 'https:'; } catch { return false; } };
+  if (!https(url) || !https(podUrl) || !/^[A-Za-z][A-Za-z0-9+.-]*:\S+$/.test(action) || !/^(0x)?[0-9a-fA-F]{64}$/.test(key)) {
+    bridgeWarn('[foxxi-bridge] WARNING: FOXXI_LIVE_CALL_URL, _POD and _ACTION must all be set (https URLs and an action IRI) with FOXXI_BRIDGE_PRIVATE_KEY; POST /cmi5/live-call answers 501 until they are.');
+    return undefined;
+  }
+  const wallet = importWallet(key.startsWith('0x') ? key : `0x${key}`, 'agent', 'foxxi-bridge');
+  bridgeLog(`[foxxi-bridge] live calls are asked of ${new URL(url).host} as ${wallet.address}`);
+  return liveCallServiceAsk({
+    url, podUrl, action, wallet,
+    fetch: async (input, init) => { await assertSafeFetchTarget(String(input)); return globalThis.fetch(input, init); },
+  });
+})();
+attachLiveCallRoute(app, {
+  session: cmi5BearerSession,
+  ...(liveCallAsk ? { ask: liveCallAsk } : {}),
+  // A call costs the practice service's operator money each time one is opened; that service limits calls per registration itself.
+  limiter: forwardedRateLimit({ windowMs: 60_000, limit: 10, identifier: 'cmi5-live-call' }),
 });
 
 attachPersonalLaunchRoutes(app, {
