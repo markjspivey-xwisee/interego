@@ -4,7 +4,7 @@
  * service for the rest, signing with its own key.
  *
  * Everything here is fictional: the practice service is a fetch double, the key is generated from a
- * test string, the course, the learner and the call credential are made up. No network, no speech.
+ * test string, the course, the learner and the session descriptions are made up. No network, no speech.
  */
 import { afterAll, beforeAll, describe, expect, it } from 'vitest';
 import express from 'express';
@@ -21,7 +21,11 @@ const AU = { id: 'https://bridge.example/au/live-call', url: 'https://bridge.exa
 const COURSE = 'https://bridge.example/courses/live-call';
 const wallet = importWallet(`0x${sha256('foxxi-live-call-test-key')}`, 'agent', 'lms');
 const SERVICE = { url: 'https://practice.example/acts/live_call_session', podUrl: 'https://pod.practice.example/practice/', action: 'urn:example:action:live-call-session' };
+const OFFER = 'v=0\r\no=- 4611731400430051336 2 IN IP4 127.0.0.1\r\ns=-\r\nm=audio 9 UDP/TLS/RTP/SAVPF 111\r\n';
+const ANSWER = 'v=0\r\no=- 1 2 IN IP4 0.0.0.0\r\ns=-\r\n';
 const SCENARIO = { scenarioIri: 'urn:example:scenario:refund-call', scenarioVersion: 3 };
+/** What a unit sends: the scenario it plays and the offer its browser made. */
+const ASK = { ...SCENARIO, sdpOffer: OFFER };
 
 const open = (launchMode: 'Normal' | 'Review' = 'Normal') => {
   const launch = buildCmi5Launch({
@@ -39,7 +43,7 @@ const terminate = (registration: string): Promise<unknown> => observeCmi5Stateme
 
 const CALL = {
   provider: 'example-speech', model: 'speech-model-1', voice: 'calm', transcriptionModel: 'transcriber-1',
-  connect: { url: 'https://speech.example/calls', dataChannel: 'events' }, credential: { value: 'fictional-client-secret', expiresAt: '2026-11-19T10:02:00.000Z' },
+  answerSdp: ANSWER, dataChannel: 'events',
   counterpartName: 'Dana Reyes', firstLine: 'Hi, I was charged twice.', language: 'en-US', turnLimit: 12, promptTemplateHash: 'a'.repeat(64),
 };
 // The practice service: answers what the test put there, and keeps what it was sent.
@@ -65,7 +69,7 @@ const listen = async (app: express.Express): Promise<[Server, string]> => {
   await new Promise<void>((resolve) => s.once('listening', () => resolve()));
   return [s, `http://127.0.0.1:${(s.address() as AddressInfo).port}`];
 };
-const ask = (root: string, token: string | null, body: unknown = SCENARIO): Promise<Response> => fetch(`${root}/cmi5/live-call`, {
+const ask = (root: string, token: string | null, body: unknown = ASK): Promise<Response> => fetch(`${root}/cmi5/live-call`, {
   method: 'POST', headers: { 'Content-Type': 'application/json', ...(token ? { Authorization: `Bearer ${token}` } : {}) }, body: JSON.stringify(body),
 });
 
@@ -85,7 +89,7 @@ afterAll(async () => {
 });
 
 describe('POST /cmi5/live-call', () => {
-  it('asks the practice service as the LMS, for the session the credential is for, and hands the unit what places the call', async () => {
+  it('asks the practice service as the LMS, for the session the credential is for, and hands the unit the answer to its offer', async () => {
     const { launch, token } = open();
     const n = service.seen.length;
     const r = await ask(base, token);
@@ -100,8 +104,12 @@ describe('POST /cmi5/live-call', () => {
     const payload = JSON.parse(sent.body['_signed_payload']!) as Record<string, unknown>;
     expect(payload).toMatchObject({
       agent_id: `did:ethr:${wallet.address}`, v: 1, action: SERVICE.action, pod_url: SERVICE.podUrl, timestamp: '2026-11-19T10:00:00.000Z',
-      registration: launch.registration, sessionId: body['sessionId'], ...SCENARIO,
+      registration: launch.registration, sessionId: body['sessionId'], ...SCENARIO, sdpOffer: OFFER,
     });
+    // The unit is handed the answer to its offer and no credential for the speech service.
+    expect(Object.keys(body['call'] as Record<string, unknown>).sort()).toEqual(Object.keys(CALL).sort());
+    expect(Object.keys(body['call'] as Record<string, unknown>)).not.toEqual(expect.arrayContaining(['credential']));
+    expect(Object.keys(body['call'] as Record<string, unknown>)).not.toEqual(expect.arrayContaining(['connect']));
     expect(String(payload['nonce']).length).toBeGreaterThanOrEqual(16);
     expect((await recoverMessageSigner(`sha256:${sha256Hex(sent.body['_signed_payload']!)}`, sent.body['_signature']!)).toLowerCase()).toBe(wallet.address.toLowerCase());
     // The learner's credential is the LMS's to check: it is not sent on.
@@ -109,11 +117,11 @@ describe('POST /cmi5/live-call', () => {
   });
 
   it('signs the same request the practice service would check', async () => {
-    const q = { registration: '6f1c2f6e-3b1a-4c53-9d2e-0a4b7c9d1e2f', sessionId: 'b7e1a9c4-52d3-4f60-8a17-3c5d9e0f1a2b', ...SCENARIO };
+    const q = { registration: '6f1c2f6e-3b1a-4c53-9d2e-0a4b7c9d1e2f', sessionId: 'b7e1a9c4-52d3-4f60-8a17-3c5d9e0f1a2b', ...ASK };
     const signed = await signedLiveCallRequest({ ...SERVICE, wallet }, q, '2026-11-19T10:00:00.000Z', 'nonce-0123456789abcdef');
     expect(JSON.parse(signed._signed_payload)).toEqual({
       agent_id: `did:ethr:${wallet.address}`, v: 1, action: SERVICE.action, timestamp: '2026-11-19T10:00:00.000Z', nonce: 'nonce-0123456789abcdef', pod_url: SERVICE.podUrl,
-      scenarioIri: SCENARIO.scenarioIri, scenarioVersion: 3, registration: q.registration, sessionId: q.sessionId,
+      scenarioIri: SCENARIO.scenarioIri, scenarioVersion: 3, registration: q.registration, sessionId: q.sessionId, sdpOffer: OFFER,
     });
   });
 
@@ -133,8 +141,13 @@ describe('POST /cmi5/live-call', () => {
     // The unit has to say which scenario it plays, well formed.
     const live = open();
     for (const bad of [{}, { scenarioIri: 'urn:example:scenario:x' }, { scenarioIri: 'no scheme', scenarioVersion: 1 }, { scenarioIri: 'urn:example:scenario:x', scenarioVersion: 0 }, { scenarioIri: 'urn:example:scenario:x', scenarioVersion: 1.5 }]) {
-      const r = await ask(base, live.token, bad);
+      const r = await ask(base, live.token, { ...bad, sdpOffer: OFFER });
       expect([r.status, (await r.json() as { error: string }).error], JSON.stringify(bad)).toEqual([400, 'scenario_required']);
+    }
+    // And to send the offer its browser made: there, a session description by its first line, and no larger than one is.
+    for (const sdpOffer of [undefined, '', 'hello', 7, `v=0\r\n${'a=x\r\n'.repeat(4000)}`]) {
+      const r = await ask(base, live.token, { ...SCENARIO, sdpOffer });
+      expect([r.status, (await r.json() as { error: string }).error], String(sdpOffer).slice(0, 20)).toEqual([400, 'sdp_offer_required']);
     }
     expect(service.seen).toHaveLength(n);
   });
@@ -167,8 +180,8 @@ describe('POST /cmi5/live-call', () => {
   it('opens no call on an answer it cannot use, and passes the unit only the fields it knows', async () => {
     const { token } = open();
     const unusable: unknown[] = [
-      { call: null }, { call: { ...CALL, credential: { value: '', expiresAt: CALL.credential.expiresAt } } }, { call: { ...CALL, credential: { value: 'x', expiresAt: 'soon' } } },
-      { call: { ...CALL, connect: { url: 'http://speech.example/calls', dataChannel: 'events' } } }, { call: { ...CALL, connect: { url: 'https://speech.example/calls' } } },
+      { call: null }, { call: { ...CALL, answerSdp: '' } }, { call: { ...CALL, answerSdp: 'not a session description' } }, { call: { ...CALL, answerSdp: 42 } },
+      { call: { ...CALL, dataChannel: undefined } }, { call: { ...CALL, answerSdp: `v=0\r\n${'a=x\r\n'.repeat(4000)}` } },
       { kind: 'refusal', call: CALL },
     ];
     for (const body of unusable) {
@@ -177,7 +190,7 @@ describe('POST /cmi5/live-call', () => {
       expect(r.status, JSON.stringify(body).slice(0, 80)).toBe(502);
     }
     // Fields the route does not know are not passed on; ones of the wrong type are left out.
-    service.answer = () => ({ status: 200, body: { call: { ...CALL, turnLimit: 'twelve', operatorKey: 'never-for-the-unit', connect: { ...CALL.connect, extra: 1 }, credential: { ...CALL.credential, session: { id: 's' } } }, rubric: { secret: true } } });
+    service.answer = () => ({ status: 200, body: { call: { ...CALL, turnLimit: 'twelve', operatorKey: 'never-for-the-unit', credential: { value: 'never-for-the-unit' }, connect: { url: 'https://speech.example/calls' }, callId: 'rtc_1' }, rubric: { secret: true } } });
     const ok = await (await ask(base, token)).json() as { call: Record<string, unknown> };
     expect(ok.call).toEqual((({ turnLimit: _t, ...rest }) => rest)(CALL));
     expect(JSON.stringify(ok)).not.toContain('never-for-the-unit');

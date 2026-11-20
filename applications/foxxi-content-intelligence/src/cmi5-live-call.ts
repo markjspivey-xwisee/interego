@@ -9,21 +9,25 @@
  * So the unit asks here, with that credential, and the LMS asks the practice service, signing with
  * its own key: `POST /cmi5/live-call`. The LMS vouches for what only it knows (the credential is one
  * it issued, for this registration, and the session it belongs to is open and was launched Normal);
- * the practice service decides everything else and answers with what the unit needs to place the
- * call, or with why not. This is the footing `GET /cmi5/reviewed` stands on, for the other half of
- * the same kind of activity.
+ * the practice service decides everything else. This is the footing `GET /cmi5/reviewed` stands
+ * on, for the other half of the same kind of activity.
+ *
+ * What passes through is the call's set-up and nothing else. The unit sends the WebRTC offer its
+ * browser made; the practice service takes it to the speech service and places the call; the
+ * speech service's answer comes back the same way. The unit is handed no credential for the speech
+ * service, here or anywhere: one request places one call. Audio then flows between the browser and
+ * the speech service and never through this LMS, which keeps nothing of a call.
  *
  * Nothing here names a practice service, a speech service, a course or a profile: where to ask, on
- * which pod and for which action are settings. No audio passes through this LMS, and it keeps
- * nothing of a call.
+ * which pod and for which action are settings.
  */
 import type { Express, Request, RequestHandler, Response } from 'express';
-import express from 'express';
 import { sha256Hex, signMessageRaw, type Wallet } from '@interego/core';
 import type { ReviewedSession } from './cmi5-reviewed.js';
+import { routeJson } from './route-json.js';
 
 export interface LiveCallAnswer { readonly status: number; readonly body: unknown }
-export interface LiveCallQuestion { readonly registration: string; readonly sessionId: string; readonly scenarioIri: string; readonly scenarioVersion: number }
+export interface LiveCallQuestion { readonly registration: string; readonly sessionId: string; readonly scenarioIri: string; readonly scenarioVersion: number; readonly sdpOffer: string }
 
 export interface LiveCallDeps {
   /** The session a cmi5 auth-token was issued for (never another session of its registration), or null for a token this LMS did not issue. */
@@ -50,6 +54,10 @@ export interface LiveCallServiceSettings {
 
 const ANSWER_MAX_BYTES = 200_000;
 const SCENARIO_IRI = /^[A-Za-z][A-Za-z0-9+.-]*:[^\s<>"{}|\\^`]{1,190}$/;
+/** A WebRTC offer or answer for one audio stream and one data channel is a few kilobytes. */
+const SDP_MAX_CHARS = 20_000;
+/** Whether a text is, by its first line and its size, a session description. Its content is the speech service's to accept or refuse. */
+const looksLikeSdp = (v: unknown): v is string => typeof v === 'string' && v.length <= SDP_MAX_CHARS && /^v=0\r?\n/.test(v);
 
 /** The text of an answer of at most `max` bytes, or null for a longer one; a longer one is not buffered. */
 async function textWithin(res: globalThis.Response, max: number): Promise<string | null> {
@@ -78,7 +86,7 @@ export async function signedLiveCallRequest(
 ): Promise<{ _signed_payload: string; _signature: string }> {
   const payload = JSON.stringify({
     agent_id: `did:ethr:${s.wallet.address}`, v: 1, action: s.action, timestamp: at, nonce, pod_url: s.podUrl,
-    scenarioIri: q.scenarioIri, scenarioVersion: q.scenarioVersion, registration: q.registration, sessionId: q.sessionId,
+    scenarioIri: q.scenarioIri, scenarioVersion: q.scenarioVersion, registration: q.registration, sessionId: q.sessionId, sdpOffer: q.sdpOffer,
   });
   return { _signed_payload: payload, _signature: await signMessageRaw(s.wallet, `sha256:${sha256Hex(payload)}`) };
 }
@@ -107,22 +115,18 @@ const isObj = (v: unknown): v is Record<string, unknown> => typeof v === 'object
 const text = (v: unknown, max: number): string | undefined => (typeof v === 'string' && v.length > 0 && v.length <= max ? v : undefined);
 
 /**
- * What of the practice service's `call` is passed to the unit: the fields a unit uses to place the
- * call and to say what the learner is talking to, each of the type and size expected, and nothing
- * else. null when a field the call cannot be placed without is missing or is not what it should be.
+ * What of the practice service's `call` is passed to the unit: the speech service's answer to the
+ * unit's offer, the channel its events come on, and what the unit says the learner is talking to,
+ * each of the type and size expected, and nothing else. null when the answer is not a session
+ * description or the channel is not named: a call that cannot be completed is not described.
  */
 function callForUnit(call: unknown): Record<string, unknown> | null {
   if (!isObj(call)) return null;
-  const connect = isObj(call['connect']) ? call['connect'] : {};
-  const credential = isObj(call['credential']) ? call['credential'] : {};
-  const url = text(connect['url'], 500), dataChannel = text(connect['dataChannel'], 100);
-  const value = text(credential['value'], 4000), expiresAt = text(credential['expiresAt'], 40);
-  let https = false;
-  try { https = url !== undefined && new URL(url).protocol === 'https:'; } catch { https = false; }
-  if (!https || dataChannel === undefined || value === undefined || expiresAt === undefined || Number.isNaN(Date.parse(expiresAt))) return null;
+  const answerSdp = call['answerSdp'], dataChannel = text(call['dataChannel'], 100);
+  if (!looksLikeSdp(answerSdp) || dataChannel === undefined) return null;
   const turnLimit = call['turnLimit'];
   return {
-    connect: { url, dataChannel }, credential: { value, expiresAt },
+    answerSdp, dataChannel,
     ...Object.fromEntries((['provider', 'model', 'voice', 'transcriptionModel', 'language', 'promptTemplateHash'] as const)
       .map((k) => [k, text(call[k], 200)] as const).filter(([, v]) => v !== undefined)),
     ...(text(call['counterpartName'], 200) !== undefined ? { counterpartName: text(call['counterpartName'], 200) } : {}),
@@ -143,7 +147,8 @@ function refusalOf(body: unknown): { reason?: string; retryAfterSeconds?: number
 }
 
 export function attachLiveCallRoute(app: Express, deps: LiveCallDeps): void {
-  app.post('/cmi5/live-call', deps.limiter, express.json({ limit: '4kb' }), async (req: Request, res: Response) => {
+  // routeJson, not express.json: behind the bridge's own parser the body is already read (tests/route-json.test.ts).
+  app.post('/cmi5/live-call', deps.limiter, routeJson({ limit: '64kb' }), async (req: Request, res: Response) => {
     res.set('Cache-Control', 'no-store');
     const token = /^Bearer\s+(\S+)$/.exec(String(req.headers.authorization ?? ''))?.[1];
     const session = token ? deps.session(token) : null;
@@ -158,11 +163,16 @@ export function attachLiveCallRoute(app: Express, deps: LiveCallDeps): void {
     const b = isObj(req.body) ? req.body : {};
     const scenarioIri = b['scenarioIri'], scenarioVersion = b['scenarioVersion'];
     if (typeof scenarioIri !== 'string' || !SCENARIO_IRI.test(scenarioIri) || typeof scenarioVersion !== 'number' || !Number.isInteger(scenarioVersion) || scenarioVersion < 1 || scenarioVersion > 1_000_000) {
-      res.status(400).json({ error: 'scenario_required', note: 'Send {scenarioIri, scenarioVersion}: the scenario version this unit plays, as the practice service names it.' });
+      res.status(400).json({ error: 'scenario_required', note: 'Send {scenarioIri, scenarioVersion, sdpOffer}: the scenario version this unit plays, as the practice service names it, and the WebRTC offer this browser made.' });
+      return;
+    }
+    const sdpOffer = b['sdpOffer'];
+    if (!looksLikeSdp(sdpOffer)) {
+      res.status(400).json({ error: 'sdp_offer_required', note: 'Send sdpOffer: the WebRTC offer this browser made (a session description, at most 20000 characters).' });
       return;
     }
     let answer: LiveCallAnswer;
-    try { answer = await deps.ask({ registration: session.registration, sessionId: session.sessionId, scenarioIri, scenarioVersion }); }
+    try { answer = await deps.ask({ registration: session.registration, sessionId: session.sessionId, scenarioIri, scenarioVersion, sdpOffer }); }
     catch { res.status(502).json({ error: 'practice_service_unreachable' }); return; }
     const body = answer.body;
     if (answer.status === 200 && isObj(body) && body['kind'] !== 'refusal') {
@@ -171,11 +181,11 @@ export function attachLiveCallRoute(app: Express, deps: LiveCallDeps): void {
       res.json({
         kind: 'cmi5-live-call', registration: session.registration, sessionId: session.sessionId, call,
         ...(text(body['disclosure'], 2000) !== undefined ? { disclosure: text(body['disclosure'], 2000) } : {}),
-        note: 'Place the call with call.connect and call.credential before it expires. Write each exchange to the LRS with this session\'s credential, and end the session when the call ends.',
+        note: 'Set call.answerSdp as the remote description of the connection that made the offer; the call is then up. Write each exchange to the LRS with this session\'s credential, and end the session when the call ends.',
       });
       return;
     }
-    // No call: the unit holds none, and says why in its own words.
+    // No call was placed: the unit holds none, and says why in its own words.
     if (answer.status === 429) { res.status(429).json({ error: 'too_many_calls', ...refusalOf(body) }); return; }
     if (answer.status === 501) { res.status(501).json({ error: 'no_voice_service', ...refusalOf(body) }); return; }
     if (answer.status === 404 || answer.status === 409) { res.status(409).json({ error: 'no_call_for_this_registration', ...refusalOf(body) }); return; }
