@@ -138,6 +138,9 @@
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
  *                                   route (this bridge never picks a model)
+ *   PEV_LLM_PROVIDER                whose API that key and model are for: "anthropic" (the default)
+ *                                   or "openai". ANTHROPIC_API_KEY is read only for anthropic.
+ *                                   Anything else: the bridge does not start
  *   PEV_DEMO_ROLES=1                demo role keys held by this bridge: loopback HOST and
  *                                   BRIDGE_DEPLOYMENT_URL only, and never with PEV_PLATFORM_KEY
  *
@@ -151,7 +154,7 @@ import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-err
 import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { contactForLog } from '../../_shared/contact-link/index.js';
 import { pevAffordances } from '../affordances.js';
-import { anthropicTextModel, type TextModel } from '../src/model.js';
+import { anthropicTextModel, openAiTextModel, type TextModel } from '../src/model.js';
 import { openAiRealtimeVoice, type VoiceService } from '../src/voice-call.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { launchVocabularyProblems, lmsAuthorityProblems, type LaunchVocabulary, type LmsAuthority } from '../src/launched-import.js';
@@ -405,10 +408,19 @@ async function main(): Promise<void> {
       ...(lmsIssuers ? { lmsIssuers } : {}), ...(lmsAuthority ? { lmsAuthority } : {}),
     };
   }
-  const llmKey = env('PEV_LLM_API_KEY') ?? env('ANTHROPIC_API_KEY');
+  // Whose API the bridge's own model is asked through. Named or anthropic: there is no guessing it
+  // from the key or the model's name, and a key sent to the other provider's API is a key disclosed.
+  const llmProvider = env('PEV_LLM_PROVIDER') ?? 'anthropic';
+  if (llmProvider !== 'anthropic' && llmProvider !== 'openai') {
+    warn(`PEV_LLM_PROVIDER is "${llmProvider.slice(0, 40)}": this bridge speaks to "anthropic" or "openai". Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  // ANTHROPIC_API_KEY is read only for Anthropic: it is never sent to another provider.
+  const llmKey = env('PEV_LLM_API_KEY') ?? (llmProvider === 'anthropic' ? env('ANTHROPIC_API_KEY') : undefined);
   const llmModel = env('PEV_LLM_MODEL');
   const model: TextModel | undefined = llmKey && llmModel
-    ? anthropicTextModel({ apiKey: llmKey, model: llmModel, keySource: 'bridge-env' }) : undefined;
+    ? (llmProvider === 'openai' ? openAiTextModel : anthropicTextModel)({ apiKey: llmKey, model: llmModel, keySource: 'bridge-env' }) : undefined;
 
   // The speech service for a live call. Named whole or not at all: a key with no model named would
   // leave this bridge choosing what the learner talks to and what it costs.
