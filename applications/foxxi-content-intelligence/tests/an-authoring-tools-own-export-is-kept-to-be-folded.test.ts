@@ -236,7 +236,10 @@ describe('the bridge keeps an upload that is an export, and folds it as any host
     expect(describeFn).toContain('const exported = projectExportOf(bytes);');
     expect(describeFn).toContain('if (exported) return { title: exported.title, launchable: [], exportOf: exported.tool };');
     const restore = server.slice(server.indexOf('async function restoreHostedPackage('), server.indexOf('attachHostedPackageRoutes(app, {'));
-    expect(restore).toContain('if (about?.launchable.length) registerCmi5Course(DEFAULT_TENANT, hostedPackageCourse(bridgeBaseUrl, sha, about));');
+    // A course is registered only when it has a unit, and an export's has none (tests/a-unit-is-served-from-an-approved-outside-address.test.ts).
+    expect(restore).toContain('const course = hostedPackageCourse(bridgeBaseUrl, sha, about, outsideAuPrefixes.prefixes);');
+    expect(restore).toContain('if (course.structure.length) registerCmi5Course(DEFAULT_TENANT, course);');
+    expect(restore.match(/registerCmi5Course\(/g)).toHaveLength(1);
   });
 });
 

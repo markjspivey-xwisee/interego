@@ -310,7 +310,9 @@ const REPO_ROOT = fileURLToPath(new URL('..', import.meta.url));
 // whole 35 of slack over 700. 710 leaves ten modules of headroom. Nothing was removed, excluded or skipped.
 // 2026-11-18: the tracked tree reached 747 with the sealed guest record and guest-rule tests, one
 // past the 35 of slack over 710. 721 leaves ten modules of headroom. Nothing was removed, excluded or skipped.
-export const MIN_TEST_MODULES = 721;
+// 2026-11-20: the tracked tree reached 758 with the test of a unit served from an approved outside
+// address, the whole 37 of slack over 721. 748 leaves ten modules of headroom. Nothing was removed, excluded or skipped.
+export const MIN_TEST_MODULES = 748;
 
 /**
  * How far below the real module count MIN_TEST_MODULES may sit before that is itself a
