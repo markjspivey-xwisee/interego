@@ -271,9 +271,12 @@ describe('a live call in the role-play player', () => {
     expect(count(lms, VOCAB.turnVerb)).toBe(0);
     page.hear({ type: 'conversation.item.input_audio_transcription.delta', item_id: 'u1', delta: "I'm sorry about" });
     heard(page, 'u1', " I'm sorry about that, I can see both charges.\n");
-    await page.settle(() => count(lms, VOCAB.turnVerb) === 1);
+    // The answer is written down, and still not saved: the reply after it has not ended, and may yet turn out never to have been heard.
+    await new Promise((r) => setTimeout(r, 30));
+    expect(count(lms, VOCAB.turnVerb)).toBe(0);
     page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a2', transcript: 'Okay, so when do I get my money back?' });
     page.hear({ type: 'response.done', response: { status: 'completed' } });
+    await page.settle(() => count(lms, VOCAB.turnVerb) === 1);
 
     // An answer the transcriber failed on is still an exchange, and says so.
     spoke(page, 'u2');
@@ -291,8 +294,11 @@ describe('a live call in the role-play player', () => {
     await new Promise((r) => setTimeout(r, 30));
     // Nothing has followed it yet, so it is not written.
     expect(count(lms, VOCAB.turnVerb)).toBe(2);
-    // The other person replies, and is cut off: there is no transcript event for the line, only the end of the response.
+    // The other person replies, and is cut off part way through the audio: no transcript event for the line, a truncation, and the end of the response.
     page.hear({ type: 'response.output_audio_transcript.delta', item_id: 'a5', delta: 'Fine, thank' });
+    await new Promise((r) => setTimeout(r, 30));
+    expect(count(lms, VOCAB.turnVerb)).toBe(2);
+    page.hear({ type: 'conversation.item.truncated', item_id: 'a5', content_index: 0, audio_end_ms: 700 });
     await page.settle(() => count(lms, VOCAB.turnVerb) === 3);
     page.hear({ type: 'response.done', response: { status: 'cancelled' } });
     // The learner speaks over it and hangs up while that is still being written down.
@@ -380,9 +386,10 @@ describe('a live call in the role-play player', () => {
     await page.settle(() => count(lms, VERB_TERMINATED) === 1);
   });
 
-  it('marks a line the learner cut in on before any of it had played, as the real service reports that', async () => {
+  it('leaves out a reply cut before any of it played, and keeps what the learner was saying as one answer', async () => {
     // The events of a real call on 2026-11-20, in their order, with fictional ids and words. No audio of the
-    // line had played, so no conversation.item.truncated came: the item ended incomplete and its response cancelled.
+    // reply had played, so no conversation.item.truncated came: the item ended incomplete and its response cancelled.
+    // First read (#988) this was a line marked cut off; nobody heard it, so it is no line, and no boundary.
     const lms = new Lms();
     const page = await placeCall(lms);
     customer(page, 'a1', 'Hi, I was charged twice.');
@@ -399,23 +406,22 @@ describe('a live call in the role-play player', () => {
     page.hear({ type: 'input_audio_buffer.committed', item_id: 'u2' });
     heard(page, 'u2', 'Let me pull up your account right now.');
     customer(page, 'a3', 'Alright, go ahead.');
-    // The cancelled response alone is enough, where an item says nothing of its own state. The other person had begun a second line when the learner spoke.
+    // The cancelled response alone is enough, where an item says nothing of its own state.
     page.hear({ type: 'conversation.item.added', item: { id: 'a4', type: 'message', role: 'assistant' } });
     spoke(page, 'u3');
     page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a4', transcript: 'And' });
     page.hear({ type: 'response.done', response: { status: 'cancelled' } });
     heard(page, 'u3', 'One moment please.');
     customer(page, 'a5', 'Fine.');
-    await page.settle(() => count(lms, VOCAB.turnVerb) === 3);
+    await page.settle(() => count(lms, VOCAB.turnVerb) === 2);
     void page.el('lend').onclick!();
     await page.settle(() => count(lms, VERB_TERMINATED) === 1);
     expect(lms.turns()).toEqual([
-      { n: '1', line: 'Hi, I was charged twice.', response: "I'm so sorry about that." },
-      { n: '2', line: 'Hold', response: 'Let me pull up your account right now.' },
-      { n: '3', line: 'Alright, go ahead. And', response: 'One moment please.' },
+      { n: '1', line: 'Hi, I was charged twice.', response: "I'm so sorry about that. Let me pull up your account right now." },
+      { n: '2', line: 'Alright, go ahead.', response: 'One moment please.' },
     ]);
-    // A whole line is not marked because a later one was cut; a line joined from a whole one and a cut one is.
-    expect(lms.marks().map((m) => m[0])).toEqual([undefined, true, true]);
+    expect(lms.marks().map((m) => m[0])).toEqual([undefined, undefined]);
+    expect(JSON.stringify(lms.held)).not.toContain('Hold');
   });
 
   it('marks an answer of which only part was transcribed, in either order, and keeps the part that was', async () => {
@@ -474,14 +480,9 @@ describe('a live call in the role-play player', () => {
     // The learner speaks before the other person has: the exchange says so in place of a line.
     spoke(page, 'u1'); heard(page, 'u1', 'Hello, Brightline support.');
     customer(page, 'a1', 'Hi, I was charged twice.');
+    await page.settle(() => count(lms, VOCAB.turnVerb) === 1);
     spoke(page, 'u2'); heard(page, 'u2', 'I can refund the duplicate today.');
     page.hear({ type: 'conversation.item.added', item: { id: 'a2', type: 'message', role: 'assistant' } });
-    await page.settle(() => count(lms, VOCAB.turnVerb) === 2);
-    // The second exchange is the last. The other person is left to finish what they are saying.
-    expect(count(lms, VERB_TERMINATED)).toBe(0);
-    expect(page.el('lstatus').textContent).toContain('That was the last exchange');
-    // Anything said meanwhile is not a third exchange.
-    spoke(page, 'u3'); heard(page, 'u3', 'One more thing.');
     page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a2', transcript: 'Great, thank you.' });
     page.hear({ type: 'response.done', response: { status: 'completed' } });
     await page.settle(() => count(lms, VERB_TERMINATED) === 1);
@@ -489,9 +490,65 @@ describe('a live call in the role-play player', () => {
       { n: '1', line: '[nothing said yet]', response: 'Hello, Brightline support.' },
       { n: '2', line: 'Hi, I was charged twice.', response: 'I can refund the duplicate today.' },
     ]);
+    // Nothing more was said, so the last answer is all of it.
+    expect(lms.held.filter((x) => x.verb.id === VOCAB.turnVerb).map((x) => x.result!.extensions ?? null)).toEqual([null, null]);
     expect(page.el('rvmsg').textContent).toContain("The call ended at this scenario's limit of 2 exchanges.");
     expect(page.win['__rolePlayLive']).toMatchObject({ exchanges: 2, why: 'limit' });
     expect(readLaunchedCall(lms.held, INPUT)).toHaveProperty('call');
+  });
+
+  it('holds the last exchange until the call ends, and does not end the call while the learner is still speaking', async () => {
+    // Found in review (2026-11-20): with one exchange left, a reply cancelled because the learner went on
+    // speaking ended the call, and the first half of their sentence was saved as a whole answer.
+    const lms = new Lms();
+    lms.call = () => ({ status: 200, body: lms.placed({ turnLimit: 1 }) });
+    const page = await placeCall(lms);
+    customer(page, 'a1', 'What number can we reach you on?');
+    spoke(page, 'u1'); heard(page, 'u1', 'The alternate number is');
+    // The service takes the pause for the end and begins a reply. None of it plays: the learner goes on.
+    page.hear({ type: 'conversation.item.added', item: { id: 'a2', type: 'message', role: 'assistant', status: 'in_progress' } });
+    page.hear({ type: 'input_audio_buffer.speech_started', item_id: 'u2' });
+    page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a2', transcript: 'Hold' });
+    page.hear({ type: 'conversation.item.done', item: { id: 'a2', type: 'message', role: 'assistant', status: 'incomplete' } });
+    page.hear({ type: 'response.done', response: { status: 'cancelled', status_details: { type: 'cancelled', reason: 'turn_detected' } } });
+    await new Promise((r) => setTimeout(r, 40));
+    // Nothing is saved and the call goes on: the answer is not over.
+    expect([count(lms, VOCAB.turnVerb), count(lms, VERB_TERMINATED)]).toEqual([0, 0]);
+    page.hear({ type: 'input_audio_buffer.committed', item_id: 'u2' });
+    heard(page, 'u2', '555-0100.');
+    customer(page, 'a3', 'Got it, thanks.');
+    await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+    // One answer, whole, and the reply nobody heard is no part of the record.
+    expect(lms.turns()).toEqual([{ n: '1', line: 'What number can we reach you on?', response: 'The alternate number is 555-0100.' }]);
+    expect(lms.held.find((x) => x.verb.id === VOCAB.turnVerb)!.result!.extensions).toBeUndefined();
+    expect(lms.marks()).toEqual([[undefined, undefined]]);
+    expect(count(lms, VERB_TERMINATED)).toBe(1);
+  });
+
+  it('marks the last answer as not all that was said when the learner said more after it', async () => {
+    const lms = new Lms();
+    lms.call = () => ({ status: 200, body: lms.placed({ turnLimit: 1 }) });
+    const page = await placeCall(lms);
+    customer(page, 'a1', 'What number can we reach you on?');
+    spoke(page, 'u1'); heard(page, 'u1', 'The alternate number is');
+    // This time the reply is heard in part before the learner goes on: it is a line, and it divides the answer.
+    page.hear({ type: 'conversation.item.added', item: { id: 'a2', type: 'message', role: 'assistant' } });
+    page.hear({ type: 'input_audio_buffer.speech_started', item_id: 'u2' });
+    page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a2', transcript: 'Hold on a' });
+    page.hear({ type: 'response.done', response: { status: 'cancelled' } });
+    page.hear({ type: 'conversation.item.truncated', item_id: 'a2', content_index: 0, audio_end_ms: 400 });
+    await new Promise((r) => setTimeout(r, 40));
+    expect([count(lms, VOCAB.turnVerb), count(lms, VERB_TERMINATED)]).toEqual([0, 0]);
+    expect(page.el('lstatus').textContent).toContain('That was the last exchange');
+    heard(page, 'u2', '555-0100.');
+    customer(page, 'a3', 'Got it, thanks.');
+    await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+    // The scenario has one exchange. It holds what was said in it, and says that more was said.
+    expect(lms.turns()).toEqual([{ n: '1', line: 'What number can we reach you on?', response: 'The alternate number is' }]);
+    expect(lms.held.find((x) => x.verb.id === VOCAB.turnVerb)!.result!.extensions).toEqual({ [PARTLY_TRANSCRIBED_EXT]: true });
+    const got = readLaunchedCall(lms.held, INPUT);
+    if (!('call' in got)) throw new Error(got.problems.join(' | '));
+    expect(got.call.turns.map((t) => t.mark)).toEqual([undefined, 'partly-transcribed']);
   });
 
   it('says why when no call could be placed, records nothing of one, and can be tried again in the same visit', async () => {
