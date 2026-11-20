@@ -298,15 +298,22 @@ interface ResponsesResponse {
  * keep the response for later retrieval, which it otherwise does by default; what a learner said
  * is in it.
  *
- * What is read back: the text of every `output_text` part of every `message` item, in order; the
- * model the provider names; usage when it measured both numbers. How the call stopped is said in
- * the two words the handlers already act on, and otherwise in the provider's own:
+ * What is read back: the text of every `output_text` part of every `message` item that is not
+ * itself unfinished, in order; the model the provider names; usage when it measured both numbers.
+ *
+ * A 200 is not an answer. The response says in `status` whether it is one, and text is taken as
+ * the model's answer only from a response that is `completed`. Two other endings are reported in
+ * the words the handlers already act on, and they record nothing for either:
  *   · `max_tokens` when the response is `incomplete` for `max_output_tokens`. That cap counts the
  *     model's reasoning tokens as well as its answer, so a model that reasons can spend it before
- *     it writes anything; the caller then reports a cut-off answer and records nothing.
+ *     it writes anything.
  *   · `refusal` when the response is `incomplete` for `content_filter` (the category says so), or
- *     when the model answered with a `refusal` part and no text.
- *   · otherwise the response's `status` (`completed`), or the reason it is incomplete.
+ *     when a completed response holds a `refusal` part and no text.
+ * Every other state (`failed`, `cancelled`, `in_progress`, `queued`, `incomplete` for any other
+ * reason, a status this code does not know, or none) is a failed call, whatever text came with
+ * it: `TextModelCallFailed`, type `response-not-completed`, which the handlers answer as the model
+ * not having been reached. Found in review of this function's first form (2026-11-20), which
+ * returned such text for the caller to record.
  */
 export function openAiTextModel(o: {
   apiKey: string; model: string; keySource: 'bridge-env' | 'per-request-byok';
@@ -339,8 +346,10 @@ export function openAiTextModel(o: {
       }
       const parts: { type?: unknown; text?: unknown }[] = [];
       for (const item of Array.isArray(data.output) ? data.output as unknown[] : []) {
-        const it = item as { type?: unknown; content?: unknown } | null;
+        const it = item as { type?: unknown; content?: unknown; status?: unknown } | null;
         if (it === null || typeof it !== 'object' || it.type !== 'message' || !Array.isArray(it.content)) continue;
+        // An item says its own state when it has one; one that is not completed is not part of the answer.
+        if (it.status !== undefined && it.status !== 'completed') continue;
         for (const part of it.content as unknown[]) if (typeof part === 'object' && part !== null) parts.push(part as { type?: unknown; text?: unknown });
       }
       const text = parts.filter((p): p is { type: 'output_text'; text: string } => p.type === 'output_text' && typeof p.text === 'string').map((p) => p.text).join('\n');
@@ -348,10 +357,13 @@ export function openAiTextModel(o: {
       const status = typeof data.status === 'string' ? data.status : null;
       const why = typeof data.incomplete_details?.reason === 'string' ? data.incomplete_details.reason : null;
       const filtered = status === 'incomplete' && why === 'content_filter';
-      const stopReason = status === 'incomplete' && why === 'max_output_tokens' ? 'max_tokens'
-        : filtered || (declined && text.length === 0) ? 'refusal'
-        : status === 'incomplete' && why !== null ? why
-        : status;
+      const cutOff = status === 'incomplete' && why === 'max_output_tokens';
+      if (status !== 'completed' && !filtered && !cutOff) {
+        // Its state is named only when it is one of the provider's own words: nothing of the body is echoed.
+        const known = ['failed', 'cancelled', 'in_progress', 'queued', 'incomplete'].includes(status ?? '') ? status : 'not one this bridge knows';
+        throw new TextModelCallFailed(`OpenAI Responses API: the response is ${status === null ? 'in no stated state' : known}, not completed`, null, 'response-not-completed', null, null);
+      }
+      const stopReason = cutOff ? 'max_tokens' : filtered || (declined && text.length === 0) ? 'refusal' : 'completed';
       const inputTokens = data.usage?.input_tokens;
       const outputTokens = data.usage?.output_tokens;
       const usage = typeof inputTokens === 'number' && typeof outputTokens === 'number'

@@ -120,10 +120,32 @@ describe('the OpenAI Responses request', () => {
     expect(await stop({ output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'I cannot help with that.' }] }] })).toEqual(['refusal', null, '']);
     // A refusal part beside an answer is not a refusal of the answer.
     expect(await stop({ output: [{ type: 'message', content: [{ type: 'refusal', refusal: 'x' }, { type: 'output_text', text: 'Fine.' }] }] })).toEqual(['completed', null, 'Fine.']);
-    // Any other way of being incomplete is said in the provider's own word, and no status at all as that.
-    expect(await stop({ status: 'incomplete', incomplete_details: { reason: 'max_messages' } })).toEqual(['max_messages', null, 'Fine.']);
-    expect(await stop({ status: 'incomplete', incomplete_details: null })).toEqual(['incomplete', null, 'Fine.']);
-    expect(await stop({ status: undefined })).toEqual([null, null, 'Fine.']);
+    // A message item that says it is unfinished is not part of the answer; one that says nothing of itself is.
+    expect(await stop({ output: [{ type: 'message', status: 'incomplete', content: [{ type: 'output_text', text: 'Half a' }] }, { type: 'message', status: 'completed', content: [{ type: 'output_text', text: 'Whole.' }] }, { type: 'message', content: [{ type: 'output_text', text: 'Unmarked.' }] }] })).toEqual(['completed', null, 'Whole.\nUnmarked.']);
+  });
+
+  it('takes no text from a response that is not completed, whatever text came with it', async () => {
+    // A 200 whose body says the response failed, was cancelled, is not finished, or says nothing of its state.
+    const not: [Record<string, unknown>, string][] = [
+      [{ status: 'failed', error: { code: 'server_error', message: `boom ${KEY}` } }, 'failed'],
+      [{ status: 'cancelled' }, 'cancelled'],
+      [{ status: 'in_progress' }, 'in_progress'],
+      [{ status: 'queued' }, 'queued'],
+      [{ status: 'incomplete', incomplete_details: { reason: 'max_messages' } }, 'incomplete'],
+      [{ status: 'incomplete', incomplete_details: { reason: 'steered' } }, 'incomplete'],
+      [{ status: 'incomplete', incomplete_details: null }, 'incomplete'],
+      [{ status: 'some-new-state' }, 'not one this bridge knows'],
+      [{ status: undefined }, 'in no stated state'],
+      [{ status: 7 }, 'in no stated state'],
+    ];
+    for (const [over, said] of not) {
+      const p = fakeProvider(() => okOpenAi(over));
+      const e = await failure(model(p.fetchImpl, { retryBaseMs: 1 }).complete(REQ));
+      expect([e.message, e.providerErrorType, e.status, e.timedOut], JSON.stringify(over)).toEqual([`OpenAI Responses API: the response is ${said}, not completed`, 'response-not-completed', null, false]);
+      // Not retried: the provider answered, and its answer is that there is none.
+      expect(p.calls).toHaveLength(1);
+      expect(JSON.stringify([e.message, e.providerMessage])).not.toContain(KEY);
+    }
   });
 
   it('fails as a call to OpenAI: the status and type, a 429\'s wait, a 5xx retried and a 4xx not, and never the key', async () => {
@@ -432,6 +454,13 @@ describe('a model failure reaches the caller as a status, and nothing is recorde
     const empty = await say({ model: openAi(() => okOpenAi({ output: [{ type: 'reasoning', id: 'rs_1', summary: [] }] })) });
     refusedWith(empty, 502, 'model-output-empty');
     expect(empty['disclosure']).toMatchObject({ provider: 'openai', model: 'gpt-test-2026-10-01', requestedModel: 'claude-test' });
+    // A response that is not completed is no line, however usable the text in it looks: nothing is written.
+    for (const over of [{ status: 'failed', error: { code: 'server_error' } }, { status: 'cancelled' }, { status: 'in_progress' }, { status: 'incomplete', incomplete_details: { reason: 'max_messages' } }, { status: undefined }]) {
+      const r = await say({ model: openAi(() => okOpenAi({ ...over, output: [{ type: 'message', content: [{ type: 'output_text', text: 'A perfectly usable line.' }] }] })) });
+      refusedWith(r, 502, 'model-unreachable');
+      expect(r['providerErrorType']).toBe('response-not-completed');
+      expect(JSON.stringify(r)).not.toContain('A perfectly usable line.');
+    }
     expect(snapshot()).toBe(before);
   }, 60_000);
 

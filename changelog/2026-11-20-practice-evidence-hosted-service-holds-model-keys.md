@@ -3,9 +3,10 @@
 The README said the hosted service "holds no model key and never will". The
 owner reversed that on 2026-11-20, for live voice calls.
 
-The hosted service now holds a speech key, without which no live call can be
-placed, and a key for the bridge's own model, so a saved call can be judged
-before a person reviews it. The bridge's own model is lent only to principals
+The hosted service holds a speech key, set that day, without which no live call
+can be placed. It is also to hold a key for the bridge's own model, so a saved
+call can be judged before a person reviews it; that key is not set as this is
+written, and the hosted service judges nothing itself yet. The bridge's own model is lent only to principals
 holding a role on the pod, and it is the same route that plays the other person
 in typed practice and drafts scenarios. A judgment it makes discloses the
 provider, the model and that the key was the bridge's.

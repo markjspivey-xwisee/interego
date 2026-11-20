@@ -17,8 +17,8 @@
  * ★ NO MODEL KEY FROM THIS TOOL, EVER. This tool never writes PEV_LLM_API_KEY, a speech key or
  * any other model setting, whatever the environment holds. It also removes nothing: a key already
  * set on the service stays until someone deletes it there. (Until 2026-11-20 the hosted Practice
- * Evidence bridge held no model key at all. The owner then set a speech key and a model key on
- * it, by hand, for live voice calls and their judging; applications/practice-evidence/README.md
+ * Evidence bridge held no model key at all. The owner then decided it holds a speech key and a
+ * model key, set by hand, for live voice calls and their judging; applications/practice-evidence/README.md
  * says which and why. A model key on a service is a person's decision, never this tool's.)
  */
 import { randomBytes } from 'node:crypto';
