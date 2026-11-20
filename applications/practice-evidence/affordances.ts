@@ -328,6 +328,17 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     outputs: out('The statement, what it leaves out, and the audit descriptor. A scored statement carries the score, so a scored attempt is refused, before anything is written, to ' + STAKES_LEFT_OUT_FOR + ' (stakes-not-in-chat, with what to do in remedy).', ['statementId', 'auditDescriptorUrl']),
   },
   {
+    action: PEV_ACTION.liveCallSession as IRI,
+    toolName: 'pev.live_call_session',
+    title: 'Open a live voice call for a launched unit',
+    description: 'An LMS opens a live voice call for a unit it launched: the learner speaks and an AI speech model answers aloud as the other person, in the browser. A principal an admin registered with the role lms, which the operator has bound to an issuer, signs {scenarioIri, scenarioVersion, registration, sessionId, sdpOffer} and vouches for the registration and the session itself; nobody else may ask. sdpOffer is the WebRTC offer the learner\'s browser made. This bridge builds what the speech model is told from the scenario version and places the call with its speech service itself, on the operator\'s key: one request, one call. No credential for the speech service is handed out. Answer: call {provider, model, voice, transcriptionModel, answerSdp, dataChannel, counterpartName, firstLine, language, turnLimit, promptTemplateHash} and a disclosure to show the learner; the browser sets answerSdp as its remote description and audio then flows between it and the speech service. Nothing is recorded: the unit writes the exchanges to the learning record, and the registration is taken afterwards with pev.import_launched_attempt, unscored. Refused for a draft scenario, a registration already taken as an attempt (409), more calls for one registration or in total than the hourly limit (429), and with 501 on a bridge with no speech service.',
+    method: 'POST',
+    targetTemplate: '{base}/pev/live_call_session',
+    annotations: hints('Open a live call', false, false, false, true),
+    inputs: [...ENVELOPE],
+    outputs: out('The call: the speech service\'s answer to the offer, and what to tell the learner.', ['registration', 'call', 'disclosure']),
+  },
+  {
     action: PEV_ACTION.launchedStatements as IRI,
     toolName: 'pev.launched_statements',
     title: 'Take the reviewed statements for the assignable unit to send',
