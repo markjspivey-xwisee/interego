@@ -914,6 +914,11 @@ async function carryOn(){
    What a call could not record is said, not papered over:
    - A line the learner spoke over is marked cut off. Its text is the whole line the model
      produced: the service says where the audio stopped, not which words had been heard.
+     The service says a line was cut in three ways, and any one marks it (seen from the real
+     service on 2026-11-20): `conversation.item.truncated` when audio already playing was
+     stopped; the line's own item ending `incomplete`; and its response ending other than
+     `completed`. The first does not come when the learner cuts in before any audio has played,
+     and until this was read the line "Hold" was saved from such a moment as if it had been said.
    - Speech the transcriber failed on is an exchange with no answer in it and a mark saying so.
      Nothing is put in the learner's mouth.
    - Where the transcriber failed on part of an answer and not the rest, the answer is the part it
@@ -943,7 +948,7 @@ function checkLive(s){
 }
 function liveItem(id, who){
   let it = lc.items.find(x => x.id === id);
-  if (!it) { it = {id: id, who: who, text: null, partial: "", done: false, failed: false, cut: false}; lc.items.push(it); }
+  if (!it) { it = {id: id, who: who, text: null, partial: "", done: false, failed: false, cut: false, closed: false}; lc.items.push(it); }
   return it;
 }
 const liveText = it => (it.text !== null ? it.text : it.partial).replace(/\s+/g, " ").trim();
@@ -1001,8 +1006,10 @@ function liveFlush(){
 function liveEvent(ev){
   if (!lc || lc.over || !ev || typeof ev.type !== "string") return;
   const t = ev.type, id = typeof ev.item_id === "string" ? ev.item_id : null;
-  if (/^conversation\.item\.(added|created|done)$/.test(t) && ev.item && typeof ev.item.id === "string" && ev.item.type === "message" && (ev.item.role === "user" || ev.item.role === "assistant")) {
-    liveItem(ev.item.id, ev.item.role === "user" ? "learner" : "counterpart");
+  if (/^(conversation\.item\.(added|created|done)|response\.output_item\.(added|done))$/.test(t) && ev.item && typeof ev.item.id === "string" && ev.item.type === "message" && (ev.item.role === "user" || ev.item.role === "assistant")) {
+    const it = liveItem(ev.item.id, ev.item.role === "user" ? "learner" : "counterpart");
+    // The other person's line, ended before it was whole.
+    if (it.who === "counterpart" && ev.item.status === "incomplete") it.cut = true;
   } else if ((t === "input_audio_buffer.speech_started" || t === "input_audio_buffer.committed") && id) {
     liveItem(id, "learner"); if (t === "input_audio_buffer.speech_started") { liveStatus("Listening…"); $("lav").classList.remove("talk"); }
   } else if (t === "conversation.item.input_audio_transcription.delta" && id) {
@@ -1021,8 +1028,9 @@ function liveEvent(ev){
     liveItem(id, "counterpart").cut = true;
   } else if (t === "response.done") {
     // Whatever the other person was saying is now said, or cut off: what there is of it is the line.
-    const cancelled = ev.response && ev.response.status === "cancelled";
-    for (const it of lc.items) if (it.who === "counterpart") { if (cancelled && !it.done) it.cut = true; it.done = true; }
+    // A response that ended any way but completed left its lines unfinished, whether or not a transcript of what there was of them had come.
+    const st = ev.response && ev.response.status, broken = typeof st === "string" && st !== "completed";
+    for (const it of lc.items) if (it.who === "counterpart" && !it.closed) { if (broken) it.cut = true; it.done = true; it.closed = true; }
     if (!lc.ending) { liveStatus("Your turn"); $("lav").classList.remove("talk"); }
   } else if (t === "error") {
     lc.errors.push(String((ev.error && (ev.error.code || ev.error.type)) || "error").slice(0, 80));

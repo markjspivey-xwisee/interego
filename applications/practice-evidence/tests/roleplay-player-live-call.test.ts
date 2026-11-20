@@ -380,6 +380,44 @@ describe('a live call in the role-play player', () => {
     await page.settle(() => count(lms, VERB_TERMINATED) === 1);
   });
 
+  it('marks a line the learner cut in on before any of it had played, as the real service reports that', async () => {
+    // The events of a real call on 2026-11-20, in their order, with fictional ids and words. No audio of the
+    // line had played, so no conversation.item.truncated came: the item ended incomplete and its response cancelled.
+    const lms = new Lms();
+    const page = await placeCall(lms);
+    customer(page, 'a1', 'Hi, I was charged twice.');
+    spoke(page, 'u1'); page.hear({ type: 'conversation.item.added', item: { id: 'u1', type: 'message', role: 'user', status: 'completed' } });
+    page.hear({ type: 'response.created', response: { status: 'in_progress' } });
+    page.hear({ type: 'response.output_item.added', item: { id: 'a2', type: 'message', role: 'assistant', status: 'in_progress' } });
+    page.hear({ type: 'conversation.item.added', item: { id: 'a2', type: 'message', role: 'assistant', status: 'in_progress' } });
+    page.hear({ type: 'input_audio_buffer.speech_started', item_id: 'u2' });
+    page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a2', transcript: 'Hold' });
+    page.hear({ type: 'conversation.item.done', item: { id: 'a2', type: 'message', role: 'assistant', status: 'incomplete' } });
+    page.hear({ type: 'response.output_item.done', item: { id: 'a2', type: 'message', role: 'assistant', status: 'incomplete' } });
+    page.hear({ type: 'response.done', response: { status: 'cancelled', status_details: { type: 'cancelled', reason: 'turn_detected' } } });
+    heard(page, 'u1', "I'm so sorry about that.");
+    page.hear({ type: 'input_audio_buffer.committed', item_id: 'u2' });
+    heard(page, 'u2', 'Let me pull up your account right now.');
+    customer(page, 'a3', 'Alright, go ahead.');
+    // The cancelled response alone is enough, where an item says nothing of its own state. The other person had begun a second line when the learner spoke.
+    page.hear({ type: 'conversation.item.added', item: { id: 'a4', type: 'message', role: 'assistant' } });
+    spoke(page, 'u3');
+    page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a4', transcript: 'And' });
+    page.hear({ type: 'response.done', response: { status: 'cancelled' } });
+    heard(page, 'u3', 'One moment please.');
+    customer(page, 'a5', 'Fine.');
+    await page.settle(() => count(lms, VOCAB.turnVerb) === 3);
+    void page.el('lend').onclick!();
+    await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+    expect(lms.turns()).toEqual([
+      { n: '1', line: 'Hi, I was charged twice.', response: "I'm so sorry about that." },
+      { n: '2', line: 'Hold', response: 'Let me pull up your account right now.' },
+      { n: '3', line: 'Alright, go ahead. And', response: 'One moment please.' },
+    ]);
+    // A whole line is not marked because a later one was cut; a line joined from a whole one and a cut one is.
+    expect(lms.marks().map((m) => m[0])).toEqual([undefined, true, true]);
+  });
+
   it('marks an answer of which only part was transcribed, in either order, and keeps the part that was', async () => {
     // Found in review of the first form of these marks: a failed item beside a transcribed one left an ordinary, unmarked answer.
     const lms = new Lms();
