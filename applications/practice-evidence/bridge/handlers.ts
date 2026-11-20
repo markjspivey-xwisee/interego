@@ -88,7 +88,7 @@ import {
   buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, CMI5_SESSION_EXT, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
   type ProjectionFormat,
 } from '../src/projections.js';
-import { voiceCallInstructions, VOICE_CALL_PROMPT_TEMPLATE_HASH, type VoiceService } from '../src/voice-call.js';
+import { looksLikeSdp, voiceCallInstructions, VOICE_CALL_PROMPT_TEMPLATE_HASH, type VoiceService } from '../src/voice-call.js';
 import { launchNotVerified, readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary, type LmsAuthority, launchedActorIsSigner } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
@@ -261,8 +261,6 @@ export const DEFAULT_BUDGETS: { readonly modelCallsPerHour: HourlyLimit; readonl
   // signs for every learner, so its own address would be one count for all of them.
   voiceCallsPerHour: { perSigner: 4, total: 60 },
 };
-/** How long a call credential may be used to start a call (seconds). The call itself outlives it. */
-export const VOICE_CREDENTIAL_SECONDS = 120;
 /** The most the speech model may say in one reply (tokens). A customer on a call speaks briefly. */
 export const VOICE_REPLY_MAX_TOKENS = 600;
 
@@ -3265,7 +3263,11 @@ async function projectAttempt(call: Call, args: Record<string, unknown>): Promis
  * registration. What this bridge adds is the two things only it has: what the scenario version
  * says the other person is like, and the operator's key for the speech service.
  *
- * It writes nothing. A call that is opened and never held leaves no record here. The exchanges of
+ * The browser's WebRTC offer comes with the request and the service's answer goes back with the
+ * reply. No credential for the speech service is handed to anyone: one request places one call,
+ * so the count kept here is the count of calls placed on the operator's key.
+ *
+ * It writes nothing. A call that is placed and never held leaves no record here. The exchanges of
  * a call that is held are the unit's to write to the learning record, and are taken afterwards
  * with pev.import_launched_attempt.
  */
@@ -3281,6 +3283,7 @@ async function liveCallSession(call: Call, args: Record<string, unknown>): Promi
       needInt(p, 'scenarioVersion', 1, 1_000_000);
       if (!REGISTRATION_UUID.test(needText(p, 'registration', 36))) throw decline(400, 'registration must be the UUID the LMS issued.', 'registration-not-a-uuid');
       needText(p, 'sessionId', 200);
+      if (!looksLikeSdp(p['sdpOffer'])) throw decline(400, 'sdpOffer must be the WebRTC offer the learner\'s browser made (a session description, at most 20000 characters).', 'sdp-offer-required');
     },
   });
   const roles = (await rolesOn(call, s.pod)).of(s.signer);
@@ -3319,11 +3322,11 @@ async function liveCallSession(call: Call, args: Record<string, unknown>): Promi
   // The speech service is told who the call is for only as a digest: it can tell two calls of one
   // registration apart from two registrations, and learns no registration and no learner.
   const opened = await voice.open({
-    instructions: voiceCallInstructions(spec), language: spec.language, safetyId: sha256(`${issuer}|${registration}`).slice(0, 32),
-    expiresInSeconds: VOICE_CREDENTIAL_SECONDS, maxOutputTokens: VOICE_REPLY_MAX_TOKENS,
+    sdpOffer: String(s.payload['sdpOffer']), instructions: voiceCallInstructions(spec), language: spec.language,
+    safetyId: sha256(`${issuer}|${registration}`).slice(0, 32), maxOutputTokens: VOICE_REPLY_MAX_TOKENS,
   });
   if (!opened.ok) {
-    throw decline(502, 'The speech service did not open a call; nothing was recorded and the call can be asked for again.', opened.reason === 'unreachable' ? 'voice-service-unreachable' : 'voice-service-refused',
+    throw decline(502, 'The speech service did not place the call; nothing was recorded and the call can be asked for again.', opened.reason === 'unreachable' ? 'voice-service-unreachable' : 'voice-service-refused',
       undefined, { ...(opened.status !== undefined ? { serviceStatus: opened.status } : {}) });
   }
   return {
@@ -3332,7 +3335,8 @@ async function liveCallSession(call: Call, args: Record<string, unknown>): Promi
     // What the unit needs to carry the call and to say truthfully what the learner is talking to.
     call: {
       provider: voice.provider, model: voice.model, voice: voice.voice, transcriptionModel: voice.transcriptionModel,
-      connect: voice.connect, credential: opened.credential,
+      // The service's answer to the browser's offer, and the channel its events come on. No credential: the call is placed.
+      answerSdp: opened.placed.answerSdp, dataChannel: voice.dataChannel,
       counterpartName: spec.counterpart.name, firstLine: spec.firstLine, language: spec.language, turnLimit: spec.turnLimit,
       promptTemplateHash: VOICE_CALL_PROMPT_TEMPLATE_HASH,
     },

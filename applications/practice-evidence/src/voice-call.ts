@@ -3,13 +3,20 @@
  * person, in a browser, with no telephone.
  *
  * The speech model is not this bridge's text model. It is a realtime speech service the learner's
- * browser connects to directly, by WebRTC, so that audio never passes through this bridge. What
- * this bridge does is decide what that model is told and hand the browser a credential for one
- * call: the instructions are built here from the scenario version, and the credential is a client
- * secret the service issues for a short time, bound to those instructions. The operator's key for
- * the service stays here.
+ * browser exchanges audio with directly, by WebRTC, so that audio never passes through this bridge.
+ * What passes through is the call's set-up: the browser makes a WebRTC offer, this bridge takes it
+ * to the speech service together with what the model is to be told, and gives the browser the
+ * service's answer. The browser is given no credential for the service at any point. One offer
+ * places one call, and the model, the instructions and the reply cap that call starts with are the
+ * ones sent from here. The operator's key for the service stays here.
  *
- * Nothing is recorded by opening a call. The exchanges are written by the unit that carries the
+ * An earlier form of this handed the browser a short-lived client secret. The service's reference
+ * says such a secret "can be used to create multiple sessions until it expires" and that its
+ * session settings "can also be overridden by the client connection", so it bounded neither how
+ * many calls a learner placed on the operator's key nor what those calls were. It was replaced
+ * before it was used.
+ *
+ * Nothing is recorded by placing a call. The exchanges are written by the unit that carries the
  * call, to the learning record, and are taken afterwards like any launched conversation
  * (`pev.import_launched_attempt`), unscored, to be judged and reviewed.
  */
@@ -47,16 +54,16 @@ export function voiceCallInstructions(s: ScenarioSpec): string {
   });
 }
 
-/** What a browser needs to place one call, and nothing that outlives it. */
-export interface VoiceCallCredential {
-  /** The client secret the service issued. It is the browser's bearer for one WebRTC call. */
-  readonly value: string;
-  /** When the secret stops being accepted for starting a call (ISO 8601). */
-  readonly expiresAt: string;
+/** The service's side of one call's set-up. */
+export interface VoiceCallPlaced {
+  /** The service's WebRTC answer to the browser's offer (SDP). */
+  readonly answerSdp: string;
+  /** The service's name for the call, where it gave one. Kept for the operator; the browser has no use for it. */
+  readonly callId?: string;
 }
 
 export type VoiceCallOpened =
-  | { readonly ok: true; readonly credential: VoiceCallCredential }
+  | { readonly ok: true; readonly placed: VoiceCallPlaced }
   | { readonly ok: false; readonly reason: 'refused' | 'unreachable' | 'unusable'; readonly status?: number };
 
 /** A realtime speech service, as far as this bridge uses one. */
@@ -66,23 +73,33 @@ export interface VoiceService {
   readonly voice: string;
   /** The model that writes down what the learner said. Its text is what is later judged. */
   readonly transcriptionModel: string;
-  /** Where the browser sends its WebRTC offer, and the data channel the service's events arrive on. */
-  readonly connect: { readonly url: string; readonly dataChannel: string };
-  open(req: { readonly instructions: string; readonly language: string; readonly safetyId: string; readonly expiresInSeconds: number; readonly maxOutputTokens: number }): Promise<VoiceCallOpened>;
+  /** The data channel the service's events arrive on; the browser creates it before making its offer. */
+  readonly dataChannel: string;
+  /** Places one call: takes the browser's offer to the service with the session it is to start with. */
+  open(req: { readonly sdpOffer: string; readonly instructions: string; readonly language: string; readonly safetyId: string; readonly maxOutputTokens: number }): Promise<VoiceCallOpened>;
 }
 
-export const OPENAI_CLIENT_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
 export const OPENAI_REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
-const ANSWER_MAX_BYTES = 200_000;
+/** A WebRTC offer or answer for one audio stream and one data channel is a few kilobytes. */
+export const SDP_MAX_CHARS = 20_000;
+const SDP_START = /^v=0\r?\n/;
+/** Whether a text is, by its first line and its size, a session description. Its content is the service's to accept or refuse. */
+export const looksLikeSdp = (v: unknown): v is string => typeof v === 'string' && v.length <= SDP_MAX_CHARS && SDP_START.test(v);
 
 /**
- * OpenAI's Realtime API (https://developers.openai.com/api/docs/guides/realtime-webrtc, read
- * 2026-11-19). `POST /v1/realtime/client_secrets` with the operator's key returns `{value,
- * expires_at}`; the browser posts its SDP offer to `/v1/realtime/calls` with that value as its
- * bearer and reads events on the `oai-events` data channel. The session is fixed here, in the
- * request that mints the secret: the model, the instructions, the voice, that the learner's speech
- * is transcribed, and that the model answers when the learner stops and yields when they speak.
- * The operator names the model, the voice and the transcription model; nothing is chosen for them.
+ * OpenAI's Realtime API, by its "unified interface"
+ * (https://developers.openai.com/api/docs/guides/realtime-webrtc, read 2026-11-19): the server
+ * posts the browser's SDP offer and the session's settings to `/v1/realtime/calls` as a multipart
+ * form (`sdp`, `session`), with the operator's key, and is answered with the SDP answer. The
+ * session is fixed in that request: the model, the instructions, audio out only, the reply cap,
+ * that the learner's speech is transcribed, and that the model answers when the learner stops and
+ * yields when they speak. The operator names the model, the voice and the transcription model;
+ * nothing is chosen for them.
+ *
+ * What this does not bound, and nothing here claims it does: once a call is up, the browser holds
+ * its data channel, and the service takes session updates over it. A learner who alters the page
+ * can change what the model in their own call is told. They cannot place a second call, use
+ * another model than the session allows them to switch to, or reach the operator's key.
  */
 export function openAiRealtimeVoice(o: {
   readonly apiKey: string; readonly model: string; readonly voice: string; readonly transcriptionModel: string;
@@ -90,55 +107,53 @@ export function openAiRealtimeVoice(o: {
 }): VoiceService {
   const f = o.fetchFn ?? fetch;
   return {
-    provider: 'openai', model: o.model, voice: o.voice, transcriptionModel: o.transcriptionModel,
-    connect: { url: OPENAI_REALTIME_CALLS_URL, dataChannel: 'oai-events' },
+    provider: 'openai', model: o.model, voice: o.voice, transcriptionModel: o.transcriptionModel, dataChannel: 'oai-events',
     async open(req) {
       // A language tag such as pt-BR is given to the transcriber as its ISO 639-1 part.
       const iso = /^[A-Za-z]{2}(?:-|$)/.test(req.language) ? req.language.slice(0, 2).toLowerCase() : undefined;
+      const form = new FormData();
+      form.set('sdp', req.sdpOffer);
+      form.set('session', JSON.stringify({
+        type: 'realtime', model: o.model, instructions: req.instructions, output_modalities: ['audio'], max_output_tokens: req.maxOutputTokens,
+        audio: {
+          input: {
+            transcription: { model: o.transcriptionModel, ...(iso ? { language: iso } : {}) },
+            turn_detection: { type: 'semantic_vad', create_response: true, interrupt_response: true },
+          },
+          output: { voice: o.voice },
+        },
+      }));
       let res: Response;
       try {
-        res = await f(OPENAI_CLIENT_SECRETS_URL, {
+        res = await f(OPENAI_REALTIME_CALLS_URL, {
           method: 'POST', redirect: 'error', signal: AbortSignal.timeout(o.timeoutMs ?? 20_000),
-          headers: { Authorization: `Bearer ${o.apiKey}`, 'Content-Type': 'application/json', 'OpenAI-Safety-Identifier': req.safetyId },
-          body: JSON.stringify({
-            expires_after: { anchor: 'created_at', seconds: req.expiresInSeconds },
-            session: {
-              type: 'realtime', model: o.model, instructions: req.instructions, output_modalities: ['audio'], max_output_tokens: req.maxOutputTokens,
-              audio: {
-                input: {
-                  transcription: { model: o.transcriptionModel, ...(iso ? { language: iso } : {}) },
-                  turn_detection: { type: 'semantic_vad', create_response: true, interrupt_response: true },
-                },
-                output: { voice: o.voice },
-              },
-            },
-          }),
+          headers: { Authorization: `Bearer ${o.apiKey}`, 'OpenAI-Safety-Identifier': req.safetyId },
+          body: form,
         });
       } catch { return { ok: false, reason: 'unreachable' }; }
       if (!res.ok) { await res.body?.cancel().catch(() => undefined); return { ok: false, reason: 'refused', status: res.status }; }
       const declared = Number(res.headers.get('content-length'));
-      if (Number.isFinite(declared) && declared > ANSWER_MAX_BYTES) { await res.body?.cancel().catch(() => undefined); return { ok: false, reason: 'unusable' }; }
-      let body: unknown;
-      try { const text = await res.text(); if (text.length > ANSWER_MAX_BYTES) return { ok: false, reason: 'unusable' }; body = JSON.parse(text); }
-      catch { return { ok: false, reason: 'unusable' }; }
-      const b = typeof body === 'object' && body !== null ? body as Record<string, unknown> : {};
-      const value = b['value'], expires = b['expires_at'];
-      if (typeof value !== 'string' || value.length === 0 || value.length > 4000 || typeof expires !== 'number' || !Number.isFinite(expires)) return { ok: false, reason: 'unusable' };
-      return { ok: true, credential: { value, expiresAt: new Date(expires * 1000).toISOString() } };
+      if (Number.isFinite(declared) && declared > SDP_MAX_CHARS * 4) { await res.body?.cancel().catch(() => undefined); return { ok: false, reason: 'unusable' }; }
+      let answer: string;
+      try { answer = await res.text(); } catch { return { ok: false, reason: 'unusable' }; }
+      if (!looksLikeSdp(answer)) return { ok: false, reason: 'unusable' };
+      // The service names the call in a Location header (a path ending in its id), where it names it at all.
+      const callId = /([A-Za-z0-9_-]{1,200})\/?$/.exec(res.headers.get('location') ?? '')?.[1];
+      return { ok: true, placed: { answerSdp: answer, ...(callId ? { callId } : {}) } };
     },
   };
 }
 
-/** A stand-in for tests and the demo: it issues a credential that names itself and opens nothing. */
-export function scriptedVoiceService(o: { readonly now: () => Date; readonly seen?: { instructions: string; language: string; safetyId: string; expiresInSeconds: number; maxOutputTokens: number }[]; readonly answer?: () => VoiceCallOpened }): VoiceService {
+/** A stand-in for tests and the demo: it answers an offer with a description that names itself, and places nothing. */
+export function scriptedVoiceService(o: { readonly seen?: { sdpOffer: string; instructions: string; language: string; safetyId: string; maxOutputTokens: number }[]; readonly answer?: () => VoiceCallOpened } = {}): VoiceService {
   let n = 0;
   return {
-    provider: 'scripted', model: 'scripted-voice', voice: 'none', transcriptionModel: 'scripted-transcriber',
-    connect: { url: 'https://voice.example.test/calls', dataChannel: 'events' },
+    provider: 'scripted', model: 'scripted-voice', voice: 'none', transcriptionModel: 'scripted-transcriber', dataChannel: 'events',
     async open(req) {
       o.seen?.push({ ...req });
       if (o.answer) return o.answer();
-      return { ok: true, credential: { value: `scripted-secret-${++n}`, expiresAt: new Date(o.now().getTime() + req.expiresInSeconds * 1000).toISOString() } };
+      n += 1;
+      return { ok: true, placed: { answerSdp: `v=0\r\no=scripted ${n} 0 IN IP4 127.0.0.1\r\ns=answer ${n}\r\n`, callId: `scripted-call-${n}` } };
     },
   };
 }
