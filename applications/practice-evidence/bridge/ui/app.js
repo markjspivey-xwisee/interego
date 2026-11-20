@@ -25,8 +25,8 @@
 // textContent only. No markup is ever parsed from a string anywhere in this file, and every icon
 // is built with createElementNS.
 //
-// Your own AI assistant. The hosted service runs no model and holds no model key. A person's own
-// Claude or ChatGPT does each AI step: through the Interego connector (its act tool calls this
+// Your own AI assistant. A person's own Claude or ChatGPT does each AI step unless the workspace
+// lends them its own model (the hosted service does, since 2026-11-20, to people holding a role): through the Interego connector (its act tool calls this
 // workspace's own actions, signed as the person by the relay), or by copy and paste. The text a
 // person copies is built with InteregoChatAgent, the shared helpers the bridge serves in front of
 // this file as one /ui/app.js (applications/_shared/chat-agent); this file declares no name of
