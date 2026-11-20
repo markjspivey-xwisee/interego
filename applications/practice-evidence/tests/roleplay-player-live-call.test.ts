@@ -441,6 +441,27 @@ describe('a live call in the role-play player', () => {
     expect(later.win['__rolePlayLive']).toEqual({ placed: false, why: 'call-in-another-session' });
   });
 
+  it('offers no call in a later visit when the first visit held none: the import reads the first session, so that call could not be reviewed', async () => {
+    const lms = new Lms();
+    // The first visit: the learner says no. The session is ended with nothing in it.
+    const first = open(lms);
+    await first.settle(() => first.el('chip').textContent === 'Tracked' && count(lms, VERB_INITIALIZED) === 1);
+    first.el('go').onclick!(); void first.el('consentno').onclick!();
+    await first.settle(() => count(lms, VERB_TERMINATED) === 1);
+    // The course is opened again: a new session of the same registration.
+    lms.session = LATER_SESSION;
+    const later = open(lms);
+    await later.settle(() => count(lms, VERB_TERMINATED) === 2);
+    expect(later.showing()).toEqual(['s-reviewed']);
+    expect(later.el('rvtitle').textContent).toBe("A call can't be held in this visit");
+    expect(later.el('rvmsg').textContent).toContain('no call was saved in it');
+    expect([lms.calls.length, later.peers.length, count(lms, VOCAB.turnVerb)]).toEqual([0, 0, 0]);
+    expect(later.win['__rolePlayLive']).toEqual({ placed: false, why: 'earlier-session-without-a-call' });
+    // Which is what the import would have said of a call held there: it reads the first session, and that one is empty.
+    const got = readLaunchedCall(lms.held, INPUT);
+    expect((got as { problems: string[] }).problems.join(' | ')).toContain('the session has no exchange');
+  });
+
   it('offers no call where one cannot be placed: a browser without WebRTC, and a page opened without a course', async () => {
     const lms = new Lms();
     const old = open(lms, { webrtc: false });

@@ -703,10 +703,10 @@ const SESSION_READ_PAGES = 5;
    and this page then loads afresh, knowing nothing of what its earlier load sent. */
 async function sessionSoFar(){
   const sid = ((cfg.contextTemplate || {}).extensions || {})[CMI5_SESSION];
-  if (!sid) return {initialized: false, last: 0, statements: [], turnsElsewhere: 0};
+  if (!sid) return {initialized: false, last: 0, statements: [], turnsElsewhere: 0, startedElsewhere: false};
   const h = {"X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization};
   let url = cfg.lrs + "/statements?registration=" + encodeURIComponent(registration) + "&limit=200";
-  let initialized = false, last = 0, turnsElsewhere = 0; const statements = [];
+  let initialized = false, last = 0, turnsElsewhere = 0, startedElsewhere = false; const statements = [];
   try {
     // The record answers in pages. A registration is one conversation and a result, so one page
     // is the usual case; a longer one is followed by the link the record gives, a few pages at most.
@@ -718,13 +718,14 @@ async function sessionSoFar(){
       for (const s of b.statements) {
         if (!(s && s.context && s.context.extensions && s.context.extensions[CMI5_SESSION] === sid)) {
           if (s && s.verb && X.verbs.turn && s.verb.id === X.verbs.turn) turnsElsewhere++;
+          if (s && s.verb && s.verb.id === X.verbs.initialized) startedElsewhere = true;
           continue;
         }
         if (s.verb && s.verb.id === X.verbs.initialized) initialized = true;
         statements.push(s);
         last = Math.max(last, Date.parse(s.timestamp) || 0);
       }
-      if (!b.more) return {initialized: initialized, last: last, statements: statements, turnsElsewhere: turnsElsewhere};
+      if (!b.more) return {initialized: initialized, last: last, statements: statements, turnsElsewhere: turnsElsewhere, startedElsewhere: startedElsewhere};
       // The link is the record's own, and is followed only on the record's own origin.
       const next = new URL(b.more, cfg.lrs);
       if (next.origin !== new URL(cfg.lrs).origin) return null;
@@ -741,11 +742,12 @@ async function sessionSoFar(){
    sent: a second initialized would be worse than a visit that has to be tried again. */
 let sessionHeld = [];   // this session's statements as the learning record held them when the visit was opened
 let turnsElsewhere = 0; // exchanges the record holds for this registration from other sessions
+let startedElsewhere = false; // whether another session of this registration was ever started
 async function openVisit(){
   if (sessionOpened) return true;
   const so = await sessionSoFar();
   if (so === null) { trackErr = "the learning record could not be read"; return false; }
-  sessionHeld = so.statements; turnsElsewhere = so.turnsElsewhere || 0;
+  sessionHeld = so.statements; turnsElsewhere = so.turnsElsewhere || 0; startedElsewhere = so.startedElsewhere === true;
   if (so.last > lastTs) lastTs = so.last;
   // A send that failed earlier does not hold up what is sent from here on. That holds too when the
   // session turns out to have its initialized: an earlier try may have stored it and lost the answer,
@@ -1113,17 +1115,27 @@ async function endLive(why){
    is settled here and no call is to be placed.
    - Exchanges in this session: an earlier load of this page was on a call and was closed. That call
      is over (it lived in that page), and what it wrote stands. The session is ended.
-   - Exchanges in another session: the call was held in an earlier visit. This visit is ended. */
+   - Exchanges in another session: the call was held in an earlier visit. This visit is ended.
+   - Another session and no exchange in it: an earlier visit was started and held no call (the
+     learner said no, or ended the call before anything was written). The review reads the first
+     session a registration started, so a call held now would be written where it is not read.
+     None is offered: the course has to be assigned again. This visit is ended. */
 async function liveCarryOn(){
   const here = sessionHeld.filter(st => st.verb && st.verb.id === X.verbs.turn).length;
-  if (!here && !turnsElsewhere) return false;
+  if (!here && !turnsElsewhere && !startedElsewhere) return false;
   show("s-reviewed"); $("rvretry").classList.add("hide");
+  if (!here && !turnsElsewhere) {
+    setChip("No call", "warn");
+    $("rvtitle").textContent = "A call can't be held in this visit";
+    $("rvmsg").textContent = "This course was opened in an earlier visit, and no call was saved in it. A review reads the first visit to a course, so a call held now could not be reviewed, and none was started. " + freshNote();
+  } else {
   $("rvtitle").textContent = "Your call is saved";
   $("rvmsg").textContent = (here ? "Your call ended when its page was closed. The " + here + (here === 1 ? " exchange" : " exchanges") + " written up to then " + (here === 1 ? "is" : "are") + " saved."
     : "This course already holds a call from an earlier visit.") + " One course holds one call, so another was not started. The course is not complete yet: " + ((S.ui && S.ui.reviewNote) || "a reviewer signs the result off first. Open this course again afterwards to record it.");
+  }
   if (!sessionHeld.some(st => st.verb && st.verb.id === X.verbs.terminated)) await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now() - t0)}, true, false);
   $("rvtrack").textContent = trackErr ? "This visit didn't save (" + trackErr + ")." : "";
-  window.__rolePlayLive = {placed: false, why: here ? "call-in-this-session" : "call-in-another-session"};
+  window.__rolePlayLive = {placed: false, why: here ? "call-in-this-session" : turnsElsewhere ? "call-in-another-session" : "earlier-session-without-a-call"};
   return true;
 }
 

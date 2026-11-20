@@ -21,7 +21,9 @@ scored and no result is sent: the registration is taken as an unscored
 conversation, judged, and reviewed by a person, as before.
 
 One registration holds one call. A page closed during a call ends it, and
-opening the course again places no second one.
+opening the course again places no second one. A later visit to a course whose
+first visit held no call is offered none either: the import reads the first
+visit, so that call could not be reviewed.
 
 The scripted practice is unchanged for a launch that does not ask for a live
 call. The sample scenario gains a `ui.liveCall` block naming the service's data
