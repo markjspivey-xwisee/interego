@@ -27,7 +27,7 @@ const SECRET = 'operator-pod-write-secret-for-tests';
 const T0 = Date.parse('2026-10-22T09:00:00.000Z');
 const key = (name: string): string => `0x${sha256(`pev-launch-test-key:${name}`)}`;
 const wallet = (name: string): Wallet => importWallet(key(name), 'human', name);
-const W = { platform: importWallet(demoKey('platform'), 'agent', 'pev-platform'), admin: wallet('admin'), author: wallet('author'), ana: wallet('ana'), ben: wallet('ben'), lms: wallet('lms') };
+const W = { platform: importWallet(demoKey('platform'), 'agent', 'pev-platform'), admin: wallet('admin'), author: wallet('author'), ana: wallet('ana'), ben: wallet('ben'), lms: wallet('lms'), jo: wallet('jo') };
 
 const clock = { t: T0, now(): Date { this.t += 1000; return new Date(this.t); } };
 let nonceN = 0;
@@ -139,6 +139,23 @@ describe('a registration read as a conversation', () => {
     expect(c.statementIds).toHaveLength(7);
     expect(c.unitSent).toEqual([]);
     expect([c.startedAt, c.endedAt]).toEqual([at(0), at(40)]);
+  });
+
+  it('reads a conversation the unit did not score as a whole call with no scores, and refuses one scored in part', () => {
+    // A unit that carries a live conversation sends its exchanges and its end, and no score.
+    const unscored = call().filter((st) => (st['verb'] as { id: string }).id !== VERB_SCORED);
+    expect(unscored).toHaveLength(4);
+    const r = readLaunchedCall(unscored, INPUT);
+    if (!('call' in r)) throw new Error(r.problems.join(' | '));
+    expect(r.call.scores).toEqual([]);
+    expect(r.call.turns.map((t) => t.speaker)).toEqual(['counterpart', 'learner', 'counterpart', 'learner']);
+    expect([r.call.startedAt, r.call.endedAt]).toEqual([at(0), at(40)]);
+    // One score makes it a scored conversation, and then every criterion has to be there.
+    const oneScore = [...unscored, scored(30, 'specific-observation', 100)];
+    expect(problemsOf(oneScore)).toEqual(['criterion asks-their-view was not scored', 'criterion agrees-next-step was not scored']);
+    // Unscored is still held to everything else: it has to have ended, and to have an exchange.
+    expect(problemsOf(unscored.filter((st) => (st['verb'] as { id: string }).id !== VERB_TERMINATED))).toEqual(['the session of the conversation has no terminated statement: it is still open']);
+    expect(problemsOf(unscored.filter((st) => (st['verb'] as { id: string }).id !== VOCAB.turnVerb))).toEqual(['the session has no exchange: there is nothing to review']);
   });
 
   it('takes the launch mode and the masteryScore from the LMS\'s launched statement when the read returned it', () => {
@@ -789,6 +806,67 @@ describe('pev.import_launched_attempt', () => {
     const o2 = { registration: REG10, session: SESSION9, rubric: scenarioVersionRef(S['scenario']!, 2) };
     lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', o2), ...call(o2)] } });
     refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ registration: REG10 }), readOf(REG10)), 422, 'registration-not-a-conversation');
+  }, SLOW);
+
+  it('takes a conversation the unit did not score as ended, to be judged and then reviewed like any other', async () => {
+    const REG11 = '7b22c8d1-1b2c-4d3e-9f40-0b9c8d7e6f51';
+    const o = { registration: REG11, session: '7b22c8d1-1b2c-4d3e-9f40-0b9c8d7e6f5f' };
+    const unscored = call(o).filter((st) => (st['verb'] as { id: string }).id !== VERB_SCORED);
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', o), ...unscored] } });
+    const r = ok(await act(H, 'pev.import_launched_attempt', W.ana, pay({ registration: REG11 }), readOf(REG11)));
+    expect(r).toMatchObject({
+      state: 'ended', registration: REG11, launchMode: 'Normal', launchModeFrom: 'launched-statement',
+      turnsRead: 4, statementsRead: 5, counterpartControlledBy: 'assignable-unit', unitJudgment: null, recorded: true,
+    });
+    expect(String((r['taken'] as Out)['onTrust'])).toContain('The unit sent no score');
+    const attemptIri = String(r['attemptIri']);
+    const first = (await readHead(POD, attemptIri, TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    // No judgment was made up for it.
+    expect([first.state, first.judgments, first.endedBy]).toEqual(['ended', [], 'learner']);
+    expect(first.turns.map((t) => t.source)).toEqual(['lrs-statement', 'lrs-statement', 'lrs-statement', 'lrs-statement']);
+    expect(validateAgainstShape(recordGraphTurtle(first), readShapesTurtle(), { entailment: 'rdfs' }).conforms).toBe(true);
+    expect(launchedRefusals(first)).not.toEqual([]);
+
+    // A reviewer has nothing to review until there is a judgment.
+    const before = ok(await act(H, 'pev.get_attempt', W.ben, { attemptIri }));
+    const levels = [['specific-observation', 'specific'], ['asks-their-view', 'late'], ['agrees-next-step', 'owner-and-date']]
+      .map(([criterionId, levelId]) => ({ criterionId, levelId, why: 'Read against the two exchanges.' }));
+    const early = await act(H, 'pev.override_attempt', W.ben, { attemptIri, target: before['currentTarget'], levels, sawJudgeLevelsFirst: true });
+    expect(early['kind']).toBe('refusal');
+
+    // A registered judge judges it from the packet, quoting the learner's own lines as the LRS returned them.
+    ok(await act(H, 'pev.register_role', W.admin, { address: W.jo.address, role: 'judge', change: 'add' }));
+    const packet = ok(await act(H, 'pev.judge_packet', W.jo, { attemptIri }));
+    const binding = packet['binding'] as Out;
+    const quotes: Record<string, { text: string; turnIndex: number }[]> = {
+      'specific-observation': [{ text: 'due Thursday at noon', turnIndex: 1 }],
+      'asks-their-view': [{ text: 'What got in the way on your side', turnIndex: 3 }],
+      'agrees-next-step': [],
+    };
+    ok(await act(H, 'pev.record_judgment', W.jo, {
+      attemptIri, attemptHeadUrl: binding['attemptHeadUrl'], transcriptHash: binding['transcriptHash'], rubricHash: binding['rubricHash'],
+      judgeDisclosure: { provider: 'Example', model: 'example-judge', usedPacketPrompt: true },
+      judgment: { criteria: SPEC.rubric.criteria.map((c) => ({ criterionId: c.id, level: quotes[c.id]!.length ? c.levels[c.levels.length - 1]!.id : c.levels[0]!.id, quotes: quotes[c.id], rationale: 'From the quoted words.' })) },
+    }));
+    const judged = (await readHead(POD, attemptIri, TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    expect([judged.state, judged.judgments.length]).toEqual(['judged', 1]);
+    expect(judged.judgments[0]!.judge.id).not.toBe(`unit:${AU}`);
+    // Both quotes are the learner's words as the LRS returned them, and check out.
+    expect(judged.judgments[0]!.unverifiedCriteria).toEqual([]);
+
+    // Now a reviewer decides, and the statements for the unit can be built: the same end as a scored call.
+    const seen = ok(await act(H, 'pev.get_attempt', W.ben, { attemptIri }));
+    ok(await act(H, 'pev.override_attempt', W.ben, { attemptIri, target: seen['currentTarget'], levels, sawJudgeLevelsFirst: true }));
+    const reviewed = (await readHead(POD, attemptIri, TRUSTED, pod.fetchFn)).head!.body as AttemptBody;
+    expect(launchedRefusals(reviewed)).toEqual([]);
+
+    // A call scored in part is neither: nothing is recorded.
+    const REG12 = '7b22c8d1-1b2c-4d3e-9f40-0b9c8d7e6f52';
+    const o2 = { registration: REG12, session: '7b22c8d1-1b2c-4d3e-9f40-0b9c8d7e6f5e' };
+    const part = [...call(o2).filter((st) => (st['verb'] as { id: string }).id !== VERB_SCORED), scored(30, 'specific-observation', 100, o2)];
+    lrs.answer = () => ({ status: 200, body: { statements: [launchedBy('Normal', o2), ...part] } });
+    const no = refused(await act(H, 'pev.import_launched_attempt', W.ana, pay({ registration: REG12 }), readOf(REG12)), 422, 'registration-not-a-conversation');
+    expect(JSON.stringify(no)).toContain('criterion asks-their-view was not scored');
   }, SLOW);
 });
 

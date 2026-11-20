@@ -74,7 +74,13 @@ export interface ImportedScore {
 export interface ImportedCall {
   readonly launch: LmsLaunch;
   readonly turns: readonly ImportedTurn[];
-  /** One per rubric criterion, in the rubric's order. */
+  /**
+   * One per rubric criterion, in the rubric's order; or none at all. A unit that plays a scripted
+   * conversation scores it. A unit that only carries a live conversation (the learner speaking with
+   * a model that answers freely) has nothing to score it with and sends no `scored`: the call is
+   * then read whole and unscored, and is judged afterwards like any conversation held on the bridge.
+   * Some scores and not others is neither, and is refused.
+   */
   readonly scores: readonly ImportedScore[];
   readonly startedAt: string; readonly endedAt: string;
   /** Every statement read for the registration, in time order. */
@@ -260,7 +266,9 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
   const ids = i.spec.rubric.criteria.map((c) => c.id);
   const unknown = [...byKey.keys()].filter((k) => !ids.includes(k));
   if (unknown.length > 0) p.push(`criteria scored that the rubric does not have: ${unknown.join(', ')}`);
-  for (const c of i.spec.rubric.criteria) {
+  // No `scored` at all is a conversation the unit did not score. One is enough to make it a scored
+  // conversation, and then every criterion has to be there.
+  for (const c of scoredRead.length === 0 ? [] : i.spec.rubric.criteria) {
     const given = byKey.get(c.id) ?? [];
     if (given.length !== 1) { p.push(given.length === 0 ? `criterion ${c.id} was not scored` : `criterion ${c.id} was scored ${given.length} times`); continue; }
     const r = given[0]!;
