@@ -929,6 +929,19 @@ async function carryOn(){
    A scenario that names no term for a mark gets the earlier form: the whole line unmarked, and
    "[not transcribed]" as the answer.
 
+   Two more rules, both from a review of this code on 2026-11-20:
+   - A reply that was cancelled before any of it played was never heard, so it is not part of the
+     conversation: it is no line, and it does not divide what the learner was saying into two
+     answers. "Never played" is read from the service sending no `conversation.item.truncated`
+     for a line it cut: in the calls recorded, a line stopped 120 ms into its audio got one, and
+     a line stopped before any audio got none. An exchange is therefore not written until the
+     reply that follows it has ended or is known to have been heard.
+   - The last exchange the scenario allows is written when the call ends, not before. If the
+     learner said more after it, the scenario has no exchange left to hold that, and the last
+     answer is marked as not all of what was said. Until then the call could end on a cancelled
+     reply while the learner was still speaking, and save the first half of a sentence as a
+     whole answer.
+
    Not recorded: what the other person says after the learner's last words (an exchange is a line
    and an answer to it). */
 const live = () => P.call === "live";
@@ -948,18 +961,22 @@ function checkLive(s){
 }
 function liveItem(id, who){
   let it = lc.items.find(x => x.id === id);
-  if (!it) { it = {id: id, who: who, text: null, partial: "", done: false, failed: false, cut: false, closed: false}; lc.items.push(it); }
+  if (!it) { it = {id: id, who: who, text: null, partial: "", done: false, failed: false, cut: false, heard: false, closed: false}; lc.items.push(it); }
   return it;
 }
 const liveText = it => (it.text !== null ? it.text : it.partial).replace(/\s+/g, " ").trim();
+/* A reply the service cut before any of its audio played: generated, never heard. Known only once
+   its response has ended (or the call has), since the truncation that says it was heard may still come. */
+const liveNeverHeard = (it, over) => it.who === "counterpart" && it.cut && !it.heard && (it.closed || over);
 /* The exchanges of a list of items: the other person's lines up to the learner speaking, and what
    the learner said until the other person spoke again. `settled` is false while an exchange could
-   still change. A stretch in which the transcriber heard nothing is no exchange: the line before
-   it carries over to the next one. */
+   still change: until everything in it is finished and the reply after it has ended or been heard.
+   A stretch in which the transcriber heard nothing is no exchange: the line before it carries over
+   to the next one. A reply that was never heard is left out altogether. */
 function liveExchanges(items, over){
   const out = []; let lines = [], said = [];
-  const close = followed => {
-    const settled = over || (followed && lines.concat(said).every(i => i.done));
+  const close = follower => {
+    const settled = over || (!!follower && (follower.closed || follower.heard) && lines.concat(said).every(i => i.done));
     const response = said.map(liveText).filter(liveHeard).join(" ");
     const lost = said.some(i => i.failed);
     const unheard = !response && lost;
@@ -969,16 +986,18 @@ function liveExchanges(items, over){
     lines = []; said = [];
   };
   for (const it of items) {
-    if (it.who === "counterpart" && said.length) close(true);
+    if (liveNeverHeard(it, over)) continue;
+    if (it.who === "counterpart" && said.length) close(it);
     (it.who === "counterpart" ? lines : said).push(it);
   }
-  if (said.length) close(false);
+  if (said.length) close(null);
   return out;
 }
 function liveStatus(text){ $("lstatus").textContent = text; }
 function liveDraw(){
   const box = $("livelog"); box.innerHTML = "";
   for (const it of lc.items) {
+    if (liveNeverHeard(it, lc.over)) continue;
     const said = liveText(it), text = it.who === "learner" && (it.failed || !liveHeard(said)) ? (it.failed ? LIVE_UNHEARD : "") : said; if (!text) continue;
     const d = document.createElement("div"); d.className = "rw";
     d.innerHTML = '<div class="was"></div><div class="say"></div>';
@@ -988,11 +1007,14 @@ function liveDraw(){
   const dots = $("ldots"); if (dots.children.length !== lc.limit) { dots.innerHTML = ""; for (let i = 0; i < lc.limit; i++) dots.appendChild(document.createElement("i")); }
   [...dots.children].forEach((d, i) => d.classList.toggle("on", i < lc.written));
 }
-/* Writes every exchange that is settled and not yet written, in order, up to the scenario's limit. */
+/* Writes every exchange that is settled and not yet written, in order, up to the scenario's limit.
+   The last one the scenario allows waits for the end of the call. true once that last one is ready. */
 function liveFlush(){
-  const ex = liveExchanges(lc.items, lc.over);
-  while (lc.written < lc.limit && ex[lc.written] && ex[lc.written].settled) {
+  const ex = liveExchanges(lc.items, lc.over), last = ex[lc.limit - 1];
+  while (lc.written < lc.limit && ex[lc.written] && ex[lc.written].settled && (lc.over || lc.written + 1 < lc.limit)) {
     const x = ex[lc.written], n = ++lc.written;
+    // More was said after the last exchange than there is anywhere to record.
+    if (n === lc.limit && ex.length > lc.limit && x.response) x.partly = true;
     const def = {name: L("Exchange " + n), extensions: {[X.extensions.counterpartLine]: x.line}};
     if (X.activityTypes.turn) def.type = X.activityTypes.turn;
     if (x.cutOff && X.extensions.lineCutOff) def.extensions[X.extensions.lineCutOff] = true;
@@ -1001,11 +1023,13 @@ function liveFlush(){
     send("turn", "took a turn", {objectType:"Activity", id: activityId + "/turn/" + n, definition: def}, res, false, true);
   }
   liveDraw();
+  return !!(last && last.settled);
 }
 /* One event from the speech service. Anything not known here is left alone. */
 function liveEvent(ev){
   if (!lc || lc.over || !ev || typeof ev.type !== "string") return;
   const t = ev.type, id = typeof ev.item_id === "string" ? ev.item_id : null;
+  let whole = false;   // this event is a reply ending as a whole reply
   if (/^(conversation\.item\.(added|created|done)|response\.output_item\.(added|done))$/.test(t) && ev.item && typeof ev.item.id === "string" && ev.item.type === "message" && (ev.item.role === "user" || ev.item.role === "assistant")) {
     const it = liveItem(ev.item.id, ev.item.role === "user" ? "learner" : "counterpart");
     // The other person's line, ended before it was whole.
@@ -1024,21 +1048,22 @@ function liveEvent(ev){
   } else if (t === "response.output_audio_transcript.done" && id) {
     const it = liveItem(id, "counterpart"); if (typeof ev.transcript === "string") it.text = ev.transcript; it.done = true;
   } else if (t === "conversation.item.truncated" && id) {
-    // The learner spoke over this line and its audio was stopped part way.
-    liveItem(id, "counterpart").cut = true;
+    // The learner spoke over this line and its audio was stopped part way: some of it was heard.
+    const it = liveItem(id, "counterpart"); it.cut = true; it.heard = true;
   } else if (t === "response.done") {
     // Whatever the other person was saying is now said, or cut off: what there is of it is the line.
     // A response that ended any way but completed left its lines unfinished, whether or not a transcript of what there was of them had come.
     const st = ev.response && ev.response.status, broken = typeof st === "string" && st !== "completed";
     for (const it of lc.items) if (it.who === "counterpart" && !it.closed) { if (broken) it.cut = true; it.done = true; it.closed = true; }
+    whole = !broken;
     if (!lc.ending) { liveStatus("Your turn"); $("lav").classList.remove("talk"); }
   } else if (t === "error") {
     lc.errors.push(String((ev.error && (ev.error.code || ev.error.type)) || "error").slice(0, 80));
   }
-  liveFlush();
-  if (lc.written >= lc.limit && !lc.ending) {
-    // The last exchange the scenario allows is written. The other person finishes what they are saying.
-    if (t === "response.done") return void endLive("limit");
+  if (liveFlush() && !lc.ending) {
+    // The last exchange the scenario allows has been had. The other person finishes what they are saying.
+    // A reply that was cancelled is the learner still speaking: the call is not ended on that.
+    if (whole) return void endLive("limit");
     if (!lc.lastReply) { liveStatus("That was the last exchange. " + lc.name + " is finishing."); lc.lastReply = setTimeout(() => endLive("limit"), LIVE_LAST_REPLY_MS); }
   }
 }
