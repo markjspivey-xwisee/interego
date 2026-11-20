@@ -631,9 +631,9 @@ describe('the bridge hosts what is uploaded, and restores it after a restart', (
 
   it('keeps what an upload is beside it, and restores from that, describing a package itself as an upload is parsed', () => {
     const host = server.slice(server.indexOf('async function hostUploadedPackage('), server.indexOf('async function restoreHostedPackage('));
-    expect(host).toContain('const about: PackageAbout = { title, launchable: launchable.filter(isPackagePath), ...(units ? { units } : {}) };');
+    expect(host).toContain('const about: PackageAbout = { title, launchable: launchable.filter(isPackagePath), ...(units ? { units } : {}), ...(outside ? { outside } : {}) };');
     expect(host).toContain('try { kept = await hostedPackages.keep(bytes, about); }');
-    expect(host).toContain('const course = hostedPackageCourse(bridgeBaseUrl, kept.sha256, about);');
+    expect(host).toContain('const course = hostedPackageCourse(bridgeBaseUrl, kept.sha256, about, outsideAuPrefixes.prefixes);');
     const restore = server.slice(server.indexOf('async function restoreHostedPackage('), server.indexOf('attachHostedPackageRoutes(app, {'));
     expect(restore).toContain('const about = await hostedPackages.aboutNow(sha);');
     expect(restore).not.toContain('unwrapScormPackage');

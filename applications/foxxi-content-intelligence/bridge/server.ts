@@ -490,7 +490,7 @@ import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-rev
 import { attachLiveCallRoute, liveCallServiceAsk } from '../src/cmi5-live-call.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
 import { commitDurableRegistry, forwardedRateLimit, readDurableRegistry } from '../src/revocable-registry.js';
-import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, takenDownPackages, type PackageAbout, cmi5PackageUnits } from '../src/scorm-hosting.js';
+import { HostedPackages, PACKAGE_SHA, attachHostedPackageRoutes, hostedPackageCourse, hostedPackageOf, isPackagePath, takenDownPackages, type PackageAbout, cmi5PackageUnits, cmi5OutsideUnits, outsideUnitAllowed, outsideUnitPrefixes } from '../src/scorm-hosting.js';
 import { unwrapScormPackage } from '../../_shared/scorm/index.js';
 import { AGS_SCOPE, attachLti13Routes, type Lti13Tool, type VerifiedResourceLaunch } from '../src/lti13.js';
 import { LtiPlatform, attachLtiPlatformRoutes } from '../src/lti-platform.js';
@@ -11258,6 +11258,14 @@ app.post('/agent/credentials/claim', async (req, res) => {
 const hostedPackagesTakenDown = takenDownPackages(process.env.FOXXI_HOSTED_PACKAGES_TAKEN_DOWN);
 for (const entry of hostedPackagesTakenDown.ignored) bridgeWarn(`[foxxi-bridge] FOXXI_HOSTED_PACKAGES_TAKEN_DOWN: "${entry}" is not a sha-256 (64 hex characters); it takes nothing down`);
 const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage, takenDown: hostedPackagesTakenDown.shas });
+// Where a cmi5 package's unit may be served from outside the package (FOXXI_CMI5_OUTSIDE_AU_PREFIXES:
+// https addresses ending in "/", comma or space separated). Unset, every unit is a file of its
+// package, served in the package's sandbox. A page in that sandbox has an opaque origin, which a
+// browser gives no microphone or camera: a unit that needs one is served from its own address,
+// and the operator says here which addresses those may be. A learner's launch of such a unit
+// hands the page at that address the launch's one-time token, as cmi5 has an LMS do.
+const outsideAuPrefixes = outsideUnitPrefixes(process.env.FOXXI_CMI5_OUTSIDE_AU_PREFIXES);
+for (const entry of outsideAuPrefixes.ignored) bridgeWarn(`[foxxi-bridge] FOXXI_CMI5_OUTSIDE_AU_PREFIXES: "${entry}" is not an https address ending in "/" with no query, fragment or credentials; it approves nothing`);
 /** Remove what the operator listed, and forget each one's course. Run once the bridge is listening. */
 async function takeDownListedPackages(): Promise<void> {
   for (const taken of await hostedPackages.removeTakenDown()) {
@@ -11279,26 +11287,40 @@ function describeHostedPackage(bytes: Buffer): PackageAbout | null {
   if (exported) return { title: exported.title, launchable: [], exportOf: exported.tool };
   const pkg = unwrapScormPackage(bytes);
   const launchable = pkg.resources.filter(r => r.isLaunchable).map(r => r.path).filter(isPackagePath);
-  if (!launchable.length) return null;
+  // A cmi5 course structure may serve a unit from an address outside the package.
+  const outside = pkg.format === 'cmi5' ? cmi5OutsideUnits(pkg.manifestRaw) : undefined;
+  if (!launchable.length && !outside) return null;
   // A cmi5 package says what satisfies each of its units; a SCORM package has nothing to say.
   const units = pkg.format === 'cmi5' ? cmi5PackageUnits(pkg.manifestRaw, launchable) : undefined;
-  return { title: pkg.title, launchable, ...(units ? { units } : {}) };
+  return { title: pkg.title, launchable, ...(units ? { units } : {}), ...(outside ? { outside } : {}) };
 }
 
 /** Keep a parsed package, and what it is beside it, and register it as a cmi5 course; say how to launch it, or why it is not kept. */
 async function hostUploadedPackage(bytes: Buffer, title: string, launchable: readonly string[]): Promise<Record<string, unknown>> {
   // What the package's own course structure says of its units, read from the bytes being kept.
-  let units: PackageAbout['units'];
-  try { units = describeHostedPackage(bytes)?.units; } catch { units = undefined; }
-  const about: PackageAbout = { title, launchable: launchable.filter(isPackagePath), ...(units ? { units } : {}) };
-  if (!about.launchable.length) return { hosted: false, hostedWhy: 'the package names no launchable SCO inside it, so there is nothing to play' };
+  let units: PackageAbout['units'], outside: PackageAbout['outside'];
+  try { const described = describeHostedPackage(bytes); units = described?.units; outside = described?.outside; } catch { units = undefined; outside = undefined; }
+  const about: PackageAbout = { title, launchable: launchable.filter(isPackagePath), ...(units ? { units } : {}), ...(outside ? { outside } : {}) };
+  // A unit served from outside is played only from an address the operator approved. One that is not
+  // is said here, by its address, so whoever brought the package knows why it has no such unit.
+  const notApproved = (outside ?? []).filter(u => !outsideUnitAllowed(u.url, outsideAuPrefixes.prefixes)).map(u => u.url);
+  if (!about.launchable.length && notApproved.length === (outside ?? []).length) {
+    return {
+      hosted: false,
+      hostedWhy: notApproved.length
+        ? 'the package serves its units from addresses this bridge\'s operator has not approved, and names no launchable SCO inside it, so there is nothing to play'
+        : 'the package names no launchable SCO inside it, so there is nothing to play',
+      ...(notApproved.length ? { outsideUnitsNotApproved: notApproved } : {}),
+    };
+  }
   let kept: { sha256: string; url: string };
   try { kept = await hostedPackages.keep(bytes, about); }
   catch (e) { return { hosted: false, hostedWhy: `the package could not be kept: ${(e as Error).message}` }; }
-  const course = hostedPackageCourse(bridgeBaseUrl, kept.sha256, about);
+  const course = hostedPackageCourse(bridgeBaseUrl, kept.sha256, about, outsideAuPrefixes.prefixes);
   registerCmi5Course(DEFAULT_TENANT, course);
   return {
     hosted: true,
+    ...(notApproved.length ? { outsideUnitsNotApproved: notApproved } : {}),
     packageSha256: kept.sha256, packageUrl: kept.url,
     course: { id: course.id, title: course.title, aus: course.structure.map(a => ({ id: a.id, title: a.title })) },
     launch: { method: 'POST', target: `${bridgeBaseUrl}/agent/cmi5/launch`, affordance: actionUrl('urn:iep:action:foxxi:cmi5-launch-signed' as IRI), payload: { course_id: course.id } },
@@ -11333,12 +11355,15 @@ async function restoreHostedPackage(courseId: string): Promise<void> {
   const sha = hostedPackageOf(bridgeBaseUrl, courseId);
   if (!sha) return;
   const about = await hostedPackages.aboutNow(sha);
-  if (about?.launchable.length) registerCmi5Course(DEFAULT_TENANT, hostedPackageCourse(bridgeBaseUrl, sha, about));
+  if (!about) return;
+  const course = hostedPackageCourse(bridgeBaseUrl, sha, about, outsideAuPrefixes.prefixes);
+  if (course.structure.length) registerCmi5Course(DEFAULT_TENANT, course);
 }
 
 attachHostedPackageRoutes(app, {
   packages: hostedPackages,
   bridgeBaseUrl,
+  outsidePrefixes: outsideAuPrefixes.prefixes,
   courseFor: async (sha) => {
     const courseId = `${bridgeBaseUrl}/scorm/packages/${sha}`;
     if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
