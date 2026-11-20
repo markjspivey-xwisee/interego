@@ -292,7 +292,7 @@ describe('how the player opens a visit in a session that may already be open', (
     ${cut('function holds(stored, issued){', 'async function recordReviewed(got, again){')}
     // What begin touches of the page besides the above: the screens, and the LMS's answer that no review is waiting.
     const shown = [], els = {};
-    const $ = (id) => els[id] || (els[id] = { textContent: '', disabled: false, onclick: null, classList: { add() {}, remove() {} } });
+    const $ = (id) => els[id] || (els[id] = { textContent: '', disabled: false, onclick: null, classList: { add() {}, remove() {}, contains() { return true; } } });
     const show = (id) => { shown.push(id); }, setChip = () => {}, P = {}, window = { __rolePlay: {} };
     const askReviewed = async () => ({ state: 'none' }), recordReviewed = async () => {}, reviewUnknown = () => {};
     ${cut('async function begin(){', '// ---------- start ----------')}

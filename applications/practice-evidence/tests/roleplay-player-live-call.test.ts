@@ -16,8 +16,9 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { readLaunchedCall, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary, type ReadLaunchedInput } from '../src/launched-import.js';
-import type { ScenarioSpec } from '../src/practice.js';
+import { LINE_CUT_OFF_EXT, NOT_TRANSCRIBED_EXT, readLaunchedCall, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary, type ReadLaunchedInput } from '../src/launched-import.js';
+import { judgeRequest, transcriptHash, verifyQuote, type ScenarioSpec, type Turn } from '../src/practice.js';
+import { sha256 } from '@interego/core';
 
 const DIR = new URL('../../../docs/applications/practice-evidence/roleplay-player/', import.meta.url);
 const read = (name: string): string => readFileSync(new URL(name, DIR), 'utf8');
@@ -36,7 +37,7 @@ interface Scenario {
 }
 const scenario = JSON.parse(read('scenarios/double-charged-subscription.json')) as Scenario;
 
-type St = Record<string, unknown> & { id: string; verb: { id: string }; timestamp: string; object: { id: string; definition?: { name?: Record<string, string>; extensions?: Record<string, unknown> } }; result?: { response?: string; score?: unknown }; context: { registration?: string; platform?: string; extensions: Record<string, unknown> } };
+type St = Record<string, unknown> & { id: string; verb: { id: string }; timestamp: string; object: { id: string; definition?: { name?: Record<string, string>; extensions?: Record<string, unknown> } }; result?: { response?: string; score?: unknown; extensions?: Record<string, unknown> }; context: { registration?: string; platform?: string; extensions: Record<string, unknown> } };
 const LMS = 'https://lms.example', LRS = `${LMS}/xapi`, PLAYER = 'https://player.example/roleplay-player/index.html';
 const AU = `${LMS}/courses/refund-call/au/1`;
 const REG = '6f1c2f6e-3b1a-4c53-9d2e-0a4b7c9d1e2f', SESSION = 'b7e1a9c4-52d3-4f60-8a17-3c5d9e0f1a2b', LATER_SESSION = 'c8f2bad5-63e4-4a71-9b28-4d6eaf1a2b3c';
@@ -54,6 +55,8 @@ class Lms {
   readonly asked: string[] = [];
   readonly calls: CallAsk[] = [];
   session = SESSION;
+  /** How long the learning record takes to answer a read of the registration, in ms. */
+  slowRead = 0;
   /** What the LMS answers a unit that asks for a call. */
   call: () => { status: number; body: unknown } = () => ({ status: 200, body: this.placed() });
   constructor() {
@@ -92,6 +95,7 @@ class Lms {
     if (u.pathname === '/xapi/statements') {
       const id = u.searchParams.get('statementId');
       if (id) { const h = this.held.find((x) => x.id === id); return h ? json(h) : new Response('', { status: 404 }); }
+      if (this.slowRead) await new Promise((r) => setTimeout(r, this.slowRead));
       return json({ statements: this.held.slice().reverse(), more: '' });
     }
     return new Response('', { status: 404 });
@@ -99,6 +103,10 @@ class Lms {
   verbs(): string[] { return this.held.map((s) => s.verb.id.split('/').pop()!); }
   turns(): { line: unknown; response: string | undefined; n: string }[] {
     return this.held.filter((s) => s.verb.id === VOCAB.turnVerb).map((s) => ({ n: s.object.id.split('/').pop()!, line: s.object.definition!.extensions![VOCAB.counterpartLineExt], response: s.result!.response }));
+  }
+  /** What each exchange says is missing from it: [the line was cut off, the learner was not transcribed]. */
+  marks(): [unknown, unknown][] {
+    return this.held.filter((s) => s.verb.id === VOCAB.turnVerb).map((s) => [s.object.definition!.extensions![LINE_CUT_OFF_EXT], s.result!.extensions?.[NOT_TRANSCRIBED_EXT]]);
   }
 }
 
@@ -298,10 +306,15 @@ describe('a live call in the role-play player', () => {
 
     expect(lms.turns()).toEqual([
       { n: '1', line: 'Hi. I just checked my card and Brightline charged me twice.', response: "I'm sorry about that, I can see both charges." },
-      { n: '2', line: 'Okay, so when do I get my money back?', response: '[not transcribed]' },
+      // No words were recorded, so no answer is written for the learner: a mark says so.
+      { n: '2', line: 'Okay, so when do I get my money back?', response: undefined },
       { n: '3', line: 'Sorry, what was that? Are you still there?', response: 'Yes, I am. The refund is started today and posts in five to seven business days.' },
+      // The whole of what the model produced of the line, marked as cut off: what was heard of it is not known.
       { n: '4', line: 'Fine, thank', response: 'Thanks for calling.' },
     ]);
+    expect(lms.marks()).toEqual([[undefined, undefined], [undefined, true], [undefined, undefined], [true, undefined]]);
+    expect(scenario.xapi.extensions['lineCutOff']).toBe(LINE_CUT_OFF_EXT);
+    expect(scenario.xapi.extensions['notTranscribed']).toBe(NOT_TRANSCRIBED_EXT);
     // No score and no result: those are a judge's and a reviewer's.
     expect(lms.verbs()).toEqual(['launched', 'initialized', 'consented', 'took-turn', 'took-turn', 'took-turn', 'took-turn', 'terminated']);
     expect(count(lms, VERB_SCORED)).toBe(0);
@@ -318,9 +331,72 @@ describe('a live call in the role-play player', () => {
     const got = readLaunchedCall(lms.held, INPUT);
     if (!('call' in got)) throw new Error(`the import refused it: ${got.problems.join(' | ')}`);
     expect(got.call.turns.map((t) => t.speaker)).toEqual(Array.from({ length: 8 }, (_, i) => (i % 2 === 0 ? 'counterpart' : 'learner')));
-    expect(got.call.turns.filter((t) => t.speaker === 'learner').map((t) => t.text)).toEqual(lms.turns().map((t) => t.response));
+    expect(got.call.turns.filter((t) => t.speaker === 'learner').map((t) => t.text)).toEqual(lms.turns().map((t) => t.response ?? ''));
+    // The marks come through the import onto the turns: nothing is put in the learner's mouth, and the cut-off line says it is one.
+    expect(got.call.turns.map((t) => t.mark)).toEqual([undefined, undefined, undefined, 'not-transcribed', undefined, undefined, 'cut-off', undefined]);
     expect(got.call.scores).toEqual([]);
     expect(lms.held.every((s, i) => i === 0 || Date.parse(s.timestamp) >= Date.parse(lms.held[i - 1]!.timestamp))).toBe(true);
+  });
+
+  it('takes a noise for no speech: it is no exchange and uses none of the scenario\'s turns', async () => {
+    const lms = new Lms();
+    lms.call = () => ({ status: 200, body: lms.placed({ turnLimit: 2 }) });
+    const page = await placeCall(lms);
+    customer(page, 'a1', 'Hi, I was charged twice.');
+    // What a transcriber writes for a cough, a hum or a beep: punctuation, or a row of symbols.
+    for (const [id, noise] of [['n1', '.'], ['n2', '****'], ['n3', ' ... '], ['n4', '—'], ['n5', '?!']] as const) {
+      spoke(page, id); heard(page, id, noise);
+      customer(page, `r-${id}`, 'Hello?');
+    }
+    await new Promise((r) => setTimeout(r, 40));
+    expect(count(lms, VOCAB.turnVerb)).toBe(0);
+    // Words beside a noise are still words, and a single word is speech.
+    spoke(page, 'u1'); heard(page, 'u1', '...'); spoke(page, 'u2'); heard(page, 'u2', 'Yes.');
+    customer(page, 'a2', 'Good.');
+    await page.settle(() => count(lms, VOCAB.turnVerb) === 1);
+    expect(lms.turns()).toEqual([{ n: '1', line: 'Hi, I was charged twice. Hello? Hello? Hello? Hello? Hello?', response: 'Yes.' }]);
+    // Five noises did not end a call whose limit is two exchanges.
+    expect(count(lms, VERB_TERMINATED)).toBe(0);
+    void page.el('lend').onclick!();
+    await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+  });
+
+  it('marks a line the service says it stopped part way, and says so beside the line on the page', async () => {
+    const lms = new Lms();
+    const page = await placeCall(lms);
+    page.hear({ type: 'conversation.item.added', item: { id: 'a1', type: 'message', role: 'assistant' } });
+    page.hear({ type: 'response.output_audio_transcript.delta', item_id: 'a1', delta: 'Hi, I was charged twice and I want to know' });
+    // The learner speaks over it. The service stops the audio and says where; the transcript it finishes with is the whole line.
+    spoke(page, 'u1');
+    page.hear({ type: 'conversation.item.truncated', item_id: 'a1', content_index: 0, audio_end_ms: 900 });
+    page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a1', transcript: 'Hi, I was charged twice and I want to know why.' });
+    page.hear({ type: 'response.done', response: { status: 'cancelled' } });
+    heard(page, 'u1', 'Sorry to interrupt, let me pull up your account.');
+    customer(page, 'a2', 'Okay.');
+    await page.settle(() => count(lms, VOCAB.turnVerb) === 1);
+    expect(lms.turns()).toEqual([{ n: '1', line: 'Hi, I was charged twice and I want to know why.', response: 'Sorry to interrupt, let me pull up your account.' }]);
+    expect(lms.marks()).toEqual([[true, undefined]]);
+    void page.el('lend').onclick!();
+    await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+  });
+
+  it('opens the visit before anything of a practice is sent, however quickly the learner agrees', async () => {
+    const lms = new Lms();
+    lms.slowRead = 80;
+    const page = open(lms);
+    // The first screen shows while the visit is still being opened: the record is slow to say what the session holds. The learner agrees at once.
+    await page.settle(() => page.showing().includes('s-welcome') && page.el('chip').textContent === 'Tracked');
+    expect(count(lms, VERB_INITIALIZED)).toBe(0);
+    page.el('go').onclick!(); page.el('agree').onclick!(); void page.el('consentyes').onclick!();
+    // Nothing is sent, and no microphone asked for, until the visit is open.
+    await new Promise((r) => setTimeout(r, 20));
+    expect([lms.verbs(), page.mics.length]).toEqual([['launched'], 0]);
+    await page.settle(() => page.peers.length > 0 && page.peer().remote !== null);
+    expect(lms.verbs()).toEqual(['launched', 'initialized', 'consented']);
+    expect(Date.parse(lms.held[1]!.timestamp)).toBeLessThan(Date.parse(lms.held[2]!.timestamp));
+    page.peer().channel!.onopen!();
+    void page.el('lend').onclick!();
+    await page.settle(() => count(lms, VERB_TERMINATED) === 1);
   });
 
   it('ends the call by itself after the last exchange the scenario allows, and writes no more than that', async () => {
@@ -490,5 +566,58 @@ describe('a live call in the role-play player', () => {
     await live.settle(() => live.el('chip').textContent === 'Tracked');
     expect([live.el('personas').hidden, live.el('steps').hidden, live.el('livesteps').hidden]).toEqual([true, true, false]);
     expect(live.el('go').textContent).toBe('Start the call');
+  });
+});
+
+describe('what a live call could not record, at the import and before a judge', () => {
+  const at = (n: number): string => new Date(Date.UTC(2026, 10, 20, 9, 0, n)).toISOString();
+  const ctx = { registration: REG, extensions: { [SESSION_EXT]: SESSION } };
+  const st = (n: number, verb: string, over: Record<string, unknown> = {}): Record<string, unknown> => ({ id: `00000000-0000-4000-8000-0000000002${String(n).padStart(2, '0')}`, actor: ACTOR, verb: { id: verb }, object: { id: AU }, context: ctx, timestamp: at(n), ...over });
+  const exchange = (n: number, line: string, result: Record<string, unknown>, ext: Record<string, unknown> = {}): Record<string, unknown> =>
+    st(n, VOCAB.turnVerb, { object: { id: `${AU}/turn/${n}`, definition: { extensions: { [VOCAB.counterpartLineExt]: line, ...ext } } }, result });
+  const launched = { ...st(0, VERB_LAUNCHED), context: { registration: REG, extensions: { [SESSION_EXT]: SESSION, 'https://w3id.org/xapi/cmi5/context/extensions/launchmode': 'Normal' } } };
+  const call = (...exchanges: Record<string, unknown>[]): Record<string, unknown>[] => [launched, st(1, VERB_INITIALIZED), ...exchanges, st(50, VERB_TERMINATED)];
+  const problems = (statements: Record<string, unknown>[]): string => { const r = readLaunchedCall(statements, INPUT); return 'problems' in r ? r.problems.join(' | ') : ''; };
+
+  it('reads a mark only as the boolean true, and refuses an exchange that says both things of the learner', () => {
+    const got = readLaunchedCall(call(
+      exchange(2, 'Hi, I was charged twice.', { response: 'Let me look.' }, { [LINE_CUT_OFF_EXT]: 'true' }),
+      exchange(3, 'Well?', { response: 'One moment.', extensions: { [NOT_TRANSCRIBED_EXT]: 'yes' } }, { [LINE_CUT_OFF_EXT]: true }),
+      exchange(4, 'Hello?', { extensions: { [NOT_TRANSCRIBED_EXT]: true } }),
+    ), INPUT);
+    if (!('call' in got)) throw new Error(got.problems.join(' | '));
+    expect(got.call.turns.map((t) => [t.speaker, t.text, t.mark])).toEqual([
+      ['counterpart', 'Hi, I was charged twice.', undefined], ['learner', 'Let me look.', undefined],
+      ['counterpart', 'Well?', 'cut-off'], ['learner', 'One moment.', undefined],
+      ['counterpart', 'Hello?', undefined], ['learner', '', 'not-transcribed'],
+    ]);
+    expect(problems(call(exchange(2, 'Hi.', { response: 'I said this.', extensions: { [NOT_TRANSCRIBED_EXT]: true } })))).toContain('says the learner was not transcribed and also gives an answer for them');
+    // With no mark, an exchange with no answer is still refused, as it always was.
+    expect(problems(call(exchange(2, 'Hi.', {})))).toContain('carries no answer from the learner');
+    // A call in which nothing the learner said was recorded is nothing to review.
+    expect(problems(call(exchange(2, 'Hi.', { extensions: { [NOT_TRANSCRIBED_EXT]: true } }), exchange(3, 'Hello?', { extensions: { [NOT_TRANSCRIBED_EXT]: true } })))).toContain('no exchange of the session has any recorded words from the learner');
+  });
+
+  it('shows a judge the marks and no words for a turn that has none, and tells it what they mean', () => {
+    const turn = (index: number, speaker: 'counterpart' | 'learner', text: string, mark?: Turn['mark']): Turn => ({ index, speaker, text, textSha256: sha256(text), at: at(index), source: 'lrs-statement', ...(mark ? { mark } : {}) });
+    const turns = [turn(0, 'counterpart', 'Hi, I was charged twice and I want a refund and a free month.', 'cut-off'), turn(1, 'learner', 'Sorry to interrupt, let me pull up your account.'), turn(2, 'counterpart', 'Well?'), turn(3, 'learner', '', 'not-transcribed')];
+    const req = judgeRequest(scenario as unknown as ScenarioSpec, turns);
+    const user = req.messages[0]!.content;
+    expect(user).toContain('[T0 THEM, CUT OFF] Hi, I was charged twice and I want a refund and a free month.');
+    expect(user).toContain('[T1 LEARNER] Sorry to interrupt, let me pull up your account.');
+    expect(user).toContain('[T2 THEM] Well?\n[T3 LEARNER, NOT TRANSCRIBED]');
+    expect(user.endsWith('[T3 LEARNER, NOT TRANSCRIBED]')).toBe(true);
+    expect(req.system).toContain('A THEM turn marked CUT OFF was interrupted');
+    expect(req.system).toContain('A LEARNER turn marked NOT TRANSCRIBED was spoken and no words of it were recorded. It is not evidence for or against any level');
+    expect(req.system).toContain('begin the rationale with "For the reviewer:"');
+    // An unmarked transcript reads to the judge exactly as it did.
+    const plain = judgeRequest(scenario as unknown as ScenarioSpec, [turn(0, 'counterpart', 'Hi.'), turn(1, 'learner', 'Hello, Brightline support.')]).messages[0]!.content;
+    expect(plain.endsWith('[T0 THEM] Hi.\n[T1 LEARNER] Hello, Brightline support.')).toBe(true);
+    // Nothing can be quoted from a turn with no words, and the old placeholder is not there to quote.
+    expect(verifyQuote({ turnIndex: 3, text: '[not transcribed]' }, turns).verified).toBe(false);
+    // A mark is part of what the transcript says: it changes the hash, and a transcript with none hashes as before.
+    const unmarked = turns.map(({ mark: _mark, ...t }) => t);
+    expect(transcriptHash(turns)).not.toBe(transcriptHash(unmarked));
+    expect(transcriptHash(unmarked)).toBe(sha256(JSON.stringify(unmarked.map((t) => ({ index: t.index, speaker: t.speaker, text: t.text })))));
   });
 });

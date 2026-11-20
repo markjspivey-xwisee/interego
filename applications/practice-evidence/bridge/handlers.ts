@@ -2292,6 +2292,7 @@ async function importLaunchedAttempt(call: Call, args: Record<string, unknown>):
     const at = iso(ctx);
     const turns: Turn[] = c.turns.map((t, index) => ({
       index, speaker: t.speaker, text: t.text, textSha256: sha256(t.text), at: t.at, source: 'lrs-statement', statementId: t.statementId,
+      ...(t.mark !== undefined ? { mark: t.mark } : {}),
     }));
     const tHash = transcriptHash(turns);
     const judgeId = `unit:${c.launch.activityId}`;
@@ -3782,6 +3783,7 @@ async function getAttempt(call: Call, args: Record<string, unknown>): Promise<Ou
     turns: a.turns.map((t) => ({
       index: t.index, speaker: t.speaker, ...(t.text !== undefined ? { text: t.text } : {}), textSha256: t.textSha256, source: t.source,
       ...(t.disclosure ? { disclosure: t.disclosure } : {}), ...(t.endSignal ? { endSignal: true } : {}),
+      ...(t.mark !== undefined ? { mark: t.mark } : {}),
       ...(judged && t.speaker === 'learner' && t.text !== undefined ? { normalisedText: normaliseForQuote(t.text) } : {}),
     })),
     ...(stakes

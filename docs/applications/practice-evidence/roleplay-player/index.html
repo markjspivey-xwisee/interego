@@ -838,7 +838,8 @@ async function begin(){
   }
   setChip(P.contextKind === "agent-test" ? "Tracked (agent test)" : "Tracked", "ok");
   if (live() ? await liveCarryOn() : await carryOn()) return;
-  show("s-welcome");
+  // A learner who has already gone on to the agreement stays there: it waits for this (visitOpen).
+  if ($("s-consent").classList.contains("hide")) show("s-welcome");
 }
 /* The completed statement of a practice the player decides for itself, from the picks as they stand. */
 function sendCompleted(){
@@ -910,12 +911,22 @@ async function carryOn(){
    can still change it: everything in it is finished and the other person has started on what
    comes next, or the call is over.
 
+   What a call could not record is said, not papered over:
+   - A line the learner spoke over is marked cut off. Its text is the whole line the model
+     produced: the service says where the audio stopped, not which words had been heard.
+   - Speech the transcriber failed on is an exchange with no answer in it and a mark saying so.
+     Nothing is put in the learner's mouth.
+   - A transcript with no letter or digit in it (a cough, a hum, a noise) is not speech: it is no
+     exchange and uses none of the scenario's turns.
+   A scenario that names no term for a mark gets the earlier form: the whole line unmarked, and
+   "[not transcribed]" as the answer.
+
    Not recorded: what the other person says after the learner's last words (an exchange is a line
-   and an answer to it), and how much of a line was heard when the learner spoke over it (the text
-   is the whole line the model produced). */
+   and an answer to it). */
 const live = () => P.call === "live";
 const LIVE_UNSAID = "[nothing said yet]";     // the learner spoke before the other person had
-const LIVE_UNHEARD = "[not transcribed]";     // the learner spoke and the transcriber failed
+const LIVE_UNHEARD = "[not transcribed]";     // the learner spoke and the transcriber failed (shown; written only where the scenario names no mark)
+const liveHeard = s => /[\p{L}\p{N}]/u.test(s);   // words, as against the punctuation a transcriber writes for a noise
 const LIVE_TEXT_MAX = 4000, LIVE_LAST_WORDS_MS = 4000, LIVE_LAST_REPLY_MS = 20000;
 let lc = null;   // the call under way: {pc, dc, mic, items, written, limit, over, ...}
 const liveSet = () => (S.ui && S.ui.liveCall) || {};
@@ -929,7 +940,7 @@ function checkLive(s){
 }
 function liveItem(id, who){
   let it = lc.items.find(x => x.id === id);
-  if (!it) { it = {id: id, who: who, text: null, partial: "", done: false, failed: false}; lc.items.push(it); }
+  if (!it) { it = {id: id, who: who, text: null, partial: "", done: false, failed: false, cut: false}; lc.items.push(it); }
   return it;
 }
 const liveText = it => (it.text !== null ? it.text : it.partial).replace(/\s+/g, " ").trim();
@@ -941,9 +952,10 @@ function liveExchanges(items, over){
   const out = []; let lines = [], said = [];
   const close = followed => {
     const settled = over || (followed && lines.concat(said).every(i => i.done));
-    const response = said.map(liveText).filter(Boolean).join(" ");
-    if (settled && !response && !said.some(i => i.failed)) { said = []; return; }
-    out.push({line: (lines.map(liveText).filter(Boolean).join(" ") || LIVE_UNSAID).slice(0, LIVE_TEXT_MAX), response: (response || LIVE_UNHEARD).slice(0, LIVE_TEXT_MAX), settled: settled});
+    const response = said.map(liveText).filter(liveHeard).join(" ");
+    const unheard = !response && said.some(i => i.failed);
+    if (settled && !response && !unheard) { said = []; return; }
+    out.push({line: (lines.map(liveText).filter(Boolean).join(" ") || LIVE_UNSAID).slice(0, LIVE_TEXT_MAX), response: response.slice(0, LIVE_TEXT_MAX), unheard: unheard, cutOff: lines.some(i => i.cut), settled: settled});
     lines = []; said = [];
   };
   for (const it of items) {
@@ -957,10 +969,10 @@ function liveStatus(text){ $("lstatus").textContent = text; }
 function liveDraw(){
   const box = $("livelog"); box.innerHTML = "";
   for (const it of lc.items) {
-    const text = liveText(it) || (it.failed ? LIVE_UNHEARD : ""); if (!text) continue;
+    const said = liveText(it), text = it.who === "learner" && !liveHeard(said) ? (it.failed ? LIVE_UNHEARD : "") : said; if (!text) continue;
     const d = document.createElement("div"); d.className = "rw";
     d.innerHTML = '<div class="was"></div><div class="say"></div>';
-    d.querySelector(".was").textContent = it.who === "counterpart" ? lc.name : "You"; d.querySelector(".say").textContent = text;
+    d.querySelector(".was").textContent = it.who === "counterpart" ? lc.name + (it.cut ? " (cut off)" : "") : "You"; d.querySelector(".say").textContent = text;
     box.appendChild(d);
   }
   const dots = $("ldots"); if (dots.children.length !== lc.limit) { dots.innerHTML = ""; for (let i = 0; i < lc.limit; i++) dots.appendChild(document.createElement("i")); }
@@ -973,7 +985,9 @@ function liveFlush(){
     const x = ex[lc.written], n = ++lc.written;
     const def = {name: L("Exchange " + n), extensions: {[X.extensions.counterpartLine]: x.line}};
     if (X.activityTypes.turn) def.type = X.activityTypes.turn;
-    send("turn", "took a turn", {objectType:"Activity", id: activityId + "/turn/" + n, definition: def}, {response: x.response}, false, true);
+    if (x.cutOff && X.extensions.lineCutOff) def.extensions[X.extensions.lineCutOff] = true;
+    const res = x.unheard && X.extensions.notTranscribed ? {extensions: {[X.extensions.notTranscribed]: true}} : {response: x.response || LIVE_UNHEARD};
+    send("turn", "took a turn", {objectType:"Activity", id: activityId + "/turn/" + n, definition: def}, res, false, true);
   }
   liveDraw();
 }
@@ -996,9 +1010,13 @@ function liveEvent(ev){
     liveStatus(lc.name + " is speaking"); $("lav").classList.add("talk");
   } else if (t === "response.output_audio_transcript.done" && id) {
     const it = liveItem(id, "counterpart"); if (typeof ev.transcript === "string") it.text = ev.transcript; it.done = true;
+  } else if (t === "conversation.item.truncated" && id) {
+    // The learner spoke over this line and its audio was stopped part way.
+    liveItem(id, "counterpart").cut = true;
   } else if (t === "response.done") {
     // Whatever the other person was saying is now said, or cut off: what there is of it is the line.
-    for (const it of lc.items) if (it.who === "counterpart") it.done = true;
+    const cancelled = ev.response && ev.response.status === "cancelled";
+    for (const it of lc.items) if (it.who === "counterpart") { if (cancelled && !it.done) it.cut = true; it.done = true; }
     if (!lc.ending) { liveStatus("Your turn"); $("lav").classList.remove("talk"); }
   } else if (t === "error") {
     lc.errors.push(String((ev.error && (ev.error.code || ev.error.type)) || "error").slice(0, 80));
@@ -1177,7 +1195,7 @@ async function liveCarryOn(){
   if (!cfg) { setChip("Preview, not saved", "warn"); return; }
   if (!ready) { setChip("Not saving", "warn"); $("voicenote").textContent = "This link couldn't connect to your record (" + trackErr + "). It may have been used already. " + freshNote(); return; }
   tracked = true; setChip(P.contextKind === "agent-test" ? "Tracked (agent test)" : "Tracked", "ok");
-  await begin();
+  opening = begin(); await opening;
 })();
 $("mic").onclick = listen;
 $("coachbtn").onclick = () => { coach = !coach; $("coachbtn").textContent = "Coach: " + (coach?"on":"off"); $("hint").classList.toggle("hide", !coach); };
@@ -1186,11 +1204,22 @@ $("go").onclick = () => { if ($("go").disabled || (!tracked && cfg && !trackErr)
 $("lend").onclick = () => endLive("ended");
 $("lretry").onclick = () => { if (!lc) startLive(); };
 let agreed = false;
+/* The visit is opened (its initialized sent, an earlier practice looked for) while the first screen
+   is already showing. A learner quick enough to agree before that is done waits for it here: cmi5
+   has initialized first in a session, and until 2026-11-20 an agreement given in that gap was
+   stamped before it. false when the visit turned out to be for something other than a new practice. */
+let opening = null;
+async function visitOpen(){
+  if (!opening) return true;
+  await opening;
+  return !$("s-consent").classList.contains("hide") && (!tracked || sessionOpened);
+}
 $("agree").onclick = () => { agreed = !agreed; $("sw").classList.toggle("on", agreed); $("consentyes").disabled = !agreed; };
 const consentAct = () => ({objectType:"Activity", id: activityId + "#consent", definition:{type: X.activityTypes.consent, name: L(live()
   ? "Consent to a live practice call with an AI speech model: microphone audio goes to the speech service for the call, and the transcribed text of what is said is saved (no audio saved)"
   : "Consent to a scored practice session, including the recognised text of what the learner says (no audio)")}});
 $("consentyes").onclick = async () => {
+  if (!(await visitOpen())) return;
   if (live()) {
     if (!tracked) return;
     send("consented", "consented", consentAct(), {success:true, response:"Agreed in the player: a live call with an AI speech model; microphone audio sent to the speech service for the call; transcribed text of both sides saved; no audio saved; nothing scored by the player"}, false, true);
@@ -1201,6 +1230,7 @@ $("consentyes").onclick = async () => {
   show("s-call"); renderStage();
 };
 $("consentno").onclick = async () => {
+  if (!(await visitOpen())) return;
   persona = live() ? null : S.personas.find(p=>p.id===sel);
   send("declinedConsent", "declined-consent", consentAct(), {success:false, response:"Declined in the player"}, false, true);
   await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);

@@ -2353,7 +2353,10 @@ function bubble(v, t, textNode) {
   const side = mine ? 'me' : 'them';
   const msg = h('div', { class: `chat__msg chat__msg--${side} bubble ${side}`, dataset: { turn: String(t.index) } },
     h('span', { class: 'chat__who', text: mine ? 'You' : v.counterpartName }),
-    h('p', { class: 'chat__bubble text' }, textNode || (t.text !== undefined ? t.text : '(text deleted)')));
+    h('p', { class: 'chat__bubble text' }, textNode || (t.mark === 'not-transcribed' ? '(no words were recorded)' : t.text !== undefined ? t.text : '(text deleted)')));
+  // What a live call could not record, said beside the turn so nobody reads the turn as more than it is.
+  if (t.mark === 'not-transcribed') msg.append(h('div', { class: 'chat__meta' }, badge('Spoken, not transcribed: not evidence either way', 'warning')));
+  if (t.mark === 'cut-off') msg.append(h('div', { class: 'chat__meta' }, badge('Cut off: the learner may not have heard all of this', 'warning')));
   if (!mine) {
     const rw = replyWords(t);
     if (rw) {
