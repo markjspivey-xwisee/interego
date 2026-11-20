@@ -295,6 +295,12 @@
   ],
   "realPracticeNote": "Ready for the real thing? Ask Grok Bot in chat to call you. It opens with an AI disclosure and asks for your consent, then scores the call against this same rubric.",
   "freshLinkNote": "Ask Grok Bot in chat for a fresh link.",
+  "liveCall": {
+   "dataChannel": "oai-events",
+   "service": "OpenAI's Realtime speech service",
+   "maxMinutes": 10,
+   "blurb": "A Brightline Notes Pro customer was charged $19 twice on Nov 3. This is a live call: an AI customer rings, you answer out loud in your own words, and they react to what you say."
+  },
   "reviewNote": "a reviewer reads what you said and signs the result off first. Open this course again afterwards to record it."
  },
  "nextSteps": [

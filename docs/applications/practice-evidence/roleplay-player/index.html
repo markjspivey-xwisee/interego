@@ -10,6 +10,12 @@
   launch of the same registration it asks the LMS (GET /cmi5/reviewed, with the session's cmi5
   credential) for the result a reviewer signed off, and sends that.
 
+  A launch that says `call=live` holds a live call instead of the scripted one: the learner speaks
+  freely and an AI speech model answers aloud. The page asks the LMS for the call (POST
+  /cmi5/live-call, with the session's cmi5 credential and the WebRTC offer this browser made) and is
+  handed the speech service's answer to that offer, and no credential for the service. It writes
+  each exchange as text, and no score: the result is a reviewer's.
+
   Nothing about a course, a scenario or a learner is in this file. The first script takes the cmi5
   launch from the URL; it is the bootstrap Foxxi puts into the pages it hosts, kept here because
   this page is served from elsewhere.
@@ -123,13 +129,19 @@ a{color:var(--accent)}.hide{display:none!important}
 <section id="s-consent" class="hide">
   <div class="card">
     <h2>Before you start</h2>
-    <ul class="steps">
+    <ul class="steps" id="steps">
       <li><span class="num">1</span><div><b>The <span class="cprole">other person</span> is simulated</b><span class="small">Played by this app. Their voice is your device's text-to-speech.</span></div></li>
       <li><span class="num">2</span><div><b>This practice is scored</b><span class="small">Your scores go to your private learning record so your coach can suggest what to practise next.</span></div></li>
       <li><span class="num">3</span><div><b>What is saved, and what isn't</b><span class="small">If you speak, your browser turns your speech into text. That recognised text of what you said is saved with your scores, along with the replies you chose. No audio is recorded or saved.</span></div></li>
       <li><span class="num">4</span><div><b>You're in control</b><span class="small">Prefer not to have your words saved? Tap replies instead of speaking. Say no here and the session ends, with nothing scored.</span></div></li>
     </ul>
-    <div class="toggle" id="agree"><span>I agree to a scored practice session, including saving the text of what I say</span><span class="sw" id="sw"></span></div>
+    <ul class="steps hide" id="livesteps">
+      <li><span class="num">1</span><div><b>The <span class="cprole">other person</span> is an AI speech model</b><span class="small">You talk and it answers aloud, as on a phone call. It is not a person, and it can say things that are wrong or odd.</span></div></li>
+      <li><span class="num">2</span><div><b>Your voice goes to a speech service</b><span class="small">For the length of the call your microphone's audio is sent to <span id="liveservice">the AI speech service</span>. This app saves no audio. What that service keeps is under its own terms.</span></div></li>
+      <li><span class="num">3</span><div><b>What is saved is text</b><span class="small">A second AI model writes down what you say. That text, and the text of what the <span class="cprole">other person</span> said, is saved to your private learning record. A word it gets wrong is wrong in the record until a reviewer reads it.</span></div></li>
+      <li><span class="num">4</span><div><b>A person decides the result</b><span class="small">Nothing is scored during the call. An AI judge and then a human reviewer read the saved text. Say no here and the session ends, with nothing saved.</span></div></li>
+    </ul>
+    <div class="toggle" id="agree"><span id="agreetext">I agree to a scored practice session, including saving the text of what I say</span><span class="sw" id="sw"></span></div>
     <div class="row"><button class="btn primary" id="consentyes" disabled>Continue</button><button class="btn ghost" id="consentno">Not now</button></div>
   </div>
 </section>
@@ -147,6 +159,18 @@ a{color:var(--accent)}.hide{display:none!important}
       <div class="heard" id="heard"></div></div>
     <div id="choices" style="margin-top:12px"></div>
     <div class="row" style="margin-top:6px"><button class="btn ghost" id="coachbtn">Coach: on</button><button class="btn ghost" id="voicebtn"></button></div>
+  </div>
+</section>
+
+<section id="s-live" class="hide">
+  <div class="card">
+    <div class="callhead"><div class="bigav" id="lav"></div>
+      <div style="flex:1;min-width:0"><div class="pname" id="lname"></div><div class="small" id="lstatus"></div></div></div>
+    <div class="dots" id="ldots"></div>
+    <div id="livelog" style="margin-top:14px"></div>
+    <p class="small" id="ldisclosure" style="margin:12px 0"></p>
+    <div class="row"><button class="btn primary" id="lend">End call</button><button class="btn ghost hide" id="lretry">Try again</button></div>
+    <audio id="liveaudio" autoplay></audio>
   </div>
 </section>
 
@@ -206,7 +230,7 @@ async function launchParams(){
     } catch(e) {}
   }
   const fromUrl = {};
-  for (const k of ["scenario","persona","participantPseudonym","attemptGraph","contextKind","actorKind"]) if (q.get(k)) fromUrl[k] = q.get(k);
+  for (const k of ["scenario","persona","participantPseudonym","attemptGraph","contextKind","actorKind","call"]) if (q.get(k)) fromUrl[k] = q.get(k);
   P.sources = {launchParameters: Object.keys(lp), url: Object.keys(fromUrl)};
   return Object.assign({}, fromUrl, lp);   // the LMS's launchParameters win over the URL
 }
@@ -281,7 +305,7 @@ function ctx(cmi5, parent){
   grouping.push({objectType:"Activity", id: attemptGraph(), definition:{type: X.activityTypes.attempt, name: L(S.title + " practice " + registration.slice(0,8))}});
   const ca = {category:cat, grouping:grouping};
   if (parent) ca.parent = [scenarioAct()];
-  return {registration: registration, platform: (S.ui && S.ui.brand ? S.ui.brand + " " : "") + "role-play player" + (P.contextKind === "agent-test" ? " (agent test)" : ""), language: S.language || "en-US", extensions: ext, contextActivities: ca};
+  return {registration: registration, platform: (S.ui && S.ui.brand ? S.ui.brand + " " : "") + "role-play player" + (P.call === "live" ? " (live call)" : "") + (P.contextKind === "agent-test" ? " (agent test)" : ""), language: S.language || "en-US", extensions: ext, contextActivities: ca};
 }
 let lastTs = 0;
 function nextTs(){ let n = Date.now(); if (n <= lastTs) n = lastTs + 1; lastTs = n; return new Date(n).toISOString(); }
@@ -679,10 +703,10 @@ const SESSION_READ_PAGES = 5;
    and this page then loads afresh, knowing nothing of what its earlier load sent. */
 async function sessionSoFar(){
   const sid = ((cfg.contextTemplate || {}).extensions || {})[CMI5_SESSION];
-  if (!sid) return {initialized: false, last: 0, statements: []};
+  if (!sid) return {initialized: false, last: 0, statements: [], turnsElsewhere: 0, startedElsewhere: false};
   const h = {"X-Experience-API-Version":"2.0.0","Authorization":cfg.authorization};
   let url = cfg.lrs + "/statements?registration=" + encodeURIComponent(registration) + "&limit=200";
-  let initialized = false, last = 0; const statements = [];
+  let initialized = false, last = 0, turnsElsewhere = 0, startedElsewhere = false; const statements = [];
   try {
     // The record answers in pages. A registration is one conversation and a result, so one page
     // is the usual case; a longer one is followed by the link the record gives, a few pages at most.
@@ -692,12 +716,16 @@ async function sessionSoFar(){
       const b = await r.json();
       if (!b || !Array.isArray(b.statements)) return null;
       for (const s of b.statements) {
-        if (!(s && s.context && s.context.extensions && s.context.extensions[CMI5_SESSION] === sid)) continue;
+        if (!(s && s.context && s.context.extensions && s.context.extensions[CMI5_SESSION] === sid)) {
+          if (s && s.verb && X.verbs.turn && s.verb.id === X.verbs.turn) turnsElsewhere++;
+          if (s && s.verb && s.verb.id === X.verbs.initialized) startedElsewhere = true;
+          continue;
+        }
         if (s.verb && s.verb.id === X.verbs.initialized) initialized = true;
         statements.push(s);
         last = Math.max(last, Date.parse(s.timestamp) || 0);
       }
-      if (!b.more) return {initialized: initialized, last: last, statements: statements};
+      if (!b.more) return {initialized: initialized, last: last, statements: statements, turnsElsewhere: turnsElsewhere, startedElsewhere: startedElsewhere};
       // The link is the record's own, and is followed only on the record's own origin.
       const next = new URL(b.more, cfg.lrs);
       if (next.origin !== new URL(cfg.lrs).origin) return null;
@@ -713,11 +741,13 @@ async function sessionSoFar(){
    what is stamped now sorts after what was sent then. If the record cannot be read, nothing is
    sent: a second initialized would be worse than a visit that has to be tried again. */
 let sessionHeld = [];   // this session's statements as the learning record held them when the visit was opened
+let turnsElsewhere = 0; // exchanges the record holds for this registration from other sessions
+let startedElsewhere = false; // whether another session of this registration was ever started
 async function openVisit(){
   if (sessionOpened) return true;
   const so = await sessionSoFar();
   if (so === null) { trackErr = "the learning record could not be read"; return false; }
-  sessionHeld = so.statements;
+  sessionHeld = so.statements; turnsElsewhere = so.turnsElsewhere || 0; startedElsewhere = so.startedElsewhere === true;
   if (so.last > lastTs) lastTs = so.last;
   // A send that failed earlier does not hold up what is sent from here on. That holds too when the
   // session turns out to have its initialized: an earlier try may have stored it and lost the answer,
@@ -807,7 +837,7 @@ async function begin(){
     return;
   }
   setChip(P.contextKind === "agent-test" ? "Tracked (agent test)" : "Tracked", "ok");
-  if (await carryOn()) return;
+  if (live() ? await liveCarryOn() : await carryOn()) return;
   show("s-welcome");
 }
 /* The completed statement of a practice the player decides for itself, from the picks as they stand. */
@@ -866,6 +896,249 @@ async function carryOn(){
   return true;
 }
 
+// ---------- a live call ----------
+/* The learner speaks freely and an AI speech model answers aloud, over WebRTC. This page makes the
+   offer; the LMS takes it to the practice service, which places the call with the speech service
+   and hands back that service's answer. No credential for the speech service comes here.
+
+   What is written is text, an exchange at a time: what the other person said since the learner
+   last spoke, and what the learner then said, as the service's transcriber wrote it down. No score
+   is written and no completed: the conversation is judged and reviewed afterwards.
+
+   The service reports each thing said as an item, with events that name it. The order of the
+   conversation is the order in which items are first named. An exchange is written once nothing
+   can still change it: everything in it is finished and the other person has started on what
+   comes next, or the call is over.
+
+   Not recorded: what the other person says after the learner's last words (an exchange is a line
+   and an answer to it), and how much of a line was heard when the learner spoke over it (the text
+   is the whole line the model produced). */
+const live = () => P.call === "live";
+const LIVE_UNSAID = "[nothing said yet]";     // the learner spoke before the other person had
+const LIVE_UNHEARD = "[not transcribed]";     // the learner spoke and the transcriber failed
+const LIVE_TEXT_MAX = 4000, LIVE_LAST_WORDS_MS = 4000, LIVE_LAST_REPLY_MS = 20000;
+let lc = null;   // the call under way: {pc, dc, mic, items, written, limit, over, ...}
+const liveSet = () => (S.ui && S.ui.liveCall) || {};
+const liveSupported = () => !!(window.RTCPeerConnection && window.navigator && window.navigator.mediaDevices && window.navigator.mediaDevices.getUserMedia);
+function checkLive(s){
+  const pe = s.practiceEvidenceScenario, lv = s.ui && s.ui.liveCall;
+  if (s.resultAfterReview !== true) throw new Error("a live call is not scored by the player, and the scenario does not leave its result to a reviewer");
+  if (!(pe && typeof pe.iri === "string" && pe.iri && Number.isInteger(pe.version))) throw new Error("the scenario names no practiceEvidenceScenario to hold a live call against");
+  if (!(lv && typeof lv.dataChannel === "string" && lv.dataChannel)) throw new Error("the scenario's ui.liveCall names no data channel");
+  if (!(Number.isInteger(s.turnLimit) && s.turnLimit > 0)) throw new Error("the scenario has no turn limit");
+}
+function liveItem(id, who){
+  let it = lc.items.find(x => x.id === id);
+  if (!it) { it = {id: id, who: who, text: null, partial: "", done: false, failed: false}; lc.items.push(it); }
+  return it;
+}
+const liveText = it => (it.text !== null ? it.text : it.partial).replace(/\s+/g, " ").trim();
+/* The exchanges of a list of items: the other person's lines up to the learner speaking, and what
+   the learner said until the other person spoke again. `settled` is false while an exchange could
+   still change. A stretch in which the transcriber heard nothing is no exchange: the line before
+   it carries over to the next one. */
+function liveExchanges(items, over){
+  const out = []; let lines = [], said = [];
+  const close = followed => {
+    const settled = over || (followed && lines.concat(said).every(i => i.done));
+    const response = said.map(liveText).filter(Boolean).join(" ");
+    if (settled && !response && !said.some(i => i.failed)) { said = []; return; }
+    out.push({line: (lines.map(liveText).filter(Boolean).join(" ") || LIVE_UNSAID).slice(0, LIVE_TEXT_MAX), response: (response || LIVE_UNHEARD).slice(0, LIVE_TEXT_MAX), settled: settled});
+    lines = []; said = [];
+  };
+  for (const it of items) {
+    if (it.who === "counterpart" && said.length) close(true);
+    (it.who === "counterpart" ? lines : said).push(it);
+  }
+  if (said.length) close(false);
+  return out;
+}
+function liveStatus(text){ $("lstatus").textContent = text; }
+function liveDraw(){
+  const box = $("livelog"); box.innerHTML = "";
+  for (const it of lc.items) {
+    const text = liveText(it) || (it.failed ? LIVE_UNHEARD : ""); if (!text) continue;
+    const d = document.createElement("div"); d.className = "rw";
+    d.innerHTML = '<div class="was"></div><div class="say"></div>';
+    d.querySelector(".was").textContent = it.who === "counterpart" ? lc.name : "You"; d.querySelector(".say").textContent = text;
+    box.appendChild(d);
+  }
+  const dots = $("ldots"); if (dots.children.length !== lc.limit) { dots.innerHTML = ""; for (let i = 0; i < lc.limit; i++) dots.appendChild(document.createElement("i")); }
+  [...dots.children].forEach((d, i) => d.classList.toggle("on", i < lc.written));
+}
+/* Writes every exchange that is settled and not yet written, in order, up to the scenario's limit. */
+function liveFlush(){
+  const ex = liveExchanges(lc.items, lc.over);
+  while (lc.written < lc.limit && ex[lc.written] && ex[lc.written].settled) {
+    const x = ex[lc.written], n = ++lc.written;
+    const def = {name: L("Exchange " + n), extensions: {[X.extensions.counterpartLine]: x.line}};
+    if (X.activityTypes.turn) def.type = X.activityTypes.turn;
+    send("turn", "took a turn", {objectType:"Activity", id: activityId + "/turn/" + n, definition: def}, {response: x.response}, false, true);
+  }
+  liveDraw();
+}
+/* One event from the speech service. Anything not known here is left alone. */
+function liveEvent(ev){
+  if (!lc || lc.over || !ev || typeof ev.type !== "string") return;
+  const t = ev.type, id = typeof ev.item_id === "string" ? ev.item_id : null;
+  if (/^conversation\.item\.(added|created|done)$/.test(t) && ev.item && typeof ev.item.id === "string" && ev.item.type === "message" && (ev.item.role === "user" || ev.item.role === "assistant")) {
+    liveItem(ev.item.id, ev.item.role === "user" ? "learner" : "counterpart");
+  } else if ((t === "input_audio_buffer.speech_started" || t === "input_audio_buffer.committed") && id) {
+    liveItem(id, "learner"); if (t === "input_audio_buffer.speech_started") { liveStatus("Listening…"); $("lav").classList.remove("talk"); }
+  } else if (t === "conversation.item.input_audio_transcription.delta" && id) {
+    if (typeof ev.delta === "string") liveItem(id, "learner").partial += ev.delta;
+  } else if (t === "conversation.item.input_audio_transcription.completed" && id) {
+    const it = liveItem(id, "learner"); it.text = typeof ev.transcript === "string" ? ev.transcript : ""; it.done = true;
+  } else if (t === "conversation.item.input_audio_transcription.failed" && id) {
+    const it = liveItem(id, "learner"); it.failed = true; it.done = true;
+  } else if (t === "response.output_audio_transcript.delta" && id) {
+    if (typeof ev.delta === "string") liveItem(id, "counterpart").partial += ev.delta;
+    liveStatus(lc.name + " is speaking"); $("lav").classList.add("talk");
+  } else if (t === "response.output_audio_transcript.done" && id) {
+    const it = liveItem(id, "counterpart"); if (typeof ev.transcript === "string") it.text = ev.transcript; it.done = true;
+  } else if (t === "response.done") {
+    // Whatever the other person was saying is now said, or cut off: what there is of it is the line.
+    for (const it of lc.items) if (it.who === "counterpart") it.done = true;
+    if (!lc.ending) { liveStatus("Your turn"); $("lav").classList.remove("talk"); }
+  } else if (t === "error") {
+    lc.errors.push(String((ev.error && (ev.error.code || ev.error.type)) || "error").slice(0, 80));
+  }
+  liveFlush();
+  if (lc.written >= lc.limit && !lc.ending) {
+    // The last exchange the scenario allows is written. The other person finishes what they are saying.
+    if (t === "response.done") return void endLive("limit");
+    if (!lc.lastReply) { liveStatus("That was the last exchange. " + lc.name + " is finishing."); lc.lastReply = setTimeout(() => endLive("limit"), LIVE_LAST_REPLY_MS); }
+  }
+}
+function liveRelease(c){
+  clearTimeout(c.cap); clearTimeout(c.lastReply);
+  try { c.mic && c.mic.getTracks().forEach(t => t.stop()); } catch(e){}
+  try { c.dc && c.dc.close(); } catch(e){}
+  try { c.pc && c.pc.close(); } catch(e){}
+}
+/* The call could not be placed. Nothing of a call was recorded and the visit stays open, so it can be tried again. */
+function liveFailed(why){
+  if (lc) { const c = lc; lc = null; liveRelease(c); }
+  show("s-live"); setChip("No call", "warn"); $("lav").classList.remove("talk");
+  liveStatus("The call could not be placed: " + why + ".");
+  $("lend").classList.add("hide"); const btn = $("lretry"); btn.classList.remove("hide"); btn.disabled = false;
+  window.__rolePlayLive = {placed: false, why: why};
+}
+const LIVE_REFUSALS = {
+  too_many_calls: "too many calls have been placed for this course in the last hour",
+  no_voice_service: "this course's LMS has no speech service set up",
+  no_call_for_this_registration: "this course already holds a call, or its scenario is not one a call can be held against",
+  session_ended: "this visit has ended",
+  not_a_normal_launch: "a call is only placed from a normal launch of the course",
+};
+async function startLive(){
+  if (lc) return;
+  show("s-live"); $("lend").classList.remove("hide"); $("lend").disabled = false; $("lretry").classList.add("hide");
+  $("livelog").innerHTML = ""; $("ldisclosure").textContent = "";
+  $("lname").textContent = role().replace(/^./, m => m.toUpperCase()); $("lav").textContent = role()[0].toUpperCase();
+  liveStatus("Asking for your microphone…");
+  const c = lc = {pc: null, dc: null, mic: null, items: [], written: 0, limit: S.turnLimit, over: false, ending: false, connected: false, errors: [], name: role().replace(/^./, m => m.toUpperCase()), cap: null, lastReply: null};
+  const mine = () => lc === c && !c.ending;
+  try { c.mic = await window.navigator.mediaDevices.getUserMedia({audio: true}); }
+  catch(e) { if (lc === c) liveFailed("the microphone could not be used (" + ((e && e.name) || "refused") + ")"); return; }
+  if (!mine()) return liveRelease(c);
+  let offer;
+  try {
+    c.pc = new window.RTCPeerConnection();
+    c.pc.ontrack = e => { $("liveaudio").srcObject = e.streams[0]; };
+    c.mic.getTracks().forEach(t => c.pc.addTrack(t, c.mic));
+    c.dc = c.pc.createDataChannel(liveSet().dataChannel);
+    c.dc.onmessage = e => { if (lc !== c) return; let ev; try { ev = JSON.parse(e.data); } catch(_) { return; } liveEvent(ev); };
+    c.dc.onopen = () => { if (!mine()) return; c.connected = true; setChip("On a call", "ok"); liveStatus("Connected. " + c.name + " speaks first.");
+      // The other person opens the call, as the one who rang would.
+      try { c.dc.send(JSON.stringify({type: "response.create"})); } catch(e){} };
+    c.dc.onclose = () => { if (mine()) (c.connected ? endLive("dropped") : liveFailed("the connection closed")); };
+    c.pc.onconnectionstatechange = () => { if (mine() && c.pc.connectionState === "failed") (c.connected ? endLive("dropped") : liveFailed("the connection failed")); };
+    offer = await c.pc.createOffer(); await c.pc.setLocalDescription(offer);
+  } catch(e) { if (lc === c) liveFailed("this browser could not set up a call (" + ((e && e.message) || e) + ")"); return; }
+  if (!mine()) return;
+  liveStatus("Placing the call…");
+  let r, b;
+  try {
+    const pe = S.practiceEvidenceScenario;
+    r = await fetch(new URL("/cmi5/live-call", cfg.lrs), {method: "POST", headers: {Authorization: "Bearer " + cfg.authorization.replace(/^Basic\s+/, ""), "Content-Type": "application/json", Accept: "application/json"},
+      body: JSON.stringify({scenarioIri: pe.iri, scenarioVersion: pe.version, sdpOffer: offer.sdp})});
+    b = await r.json().catch(() => null);
+  } catch(e) { if (lc === c) liveFailed("the LMS could not be reached"); return; }
+  if (!mine()) return;
+  const call = b && b.call;
+  if (!r.ok || !call || typeof call.answerSdp !== "string") {
+    const err = b && typeof b.error === "string" ? b.error : "";
+    return liveFailed(LIVE_REFUSALS[err] || ("the LMS answered " + r.status + (err ? " (" + err + ")" : "")));
+  }
+  // The channel this page opened is the one its offer describes. A service that listens on another would never be heard.
+  if (call.dataChannel !== liveSet().dataChannel) return liveFailed("the speech service uses a channel this scenario does not name");
+  if (typeof call.counterpartName === "string" && call.counterpartName) { c.name = call.counterpartName.slice(0, 80); $("lname").textContent = c.name; $("lav").textContent = initials(c.name); }
+  if (Number.isInteger(call.turnLimit) && call.turnLimit > 0) c.limit = Math.min(c.limit, call.turnLimit);
+  $("ldisclosure").textContent = (typeof b.disclosure === "string" ? b.disclosure.slice(0, 600) + " " : "") + "Up to " + c.limit + " exchanges are saved; the call ends after the last one.";
+  try { await c.pc.setRemoteDescription({type: "answer", sdp: call.answerSdp}); }
+  catch(e) { if (lc === c) liveFailed("the speech service's answer could not be used"); return; }
+  if (!mine()) return;
+  callStart = Date.now(); liveDraw();
+  if (!c.connected) liveStatus("Connecting…");
+  const cap = Number(liveSet().maxMinutes);
+  if (cap > 0) c.cap = setTimeout(() => endLive("time"), cap * 60000);
+}
+/* Ends the call and this visit. What was said is written; nothing is scored. */
+async function endLive(why){
+  const c = lc; if (!c || c.ending) return;
+  c.ending = true; clearTimeout(c.cap); clearTimeout(c.lastReply);
+  $("lend").disabled = true; $("lav").classList.remove("talk"); liveStatus("Ending the call…");
+  try { c.mic.getTracks().forEach(t => t.stop()); } catch(e){}
+  // The learner's last words are written down by the service and arrive over the call: it is kept a moment for them.
+  const t = Date.now();
+  while (why !== "dropped" && c.items.some(i => i.who === "learner" && !i.done) && Date.now() - t < LIVE_LAST_WORDS_MS) await new Promise(r => setTimeout(r, 100));
+  liveFlush(); c.over = true; liveFlush();
+  liveRelease(c);
+  const n = c.written;
+  await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now() - t0)}, true, false);
+  window.__rolePlaySent = sent; window.__rolePlayLive = {placed: true, exchanges: n, why: why, errors: c.errors};
+  show("s-reviewed"); $("rvretry").classList.add("hide");
+  const how = why === "limit" ? "The call ended at this scenario's limit of " + c.limit + " exchanges. " : why === "dropped" ? "The connection dropped, so the call ended there. " : why === "time" ? "The call reached its time limit. " : "";
+  if (n > 0) {
+    $("rvtitle").textContent = "Your call is saved";
+    $("rvmsg").textContent = how + "Your " + n + (n === 1 ? " exchange" : " exchanges") + " with " + c.name + (n === 1 ? " is" : " are") + " saved as text. Nothing was scored. The course is not complete yet: " + ((S.ui && S.ui.reviewNote) || "a reviewer signs the result off first. Open this course again afterwards to record it.");
+  } else {
+    $("rvtitle").textContent = "Nothing was saved";
+    $("rvmsg").textContent = how + "The call ended before anything you said was written down, so there is nothing to review. This visit is closed. " + freshNote();
+  }
+  $("rvtrack").textContent = trackErr ? "Some of this call didn't save (" + trackErr + ")." : "";
+  if (!trackErr) setChip(n > 0 ? "Saved" : "Ended", n > 0 ? "ok" : "warn");
+}
+/* A call this registration already holds. One registration is one conversation: the review reads
+   the first session's, and a second call would be a conversation nobody takes. true when this visit
+   is settled here and no call is to be placed.
+   - Exchanges in this session: an earlier load of this page was on a call and was closed. That call
+     is over (it lived in that page), and what it wrote stands. The session is ended.
+   - Exchanges in another session: the call was held in an earlier visit. This visit is ended.
+   - Another session and no exchange in it: an earlier visit was started and held no call (the
+     learner said no, or ended the call before anything was written). The review reads the first
+     session a registration started, so a call held now would be written where it is not read.
+     None is offered: the course has to be assigned again. This visit is ended. */
+async function liveCarryOn(){
+  const here = sessionHeld.filter(st => st.verb && st.verb.id === X.verbs.turn).length;
+  if (!here && !turnsElsewhere && !startedElsewhere) return false;
+  show("s-reviewed"); $("rvretry").classList.add("hide");
+  if (!here && !turnsElsewhere) {
+    setChip("No call", "warn");
+    $("rvtitle").textContent = "A call can't be held in this visit";
+    $("rvmsg").textContent = "This course was opened in an earlier visit, and no call was saved in it. A review reads the first visit to a course, so a call held now could not be reviewed, and none was started. " + freshNote();
+  } else {
+  $("rvtitle").textContent = "Your call is saved";
+  $("rvmsg").textContent = (here ? "Your call ended when its page was closed. The " + here + (here === 1 ? " exchange" : " exchanges") + " written up to then " + (here === 1 ? "is" : "are") + " saved."
+    : "This course already holds a call from an earlier visit.") + " One course holds one call, so another was not started. The course is not complete yet: " + ((S.ui && S.ui.reviewNote) || "a reviewer signs the result off first. Open this course again afterwards to record it.");
+  }
+  if (!sessionHeld.some(st => st.verb && st.verb.id === X.verbs.terminated)) await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now() - t0)}, true, false);
+  $("rvtrack").textContent = trackErr ? "This visit didn't save (" + trackErr + ")." : "";
+  window.__rolePlayLive = {placed: false, why: here ? "call-in-this-session" : turnsElsewhere ? "call-in-another-session" : "earlier-session-without-a-call"};
+  return true;
+}
+
 // ---------- start ----------
 (async () => {
   let ready = false;
@@ -875,6 +1148,7 @@ async function carryOn(){
   try { const got = await loadScenario(P.scenario); S = got.doc; P.scenarioFrom = got.from; checkScenario(S); }
   catch(e){ return fail("The scenario couldn't be read (" + e.message + ")."); }
   X = S.xapi; CRITS = S.rubric.criteria;
+  if (live()) { try { checkLive(S); } catch(e){ return fail("This scenario can't be held as a live call (" + e.message + ")."); } }
   sel = (P.persona && S.personas.some(p=>p.id===P.persona)) ? P.persona : S.personas[0].id;
   document.title = (S.ui && S.ui.brand ? S.ui.brand + ": " : "") + S.title;
   $("brand").textContent = (S.ui && S.ui.brand) || "Role-play practice"; $("logo").textContent = ((S.ui && S.ui.brand) || "R")[0];
@@ -886,6 +1160,17 @@ async function carryOn(){
   $("voicenote").textContent = SR ? "Voice works best in Chrome or Edge. You can always tap a reply instead." : "Voice input isn't available in this browser, so you'll tap replies. The " + role() + " still speaks if your device supports it.";
   if (!SR) $("mic").classList.add("hide");
   if (!window.speechSynthesis) { voiceOut = false; $("voicebtn").classList.add("hide"); }
+  if (live()) {
+    // One other person, whom the practice service names when the call is placed; no script to choose from.
+    $("personas").classList.add("hide"); $("steps").classList.add("hide"); $("livesteps").classList.remove("hide");
+    if (liveSet().blurb) $("blurb").textContent = liveSet().blurb;
+    if (liveSet().service) $("liveservice").textContent = liveSet().service;
+    $("agreetext").textContent = "I agree to a live practice call with an AI speech model, including saving the text of what I say";
+    $("go").textContent = "Start the call";
+    $("voicenote").textContent = !cfg ? "A live call is placed through a course. This page was opened without one, so no call can be placed."
+      : liveSupported() ? "You'll need a microphone. Headphones keep the " + role() + "'s voice out of it." : "This browser can't place a live call: it has no microphone access or no WebRTC.";
+    if (!cfg || !liveSupported()) $("go").disabled = true;
+  }
   show("s-welcome");
   await checkProfile();
   window.__rolePlay = {scenarioFrom: P.scenarioFrom, sources: P.sources, pseudonymSupplied: !!P.participantPseudonym, profileCheck, contextKind: P.contextKind || "training"};
@@ -897,17 +1182,26 @@ async function carryOn(){
 $("mic").onclick = listen;
 $("coachbtn").onclick = () => { coach = !coach; $("coachbtn").textContent = "Coach: " + (coach?"on":"off"); $("hint").classList.toggle("hide", !coach); };
 $("voicebtn").onclick = () => { voiceOut = !voiceOut; $("voicebtn").textContent = role().replace(/^./, m=>m.toUpperCase()) + " voice: " + (voiceOut?"on":"off"); if (!voiceOut && window.speechSynthesis) speechSynthesis.cancel(); };
-$("go").onclick = () => { if (!tracked && cfg && !trackErr) return; show("s-consent"); };
+$("go").onclick = () => { if ($("go").disabled || (!tracked && cfg && !trackErr)) return; show("s-consent"); };
+$("lend").onclick = () => endLive("ended");
+$("lretry").onclick = () => { if (!lc) startLive(); };
 let agreed = false;
 $("agree").onclick = () => { agreed = !agreed; $("sw").classList.toggle("on", agreed); $("consentyes").disabled = !agreed; };
-const consentAct = () => ({objectType:"Activity", id: activityId + "#consent", definition:{type: X.activityTypes.consent, name: L("Consent to a scored practice session, including the recognised text of what the learner says (no audio)")}});
+const consentAct = () => ({objectType:"Activity", id: activityId + "#consent", definition:{type: X.activityTypes.consent, name: L(live()
+  ? "Consent to a live practice call with an AI speech model: microphone audio goes to the speech service for the call, and the transcribed text of what is said is saved (no audio saved)"
+  : "Consent to a scored practice session, including the recognised text of what the learner says (no audio)")}});
 $("consentyes").onclick = async () => {
+  if (live()) {
+    if (!tracked) return;
+    send("consented", "consented", consentAct(), {success:true, response:"Agreed in the player: a live call with an AI speech model; microphone audio sent to the speech service for the call; transcribed text of both sides saved; no audio saved; nothing scored by the player"}, false, true);
+    return startLive();
+  }
   persona = S.personas.find(p=>p.id===sel); mood = persona.startMood ?? 50; stage = 0; picks = []; variantAt = -1; callStart = Date.now();
   send("consented", "consented", consentAct(), {success:true, response:"Agreed in the player: scores, chosen replies and recognised speech text saved; no audio"}, false, true);
   show("s-call"); renderStage();
 };
 $("consentno").onclick = async () => {
-  persona = S.personas.find(p=>p.id===sel);
+  persona = live() ? null : S.personas.find(p=>p.id===sel);
   send("declinedConsent", "declined-consent", consentAct(), {success:false, response:"Declined in the player"}, false, true);
   await send("terminated", "terminated", scenarioAct(), {duration: iso(Date.now()-t0)}, true, false);
   show("s-declined");
