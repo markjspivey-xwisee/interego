@@ -24,11 +24,13 @@ import { PEV_NS } from './ontology.js';
  * they are this import's to understand, whatever profile the unit's other terms come from.
  * `LINE_CUT_OFF_EXT`, on the exchange's activity definition beside the other person's line: the
  * line was interrupted. `NOT_TRANSCRIBED_EXT`, in the exchange's result extensions: the learner
- * spoke and no words were recorded, and the result then has no `response`. Each counts only as
- * the boolean `true`.
+ * spoke and no words were recorded, and the result then has no `response`.
+ * `PARTLY_TRANSCRIBED_EXT`, in the result extensions beside a `response`: the learner said more
+ * than was recorded, and the response is the part that was. Each counts only as the boolean `true`.
  */
 export const LINE_CUT_OFF_EXT = `${PEV_NS}lineCutOff`;
 export const NOT_TRANSCRIBED_EXT = `${PEV_NS}notTranscribed`;
+export const PARTLY_TRANSCRIBED_EXT = `${PEV_NS}partlyTranscribed`;
 
 export const VERB_INITIALIZED = 'http://adlnet.gov/expapi/verbs/initialized';
 export const VERB_TERMINATED = 'http://adlnet.gov/expapi/verbs/terminated';
@@ -265,13 +267,15 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
     const answer = str(t.result['response']);
     const cutOff = t.objectExt[LINE_CUT_OFF_EXT] === true;
     const unheard = objOf(t.result['extensions'])[NOT_TRANSCRIBED_EXT] === true;
+    const partly = objOf(t.result['extensions'])[PARTLY_TRANSCRIBED_EXT] === true;
     if (line === undefined || line.length > TURN_TEXT_MAX) { p.push(`exchange ${t.id} carries no line for the other person (or one over ${TURN_TEXT_MAX} characters)`); continue; }
     // An exchange says what the learner answered, or that no words of it were recorded: never both, and one of them.
-    if (unheard && t.result['response'] !== undefined) { p.push(`exchange ${t.id} says the learner was not transcribed and also gives an answer for them`); continue; }
+    if (unheard && (t.result['response'] !== undefined || partly)) { p.push(`exchange ${t.id} says the learner was not transcribed and also gives an answer for them`); continue; }
     if (!unheard && (answer === undefined || answer.length > TURN_TEXT_MAX)) { p.push(`exchange ${t.id} carries no answer from the learner in result.response (or one over ${TURN_TEXT_MAX} characters)`); continue; }
     turns.push(
       { speaker: 'counterpart', text: line, at: t.at, statementId: t.id, ...(cutOff ? { mark: 'cut-off' as const } : {}) },
-      unheard ? { speaker: 'learner', text: '', at: t.at, statementId: t.id, mark: 'not-transcribed' as const } : { speaker: 'learner', text: answer!, at: t.at, statementId: t.id },
+      unheard ? { speaker: 'learner', text: '', at: t.at, statementId: t.id, mark: 'not-transcribed' as const }
+        : { speaker: 'learner', text: answer!, at: t.at, statementId: t.id, ...(partly ? { mark: 'partly-transcribed' as const } : {}) },
     );
   }
 

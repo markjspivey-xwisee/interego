@@ -799,9 +799,13 @@ pev:notTranscribed a owl:DatatypeProperty ;
     rdfs:label "not transcribed" ;
     rdfs:comment "On an exchange of a live call: true when the learner spoke and the transcriber produced no words. The exchange then carries no answer for the learner: nothing is put in their mouth." ;
     rdfs:range xsd:boolean .
+pev:partlyTranscribed a owl:DatatypeProperty ;
+    rdfs:label "partly transcribed" ;
+    rdfs:comment "On an exchange of a live call: true when the learner said more than was transcribed. Part of what they said is in the answer beside it and part produced no words. The answer is what was recorded, not all that was said." ;
+    rdfs:range xsd:boolean .
 pev:turnMark a owl:DatatypeProperty ;
     rdfs:label "turn mark" ;
-    rdfs:comment "What is known to be missing from a turn read from a live call: cut-off (the other person's line was interrupted, and how much of it was heard is not known) or not-transcribed (the learner spoke and no words were recorded; the turn has no text). A marked turn is not evidence of what the learner heard or said." ;
+    rdfs:comment "What is known to be missing from a turn read from a live call: cut-off (the other person's line was interrupted, and how much of it was heard is not known), not-transcribed (the learner spoke and no words were recorded; the turn has no text) or partly-transcribed (the learner said more than was recorded; the turn's text is the part that was). A marked turn is not evidence of what the learner heard or said." ;
     rdfs:range xsd:string .
 pev:criterionLevels a owl:DatatypeProperty ;
     rdfs:label "criterion levels" ;

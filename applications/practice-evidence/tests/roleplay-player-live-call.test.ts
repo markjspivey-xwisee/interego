@@ -16,7 +16,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { LINE_CUT_OFF_EXT, NOT_TRANSCRIBED_EXT, readLaunchedCall, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary, type ReadLaunchedInput } from '../src/launched-import.js';
+import { LINE_CUT_OFF_EXT, NOT_TRANSCRIBED_EXT, PARTLY_TRANSCRIBED_EXT, readLaunchedCall, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary, type ReadLaunchedInput } from '../src/launched-import.js';
 import { judgeRequest, transcriptHash, verifyQuote, type ScenarioSpec, type Turn } from '../src/practice.js';
 import { sha256 } from '@interego/core';
 
@@ -380,6 +380,36 @@ describe('a live call in the role-play player', () => {
     await page.settle(() => count(lms, VERB_TERMINATED) === 1);
   });
 
+  it('marks an answer of which only part was transcribed, in either order, and keeps the part that was', async () => {
+    // Found in review of the first form of these marks: a failed item beside a transcribed one left an ordinary, unmarked answer.
+    const lms = new Lms();
+    const page = await placeCall(lms);
+    const failed = (id: string): void => { spoke(page, id); page.hear({ type: 'conversation.item.input_audio_transcription.failed', item_id: id, error: { code: 'audio_unintelligible' } }); };
+    customer(page, 'a1', 'Hi, I was charged twice.');
+    failed('u1'); spoke(page, 'u2'); heard(page, 'u2', 'Yes, I can see both charges.');
+    customer(page, 'a2', 'So what happens now?');
+    spoke(page, 'u3'); heard(page, 'u3', 'I am refunding the second one today.'); failed('u4');
+    customer(page, 'a3', 'And when will I see it?');
+    // All of an answer transcribed, and none of one, are as they were.
+    spoke(page, 'u5'); heard(page, 'u5', 'Five to seven business days.');
+    customer(page, 'a4', 'Okay.');
+    failed('u6');
+    customer(page, 'a5', 'Sorry?');
+    await page.settle(() => count(lms, VOCAB.turnVerb) === 4);
+    void page.el('lend').onclick!();
+    await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+    expect(lms.turns().map((t) => t.response)).toEqual(['Yes, I can see both charges.', 'I am refunding the second one today.', 'Five to seven business days.', undefined]);
+    const ext = lms.held.filter((x) => x.verb.id === VOCAB.turnVerb).map((x) => x.result!.extensions ?? null);
+    expect(ext).toEqual([{ [PARTLY_TRANSCRIBED_EXT]: true }, { [PARTLY_TRANSCRIBED_EXT]: true }, null, { [NOT_TRANSCRIBED_EXT]: true }]);
+    expect(scenario.xapi.extensions['partlyTranscribed']).toBe(PARTLY_TRANSCRIBED_EXT);
+    // Through the import: the words are the learner's, with a mark that they are not all of what was said.
+    const got = readLaunchedCall(lms.held, INPUT);
+    if (!('call' in got)) throw new Error(got.problems.join(' | '));
+    expect(got.call.turns.filter((t) => t.speaker === 'learner').map((t) => [t.text, t.mark])).toEqual([
+      ['Yes, I can see both charges.', 'partly-transcribed'], ['I am refunding the second one today.', 'partly-transcribed'], ['Five to seven business days.', undefined], ['', 'not-transcribed'],
+    ]);
+  });
+
   it('opens the visit before anything of a practice is sent, however quickly the learner agrees', async () => {
     const lms = new Lms();
     lms.slowRead = 80;
@@ -592,6 +622,12 @@ describe('what a live call could not record, at the import and before a judge', 
       ['counterpart', 'Hello?', undefined], ['learner', '', 'not-transcribed'],
     ]);
     expect(problems(call(exchange(2, 'Hi.', { response: 'I said this.', extensions: { [NOT_TRANSCRIBED_EXT]: true } })))).toContain('says the learner was not transcribed and also gives an answer for them');
+    // Partly is said beside an answer, only as true, and never together with "none of it".
+    const part = readLaunchedCall(call(exchange(2, 'Hi.', { response: 'Yes, I can.', extensions: { [PARTLY_TRANSCRIBED_EXT]: true } }), exchange(3, 'And?', { response: 'One moment.', extensions: { [PARTLY_TRANSCRIBED_EXT]: 1 } })), INPUT);
+    if (!('call' in part)) throw new Error(part.problems.join(' | '));
+    expect(part.call.turns.map((t) => t.mark)).toEqual([undefined, 'partly-transcribed', undefined, undefined]);
+    expect(problems(call(exchange(2, 'Hi.', { extensions: { [NOT_TRANSCRIBED_EXT]: true, [PARTLY_TRANSCRIBED_EXT]: true } }), exchange(3, 'And?', { response: 'Yes.' })))).toContain('says the learner was not transcribed and also gives an answer for them');
+    expect(problems(call(exchange(2, 'Hi.', { extensions: { [PARTLY_TRANSCRIBED_EXT]: true } })))).toContain('carries no answer from the learner');
     // With no mark, an exchange with no answer is still refused, as it always was.
     expect(problems(call(exchange(2, 'Hi.', {})))).toContain('carries no answer from the learner');
     // A call in which nothing the learner said was recorded is nothing to review.
@@ -601,6 +637,14 @@ describe('what a live call could not record, at the import and before a judge', 
   it('shows a judge the marks and no words for a turn that has none, and tells it what they mean', () => {
     const turn = (index: number, speaker: 'counterpart' | 'learner', text: string, mark?: Turn['mark']): Turn => ({ index, speaker, text, textSha256: sha256(text), at: at(index), source: 'lrs-statement', ...(mark ? { mark } : {}) });
     const turns = [turn(0, 'counterpart', 'Hi, I was charged twice and I want a refund and a free month.', 'cut-off'), turn(1, 'learner', 'Sorry to interrupt, let me pull up your account.'), turn(2, 'counterpart', 'Well?'), turn(3, 'learner', '', 'not-transcribed')];
+    // Part of an answer: its words are shown, quotable, and marked as not all of it.
+    const partTurns = [turn(0, 'counterpart', 'So what happens now?'), turn(1, 'learner', 'I am refunding the second one today.', 'partly-transcribed')];
+    const partReq = judgeRequest(scenario as unknown as ScenarioSpec, partTurns);
+    expect(partReq.messages[0]!.content.endsWith('[T1 LEARNER, PARTLY TRANSCRIBED] I am refunding the second one today.')).toBe(true);
+    expect(partReq.system).toContain('A LEARNER turn marked PARTLY TRANSCRIBED holds only part of what the learner said there');
+    expect(partReq.system).toContain('Do not hold against the learner anything such a turn fails to say.');
+    expect(verifyQuote({ turnIndex: 1, text: 'I am refunding the second one today.' }, partTurns).verified).toBe(true);
+    expect(transcriptHash(partTurns)).not.toBe(transcriptHash(partTurns.map(({ mark: _m, ...t }) => t)));
     const req = judgeRequest(scenario as unknown as ScenarioSpec, turns);
     const user = req.messages[0]!.content;
     expect(user).toContain('[T0 THEM, CUT OFF] Hi, I was charged twice and I want a refund and a free month.');

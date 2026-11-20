@@ -275,6 +275,7 @@
    "replyId": "https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#replyId",
    "lineCutOff": "https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#lineCutOff",
    "notTranscribed": "https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#notTranscribed",
+   "partlyTranscribed": "https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#partlyTranscribed",
    "rubric": "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric"
   }
  },

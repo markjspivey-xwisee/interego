@@ -916,6 +916,9 @@ async function carryOn(){
      produced: the service says where the audio stopped, not which words had been heard.
    - Speech the transcriber failed on is an exchange with no answer in it and a mark saying so.
      Nothing is put in the learner's mouth.
+   - Where the transcriber failed on part of an answer and not the rest, the answer is the part it
+     wrote, marked as partly transcribed: the words are the learner's, and they are not all of
+     what the learner said. Until 2026-11-20 such an answer was written with no mark at all.
    - A transcript with no letter or digit in it (a cough, a hum, a noise) is not speech: it is no
      exchange and uses none of the scenario's turns.
    A scenario that names no term for a mark gets the earlier form: the whole line unmarked, and
@@ -953,9 +956,11 @@ function liveExchanges(items, over){
   const close = followed => {
     const settled = over || (followed && lines.concat(said).every(i => i.done));
     const response = said.map(liveText).filter(liveHeard).join(" ");
-    const unheard = !response && said.some(i => i.failed);
+    const lost = said.some(i => i.failed);
+    const unheard = !response && lost;
     if (settled && !response && !unheard) { said = []; return; }
-    out.push({line: (lines.map(liveText).filter(Boolean).join(" ") || LIVE_UNSAID).slice(0, LIVE_TEXT_MAX), response: response.slice(0, LIVE_TEXT_MAX), unheard: unheard, cutOff: lines.some(i => i.cut), settled: settled});
+    // An answer cut to fit is not all of it either.
+    out.push({line: (lines.map(liveText).filter(Boolean).join(" ") || LIVE_UNSAID).slice(0, LIVE_TEXT_MAX), response: response.slice(0, LIVE_TEXT_MAX), unheard: unheard, partly: !!response && (lost || response.length > LIVE_TEXT_MAX), cutOff: lines.some(i => i.cut), settled: settled});
     lines = []; said = [];
   };
   for (const it of items) {
@@ -969,7 +974,7 @@ function liveStatus(text){ $("lstatus").textContent = text; }
 function liveDraw(){
   const box = $("livelog"); box.innerHTML = "";
   for (const it of lc.items) {
-    const said = liveText(it), text = it.who === "learner" && !liveHeard(said) ? (it.failed ? LIVE_UNHEARD : "") : said; if (!text) continue;
+    const said = liveText(it), text = it.who === "learner" && (it.failed || !liveHeard(said)) ? (it.failed ? LIVE_UNHEARD : "") : said; if (!text) continue;
     const d = document.createElement("div"); d.className = "rw";
     d.innerHTML = '<div class="was"></div><div class="say"></div>';
     d.querySelector(".was").textContent = it.who === "counterpart" ? lc.name + (it.cut ? " (cut off)" : "") : "You"; d.querySelector(".say").textContent = text;
@@ -987,6 +992,7 @@ function liveFlush(){
     if (X.activityTypes.turn) def.type = X.activityTypes.turn;
     if (x.cutOff && X.extensions.lineCutOff) def.extensions[X.extensions.lineCutOff] = true;
     const res = x.unheard && X.extensions.notTranscribed ? {extensions: {[X.extensions.notTranscribed]: true}} : {response: x.response || LIVE_UNHEARD};
+    if (x.partly && X.extensions.partlyTranscribed) res.extensions = {[X.extensions.partlyTranscribed]: true};
     send("turn", "took a turn", {objectType:"Activity", id: activityId + "/turn/" + n, definition: def}, res, false, true);
   }
   liveDraw();
