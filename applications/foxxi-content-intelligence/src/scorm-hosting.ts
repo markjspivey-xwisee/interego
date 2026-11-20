@@ -196,23 +196,40 @@ export function scormRuntimeSource(): string {
  * whatever its course structure said: a unit declared `CompletedAndPassed` was satisfied by a
  * `completed` alone.
  */
-export function hostedPackageCourse(bridgeBaseUrl: string, sha256: string, pkg: PackageAbout): Cmi5Course {
+export function hostedPackageCourse(bridgeBaseUrl: string, sha256: string, pkg: PackageAbout, outsidePrefixes: readonly string[] = []): Cmi5Course {
   const root = `${bridgeBaseUrl.replace(/\/+$/, '')}/scorm/packages/${sha256}`;
   const launchable = pkg.launchable.filter(isPackagePath);
-  const n = launchable.length;
+  // A unit served from outside is an AU only while the operator's list approves its address. Its id
+  // is its place among the package's outside units, approved or not, so a change to the list
+  // renames none.
+  // An authoring tool's own export launches nothing, whatever its description says.
+  const outside = (pkg.exportOf ? [] : pkg.outside ?? []).map((unit, i) => ({ unit, i })).filter(({ unit }) => outsideUnitAllowed(unit.url, outsidePrefixes));
+  const n = launchable.length + outside.length;
   return {
     id: root,
     title: pkg.title,
-    structure: launchable.map((href, i) => ({
-      kind: 'au' as const,
-      id: `${root}/au/${i}`,
-      title: n > 1 ? `${pkg.title} (${i + 1} of ${n})` : pkg.title,
-      url: `${root}/files/${href.split('/').map(encodeURIComponent).join('/')}`,
-      moveOn: pkg.units?.[href]?.moveOn ?? ('CompletedOrPassed' as const),
-      launchMethod: 'AnyWindow' as const,
-      ...(pkg.units?.[href]?.masteryScore !== undefined ? { masteryScore: pkg.units[href]!.masteryScore } : {}),
-      ...(pkg.units?.[href]?.launchParameters ? { launchParameters: pkg.units[href]!.launchParameters } : {}),
-    })),
+    structure: [
+      ...launchable.map((href, i) => ({
+        kind: 'au' as const,
+        id: `${root}/au/${i}`,
+        title: n > 1 ? `${pkg.title} (${i + 1} of ${n})` : pkg.title,
+        url: `${root}/files/${href.split('/').map(encodeURIComponent).join('/')}`,
+        moveOn: pkg.units?.[href]?.moveOn ?? ('CompletedOrPassed' as const),
+        launchMethod: 'AnyWindow' as const,
+        ...(pkg.units?.[href]?.masteryScore !== undefined ? { masteryScore: pkg.units[href]!.masteryScore } : {}),
+        ...(pkg.units?.[href]?.launchParameters ? { launchParameters: pkg.units[href]!.launchParameters } : {}),
+      })),
+      ...outside.map(({ unit, i }, at) => ({
+        kind: 'au' as const,
+        id: `${root}/au/outside/${i}`,
+        title: n > 1 ? `${pkg.title} (${launchable.length + at + 1} of ${n})` : pkg.title,
+        url: unit.url,
+        moveOn: unit.moveOn ?? ('CompletedOrPassed' as const),
+        launchMethod: 'AnyWindow' as const,
+        ...(unit.masteryScore !== undefined ? { masteryScore: unit.masteryScore } : {}),
+        ...(unit.launchParameters ? { launchParameters: unit.launchParameters } : {}),
+      })),
+    ],
   };
 }
 
@@ -241,6 +258,92 @@ export interface PackageAbout {
   exportOf?: string;
   /** What a cmi5 package's course structure says of a launchable file, by its path in the package. */
   units?: Readonly<Record<string, PackageUnit>>;
+  /**
+   * The units a cmi5 package's course structure serves from outside the package: an absolute
+   * https address in the unit's `<url>`, which cmi5 allows. Kept as the package states them; one
+   * is launched only while the operator's list approves its address (`outsideUnitAllowed`).
+   */
+  outside?: readonly OutsideUnit[];
+}
+
+/** A unit a package's course structure serves from an address outside the package. */
+export interface OutsideUnit extends PackageUnit {
+  /** The unit's address, absolute and https, as `new URL` writes it. */
+  url: string;
+}
+
+export const OUTSIDE_UNITS_MAX = 20;
+const OUTSIDE_URL_MAX = 2_048;
+
+/** An address a unit may be served from outside a package, as `new URL` writes it; null for any other. */
+function outsideUrlOf(raw: unknown): string | null {
+  if (typeof raw !== 'string' || raw.length > OUTSIDE_URL_MAX || !/^https:\/\//i.test(raw.trim())) return null;
+  let u: URL;
+  try { u = new URL(raw.trim()); } catch { return null; }
+  // No credentials in it, and no fragment: the LMS appends the launch's query to it.
+  if (u.protocol !== 'https:' || u.username || u.password || u.hash) return null;
+  return u.href;
+}
+
+/**
+ * The operator's list of where a unit may be served from outside a package (comma or space
+ * separated). Each entry is an https address ending in `/`, with no query, fragment or
+ * credentials: a unit is approved when its address begins with one. An entry is a place and what
+ * is under it, so `https://docs.example/` approves a whole host and
+ * `https://docs.example/courses/` only that folder. Anything else is ignored and named.
+ */
+export function outsideUnitPrefixes(raw: unknown): { prefixes: string[]; ignored: string[] } {
+  const prefixes = new Set<string>(), ignored: string[] = [];
+  for (const entry of (typeof raw === 'string' ? raw : '').split(/[\s,]+/).filter(Boolean)) {
+    const href = outsideUrlOf(entry);
+    if (href && href.endsWith('/') && !new URL(href).search) prefixes.add(href); else ignored.push(entry.slice(0, 120));
+  }
+  return { prefixes: [...prefixes], ignored };
+}
+
+/** Whether the operator's list approves an outside unit's address. `new URL` has already resolved any `..` in it. */
+export function outsideUnitAllowed(url: string, prefixes: readonly string[]): boolean {
+  const href = outsideUrlOf(url);
+  return href !== null && prefixes.some(p => href.startsWith(p));
+}
+
+/** The outside units of a description, keeping only what is well formed; undefined when there are none. */
+function outsideFrom(raw: unknown): OutsideUnit[] | undefined {
+  if (!Array.isArray(raw)) return undefined;
+  const out: OutsideUnit[] = [];
+  for (const r of raw.slice(0, OUTSIDE_UNITS_MAX)) {
+    const url = outsideUrlOf((r as { url?: unknown } | null)?.url);
+    if (url && !out.some(o => o.url === url)) out.push({ ...(unitFrom(r) ?? {}), url });
+  }
+  return out.length ? out : undefined;
+}
+
+/**
+ * The units a cmi5 course structure serves from outside its package: each `<au>` whose `<url>` is
+ * an absolute https address, with its moveOn, mastery score and launch parameters. Two units at
+ * one address are one here, the first in the document. Undefined when there are none.
+ */
+export function cmi5OutsideUnits(cmi5Xml: string): OutsideUnit[] | undefined {
+  let root: XmlNode | null;
+  try { root = parseXml(cmi5Xml); } catch { return undefined; }
+  if (!root || root.tag !== 'courseStructure') return undefined;
+  const found: unknown[] = [];
+  const walk = (n: XmlNode): void => {
+    if (n.tag === 'au') {
+      const url = (n.children.find(c => c.tag === 'url')?.text ?? '').trim();
+      if (outsideUrlOf(url)) {
+        const score = n.attrs['masteryScore'];
+        found.push({
+          url, moveOn: n.attrs['moveOn'],
+          ...(score !== undefined && score.trim() !== '' ? { masteryScore: Number(score) } : {}),
+          launchParameters: (n.children.find(c => c.tag === 'launchParameters')?.text ?? '').trim(),
+        });
+      }
+    }
+    for (const c of n.children) walk(c);
+  };
+  walk(root);
+  return outsideFrom(found);
 }
 
 /** What a cmi5 course structure says of one assignable unit that the LMS has to apply. */
@@ -308,15 +411,16 @@ export function cmi5PackageUnits(cmi5Xml: string, launchable: readonly string[])
 
 /** A description read back from beside a package, when it is one of that package: with something to launch, or an export. */
 export function aboutFrom(sha256: string, body: unknown): PackageAbout | null {
-  const b = body as { packageSha256?: unknown; title?: unknown; launchable?: unknown; exportOf?: unknown; units?: unknown } | null;
+  const b = body as { packageSha256?: unknown; title?: unknown; launchable?: unknown; exportOf?: unknown; units?: unknown; outside?: unknown } | null;
   if (!b || b.packageSha256 !== sha256 || typeof b.title !== 'string' || !Array.isArray(b.launchable)) return null;
   // An export launches nothing, whatever a description beside it says.
   const exportOf = typeof b.exportOf === 'string' ? b.exportOf.trim() : '';
   if (exportOf) return { title: b.title, launchable: [], exportOf };
   const launchable = b.launchable.filter((p): p is string => typeof p === 'string' && isPackagePath(p));
-  if (!launchable.length) return null;
+  const outside = outsideFrom(b.outside);
+  if (!launchable.length && !outside) return null;
   const units = unitsFrom(b.units, launchable);
-  return units ? { title: b.title, launchable, units } : { title: b.title, launchable };
+  return { title: b.title, launchable, ...(units ? { units } : {}), ...(outside ? { outside } : {}) };
 }
 
 /** The answer already on its way for a key, or new work, forgotten once it arrives. */
@@ -409,9 +513,10 @@ export class HostedPackages {
     const exportOf = about.exportOf?.trim() ?? '';
     // An export launches nothing; a package names only the SCOs inside it.
     const launchable = exportOf ? [] : about.launchable.filter(isPackagePath);
-    if (!PACKAGE_SHA.test(sha256) || (!launchable.length && !exportOf)) return;
+    const outside = exportOf ? undefined : outsideFrom(about.outside);
+    if (!PACKAGE_SHA.test(sha256) || (!launchable.length && !exportOf && !outside)) return;
     const units = exportOf ? undefined : unitsFrom(about.units, launchable);
-    const kept: PackageAbout = exportOf ? { title: about.title, launchable, exportOf } : { title: about.title, launchable, ...(units ? { units } : {}) };
+    const kept: PackageAbout = exportOf ? { title: about.title, launchable, exportOf } : { title: about.title, launchable, ...(units ? { units } : {}), ...(outside ? { outside } : {}) };
     this.abouts.set(sha256, kept);
     try {
       await (this.opts.fetch ?? globalThis.fetch)(this.aboutUrlOf(sha256), {
@@ -618,6 +723,8 @@ export function attachHostedPackageRoutes(app: Express, deps: {
   bridgeBaseUrl: string;
   /** The course a hosted package is, restored from the package when this process has not seen it. */
   courseFor: (sha256: string) => Promise<Cmi5Course | undefined>;
+  /** Where the operator lets a unit be served from outside a package; none when absent. */
+  outsidePrefixes?: readonly string[];
   onError: (res: ExpressResponse, err: unknown, where: string) => void;
 }): void {
   const base = deps.bridgeBaseUrl.replace(/\/+$/, '');
@@ -655,7 +762,7 @@ export function attachHostedPackageRoutes(app: Express, deps: {
           exports.push({ packageSha256: sha, href: `${base}/scorm/packages/${sha}`, title: about.title, exportOf: about.exportOf });
           return;
         }
-        const course = about ? hostedPackageCourse(base, sha, about) : undefined;
+        const course = about ? hostedPackageCourse(base, sha, about, deps.outsidePrefixes) : undefined;
         if (!course?.structure.length) { unlisted++; return; }
         packages.push({
           packageSha256: sha, href: `${base}/scorm/packages/${sha}`,
