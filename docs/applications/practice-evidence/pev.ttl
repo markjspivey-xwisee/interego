@@ -791,6 +791,18 @@ pev:replyId a owl:DatatypeProperty ;
     rdfs:label "reply id" ;
     rdfs:comment "The id a scenario gives one of the replies offered at a step of a scripted conversation. Recorded on an exchange beside what the learner said, so the reply can be found again whatever its wording is by then." ;
     rdfs:range xsd:string .
+pev:lineCutOff a owl:DatatypeProperty ;
+    rdfs:label "line cut off" ;
+    rdfs:comment "On an exchange of a live call: true when the other person's line was interrupted, so the learner may have heard only its start. The text beside it is the whole line the model produced, not the part that was heard." ;
+    rdfs:range xsd:boolean .
+pev:notTranscribed a owl:DatatypeProperty ;
+    rdfs:label "not transcribed" ;
+    rdfs:comment "On an exchange of a live call: true when the learner spoke and the transcriber produced no words. The exchange then carries no answer for the learner: nothing is put in their mouth." ;
+    rdfs:range xsd:boolean .
+pev:turnMark a owl:DatatypeProperty ;
+    rdfs:label "turn mark" ;
+    rdfs:comment "What is known to be missing from a turn read from a live call: cut-off (the other person's line was interrupted, and how much of it was heard is not known) or not-transcribed (the learner spoke and no words were recorded; the turn has no text). A marked turn is not evidence of what the learner heard or said." ;
+    rdfs:range xsd:string .
 pev:criterionLevels a owl:DatatypeProperty ;
     rdfs:label "criterion levels" ;
     rdfs:comment "The reviewed level of every criterion, as a map from criterion id to level id." .

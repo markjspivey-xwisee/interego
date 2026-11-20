@@ -1385,6 +1385,7 @@ function attemptGraph(a: AttemptBody, json: string): string[] {
       ['pev:textSha256', lit(t.textSha256)],
       ['pev:turnSource', lit(t.source)],
       ['pev:endSignal', t.endSignal ? bool(true) : undefined],
+      ['pev:turnMark', t.mark !== undefined ? lit(t.mark) : undefined],
       ['pev:disclosure', t.disclosure ? ref(`${T}-disclosure`) : undefined],
       ['prov:generatedAtTime', when(t.at)],
       ...envelopePairs(t.envelope),
