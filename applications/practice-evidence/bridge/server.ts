@@ -128,6 +128,13 @@
  *                                   principal takes reviewed statements only for attempts whose
  *                                   launch actor carries that homePage; one not listed speaks for
  *                                   no LMS, whatever its role. Malformed: the bridge does not start
+ *   PEV_VOICE_OPENAI_API_KEY, PEV_VOICE_MODEL, PEV_VOICE_NAME, PEV_VOICE_TRANSCRIPTION_MODEL
+ *                                   the speech service for a live call (pev.live_call_session):
+ *                                   an OpenAI key, the realtime model, the voice it speaks in and
+ *                                   the model that transcribes the learner. All four or none; a
+ *                                   key with one of the others missing is NO route (this bridge
+ *                                   never picks a model), and the bridge does not start
+ *   PEV_VOICE_CALLS_PER_HOUR        "<per registration>,<total>", default 4,60
  *   PEV_LLM_API_KEY | ANTHROPIC_API_KEY, PEV_LLM_MODEL
  *                                   this bridge's own model route; a key without a model is NO
  *                                   route (this bridge never picks a model)
@@ -145,6 +152,7 @@ import { attachOntologyServing } from '../../_shared/ontology-serve/index.js';
 import { contactForLog } from '../../_shared/contact-link/index.js';
 import { pevAffordances } from '../affordances.js';
 import { anthropicTextModel, type TextModel } from '../src/model.js';
+import { openAiRealtimeVoice, type VoiceService } from '../src/voice-call.js';
 import { PEV_ACTION, PEV_NS, PEV_ONTOLOGY_IRI, readOntologyTurtle, readShapesTurtle } from '../src/ontology.js';
 import { launchVocabularyProblems, lmsAuthorityProblems, type LaunchVocabulary, type LmsAuthority } from '../src/launched-import.js';
 import { attemptIriSecret, freshNonce, iriKeyFingerprint, isAddress, signEnvelope, type KeyKind, type Role } from '../src/records.js';
@@ -217,6 +225,7 @@ async function main(): Promise<void> {
   const modelFor = env('PEV_BRIDGE_MODEL_FOR') === 'anyone' ? 'anyone' : 'registered';
   const budgets = {
     modelCallsPerHour: hourly('PEV_MODEL_CALLS_PER_HOUR', DEFAULT_BUDGETS.modelCallsPerHour),
+    voiceCallsPerHour: hourly('PEV_VOICE_CALLS_PER_HOUR', DEFAULT_BUDGETS.voiceCallsPerHour),
     attemptsPerHour: hourly('PEV_ATTEMPTS_PER_HOUR', DEFAULT_BUDGETS.attemptsPerHour),
   };
 
@@ -401,6 +410,19 @@ async function main(): Promise<void> {
   const model: TextModel | undefined = llmKey && llmModel
     ? anthropicTextModel({ apiKey: llmKey, model: llmModel, keySource: 'bridge-env' }) : undefined;
 
+  // The speech service for a live call. Named whole or not at all: a key with no model named would
+  // leave this bridge choosing what the learner talks to and what it costs.
+  const voiceSet = { PEV_VOICE_OPENAI_API_KEY: env('PEV_VOICE_OPENAI_API_KEY'), PEV_VOICE_MODEL: env('PEV_VOICE_MODEL'), PEV_VOICE_NAME: env('PEV_VOICE_NAME'), PEV_VOICE_TRANSCRIPTION_MODEL: env('PEV_VOICE_TRANSCRIPTION_MODEL') };
+  const voiceMissing = Object.entries(voiceSet).filter(([, v]) => v === undefined).map(([k]) => k);
+  if (voiceMissing.length > 0 && voiceMissing.length < 4) {
+    warn(`A live call needs PEV_VOICE_OPENAI_API_KEY, PEV_VOICE_MODEL, PEV_VOICE_NAME and PEV_VOICE_TRANSCRIPTION_MODEL together, or none of them. Missing: ${voiceMissing.join(', ')}. Not listening.`);
+    process.exitCode = 1;
+    return;
+  }
+  const voice: VoiceService | undefined = voiceMissing.length === 0
+    ? openAiRealtimeVoice({ apiKey: voiceSet.PEV_VOICE_OPENAI_API_KEY!, model: voiceSet.PEV_VOICE_MODEL!, voice: voiceSet.PEV_VOICE_NAME!, transcriptionModel: voiceSet.PEV_VOICE_TRANSCRIPTION_MODEL! })
+    : undefined;
+
   const demoOn = env('PEV_DEMO_ROLES') === '1';
   if (demoOn && !loopback) {
     warn(`PEV_DEMO_ROLES=1 needs a loopback HOST (127.0.0.1, localhost or ::1); HOST is ${HOST}. Not listening.`);
@@ -455,6 +477,7 @@ async function main(): Promise<void> {
     ...(anyPod ? { servedPods: '*' as const } : servedPods.length > 0 ? { servedPods } : {}),
     bridgeModelFor: modelFor, budgets,
     ...(model ? { model } : {}),
+    ...(voice ? { voice } : {}),
     ...(demoSigner ? { demoSigner } : {}),
     ...(launchImport ? { launchImport: { ...launchImport, fetchFn: baseFetch } } : {}),
   };
