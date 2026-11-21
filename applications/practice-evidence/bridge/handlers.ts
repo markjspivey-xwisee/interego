@@ -88,7 +88,7 @@ import {
   buildLaunchedStatements, buildStatement, launchedRefusals, launchedStatementProblems, statementProblems, CMI5_SESSION_EXT, LOSSY, LOSSY_LAUNCHED, LRS_REQUEST_NOTE, PROJECTION_FORMATS,
   type ProjectionFormat,
 } from '../src/projections.js';
-import { looksLikeSdp, voiceCallInstructions, VOICE_CALL_PROMPT_TEMPLATE_HASH, type VoiceService } from '../src/voice-call.js';
+import { looksLikeSdp, simulatedLearnerInstructions, SIMULATED_LEARNER_PROMPT_TEMPLATE_HASH, voiceCallInstructions, VOICE_CALL_PROMPT_TEMPLATE_HASH, VOICE_NAME, type VoiceService } from '../src/voice-call.js';
 import { launchNotVerified, readLaunchedCall, refixProblems, scenarioVersionRef, sendingSessionProblems, type LaunchVocabulary, type LmsAuthority, launchedActorIsSigner } from '../src/launched-import.js';
 import {
   createGraphLocks, deleteResource, isDeleted, isTrusted, keyMarksOf, listEntries, normalPod, placementProblem, podEntries, publishPevRecord,
@@ -3354,6 +3354,70 @@ async function liveCallSession(call: Call, args: Record<string, unknown>): Promi
   };
 }
 
+/**
+ * A speech model in the learner's place, for trying a scenario out with nobody on the line. An
+ * author or an admin signs {scenarioIri, scenarioVersion, voice, sdpOffer}; the bridge places a
+ * call with the speech service in which the model is told the learner's part and goal, and gives
+ * back the service's answer. The caller wires that voice to a live call of the same scenario
+ * themselves, so that two models talk to each other.
+ *
+ * It spends the operator's key, so it counts against the same hourly limit as a learner's calls,
+ * per signer. It writes nothing. A draft may be tried: that is what a test is for. The caller
+ * names the voice, as the operator names the other one: this bridge chooses neither.
+ */
+async function simulatedLearnerSession(call: Call, args: Record<string, unknown>): Promise<Out> {
+  const { ctx } = call;
+  const voice = ctx.deps.voice;
+  if (!voice) throw decline(501, 'This bridge has no speech service configured; a simulated learner cannot be placed here.', 'voice-not-configured');
+  const s = await signedAct(call, args, 'simulatedLearnerSession', {
+    checks: (p) => {
+      needText(p, 'scenarioIri', 200);
+      needInt(p, 'scenarioVersion', 1, 1_000_000);
+      if (!VOICE_NAME.test(needText(p, 'voice', 40))) throw decline(400, 'voice must be the name of a voice the speech service has (lower-case letters, digits, hyphens and underscores).', 'voice-name-required');
+      if (!looksLikeSdp(p['sdpOffer'])) throw decline(400, 'sdpOffer must be a WebRTC offer (a session description, at most 20000 characters).', 'sdp-offer-required');
+    },
+  });
+  const roles = (await rolesOn(call, s.pod)).of(s.signer);
+  if (!roles.has('author') && !isAdmin(ctx, s.signer)) throw decline(403, 'Only an author or an admin tries a scenario out with a simulated learner.', 'not-an-author-or-admin');
+
+  const sIri = String(s.payload['scenarioIri']);
+  const h = await scenarioHead(call, s.pod, sIri);
+  if (!h) throw decline(404, 'No scenario with this IRI is on this pod.', 'scenario-not-found');
+  const sb = h.body;
+  if (s.payload['scenarioVersion'] !== sb.version) {
+    throw decline(409, `The scenario is now at version ${sb.version}; read the scenario again.`, 'scenario-revised', undefined, { currentVersion: sb.version });
+  }
+  const spec = sb.scenario;
+  const taken = ctx.voiceBudget.take(`simulated-learner:${principalKey(s.signer)}`, ctx.now().getTime());
+  if (!taken.ok) {
+    throw decline(429,
+      taken.scope === 'signer'
+        ? `You have placed ${ctx.voiceBudget.limit.perSigner} simulated learners in the last hour; try again in ${taken.retryAfterSeconds} s.`
+        : `${ctx.voiceBudget.limit.total} calls have been opened on this bridge in the last hour; try again in ${taken.retryAfterSeconds} s.`,
+      'voice-budget-spent', undefined, { scope: taken.scope === 'signer' ? 'signer' : 'total', retryAfterSeconds: taken.retryAfterSeconds });
+  }
+  const spokenIn = String(s.payload['voice']);
+  const opened = await voice.open({
+    sdpOffer: String(s.payload['sdpOffer']), instructions: simulatedLearnerInstructions(spec), language: spec.language,
+    safetyId: sha256(`simulated-learner|${principalKey(s.signer)}`).slice(0, 32), maxOutputTokens: VOICE_REPLY_MAX_TOKENS, voice: spokenIn,
+  });
+  if (!opened.ok) {
+    throw decline(502, 'The speech service did not place the call; nothing was recorded and it can be asked for again.', opened.reason === 'unreachable' ? 'voice-service-unreachable' : 'voice-service-refused',
+      undefined, { ...(opened.status !== undefined ? { serviceStatus: opened.status } : {}) });
+  }
+  return {
+    scenario: { scenarioIri: sIri, version: sb.version, title: spec.title, status: sb.status },
+    call: {
+      provider: voice.provider, model: voice.model, voice: spokenIn,
+      answerSdp: opened.placed.answerSdp, dataChannel: voice.dataChannel,
+      part: spec.learnerPart, language: spec.language, promptTemplateHash: SIMULATED_LEARNER_PROMPT_TEMPLATE_HASH,
+    },
+    simulated: true,
+    recorded: false,
+    note: 'This voice is a speech model in the learner\'s place, for testing. Nothing was recorded here. If you wire it to a live call, launch that call as an agent test (contextKind agent-test, actorKind agent) so what it records says no person spoke; what it says is not evidence of anyone\'s skill.',
+  };
+}
+
 async function launchedStatementsAct(call: Call, args: Record<string, unknown>): Promise<Out> {
   const { ctx } = call;
   const s = await signedAct(call, args, 'launchedStatements', {
@@ -3889,6 +3953,7 @@ export function createPevHandlers(deps: PevDeps): Record<string, AffordanceHandl
     'pev.project_attempt': run(projectAttempt),
     'pev.launched_statements': run(launchedStatementsAct),
     'pev.live_call_session': run(liveCallSession),
+    'pev.simulated_learner_session': run(simulatedLearnerSession),
     'pev.holder_copy': run(holderCopy),
     'pev.export_record': run(exportRecord),
     'pev.redact_attempt': run(redactAttempt),
