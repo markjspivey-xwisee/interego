@@ -339,6 +339,17 @@ export const pevAffordances: ReadonlyArray<Affordance> = [
     outputs: out('The call: the speech service\'s answer to the offer, and what to tell the learner.', ['registration', 'call', 'disclosure']),
   },
   {
+    action: PEV_ACTION.simulatedLearnerSession as IRI,
+    toolName: 'pev.simulated_learner_session',
+    title: 'Place a simulated learner voice, to try a scenario out',
+    description: 'An author or an admin tries a scenario out with nobody on the line: a second AI speech model takes the learner\'s part. Payload: {scenarioIri, scenarioVersion, voice, sdpOffer}. The model is told the learner\'s part, goal and situation, not the rubric, and waits for the other person to speak first. The answer is the speech service\'s answer to the offer; no credential is handed out, and nothing is recorded. The caller names the voice and wires it to a live call themselves. It spends the operator\'s speech key and counts against the hourly call limit per signer. What a simulated learner says is not evidence of anyone\'s skill: launch the call it joins as an agent test.',
+    method: 'POST',
+    targetTemplate: '{base}/pev/simulated_learner_session',
+    annotations: hints('Place a simulated learner', false, false, false, true),
+    inputs: [...ENVELOPE],
+    outputs: out('The call: the speech service\'s answer to the offer.', ['call', 'simulated']),
+  },
+  {
     action: PEV_ACTION.launchedStatements as IRI,
     toolName: 'pev.launched_statements',
     title: 'Take the reviewed statements for the assignable unit to send',

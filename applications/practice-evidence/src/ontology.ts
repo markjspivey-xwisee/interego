@@ -52,6 +52,7 @@ export const PEV_ACTION = {
   projectAttempt: 'urn:iep:action:pev:project-attempt',
   launchedStatements: 'urn:iep:action:pev:launched-statements',
   liveCallSession: 'urn:iep:action:pev:live-call-session',
+  simulatedLearnerSession: 'urn:iep:action:pev:simulated-learner-session',
   holderCopy: 'urn:iep:action:pev:holder-copy',
   exportRecord: 'urn:iep:action:pev:export-record',
   redactAttempt: 'urn:iep:action:pev:redact-attempt',
