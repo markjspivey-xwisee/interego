@@ -162,7 +162,7 @@ interface Opened {
   peer(): Peer;
 }
 /** One load of the page at a launch URL that asks for a live call. */
-function open(lms: Lms, o: { webrtc?: boolean; mic?: 'refused'; call?: string | null; launched?: boolean } = {}): Opened {
+function open(lms: Lms, o: { webrtc?: boolean; mic?: 'refused'; call?: string | null; launched?: boolean; waitsAtMost?: number } = {}): Opened {
   const els = new Map<string, El>();
   const el = (id: string): El => { let e = els.get(id); if (!e) { e = new El(); els.set(id, e); } return e; };
   for (const id of HIDDEN) el(id).classList.add('hide');
@@ -180,7 +180,8 @@ function open(lms: Lms, o: { webrtc?: boolean; mic?: 'refused'; call?: string | 
     } } };
   }
   // A timer the page waits on runs as it would, and does not keep the test run alive after it.
-  const timeout = (f: () => void, ms?: number): unknown => { const t = setTimeout(f, ms); t.unref(); return t; };
+  // `waitsAtMost` shortens every wait the page sets, for a test that is about what happens when one runs out.
+  const timeout = (f: () => void, ms?: number): unknown => { const t = setTimeout(f, o.waitsAtMost !== undefined ? Math.min(ms ?? 0, o.waitsAtMost) : ms); t.unref(); return t; };
   for (const script of SCRIPTS) {
     new Function('window', 'document', 'location', 'fetch', 'setInterval', 'clearInterval', 'setTimeout', script)(window, document, location, lms.fetch, () => 0, () => {}, timeout);
   }
@@ -209,7 +210,9 @@ const customer = (page: Opened, id: string, text: string): void => {
   page.hear({ type: 'response.output_audio_transcript.delta', item_id: id, delta: text.slice(0, half) });
   page.hear({ type: 'response.output_audio_transcript.delta', item_id: id, delta: text.slice(half) });
   page.hear({ type: 'response.output_audio_transcript.done', item_id: id, transcript: text });
-  page.hear({ type: 'response.done', response: { status: 'completed', output: [{ id }] } });
+  page.hear({ type: 'response.done', response: { id: `resp-${id}`, status: 'completed', output: [{ id }] } });
+  // The service finishes sending the reply's audio after the response is done.
+  page.hear({ type: 'output_audio_buffer.stopped', response_id: `resp-${id}` });
 };
 const spoke = (page: Opened, id: string): void => {
   page.hear({ type: 'input_audio_buffer.speech_started', item_id: id });
@@ -483,9 +486,22 @@ describe('a live call in the role-play player', () => {
     await page.settle(() => count(lms, VOCAB.turnVerb) === 1);
     spoke(page, 'u2'); heard(page, 'u2', 'I can refund the duplicate today.');
     page.hear({ type: 'conversation.item.added', item: { id: 'a2', type: 'message', role: 'assistant' } });
-    page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a2', transcript: 'Great, thank you.' });
-    page.hear({ type: 'response.done', response: { status: 'completed' } });
+    page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a2', transcript: 'Great, thank you. Goodbye now.' });
+    page.hear({ type: 'response.done', response: { id: 'resp-a2', status: 'completed' } });
+    // The goodbye is generated, and still playing: the call is not closed on it.
+    await new Promise((r) => setTimeout(r, 40));
+    expect([count(lms, VERB_TERMINATED), page.peer().closed]).toEqual([0, false]);
+    expect(page.el('lstatus').textContent).toContain('That was the last exchange');
+    // Another reply's audio finishing does not close it either. This reply's does.
+    page.hear({ type: 'output_audio_buffer.stopped', response_id: 'resp-a1' });
+    page.hear({ type: 'response.done', response: { id: 'resp-a2', status: 'completed' } });
+    await new Promise((r) => setTimeout(r, 40));
+    expect([count(lms, VERB_TERMINATED), page.peer().closed]).toEqual([0, false]);
+    page.hear({ type: 'output_audio_buffer.stopped', response_id: 'resp-a2' });
+    page.hear({ type: 'output_audio_buffer.stopped', response_id: 'resp-a2' });
     await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+    await new Promise((r) => setTimeout(r, 40));
+    expect(count(lms, VERB_TERMINATED)).toBe(1);
     expect(lms.turns()).toEqual([
       { n: '1', line: '[nothing said yet]', response: 'Hello, Brightline support.' },
       { n: '2', line: 'Hi, I was charged twice.', response: 'I can refund the duplicate today.' },
@@ -496,6 +512,56 @@ describe('a live call in the role-play player', () => {
     expect(page.win['__rolePlayLive']).toMatchObject({ exchanges: 2, why: 'limit' });
     expect(readLaunchedCall(lms.held, INPUT)).toHaveProperty('call');
   });
+
+  it('ends the call after a bounded wait when the service never says the last reply\'s audio is finished', async () => {
+    const lms = new Lms();
+    lms.call = () => ({ status: 200, body: lms.placed({ turnLimit: 1 }) });
+    const page = await placeCall(lms, { waitsAtMost: 120 });
+    customer(page, 'a1', 'Hi, I was charged twice.');
+    spoke(page, 'u1'); heard(page, 'u1', 'I can refund the duplicate today.');
+    page.hear({ type: 'conversation.item.added', item: { id: 'a2', type: 'message', role: 'assistant' } });
+    page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a2', transcript: 'Thanks, goodbye.' });
+    page.hear({ type: 'response.done', response: { id: 'resp-a2', status: 'completed' } });
+    await new Promise((r) => setTimeout(r, 40));
+    expect(count(lms, VERB_TERMINATED)).toBe(0);
+    await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+    // Every wait is shortened here, the call's own time limit among them, so which of the two waits ran out first is not asserted: the call ended, once, with its exchange.
+    expect(page.win['__rolePlayLive']).toMatchObject({ placed: true, exchanges: 1 });
+    await new Promise((r) => setTimeout(r, 200));
+    expect(count(lms, VERB_TERMINATED)).toBe(1);
+  });
+
+  it('takes a truncation at nought as a line that was never heard, and any other as heard', async () => {
+    // Found in review (2026-11-20): a truncation's mere presence was read as proof the line had played.
+    const cut = async (truncated: Record<string, unknown> | null): Promise<{ turns: unknown; marks: unknown }> => {
+      const lms = new Lms();
+      const page = await placeCall(lms);
+      customer(page, 'a1', 'What number can we reach you on?');
+      spoke(page, 'u1'); heard(page, 'u1', 'The alternate number is');
+      page.hear({ type: 'conversation.item.added', item: { id: 'a2', type: 'message', role: 'assistant' } });
+      page.hear({ type: 'input_audio_buffer.speech_started', item_id: 'u2' });
+      page.hear({ type: 'response.output_audio_transcript.done', item_id: 'a2', transcript: 'Hold' });
+      page.hear({ type: 'response.done', response: { status: 'cancelled' } });
+      if (truncated) page.hear({ type: 'conversation.item.truncated', item_id: 'a2', content_index: 0, ...truncated });
+      heard(page, 'u2', '555-0100.');
+      customer(page, 'a3', 'Got it, thanks.');
+      void page.el('lend').onclick!();
+      await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+      return { turns: lms.turns().map((t) => [t.line, t.response]), marks: lms.marks().map((m) => m[0]) };
+    };
+    const joined = { turns: [['What number can we reach you on?', 'The alternate number is 555-0100.']], marks: [undefined] };
+    const split = { turns: [['What number can we reach you on?', 'The alternate number is'], ['Hold', '555-0100.']], marks: [undefined, true] };
+    // No truncation, and a truncation that says nothing had played: never heard, so no line and one answer.
+    expect(await cut(null)).toEqual(joined);
+    expect(await cut({ audio_end_ms: 0 })).toEqual(joined);
+    expect(await cut({ audio_end_ms: -5 })).toEqual(joined);
+    // Some audio had played: a line, cut off, and two answers.
+    expect(await cut({ audio_end_ms: 120 })).toEqual(split);
+    // No usable figure: taken as heard, which is the reading that keeps the line in the record.
+    expect(await cut({})).toEqual(split);
+    expect(await cut({ audio_end_ms: '120' })).toEqual(split);
+    expect(await cut({ audio_end_ms: null })).toEqual(split);
+  }, 20_000);
 
   it('holds the last exchange until the call ends, and does not end the call while the learner is still speaking', async () => {
     // Found in review (2026-11-20): with one exchange left, a reply cancelled because the learner went on

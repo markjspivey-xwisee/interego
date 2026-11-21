@@ -948,7 +948,7 @@ const live = () => P.call === "live";
 const LIVE_UNSAID = "[nothing said yet]";     // the learner spoke before the other person had
 const LIVE_UNHEARD = "[not transcribed]";     // the learner spoke and the transcriber failed (shown; written only where the scenario names no mark)
 const liveHeard = s => /[\p{L}\p{N}]/u.test(s);   // words, as against the punctuation a transcriber writes for a noise
-const LIVE_TEXT_MAX = 4000, LIVE_LAST_WORDS_MS = 4000, LIVE_LAST_REPLY_MS = 20000;
+const LIVE_TEXT_MAX = 4000, LIVE_LAST_WORDS_MS = 4000, LIVE_LAST_REPLY_MS = 20000, LIVE_PLAYOUT_MS = 12000;
 let lc = null;   // the call under way: {pc, dc, mic, items, written, limit, over, ...}
 const liveSet = () => (S.ui && S.ui.liveCall) || {};
 const liveSupported = () => !!(window.RTCPeerConnection && window.navigator && window.navigator.mediaDevices && window.navigator.mediaDevices.getUserMedia);
@@ -1030,6 +1030,7 @@ function liveEvent(ev){
   if (!lc || lc.over || !ev || typeof ev.type !== "string") return;
   const t = ev.type, id = typeof ev.item_id === "string" ? ev.item_id : null;
   let whole = false;   // this event is a reply ending as a whole reply
+  let played = null;   // this event is the service finishing a reply's audio: that reply's id, or "" where it names none
   if (/^(conversation\.item\.(added|created|done)|response\.output_item\.(added|done))$/.test(t) && ev.item && typeof ev.item.id === "string" && ev.item.type === "message" && (ev.item.role === "user" || ev.item.role === "assistant")) {
     const it = liveItem(ev.item.id, ev.item.role === "user" ? "learner" : "counterpart");
     // The other person's line, ended before it was whole.
@@ -1048,14 +1049,22 @@ function liveEvent(ev){
   } else if (t === "response.output_audio_transcript.done" && id) {
     const it = liveItem(id, "counterpart"); if (typeof ev.transcript === "string") it.text = ev.transcript; it.done = true;
   } else if (t === "conversation.item.truncated" && id) {
-    // The learner spoke over this line and its audio was stopped part way: some of it was heard.
-    const it = liveItem(id, "counterpart"); it.cut = true; it.heard = true;
+    // The learner spoke over this line and its audio was stopped. The service says how far in: at
+    // nought, none of it had played, and it was not heard. A truncation that gives no usable figure
+    // is taken as heard, since one is sent for audio that was playing; this is the service's account
+    // of its own buffer, not a measurement of what reached the learner's ears.
+    const it = liveItem(id, "counterpart"); it.cut = true;
+    if (!(typeof ev.audio_end_ms === "number" && ev.audio_end_ms <= 0)) it.heard = true;
   } else if (t === "response.done") {
     // Whatever the other person was saying is now said, or cut off: what there is of it is the line.
     // A response that ended any way but completed left its lines unfinished, whether or not a transcript of what there was of them had come.
     const st = ev.response && ev.response.status, broken = typeof st === "string" && st !== "completed";
     for (const it of lc.items) if (it.who === "counterpart" && !it.closed) { if (broken) it.cut = true; it.done = true; it.closed = true; }
     whole = !broken;
+    if (whole) lc.lastWhole = (ev.response && typeof ev.response.id === "string") ? ev.response.id : "";
+  } else if (t === "output_audio_buffer.stopped" || t === "output_audio_buffer.cleared") {
+    // The service has finished sending a reply's audio (or dropped it). Which reply, where it says.
+    played = typeof ev.response_id === "string" ? ev.response_id : "";
     if (!lc.ending) { liveStatus("Your turn"); $("lav").classList.remove("talk"); }
   } else if (t === "error") {
     lc.errors.push(String((ev.error && (ev.error.code || ev.error.type)) || "error").slice(0, 80));
@@ -1063,7 +1072,17 @@ function liveEvent(ev){
   if (liveFlush() && !lc.ending) {
     // The last exchange the scenario allows has been had. The other person finishes what they are saying.
     // A reply that was cancelled is the learner still speaking: the call is not ended on that.
-    if (whole) return void endLive("limit");
+    // A whole reply has been generated when its response is done, and is still being played: the call
+    // is ended when the service says that reply's audio is finished, or after a bounded wait where it
+    // does not say. Until 2026-11-21 the call was closed on the response, which could cut the goodbye short.
+    if (whole && lc.farewell === undefined) {
+      lc.farewell = lc.lastWhole || "";
+      clearTimeout(lc.lastReply); lc.lastReply = setTimeout(() => endLive("limit"), LIVE_PLAYOUT_MS);
+      liveStatus("That was the last exchange. " + lc.name + " is finishing.");
+      return;
+    }
+    // Only the audio of the reply that closed the call releases it; another reply's does not.
+    if (played !== null && lc.farewell !== undefined && (played === lc.farewell || played === "" || lc.farewell === "")) return void endLive("limit");
     if (!lc.lastReply) { liveStatus("That was the last exchange. " + lc.name + " is finishing."); lc.lastReply = setTimeout(() => endLive("limit"), LIVE_LAST_REPLY_MS); }
   }
 }
