@@ -110,6 +110,7 @@ h1{font-size:26px;line-height:1.2;letter-spacing:-.02em;margin:0 0 6px}h2{font-s
 .rw{border-top:1px solid var(--line);padding:12px 0}.rw:first-of-type{border-top:0}.rw .say{font-weight:600}.rw .was{font-size:14px;color:var(--ink2);margin-top:4px}
 a{color:var(--accent)}.hide{display:none!important}
 .track{font-size:13px;color:var(--ink2)}.track code{font-size:12px}
+.livelog{margin-top:14px;max-height:46vh;overflow-y:auto;overscroll-behavior:contain;border-top:1px solid var(--line);border-bottom:1px solid var(--line)}
 </style></head><body>
 <div class="wrap">
 <header><div class="brand"><div class="logo" id="logo">·</div><span id="brand">Role-play practice</span></div><span id="chip" class="chip">Loading…</span></header>
@@ -167,7 +168,7 @@ a{color:var(--accent)}.hide{display:none!important}
     <div class="callhead"><div class="bigav" id="lav"></div>
       <div style="flex:1;min-width:0"><div class="pname" id="lname"></div><div class="small" id="lstatus"></div></div></div>
     <div class="dots" id="ldots"></div>
-    <div id="livelog" style="margin-top:14px"></div>
+    <div id="livelog" class="livelog" role="log" aria-live="polite" aria-label="What has been said on this call"></div>
     <p class="small" id="ldisclosure" style="margin:12px 0"></p>
     <div class="row"><button class="btn primary" id="lend">End call</button><button class="btn ghost hide" id="lretry">Try again</button></div>
     <audio id="liveaudio" autoplay></audio>
@@ -994,8 +995,14 @@ function liveExchanges(items, over){
   return out;
 }
 function liveStatus(text){ $("lstatus").textContent = text; }
+/* The log keeps to what is being said now: it is a panel of its own that scrolls, so the newest
+   line, the call's state and the button that ends the call are all on screen together. Until
+   2026-11-22 the log grew down the page, and from the third exchange the newest lines were below
+   the bottom of the screen. A learner who has scrolled back to read an earlier line is left there. */
 function liveDraw(){
-  const box = $("livelog"); box.innerHTML = "";
+  const box = $("livelog");
+  const following = !(box.scrollHeight - box.scrollTop - box.clientHeight > 40);
+  box.innerHTML = "";
   for (const it of lc.items) {
     if (liveNeverHeard(it, lc.over)) continue;
     const said = liveText(it), text = it.who === "learner" && (it.failed || !liveHeard(said)) ? (it.failed ? LIVE_UNHEARD : "") : said; if (!text) continue;
@@ -1004,6 +1011,7 @@ function liveDraw(){
     d.querySelector(".was").textContent = it.who === "counterpart" ? lc.name + (it.cut ? " (cut off)" : "") : "You"; d.querySelector(".say").textContent = text;
     box.appendChild(d);
   }
+  if (following) box.scrollTop = box.scrollHeight;
   const dots = $("ldots"); if (dots.children.length !== lc.limit) { dots.innerHTML = ""; for (let i = 0; i < lc.limit; i++) dots.appendChild(document.createElement("i")); }
   [...dots.children].forEach((d, i) => d.classList.toggle("on", i < lc.written));
 }
