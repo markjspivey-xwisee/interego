@@ -114,6 +114,10 @@ class Lms {
 class El {
   children: El[] = []; onclick: (() => unknown) | null = null; className = ''; style: Record<string, string> = {}; disabled = false; srcObject: unknown = null;
   readonly offsetWidth = 0;
+  /** A scrolling panel as far as the page asks one: each row is 60 high, the panel shows 200, and it is scrolled to wherever it was last put. */
+  scrollTop = 0;
+  readonly clientHeight = 200;
+  get scrollHeight(): number { return this.children.length * 60; }
   private text = '';
   private readonly classes = new Set<string>();
   readonly classList = {
@@ -345,6 +349,34 @@ describe('a live call in the role-play player', () => {
     expect(got.call.turns.map((t) => t.mark)).toEqual([undefined, undefined, undefined, 'not-transcribed', undefined, undefined, 'cut-off', undefined]);
     expect(got.call.scores).toEqual([]);
     expect(lms.held.every((s, i) => i === 0 || Date.parse(s.timestamp) >= Date.parse(lms.held[i - 1]!.timestamp))).toBe(true);
+  });
+
+  it('keeps the newest line of the call in view, and leaves a learner who has scrolled back where they are', async () => {
+    // Seen in the first recordings (2026-11-21): the log grew down the page and the conversation went on below the screen.
+    expect(PAGE).toMatch(/\.livelog\{[^}]*max-height:\d+vh;overflow-y:auto/);
+    expect(PAGE).toContain('<div id="livelog" class="livelog" role="log" aria-live="polite"');
+    const lms = new Lms();
+    const page = await placeCall(lms);
+    const log = page.el('livelog');
+    const atBottom = (): boolean => log.scrollTop === log.scrollHeight;
+    customer(page, 'a1', 'Hi, I was charged twice.');
+    for (let n = 1; n <= 4; n++) { spoke(page, `u${n}`); heard(page, `u${n}`, `Answer number ${n}.`); customer(page, `a${n + 1}`, `Reply number ${n}.`); }
+    // Nine things have been said, which is more than the panel shows at once: it is at its end.
+    expect(log.children).toHaveLength(9);
+    expect(log.scrollHeight).toBeGreaterThan(log.clientHeight);
+    expect(atBottom()).toBe(true);
+    // The learner scrolls back to read the first line. The next thing said does not pull them away from it.
+    log.scrollTop = 0;
+    page.hear({ type: 'response.output_audio_transcript.delta', item_id: 'a6', delta: 'One more thing' });
+    expect(log.children).toHaveLength(10);
+    expect(log.scrollTop).toBe(0);
+    // Back at the end, it follows again.
+    log.scrollTop = log.scrollHeight - log.clientHeight;
+    page.hear({ type: 'response.output_audio_transcript.delta', item_id: 'a6', delta: ' before you go' });
+    spoke(page, 'u5'); heard(page, 'u5', 'Of course.');
+    expect(atBottom()).toBe(true);
+    void page.el('lend').onclick!();
+    await page.settle(() => count(lms, VERB_TERMINATED) === 1);
   });
 
   it('takes a noise for no speech: it is no exchange and uses none of the scenario\'s turns', async () => {
