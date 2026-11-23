@@ -791,6 +791,10 @@ pev:replyId a owl:DatatypeProperty ;
     rdfs:label "reply id" ;
     rdfs:comment "The id a scenario gives one of the replies offered at a step of a scripted conversation. Recorded on an exchange beside what the learner said, so the reply can be found again whatever its wording is by then." ;
     rdfs:range xsd:string .
+pev:agentTest a owl:DatatypeProperty ;
+    rdfs:label "agent test" ;
+    rdfs:comment "In the context of a statement an assignable unit wrote: true when the unit was launched as a test in which no person took the learner's part (an agent, a script or a simulated learner did). A session that carries it is not taken as anyone's attempt." ;
+    rdfs:range xsd:boolean .
 pev:lineCutOff a owl:DatatypeProperty ;
     rdfs:label "line cut off" ;
     rdfs:comment "On an exchange of a live call: true when the other person's line was interrupted, so the learner may have heard only its start. The text beside it is the whole line the model produced, not the part that was heard." ;

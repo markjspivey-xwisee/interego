@@ -16,7 +16,7 @@
  */
 import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
-import { LINE_CUT_OFF_EXT, NOT_TRANSCRIBED_EXT, PARTLY_TRANSCRIBED_EXT, readLaunchedCall, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary, type ReadLaunchedInput } from '../src/launched-import.js';
+import { AGENT_TEST_EXT, LINE_CUT_OFF_EXT, NOT_TRANSCRIBED_EXT, PARTLY_TRANSCRIBED_EXT, readLaunchedCall, VERB_INITIALIZED, VERB_LAUNCHED, VERB_SCORED, VERB_TERMINATED, type LaunchVocabulary, type ReadLaunchedInput } from '../src/launched-import.js';
 import { judgeRequest, transcriptHash, verifyQuote, type ScenarioSpec, type Turn } from '../src/practice.js';
 import { sha256 } from '@interego/core';
 
@@ -166,13 +166,13 @@ interface Opened {
   peer(): Peer;
 }
 /** One load of the page at a launch URL that asks for a live call. */
-function open(lms: Lms, o: { webrtc?: boolean; mic?: 'refused'; call?: string | null; launched?: boolean; waitsAtMost?: number } = {}): Opened {
+function open(lms: Lms, o: { webrtc?: boolean; mic?: 'refused'; call?: string | null; launched?: boolean; waitsAtMost?: number; launchedAs?: Record<string, string> } = {}): Opened {
   const els = new Map<string, El>();
   const el = (id: string): El => { let e = els.get(id); if (!e) { e = new El(); els.set(id, e); } return e; };
   for (const id of HIDDEN) el(id).classList.add('hide');
   const document = { title: '', getElementById: el, createElement: (): El => new El(), querySelectorAll: (q: string): El[] => (q === 'section' ? SECTIONS.map(el) : []) };
   const launch: Record<string, string> = o.launched === false ? {} : { endpoint: LRS, fetch: `${LMS}/cmi5/fetch/once`, actor: JSON.stringify(ACTOR), activityId: AU, registration: REG };
-  const href = `${PLAYER}?${new URLSearchParams({ ...launch, ...(o.call === null ? {} : { call: o.call ?? 'live' }) }).toString()}`;
+  const href = `${PLAYER}?${new URLSearchParams({ ...launch, ...(o.call === null ? {} : { call: o.call ?? 'live' }), ...(o.launchedAs ?? {}) }).toString()}`;
   const location = { href, search: new URL(href).search };
   const peers: Peer[] = [], mics: Track[] = [];
   const window: Record<string, unknown> = { scrollTo: () => {}, localStorage: undefined, sessionStorage: undefined };
@@ -200,7 +200,7 @@ function open(lms: Lms, o: { webrtc?: boolean; mic?: 'refused'; call?: string | 
 /** The learner agrees, and the page gets as far as holding the speech service's answer. */
 async function placeCall(lms: Lms, o: Parameters<typeof open>[1] = {}): Promise<Opened> {
   const page = open(lms, o);
-  await page.settle(() => page.showing().includes('s-welcome') && page.el('chip').textContent === 'Tracked' && count(lms, VERB_INITIALIZED) === 1);
+  await page.settle(() => page.showing().includes('s-welcome') && String(page.el('chip').textContent).startsWith('Tracked') && count(lms, VERB_INITIALIZED) === 1);
   page.el('go').onclick!(); page.el('agree').onclick!(); void page.el('consentyes').onclick!();
   await page.settle(() => page.peers.length > 0 && page.peer().remote !== null);
   page.peer().channel!.onopen!();
@@ -378,6 +378,37 @@ describe('a live call in the role-play player', () => {
     void page.el('lend').onclick!();
     await page.settle(() => count(lms, VERB_TERMINATED) === 1);
   });
+
+  it('says on every statement that a call launched as an agent test had no person in it, and the import refuses to take it as an attempt', async () => {
+    // Until 2026-11-23 only a note asked for such a call not to be imported: a call between two speech
+    // models, taken in, would have been judged and reviewed as the launching person's own practice.
+    expect(scenario.xapi.extensions['agentTest']).toBe(AGENT_TEST_EXT);
+    const run = async (launchedAs: Record<string, string> | undefined): Promise<{ marks: unknown[]; platform: unknown; problems: string }> => {
+      const lms = new Lms();
+      const page = await placeCall(lms, launchedAs ? { launchedAs } : {});
+      customer(page, 'a1', 'Hi, I was charged twice.');
+      spoke(page, 'u1'); heard(page, 'u1', 'I can refund the duplicate today.');
+      customer(page, 'a2', 'Thank you.');
+      await page.settle(() => count(lms, VOCAB.turnVerb) === 1);
+      void page.el('lend').onclick!();
+      await page.settle(() => count(lms, VERB_TERMINATED) === 1);
+      const unit = lms.held.filter((x) => x.verb.id !== VERB_LAUNCHED);
+      const got = readLaunchedCall(lms.held, INPUT);
+      return { marks: unit.map((x) => x.context.extensions[AGENT_TEST_EXT]), platform: unit[0]!.context.platform, problems: 'problems' in got ? got.problems.join(' | ') : '' };
+    };
+    // An ordinary launch: no such word anywhere, and the call is taken.
+    const person = await run(undefined);
+    expect(person.marks).toEqual([undefined, undefined, undefined, undefined]);
+    expect(person.problems).toBe('');
+    // Launched as an agent test, either way of saying it: every statement of the unit says so, and nothing is taken.
+    const ways: Record<string, string>[] = [{ contextKind: 'agent-test' }, { actorKind: 'agent' }, { contextKind: 'agent-test', actorKind: 'agent' }];
+    for (const launchedAs of ways) {
+      const test = await run(launchedAs);
+      expect(test.marks, JSON.stringify(launchedAs)).toEqual([true, true, true, true]);
+      expect(test.problems).toContain('the unit says this registration was an agent test');
+    }
+    expect(String((await run({ contextKind: 'agent-test' })).platform)).toContain('(agent test)');
+  }, 20_000);
 
   it('takes a noise for no speech: it is no exchange and uses none of the scenario\'s turns', async () => {
     const lms = new Lms();
@@ -823,6 +854,10 @@ describe('what a live call could not record, at the import and before a judge', 
     expect(problems(call(exchange(2, 'Hi.', { extensions: { [PARTLY_TRANSCRIBED_EXT]: true } })))).toContain('carries no answer from the learner');
     // With no mark, an exchange with no answer is still refused, as it always was.
     expect(problems(call(exchange(2, 'Hi.', {})))).toContain('carries no answer from the learner');
+    // The agent-test word is read only as true, from any one statement of the unit, in any session of the registration.
+    const marked = (value: unknown, n = 2): Record<string, unknown>[] => call(exchange(2, 'Hi.', { response: 'Hello.' })).map((x, i) => (i === n ? { ...x, context: { ...(x['context'] as Record<string, unknown>), extensions: { ...((x['context'] as { extensions: Record<string, unknown> }).extensions), [AGENT_TEST_EXT]: value } } } : x));
+    for (const n of [1, 2, 3]) expect(problems(marked(true, n)), `statement ${n}`).toContain('the unit says this registration was an agent test');
+    for (const v of ['true', 1, 'agent-test', null, false]) expect(problems(marked(v)), String(v)).toBe('');
     // A call in which nothing the learner said was recorded is nothing to review.
     expect(problems(call(exchange(2, 'Hi.', { extensions: { [NOT_TRANSCRIBED_EXT]: true } }), exchange(3, 'Hello?', { extensions: { [NOT_TRANSCRIBED_EXT]: true } })))).toContain('no exchange of the session has any recorded words from the learner');
   });

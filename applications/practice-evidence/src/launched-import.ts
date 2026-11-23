@@ -31,6 +31,14 @@ import { PEV_NS } from './ontology.js';
 export const LINE_CUT_OFF_EXT = `${PEV_NS}lineCutOff`;
 export const NOT_TRANSCRIBED_EXT = `${PEV_NS}notTranscribed`;
 export const PARTLY_TRANSCRIBED_EXT = `${PEV_NS}partlyTranscribed`;
+/**
+ * In a statement's context extensions: the unit was launched as a test in which no person took the
+ * learner's part. It counts only as the boolean `true`. A registration in which any of the unit's
+ * statements carries it is refused: what was said in it is nobody's practice. This is the unit's
+ * own word about its launch, like everything else read here; a unit that does not say it is not
+ * caught by this.
+ */
+export const AGENT_TEST_EXT = `${PEV_NS}agentTest`;
 
 export const VERB_INITIALIZED = 'http://adlnet.gov/expapi/verbs/initialized';
 export const VERB_TERMINATED = 'http://adlnet.gov/expapi/verbs/terminated';
@@ -257,6 +265,8 @@ export function readLaunchedCall(statements: readonly unknown[], i: ReadLaunched
   if (!ended) p.push('the session of the conversation has no terminated statement: it is still open');
 
   const turnsRead = inSession.filter((r) => r.verb === v.turnVerb);
+  // Held with no person in the learner's place: an agent test, by the unit's own statement. Any one statement saying so is enough.
+  if (unit.some((r) => r.ext[AGENT_TEST_EXT] === true)) p.push('the unit says this registration was an agent test: no person took the learner\'s part, so it is not taken as anyone\'s attempt');
   if (turnsRead.length === 0) p.push('the session has no exchange: there is nothing to review');
   // A call in which nothing the learner said was recorded holds nothing of theirs to judge or review.
   else if (turnsRead.every((t) => objOf(t.result['extensions'])[NOT_TRANSCRIBED_EXT] === true)) p.push('no exchange of the session has any recorded words from the learner: there is nothing to review');

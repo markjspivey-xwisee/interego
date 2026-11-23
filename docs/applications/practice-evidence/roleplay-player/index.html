@@ -301,6 +301,9 @@ function ctx(cmi5, parent){
   if (X.extensions.rubric && S.rubricRef) ext[X.extensions.rubric] = S.rubricRef;
   ext[FOXXI+"contextKind"] = P.contextKind || "training";
   ext[FOXXI+"actorKind"] = P.actorKind || "human";
+  // A launch that says no person takes the learner's part says so in a term the review side reads,
+  // on every statement, so that such a session is not taken as anyone's attempt.
+  if (X.extensions.agentTest && (P.contextKind === "agent-test" || P.actorKind === "agent")) ext[X.extensions.agentTest] = true;
   const cat = [{objectType:"Activity", id: X.profileVersion}]; if (cmi5) cat.push({objectType:"Activity", id:CMI5_CAT});
   const grouping = (tplCA.grouping || []).slice();
   grouping.push({objectType:"Activity", id: attemptGraph(), definition:{type: X.activityTypes.attempt, name: L(S.title + " practice " + registration.slice(0,8))}});
