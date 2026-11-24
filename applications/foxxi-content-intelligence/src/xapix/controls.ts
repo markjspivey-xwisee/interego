@@ -62,6 +62,8 @@ export function controlsDocument(input: { readonly id: string; readonly template
 }
 
 /** The address of the controls document for these templates, under a profile server's base. One IRI, as `xapix:controls` wants. */
-export function controlsUrl(base: string, templates: readonly string[]): string {
-  return `${base}/controls?${templates.map(t => `template=${encodeURIComponent(t)}`).join('&')}`;
+export function controlsUrl(base: string, templates: readonly string[], profileVersion?: string): string {
+  const query = templates.map(template => `template=${encodeURIComponent(template)}`);
+  if (profileVersion !== undefined) query.push(`profile=${encodeURIComponent(profileVersion)}`);
+  return `${base}/controls?${query.join('&')}`;
 }

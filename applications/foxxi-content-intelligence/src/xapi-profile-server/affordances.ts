@@ -207,10 +207,14 @@ export const xapiProfileServerAffordances: Affordance[] = [
     inputs: [
       { name: 'statement', type: 'object', required: true, description: 'One xAPI Statement.' },
       { name: 'profile', type: 'string', required: true, description: 'The id of a profile, or of a version, held on the server.' },
+      { name: 'report', type: 'boolean', required: false, description: 'Read the exact profile version, outcome and omitted checks.' },
     ],
     outputs: {
-      description: 'An empty 204 on success. On 400: why.',
+      description: 'An empty 204 on success. With report=true, get JSON with the exact version and checked scope. On 400, get reasons.',
       properties: {
+        profileVersion: { type: 'string' },
+        outcome: { type: 'string', description: 'matched, incomplete or refused when report=true.' },
+        templates: { type: 'array', items: { type: 'string' } },
         valid: { type: 'boolean' },
         comments: { type: 'array', items: { type: 'string' }, description: 'Which template and rule were not followed.' },
         notChecked: { type: 'array', items: { type: 'string' }, description: 'What was not checked: a referenced statement that was not available, and any part of an extension schema this server does not read (it reads type, enum, const, numeric and length bounds, format iri, plain patterns, items, properties and required).' },
@@ -230,10 +234,18 @@ export const xapiProfileServerAffordances: Affordance[] = [
     inputs: [
       { name: 'statements', type: 'array', required: true, description: 'The xAPI Statements of one registration or sub-registration.' },
       { name: 'profile', type: 'string', required: true, description: 'The id of a profile, or of a version, held on the server.' },
+      { name: 'report', type: 'boolean', required: false, description: 'Read the exact profile version, outcome and omitted checks.' },
     ],
     outputs: {
-      description: 'An empty 204 on success. On 400: why.',
-      properties: { valid: { type: 'boolean' }, comments: { type: 'array', items: { type: 'string' } } },
+      description: 'An empty 204 on success. With report=true, get JSON with the exact version and checked scope. On 400, get reasons.',
+      properties: {
+        profileVersion: { type: 'string' },
+        outcome: { type: 'string', description: 'matched, incomplete or refused when report=true.' },
+        pattern: { type: 'string' },
+        valid: { type: 'boolean' },
+        comments: { type: 'array', items: { type: 'string' } },
+        notChecked: { type: 'array', items: { type: 'string' } },
+      },
     },
   },
   {
@@ -270,13 +282,16 @@ export const xapiProfileServerAffordances: Affordance[] = [
     action: 'urn:iep:action:foxxi:xapi-profile-controls' as IRI,
     toolName: 'foxxi.xapi_profile_controls',
     title: 'Read what can be done after a statement that follows a template',
-    description: `Read the controls a statement template offers: the affordances its profile states under xapix:offers, each described as this deployment serves it now (target, method, inputs). ${SERVER} Name one or more statement templates in template. This is the document an xapix:controls link on a statement points at. It is of a template, not of a statement, so it says nothing a statement says. Follow each target as given and build no address from a statement. An offer is a possibility, not a permission: each affordance applies its own access rules. unresolved names an offered affordance this deployment does not serve. To ask for one statement, POST { statement, profile? } to the same address: the templates it follows are found and the statement is not kept.`,
+    description: `Read the controls a statement template offers: the affordances its profile states under xapix:offers, each described as this deployment serves it now (target, method, inputs). ${SERVER} Name one or more statement templates in template and optionally select a profile or published version with profile. The response identifies that version and its link remains pinned when a later version is published. This is the document an xapix:controls link on a statement points at. It is of a template, not of a statement, so it says nothing a statement says. Follow each target as given and build no address from a statement. An offer is a possibility, not a permission: each affordance applies its own access rules. unresolved names an offered affordance this deployment does not serve. To ask for one statement, POST { statement, profile? } to the same address. Only templates confirmed by validation offer controls. With a profile, outcome is matched, incomplete or refused. The statement is not kept.`,
     method: 'GET',
     targetTemplate: '{base}/xapi/profiles/controls',
     mediaType: 'application/json',
     externallyRouted: true,
     annotations: { title: 'Read a template\'s controls', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    inputs: [{ name: 'template', type: 'string', required: true, description: 'The IRI of a statement template held on the server.' }],
+    inputs: [
+      { name: 'template', type: 'string', required: true, description: 'The IRI of a statement template held on the server.' },
+      { name: 'profile', type: 'string', required: false, description: 'Select a profile or a specific published version.' },
+    ],
     outputs: {
       description: 'The controls document. 404 when no IRI named is a statement template held here.',
       properties: {
@@ -285,6 +300,7 @@ export const xapiProfileServerAffordances: Affordance[] = [
         controls: { type: 'array', items: { type: 'object' }, description: 'Each: offeredBy (the template), affordance (its IRI), title, description, method, target, mediaType, inputs.' },
         unresolved: { type: 'array', items: { type: 'object' }, description: 'Offers whose affordance this deployment does not serve.' },
         notTemplates: { type: 'array', items: { type: 'string' } },
+        profileVersion: { type: 'string', description: 'The exact version used when profile was supplied.' },
         note: { type: 'string' },
       },
       required: ['id', 'templates', 'controls'],

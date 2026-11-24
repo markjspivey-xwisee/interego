@@ -202,6 +202,7 @@ Run the specification's statement template validation (Part Three, 2.1) for one 
 | --- | --- | --- | --- |
 | `statement` | object | yes | One xAPI Statement. |
 | `profile` | string | yes | The id of a profile, or of a version, held on the server. |
+| `report` | boolean | no | Read the exact profile version, outcome and omitted checks. |
 
 ## `foxxi.xapi_profile_validate_patterns`
 
@@ -217,6 +218,7 @@ Run the specification's pattern validation (Part Three, 2.2) for an array of xAP
 | --- | --- | --- | --- |
 | `statements` | array | yes | The xAPI Statements of one registration or sub-registration. |
 | `profile` | string | yes | The id of a profile, or of a version, held on the server. |
+| `report` | boolean | no | Read the exact profile version, outcome and omitted checks. |
 
 ## `foxxi.xapi_profile_lint_decorations`
 
@@ -241,7 +243,7 @@ Run the xapi-x rules over xAPI Statements, over a profile, or both. The xAPI Pro
 
 **Read what can be done after a statement that follows a template**
 
-Read the controls a statement template offers: the affordances its profile states under xapix:offers, each described as this deployment serves it now (target, method, inputs). The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. Name one or more statement templates in template. This is the document an xapix:controls link on a statement points at. It is of a template, not of a statement, so it says nothing a statement says. Follow each target as given and build no address from a statement. An offer is a possibility, not a permission: each affordance applies its own access rules. unresolved names an offered affordance this deployment does not serve. To ask for one statement, POST { statement, profile? } to the same address: the templates it follows are found and the statement is not kept.
+Read the controls a statement template offers: the affordances its profile states under xapix:offers, each described as this deployment serves it now (target, method, inputs). The xAPI Profile Server (xAPI Profiles specification, Part Three) at {base}/xapi/profiles. GET that address for the profiles held and these links. Name one or more statement templates in template and optionally select a profile or published version with profile. The response identifies that version and its link remains pinned when a later version is published. This is the document an xapix:controls link on a statement points at. It is of a template, not of a statement, so it says nothing a statement says. Follow each target as given and build no address from a statement. An offer is a possibility, not a permission: each affordance applies its own access rules. unresolved names an offered affordance this deployment does not serve. To ask for one statement, POST { statement, profile? } to the same address. Only templates confirmed by validation offer controls. With a profile, outcome is matched, incomplete or refused. The statement is not kept.
 
 - Action: `urn:iep:action:foxxi:xapi-profile-controls`
 - HTTP: `GET https://foxxi-bridge.interego.xwisee.com/xapi/profiles/controls` (served by a bespoke route; not through the bridge's MCP endpoint)
@@ -250,6 +252,7 @@ Read the controls a statement template offers: the affordances its profile state
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `template` | string | yes | The IRI of a statement template held on the server. |
+| `profile` | string | no | Select a profile or a specific published version. |
 
 ## `foxxi.i2idlx_capabilities`
 

@@ -10,6 +10,7 @@ import { PodBrowser } from './pages/PodBrowser.js';
 import { AgenticDemo } from './pages/AgenticDemo.js';
 import { ReportsPage } from './pages/ReportsPage.js';
 import { Compliance } from './pages/Compliance.js';
+import { ProfileWorkbench } from './pages/ProfileWorkbench.js';
 import { CourseIntel } from './pages/CourseIntel.js';
 import { Portfolio } from './pages/Portfolio.js';
 import { EvidenceLedger } from './pages/EvidenceLedger.js';
@@ -23,7 +24,7 @@ import { AiTutor } from './pages/AiTutor.js';
 // against demos/interego-bridge) — they are substrate concerns, not Foxxi (L&D).
 // Only genuinely-vertical demos remain here. Poison/calibration stays: federated
 // L&D calibration is a Foxxi domain concern.
-export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance' | 'course' | 'hire' | 'ledger' | 'consortium' | 'convergence' | 'poison' | 'aitutor';
+export type Route = 'landing' | 'try' | 'about' | 'verify' | 'dpia' | 'demos' | 'emergent' | 'pod' | 'agentdemo' | 'reports' | 'compliance' | 'profiles' | 'course' | 'hire' | 'ledger' | 'consortium' | 'convergence' | 'poison' | 'aitutor';
 
 export function App() {
   const [route, setRoute] = useState<Route>(initialRoute());
@@ -44,6 +45,7 @@ export function App() {
     else if (r === 'agentdemo') { url.pathname = '/agents'; url.searchParams.delete('role'); }
     else if (r === 'reports') { url.pathname = '/reports'; url.searchParams.delete('role'); }
     else if (r === 'compliance') { url.pathname = '/compliance'; url.searchParams.delete('role'); }
+    else if (r === 'profiles') { url.pathname = '/profiles'; url.searchParams.delete('role'); }
     else if (r === 'course') { url.pathname = '/course'; url.searchParams.delete('role'); }
     else if (r === 'hire') { url.pathname = '/hire'; url.searchParams.delete('role'); }
     else if (r === 'ledger') { url.pathname = '/ledger'; url.searchParams.delete('role'); }
@@ -51,6 +53,7 @@ export function App() {
     else if (r === 'convergence') { url.pathname = '/convergence'; url.searchParams.delete('role'); }
     else if (r === 'poison') { url.pathname = '/poison'; url.searchParams.delete('role'); }
     else if (r === 'aitutor') { url.pathname = '/aitutor'; url.searchParams.delete('role'); }
+    if (r !== 'profiles') url.searchParams.delete('version');
     window.history.pushState({}, '', url.toString());
     window.scrollTo({ top: 0, behavior: 'smooth' });
   }
@@ -79,6 +82,7 @@ export function App() {
         {route === 'agentdemo' && <AgenticDemo onHome={() => navigate('landing')} onReports={() => navigate('reports')} />}
         {route === 'reports' && <ReportsPage onHome={() => navigate('landing')} onAgents={() => navigate('agentdemo')} />}
         {route === 'compliance' && <Compliance onHome={() => navigate('landing')} />}
+        {route === 'profiles' && <ProfileWorkbench />}
         {route === 'course' && <CourseIntel onHome={() => navigate('landing')} />}
         {route === 'hire' && <Portfolio onHome={() => navigate('landing')} />}
         {route === 'ledger' && <EvidenceLedger onHome={() => navigate('landing')} />}
@@ -102,6 +106,7 @@ function initialRoute(): Route {
   if (p.startsWith('/agents')) return 'agentdemo';
   if (p.startsWith('/reports')) return 'reports';
   if (p.startsWith('/compliance')) return 'compliance';
+  if (p === '/profiles' || p === '/profiles/') return 'profiles';
   if (p.startsWith('/course')) return 'course';
   if (p.startsWith('/hire')) return 'hire';
   if (p.startsWith('/ledger')) return 'ledger';
@@ -196,6 +201,7 @@ function SiteFooter() {
         </div>
       </div>
       <div style={{ display: 'flex', gap: 16, alignItems: 'center', flexWrap: 'wrap' }}>
+        <a href="/profiles">xAPI Profile Workbench</a>
         <a href="https://foxxi-dashboard.interego.xwisee.com">Full dashboard</a>
         <a href="https://github.com/markjspivey-xwisee/interego">Source</a>
       </div>

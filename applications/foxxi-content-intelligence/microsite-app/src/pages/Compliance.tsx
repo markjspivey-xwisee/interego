@@ -18,7 +18,7 @@ interface SuiteDef { id: SuiteId; label: string; standard: string; blurb: string
 
 const SUITES: SuiteDef[] = [
   { id: 'xapi', label: 'LRS — xAPI 2.0', standard: 'IEEE 9274.1.1 + xAPI Profile Spec 2017',
-    blurb: 'Drives the live Foxxi LRS across the major spec sections: /about version negotiation, the xAPI Profile document, statement POST + round-trip, immutability (409), voiding, filtered queries, and State-resource ETag concurrency — plus the §4 validator on every statement. (This live battery is the interactive subset; the FULL official ADL lrs-conformance-test-suite result is attested below.)' },
+    blurb: 'Drives the live Foxxi LRS across the major spec sections: /about version negotiation, the xAPI Profile document, statement POST + round-trip, immutability (409), voiding, filtered queries, and State-resource ETag concurrency — plus the §4 validator on every statement. This is Foxxi’s interactive smoke suite.' },
   { id: 'cmi5', label: 'LMS — cmi5', standard: 'IEEE 9274.2.1 / cmi5 v1.0',
     blurb: 'Exercises the cmi5 emitter: all 9 statement types (launched / initialized / completed / passed / failed / abandoned / waived / terminated / satisfied) with correct verb IRIs + the cmi5 context category, the §9 invariants (passed/failed require a scaled score; completed can’t assert completion=false), the §10 moveOn category on satisfied/waived, the §11 moveOn evaluation (all 5 rules), and a §9 lifecycle trace in spec order sharing one registration.' },
   { id: 'scorm', label: 'LMS — SCORM 2004 (S&N)', standard: 'ADL SCORM 2004 4th Ed — Sequencing & Navigation (IMS Simple Sequencing)',
@@ -54,15 +54,17 @@ export function Compliance({ onHome }: { onHome: () => void }) {
         Endpoint: <code style={code}>{BRIDGE_URL}/compliance/&lt;suite&gt;/run</code>.
       </p>
 
-      <div style={{ margin: '18px 0 4px', padding: '14px 18px', background: '#f0fdf4', border: '1px solid #15803d', borderRadius: 10 }}>
-        <div style={{ fontSize: 15, color: '#14532d' }}>
-          ✓ <strong>Official ADL xAPI 2.0 conformance: 1442 / 1442 — 0 failures.</strong>
+      <div style={{ margin: '18px 0 4px', padding: '14px 18px', background: 'var(--panel)', border: '1px solid var(--border)', borderRadius: 10 }}>
+        <div style={{ fontSize: 15 }}>
+          <strong>June 2026 ADL xAPI 2.0 test record</strong>
         </div>
-        <div style={{ fontSize: 12.5, color: '#166534', marginTop: 5, lineHeight: 1.5 }}>
-          Foxxi-as-LRS passes the complete <strong>ADL <code style={code}>lrs-conformance-test-suite</code></strong> (the <code style={code}>LRS-2.0</code> branch — the ~1,442-case official battery), run against the live bridge. This is the gold-standard proof; it's a ~1,400-test Mocha run (minutes), so it's attested here rather than run per-click. Re-run it yourself:
-          <code style={{ ...code, display: 'block', marginTop: 6, padding: '6px 8px', whiteSpace: 'pre-wrap' }}>git clone -b LRS-2.0 https://github.com/adlnet/lrs-conformance-test-suite && cd lrs-conformance-test-suite && npm i{'\n'}node bin/console_runner.js -x 2.0.0 -e {BRIDGE_URL}/xapi -a -u &lt;user&gt; -p &lt;pass&gt;</code>
-          The suites below run <strong>live, per-click</strong> as the interactive, audit-it-yourself subset.
-        </div>
+        <p style={{ fontSize: 13, margin: '6px 0', lineHeight: 1.5 }}>
+          Foxxi recorded 1,442 passing cases on the live memory backend. The durable Interego backend has its own acceptance evidence.
+          Run the upstream suite against an isolated instance because its test statements are retained.
+        </p>
+        <a href="https://github.com/markjspivey-xwisee/interego/actions/workflows/bridge-typecheck.yml" style={linkBtn}>
+          See runs and download the native LRS evidence
+        </a>
         <div style={{ fontSize: 12.5, color: '#14532d', marginTop: 10, paddingTop: 10, borderTop: '1px solid #bbf7d0' }}>
           ✓ <strong>SCORM 2004 RTE (IEEE 1484.11.2): 9/9.</strong> The Run-Time Environment is browser code (the player's
           <code style={code}>scorm-rte.js</code>), so it's exercised headlessly in jsdom — driving the real

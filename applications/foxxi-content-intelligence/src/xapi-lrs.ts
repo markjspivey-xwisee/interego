@@ -47,6 +47,7 @@
 
 import express, { type Express, type Request, type Response, type NextFunction } from 'express';
 import { randomUUID, createHash } from 'node:crypto';
+import { validateHeaderValue } from 'node:http';
 import { ingestStatementBatchFromLrs as _unusedTypeAnchor } from '../../lrs-adapter/src/pod-publisher.js';
 import { createStatementStore, InMemoryStatementStore, configuredLrsBackend, assertLrsPrimaryConfiguration, listPersistentStatementTenants, ConflictError, matchesFilter, decodeCursor, type StatementStore, type StoredStatement } from './statement-store.js';
 import { NativeInteregoLrsStore, type NativeStatementCommit } from './native-lrs-store.js';
@@ -408,6 +409,95 @@ function isIsoTimestamp(s: unknown): boolean {
 function setXapiHeaders(res: Response, version: string): void {
   res.setHeader('X-Experience-API-Version', version);
   res.setHeader('X-Experience-API-Consistent-Through', nowIso());
+}
+
+const ALTERNATE_XAPI_METHODS = new Map<string, readonly string[]>([
+  ['/xapi/statements', ['GET', 'HEAD', 'POST', 'PUT']],
+  ['/xapi/about', ['GET', 'HEAD']],
+  ['/xapi/agents', ['GET', 'HEAD']],
+  ['/xapi/activities', ['GET', 'HEAD']],
+  ['/xapi/activities/state', ['GET', 'HEAD', 'PUT', 'POST', 'DELETE']],
+  ['/xapi/activities/profile', ['GET', 'HEAD', 'PUT', 'POST', 'DELETE']],
+  ['/xapi/agents/profile', ['GET', 'HEAD', 'PUT', 'POST', 'DELETE']],
+]);
+const ALTERNATE_XAPI_HEADERS = new Set(['authorization', 'x-experience-api-version',
+  'content-type', 'content-length', 'if-match', 'if-none-match']);
+const parseAlternateXapiForm = express.urlencoded({ extended: false, limit: '2mb', parameterLimit: 32 });
+
+/** xAPI 1.0.3 §1.3 decodes an alternate POST before the standard route authenticates it. */
+function normalizeAlternateXapiRequest(req: Request, res: Response, next: NextFunction): void {
+  if (req.method !== 'POST') { next(); return; }
+  const path = req.path;
+  const allowed = ALTERNATE_XAPI_METHODS.get(path);
+  const queryStart = req.url.indexOf('?');
+  if (!allowed || queryStart < 0) { next(); return; }
+  const query = new URLSearchParams(req.url.slice(queryStart + 1));
+  if (!query.has('method')) { next(); return; }
+
+  const method = query.get('method')!;
+  const refuse = (error: string): void => {
+    setXapiHeaders(res, negotiateVersion(req));
+    res.status(400).json({ error });
+  };
+  if ([...query].length !== 1 || !allowed.includes(method) || !req.is('application/x-www-form-urlencoded')) {
+    refuse('An alternate xAPI request needs one supported method and a URL-encoded form.');
+    return;
+  }
+
+  parseAlternateXapiForm(req, res, error => {
+    if (error) { next(error); return; }
+    const data = new URLSearchParams();
+    const headers = new Map<string, string>();
+    let content: string | undefined;
+    for (const [key, value] of Object.entries(req.body as Record<string, unknown>)) {
+      if (typeof value !== 'string') { refuse('Alternate xAPI parameters must each appear once.'); return; }
+      const name = key.toLowerCase();
+      if (ALTERNATE_XAPI_HEADERS.has(name)) {
+        const outer = name === 'content-type' || name === 'content-length' ? undefined : req.headers[name];
+        if (headers.has(name) || (outer !== undefined && outer !== value)) {
+          refuse('Conflicting alternate xAPI headers.');
+          return;
+        }
+        try { validateHeaderValue(name, value); }
+        catch { refuse('An alternate xAPI header is invalid.'); return; }
+        headers.set(name, value);
+      } else if (key === 'content') content = value;
+      else data.set(key, value);
+    }
+    const version = headers.get('x-experience-api-version') ?? req.headers['x-experience-api-version'];
+    if (typeof version !== 'string' || !/^1\.0(?:\.\d+)?$/.test(version)) {
+      refuse('Alternate request syntax is available for xAPI 1.0.x.');
+      return;
+    }
+    const expectsContent = method === 'POST' || method === 'PUT';
+    if (expectsContent ? !content : content !== undefined) {
+      refuse('Supply content for a PUT or POST only.');
+      return;
+    }
+    const length = headers.get('content-length');
+    if (length !== undefined && (!/^\d+$/.test(length) || Number(length) !== Buffer.byteLength(content ?? ''))) {
+      refuse('The declared content length does not match the UTF-8 body.');
+      return;
+    }
+    const mediaType = headers.get('content-type') ?? (path === '/xapi/statements' ? 'application/json' : 'application/octet-stream');
+    if (/^multipart\//i.test(mediaType)) { refuse('Alternate syntax supports UTF-8 content only.'); return; }
+    let body: unknown;
+    if (content !== undefined) {
+      if (/^application\/json(?:\s*;|$)/i.test(mediaType)) {
+        try { body = JSON.parse(content); }
+        catch { refuse('The content form parameter is not valid JSON.'); return; }
+      } else body = Buffer.from(content, 'utf8');
+    }
+    for (const [name, value] of headers) req.headers[name] = value;
+    req.headers['content-type'] = mediaType;
+    req.body = body;
+    req.method = method;
+    // Express 4 parses req.query before application middleware. Keep its resource view in sync.
+    req.query = Object.fromEntries(data);
+    const encoded = data.toString();
+    req.url = encoded ? path + '?' + encoded : path;
+    next();
+  });
 }
 
 function negotiateVersion(req: Request): string {
@@ -1703,6 +1793,10 @@ async function handleDocResource(
         if (method === 'PUT' && existing && !ifMatch && !ifNoneMatch) {
           throw new DocumentRefusal(409, 'Conflict: a document already exists at this resource. Supply If-Match (to replace) or If-None-Match (to guard) on the PUT, per xAPI §6.3 concurrency.', true);
         }
+        // xAPI 1.0.3 §3.1 requires Profile PUTs to carry a condition even when creating.
+        if (method === 'PUT' && kind !== 'state' && negotiateVersion(req).startsWith('1.') && !ifMatch && !ifNoneMatch) {
+          throw new DocumentRefusal(400, 'Profile PUT requires If-Match or If-None-Match.');
+        }
         if (ifMatch && !matchesDocumentEtag(ifMatch, existing, false)) throw new DocumentRefusal(412, 'If-Match precondition failed');
         if (ifNoneMatch && matchesDocumentEtag(ifNoneMatch, existing, true)) throw new DocumentRefusal(412, 'If-None-Match precondition failed — document exists');
         if (method === 'DELETE') return { value: null, result: undefined };
@@ -1810,6 +1904,8 @@ export function attachXapiLrsRoutes(app: Express, config: XapiLrsConfig): void {
   // operators then manage them at runtime through /xapi/admin/forwarding/*.
   seedForwardingTargets(DEFAULT_TENANT, config.forwardingTargets);
   const gate = makeAuthGate(config);
+
+  app.use(normalizeAlternateXapiRequest);
 
   // How long each xAPI write took end to end, beside the store's own native-write and
   // native-commit lines: the difference is what this handler spends outside the store.

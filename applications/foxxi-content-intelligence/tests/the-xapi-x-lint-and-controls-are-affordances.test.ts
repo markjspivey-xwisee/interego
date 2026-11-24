@@ -257,6 +257,65 @@ describe('the controls document', () => {
     expect((await templatesFollowed(both, failedLesson())).map(t => t.id)).toEqual([LESSON_FAILED]);
   });
 
+  it('follows the same profile version after a successor changes the affordance', async () => {
+    const id = 'https://example.org/profiles/pinned-controls';
+    const v1 = id + '/v/1';
+    const v2 = id + '/v/2';
+    const template = id + '/templates/seen';
+    const statement = { ...failedLesson(), verb: { id: id + '/verbs/seen' } };
+    const profile = (version: string, generatedAtTime: string, offer: string, previous?: string) => ({
+      id, type: 'Profile',
+      versions: [{ id: version, generatedAtTime, wasRevisionOf: previous ? [previous] : [] }],
+      templates: [{ id: template, inScheme: version, type: 'StatementTemplate',
+        verb: statement.verb.id, [xapix('offers')]: [{ '@id': offer }] }],
+    });
+    server.dataset.add(profile(v1, '2026-11-17T00:00:00Z', OFFERED_AFTER_A_FAILED_ATTEMPT[0]));
+    try {
+      const old = await post('/controls', { statement, profile: id });
+      expect(old.status).toBe(200);
+      expect(old.body).toMatchObject({ profileVersion: v1, link: controlsUrl(BASE, [template], v1) });
+
+      server.dataset.add(profile(v2, '2026-11-18T00:00:00Z', OFFERED_AFTER_A_FAILED_ATTEMPT[1], v1));
+      const resolved = await get('/controls' + new URL(String(old.body.link)).search);
+      expect(resolved.status).toBe(200);
+      expect(resolved.body).toMatchObject({ profileVersion: v1, controls: [{ affordance: OFFERED_AFTER_A_FAILED_ATTEMPT[0] }] });
+      expect(resolved.body.controls).toEqual(old.body.controls);
+      const current = await post('/controls', { statement, profile: id });
+      expect(current.body).toMatchObject({ profileVersion: v2, controls: [{ affordance: OFFERED_AFTER_A_FAILED_ATTEMPT[1] }] });
+      expect((await get('/controls?profile=' + encodeURIComponent(v1) + '&template=' + encodeURIComponent(LESSON_FAILED))).status).toBe(404);
+      expect((await post('/controls', { statement, profile: ['invalid'] })).status).toBe(400);
+    } finally { server.dataset.remove(id); }
+  });
+
+  it('offers no action for an incomplete or refused check without echoing the reference', async () => {
+    const id = 'https://example.org/profiles/referenced-evidence';
+    const version = id + '/v/1';
+    const template = id + '/templates/followup';
+    const reference = '6f1d2c9a-3b4e-4f5a-8b6c-7d8e9f0a1b2c';
+    const statement = { ...failedLesson(), verb: { id: id + '/verbs/followup' } };
+    server.dataset.add({
+      id, type: 'Profile',
+      versions: [{ id: version, generatedAtTime: '2026-11-17T00:00:00Z' }],
+      templates: [{ id: template, inScheme: version, type: 'StatementTemplate', verb: statement.verb.id,
+        contextStatementRefTemplate: [id + '/templates/evidence'],
+        [xapix('offers')]: [{ '@id': OFFERED_AFTER_A_FAILED_ATTEMPT[0] }] },
+      { id: id + '/templates/evidence', inScheme: version, type: 'StatementTemplate', verb: id + '/verbs/evidence' }],
+    });
+    try {
+      const withReference = { ...statement, context: { statement: { objectType: 'StatementRef', id: reference } } };
+      const incomplete = await post('/controls', { statement: withReference, profile: version });
+      expect(incomplete.status).toBe(200);
+      expect(incomplete.body).toMatchObject({ profileVersion: version, outcome: 'incomplete', templates: [], controls: [] });
+      expect(incomplete.body.link).toBeUndefined();
+      expect(JSON.stringify(incomplete.body)).not.toContain(reference);
+      const inferred = await post('/controls', { statement: withReference });
+      expect(inferred.body).toMatchObject({ templates: [], controls: [] });
+      const refused = await post('/controls', { statement, profile: version });
+      expect(refused.body).toMatchObject({ profileVersion: version, outcome: 'refused', templates: [], controls: [] });
+      expect(refused.body.link).toBeUndefined();
+    } finally { server.dataset.remove(id); }
+  });
+
   it('names an offer the deployment does not serve as unresolved, and gives it no target', () => {
     const doc = controlsDocument({ id: 'https://bridge.example/x', templates: [{ id: 'https://example.org/t', [xapix('offers')]: [{ '@id': 'urn:made-up:not-served' }, { '@id': OFFERED_AFTER_A_FAILED_ATTEMPT[0] }] }], describe: describeAffordance });
     expect(doc.unresolved).toEqual([{ offeredBy: 'https://example.org/t', affordance: 'urn:made-up:not-served' }]);
