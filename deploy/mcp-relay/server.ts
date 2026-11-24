@@ -115,7 +115,7 @@ import {
   type FederationStoreConfig,
   type FederationEntry,
 } from './federation-store.js';
-import { createAgentDirectory, podDirectoryStore } from './agent-directory.js';
+import { cardAddresses, createAgentDirectory, podDirectoryStore } from './agent-directory.js';
 import {
   inboxUrlFor,
   buildNotification,
@@ -802,7 +802,7 @@ const AUTH_REQUIRED_TOOLS = new Set([
   'notify_agent', 'read_inbox', 'set_reachability',
   // The directory writes a public card onto the caller's own pod and sends
   // work into another agent's inbox. Both are the caller's actions.
-  'publish_agent_card', 'request_agent_work',
+  'publish_agent_card', 'withdraw_agent_card', 'request_agent_work',
   // sign_request signs a payload AS the bound caller (session-derived identity)
   // with the relay delegation key — the agent's signing primitive for
   // signed-request affordances. Must be auth-gated so it can never sign for
@@ -9918,12 +9918,13 @@ async function handleRevokeAgent(args: ToolArgs): Promise<string> {
   const revokedSubjects = equivalentDelegationSubjects(String(args.agent_id), profile.authorizedAgents, IDENTITY_URL);
   for (const target of revokedSubjects) profile = removeAuthorizedAgent(profile, target as IRI);
   await writeAgentRegistry(profile, podUrl, { fetch: solidFetch });
+  const directoryRemoved = await agentDirectory.forgetRevoked(podName, [podName, String(args.agent_id), ...revokedSubjects.map(String)]);
   relayProfileCache.delete(podUrl);
   for (const target of revokedSubjects) {
     agentScopeCache.delete(`${podUrl}|${target}`);
     agentRegistrationCache.delete(`${podUrl}|${target}`);
   }
-  return JSON.stringify({ revoked: true, agent: args.agent_id, revokedSubjects });
+  return JSON.stringify({ revoked: true, agent: args.agent_id, revokedSubjects, ...(directoryRemoved.length > 0 ? { directoryCardsWithdrawn: directoryRemoved } : {}) });
 }
 
 // ── Federation: subscription management ─────────────────────
@@ -11268,7 +11269,15 @@ const agentDirectory = createAgentDirectory({
   publicBaseUrl: PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com',
   notifyTarget: toolTarget('notify_agent'),
   log,
-  store: podDirectoryStore({ podUrl: oauthStorePodUrl, fetch: solidFetch, log }),
+  store: podDirectoryStore({
+    podUrl: oauthStorePodUrl,
+    fetch: solidFetch,
+    log,
+    addressFor(agentId) {
+      const pod = `${CSS_URL}${encodeURIComponent(agentId)}/`;
+      return cardAddresses(agentId, PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com', relayAgentAddress(pod));
+    },
+  }),
   callerOf(args) {
     const agentId = typeof args._session_user_id === 'string' ? args._session_user_id : '';
     if (!agentId) return null;
@@ -11324,6 +11333,7 @@ const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   // Agent-to-agent messaging (Linked Data Notifications over Solid inboxes)
   notify_agent: { description: 'Send a notification to another agent (fans out across their declared channels: LDN inbox + any discord/telegram/email/sms/voice)', handler: handleNotifyAgent },
   publish_agent_card: { description: 'Publish or replace your own agent card as a signed public context descriptor on your namespace', handler: (args) => agentDirectory.publishCard(args) },
+  withdraw_agent_card: { description: 'Withdraw your own directory card. The signed document is superseded and you disappear from search.', handler: (args) => agentDirectory.withdrawCard(args) },
   search_agents: { description: 'Search published agent cards by name or capability', handler: (args) => agentDirectory.searchAgents(args) },
   get_agent_card: { description: 'Fetch one published agent card', handler: (args) => agentDirectory.getAgentCard(args) },
   request_agent_work: { description: 'Send work to an agent who published a card; delivered through notify_agent into their LDN inbox', handler: (args) => agentDirectory.requestWork(args) },
@@ -12506,6 +12516,13 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Publish your agent card', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'withdraw_agent_card',
+    description: 'Withdraw YOUR directory card. Supersedes the signed public document with a withdrawal and removes you from search and request_agent_work. revoke_agent on your pod does the same removal. Does not delete the federation row or set_reachability channels.',
+    inputSchema: { type: 'object', properties: {} },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Withdraw your agent card', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: false },
   },
   {
     name: 'search_agents',
