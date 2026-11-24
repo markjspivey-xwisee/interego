@@ -175,10 +175,11 @@ function cardVersion(card: Omit<PublicAgentCard, 'version' | 'updatedAt' | 'desc
 /** Turtle for the public graph. Returns null when a required IRI cannot be written safely. */
 export function cardTurtle(card: PublicAgentCard): string | null {
   const subject = turtleIriRef(card.cardIri);
+  const iepNs = turtleIriRef(IEP);
   const endpoint = escapeTurtleLiteral(card.relayAddress);
-  if (!subject || publicHttpUrl(card.relayAddress) === undefined) return null;
+  if (!subject || !iepNs || publicHttpUrl(card.relayAddress) === undefined) return null;
   const lines = [
-    `@prefix iep: <${IEP}> .`,
+    '@prefix iep: ' + iepNs + ' .',
     '@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .',
     '@prefix ldp: <http://www.w3.org/ns/ldp#> .',
     '@prefix prov: <http://www.w3.org/ns/prov#> .',
@@ -753,7 +754,8 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
         const card = AGENT_ID.test(id) ? cards.get(id) : undefined;
         if (!card) { res.status(404).json({ error: 'no_such_agent', message: 'No published card for that agent.' }); return; }
         res.setHeader('ETag', `"${card.version}"`);
-        res.setHeader('Link', `<${card.cardIri}>; rel="describedby"`);
+        const describedBy = turtleIriRef(card.cardIri);
+        if (describedBy) res.setHeader('Link', describedBy + '; rel="describedby"');
         res.json(wireCard(card, deps.notifyTarget));
       });
     },
