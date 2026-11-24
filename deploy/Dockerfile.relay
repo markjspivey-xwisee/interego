@@ -229,6 +229,9 @@ COPY deploy/mcp-relay/action-authority.ts ./
 # from server.ts so the projections are importable; server.ts imports it, so this per-file
 # COPY is mandatory — image-copies-every-source.test.ts walks the real import graph.
 COPY deploy/mcp-relay/ns-dereference.ts ./
+# Agent directory: signed cards on each agent's namespace, plus the public
+# browse/search pages. server.ts imports it, so the image must copy it.
+COPY deploy/mcp-relay/agent-directory.ts ./
 # Pod authorization: which pod URLs a bearer may act on, and which of them the relay minted
 # itself. Extracted for the same reason — server.ts is unimportable, so the rule was untested.
 COPY deploy/mcp-relay/pod-authorization.ts ./
