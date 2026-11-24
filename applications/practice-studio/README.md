@@ -9,22 +9,20 @@ progress are records agents discover and invoke. The page at
 `docs/applications/practice-studio/` is the library, the practice session, the
 results view and the authoring box.
 
-The practice session opens the hosted role-play player and its scenario as
-they stand. That package, including per-turn `took-turn` statements,
-`resultAfterReview`, the scenario-version
-`urn:pev:scenario:2820abbd51e6ac5c#version-1`, and `GET /cmi5/reviewed`, is
-owned by the player republish. This studio does not edit those files and does
-not publish a new package. `studio.score_attempt` replays the script the way
-that player does, against the scenario revision the session stored, and checks
-the statements it emits against the v3 profile snapshot in
-`profile/phone-roleplay-xapi.ttl` (the document at
-`https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3`)
-using Foxxi's supplied-profile checker.
+The practice page opens the hosted role-play player and its scenario as they
+stand. That package — per-turn `took-turn` statements, `resultAfterReview`,
+the scenario version `urn:pev:scenario:2820abbd51e6ac5c#version-1`, and
+`GET /cmi5/reviewed` — is the player's. This studio does not edit those files
+and does not publish a new package. A real attempt is what the player writes
+when a course launches it, including consent, the clock, and the agent-test
+mark. Practice Evidence imports that registration. This studio does not.
 
-A pass-gate, including the seeded scenario, closes with `terminated` and does
-not send `completed`, `passed` or `failed`. The score stays provisional.
-`pev.import_launched_attempt` on the practice-evidence bridge is how a reviewed
-record is taken from an LRS; this studio does not replace that bridge.
+`studio.score_attempt` is a separate, unrecorded calculation: the caller
+declares reply indexes, and the studio applies the same scripted arithmetic
+the player uses. The record says `observed: false` and `source: declared-choices`.
+It writes no xAPI statement. An omitted `actorKind` is `agent`, so a tool call
+is not stored as a person's attempt. The learner value is the label the caller
+sent, kept in this process, not a keyed pseudonym.
 
 ## Affordances
 
@@ -33,14 +31,15 @@ record is taken from an LRS; this studio does not replace that bridge.
 | `studio.list_scenarios` | Library |
 | `studio.create_scenario` | Author a scenario document |
 | `studio.start_session` | Open a session and return the player URL |
-| `studio.score_attempt` | Score, coach, and validate v3 statements |
-| `studio.list_progress` | One learner's attempts, pass rate, criterion averages |
+| `studio.score_attempt` | Score declared reply indexes and write coaching notes |
+| `studio.list_progress` | Declared scores for one learner label |
 
-`GET /` and `GET /affordances` are the discovery documents. The learner's name
-is not written into a statement; the actor account is a keyed pseudonym.
+`GET /` and `GET /affordances` are the discovery documents.
 
-The store is the process. Restarting drops it. That is deliberate: this
-surface does not write a pod and does not hold a model key.
+The store is the process. Restarting drops it. Nothing is authenticated, so
+the process listens on loopback. `STUDIO_INSECURE_BIND=1` is required before
+it will listen anywhere else, and that flag means anyone who can reach it can
+read and write every record.
 
 ## Run
 
@@ -48,9 +47,9 @@ surface does not write a pod and does not hold a model key.
 npx tsx applications/practice-studio/bridge/server.ts
 ```
 
-Then open `http://127.0.0.1:6120/ui/`. `PORT` and `HOST` override the bind.
-`BRIDGE_DEPLOYMENT_URL` is the origin written into affordance targets when a
-proxy sits in front.
+Then open `http://127.0.0.1:6120/ui/`. `PORT` changes the port. Leave `HOST`
+unset. `BRIDGE_DEPLOYMENT_URL` is the origin written into affordance targets
+when you are looking at the process through a proxy on the same machine.
 
 ## Deploy
 
@@ -61,11 +60,11 @@ already published from (GitHub Pages, `docs/.nojekyll`). Publishing that tree
 hosts the library and a preview of the player. Scoring, progress and authoring
 need the process above.
 
-The existing Railway project already runs `pev-bridge` and `foxxi-bridge`.
-Putting the studio beside them later means a new service on that project, not
-a new vendor: `PORT`, `HOST=::` behind the proxy, and `BRIDGE_DEPLOYMENT_URL`
-set to the service's https origin. No image is added here, and nothing in this
-change is deployed. There is no Cloudflare account and no new paid service.
+Do not put this process on a public host until it authenticates callers. No
+image is added here, and nothing in this change is deployed. There is no
+Cloudflare account and no new paid service.
 
-The profile snapshot is a copy of the published v3 document so tests do not
-depend on the network. Refresh it from the URL above when that document changes.
+The profile snapshot is a copy of the published v3 document at
+`https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3`
+so tests do not depend on the network. Refresh it from that URL when the
+document changes. The studio does not send statements that follow it.

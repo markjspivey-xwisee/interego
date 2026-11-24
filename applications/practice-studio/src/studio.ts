@@ -1,18 +1,16 @@
 /**
  * Practice studio. Scenarios, sessions, scores and coaching are records an
- * agent can ask for. The scripted score is the player's own arithmetic. Each
- * finished attempt also carries the xAPI statements the phone-roleplay profile
- * v3 asks for, checked before they are kept.
+ * agent can ask for. A score is the scripted arithmetic on choice indexes the
+ * caller declares. It is not a played session: the hosted player is what
+ * records consent, timing and xAPI, and only when a course launches it.
  *
- * The store is this process. Nothing here is a pod write. A deployment that
- * should keep records puts them on a pod; this one says so on every record.
+ * The store is this process. There is no authentication. The process listens
+ * on loopback unless the operator explicitly accepts that.
  */
 import { readFileSync } from 'node:fs';
 import { randomUUID } from 'node:crypto';
-import { answerSuppliedProfileRequest } from '../../foxxi-content-intelligence/src/xapi-profile-patterns.js';
-import { phoneRoleplayProfile } from './profile.js';
 import { assess, replay, type ScenarioDoc, type TakenChoice } from './score.js';
-import { canonicalXapi, closesAwaitingReview, practiceStatements, pseudonymOf } from './statements.js';
+import { canonicalXapi, closesAwaitingReview } from './statements.js';
 
 const SEEDED = new URL('../../../docs/applications/practice-evidence/roleplay-player/scenarios/double-charged-subscription.json', import.meta.url);
 
@@ -27,8 +25,14 @@ export interface StudioRecord {
 export interface SessionRecord extends StudioRecord {
   scenarioKey: string;
   personaId: string;
-  learnerPseudonym: string;
+  learnerId: string;
   state: 'open' | 'scored';
+}
+
+/** Nothing here is authenticated, so a non-loopback listen needs an explicit flag. */
+export function refusesPublicBind(host: string, insecureFlag: string | undefined): boolean {
+  const loopback = host === '127.0.0.1' || host === '::1' || host === 'localhost';
+  return !loopback && insecureFlag !== '1';
 }
 
 const refusal = (status: number, error: string): Record<string, unknown> => ({
@@ -52,8 +56,13 @@ export function scenarioProblems(doc: ScenarioDoc): string[] {
   for (const criterion of doc.rubric?.criteria ?? []) {
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(criterion.id)) problems.push(`criterion id ${JSON.stringify(criterion.id)} must be a lowercase key`);
     if (!Array.isArray(criterion.levels) || criterion.levels.length < 2) problems.push(`criterion ${criterion.id} needs at least two levels`);
+    let previous = Number.NEGATIVE_INFINITY;
     for (const level of criterion.levels ?? []) {
-      if (typeof level.value !== 'number' || !Number.isInteger(level.value)) problems.push(`criterion ${criterion.id} level ${level.id} value must be a whole number`);
+      if (typeof level.value !== 'number' || !Number.isInteger(level.value)) {
+        problems.push(`criterion ${criterion.id} level ${level.id} value must be a whole number`);
+      } else if (level.value <= previous) {
+        problems.push(`criterion ${criterion.id} levels must be listed from the lowest value to the highest`);
+      } else previous = level.value;
     }
   }
   if (!Array.isArray(doc.personas) || doc.personas.length === 0) problems.push('name at least one persona');
@@ -80,7 +89,7 @@ function prepare(doc: ScenarioDoc, seeded: boolean): ScenarioDoc {
 }
 
 export interface ProgressView {
-  learnerPseudonym: string;
+  learnerId: string;
   attempts: number;
   scored: number;
   passRate: number | null;
@@ -92,8 +101,6 @@ export interface ProgressView {
 export class Studio {
   private readonly scenarios = new Map<string, ScenarioDoc>();
   private readonly sessions = new Map<string, { session: SessionRecord; scenario: ScenarioDoc; choices?: TakenChoice[]; result?: Record<string, unknown> }>();
-  /** learner name is kept only to answer that same caller. Statements carry the pseudonym. */
-  private readonly learners = new Map<string, string>();
 
   constructor() {
     const seeded = JSON.parse(readFileSync(SEEDED, 'utf8')) as ScenarioDoc;
@@ -155,13 +162,11 @@ export class Studio {
     const learner = typeof input['learner'] === 'string' ? input['learner'].trim() : '';
     const doc = this.scenarios.get(scenarioKey);
     if (!doc) return refusal(404, `no scenario ${scenarioKey}`);
-    if (learner.length < 1 || learner.length > 80) return refusal(400, 'learner is the name to file this practice under, from 1 to 80 characters');
+    if (learner.length < 1 || learner.length > 80) return refusal(400, 'learner is a label you choose for this process, from 1 to 80 characters');
     const personaId = typeof input['personaId'] === 'string' && doc.personas.some((p) => p.id === input['personaId'])
       ? input['personaId']
       : doc.personas[0]!.id;
     const sessionId = randomUUID();
-    const pseudo = pseudonymOf(learner);
-    this.learners.set(pseudo, learner);
     const session: SessionRecord = {
       id: `urn:studio:session:${sessionId}`,
       type: 'studio:PracticeSession',
@@ -169,7 +174,7 @@ export class Studio {
       stored: 'process-memory',
       scenarioKey,
       personaId,
-      learnerPseudonym: pseudo,
+      learnerId: learner,
       state: 'open',
       sessionId,
     };
@@ -188,7 +193,9 @@ export class Studio {
     if (typeof played === 'string' && played !== held.session.personaId) {
       return refusal(409, `this session is ${held.session.personaId}; the player finished as ${played}`);
     }
-    if (!Array.isArray(input['choices'])) return refusal(400, 'choices is the list of replies taken, in order');
+    const actorKind = input['actorKind'] === undefined ? 'agent' : input['actorKind'];
+    if (actorKind !== 'agent' && actorKind !== 'person') return refusal(400, 'actorKind is agent or person; omitted means agent');
+    if (!Array.isArray(input['choices'])) return refusal(400, 'choices is the list of reply indexes the caller declares, in order');
     const choices: TakenChoice[] = [];
     for (const item of input['choices']) {
       if (!item || typeof item !== 'object' || typeof (item as TakenChoice).index !== 'number') {
@@ -211,31 +218,19 @@ export class Studio {
     } catch (error) {
       return refusal(400, error instanceof Error ? error.message : 'the replies do not fit the scenario');
     }
-    const learner = this.learners.get(held.session.learnerPseudonym) ?? held.session.learnerPseudonym;
-    const statements = practiceStatements({ scenario: doc, sessionId, learner, personaId: held.session.personaId, assessment });
-    const profile = phoneRoleplayProfile();
-    const checked = answerSuppliedProfileRequest({ profile, statements });
-    const body = checked.body;
-    if (checked.status !== 200 || body['conforms'] !== true) {
-      return refusal(422, `the attempt's statements do not follow phone-roleplay profile v3: ${JSON.stringify(body['patterns'] ?? body['error'] ?? body)}`);
-    }
-    const perStatement = statements.map((statement) => {
-      const one = answerSuppliedProfileRequest({ profile, statement });
-      return { verb: (statement['verb'] as { id: string }).id, conforms: one.body['conforms'] === true, violations: one.body['violations'] ?? [] };
-    });
-    if (perStatement.some((item) => !item.conforms)) {
-      return refusal(422, `a statement does not follow a v3 template: ${JSON.stringify(perStatement.filter((item) => !item.conforms))}`);
-    }
     held.session.state = 'scored';
     held.choices = choices;
     const score: StudioRecord = {
       id: `urn:studio:score:${sessionId}`,
       type: 'studio:AttemptScore',
-      modalStatus: assessment.provisional ? 'Hypothetical' : 'Asserted',
+      modalStatus: 'Hypothetical',
       stored: 'process-memory',
+      observed: false,
+      source: 'declared-choices',
+      actorKind,
       sessionId,
       scenarioKey: doc.scenarioKey,
-      learnerPseudonym: held.session.learnerPseudonym,
+      learnerId: held.session['learnerId'],
       points: assessment.points,
       max: assessment.max,
       percent: assessment.percent,
@@ -253,10 +248,8 @@ export class Studio {
       notes: assessment.coaching,
     };
     const result = {
-      score, coaching, statements, profileCheck: { conforms: true, patterns: body['patterns'], statements: perStatement },
-      review: assessment.provisional
-        ? 'Provisional. A pass-gate result stays open until a person reviews it. practice-evidence pev.import_launched_attempt takes the statements.'
-        : 'Feedback is recorded on this attempt. It is not a pass gate.',
+      score, coaching,
+      review: 'Declared choices, not a played session. Nothing was consented to, timed, or written as xAPI. The hosted player records an attempt only when a course launches it.',
     };
     held.result = result;
     return result;
@@ -265,8 +258,7 @@ export class Studio {
   listProgress(learner: string): Record<string, unknown> {
     const name = learner.trim();
     if (!name) return refusal(400, 'learner is required');
-    const pseudo = pseudonymOf(name);
-    const rows = [...this.sessions.values()].filter((held) => held.session.learnerPseudonym === pseudo && held.result);
+    const rows = [...this.sessions.values()].filter((held) => held.session['learnerId'] === name && held.result);
     const scored = rows.map((held) => held.result!['score'] as StudioRecord);
     const percents = scored.map((score) => Number(score['percent']));
     const passes = scored.filter((score) => score['pass'] === true).length;
@@ -281,7 +273,7 @@ export class Studio {
       }
     }
     const view: ProgressView = {
-      learnerPseudonym: pseudo,
+      learnerId: name,
       attempts: rows.length,
       scored: scored.length,
       passRate: scored.length ? Math.round((passes / scored.length) * 1000) / 10 : null,
@@ -303,7 +295,7 @@ export class Studio {
       }),
     };
     return {
-      id: `urn:studio:progress:${pseudo}`,
+      id: `urn:studio:progress:${encodeURIComponent(name)}`,
       type: 'studio:LearnerProgress',
       modalStatus: 'Asserted',
       stored: 'process-memory',

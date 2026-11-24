@@ -8,11 +8,17 @@
  */
 import { installProcessSafetyNet } from '../../_shared/vertical-bridge/route-errors.js';
 import { createStudioApp } from '../src/server.js';
+import { refusesPublicBind } from '../src/studio.js';
 
 installProcessSafetyNet((msg) => { process.stderr.write(`[practice-studio-bridge] ${msg}\n`); });
 
 const port = Number(process.env['PORT'] ?? 6120);
 const host = process.env['HOST'] ?? '127.0.0.1';
+if (refusesPublicBind(host, process.env['STUDIO_INSECURE_BIND'])) {
+  process.stderr.write(`[practice-studio-bridge] refusing to listen on ${host}: nothing is authenticated. `
+    + 'Leave HOST unset, or set STUDIO_INSECURE_BIND=1 only on a network you trust.\n');
+  process.exit(1);
+}
 const deploymentUrl = (process.env['BRIDGE_DEPLOYMENT_URL'] ?? '').trim() || undefined;
 const app = createStudioApp(undefined, deploymentUrl);
 

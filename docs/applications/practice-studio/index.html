@@ -43,22 +43,28 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;p
   <section id="practice" hidden>
     <div class="card">
       <h1>Practice</h1>
-      <p class="muted">The session opens the hosted role-play player for the persona this session was started with. That player writes one took-turn statement per exchange. A pass-gate stays uncompleted until a later launch asks the LMS for the reviewed result. Scoring this session is the studio affordance, against that same scenario revision.</p>
+      <p class="muted">The frame is the hosted player. It records an attempt only when a course launches it. This page does not read that record. To file a studio score, declare the reply indexes below. That score is arithmetic on those indexes, not the call.</p>
       <label for="learner">Your name</label>
       <input id="learner" value="Learner 12" autocomplete="nickname">
       <label for="scenario">Scenario</label>
       <select id="scenario"></select>
       <label for="persona">Other person</label>
       <select id="persona"></select>
-      <p><button class="primary" id="begin" type="button">Start session</button></p>
+      <p><button class="primary" id="begin" type="button">Open the player</button></p>
       <p class="note" id="sessionNote"></p>
+      <label for="indexes">Declared reply indexes, in order</label>
+      <input id="indexes" placeholder="1, 1, 2, 0, 1">
+      <label for="actorKind">Who took them</label>
+      <select id="actorKind"><option value="person">A person, as you declare</option><option value="agent" selected>An agent</option></select>
+      <p><button class="primary" id="file" type="button">File declared choices</button></p>
+      <p class="note" id="fileNote"></p>
     </div>
     <iframe id="player" hidden title="Role-play practice"></iframe>
   </section>
   <section id="results" hidden>
     <div class="card">
       <h1>Results and coaching</h1>
-      <p class="muted">Pass rates on a pass-gate are provisional until a person reviews them. The learner's name is not in the statements.</p>
+      <p class="muted">These are declared scores kept in this process. A pass-gate percent is provisional. The hosted player keeps the real attempt, and only when a course launches it.</p>
       <p><button class="primary" id="refresh" type="button">Show progress</button></p>
       <div id="progress"></div>
     </div>
@@ -119,7 +125,7 @@ function renderLibrary(){
   root.innerHTML = '<div class="card"><h1>Scenario library</h1><p class="muted" id="libNote"></p></div><div class="grid" id="cards"></div>';
   $('libNote').textContent = staticMode
     ? 'This page is the published studio. Scoring and progress run when the studio bridge is up; until then the player opens in preview and keeps its own score on screen.'
-    : 'Each scenario is a descriptor. Start a session, then score it. Agents use the same affordances.';
+    : 'Each scenario is a document agents can open. A studio score is reply indexes you declare. The player records an attempt only when a course launches it.';
   const cards = $('cards');
   if (!scenarios.length) {
     cards.appendChild(libraryCard({
@@ -181,7 +187,7 @@ $('begin').onclick = async () => {
       frame.dataset.sessionId = started.session.sessionId;
       frame.src = started.playerUrl;
       frame.hidden = false;
-      $('sessionNote').textContent = 'Session ' + started.session.sessionId + ' is open in the hosted player, as ' + $('persona').value + '. The studio scores that persona and the scenario revision this session stored.';
+      $('sessionNote').textContent = 'The player is open as ' + $('persona').value + '. It does not file this session. Declare the reply indexes to store a studio score for session ' + started.session.sessionId + '.';
       return;
     } catch (error) {
       $('sessionNote').textContent = error.message;
@@ -194,28 +200,25 @@ $('begin').onclick = async () => {
   $('sessionNote').textContent = 'Preview. The player keeps the score on its own screen. Connect the studio bridge to file it.';
 };
 
-window.addEventListener('message', async (event) => {
-  if (event.origin !== location.origin) return;
-  const data = event.data;
-  if (!data || data.source !== 'interego-roleplay-player' || data.kind !== 'finished') return;
+$('file').onclick = async () => {
   const sessionId = $('player').dataset.sessionId;
-  if (!sessionId || staticMode) {
-    $('sessionNote').textContent = 'Finished' + (data.provisional ? ' at ' + data.provisional.points + ' of ' + data.provisional.max + '.' : '.');
-    return;
-  }
+  $('fileNote').textContent = '';
+  if (!sessionId || staticMode) { $('fileNote').textContent = 'Open a session on the studio bridge first. A preview of the player does not file a score.'; return; }
+  const choices = $('indexes').value.split(',').map((part) => part.trim()).filter(Boolean).map((part) => ({ index: Number(part) }));
+  if (!choices.length || choices.some((choice) => !Number.isInteger(choice.index))) { $('fileNote').textContent = 'Each index is a whole number, separated by commas.'; return; }
   try {
     const scored = await api('/studio/attempts/score', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, personaId: data.personaId, choices: data.choices || [] }),
+      body: JSON.stringify({ sessionId, personaId: $('persona').value, actorKind: $('actorKind').value, choices }),
     });
     const score = scored.score;
-    $('sessionNote').textContent = (score.provisional ? 'Provisional ' : '') + score.percent + '% · ' + (score.pass ? 'over the bar' : 'under the bar') + ' · ' + (scored.coaching.notes || []).length + ' coaching notes. Open Results.';
+    $('fileNote').textContent = 'Declared score ' + score.percent + '% · ' + (score.pass ? 'over the bar' : 'under the bar') + ' · ' + (scored.coaching.notes || []).length + ' coaching notes. This is not the player\'s record.';
     show('results');
     await loadProgress();
   } catch (error) {
-    $('sessionNote').textContent = error.message;
+    $('fileNote').textContent = error.message;
   }
-});
+};
 
 function loadProgress(){
   const root = $('progress');
@@ -240,7 +243,7 @@ function loadProgress(){
       const list = document.createElement('ul');
       for (const item of view.recent) {
         const line = document.createElement('li');
-        line.textContent = item.scenarioKey + ' · ' + item.percent + '% · ' + (item.provisional ? 'provisional' : 'recorded') + ' · ' + item.coaching + ' coaching notes';
+        line.textContent = item.scenarioKey + ' · ' + item.percent + '% · ' + (item.provisional ? 'provisional' : 'filed') + ' · ' + item.coaching + ' coaching notes';
         list.appendChild(line);
       }
       root.appendChild(list);
