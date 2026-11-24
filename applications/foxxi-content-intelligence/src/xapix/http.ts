@@ -16,7 +16,7 @@
  */
 import type { Express, Request, Response } from 'express';
 import { MAX_PATTERN_STATEMENTS, ProfileServerError, type ProfileServer } from '../xapi-profile-server/service.js';
-import { validates, type Json } from '../xapi-profile-server/processor.js';
+import type { Json } from '../xapi-profile-server/processor.js';
 import type { LintFinding, ProfileExamples } from '../xapi-profile-server/lint.js';
 import { lintXapixProfile, lintXapixStatements, type XapixProfileOptions } from './lint.js';
 import { controlsDocument, controlsUrl, offersOf, type AffordanceCard } from './controls.js';
@@ -102,20 +102,23 @@ export async function lintDecorations(server: ProfileServer, body: unknown, o: P
   return { findings, clean: findings.length === 0, checked, ...(linksChecked ? { linksChecked } : {}) };
 }
 
-/** The templates a statement follows, across the current profiles held or the one named: matched, with no rule broken. */
+/** Use the same evidence check as /validate_templates before offering follow-up actions. */
+async function checkTemplateEvidence(server: ProfileServer, statement: Json, version: string) {
+  const evidence = await server.validateTemplates(statement, version);
+  const outcome = evidence.comments.length ? 'refused' : evidence.skipped.length ? 'incomplete' : 'matched';
+  const matched = new Set(outcome === 'matched' ? evidence.templates : []);
+  const templates = matched.size ? liveTemplates(server, version)
+    .filter(template => typeof template.id === 'string' && matched.has(template.id)) : [];
+  return { outcome, templates };
+}
+
+/** Check each profile independently so one profile cannot hide a confirmed match in another. */
 export async function templatesFollowed(server: ProfileServer, statement: Json, profile?: string): Promise<Json[]> {
   await server.ready();
-  if (profile !== undefined && !server.dataset.get(profile)) throw new ProfileServerError(400, `No profile with id ${profile} is on this server.`);
-  const templates = liveTemplates(server, profile);
-  // Each template is judged on its own. Asked of them all at once, `validates` answers with the
-  // failing templates alone as soon as one matched template is not followed, so a rule broken in
-  // one profile would hide a template the statement does follow in another.
-  return templates.filter(t => {
-    if (typeof t.id !== 'string') return false;
-    let r;
-    try { r = validates(statement, [t]); } catch (e) { throw new ProfileServerError(400, (e as Error).message); }
-    return r.outcome === 'success';
-  });
+  const selected = selectedVersion(server, profile);
+  const versions = selected === undefined ? server.dataset.current().map(held => held.version) : [selected];
+  const results = await Promise.all(versions.map(version => checkTemplateEvidence(server, statement, version)));
+  return results.flatMap(result => result.templates);
 }
 
 /** Resolve an explicit selection so the link identifies the version used. */
@@ -173,9 +176,11 @@ export function mountXapixRoutes(app: Express, server: ProfileServer, o: XapixRo
       if (!isObj(body.statement)) { res.status(400).json({ error: '`statement` is one xAPI Statement, as a JSON object.' }); return; }
       await server.ready();
       const profileVersion = selectedVersion(server, body.profile);
-      const templates = (await templatesFollowed(server, body.statement, profileVersion)).filter(t => offersOf(t).length > 0);
+      const checked = profileVersion === undefined ? undefined : await checkTemplateEvidence(server, body.statement, profileVersion);
+      const templates = (checked?.templates ?? await templatesFollowed(server, body.statement)).filter(t => offersOf(t).length > 0);
       const link = templates.length > 0 && templates.length <= 20 ? controlsUrl(o.base, templates.map(t => String(t.id)), profileVersion) : undefined;
-      res.json({ ...controlsDocument({ id: link ?? `${o.base}/controls`, templates, describe }), ...(profileVersion ? { profileVersion } : {}), ...(link ? { link } : {}) });
+      res.json({ ...controlsDocument({ id: link ?? `${o.base}/controls`, templates, describe }),
+        ...(checked ? { profileVersion, outcome: checked.outcome } : {}), ...(link ? { link } : {}) });
     } catch (e) { fail(res, e); }
   });
 }

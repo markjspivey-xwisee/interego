@@ -287,6 +287,35 @@ describe('the controls document', () => {
     } finally { server.dataset.remove(id); }
   });
 
+  it('offers no action for an incomplete or refused check without echoing the reference', async () => {
+    const id = 'https://example.org/profiles/referenced-evidence';
+    const version = id + '/v/1';
+    const template = id + '/templates/followup';
+    const reference = '6f1d2c9a-3b4e-4f5a-8b6c-7d8e9f0a1b2c';
+    const statement = { ...failedLesson(), verb: { id: id + '/verbs/followup' } };
+    server.dataset.add({
+      id, type: 'Profile',
+      versions: [{ id: version, generatedAtTime: '2026-11-17T00:00:00Z' }],
+      templates: [{ id: template, inScheme: version, type: 'StatementTemplate', verb: statement.verb.id,
+        contextStatementRefTemplate: [id + '/templates/evidence'],
+        [xapix('offers')]: [{ '@id': OFFERED_AFTER_A_FAILED_ATTEMPT[0] }] },
+      { id: id + '/templates/evidence', inScheme: version, type: 'StatementTemplate', verb: id + '/verbs/evidence' }],
+    });
+    try {
+      const withReference = { ...statement, context: { statement: { objectType: 'StatementRef', id: reference } } };
+      const incomplete = await post('/controls', { statement: withReference, profile: version });
+      expect(incomplete.status).toBe(200);
+      expect(incomplete.body).toMatchObject({ profileVersion: version, outcome: 'incomplete', templates: [], controls: [] });
+      expect(incomplete.body.link).toBeUndefined();
+      expect(JSON.stringify(incomplete.body)).not.toContain(reference);
+      const inferred = await post('/controls', { statement: withReference });
+      expect(inferred.body).toMatchObject({ templates: [], controls: [] });
+      const refused = await post('/controls', { statement, profile: version });
+      expect(refused.body).toMatchObject({ profileVersion: version, outcome: 'refused', templates: [], controls: [] });
+      expect(refused.body.link).toBeUndefined();
+    } finally { server.dataset.remove(id); }
+  });
+
   it('names an offer the deployment does not serve as unresolved, and gives it no target', () => {
     const doc = controlsDocument({ id: 'https://bridge.example/x', templates: [{ id: 'https://example.org/t', [xapix('offers')]: [{ '@id': 'urn:made-up:not-served' }, { '@id': OFFERED_AFTER_A_FAILED_ATTEMPT[0] }] }], describe: describeAffordance });
     expect(doc.unresolved).toEqual([{ offeredBy: 'https://example.org/t', affordance: 'urn:made-up:not-served' }]);
