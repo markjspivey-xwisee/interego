@@ -17,7 +17,7 @@ on:
     branches: [master]
     # Every native/golden input must start this exact-head PR check too.
     paths:
-      - '.github/actions/restore-pinned-dul/**'
+      - '.github/actions/restore-pinned-upper/**'
       - 'applications/foxxi-content-intelligence/i2idlx/**'
       - 'applications/foxxi-content-intelligence/src/**'
       - 'applications/_shared/voice/**'

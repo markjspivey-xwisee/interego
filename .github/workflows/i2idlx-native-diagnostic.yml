@@ -6,7 +6,7 @@ on:
   pull_request:
     branches: [master]
     paths:
-      - '.github/actions/restore-pinned-dul/**'
+      - '.github/actions/restore-pinned-upper/**'
       - 'applications/foxxi-content-intelligence/i2idlx/**'
       - 'applications/foxxi-content-intelligence/src/**'
       - 'applications/_shared/voice/**'
@@ -85,8 +85,8 @@ jobs:
             applications/foxxi-content-intelligence/i2idlx/.cache/upper
             applications/foxxi-content-intelligence/i2idlx/.cache/robot-1.9.11.jar
           key: i2idlx-golden-pins-${{ hashFiles('applications/foxxi-content-intelligence/i2idlx/evidence/upper/manifest.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/refresh-upper-data.json', 'applications/foxxi-content-intelligence/i2idlx/typescript/semantic-data.json', 'applications/foxxi-content-intelligence/i2idlx/config.json') }}
-      - name: Restore the archived DUL bytes and check their hash
-        uses: ./.github/actions/restore-pinned-dul
+      - name: Restore archived ontology bytes verified against the manifest
+        uses: ./.github/actions/restore-pinned-upper
         with:
           root: ${{ env.I2IDLX_ROOT }}
       - name: Seed the pinned gUFO bytes from the publisher's own commit

@@ -8,7 +8,7 @@ on:
   pull_request:
     branches: [master]
     paths:
-      - '.github/actions/restore-pinned-dul/**'
+      - '.github/actions/restore-pinned-upper/**'
       - 'applications/foxxi-content-intelligence/i2idlx/**'
       - 'applications/foxxi-content-intelligence/src/**'
       - 'applications/foxxi-content-intelligence/affordances.ts'
@@ -110,10 +110,10 @@ jobs:
         uses: actions/checkout@v6
         with:
           path: ci
-          sparse-checkout: .github/actions/restore-pinned-dul
+          sparse-checkout: .github/actions/restore-pinned-upper
           persist-credentials: false
-      - name: Restore the archived DUL bytes and check their hash
-        uses: ./ci/.github/actions/restore-pinned-dul
+      - name: Restore archived ontology bytes verified against the manifest
+        uses: ./ci/.github/actions/restore-pinned-upper
         with:
           root: ${{ env.I2IDLX_ROOT }}
       - name: Prepare and verify the complete original canonical source and pinned inputs
