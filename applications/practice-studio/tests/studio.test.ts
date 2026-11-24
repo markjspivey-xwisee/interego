@@ -75,7 +75,7 @@ describe('practice studio', () => {
         kind?: string; error?: string;
         score: { pass: boolean; provisional: boolean; percent: number; criteria: Array<{ id: string; raw: number; max: number }> };
         coaching: { notes: unknown[] };
-        statements: Array<{ verb: { id: string }; result?: { extensions?: Record<string, string> }; object: { definition?: { type?: string; extensions?: Record<string, string> } } }>;
+        statements: Array<{ timestamp: string; verb: { id: string }; result?: { extensions?: Record<string, string> }; object: { definition?: { type?: string; extensions?: Record<string, string> } } }>;
         profileCheck: { conforms: boolean };
       };
       expect(scored.status, JSON.stringify(body).slice(0, 800)).toBe(200);
@@ -95,7 +95,7 @@ describe('practice studio', () => {
       expect(turn.object.definition?.type).toBe('https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-turn');
       expect(turn.object.definition?.extensions?.['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/step-id']).toBeTruthy();
       expect(turn.result?.extensions?.['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/confirmed-choice']).toBe('tapped');
-      const times = body.statements.map((s) => Date.parse((s as { timestamp: string }).timestamp));
+      const times = body.statements.map((s) => Date.parse(s.timestamp));
       expect(times.every((t, i) => i === 0 || t > times[i - 1]!)).toBe(true);
       expect(times[0]).toBeGreaterThan(openedAt - 5_000);
       expect(times[0]).toBeLessThan(openedAt + 5_000);
