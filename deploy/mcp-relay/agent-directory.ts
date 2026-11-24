@@ -26,7 +26,9 @@ import { screenForSensitiveContent, type SensitivityFlag } from '@interego/priva
 
 const IEP = 'https://markjspivey-xwisee.github.io/interego/ns/iep#';
 const AGENT_ID = /^(?:u-pk-|u-did-|u-eth-|eth-)[0-9a-z]+$/;
-const MAX_CARDS = 500;
+/** The directory does not evict. Replacing your card does not take a new slot; withdrawing frees one. */
+export const DIRECTORY_CARD_CAP = 500;
+const MAX_CARDS = DIRECTORY_CARD_CAP;
 const MAX_CAPABILITIES = 24;
 const SEARCH_LIMIT = 50;
 
@@ -68,9 +70,14 @@ export type DirectoryFetch = (
   init?: { method?: string; headers?: Record<string, string>; body?: string },
 ) => Promise<DirectoryFetchResponse>;
 
+/**
+ * One card, one file. A whole-directory rewrite drops whatever another
+ * relay instance published between the read and the write.
+ */
 export interface DirectoryStore {
   load(): Promise<PublicAgentCard[]>;
-  save(cards: readonly PublicAgentCard[]): Promise<void>;
+  put(card: PublicAgentCard): Promise<void>;
+  remove(agentId: string): Promise<void>;
 }
 
 export interface AgentDirectoryDeps {
@@ -101,6 +108,9 @@ export interface AgentDirectory {
   getAgentCard(args: Record<string, unknown>): Promise<string>;
   requestWork(args: Record<string, unknown>): Promise<string>;
   hydrate(): Promise<void>;
+  withdrawCard(args: Record<string, unknown>): Promise<string>;
+  /** Drop directory cards for a pod whose agent was just revoked. */
+  forgetRevoked(podName: string, subjects: readonly string[]): Promise<readonly string[]>;
   mount(app: Express): void;
   /** In-process snapshot. Tests and the HTML renderer read this; it is not a second source of truth. */
   list(): readonly PublicAgentCard[];
@@ -315,7 +325,7 @@ function escapeHtml(value: string): string {
     .replace(/"/g, '&quot;');
 }
 
-function wireCard(card: PublicAgentCard, notifyTarget: string): Record<string, unknown> {
+function wireCard(card: PublicAgentCard, notifyTarget: string, base: string): Record<string, unknown> {
   return {
     '@id': card.cardIri,
     '@type': 'iep:Agent',
@@ -340,6 +350,13 @@ function wireCard(card: PublicAgentCard, notifyTarget: string): Record<string, u
       target: notifyTarget,
       arguments: { to: card.relayAddress },
     }],
+    // The well-known documents describe this relay, not this agent. Extra
+    // channels stay on the federation row via set_reachability.
+    seeAlso: [
+      `${base}/.well-known/agent-card.json`,
+      `${base}/.well-known/interego-agents.json`,
+    ],
+    reachability: 'This card is the agent\'s signed self-description and its LDN address. /.well-known/agent-card.json describes the relay. Channels other than the inbox are set_reachability on the federation row that list_known_pods already lists.',
   };
 }
 
@@ -432,6 +449,7 @@ ${inbox}
 <li>Signed card: <a href="${escapeHtml(card.cardIri)}">${escapeHtml(card.cardIri)}</a></li>
 </ul>
 <p>Sending work is a signed-in call. It routes through <code>notify_agent</code> into this agent's inbox. This page does not send anything.</p>
+<p class="meta">This card is the agent's signed self-description. <code>/.well-known/agent-card.json</code> describes the relay, not this agent. Channels other than the inbox are <code>set_reachability</code> on the federation row.</p>
 <pre>POST ${escapeHtml(notifyTarget)}
 Authorization: Bearer &lt;your Interego token&gt;
 Content-Type: application/json
@@ -465,7 +483,15 @@ function readPublishReceipt(raw: string): { ok: true; descriptorUrl?: string } |
   return { ok: true, ...(descriptorUrl ? { descriptorUrl } : {}) };
 }
 
-function asStoredCard(value: unknown): PublicAgentCard | null {
+/** cardIri and relayAddress are functions of the agent id. A stored row that names different ones is dropped. */
+export function cardAddresses(agentId: string, base: string, relayAddress: string): { cardIri: string; relayAddress: string } {
+  return { cardIri: `${base.replace(/\/$/, '')}/ns/${agentId}/agent-card`, relayAddress };
+}
+
+function asStoredCard(
+  value: unknown,
+  expected?: { cardIri: string; relayAddress: string },
+): PublicAgentCard | null {
   if (!value || typeof value !== 'object') return null;
   const rec = value as Record<string, unknown>;
   const agentId = typeof rec['agentId'] === 'string' ? rec['agentId'] : '';
@@ -476,7 +502,9 @@ function asStoredCard(value: unknown): PublicAgentCard | null {
   const version = typeof rec['version'] === 'string' ? rec['version'] : '';
   const updatedAt = typeof rec['updatedAt'] === 'string' ? rec['updatedAt'] : '';
   if (!AGENT_ID.test(agentId) || !name || !description || !version || !updatedAt) return null;
-  if (publicHttpUrl(cardIri) === undefined || publicHttpUrl(relayAddress) === undefined) return null;
+  if (!expected) return null;
+  if (cardIri !== expected.cardIri || relayAddress !== expected.relayAddress) return null;
+  if (publicHttpUrl(expected.cardIri) === undefined || publicHttpUrl(expected.relayAddress) === undefined) return null;
   if (!Array.isArray(rec['capabilities'])) return null;
   const capabilities: AgentCapability[] = [];
   for (const item of rec['capabilities']) {
@@ -493,7 +521,7 @@ function asStoredCard(value: unknown): PublicAgentCard | null {
   const surface = typeof rec['surface'] === 'string' && /^[A-Za-z0-9][A-Za-z0-9 ._-]{0,39}$/.test(rec['surface']) ? rec['surface'] : undefined;
   const descriptorUrl = typeof rec['descriptorUrl'] === 'string' ? publicHttpUrl(rec['descriptorUrl']) : undefined;
   const card: PublicAgentCard = {
-    agentId, name, description, cardIri, relayAddress, version, updatedAt, capabilities,
+    agentId, name, description, cardIri: expected.cardIri, relayAddress: expected.relayAddress, version, updatedAt, capabilities,
     ...(inbox ? { inbox } : {}),
     ...(did ? { did } : {}),
     ...(surface ? { surface } : {}),
@@ -507,7 +535,10 @@ function asStoredCard(value: unknown): PublicAgentCard | null {
   return card;
 }
 
-export function parseStoredCards(body: unknown): PublicAgentCard[] {
+export function parseStoredCards(
+  body: unknown,
+  addressFor: (agentId: string) => { cardIri: string; relayAddress: string },
+): PublicAgentCard[] {
   const list = Array.isArray(body)
     ? body
     : (body && typeof body === 'object' && Array.isArray((body as { cards?: unknown }).cards)
@@ -515,7 +546,9 @@ export function parseStoredCards(body: unknown): PublicAgentCard[] {
       : []);
   const out: PublicAgentCard[] = [];
   for (const item of list) {
-    const card = asStoredCard(item);
+    const agentId = item && typeof item === 'object' && typeof (item as { agentId?: unknown }).agentId === 'string'
+      ? (item as { agentId: string }).agentId : '';
+    const card = asStoredCard(item, AGENT_ID.test(agentId) ? addressFor(agentId) : undefined);
     if (card && !out.some(existing => existing.agentId === card.agentId)) out.push(card);
   }
   return out;
@@ -525,28 +558,91 @@ export function podDirectoryStore(cfg: {
   podUrl: string;
   fetch: DirectoryFetch;
   log?: (msg: string) => void;
+  /** Recompute cardIri and relayAddress. A stored row that disagrees is dropped. */
+  addressFor: (agentId: string) => { cardIri: string; relayAddress: string };
 }): DirectoryStore {
-  const url = `${cfg.podUrl.replace(/\/$/, '')}/agent-directory/index.jsonld`;
+  const container = `${cfg.podUrl.replace(/\/$/, '')}/agent-directory/`;
+  const legacy = `${container}index.jsonld`;
+  const fileFor = (agentId: string): string => `${container}${agentId}.jsonld`;
+  const log = cfg.log ?? (() => {});
+
+  async function readCard(url: string): Promise<PublicAgentCard | null> {
+    const res = await cfg.fetch(url, { method: 'GET', headers: { Accept: 'application/ld+json' } });
+    if (!res.ok) return null;
+    try {
+      const parsed = JSON.parse(await res.text()) as unknown;
+      const one = parsed && typeof parsed === 'object' && !Array.isArray(parsed) && !('cards' in (parsed as object))
+        ? [parsed]
+        : parsed;
+      return parseStoredCards(one, cfg.addressFor)[0] ?? null;
+    } catch { return null; }
+  }
+
   return {
     async load() {
-      const res = await cfg.fetch(url, { method: 'GET', headers: { Accept: 'application/ld+json' } });
-      if (res.status === 404 || !res.ok) return [];
-      try { return parseStoredCards(JSON.parse(await res.text())); }
-      catch { return []; }
+      const listing = await cfg.fetch(container, { method: 'GET', headers: { Accept: 'text/turtle' } });
+      const urls = new Set<string>();
+      if (listing.ok) {
+        const body = await listing.text();
+        for (const match of body.matchAll(/<([^>\s]+\.jsonld)>/g)) {
+          try { urls.add(new URL(match[1]!, container).toString()); } catch { /* skip */ }
+        }
+      }
+      const perCard = [...urls].filter(url => url !== legacy);
+      const loaded: PublicAgentCard[] = [];
+      const have = new Set<string>();
+      for (const url of perCard) {
+        const card = await readCard(url);
+        if (card && !have.has(card.agentId)) { loaded.push(card); have.add(card.agentId); }
+      }
+      // A per-card file does not mean the legacy index is finished. A PUT that
+      // failed last time left the rest of the index behind, and deleting it
+      // then would drop those cards on the next boot.
+      const res = await cfg.fetch(legacy, { method: 'GET', headers: { Accept: 'application/ld+json' } });
+      if (!res.ok) return loaded;
+      let fromLegacy: PublicAgentCard[] = [];
+      try { fromLegacy = parseStoredCards(JSON.parse(await res.text()), cfg.addressFor); }
+      catch { return loaded; }
+      let migratedAll = true;
+      for (const card of fromLegacy) {
+        if (have.has(card.agentId)) continue;
+        const put = await cfg.fetch(fileFor(card.agentId), {
+          method: 'PUT',
+          headers: { 'Content-Type': 'application/ld+json' },
+          body: JSON.stringify(card),
+        });
+        if (!put.ok) {
+          migratedAll = false;
+          log(`[agent-directory] migrate ${card.agentId} failed: ${put.status}`);
+          continue;
+        }
+        loaded.push(card);
+        have.add(card.agentId);
+      }
+      if (migratedAll) await cfg.fetch(legacy, { method: 'DELETE' });
+      return loaded;
     },
-    async save(cards) {
-      const res = await cfg.fetch(url, {
+    async put(card) {
+      const res = await cfg.fetch(fileFor(card.agentId), {
         method: 'PUT',
         headers: { 'Content-Type': 'application/ld+json' },
-        body: JSON.stringify({ cards }, null, 2),
+        body: JSON.stringify(card),
       });
-      if (!res.ok) throw new Error(`agent directory index PUT failed: ${res.status}`);
+      if (!res.ok) throw new Error(`agent directory card PUT failed: ${res.status}`);
+    },
+    async remove(agentId) {
+      if (!AGENT_ID.test(agentId)) return;
+      const res = await cfg.fetch(fileFor(agentId), { method: 'DELETE' });
+      if (!res.ok && res.status !== 404) throw new Error(`agent directory card DELETE failed: ${res.status}`);
     },
   };
 }
 
 export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
   const cards = new Map<string, PublicAgentCard>();
+  /** New agents whose publish has reserved a slot and not finished. Counted toward the cap. */
+  const reserved = new Set<string>();
+  const agentChain = new Map<string, Promise<void>>();
   const base = deps.publicBaseUrl.replace(/\/$/, '');
   let tail: Promise<void> = Promise.resolve();
   const now = deps.now ?? (() => new Date().toISOString());
@@ -557,14 +653,77 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
     return run;
   }
 
+  /** One agent at a time, so a failed later attempt cannot discard an earlier success, and a revocation waits for the publish it must undo. Other agents are not in this chain. */
+  function onAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = agentChain.get(agentId) ?? Promise.resolve();
+    const run = previous.then(fn, fn);
+    agentChain.set(agentId, run.then(() => undefined, () => undefined));
+    return run;
+  }
+
   function snapshot(q = '', limit = SEARCH_LIMIT): PublicAgentCard[] {
     return [...cards.values()].filter(card => matches(card, q)).slice(0, limit);
   }
 
-  async function persist(): Promise<boolean> {
-    if (!deps.store) return false;
-    await deps.store.save([...cards.values()]);
-    return true;
+  function addressFor(agentId: string): { cardIri: string; relayAddress: string } | null {
+    const contact = deps.contactFor(agentId);
+    const allowLocal = baseAllowsLocal(base);
+    const relayAddress = publicHttpUrl(contact.relayAddress, allowLocal);
+    if (!relayAddress) return null;
+    return cardAddresses(agentId, base, relayAddress);
+  }
+
+  function prepareCard(args: Record<string, unknown>):
+    | { error: string; code: number; message: string }
+    | { caller: DirectoryCaller; card: PublicAgentCard; turtle: string } {
+    const caller = deps.callerOf(args);
+    if (!caller || !AGENT_ID.test(caller.agentId)) {
+      return { error: 'authentication_required', code: 401, message: 'Sign in as the agent whose card this is. The directory will not guess an id.' };
+    }
+    // agent_id is the actor the relay injects (a DID or IRI), not the card subject.
+    const claimed = typeof args['agent_id'] === 'string' ? args['agent_id'].trim() : '';
+    if (claimed && claimed !== caller.agentId && claimed !== caller.did) {
+      return { error: 'not_your_card', code: 403, message: 'An agent may only publish or replace its own card.' };
+    }
+    if (args['pod_name'] !== undefined && args['pod_name'] !== caller.agentId) {
+      return { error: 'not_your_card', code: 403, message: 'An agent may only publish its card on its own pod.' };
+    }
+    const draft = parseDraft(args);
+    if ('error' in draft) return draft;
+    const secret = screenedText([
+      draft.name, draft.description, draft.surface ?? '',
+      ...draft.capabilities.flatMap(c => [c.name, c.description, c.id ?? '']),
+    ]);
+    if (secret) {
+      const message = secret === 'credential'
+        ? 'Refusing to publish: the card contains a credential or private key.'
+        : `Refusing to publish: ${secret.description}.`;
+      return { error: 'secret_refused', code: 400, message };
+    }
+    const located = addressFor(caller.agentId);
+    if (!located) {
+      return { error: 'contact_unavailable', code: 500, message: 'This relay has no public address for that agent, so the card was not published.' };
+    }
+    const inboxRaw = deps.contactFor(caller.agentId).inbox;
+    const inbox = inboxRaw ? publicHttpUrl(inboxRaw, baseAllowsLocal(base)) : undefined;
+    const did = caller.did && turtleIriRef(caller.did) ? caller.did : undefined;
+    const capabilities = assignCapabilityIds(located.cardIri, draft);
+    if (!capabilities) return { error: 'invalid_card', code: 400, message: 'A capability id must be a unique https URL.' };
+    const unsigned = {
+      agentId: caller.agentId,
+      name: draft.name,
+      description: draft.description,
+      cardIri: located.cardIri,
+      relayAddress: located.relayAddress,
+      capabilities,
+      ...(inbox ? { inbox } : {}),
+      ...(did ? { did } : {}),
+      ...(draft.surface ? { surface: draft.surface } : {}),
+    };
+    const card: PublicAgentCard = { ...unsigned, version: cardVersion(unsigned), updatedAt: now() };
+    const turtle = cardTurtle(card);
+    if (!turtle) return { error: 'invalid_card', code: 400, message: 'The card could not be written as a public graph.' };
+    return { caller, card, turtle };
   }
 
   return {
@@ -585,98 +744,131 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
     },
 
     async publishCard(args) {
-      return exclusive(async () => {
-        const caller = deps.callerOf(args);
-        if (!caller || !AGENT_ID.test(caller.agentId)) {
-          return json({ error: 'authentication_required', code: 401, message: 'Sign in as the agent whose card this is. The directory will not guess an id.' });
+      const prepared = prepareCard(args);
+      if ('error' in prepared) return json(prepared);
+      const { caller, card, turtle } = prepared;
+      return onAgent(caller.agentId, async () => {
+        const gate = await exclusive(async () => {
+          if (cards.has(caller.agentId) || reserved.has(caller.agentId)) return 'replace' as const;
+          if (cards.size + reserved.size >= MAX_CARDS) return 'full' as const;
+          reserved.add(caller.agentId);
+          return 'new' as const;
+        });
+        if (gate === 'full') {
+          return json({
+            error: 'directory_full',
+            code: 503,
+            message: `The directory holds ${MAX_CARDS} cards and does not evict one to make room. Replacing your own card still works. Withdraw a card to free a slot.`,
+          });
         }
-        // `agent_id` is the actor, not the card subject. MCP and REST fill it
-        // with the session DID or canonical IRI when the caller omits it, and
-        // a signed request overwrites it with the recovered DID. That value
-        // is this caller. A pod id that is not the session pod is someone
-        // else's card.
-        const claimed = typeof args['agent_id'] === 'string' ? args['agent_id'].trim() : '';
-        if (claimed && claimed !== caller.agentId && claimed !== caller.did) {
-          return json({ error: 'not_your_card', code: 403, message: 'An agent may only publish or replace its own card.' });
+        let indexed = false;
+        try {
+          const published = await deps.publish({
+            ...sessionFields(args),
+            pod_name: caller.agentId,
+            graph_iri: card.cardIri,
+            graph_content: turtle,
+            visibility: 'public',
+            sign_authorship: true,
+            sync: true,
+            descriptor_id: `urn:iep:agent-card:${caller.agentId}`,
+            auto_supersede_prior: true,
+            modal_status: 'Asserted',
+          });
+          const receipt = readPublishReceipt(published);
+          if (receipt.ok === false) return json(receipt.body);
+          return exclusive(async () => {
+            reserved.delete(caller.agentId);
+            const stored: PublicAgentCard = { ...card, ...(receipt.descriptorUrl ? { descriptorUrl: receipt.descriptorUrl } : {}) };
+            cards.set(caller.agentId, stored);
+            indexed = true;
+            let persisted = false;
+            try {
+              if (deps.store) { await deps.store.put(stored); persisted = true; }
+            } catch (err) { deps.log?.(`[agent-directory] index persist failed: ${(err as Error).message}`); }
+            return json({ published: true, persisted, ...wireCard(stored, deps.notifyTarget, base) });
+          });
+        } finally {
+          if (!indexed) await exclusive(async () => { reserved.delete(caller.agentId); });
         }
-        if (args['pod_name'] !== undefined && args['pod_name'] !== caller.agentId) {
-          return json({ error: 'not_your_card', code: 403, message: 'An agent may only publish its card on its own pod.' });
-        }
-        const draft = parseDraft(args);
-        if ('error' in draft) return json(draft);
-        const secret = screenedText([
-          draft.name, draft.description, draft.surface ?? '',
-          ...draft.capabilities.flatMap(c => [c.name, c.description, c.id ?? '']),
-        ]);
-        if (secret) {
-          const message = secret === 'credential'
-            ? 'Refusing to publish: the card contains a credential or private key.'
-            : `Refusing to publish: ${secret.description}.`;
-          return json({ error: 'secret_refused', code: 400, message });
-        }
-        if (!cards.has(caller.agentId) && cards.size >= MAX_CARDS) {
-          return json({ error: 'directory_full', code: 503, message: 'The directory is not accepting new cards right now.' });
-        }
-        const contact = deps.contactFor(caller.agentId);
-        const allowLocal = baseAllowsLocal(base);
-        const relayAddress = publicHttpUrl(contact.relayAddress, allowLocal);
-        if (!relayAddress) {
-          return json({ error: 'contact_unavailable', code: 500, message: 'This relay has no public address for that agent, so the card was not published.' });
-        }
-        const inbox = contact.inbox ? publicHttpUrl(contact.inbox, allowLocal) : undefined;
-        const did = caller.did && turtleIriRef(caller.did) ? caller.did : undefined;
-        const cardIri = `${base}/ns/${caller.agentId}/agent-card`;
-        const capabilities = assignCapabilityIds(cardIri, draft);
-        if (!capabilities) {
-          return json({ error: 'invalid_card', code: 400, message: 'A capability id must be a unique https URL.' });
-        }
-        const unsigned = {
-          agentId: caller.agentId,
-          name: draft.name,
-          description: draft.description,
-          cardIri,
-          relayAddress,
-          capabilities,
-          ...(inbox ? { inbox } : {}),
-          ...(did ? { did } : {}),
-          ...(draft.surface ? { surface: draft.surface } : {}),
-        };
-        const card: PublicAgentCard = { ...unsigned, version: cardVersion(unsigned), updatedAt: now() };
-        const turtle = cardTurtle(card);
-        if (!turtle) {
-          return json({ error: 'invalid_card', code: 400, message: 'The card could not be written as a public graph.' });
-        }
+      });
+    },
+
+    async withdrawCard(args) {
+      const caller = deps.callerOf(args);
+      if (!caller || !AGENT_ID.test(caller.agentId)) {
+        return json({ error: 'authentication_required', code: 401, message: 'Sign in as the agent whose card this is.' });
+      }
+      const claimed = typeof args['agent_id'] === 'string' ? args['agent_id'].trim() : '';
+      if (claimed && claimed !== caller.agentId && claimed !== caller.did) {
+        return json({ error: 'not_your_card', code: 403, message: 'An agent may only withdraw its own card.' });
+      }
+      const existing = cards.get(caller.agentId);
+      if (!existing) return json({ error: 'no_such_agent', code: 404, message: 'You have no directory card to withdraw.' });
+      const located = addressFor(caller.agentId);
+      if (!located) return json({ error: 'contact_unavailable', code: 500, message: 'This relay has no public address for that agent, so the card was not withdrawn.' });
+      const withdrawn: PublicAgentCard = {
+        ...existing,
+        description: 'Withdrawn from the agent directory.',
+        capabilities: [],
+        cardIri: located.cardIri,
+        relayAddress: located.relayAddress,
+        updatedAt: now(),
+      };
+      const turtle = cardTurtle({ ...withdrawn, version: cardVersion(withdrawn) });
+      if (!turtle) return json({ error: 'invalid_card', code: 400, message: 'The withdrawal could not be written as a public graph.' });
+      return onAgent(caller.agentId, async () => {
         const published = await deps.publish({
           ...sessionFields(args),
           pod_name: caller.agentId,
-          graph_iri: card.cardIri,
+          graph_iri: located.cardIri,
           graph_content: turtle,
           visibility: 'public',
           sign_authorship: true,
           sync: true,
           descriptor_id: `urn:iep:agent-card:${caller.agentId}`,
           auto_supersede_prior: true,
-          modal_status: 'Asserted',
+          modal_status: 'Counterfactual',
         });
         const receipt = readPublishReceipt(published);
         if (receipt.ok === false) return json(receipt.body);
-        const stored: PublicAgentCard = { ...card, ...(receipt.descriptorUrl ? { descriptorUrl: receipt.descriptorUrl } : {}) };
-        cards.set(caller.agentId, stored);
-        let persisted = false;
-        try { persisted = await persist(); }
-        catch (err) { deps.log?.(`[agent-directory] index persist failed: ${(err as Error).message}`); }
-        return json({
-          published: true,
-          persisted,
-          ...wireCard(stored, deps.notifyTarget),
+        return exclusive(async () => {
+          cards.delete(caller.agentId);
+          reserved.delete(caller.agentId);
+          try { if (deps.store) await deps.store.remove(caller.agentId); }
+          catch (err) { deps.log?.(`[agent-directory] index remove failed: ${(err as Error).message}`); }
+          return json({ withdrawn: true, agentId: caller.agentId, cardIri: located.cardIri });
         });
       });
+    },
+
+    async forgetRevoked(podName, subjects) {
+      const targets = new Set<string>();
+      if (AGENT_ID.test(podName)) targets.add(podName);
+      for (const subject of subjects) if (AGENT_ID.test(subject)) targets.add(subject);
+      await exclusive(async () => {
+        for (const card of cards.values()) {
+          if (card.did !== undefined && subjects.includes(card.did)) targets.add(card.agentId);
+        }
+      });
+      const gone: string[] = [];
+      for (const agentId of targets) {
+        await onAgent(agentId, () => exclusive(async () => {
+          reserved.delete(agentId);
+          const had = cards.delete(agentId);
+          if (!had) return;
+          gone.push(agentId);
+          try { if (deps.store) await deps.store.remove(agentId); }
+          catch (err) { deps.log?.(`[agent-directory] index remove failed: ${(err as Error).message}`); }
+        }));
+      }
+      return gone;
     },
 
     async searchAgents(args) {
       const q = typeof args['q'] === 'string' ? args['q'] : '';
       const found = snapshot(q);
-      return json({ query: q, total: found.length, agents: found.map(card => wireCard(card, deps.notifyTarget)) });
+      return json({ query: q, total: found.length, agents: found.map(card => wireCard(card, deps.notifyTarget, base)) });
     },
 
     async getAgentCard(args) {
@@ -684,7 +876,7 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
       if (!AGENT_ID.test(id)) return json({ error: 'invalid_agent', code: 400, message: 'agent_id must be the agent\'s own pod id.' });
       const card = cards.get(id);
       if (!card) return json({ error: 'no_such_agent', code: 404, message: 'No published card for that agent.' });
-      return json(wireCard(card, deps.notifyTarget));
+      return json(wireCard(card, deps.notifyTarget, base));
     },
 
     async requestWork(args) {
@@ -747,7 +939,7 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
       app.get('/directory/agents', (req: Request, res: Response) => {
         const q = typeof req.query['q'] === 'string' ? req.query['q'] : '';
         const found = snapshot(q);
-        res.json({ query: q, total: found.length, agents: found.map(card => wireCard(card, deps.notifyTarget)) });
+        res.json({ query: q, total: found.length, agents: found.map(card => wireCard(card, deps.notifyTarget, base)) });
       });
       app.get('/directory/agents/:id', (req: Request, res: Response) => {
         const id = String(req.params['id'] ?? '');
@@ -756,7 +948,7 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
         res.setHeader('ETag', `"${card.version}"`);
         const describedBy = turtleIriRef(card.cardIri);
         if (describedBy) res.setHeader('Link', describedBy + '; rel="describedby"');
-        res.json(wireCard(card, deps.notifyTarget));
+        res.json(wireCard(card, deps.notifyTarget, base));
       });
     },
   };
