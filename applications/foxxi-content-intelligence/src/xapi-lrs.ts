@@ -492,6 +492,8 @@ function normalizeAlternateXapiRequest(req: Request, res: Response, next: NextFu
     req.headers['content-type'] = mediaType;
     req.body = body;
     req.method = method;
+    // Express 4 parses req.query before application middleware. Keep its resource view in sync.
+    req.query = Object.fromEntries(data);
     const encoded = data.toString();
     req.url = encoded ? path + '?' + encoded : path;
     next();
