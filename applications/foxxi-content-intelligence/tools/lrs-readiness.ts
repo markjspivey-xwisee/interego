@@ -328,11 +328,17 @@ try {
       persist();
     } finally { await restored.stop(); }
 
+    const failed = [];
     for (const version of ['2.0.0', '1.0.3'] as const) {
       const app = await startLrs(fixture.podUrl, randomUUID());
-      try { stages[version] = adl(app.base, version); persist(); }
-      finally { await app.stop(); }
+      try {
+        const result = adl(app.base, version);
+        stages[version] = result;
+        if (result.failed) failed.push(version);
+        persist();
+      } finally { await app.stop(); }
     }
+    assert.equal(failed.length, 0, 'ADL HTTP cases failed for xAPI ' + failed.join(', '));
   } finally { await fixture.stop(); }
 } catch (error) {
   proof.error = error instanceof Error ? error.message : 'Fixture failed';

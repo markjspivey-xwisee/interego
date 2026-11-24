@@ -20,3 +20,8 @@ Profile checks can return the exact published version, the matching template
 or pattern, and any skipped checks. The human workbench uses those same public
 operations to inspect versions and check examples. It shows controls after a
 fully evaluated match. The standard response remains available to xAPI clients.
+
+The legacy xAPI transport decodes URL-encoded alternate requests and hands
+them to the existing authenticated resources. Profile PUTs negotiated as xAPI
+1.0 require HTTP preconditions. Successful and rejected suite outcomes appear
+in the same report, and a failing suite fails the acceptance job.

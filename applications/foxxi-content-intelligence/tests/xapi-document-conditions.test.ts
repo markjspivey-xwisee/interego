@@ -55,3 +55,52 @@ describe('HTTP statement limits are bounded before querying storage', () => {
     expect((await fetch(`${base}/xapi/statements?continuationToken=${token}`, { headers })).status).toBe(400);
   });
 });
+
+describe('xAPI 1.0.3 alternate requests use the regular resource handlers', () => {
+  const version = '1.0.3';
+  const legacy = { ...headers, 'X-Experience-API-Version': version };
+  const form = (path: string, method: string, params: Record<string, string>, extraQuery = '') => fetch(
+    base + path + '?method=' + method + extraQuery, {
+      method: 'POST', body: new URLSearchParams({ 'X-Experience-API-Version': version, ...params }),
+    });
+  const statement = (id: string) => ({ id, actor: { mbox: 'mailto:synthetic@example.test' },
+    verb: { id: 'http://adlnet.gov/expapi/verbs/experienced' }, object: { id: 'https://example.test/course' } });
+
+  it('authenticates form credentials and keeps the same statement over PUT and GET', async () => {
+    const id = randomUUID(), path = '/xapi/statements';
+    const body = { statementId: id, content: JSON.stringify(statement(id)), Authorization: headers.Authorization };
+    expect((await form(path, 'PUT', body)).status).toBe(204);
+    expect((await form(path, 'GET', { statementId: id })).status).toBe(401);
+    const alternate = await form(path, 'GET', { statementId: id, Authorization: headers.Authorization });
+    const ordinary = await fetch(base + path + '?statementId=' + id, { headers: legacy });
+    expect(alternate.status).toBe(200);
+    expect(await alternate.json()).toEqual(await ordinary.json());
+    const list = await form(path, 'GET', { limit: '1', Authorization: headers.Authorization });
+    expect(list.status).toBe(200);
+    expect(await list.json()).toMatchObject({ statements: [expect.objectContaining({ id })] });
+  });
+
+  it('requires an unambiguous legacy envelope', async () => {
+    const path = '/xapi/statements';
+    const credentials = { Authorization: headers.Authorization };
+    expect((await form(path, 'GET', credentials, '&limit=1')).status).toBe(400);
+    expect((await form(path, 'GET', { ...credentials, 'X-Experience-API-Version': '2.0.0' })).status).toBe(400);
+    expect((await form(path, 'PUT', { ...credentials, statementId: randomUUID() })).status).toBe(400);
+    expect((await form(path, 'POST', credentials)).status).toBe(400);
+  });
+
+  it('applies profile preconditions through both the form and normal headers', async () => {
+    const path = '/xapi/agents/profile';
+    const address = { agent: JSON.stringify({ mbox: 'mailto:synthetic@example.test' }), profileId: randomUUID() };
+    const url = base + path + '?' + new URLSearchParams(address);
+    const body = '{"marker":"é"}';
+    expect((await fetch(url, { method: 'PUT', headers: legacy, body })).status).toBe(400);
+    const created = await form(path, 'PUT', { ...address, Authorization: headers.Authorization, 'If-None-Match': '*',
+      'Content-Type': 'application/json', 'Content-Length': String(Buffer.byteLength(body)), content: body });
+    expect(created.status).toBe(204);
+    expect((await fetch(url, { method: 'PUT', headers: legacy, body })).status).toBe(409);
+    const stored = await fetch(url, { headers: legacy });
+    expect(stored.headers.get('etag')).toBe(created.headers.get('etag'));
+    expect(await stored.json()).toEqual({ marker: 'é' });
+  });
+});
