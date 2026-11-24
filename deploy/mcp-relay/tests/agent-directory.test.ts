@@ -235,9 +235,23 @@ console.log('\nagent directory: own card, public projection, work routed to the 
       updatedAt: '2026-11-24T00:00:00.000Z',
       capabilities: [{ id: 'https://example.com/capabilities/search', name: 'Search', description: '' }],
       credential: 'not-forwarded',
+    }, {
+      agentId: 'u-did-aabbccddeeff',
+      name: 'Stranger',
+      description: 'A card whose stored address is not this relay.',
+      cardIri: 'https://evil.example/ns/u-did-aabbccddeeff/agent-card',
+      relayAddress: 'https://evil.example/agents/u-did-aabbccddeeff',
+      version: 'ghi',
+      updatedAt: '2026-11-24T00:00:00.000Z',
+      capabilities: [],
     }],
   };
-  const loaded = parseStoredCards(poisoned);
+  const addressFor = (agentId: string) => ({
+    cardIri: `${BASE}/ns/${agentId}/agent-card`,
+    relayAddress: `${BASE}/agents/${agentId}`,
+  });
+  const loaded = parseStoredCards(poisoned, addressFor);
+  check('a stored address that is not this relay\'s is dropped', loaded.every(card => card.agentId !== 'u-did-aabbccddeeff'));
   check('a stored card carrying a JWT is dropped', loaded.every(card => card.agentId !== GEORGIO));
   check('a clean card is kept and secret fields are not on it',
     loaded.length === 1 && loaded[0]?.agentId === GROK && !JSON.stringify(loaded[0]).includes('not-forwarded') && !JSON.stringify(loaded[0]).includes('proofValue'));
@@ -246,15 +260,30 @@ console.log('\nagent directory: own card, public projection, work routed to the 
 {
   const files = new Map<string, string>();
   const fetchImpl: DirectoryFetch = async (url, init) => {
-    if ((init?.method ?? 'GET') === 'PUT' && init?.body) {
+    const method = init?.method ?? 'GET';
+    if (method === 'PUT' && init?.body) {
       files.set(url, init.body);
       return { ok: true, status: 201, text: async () => '' };
+    }
+    if (method === 'DELETE') {
+      const existed = files.delete(url);
+      return { ok: existed, status: existed ? 200 : 404, text: async () => '' };
+    }
+    if (method === 'GET' && /\/agent-directory\/?$/.test(url)) {
+      const prefix = url.endsWith('/') ? url : `${url}/`;
+      const links = [...files.keys()].filter(key => key.startsWith(prefix)).map(key => `<${key}>`).join(', ');
+      const body = links ? `<> <http://www.w3.org/ns/ldp#contains> ${links} .` : '';
+      return { ok: true, status: 200, text: async () => body };
     }
     const hit = files.get(url);
     if (!hit) return { ok: false, status: 404, text: async () => '' };
     return { ok: true, status: 200, text: async () => hit };
   };
-  const store = podDirectoryStore({ podUrl: 'https://store.example/svc-relay-dcr/', fetch: fetchImpl });
+  const addressFor = (agentId: string) => ({
+    cardIri: `${BASE}/ns/${agentId}/agent-card`,
+    relayAddress: `${BASE}/agents/${agentId}`,
+  });
+  const store = podDirectoryStore({ podUrl: 'https://store.example/svc-relay-dcr/', fetch: fetchImpl, addressFor });
   const directory = createAgentDirectory({
     publicBaseUrl: BASE,
     notifyTarget: `${BASE}/tool/notify_agent`,
@@ -326,12 +355,221 @@ console.log('\nagent directory: own card, public projection, work routed to the 
     const api = await fetch(`${srv.base}/directory/agents/${GEORGIO}`);
     const doc = await api.json() as { name: string; cardIri: string };
     check('the JSON card is the public projection', api.status === 200 && doc.name === 'Georgio <script>' && doc.cardIri.endsWith('/agent-card'));
+    const seeAlso = (doc as { seeAlso?: string[] }).seeAlso ?? [];
+    check('the card points at the relay well-known card, which is not this agent',
+      seeAlso.some(url => url.endsWith('/.well-known/agent-card.json')));
     check('the JSON card points at the signed document', (api.headers.get('link') ?? '').includes('rel="describedby"'));
     const none = await fetch(`${srv.base}/directory/agents/u-pk-missingmissing`);
     check('an unknown agent is a 404', none.status === 404);
   } finally {
     await srv.close();
   }
+}
+
+{
+  const { directory, publishes } = harness();
+  await directory.publishCard(georgioArgs());
+  const stolen = JSON.parse(await directory.withdrawCard({ _session_user_id: GROK, agent_id: GEORGIO })) as { error?: string };
+  check('another agent cannot withdraw Georgio\'s card', stolen.error === 'not_your_card' && publishes.length === 1);
+  const gone = JSON.parse(await directory.withdrawCard({ _session_user_id: GEORGIO, _session_agent_did: 'did:web:id.example/georgio' })) as { withdrawn?: boolean };
+  check('Georgio can withdraw his own card', gone.withdrawn === true);
+  const missing = JSON.parse(await directory.getAgentCard({ agent_id: GEORGIO })) as { error?: string };
+  check('a withdrawn card leaves search', missing.error === 'no_such_agent');
+  const removed = await directory.forgetRevoked(GEORGIO, [GEORGIO]);
+  check('revoking an already withdrawn card removes nothing else', removed.length === 0);
+  await directory.publishCard(georgioArgs());
+  const again = await directory.forgetRevoked(GEORGIO, ['did:web:id.example/georgio']);
+  check('revoke_agent removes the pod\'s directory card', again.includes(GEORGIO));
+  const after = JSON.parse(await directory.getAgentCard({ agent_id: GEORGIO })) as { error?: string };
+  check('the revoked card is not messageable from the directory', after.error === 'no_such_agent');
+}
+
+{
+  let entered = 0;
+  let releaseFirst: () => void = () => {};
+  const hold = new Promise<void>(resolve => { releaseFirst = resolve; });
+  const directory = createAgentDirectory({
+    publicBaseUrl: BASE,
+    notifyTarget: `${BASE}/tool/notify_agent`,
+    now: () => '2026-11-24T00:00:00.000Z',
+    callerOf(args) {
+      const agentId = typeof args['_session_user_id'] === 'string' ? args['_session_user_id'] : '';
+      return agentId ? { agentId } : null;
+    },
+    contactFor: (agentId) => ({ relayAddress: `${BASE}/agents/${agentId}` }),
+    async publish(args) {
+      entered += 1;
+      if (args['pod_name'] === GEORGIO) await hold;
+      return JSON.stringify({ published: true, status: 'committed' });
+    },
+    notify: async () => '{}',
+  });
+  const first = directory.publishCard(georgioArgs());
+  for (let i = 0; i < 40 && entered < 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const second = directory.publishCard({ ...georgioArgs(), _session_user_id: GROK, name: 'Grok', description: 'Mark\'s Grok bot.' });
+  for (let i = 0; i < 40 && entered < 2; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  check('a second publish is not stuck behind the first network call', entered === 2, String(entered));
+  releaseFirst();
+  await Promise.all([first, second]);
+  check('both cards are indexed after the overlapping publishes', directory.list().length === 2);
+}
+
+{
+  const files = new Map<string, string>();
+  const fetchImpl: DirectoryFetch = async (url, init) => {
+    const method = init?.method ?? 'GET';
+    if (method === 'PUT' && init?.body) { files.set(url, init.body); return { ok: true, status: 201, text: async () => '' }; }
+    if (method === 'DELETE') { const existed = files.delete(url); return { ok: existed, status: existed ? 200 : 404, text: async () => '' }; }
+    if (method === 'GET' && /\/agent-directory\/?$/.test(url)) {
+      const prefix = url.endsWith('/') ? url : `${url}/`;
+      const links = [...files.keys()].filter(key => key.startsWith(prefix)).map(key => `<${key}>`).join(', ');
+      return { ok: true, status: 200, text: async () => (links ? `<> <http://www.w3.org/ns/ldp#contains> ${links} .` : '') };
+    }
+    const hit = files.get(url);
+    return hit ? { ok: true, status: 200, text: async () => hit } : { ok: false, status: 404, text: async () => '' };
+  };
+  const addressFor = (agentId: string) => ({ cardIri: `${BASE}/ns/${agentId}/agent-card`, relayAddress: `${BASE}/agents/${agentId}` });
+  const store = podDirectoryStore({ podUrl: 'https://store.example/svc/', fetch: fetchImpl, addressFor });
+  const make = (id: string) => createAgentDirectory({
+    publicBaseUrl: BASE, notifyTarget: `${BASE}/tool/notify_agent`, store,
+    callerOf: () => ({ agentId: id }),
+    contactFor: (agentId) => ({ relayAddress: `${BASE}/agents/${agentId}` }),
+    publish: async () => JSON.stringify({ published: true, status: 'committed' }),
+    notify: async () => '{}',
+  });
+  await make(GEORGIO).publishCard(georgioArgs());
+  await make(GROK).publishCard({ ...georgioArgs(), name: 'Grok', description: 'Mark\'s Grok bot.' });
+  const reader = make('u-pk-000000000000');
+  await reader.hydrate();
+  const ids = reader.list().map(card => card.agentId).sort();
+  check('two relay instances keep each other\'s cards', ids.includes(GEORGIO) && ids.includes(GROK), ids.join(','));
+}
+
+{
+  let release: () => void = () => {};
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  let calls = 0;
+  const directory = createAgentDirectory({
+    publicBaseUrl: BASE,
+    notifyTarget: `${BASE}/tool/notify_agent`,
+    callerOf(args) {
+      const agentId = typeof args['_session_user_id'] === 'string' ? args['_session_user_id'] : '';
+      return agentId ? { agentId } : null;
+    },
+    contactFor: (agentId) => ({ relayAddress: `${BASE}/agents/${agentId}` }),
+    async publish(args) {
+      const id = String(args['pod_name'] ?? '');
+      if (id === 'u-pk-fffffffffffe' || id === 'u-pk-ffffffffffff') {
+        calls += 1;
+        await hold;
+      }
+      return JSON.stringify({ published: true, status: 'committed' });
+    },
+    notify: async () => '{}',
+  });
+  for (let i = 0; i < 499; i++) {
+    const id = `u-pk-${i.toString(16).padStart(12, '0')}`;
+    await directory.publishCard({ _session_user_id: id, name: `A${i}`, description: 'A listed agent.' });
+  }
+  const last = directory.publishCard({ _session_user_id: 'u-pk-fffffffffffe', name: 'Last', description: 'The last slot.' });
+  for (let i = 0; i < 40 && calls < 1; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const overflow = JSON.parse(await directory.publishCard({ _session_user_id: 'u-pk-ffffffffffff', name: 'Extra', description: 'Past the cap.' })) as { error?: string };
+  check('an in-flight new card reserves its slot', overflow.error === 'directory_full' && calls === 1, `${overflow.error} calls=${calls}`);
+  release();
+  await last;
+}
+
+{
+  let release: () => void = () => {};
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  const directory = createAgentDirectory({
+    publicBaseUrl: BASE,
+    notifyTarget: `${BASE}/tool/notify_agent`,
+    callerOf(args) {
+      const agentId = typeof args['_session_user_id'] === 'string' ? args['_session_user_id'] : '';
+      return agentId ? { agentId } : null;
+    },
+    contactFor: (agentId) => ({ relayAddress: `${BASE}/agents/${agentId}` }),
+    async publish(args) {
+      if (args['pod_name'] === GEORGIO && args['name'] === undefined) await hold;
+      if (String(args['graph_content'] ?? '').includes('second-attempt')) {
+        return JSON.stringify({ error: 'publish_failed', code: 500, message: 'no' });
+      }
+      return JSON.stringify({ published: true, status: 'committed' });
+    },
+    notify: async () => '{}',
+  });
+  const first = directory.publishCard(georgioArgs());
+  for (let i = 0; i < 20; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const second = directory.publishCard(georgioArgs({ description: 'second-attempt still public text.' }));
+  release();
+  const firstBody = JSON.parse(await first) as { published?: boolean; name?: string };
+  const secondBody = JSON.parse(await second) as { error?: string };
+  check('a failed later publish does not drop the earlier success', firstBody.published === true && secondBody.error === 'publish_failed');
+  check('the earlier card stays indexed', directory.list().some(card => card.agentId === GEORGIO && card.name === 'Georgio'));
+}
+
+{
+  let release: () => void = () => {};
+  const hold = new Promise<void>(resolve => { release = resolve; });
+  const directory = createAgentDirectory({
+    publicBaseUrl: BASE,
+    notifyTarget: `${BASE}/tool/notify_agent`,
+    callerOf(args) {
+      const agentId = typeof args['_session_user_id'] === 'string' ? args['_session_user_id'] : '';
+      return agentId ? { agentId } : null;
+    },
+    contactFor: (agentId) => ({ relayAddress: `${BASE}/agents/${agentId}` }),
+    async publish() {
+      await hold;
+      return JSON.stringify({ published: true, status: 'committed' });
+    },
+    notify: async () => '{}',
+  });
+  const publishing = directory.publishCard(georgioArgs());
+  for (let i = 0; i < 20; i++) await new Promise(resolve => setTimeout(resolve, 5));
+  const revoked = directory.forgetRevoked(GEORGIO, [GEORGIO]);
+  release();
+  await publishing;
+  await revoked;
+  check('a revocation during the first publish does not leave the card listed', directory.list().every(card => card.agentId !== GEORGIO));
+}
+
+{
+  const files = new Map<string, string>();
+  const addressFor = (agentId: string) => ({ cardIri: `${BASE}/ns/${agentId}/agent-card`, relayAddress: `${BASE}/agents/${agentId}` });
+  const legacy = 'https://store.example/svc/agent-directory/index.jsonld';
+  files.set(legacy, JSON.stringify({ cards: [
+    { agentId: GEORGIO, name: 'Georgio', description: 'One.', cardIri: addressFor(GEORGIO).cardIri, relayAddress: addressFor(GEORGIO).relayAddress, version: 'a', updatedAt: '2026-11-24T00:00:00.000Z', capabilities: [] },
+    { agentId: GROK, name: 'Grok', description: 'Two.', cardIri: addressFor(GROK).cardIri, relayAddress: addressFor(GROK).relayAddress, version: 'b', updatedAt: '2026-11-24T00:00:00.000Z', capabilities: [] },
+  ] }));
+  let failGeorgio = true;
+  const fetchImpl: DirectoryFetch = async (url, init) => {
+    const method = init?.method ?? 'GET';
+    if (method === 'PUT' && init?.body) {
+      if (failGeorgio && url.endsWith(`/${GEORGIO}.jsonld`)) return { ok: false, status: 500, text: async () => '' };
+      files.set(url, init.body);
+      return { ok: true, status: 201, text: async () => '' };
+    }
+    if (method === 'DELETE') {
+      const existed = files.delete(url);
+      return { ok: existed, status: existed ? 200 : 404, text: async () => '' };
+    }
+    if (method === 'GET' && /\/agent-directory\/?$/.test(url)) {
+      const prefix = url.endsWith('/') ? url : `${url}/`;
+      const links = [...files.keys()].filter(key => key.startsWith(prefix) && key !== legacy).map(key => `<${key}>`).join(', ');
+      return { ok: true, status: 200, text: async () => (links ? `<> <http://www.w3.org/ns/ldp#contains> ${links} .` : '') };
+    }
+    const hit = files.get(url);
+    return hit ? { ok: true, status: 200, text: async () => hit } : { ok: false, status: 404, text: async () => '' };
+  };
+  const store = podDirectoryStore({ podUrl: 'https://store.example/svc/', fetch: fetchImpl, addressFor });
+  const first = await store.load();
+  check('a failed migration keeps the legacy index', files.has(legacy) && first.some(card => card.agentId === GROK) && first.every(card => card.agentId !== GEORGIO));
+  failGeorgio = false;
+  const second = await store.load();
+  check('the next load finishes the migration and drops the legacy index',
+    !files.has(legacy) && second.some(card => card.agentId === GEORGIO) && second.some(card => card.agentId === GROK));
 }
 
 if (failures > 0) {
