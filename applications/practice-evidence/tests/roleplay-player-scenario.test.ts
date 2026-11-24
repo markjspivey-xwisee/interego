@@ -445,3 +445,45 @@ describe('how the player opens a visit in a session that may already be open', (
     expect(page.split('send("initialized"').length - 1).toBe(1);
   });
 });
+
+describe('how the player reads a rubric\'s levels', () => {
+  const cut = (from: string, to: string): string => {
+    const a = page.indexOf(from), b = page.indexOf(to, a);
+    if (a < 0 || b < 0) throw new Error(`the player page no longer holds: ${a < 0 ? from : to}`);
+    return page.slice(a, b);
+  };
+  /** The page's own scenario check and its own level arithmetic, over a scenario given here. */
+  const reads = (doc: Record<string, unknown>) => new Function('S',
+    cut('function repeatedIds(s){', 'async function checkProfile(){')
+    + cut('const lowVal = c =>', '// ---------- tracking ----------').replace(/\bCRITS\b/g, 'S.rubric.criteria')
+    + '; return { check: () => checkScenario(S), levelOf, assess };')(doc) as {
+      check(): void; levelOf(c: Criterion, v: number): Level; assess(sc: number[]): { pass: boolean; unmet: string[] };
+    };
+  const withLevels = (levels: Level[]): Record<string, unknown> => ({
+    ...(scenario as unknown as Record<string, unknown>),
+    rubric: { criteria: [{ id: 'care', levels }], passRule: { minPercent: 0, requiredLevels: { care: 'good' } } },
+  });
+  const lowestFirst = [{ id: 'poor', value: 0 }, { id: 'ok', value: 1 }, { id: 'good', value: 2 }];
+
+  it('plays the published scenario, whose levels run lowest first', () => {
+    expect(() => reads(scenario as unknown as Record<string, unknown>).check()).not.toThrow();
+  });
+
+  it('gives the weakest score the lowest level, and holds it under a pass rule that asks for more', () => {
+    const p = reads(withLevels(lowestFirst));
+    p.check();
+    expect(p.levelOf({ id: 'care', levels: lowestFirst }, 0).id).toBe('poor');
+    expect(p.assess([0])).toMatchObject({ pass: false, unmet: ['care'] });
+    expect(p.assess([2])).toMatchObject({ pass: true, unmet: [] });
+  });
+
+  it('refuses a rubric whose levels do not run lowest first, which it used to score upside down', () => {
+    const highestFirst = [...lowestFirst].reverse();
+    const p = reads(withLevels(highestFirst));
+    // What the arithmetic does with such a rubric, and why the page must not get that far:
+    expect(p.levelOf({ id: 'care', levels: highestFirst }, 0).id).toBe('good');
+    expect(p.assess([0]).pass).toBe(true);
+    expect(() => p.check()).toThrow('criterion care: level values must strictly increase from lowest to highest');
+    expect(() => reads(withLevels([{ id: 'a', value: 1 }, { id: 'b', value: 1 }])).check()).toThrow('strictly increase');
+  });
+});
