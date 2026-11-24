@@ -571,6 +571,10 @@ function pick(i, said){
     const res = {response: said || c.text};
     if (said && X.extensions.matchedReply) res.extensions = {[X.extensions.matchedReply]: c.text};
     if (X.extensions.replyId && c.id) res.extensions = {...(res.extensions || {}), [X.extensions.replyId]: c.id};
+    // v3: which source the trainee confirmed, and the recognised text when they spoke.
+    // A tap has no recognised text. The highlighted reply they confirm after speech is "matched".
+    if (X.extensions.confirmedChoice) res.extensions = {...(res.extensions || {}), [X.extensions.confirmedChoice]: said ? "matched" : "tapped"};
+    if (said && X.extensions.recognisedText) res.extensions = {...(res.extensions || {}), [X.extensions.recognisedText]: said};
     send("turn", "took a turn", {objectType:"Activity", id: activityId + "/turn/" + n, definition: def}, res, false, true);
   }
   if (stage >= persona.stages.length) return finish();
@@ -615,6 +619,17 @@ async function finish(){
     d.querySelector(".say").textContent = "“" + p.bestText + "”"; d.querySelector(".was").textContent = "Instead of: “" + (p.said || p.text) + "” " + p.note; rws.appendChild(d); });
   const ns = nextStep(sc, a); $("next").textContent = ns.text; $("nextlinks").innerHTML = "";
   if (ns.link) { const el = document.createElement("a"); el.href = ns.link.href; el.target = "_blank"; el.rel = "noopener"; el.className = "btn primary"; el.style.display="block"; el.style.textAlign="center"; el.style.textDecoration="none"; el.textContent = ns.link.label; $("nextlinks").appendChild(el); }
+  // A studio page that framed this player reads the finished attempt from here and records it
+  // through its own affordances. Opened on its own, there is no parent to tell.
+  try {
+    if (window.parent && window.parent !== window) window.parent.postMessage({
+      source: "interego-roleplay-player", kind: "finished",
+      scenarioKey: S.scenarioKey, personaId: persona && persona.id,
+      provisional: { points: total, max: max, pass: a.pass, afterReview: deferred },
+      choices: picks.map(p => ({ index: p.i, said: p.said || "" })),
+      coaching: weak.map(p => ({ instead: p.bestText, was: p.said || p.text, note: p.note }))
+    }, location.origin);
+  } catch (e) {}
   if (!tracked) { $("trackstatus").textContent = "Preview mode: this run wasn't launched from a course, so it isn't saved. " + freshNote(); return; }
   CRITS.forEach((c,i) => send("scored", "scored",
     {objectType:"Activity", id: c.activityId, definition:{type: X.activityTypes.criterion, name: L(c.title || c.id), description: L(c.description), extensions:{[X.extensions.criterionKey]: c.xapiKey || c.id, [X.extensions.concepts]: c.concepts || []}}},

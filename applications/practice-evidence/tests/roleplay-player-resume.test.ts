@@ -108,6 +108,14 @@ describe('a practice opened again part way through', () => {
 
   const EXT = scenario.xapi.extensions;
   const MATCHED = EXT['matchedReply']!, STEP = EXT['stepId']!, REPLY = EXT['replyId']!;
+  /** v3 names which source was confirmed, and the recognised text when the reply was spoken. */
+  const replyExt = (doc: Scenario, said: string | null, rest: Record<string, string>): Record<string, string> => {
+    const out = { ...rest };
+    const confirmed = doc.xapi.extensions['confirmedChoice'], recognised = doc.xapi.extensions['recognisedText'];
+    if (confirmed) out[confirmed] = said ? 'matched' : 'tapped';
+    if (said && recognised) out[recognised] = said;
+    return out;
+  };
   /** The scenario as it would be with the given changes made to a deep copy of it. */
   const edited = (change: (s: Scenario) => void): Scenario => { const copy = JSON.parse(JSON.stringify(scenario)) as Scenario; change(copy); return copy; };
   /** The scenario with some of its extensions left out, as an older one had it. */
@@ -142,9 +150,9 @@ describe('a practice opened again part way through', () => {
     l.pick(BEST[1]!, null);
     const [spoken, tapped] = turns(l.sent) as [St, St];
     expect(spoken.object.definition!.extensions![STEP]).toBe('dana-1');
-    expect(spoken.result).toEqual({ response: 'being charged', extensions: { [MATCHED]: firstBest.text, [REPLY]: 'dana-1-b' } });
+    expect(spoken.result).toEqual({ response: 'being charged', extensions: replyExt(scenario, 'being charged', { [MATCHED]: firstBest.text, [REPLY]: 'dana-1-b' }) });
     expect(tapped.object.definition!.extensions![STEP]).toBe('dana-2');
-    expect(tapped.result).toEqual({ response: scenario.personas[0]!.stages[1]!.choices[BEST[1]!]!.text, extensions: { [REPLY]: 'dana-2-b' } });
+    expect(tapped.result).toEqual({ response: scenario.personas[0]!.stages[1]!.choices[BEST[1]!]!.text, extensions: replyExt(scenario, null, { [REPLY]: 'dana-2-b' }) });
   });
 
   it('takes an exchange up by its ids, whatever the wording has become', async () => {
@@ -172,7 +180,7 @@ describe('a practice opened again part way through', () => {
     old.start(0);
     old.pick(BEST[0]!, 'being charged');
     old.pick(BEST[1]!, null);
-    expect(turns(old.sent)[0]!.result).toEqual({ response: 'being charged', extensions: { [MATCHED]: firstBest.text } });
+    expect(turns(old.sent)[0]!.result).toEqual({ response: 'being charged', extensions: replyExt(without('stepId', 'replyId'), 'being charged', { [MATCHED]: firstBest.text }) });
     const lost = load([verb('initialized'), ...turns(old.sent)], reworded);
     expect(await lost.carryOn()).toBe(true);
     expect(lost.title()).toBe("This practice can't be carried on here");
@@ -184,15 +192,15 @@ describe('a practice opened again part way through', () => {
   });
 
   it('keeps what the learner said when a scenario records ids and not the matched reply', async () => {
-    // Such a scenario's spoken exchange has the words heard as its answer and the reply's id beside them, and nothing else.
+    // Such a scenario's spoken exchange has the words heard as its answer and the reply's id beside them, not the matched reply.
     const idsOnly = without('matchedReply');
     const first = load([], idsOnly);
     first.start(0);
     first.pick(BEST[0]!, 'being charged twice is frustrating');
     first.pick(BEST[1]!, null);
     const [spoken, tapped] = turns(first.sent) as [St, St];
-    expect(spoken.result).toEqual({ response: 'being charged twice is frustrating', extensions: { [REPLY]: 'dana-1-b' } });
-    expect(tapped.result).toEqual({ response: scenario.personas[0]!.stages[1]!.choices[BEST[1]!]!.text, extensions: { [REPLY]: 'dana-2-b' } });
+    expect(spoken.result).toEqual({ response: 'being charged twice is frustrating', extensions: replyExt(idsOnly, 'being charged twice is frustrating', { [REPLY]: 'dana-1-b' }) });
+    expect(tapped.result).toEqual({ response: scenario.personas[0]!.stages[1]!.choices[BEST[1]!]!.text, extensions: replyExt(idsOnly, null, { [REPLY]: 'dana-2-b' }) });
     const again = load([verb('initialized'), spoken, tapped], idsOnly);
     expect(await again.carryOn()).toBe(true);
     // The spoken one comes back as the learner's own words, not as the scripted reply; the tapped one as a tap.
@@ -229,7 +237,7 @@ describe('a practice opened again part way through', () => {
     const old = load([], bare);
     old.start(0);
     old.pick(BEST[0]!, 'the weather has been lovely');
-    expect(turns(old.sent)[0]!.result).toEqual({ response: 'the weather has been lovely' });
+    expect(turns(old.sent)[0]!.result).toEqual({ response: 'the weather has been lovely', extensions: replyExt(bare, 'the weather has been lovely', {}) });
     const stuck = load([verb('initialized'), ...turns(old.sent)], bare);
     expect(await stuck.carryOn()).toBe(true);
     expect(stuck.title()).toBe("This practice can't be carried on here");
