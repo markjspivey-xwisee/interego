@@ -8,6 +8,7 @@ on:
   pull_request:
     branches: [master]
     paths:
+      - '.github/actions/restore-pinned-dul/**'
       - 'applications/foxxi-content-intelligence/i2idlx/**'
       - 'applications/foxxi-content-intelligence/src/**'
       - 'applications/foxxi-content-intelligence/affordances.ts'
@@ -22,6 +23,7 @@ on:
 
 permissions:
   contents: read
+  packages: read
 
 concurrency:
   group: i2idlx-orchestra-history-${{ github.event.pull_request.number || github.ref }}
@@ -104,6 +106,16 @@ jobs:
           curl -fsSL --retry 4 --retry-all-errors -o "$cache/gufo.download" "https://raw.githubusercontent.com/nemo-ufes/gufo/$GUFO_COMMIT/docs/gufo.ttl"
           printf '%s  %s\n' "$GUFO_SHA256" "$cache/gufo.download" | sha256sum -c -
           mv "$cache/gufo.download" "$cache/gufo.source"
+      - name: Check out the current CI seed reader separately from the historical source
+        uses: actions/checkout@v6
+        with:
+          path: ci
+          sparse-checkout: .github/actions/restore-pinned-dul
+          persist-credentials: false
+      - name: Restore the archived DUL bytes and check their hash
+        uses: ./ci/.github/actions/restore-pinned-dul
+        with:
+          root: ${{ env.I2IDLX_ROOT }}
       - name: Prepare and verify the complete original canonical source and pinned inputs
         timeout-minutes: 8
         run: |
