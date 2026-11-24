@@ -22,19 +22,12 @@ done, the rest is roadmap · **Roadmap** = designed, not built.
 
 | Capability | Status | Evidence |
 |---|---|---|
-| Full LRS (Statements, State, Activity/Agent Profile, Activities, Agents, About) | **Conformant** | `src/xapi-lrs.ts` |
-| **Official ADL `lrs-conformance-test-suite` (xAPI 2.0 / LRS-2.0 branch)** | **Conformant — 1442 / 1442, 0 failures** | Run against the live LRS (memory backend). Re-run: `git clone -b LRS-2.0 https://github.com/adlnet/lrs-conformance-test-suite && npm i && node bin/console_runner.js -x 2.0.0 -e <bridge>/xapi -a -u <user> -p <pass>`. Getting here required real fixes: accept RFC 3339 space-separator + offset-only (no-seconds) timestamps (`src/xapi-validate.ts`), strong 40-hex SHA-1 document ETags, and a plain-text 409 body on PUT-without-precondition (`src/xapi-lrs.ts`). |
-| In-repo xAPI 2.0 interactive battery — about/version, Profile doc, statement POST + round-trip, immutability (409), voiding, filtered queries, State ETag concurrency | **Conformant — 26 / 26, live, re-runnable by anyone** | `src/compliance-runner.ts` (`runXapiConformance`) + `tools/xapi-conformance-smoke.mjs`; run it yourself from the deployed microsite's **Compliance** tab → `GET /compliance/xapi/run`, or `FOXXI_BRIDGE_URL=<bridge> npx tsx tools/xapi-conformance-smoke.mjs` |
-| §4 statement data-model validation (UUID/IRI/timestamp/duration/lang-tag, IFI rules, voiding-verb-requires-StatementRef, …) enforced on every inbound statement | **Conformant** | `src/xapi-validate.ts` — 400s malformed statements |
+| xAPI Statements, State, Profile documents, Activities, Agents and About | Implemented | `src/xapi-lrs.ts` and `src/xapi-validate.ts` |
+| Official ADL xAPI 2.0 suite (June 2026) | Historical run, 1,442 passed | Live memory-backend run. |
+| Native Interego durability, load and external suites | Commit-specific evidence | Bridge Typecheck runs the native CSS/gate/PostgreSQL fixture. The JSON artifact reports xAPI 2.0 and 1.0.3 independently, ingest and read latency, and a restore of synthetic records. |
+| Foxxi interactive xAPI 2.0 smoke checks | Live smoke | `src/compliance-runner.ts` and the Compliance tab exercise the main HTTP resources. |
 
-Foxxi-as-LRS is a genuinely conformant xAPI 2.0 LRS — and you don't have
-to trust this table: the **Compliance** microsite runs the battery live
-against the deployment and shows every check pass/fail with its spec
-citation. The broader ADL `lrs-conformance-test-suite` (the ~1400-case
-external Mocha battery) is a separate, heavier run against the same
-`/xapi` surface (`node bin/console_runner.js -x 2.0.0 -e <bridge>/xapi -a
--u <u> -p <p>`); it is **not vendored in this repo**, so the in-repo,
-always-runnable evidence above is what the microsite proves.
+Read the [Bridge Typecheck run](https://github.com/markjspivey-xwisee/interego/actions/workflows/bridge-typecheck.yml) for the tested commit and backend. The upstream suites retain the test statements they write. The fixture provides a separate synthetic scope per version and a separate database for the restore. The report records the observed pass and failure counts.
 
 ## 2. cmi5 (IEEE P9274.3.1, in progress) — the LMS launch standard
 
@@ -119,7 +112,7 @@ exchange over HTTP.
 | Capability | Status | Evidence |
 |---|---|---|
 | One bridge serves many tenants, every in-memory store partitioned | **Conformant (verified)** | `src/tenant-context.ts`; isolation test: tenant B gets 404 on tenant A's statement, sees 0 of A's |
-| xAPI conformance preserved under multi-tenancy | **Conformant** | 1442 / 1442 (full ADL suite, re-runnable; default-tenant credential) |
+| Tenant isolation on the native LRS | **Verified in fixture** | Authenticated synthetic tenants exercise statement and document visibility across process and database recovery. |
 | Tenant resolution — LRS by auth credential (`user:pass:tenantId`), affordances by `tenant_pod_url` | **Implemented** | the auth gate + `callTenant` |
 | Deployment-per-tenant (fully-isolated alternative) | **Conformant** | env-configured, always available |
 
@@ -147,8 +140,7 @@ An incumbent xAPI LRS becomes a *data source under the substrate* — see
 
 ## Honest summary
 
-- **Foxxi-as-LRS**: production-conformant xAPI 2.0 (1442/1442 ADL suite), multi-tenant,
-  interoperable with any external LRS.
+- **Foxxi-as-LRS** uses the native Interego store. The xAPI surface, restoration and synthetic performance are measured by the acceptance fixture above.
 - **Foxxi-as-LMS**: the full cmi5 launch-and-track loop closes inside
   Foxxi — register a cmi5.xml course structure, launch an AU (sequential
   gating derived from the structure), the AU runs and reports, moveOn

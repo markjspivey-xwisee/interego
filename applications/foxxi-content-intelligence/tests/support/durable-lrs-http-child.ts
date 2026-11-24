@@ -51,7 +51,7 @@ attachXapiLrsRoutes(app, {
   onStatementStored: statement => { callbacks.push({ id: String(statement.id), statement: structuredClone(statement) }); },
   onVoidApplied: (target, voidingId) => { voidCallbacks.push({ target: target.id, voidingId }); },
   ownerTenantOfStatement: () => { forwardChecks++; return null; },
-  podUrl: '', tenantDid: 'did:web:durable.test' as IRI, basicAuthPairs: '', forwardingTargets: '', selfBaseUrl: 'https://durable.test',
+  podUrl: '', tenantDid: 'did:web:durable.test' as IRI, basicAuthPairs: process.env.LRS_TEST_BASIC_AUTH_PAIRS ?? '', forwardingTargets: '', selfBaseUrl: 'https://durable.test',
   bearerRegistrationResolver: token => token.startsWith('alice-reg:') ? token.slice('alice-reg:'.length) : null,
   bearerTenantResolver: token => token === 'alice' || token.startsWith('alice-reg:') ? process.env.LRS_TEST_ALICE as TenantId : token === 'bob' ? process.env.LRS_TEST_BOB as TenantId : null,
 });

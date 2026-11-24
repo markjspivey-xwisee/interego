@@ -444,3 +444,45 @@ jobs:
           TEST_NATIVE_CSS_ROOT: ${{ runner.temp }}/native-lrs-css/integrations/pgsl-css-accessor
           TEST_NATIVE_PG_URL: postgresql://foxxi_test:isolated_fixture_only@127.0.0.1:5432/native_interego_test
         run: npx vitest run applications/foxxi-content-intelligence/tests/native-lrs-store.test.ts applications/foxxi-content-intelligence/tests/xapi-durable-primary.test.ts
+
+      - name: Check for changes affecting Foxxi LRS readiness
+        id: foxxi-readiness
+        env:
+          BASE_COMMIT: ${{ github.event.pull_request.base.sha }}
+        run: |
+          set -euo pipefail
+          AFFECTED="$(git diff --name-only "$BASE_COMMIT" HEAD -- \
+            applications/foxxi-content-intelligence/src/{xapi-lrs,xapi-validate,statement-store,native-lrs-store}.ts \
+            applications/foxxi-content-intelligence/tests/support \
+            applications/foxxi-content-intelligence/tools/lrs-readiness.ts \
+            integrations/pgsl-css-accessor packages/{pgsl,pgsl-store} deploy/css-gate \
+            .github/workflows/bridge-typecheck.yml)"
+          if [ -n "$AFFECTED" ]; then echo 'run=true' >> "$GITHUB_OUTPUT"; fi
+      - name: Check out pinned ADL xAPI suites
+        if: steps.foxxi-readiness.outputs.run == 'true'
+        uses: actions/checkout@v6
+        with:
+          repository: adlnet/lrs-conformance-test-suite
+          ref: 5bc232d349c60faded8240da698f195106091638
+          path: .foxxi-test-adl
+          persist-credentials: false
+      - name: Install upstream test dependencies
+        if: steps.foxxi-readiness.outputs.run == 'true'
+        working-directory: .foxxi-test-adl
+        run: npm install --ignore-scripts --no-audit --no-fund
+      - name: Measure Foxxi LRS load, restore and external conformance
+        if: steps.foxxi-readiness.outputs.run == 'true'
+        env:
+          TEST_NATIVE_CSS_ROOT: ${{ runner.temp }}/native-lrs-css/integrations/pgsl-css-accessor
+          TEST_NATIVE_PG_URL: postgresql://foxxi_test:isolated_fixture_only@127.0.0.1:5432/foxxi_lrs_readiness
+          FOXXI_TEST_POSTGRES_CONTAINER: ${{ job.services.postgres.id }}
+          FOXXI_TEST_ADL_DIRECTORY: ${{ github.workspace }}/.foxxi-test-adl
+          FOXXI_TEST_REPORT_DIRECTORY: ${{ runner.temp }}/foxxi-lrs-readiness
+        run: node --import tsx applications/foxxi-content-intelligence/tools/lrs-readiness.ts
+      - name: Publish synthetic Foxxi LRS evidence
+        if: always() && steps.foxxi-readiness.outputs.run == 'true'
+        uses: actions/upload-artifact@v6
+        with:
+          name: foxxi-lrs-readiness
+          path: ${{ runner.temp }}/foxxi-lrs-readiness/report.json
+          if-no-files-found: warn

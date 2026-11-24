@@ -270,13 +270,16 @@ export const xapiProfileServerAffordances: Affordance[] = [
     action: 'urn:iep:action:foxxi:xapi-profile-controls' as IRI,
     toolName: 'foxxi.xapi_profile_controls',
     title: 'Read what can be done after a statement that follows a template',
-    description: `Read the controls a statement template offers: the affordances its profile states under xapix:offers, each described as this deployment serves it now (target, method, inputs). ${SERVER} Name one or more statement templates in template. This is the document an xapix:controls link on a statement points at. It is of a template, not of a statement, so it says nothing a statement says. Follow each target as given and build no address from a statement. An offer is a possibility, not a permission: each affordance applies its own access rules. unresolved names an offered affordance this deployment does not serve. To ask for one statement, POST { statement, profile? } to the same address: the templates it follows are found and the statement is not kept.`,
+    description: `Read the controls a statement template offers: the affordances its profile states under xapix:offers, each described as this deployment serves it now (target, method, inputs). ${SERVER} Name one or more statement templates in template and optionally select a profile or published version with profile. The response identifies that version and its link remains pinned when a later version is published. This is the document an xapix:controls link on a statement points at. It is of a template, not of a statement, so it says nothing a statement says. Follow each target as given and build no address from a statement. An offer is a possibility, not a permission: each affordance applies its own access rules. unresolved names an offered affordance this deployment does not serve. To ask for one statement, POST { statement, profile? } to the same address: the templates it follows are found and the statement is not kept.`,
     method: 'GET',
     targetTemplate: '{base}/xapi/profiles/controls',
     mediaType: 'application/json',
     externallyRouted: true,
     annotations: { title: 'Read a template\'s controls', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
-    inputs: [{ name: 'template', type: 'string', required: true, description: 'The IRI of a statement template held on the server.' }],
+    inputs: [
+      { name: 'template', type: 'string', required: true, description: 'The IRI of a statement template held on the server.' },
+      { name: 'profile', type: 'string', required: false, description: 'Select a profile or a specific published version.' },
+    ],
     outputs: {
       description: 'The controls document. 404 when no IRI named is a statement template held here.',
       properties: {
@@ -285,6 +288,7 @@ export const xapiProfileServerAffordances: Affordance[] = [
         controls: { type: 'array', items: { type: 'object' }, description: 'Each: offeredBy (the template), affordance (its IRI), title, description, method, target, mediaType, inputs.' },
         unresolved: { type: 'array', items: { type: 'object' }, description: 'Offers whose affordance this deployment does not serve.' },
         notTemplates: { type: 'array', items: { type: 'string' } },
+        profileVersion: { type: 'string', description: 'The exact version used when profile was supplied.' },
         note: { type: 'string' },
       },
       required: ['id', 'templates', 'controls'],

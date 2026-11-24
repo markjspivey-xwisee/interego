@@ -8,14 +8,14 @@ export const NATIVE_CSS_FIXTURE_CAPABILITY = 'native-css-fixture-existing-write-
 
 export interface NativeCssFixture {
   readonly podUrl: string;
-  restart(): Promise<void>;
+  restart(connectionString?: string): Promise<void>;
   stop(): Promise<void>;
 }
 
 /** Isolated test server only. SQL is confined to Interego's existing substrate. */
 export async function startNativeCssFixture(): Promise<NativeCssFixture> {
   const cssRoot = process.env.TEST_NATIVE_CSS_ROOT;
-  const connectionString = process.env.TEST_NATIVE_PG_URL;
+  let connectionString = process.env.TEST_NATIVE_PG_URL;
   if (!cssRoot || !connectionString) {
     throw new Error('Native recovery fixture requires TEST_NATIVE_CSS_ROOT and TEST_NATIVE_PG_URL');
   }
@@ -81,7 +81,7 @@ export async function startNativeCssFixture(): Promise<NativeCssFixture> {
   await boot();
   return {
     podUrl: `http://127.0.0.1:${gatePort}/`,
-    async restart() { await stop(); await boot(); },
+    async restart(databaseUrl = connectionString) { await stop(); connectionString = databaseUrl; await boot(); },
     stop,
   };
 }

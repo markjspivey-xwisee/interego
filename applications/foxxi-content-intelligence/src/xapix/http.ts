@@ -118,6 +118,15 @@ export async function templatesFollowed(server: ProfileServer, statement: Json, 
   });
 }
 
+/** Resolve an explicit selection so the link identifies the version used. */
+function selectedVersion(server: ProfileServer, requested: unknown): string | undefined {
+  if (requested === undefined) return undefined;
+  if (typeof requested !== 'string' || requested.length === 0) throw new ProfileServerError(400, '`profile` is one profile or version IRI.');
+  const held = server.dataset.get(requested);
+  if (!held) throw new ProfileServerError(400, 'No profile with that IRI is on this server.');
+  return held.version;
+}
+
 export function mountXapixRoutes(app: Express, server: ProfileServer, o: XapixRouteOptions): void {
   const open = (res: Response) => { res.setHeader('Access-Control-Allow-Origin', '*'); };
   const fail = (res: Response, e: unknown) => {
@@ -140,11 +149,19 @@ export function mountXapixRoutes(app: Express, server: ProfileServer, o: XapixRo
       const named = strings(req.query.template);
       if (named.length === 0) { res.status(400).json({ error: 'Name one or more statement templates as `template`.' }); return; }
       if (named.length > 20) { res.status(400).json({ error: 'Up to 20 templates are read in one request.' }); return; }
-      const found = named.map(iri => ({ iri, resolved: server.resolve(iri) }));
-      const missing = found.filter(f => f.resolved?.kind !== 'template').map(f => f.iri);
-      if (missing.length === named.length) { res.status(404).json({ error: 'None of those is a statement template held here.', notTemplates: missing }); return; }
-      const templates = found.filter(f => f.resolved?.kind === 'template').map(f => f.resolved!.body as unknown as Json);
-      res.json({ ...controlsDocument({ id: controlsUrl(o.base, templates.map(t => String(t.id))), templates, describe }), ...(missing.length ? { notTemplates: missing } : {}) });
+      const profileVersion = selectedVersion(server, req.query.profile);
+      const pinned = profileVersion ? new Map(liveTemplates(server, profileVersion).map(template => [template.id, template])) : undefined;
+      const templates: Json[] = [];
+      const missing: string[] = [];
+      for (const iri of named) {
+        const resolved = pinned ? undefined : server.resolve(iri);
+        const template = pinned?.get(iri) ?? (resolved?.kind === 'template' ? resolved.body as unknown as Json : undefined);
+        if (template) templates.push(template);
+        else missing.push(iri);
+      }
+      if (!templates.length) { res.status(404).json({ error: 'None of those is a statement template held in the selection.', notTemplates: missing }); return; }
+      const id = controlsUrl(o.base, templates.map(t => String(t.id)), profileVersion);
+      res.json({ ...controlsDocument({ id, templates, describe }), ...(profileVersion ? { profileVersion } : {}), ...(missing.length ? { notTemplates: missing } : {}) });
     } catch (e) { fail(res, e); }
   });
 
@@ -154,9 +171,11 @@ export function mountXapixRoutes(app: Express, server: ProfileServer, o: XapixRo
     try {
       const body = isObj(req.body) ? req.body : {};
       if (!isObj(body.statement)) { res.status(400).json({ error: '`statement` is one xAPI Statement, as a JSON object.' }); return; }
-      const templates = (await templatesFollowed(server, body.statement, typeof body.profile === 'string' ? body.profile : undefined)).filter(t => offersOf(t).length > 0);
-      const ids = templates.map(t => String(t.id));
-      res.json({ ...controlsDocument({ id: ids.length ? controlsUrl(o.base, ids) : `${o.base}/controls`, templates, describe }), ...(ids.length ? { link: controlsUrl(o.base, ids) } : {}) });
+      await server.ready();
+      const profileVersion = selectedVersion(server, body.profile);
+      const templates = (await templatesFollowed(server, body.statement, profileVersion)).filter(t => offersOf(t).length > 0);
+      const link = templates.length > 0 && templates.length <= 20 ? controlsUrl(o.base, templates.map(t => String(t.id)), profileVersion) : undefined;
+      res.json({ ...controlsDocument({ id: link ?? `${o.base}/controls`, templates, describe }), ...(profileVersion ? { profileVersion } : {}), ...(link ? { link } : {}) });
     } catch (e) { fail(res, e); }
   });
 }
