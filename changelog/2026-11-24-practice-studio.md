@@ -5,4 +5,5 @@ phone-roleplay xAPI profile v3. Agents list scenarios, author one, start a
 session, score and coach a finished attempt, and read a learner's progress.
 The seeded pass-gate does not emit `completed`. Statements are checked against
 the v3 profile before they are kept. The page under `docs/applications/practice-studio/`
-is the library, player frame, results and authoring box. Nothing is deployed.
+is the library, player frame, results and authoring box. The hosted player and
+its scenario package are unchanged. Nothing is deployed.

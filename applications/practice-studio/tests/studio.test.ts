@@ -224,11 +224,17 @@ describe('practice studio', () => {
     }
   });
 
-  it('refuses a session that is not finished, and the player tells a parent page when one is', () => {
+  it('follows the hosted player design and refuses an unfinished session', () => {
     const page = readFileSync(PLAYER, 'utf8');
-    expect(page).toContain('source: "interego-roleplay-player"');
-    expect(page).toContain('confirmedChoice');
-    expect(page).toContain('const locked = typeof P.persona === "string"');
+    const scenario = JSON.parse(readFileSync(new URL('../../../docs/applications/practice-evidence/roleplay-player/scenarios/double-charged-subscription.json', import.meta.url), 'utf8')) as {
+      resultAfterReview: boolean; rubricRef: string; xapi: { verbs: { turn: string } };
+    };
+    expect(scenario.resultAfterReview).toBe(true);
+    expect(scenario.rubricRef).toBe('urn:pev:scenario:2820abbd51e6ac5c#version-1');
+    expect(scenario.xapi.verbs.turn).toBe('https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/took-turn');
+    expect(page).toContain('new URL("/cmi5/reviewed", cfg.lrs)');
+    expect(page).toContain('send("turn"');
+    expect(page).not.toContain('source: "interego-roleplay-player"');
     const held = new Studio();
     expect(held.scoreAttempt({ sessionId: 'missing', choices: [] })['kind']).toBe('refusal');
     const started = held.startSession({ scenarioKey: 'double-charged-subscription', learner: 'Pat', personaId: 'dana' });

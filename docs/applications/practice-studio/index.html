@@ -43,7 +43,7 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;p
   <section id="practice" hidden>
     <div class="card">
       <h1>Practice</h1>
-      <p class="muted">The session is the role-play player. When it finishes, this page asks the studio to score and coach the attempt.</p>
+      <p class="muted">The session opens the hosted role-play player for the persona this session was started with. That player writes one took-turn statement per exchange. A pass-gate stays uncompleted until a later launch asks the LMS for the reviewed result. Scoring this session is the studio affordance, against that same scenario revision.</p>
       <label for="learner">Your name</label>
       <input id="learner" value="Learner 12" autocomplete="nickname">
       <label for="scenario">Scenario</label>
@@ -181,7 +181,7 @@ $('begin').onclick = async () => {
       frame.dataset.sessionId = started.session.sessionId;
       frame.src = started.playerUrl;
       frame.hidden = false;
-      $('sessionNote').textContent = 'Session ' + started.session.sessionId + ' is open. Finish the call in the player.';
+      $('sessionNote').textContent = 'Session ' + started.session.sessionId + ' is open in the hosted player, as ' + $('persona').value + '. The studio scores that persona and the scenario revision this session stored.';
       return;
     } catch (error) {
       $('sessionNote').textContent = error.message;

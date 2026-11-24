@@ -9,13 +9,15 @@ progress are records agents discover and invoke. The page at
 `docs/applications/practice-studio/` is the library, the practice session, the
 results view and the authoring box.
 
-The practice session **is** the existing player
-(`docs/applications/practice-evidence/roleplay-player/`). The seeded scenario
-is `double-charged-subscription.json`. When a framed player finishes, the page
-sends the replies taken to `studio.score_attempt`. That act replays the script
-the way the player does, writes a score and coaching notes, and emits xAPI
-statements. Those statements are checked, in process, against the v3 profile
-snapshot in `profile/phone-roleplay-xapi.ttl` (the document at
+The practice session opens the hosted role-play player and its scenario as
+they stand. That package, including per-turn `took-turn` statements,
+`resultAfterReview`, the scenario-version
+`urn:pev:scenario:2820abbd51e6ac5c#version-1`, and `GET /cmi5/reviewed`, is
+owned by the player republish. This studio does not edit those files and does
+not publish a new package. `studio.score_attempt` replays the script the way
+that player does, against the scenario revision the session stored, and checks
+the statements it emits against the v3 profile snapshot in
+`profile/phone-roleplay-xapi.ttl` (the document at
 `https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3`)
 using Foxxi's supplied-profile checker.
 
