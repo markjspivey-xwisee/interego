@@ -590,27 +590,37 @@ export function podDirectoryStore(cfg: {
       }
       const perCard = [...urls].filter(url => url !== legacy);
       const loaded: PublicAgentCard[] = [];
+      const have = new Set<string>();
       for (const url of perCard) {
         const card = await readCard(url);
-        if (card && !loaded.some(existing => existing.agentId === card.agentId)) loaded.push(card);
+        if (card && !have.has(card.agentId)) { loaded.push(card); have.add(card.agentId); }
       }
-      if (perCard.length > 0) return loaded;
+      // A per-card file does not mean the legacy index is finished. A PUT that
+      // failed last time left the rest of the index behind, and deleting it
+      // then would drop those cards on the next boot.
       const res = await cfg.fetch(legacy, { method: 'GET', headers: { Accept: 'application/ld+json' } });
-      if (!res.ok) return [];
+      if (!res.ok) return loaded;
       let fromLegacy: PublicAgentCard[] = [];
       try { fromLegacy = parseStoredCards(JSON.parse(await res.text()), cfg.addressFor); }
-      catch { return []; }
-      if (fromLegacy.length === 0) return [];
+      catch { return loaded; }
+      let migratedAll = true;
       for (const card of fromLegacy) {
+        if (have.has(card.agentId)) continue;
         const put = await cfg.fetch(fileFor(card.agentId), {
           method: 'PUT',
           headers: { 'Content-Type': 'application/ld+json' },
           body: JSON.stringify(card),
         });
-        if (!put.ok) log(`[agent-directory] migrate ${card.agentId} failed: ${put.status}`);
+        if (!put.ok) {
+          migratedAll = false;
+          log(`[agent-directory] migrate ${card.agentId} failed: ${put.status}`);
+          continue;
+        }
+        loaded.push(card);
+        have.add(card.agentId);
       }
-      await cfg.fetch(legacy, { method: 'DELETE' });
-      return fromLegacy;
+      if (migratedAll) await cfg.fetch(legacy, { method: 'DELETE' });
+      return loaded;
     },
     async put(card) {
       const res = await cfg.fetch(fileFor(card.agentId), {
@@ -630,8 +640,10 @@ export function podDirectoryStore(cfg: {
 
 export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
   const cards = new Map<string, PublicAgentCard>();
+  /** New agents whose publish has reserved a slot and not finished. Counted toward the cap. */
+  const reserved = new Set<string>();
+  const agentChain = new Map<string, Promise<void>>();
   const base = deps.publicBaseUrl.replace(/\/$/, '');
-  const writeSeq = new Map<string, number>();
   let tail: Promise<void> = Promise.resolve();
   const now = deps.now ?? (() => new Date().toISOString());
 
@@ -641,14 +653,16 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
     return run;
   }
 
-  function snapshot(q = '', limit = SEARCH_LIMIT): PublicAgentCard[] {
-    return [...cards.values()].filter(card => matches(card, q)).slice(0, limit);
+  /** One agent at a time, so a failed later attempt cannot discard an earlier success, and a revocation waits for the publish it must undo. Other agents are not in this chain. */
+  function onAgent<T>(agentId: string, fn: () => Promise<T>): Promise<T> {
+    const previous = agentChain.get(agentId) ?? Promise.resolve();
+    const run = previous.then(fn, fn);
+    agentChain.set(agentId, run.then(() => undefined, () => undefined));
+    return run;
   }
 
-  function bump(agentId: string): number {
-    const next = (writeSeq.get(agentId) ?? 0) + 1;
-    writeSeq.set(agentId, next);
-    return next;
+  function snapshot(q = '', limit = SEARCH_LIMIT): PublicAgentCard[] {
+    return [...cards.values()].filter(card => matches(card, q)).slice(0, limit);
   }
 
   function addressFor(agentId: string): { cardIri: string; relayAddress: string } | null {
@@ -733,42 +747,50 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
       const prepared = prepareCard(args);
       if ('error' in prepared) return json(prepared);
       const { caller, card, turtle } = prepared;
-      const token = await exclusive(async () => {
-        if (!cards.has(caller.agentId) && cards.size >= MAX_CARDS) return 0;
-        return bump(caller.agentId);
-      });
-      if (token === 0) {
-        return json({
-          error: 'directory_full',
-          code: 503,
-          message: `The directory holds ${MAX_CARDS} cards and does not evict one to make room. Replacing your own card still works. Withdraw a card to free a slot.`,
+      return onAgent(caller.agentId, async () => {
+        const gate = await exclusive(async () => {
+          if (cards.has(caller.agentId) || reserved.has(caller.agentId)) return 'replace' as const;
+          if (cards.size + reserved.size >= MAX_CARDS) return 'full' as const;
+          reserved.add(caller.agentId);
+          return 'new' as const;
         });
-      }
-      const published = await deps.publish({
-        ...sessionFields(args),
-        pod_name: caller.agentId,
-        graph_iri: card.cardIri,
-        graph_content: turtle,
-        visibility: 'public',
-        sign_authorship: true,
-        sync: true,
-        descriptor_id: `urn:iep:agent-card:${caller.agentId}`,
-        auto_supersede_prior: true,
-        modal_status: 'Asserted',
-      });
-      const receipt = readPublishReceipt(published);
-      if (receipt.ok === false) return json(receipt.body);
-      return exclusive(async () => {
-        if (writeSeq.get(caller.agentId) !== token) {
-          return json({ published: true, indexed: false, message: 'A later write for this card finished first, so this copy was not indexed.' });
+        if (gate === 'full') {
+          return json({
+            error: 'directory_full',
+            code: 503,
+            message: `The directory holds ${MAX_CARDS} cards and does not evict one to make room. Replacing your own card still works. Withdraw a card to free a slot.`,
+          });
         }
-        const stored: PublicAgentCard = { ...card, ...(receipt.descriptorUrl ? { descriptorUrl: receipt.descriptorUrl } : {}) };
-        cards.set(caller.agentId, stored);
-        let persisted = false;
+        let indexed = false;
         try {
-          if (deps.store) { await deps.store.put(stored); persisted = true; }
-        } catch (err) { deps.log?.(`[agent-directory] index persist failed: ${(err as Error).message}`); }
-        return json({ published: true, persisted, ...wireCard(stored, deps.notifyTarget, base) });
+          const published = await deps.publish({
+            ...sessionFields(args),
+            pod_name: caller.agentId,
+            graph_iri: card.cardIri,
+            graph_content: turtle,
+            visibility: 'public',
+            sign_authorship: true,
+            sync: true,
+            descriptor_id: `urn:iep:agent-card:${caller.agentId}`,
+            auto_supersede_prior: true,
+            modal_status: 'Asserted',
+          });
+          const receipt = readPublishReceipt(published);
+          if (receipt.ok === false) return json(receipt.body);
+          return exclusive(async () => {
+            reserved.delete(caller.agentId);
+            const stored: PublicAgentCard = { ...card, ...(receipt.descriptorUrl ? { descriptorUrl: receipt.descriptorUrl } : {}) };
+            cards.set(caller.agentId, stored);
+            indexed = true;
+            let persisted = false;
+            try {
+              if (deps.store) { await deps.store.put(stored); persisted = true; }
+            } catch (err) { deps.log?.(`[agent-directory] index persist failed: ${(err as Error).message}`); }
+            return json({ published: true, persisted, ...wireCard(stored, deps.notifyTarget, base) });
+          });
+        } finally {
+          if (!indexed) await exclusive(async () => { reserved.delete(caller.agentId); });
+        }
       });
     },
 
@@ -795,47 +817,51 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
       };
       const turtle = cardTurtle({ ...withdrawn, version: cardVersion(withdrawn) });
       if (!turtle) return json({ error: 'invalid_card', code: 400, message: 'The withdrawal could not be written as a public graph.' });
-      const token = await exclusive(async () => bump(caller.agentId));
-      const published = await deps.publish({
-        ...sessionFields(args),
-        pod_name: caller.agentId,
-        graph_iri: located.cardIri,
-        graph_content: turtle,
-        visibility: 'public',
-        sign_authorship: true,
-        sync: true,
-        descriptor_id: `urn:iep:agent-card:${caller.agentId}`,
-        auto_supersede_prior: true,
-        modal_status: 'Counterfactual',
-      });
-      const receipt = readPublishReceipt(published);
-      if (receipt.ok === false) return json(receipt.body);
-      return exclusive(async () => {
-        if (writeSeq.get(caller.agentId) !== token) {
-          return json({ withdrawn: false, message: 'A later write for this card finished first.' });
-        }
-        cards.delete(caller.agentId);
-        try { if (deps.store) await deps.store.remove(caller.agentId); }
-        catch (err) { deps.log?.(`[agent-directory] index remove failed: ${(err as Error).message}`); }
-        return json({ withdrawn: true, agentId: caller.agentId, cardIri: located.cardIri });
+      return onAgent(caller.agentId, async () => {
+        const published = await deps.publish({
+          ...sessionFields(args),
+          pod_name: caller.agentId,
+          graph_iri: located.cardIri,
+          graph_content: turtle,
+          visibility: 'public',
+          sign_authorship: true,
+          sync: true,
+          descriptor_id: `urn:iep:agent-card:${caller.agentId}`,
+          auto_supersede_prior: true,
+          modal_status: 'Counterfactual',
+        });
+        const receipt = readPublishReceipt(published);
+        if (receipt.ok === false) return json(receipt.body);
+        return exclusive(async () => {
+          cards.delete(caller.agentId);
+          reserved.delete(caller.agentId);
+          try { if (deps.store) await deps.store.remove(caller.agentId); }
+          catch (err) { deps.log?.(`[agent-directory] index remove failed: ${(err as Error).message}`); }
+          return json({ withdrawn: true, agentId: caller.agentId, cardIri: located.cardIri });
+        });
       });
     },
 
     async forgetRevoked(podName, subjects) {
-      const gone: string[] = [];
+      const targets = new Set<string>();
+      if (AGENT_ID.test(podName)) targets.add(podName);
+      for (const subject of subjects) if (AGENT_ID.test(subject)) targets.add(subject);
       await exclusive(async () => {
-        for (const card of [...cards.values()]) {
-          const named = subjects.includes(card.agentId) || (card.did !== undefined && subjects.includes(card.did));
-          if (card.agentId !== podName && !named) continue;
-          if (card.agentId === podName || named) {
-            bump(card.agentId);
-            cards.delete(card.agentId);
-            gone.push(card.agentId);
-            try { if (deps.store) await deps.store.remove(card.agentId); }
-            catch (err) { deps.log?.(`[agent-directory] index remove failed: ${(err as Error).message}`); }
-          }
+        for (const card of cards.values()) {
+          if (card.did !== undefined && subjects.includes(card.did)) targets.add(card.agentId);
         }
       });
+      const gone: string[] = [];
+      for (const agentId of targets) {
+        await onAgent(agentId, () => exclusive(async () => {
+          reserved.delete(agentId);
+          const had = cards.delete(agentId);
+          if (!had) return;
+          gone.push(agentId);
+          try { if (deps.store) await deps.store.remove(agentId); }
+          catch (err) { deps.log?.(`[agent-directory] index remove failed: ${(err as Error).message}`); }
+        }));
+      }
       return gone;
     },
 
