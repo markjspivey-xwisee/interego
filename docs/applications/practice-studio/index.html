@@ -43,36 +43,34 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;p
   <section id="practice" hidden>
     <div class="card">
       <h1>Practice</h1>
-      <p class="muted">The frame is the hosted player. It records an attempt only when a course launches it. This page does not read that record. To file a studio score, declare the reply indexes below. That score is arithmetic on those indexes, not the call.</p>
-      <label for="learner">Your name</label>
-      <input id="learner" value="Learner 12" autocomplete="nickname">
+      <p class="muted">A session is a cmi5 launch of the hosted player. Paste the signed request for <code>studio.start_session</code>; that payload names the scenario, the persona and whether the learner's place is a person or an agent. The fields below are a reminder of the library and are not added to the signature. The player writes the statements under the signer's account.</p>
       <label for="scenario">Scenario</label>
       <select id="scenario"></select>
       <label for="persona">Other person</label>
       <select id="persona"></select>
-      <p><button class="primary" id="begin" type="button">Open the player</button></p>
+      <label for="learnerPlace">Who is in the learner's place</label>
+      <select id="learnerPlace"><option value="person" selected>A person</option><option value="agent">An agent, marked as a test</option></select>
+      <label for="envelope">Signed request</label>
+      <textarea id="envelope" spellcheck="false" placeholder='{"_signed_payload":"...","_signature":"0x..."}'></textarea>
+      <p><button class="primary" id="begin" type="button">Open the launch</button></p>
       <p class="note" id="sessionNote"></p>
-      <label for="indexes">Declared reply indexes, in order</label>
-      <input id="indexes" placeholder="1, 1, 2, 0, 1">
-      <label for="actorKind">Who took them</label>
-      <select id="actorKind"><option value="person">A person, as you declare</option><option value="agent" selected>An agent</option></select>
-      <p><button class="primary" id="file" type="button">File declared choices</button></p>
-      <p class="note" id="fileNote"></p>
     </div>
     <iframe id="player" hidden title="Role-play practice"></iframe>
   </section>
   <section id="results" hidden>
     <div class="card">
-      <h1>Results and coaching</h1>
-      <p class="muted">These are declared scores kept in this process. A pass-gate percent is provisional. The hosted player keeps the real attempt, and only when a course launches it.</p>
-      <p><button class="primary" id="refresh" type="button">Show progress</button></p>
+      <h1>Results</h1>
+      <p class="muted">This is Practice Evidence's read of one registration: the statements the player wrote. It is not a score this page computed.</p>
+      <label for="registration">Registration</label>
+      <input id="registration" autocomplete="off">
+      <p><button class="primary" id="refresh" type="button">Read the launch</button></p>
       <div id="progress"></div>
     </div>
   </section>
   <section id="author" hidden>
     <div class="card">
       <h1>Author a scenario</h1>
-      <p class="muted">Edit the document and save it. Agents reach the same act as <code>studio.create_scenario</code>. A pass-gate stays provisional.</p>
+      <p class="muted">Edit the document here, then sign a <code>studio.create_scenario</code> request whose payload contains it. Saving sends that signed request. Only the signer can replace what they saved.</p>
       <label for="draft">Scenario document</label>
       <textarea id="draft" spellcheck="false"></textarea>
       <p><button class="primary" id="save" type="button">Save scenario</button> <button type="button" id="loadSample">Start from the sample</button></p>
@@ -82,9 +80,6 @@ table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;p
 </main>
 <script>
 const $ = (id) => document.getElementById(id);
-const learnerKey = 'studio-learner';
-const saved = localStorage.getItem(learnerKey);
-if (saved) $('learner').value = saved;
 let bridge = null;
 let scenarios = [];
 let staticMode = false;
@@ -125,7 +120,7 @@ function renderLibrary(){
   root.innerHTML = '<div class="card"><h1>Scenario library</h1><p class="muted" id="libNote"></p></div><div class="grid" id="cards"></div>';
   $('libNote').textContent = staticMode
     ? 'This page is the published studio. Scoring and progress run when the studio bridge is up; until then the player opens in preview and keeps its own score on screen.'
-    : 'Each scenario is a document agents can open. A studio score is reply indexes you declare. The player records an attempt only when a course launches it.';
+    : 'Each scenario is a document. A session is a signed cmi5 launch of the hosted player. Progress is Practice Evidence\'s read of the statements that player wrote.';
   const cards = $('cards');
   if (!scenarios.length) {
     cards.appendChild(libraryCard({
@@ -165,92 +160,61 @@ function fillScenarios(){
 }
 $('scenario').onchange = fillPersonas;
 
-function playerSrc(){
-  const key = $('scenario').value;
-  const persona = $('persona').value;
-  if (bridge === '') {
-    return '/player/index.html?scenario=' + encodeURIComponent('/studio/scenarios/' + key + '/document') + '&persona=' + encodeURIComponent(persona);
-  }
-  return '../practice-evidence/roleplay-player/index.html?persona=' + encodeURIComponent(persona);
-}
-
 $('begin').onclick = async () => {
-  localStorage.setItem(learnerKey, $('learner').value.trim());
   $('sessionNote').textContent = '';
   const frame = $('player');
-  if (!staticMode) {
-    try {
-      const started = await api('/studio/sessions', {
-        method: 'POST', headers: { 'content-type': 'application/json' },
-        body: JSON.stringify({ scenarioKey: $('scenario').value, learner: $('learner').value.trim(), personaId: $('persona').value }),
-      });
-      frame.dataset.sessionId = started.session.sessionId;
-      frame.src = started.playerUrl;
-      frame.hidden = false;
-      $('sessionNote').textContent = 'The player is open as ' + $('persona').value + '. It does not file this session. Declare the reply indexes to store a studio score for session ' + started.session.sessionId + '.';
-      return;
-    } catch (error) {
-      $('sessionNote').textContent = error.message;
-      return;
-    }
+  if (staticMode) {
+    frame.src = '../practice-evidence/roleplay-player/index.html?persona=' + encodeURIComponent($('persona').value);
+    frame.hidden = false;
+    $('sessionNote').textContent = 'Preview. A launch needs the studio bridge and a signed request. The player keeps nothing from this page.';
+    return;
   }
-  frame.removeAttribute('data-session-id');
-  frame.src = playerSrc();
-  frame.hidden = false;
-  $('sessionNote').textContent = 'Preview. The player keeps the score on its own screen. Connect the studio bridge to file it.';
-};
-
-$('file').onclick = async () => {
-  const sessionId = $('player').dataset.sessionId;
-  $('fileNote').textContent = '';
-  if (!sessionId || staticMode) { $('fileNote').textContent = 'Open a session on the studio bridge first. A preview of the player does not file a score.'; return; }
-  const choices = $('indexes').value.split(',').map((part) => part.trim()).filter(Boolean).map((part) => ({ index: Number(part) }));
-  if (!choices.length || choices.some((choice) => !Number.isInteger(choice.index))) { $('fileNote').textContent = 'Each index is a whole number, separated by commas.'; return; }
   try {
-    const scored = await api('/studio/attempts/score', {
+    const started = await api('/studio/sessions', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, personaId: $('persona').value, actorKind: $('actorKind').value, choices }),
+      body: $('envelope').value,
     });
-    const score = scored.score;
-    $('fileNote').textContent = 'Declared score ' + score.percent + '% · ' + (score.pass ? 'over the bar' : 'under the bar') + ' · ' + (scored.coaching.notes || []).length + ' coaching notes. This is not the player\'s record.';
-    show('results');
-    await loadProgress();
+    if (!started.launch) throw new Error('the bridge did not return a launch');
+    frame.src = started.launch.launchUrl;
+    frame.hidden = false;
+    $('registration').value = started.launch.registration;
+    $('sessionNote').textContent = 'Launch ' + started.launch.registration + ' for ' + started.launch.learnerDid + '. The player writes the statements.';
   } catch (error) {
-    $('fileNote').textContent = error.message;
+    $('sessionNote').textContent = error.message;
   }
 };
 
 function loadProgress(){
   const root = $('progress');
-  if (staticMode) { root.innerHTML = '<p class="note">Progress is filed by the studio bridge. This published page can still open the player.</p>'; return Promise.resolve(); }
-  return api('/studio/progress?learner=' + encodeURIComponent($('learner').value.trim())).then((view) => {
-    const rate = view.passRate === null ? '—' : view.passRate + '%';
-    const avg = view.averagePercent === null ? '—' : view.averagePercent + '%';
-    root.innerHTML = '<p><span class="pill">' + view.attempts + ' attempts</span> <span class="pill">pass rate ' + rate + '</span> <span class="pill">average ' + avg + '</span></p>';
-    if (view.criteria && view.criteria.length) {
-      const table = document.createElement('table');
-      table.innerHTML = '<tr><th>Criterion</th><th>Average</th></tr>';
-      for (const criterion of view.criteria) {
-        const row = document.createElement('tr');
-        row.innerHTML = '<td></td><td></td>';
-        row.children[0].textContent = criterion.title;
-        row.children[1].textContent = criterion.averagePercent + '%';
-        table.appendChild(row);
-      }
-      root.appendChild(table);
+  if (staticMode) { root.innerHTML = '<p class="note">Reading a launch needs the studio bridge and the signed request that opened it.</p>'; return Promise.resolve(); }
+  let envelope;
+  try { envelope = JSON.parse($('envelope').value); } catch (error) { root.innerHTML = '<p class="note">The signed request is not JSON.</p>'; return Promise.resolve(); }
+  return api('/studio/progress', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(envelope),
+  }).then((view) => {
+    const read = view.read || {};
+    if (read.problems) {
+      root.innerHTML = '<p class="note"></p>';
+      root.querySelector('p').textContent = read.problems.join(' ');
+      return;
     }
-    if (view.recent) {
-      const list = document.createElement('ul');
-      for (const item of view.recent) {
-        const line = document.createElement('li');
-        line.textContent = item.scenarioKey + ' · ' + item.percent + '% · ' + (item.provisional ? 'provisional' : 'filed') + ' · ' + item.coaching + ' coaching notes';
-        list.appendChild(line);
-      }
-      root.appendChild(list);
+    const call = read.call;
+    if (!call) { root.innerHTML = '<p class="note">No read was returned.</p>'; return; }
+    root.innerHTML = '<p class="note"></p>';
+    root.querySelector('p').textContent = view.scenarioKey + ' · ' + (call.scores || []).length + ' scores · ' + (call.turns || []).length + ' lines';
+    const table = document.createElement('table');
+    table.innerHTML = '<tr><th>Criterion</th><th>Raw</th></tr>';
+    for (const score of call.scores || []) {
+      const row = document.createElement('tr');
+      row.innerHTML = '<td></td><td></td>';
+      row.children[0].textContent = score.criterionId;
+      row.children[1].textContent = String(score.raw);
+      table.appendChild(row);
     }
+    root.appendChild(table);
   }).catch((error) => { root.innerHTML = '<p class="note"></p>'; root.querySelector('p').textContent = error.message; });
 }
-$('refresh').onclick = () => { localStorage.setItem(learnerKey, $('learner').value.trim()); loadProgress(); };
+$('refresh').onclick = () => { loadProgress(); };
 
 $('loadSample').onclick = async () => {
   const url = staticMode ? '../practice-evidence/roleplay-player/scenarios/double-charged-subscription.json' : '/studio/scenarios/double-charged-subscription/document';
@@ -264,8 +228,8 @@ $('save').onclick = async () => {
   $('saveNote').textContent = '';
   if (staticMode) { $('saveNote').textContent = 'Saving needs the studio bridge. The document stays in this box.'; return; }
   try {
-    const scenario = JSON.parse($('draft').value);
-    const savedDoc = await api('/studio/scenarios', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify({ scenario }) });
+    const envelope = JSON.parse($('envelope').value);
+    const savedDoc = await api('/studio/scenarios', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(envelope) });
     $('saveNote').textContent = 'Saved ' + savedDoc.scenario.scenarioKey + '.';
     await boot();
   } catch (error) {

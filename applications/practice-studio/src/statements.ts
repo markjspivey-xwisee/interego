@@ -48,6 +48,7 @@ export function canonicalXapi(): XapiBlock {
       recognisedText: `${P}/extensions/recognised-text`,
       confirmedChoice: `${P}/extensions/confirmed-choice`,
       rubric: `${P}/extensions/rubric`,
+      agentTest: 'https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#agentTest',
     },
   };
 }

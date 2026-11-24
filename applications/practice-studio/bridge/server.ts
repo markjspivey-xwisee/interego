@@ -20,7 +20,8 @@ if (refusesPublicBind(host, process.env['STUDIO_INSECURE_BIND'])) {
   process.exit(1);
 }
 const deploymentUrl = (process.env['BRIDGE_DEPLOYMENT_URL'] ?? '').trim() || undefined;
-const app = createStudioApp(undefined, deploymentUrl);
+const hostForUrl = host.includes(':') && !host.startsWith('[') ? `[${host}]` : host;
+const app = createStudioApp(undefined, deploymentUrl, () => `http://${hostForUrl}:${port}`);
 
 app.listen(port, host, () => {
   process.stdout.write(`practice studio http://${host}:${port}/ui\n`);
