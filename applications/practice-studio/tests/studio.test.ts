@@ -114,18 +114,20 @@ describe('practice studio', () => {
       expect(state.launchParameters).toContain('actorKind=agent');
       expect(state.launchParameters).toContain('contextKind=agent-test');
       const actor = JSON.parse(launchUrl.searchParams.get('actor') ?? '{}') as { account: { homePage: string; name: string } };
-      const session = state.contextTemplate.extensions['https://w3id.org/xapi/cmi5/context/extensions/sessionid'];
+      const sessionKey = 'https://w3id.org/xapi/cmi5/context/extensions/sessionid';
+      const session = state.contextTemplate.extensions[sessionKey];
       const agentTest = 'https://markjspivey-xwisee.github.io/interego/applications/practice-evidence/pev#agentTest';
+      const initialized = 'http://adlnet.gov/expapi/verbs/initialized';
+      const statement = {
+        id: '11111111-1111-4111-8111-111111111111',
+        actor,
+        verb: { id: initialized },
+        object: { id: launchUrl.searchParams.get('activityId') },
+        timestamp: new Date().toISOString(),
+        context: { registration: started.launch.registration, extensions: { [sessionKey]: session, [agentTest]: true } },
+      };
       const posted = await fetch(`${studio.base}/xapi/statements`, {
-        method: 'POST', headers: auth,
-        body: JSON.stringify({
-          id: '11111111-1111-4111-8111-111111111111',
-          actor,
-          verb: { id: 'http://adlnet.gov/expapi/verbs/initialized' },
-          object: { id: launchUrl.searchParams.get('activityId') },
-          timestamp: new Date().toISOString(),
-          context: { registration: started.launch.registration, extensions: { 'https://w3id.org/xapi/cmi5/context/extensions/sessionid': session, [agentTest]: true } },
-        }),
+        method: 'POST', headers: auth, body: JSON.stringify(statement),
       });
       expect(posted.status).toBe(200);
       const read = await fetch(`${studio.base}/studio/progress`, {
