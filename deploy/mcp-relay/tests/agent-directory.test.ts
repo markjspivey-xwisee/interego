@@ -32,6 +32,15 @@ const BASE = 'https://relay.test';
 const JWT = ['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0', 'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'].join('.');
 const PRIVATE_KEY_BANNER = '-----BEGIN ' + 'PRIVATE KEY-----abc';
 
+/** Hosts of the IRIs actually written, parsed as URLs rather than searched as text. */
+function iriHosts(turtle: string): Set<string> {
+  const hosts = new Set<string>();
+  for (const match of turtle.matchAll(/<([^>\s]+)>/g)) {
+    try { hosts.add(new URL(match[1]!).hostname); } catch { /* a non-URL IRI has no host */ }
+  }
+  return hosts;
+}
+
 interface Call { args: Record<string, unknown> }
 
 function harness(opts?: { inbox?: string }) {
@@ -107,8 +116,9 @@ console.log('\nagent directory: own card, public projection, work routed to the 
   check('the graph is an iep:Agent and does not carry the session token',
     turtle.includes('a iep:Agent') && turtle.includes('iep:offers') && !turtle.includes('session-marker-value') && !turtle.includes('BEGIN'));
   check('the session token is not forwarded into the publish arguments', sent['_identity_token'] === undefined && sent['_session_user_id'] === GEORGIO);
+  const publishedHosts = iriHosts(turtle);
   check('a caller-supplied inbox is not what gets published',
-    turtle.includes('https://store.example/' + GEORGIO + '/inbox/') && !turtle.includes('https://evil.example/inbox'));
+    publishedHosts.has('store.example') && !publishedHosts.has('evil.example'));
 
   const found = JSON.parse(await directory.searchAgents({ q: 'summarize' })) as { agents: { agentId: string }[] };
   check('search by capability finds the card', found.agents.some(a => a.agentId === GEORGIO));
@@ -197,7 +207,9 @@ console.log('\nagent directory: own card, public projection, work routed to the 
   const raw = await internal.directory.publishCard(georgioArgs({ inbox: 'https://evil.example/inbox' }));
   const body = JSON.parse(raw) as { inbox?: string };
   const turtle = String(internal.publishes[0]?.args['graph_content'] ?? '');
-  check('an internal inbox is not advertised', body.inbox === undefined && !turtle.includes('railway.internal') && !turtle.includes('evil.example'));
+  const publishedHosts = iriHosts(turtle);
+  check('an internal inbox is not advertised',
+    body.inbox === undefined && !publishedHosts.has('css.railway.internal') && !publishedHosts.has('evil.example'));
 }
 
 {
