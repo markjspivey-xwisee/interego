@@ -256,6 +256,14 @@ function checkScenario(s){
   if (s.resultAfterReview === true && !(s.rubricRef && s.xapi.verbs && s.xapi.verbs.turn && s.xapi.extensions && s.xapi.extensions.counterpartLine && s.xapi.extensions.rubric)) throw new Error("the scenario leaves its result to a reviewer but names no rubricRef, turn verb, counterpart-line extension or rubric extension");
   const miss = need.filter(k => !s[k]); if (miss.length) throw new Error("the scenario is missing " + miss.join(", "));
   if (!Array.isArray(s.rubric.criteria) || !s.rubric.criteria.length) throw new Error("the scenario's rubric has no criteria");
+  // The level a score reaches (levelOf) and the level a pass rule asks for (assess) are both found by a
+  // level's place in the list, lowest first. Practice Evidence refuses a rubric written any other way,
+  // and so does this: with the highest level first, the weakest answers were given the top level.
+  for (const c of s.rubric.criteria) {
+    const ls = Array.isArray(c.levels) ? c.levels : [];
+    if (ls.some((l, j) => j > 0 && typeof l.value === "number" && typeof ls[j-1].value === "number" && l.value <= ls[j-1].value))
+      throw new Error("criterion " + (c.id || "?") + ": level values must strictly increase from lowest to highest");
+  }
   if (!Array.isArray(s.personas) || !s.personas.length) throw new Error("the scenario has no personas");
   for (const k of ["verbs","activityTypes","extensions"]) if (!s.xapi[k]) throw new Error("the scenario's xapi block has no " + k);
   const twice = repeatedIds(s); if (twice.length) throw new Error("the scenario uses an id for more than one step or reply: " + twice.join(", "));
