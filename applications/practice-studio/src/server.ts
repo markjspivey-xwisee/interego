@@ -28,6 +28,14 @@ export function createStudioApp(studio: Studio = new Studio(), deploymentUrl?: s
       mounted.get('/ui', (_req, res) => { res.redirect(302, '/ui/'); });
       mounted.use('/ui', express.static(fileURLToPath(UI_DIR)));
       mounted.use('/player', express.static(fileURLToPath(PLAYER_DIR)));
+      mounted.get('/studio/sessions/:id/scenario', (req, res) => {
+        const doc = studio.sessionScenario(req.params['id'] ?? '');
+        if (!doc) {
+          res.status(404).json({ kind: 'refusal', 'iep:refusalStatus': 404, error: 'no such session' });
+          return;
+        }
+        res.json(doc);
+      });
       mounted.get('/studio/scenarios/:key/document', (req, res) => {
         const doc = studio.scenario(req.params['key'] ?? '');
         if (!doc) {

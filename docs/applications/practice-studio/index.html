@@ -206,7 +206,7 @@ window.addEventListener('message', async (event) => {
   try {
     const scored = await api('/studio/attempts/score', {
       method: 'POST', headers: { 'content-type': 'application/json' },
-      body: JSON.stringify({ sessionId, choices: data.choices || [] }),
+      body: JSON.stringify({ sessionId, personaId: data.personaId, choices: data.choices || [] }),
     });
     const score = scored.score;
     $('sessionNote').textContent = (score.provisional ? 'Provisional ' : '') + score.percent + '% · ' + (score.pass ? 'over the bar' : 'under the bar') + ' · ' + (scored.coaching.notes || []).length + ' coaching notes. Open Results.';

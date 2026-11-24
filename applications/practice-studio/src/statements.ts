@@ -111,7 +111,7 @@ export function practiceStatements(ctx: StatementContext): Statement[] {
   };
   const types = { ...canonicalXapi().activityTypes, ...block.activityTypes };
   const verbs = { ...canonicalXapi().verbs, ...block.verbs };
-  let clock = Date.parse('2026-11-24T15:00:00.000Z');
+  let clock = Date.now();
   const stamp = (): string => new Date(clock++).toISOString();
   const actor = {
     objectType: 'Agent',

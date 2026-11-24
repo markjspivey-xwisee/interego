@@ -444,11 +444,17 @@ const role = () => (S.ui && S.ui.counterpartRole) || "other person";
 function initials(n){ return n.split(/[ ,]+/).filter(Boolean).slice(0,2).map(w=>w[0]).join(""); }
 function renderPersonas(){
   const box = $("personas"); box.innerHTML = "";
-  S.personas.forEach(p => { const d = document.createElement("div"); d.className = "persona" + (p.id===sel?" sel":"");
+  // A launch that names the other person is that session's person. Choosing another here
+  // would score the replies against the wrong script.
+  const locked = typeof P.persona === "string" && S.personas.some(p => p.id === P.persona);
+  const list = locked ? S.personas.filter(p => p.id === P.persona) : S.personas;
+  list.forEach(p => { const d = document.createElement("div"); d.className = "persona" + (p.id===sel?" sel":"");
     d.innerHTML = '<div class="av"></div><div><div><span class="pname"></span><span class="lvl"></span></div><div class="ptag"></div><div class="pdesc"></div></div>';
     d.querySelector(".av").textContent = initials(p.name); d.querySelector(".pname").textContent = p.name;
     d.querySelector(".lvl").textContent = p.level ? "Level " + p.level : ""; d.querySelector(".ptag").textContent = p.mood || ""; d.querySelector(".pdesc").textContent = p.backstory || "";
-    d.onclick = () => { sel = p.id; renderPersonas(); }; box.appendChild(d); });
+    if (locked) d.style.cursor = "default";
+    else d.onclick = () => { sel = p.id; renderPersonas(); };
+    box.appendChild(d); });
 }
 function variantApplies(v){ return v && v.when && typeof v.when.moodAbove === "number" ? mood > v.when.moodAbove : false; }
 function stageObj(){ const s = persona.stages[stage];

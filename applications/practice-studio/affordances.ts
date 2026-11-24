@@ -50,11 +50,12 @@ export const studioAffordances: readonly Affordance[] = [
     action: iri('urn:iep:action:studio:score-attempt'),
     toolName: 'studio.score_attempt',
     title: 'Score and coach an attempt',
-    description: 'Score a finished scripted session from the replies taken, in order. Returns the provisional or final score, coaching notes for replies that were not the step\'s best, and xAPI statements checked against phone-roleplay profile v3. A pass-gate sends no completed statement.',
+    description: 'Score a finished scripted session from the replies taken, in order, against the scenario revision and persona the session was opened with. personaId, when sent, must be that persona. Returns the provisional or final score, coaching notes for replies that were not the step\'s best, and xAPI statements checked against phone-roleplay profile v3. A pass-gate sends no completed statement.',
     method: 'POST',
     targetTemplate: '{base}/studio/attempts/score',
     inputs: [
       { name: 'sessionId', type: 'string', required: true, description: 'The session id returned by studio.start_session.' },
+      { name: 'personaId', type: 'string', required: false, description: 'The persona the player actually used. Refused when it is not the persona this session was opened with.' },
       { name: 'choices', type: 'array', required: true, itemType: 'object', description: 'One entry per step, in order: { index, said?, confirmed? }. index is the reply taken. said is recognised speech. confirmed is tapped, matched or recognised.' },
     ],
     annotations: { ...write, title: 'Score and coach an attempt' },

@@ -63,7 +63,9 @@ describe('practice studio', () => {
         body: JSON.stringify({ scenarioKey: 'double-charged-subscription', learner: 'Learner 12', personaId: 'dana' }),
       }).then((r) => r.json()) as { session: { sessionId: string }; playerUrl: string };
       expect(started.playerUrl).toContain('/player/index.html');
+      expect(started.playerUrl).toContain(encodeURIComponent(`/studio/sessions/${started.session.sessionId}/scenario`));
       expect(started.playerUrl).toContain('persona=dana');
+      const openedAt = Date.now();
 
       const scored = await fetch(`${studio.base}/studio/attempts/score`, {
         method: 'POST', headers: { 'content-type': 'application/json' },
@@ -93,6 +95,10 @@ describe('practice studio', () => {
       expect(turn.object.definition?.type).toBe('https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-turn');
       expect(turn.object.definition?.extensions?.['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/step-id']).toBeTruthy();
       expect(turn.result?.extensions?.['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/confirmed-choice']).toBe('tapped');
+      const times = body.statements.map((s) => Date.parse((s as { timestamp: string }).timestamp));
+      expect(times.every((t, i) => i === 0 || t > times[i - 1]!)).toBe(true);
+      expect(times[0]).toBeGreaterThan(openedAt - 5_000);
+      expect(times[0]).toBeLessThan(openedAt + 5_000);
 
       const patterns = answerSuppliedProfileRequest({ profile, statements: body.statements });
       expect(patterns.body['conforms']).toBe(true);
@@ -163,10 +169,66 @@ describe('practice studio', () => {
     }
   });
 
+  it('scores the revision and persona the session opened with', async () => {
+    const studio = await listen();
+    try {
+      const scenario = {
+        scenarioKey: 'two-people',
+        title: 'Two people',
+        assessmentUse: 'feedback-only',
+        resultAfterReview: false,
+        language: 'en-US',
+        rubric: {
+          criteria: [{ id: 'greeting', title: 'Greeting', description: 'Says hello', weight: 1, levels: [{ id: '0', value: 0 }, { id: '1', value: 1 }] }],
+          passRule: { minPercent: 50 },
+        },
+        personas: [
+          { id: 'dana', name: 'Dana', firstLine: 'Hi from Dana', stages: [{ id: 'd1', choices: [
+            { id: 'a', text: 'Hello Dana', effects: { greeting: 1 }, best: true },
+            { id: 'b', text: 'What', effects: { greeting: 0 }, note: 'Greet them.' },
+          ] }] },
+          { id: 'sam', name: 'Sam', firstLine: 'Hi from Sam', stages: [{ id: 's1', choices: [
+            { id: 'c', text: 'Hello Sam', effects: { greeting: 1 }, best: true },
+          ] }] },
+        ],
+      };
+      expect((await fetch(`${studio.base}/studio/scenarios`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(scenario),
+      })).status).toBe(200);
+      const started = await fetch(`${studio.base}/studio/sessions`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ scenarioKey: 'two-people', learner: 'Ada', personaId: 'dana' }),
+      }).then((r) => r.json()) as { session: { sessionId: string } };
+      const mismatch = await fetch(`${studio.base}/studio/attempts/score`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: started.session.sessionId, personaId: 'sam', choices: [{ index: 0 }] }),
+      }).then((r) => r.json()) as { kind: string; error: string };
+      expect(mismatch.kind).toBe('refusal');
+      expect(mismatch.error).toContain('dana');
+
+      scenario.personas[0]!.firstLine = 'Rewritten after the session opened';
+      scenario.personas[0]!.stages[0]!.choices[0]!.effects = { greeting: 0 };
+      expect((await fetch(`${studio.base}/studio/scenarios`, {
+        method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(scenario),
+      })).status).toBe(200);
+      const frozen = await fetch(`${studio.base}/studio/sessions/${started.session.sessionId}/scenario`).then((r) => r.json()) as { personas: Array<{ firstLine: string }> };
+      expect(frozen.personas[0]!.firstLine).toBe('Hi from Dana');
+      const scored = await fetch(`${studio.base}/studio/attempts/score`, {
+        method: 'POST', headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ sessionId: started.session.sessionId, personaId: 'dana', choices: [{ index: 0 }] }),
+      }).then((r) => r.json()) as { score: { pass: boolean; percent: number } };
+      expect(scored.score.pass).toBe(true);
+      expect(scored.score.percent).toBe(100);
+    } finally {
+      await studio.close();
+    }
+  });
+
   it('refuses a session that is not finished, and the player tells a parent page when one is', () => {
     const page = readFileSync(PLAYER, 'utf8');
     expect(page).toContain('source: "interego-roleplay-player"');
     expect(page).toContain('confirmedChoice');
+    expect(page).toContain('const locked = typeof P.persona === "string"');
     const held = new Studio();
     expect(held.scoreAttempt({ sessionId: 'missing', choices: [] })['kind']).toBe('refusal');
     const started = held.startSession({ scenarioKey: 'double-charged-subscription', learner: 'Pat', personaId: 'dana' });

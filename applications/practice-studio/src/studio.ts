@@ -91,7 +91,7 @@ export interface ProgressView {
 
 export class Studio {
   private readonly scenarios = new Map<string, ScenarioDoc>();
-  private readonly sessions = new Map<string, { session: SessionRecord; choices?: TakenChoice[]; result?: Record<string, unknown> }>();
+  private readonly sessions = new Map<string, { session: SessionRecord; scenario: ScenarioDoc; choices?: TakenChoice[]; result?: Record<string, unknown> }>();
   /** learner name is kept only to answer that same caller. Statements carry the pseudonym. */
   private readonly learners = new Map<string, string>();
 
@@ -102,6 +102,11 @@ export class Studio {
 
   scenario(key: string): ScenarioDoc | undefined {
     return this.scenarios.get(key);
+  }
+
+  /** The scenario revision a session was opened against, including after the library copy changes. */
+  sessionScenario(sessionId: string): ScenarioDoc | undefined {
+    return this.sessions.get(sessionId)?.scenario;
   }
 
   listScenarios(): Record<string, unknown> {
@@ -168,8 +173,8 @@ export class Studio {
       state: 'open',
       sessionId,
     };
-    this.sessions.set(sessionId, { session });
-    const player = `/player/index.html?scenario=${encodeURIComponent(`/studio/scenarios/${scenarioKey}/document`)}&persona=${encodeURIComponent(personaId)}`;
+    this.sessions.set(sessionId, { session, scenario: JSON.parse(JSON.stringify(doc)) as ScenarioDoc });
+    const player = `/player/index.html?scenario=${encodeURIComponent(`/studio/sessions/${sessionId}/scenario`)}&persona=${encodeURIComponent(personaId)}`;
     return { session, playerUrl: player, personaId, steps: doc.personas.find((p) => p.id === personaId)!.stages.length };
   }
 
@@ -178,8 +183,11 @@ export class Studio {
     const held = this.sessions.get(sessionId);
     if (!held) return refusal(404, `no session ${sessionId}`);
     if (held.session.state === 'scored') return refusal(409, 'this session is already scored');
-    const doc = this.scenarios.get(held.session.scenarioKey);
-    if (!doc) return refusal(404, 'the scenario for this session is gone');
+    const doc = held.scenario;
+    const played = input['personaId'];
+    if (typeof played === 'string' && played !== held.session.personaId) {
+      return refusal(409, `this session is ${held.session.personaId}; the player finished as ${played}`);
+    }
     if (!Array.isArray(input['choices'])) return refusal(400, 'choices is the list of replies taken, in order');
     const choices: TakenChoice[] = [];
     for (const item of input['choices']) {
