@@ -1,0 +1,260 @@
+<!doctype html>
+<html lang="en">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width,initial-scale=1">
+<title>Practice studio</title>
+<style>
+:root{--bg:#f4f6f8;--card:#fff;--ink:#14181f;--muted:#5c6570;--line:#e3e7ee;--accent:#2457d6;--accent2:#e8eeff;--good:#0f7a45;--goodbg:#e5f6ee;--warn:#8a4b00;--warnbg:#fff1df;--radius:16px}
+@media (prefers-color-scheme:dark){:root{--bg:#101318;--card:#181c24;--ink:#eef1f6;--muted:#a7b0bc;--line:#2c3340;--accent:#8eafff;--accent2:#1c2744;--good:#7ddeb0;--goodbg:#143024;--warn:#ffc27a;--warnbg:#332413}}
+*{box-sizing:border-box}body{margin:0;background:var(--bg);color:var(--ink);font:16px/1.5 ui-sans-serif,system-ui,sans-serif}
+header{display:flex;justify-content:space-between;gap:16px;align-items:center;padding:18px 22px;border-bottom:1px solid var(--line);background:var(--card)}
+.brand{font-weight:750;letter-spacing:-.02em}nav{display:flex;gap:8px;flex-wrap:wrap}
+nav button{border:1px solid var(--line);background:transparent;color:var(--ink);border-radius:999px;padding:6px 12px;cursor:pointer;font:inherit}
+nav button.on{background:var(--accent);color:#fff;border-color:transparent}
+main{max-width:980px;margin:0 auto;padding:22px 16px 64px}
+.card{background:var(--card);border:1px solid var(--line);border-radius:var(--radius);padding:18px;margin-bottom:14px}
+h1{font-size:28px;letter-spacing:-.03em;margin:0 0 6px}h2{font-size:18px;margin:0 0 8px}
+.muted{color:var(--muted)}
+.grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(260px,1fr));gap:12px}
+button.primary,a.primary{display:inline-block;background:var(--accent);color:#fff;border:0;border-radius:12px;padding:10px 14px;font:600 15px inherit;cursor:pointer;text-decoration:none}
+label{display:block;font-size:13px;color:var(--muted);margin:10px 0 4px}
+input,textarea,select{width:100%;border:1px solid var(--line);background:var(--bg);color:var(--ink);border-radius:10px;padding:10px;font:inherit}
+textarea{min-height:220px;font-family:ui-monospace,monospace;font-size:13px}
+.pill{display:inline-block;border-radius:999px;padding:2px 8px;font-size:12px;background:var(--accent2);color:var(--accent)}
+.pill.ok{background:var(--goodbg);color:var(--good)}.pill.warn{background:var(--warnbg);color:var(--warn)}
+iframe{width:100%;height:760px;border:1px solid var(--line);border-radius:16px;background:var(--card)}
+table{width:100%;border-collapse:collapse;font-size:14px}td,th{text-align:left;padding:8px 6px;border-bottom:1px solid var(--line)}
+.note{font-size:14px;color:var(--muted)}
+</style>
+</head>
+<body>
+<header>
+  <div class="brand">Practice studio</div>
+  <nav>
+    <button type="button" data-view="library" class="on">Library</button>
+    <button type="button" data-view="practice">Practice</button>
+    <button type="button" data-view="results">Results</button>
+    <button type="button" data-view="author">Author</button>
+  </nav>
+</header>
+<main>
+  <section id="library"></section>
+  <section id="practice" hidden>
+    <div class="card">
+      <h1>Practice</h1>
+      <p class="muted">A session is a cmi5 launch of the hosted player. Paste the signed request for <code>studio.start_session</code>; that payload names the scenario, the persona and whether the learner's place is a person or an agent. The fields below are a reminder of the library and are not added to the signature. The player writes the statements under the signer's account.</p>
+      <label for="scenario">Scenario</label>
+      <select id="scenario"></select>
+      <label for="persona">Other person</label>
+      <select id="persona"></select>
+      <label for="learnerPlace">Who is in the learner's place</label>
+      <select id="learnerPlace"><option value="person" selected>A person</option><option value="agent">An agent, marked as a test</option></select>
+      <label for="envelope">Signed request</label>
+      <textarea id="envelope" spellcheck="false" placeholder='{"_signed_payload":"...","_signature":"0x..."}'></textarea>
+      <p><button class="primary" id="begin" type="button">Open the launch</button></p>
+      <p class="note" id="sessionNote"></p>
+    </div>
+    <iframe id="player" hidden title="Role-play practice"></iframe>
+  </section>
+  <section id="results" hidden>
+    <div class="card">
+      <h1>Results</h1>
+      <p class="muted">This is Practice Evidence's read of one registration: the statements the player wrote. It is not a score this page computed.</p>
+      <label for="registration">Registration</label>
+      <input id="registration" autocomplete="off">
+      <p><button class="primary" id="refresh" type="button">Read the launch</button></p>
+      <div id="progress"></div>
+    </div>
+  </section>
+  <section id="author" hidden>
+    <div class="card">
+      <h1>Author a scenario</h1>
+      <p class="muted">Edit the document here, then sign a <code>studio.create_scenario</code> request whose payload contains it. Saving sends that signed request. Only the signer can replace what they saved.</p>
+      <label for="draft">Scenario document</label>
+      <textarea id="draft" spellcheck="false"></textarea>
+      <p><button class="primary" id="save" type="button">Save scenario</button> <button type="button" id="loadSample">Start from the sample</button></p>
+      <p class="note" id="saveNote"></p>
+    </div>
+  </section>
+</main>
+<script>
+const $ = (id) => document.getElementById(id);
+let bridge = null;
+let scenarios = [];
+let staticMode = false;
+
+function show(name){
+  for (const id of ['library','practice','results','author']) $(id).hidden = id !== name;
+  document.querySelectorAll('nav button').forEach((b) => b.classList.toggle('on', b.dataset.view === name));
+}
+document.querySelectorAll('nav button').forEach((b) => b.onclick = () => show(b.dataset.view));
+
+async function api(path, options){
+  const response = await fetch((bridge || '') + path, options);
+  const body = await response.json().catch(() => ({}));
+  if (!response.ok || body.kind === 'refusal') throw new Error(body.error || ('request failed (' + response.status + ')'));
+  return body;
+}
+
+function libraryCard(item){
+  const card = document.createElement('article');
+  card.className = 'card';
+  const criteria = (item.criteria || []).map((c) => c.title || c.id).join(', ');
+  card.innerHTML = '<span class="pill"></span><h2></h2><p class="muted"></p><p class="note"></p>';
+  card.querySelector('.pill').textContent = item.assessmentUse === 'pass-gate' ? 'Pass gate' : 'Feedback';
+  card.querySelector('h2').textContent = item.title;
+  card.querySelector('p').textContent = item.learnerGoal || '';
+  card.querySelector('.note').textContent = criteria;
+  const button = document.createElement('button');
+  button.className = 'primary';
+  button.type = 'button';
+  button.textContent = 'Practice';
+  button.onclick = () => { $('scenario').value = item.scenarioKey; fillPersonas(); show('practice'); };
+  card.appendChild(button);
+  return card;
+}
+
+function renderLibrary(){
+  const root = $('library');
+  root.innerHTML = '<div class="card"><h1>Scenario library</h1><p class="muted" id="libNote"></p></div><div class="grid" id="cards"></div>';
+  $('libNote').textContent = staticMode
+    ? 'This page is the published studio. Scoring and progress run when the studio bridge is up; until then the player opens in preview and keeps its own score on screen.'
+    : 'Each scenario is a document. A session is a signed cmi5 launch of the hosted player. Progress is Practice Evidence\'s read of the statements that player wrote.';
+  const cards = $('cards');
+  if (!scenarios.length) {
+    cards.appendChild(libraryCard({
+      scenarioKey: 'double-charged-subscription',
+      title: 'Double-charged subscription refund call',
+      learnerGoal: 'Resolve a duplicate $19 charge within policy.',
+      assessmentUse: 'pass-gate',
+      criteria: [{ title: 'Empathy' }, { title: 'Discovery' }, { title: 'Accuracy' }, { title: 'Resolution' }, { title: 'Professionalism' }],
+    }));
+  } else scenarios.forEach((item) => cards.appendChild(libraryCard(item)));
+}
+
+function fillPersonas(){
+  const key = $('scenario').value;
+  const item = scenarios.find((s) => s.scenarioKey === key);
+  const select = $('persona');
+  select.innerHTML = '';
+  for (const persona of (item && item.personas) || [{ id: 'dana', name: 'Dana Reyes' }]) {
+    const option = document.createElement('option');
+    option.value = persona.id;
+    option.textContent = persona.name || persona.id;
+    select.appendChild(option);
+  }
+}
+
+function fillScenarios(){
+  const select = $('scenario');
+  select.innerHTML = '';
+  const list = scenarios.length ? scenarios : [{ scenarioKey: 'double-charged-subscription', title: 'Double-charged subscription refund call', personas: [{ id: 'dana', name: 'Dana Reyes' }] }];
+  for (const item of list) {
+    const option = document.createElement('option');
+    option.value = item.scenarioKey;
+    option.textContent = item.title;
+    select.appendChild(option);
+  }
+  fillPersonas();
+}
+$('scenario').onchange = fillPersonas;
+
+$('begin').onclick = async () => {
+  $('sessionNote').textContent = '';
+  const frame = $('player');
+  if (staticMode) {
+    frame.src = '../practice-evidence/roleplay-player/index.html?persona=' + encodeURIComponent($('persona').value);
+    frame.hidden = false;
+    $('sessionNote').textContent = 'Preview. A launch needs the studio bridge and a signed request. The player keeps nothing from this page.';
+    return;
+  }
+  try {
+    const started = await api('/studio/sessions', {
+      method: 'POST', headers: { 'content-type': 'application/json' },
+      body: $('envelope').value,
+    });
+    if (!started.launch) throw new Error('the bridge did not return a launch');
+    frame.src = started.launch.launchUrl;
+    frame.hidden = false;
+    $('registration').value = started.launch.registration;
+    $('sessionNote').textContent = 'Launch ' + started.launch.registration + ' for ' + started.launch.learnerDid + '. The player writes the statements.';
+  } catch (error) {
+    $('sessionNote').textContent = error.message;
+  }
+};
+
+function loadProgress(){
+  const root = $('progress');
+  if (staticMode) { root.innerHTML = '<p class="note">Reading a launch needs the studio bridge and the signed request that opened it.</p>'; return Promise.resolve(); }
+  let envelope;
+  try { envelope = JSON.parse($('envelope').value); } catch (error) { root.innerHTML = '<p class="note">The signed request is not JSON.</p>'; return Promise.resolve(); }
+  return api('/studio/progress', {
+    method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(envelope),
+  }).then((view) => {
+    const read = view.read || {};
+    if (read.problems) {
+      root.innerHTML = '<p class="note"></p>';
+      root.querySelector('p').textContent = read.problems.join(' ');
+      return;
+    }
+    const call = read.call;
+    if (!call) { root.innerHTML = '<p class="note">No read was returned.</p>'; return; }
+    root.innerHTML = '<p class="note"></p>';
+    root.querySelector('p').textContent = view.scenarioKey + ' · ' + (call.scores || []).length + ' scores · ' + (call.turns || []).length + ' lines';
+    const table = document.createElement('table');
+    table.innerHTML = '<tr><th>Criterion</th><th>Raw</th></tr>';
+    for (const score of call.scores || []) {
+      const row = document.createElement('tr');
+      row.innerHTML = '<td></td><td></td>';
+      row.children[0].textContent = score.criterionId;
+      row.children[1].textContent = String(score.raw);
+      table.appendChild(row);
+    }
+    root.appendChild(table);
+  }).catch((error) => { root.innerHTML = '<p class="note"></p>'; root.querySelector('p').textContent = error.message; });
+}
+$('refresh').onclick = () => { loadProgress(); };
+
+$('loadSample').onclick = async () => {
+  const url = staticMode ? '../practice-evidence/roleplay-player/scenarios/double-charged-subscription.json' : '/studio/scenarios/double-charged-subscription/document';
+  const doc = await fetch(url).then((r) => r.json());
+  doc.scenarioKey = 'my-scenario';
+  doc.title = 'My scenario';
+  delete doc.seeded;
+  $('draft').value = JSON.stringify(doc, null, 2);
+};
+$('save').onclick = async () => {
+  $('saveNote').textContent = '';
+  if (staticMode) { $('saveNote').textContent = 'Saving needs the studio bridge. The document stays in this box.'; return; }
+  try {
+    const envelope = JSON.parse($('envelope').value);
+    const savedDoc = await api('/studio/scenarios', { method: 'POST', headers: { 'content-type': 'application/json' }, body: JSON.stringify(envelope) });
+    $('saveNote').textContent = 'Saved ' + savedDoc.scenario.scenarioKey + '.';
+    await boot();
+  } catch (error) {
+    $('saveNote').textContent = error.message;
+  }
+};
+
+async function boot(){
+  try {
+    const entry = await fetch('/studio/scenarios', { headers: { accept: 'application/json' } });
+    if (!entry.ok) throw new Error('no bridge');
+    const body = await entry.json();
+    if (!body.scenarios) throw new Error('no bridge');
+    bridge = '';
+    staticMode = false;
+    scenarios = body.scenarios;
+  } catch (error) {
+    bridge = null;
+    staticMode = true;
+    scenarios = [];
+  }
+  renderLibrary();
+  fillScenarios();
+}
+boot();
+</script>
+</body>
+</html>

@@ -1,0 +1,16 @@
+# Practice studio vocabulary. A vertical namespace, not a protocol term.
+# Dereferences with the docs site once this tree is published.
+@prefix studio: <https://markjspivey-xwisee.github.io/interego/applications/practice-studio/studio#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+
+<https://markjspivey-xwisee.github.io/interego/applications/practice-studio/studio> a owl:Ontology ;
+  dct:title "Practice studio"@en ;
+  rdfs:comment "Records a conversation-practice studio keeps: scenarios, sessions, scores, coaching notes and a learner's progress. Not part of Interego Protocol."@en .
+
+studio:Scenario a owl:Class ; rdfs:label "scenario"@en .
+studio:PracticeSession a owl:Class ; rdfs:label "practice session"@en .
+studio:AttemptScore a owl:Class ; rdfs:label "attempt score"@en .
+studio:CoachingNote a owl:Class ; rdfs:label "coaching note"@en .
+studio:LearnerProgress a owl:Class ; rdfs:label "learner progress"@en .

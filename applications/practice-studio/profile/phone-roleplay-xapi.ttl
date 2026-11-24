@@ -1,0 +1,839 @@
+@prefix iep: <https://markjspivey-xwisee.github.io/interego/ns/iep#> .
+@prefix cg: <https://markjspivey-xwisee.github.io/interego/ns/cg#> .
+@prefix ieh: <https://markjspivey-xwisee.github.io/interego/ns/harness#> .
+@prefix cgh: <https://markjspivey-xwisee.github.io/interego/ns/cgh#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+@prefix owl: <http://www.w3.org/2002/07/owl#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix time: <http://www.w3.org/2006/time#> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix as: <https://www.w3.org/ns/activitystreams#> .
+@prefix sh: <http://www.w3.org/ns/shacl#> .
+@prefix acl: <http://www.w3.org/ns/auth/acl#> .
+@prefix vc: <https://www.w3.org/2018/credentials#> .
+@prefix did: <https://www.w3.org/ns/did#> .
+@prefix dcat: <http://www.w3.org/ns/dcat#> .
+@prefix ldp: <http://www.w3.org/ns/ldp#> .
+@prefix solid: <http://www.w3.org/ns/solid/terms#> .
+@prefix oa: <http://www.w3.org/ns/oa#> .
+@prefix hydra: <http://www.w3.org/ns/hydra/core#> .
+@prefix dprod: <https://dprod.org/ns/dprod#> .
+@prefix foaf: <http://xmlns.com/foaf/0.1/> .
+@prefix dct: <http://purl.org/dc/terms/> .
+@prefix profile: <https://w3id.org/xapi/profiles/ontology#> .
+@prefix prov: <http://www.w3.org/ns/prov#> .
+@prefix rdf: <http://www.w3.org/1999/02/22-rdf-syntax-ns#> .
+@prefix rdfs: <http://www.w3.org/2000/01/rdf-schema#> .
+@prefix schemaorg: <http://schema.org/> .
+@prefix skos: <http://www.w3.org/2004/02/skos/core#> .
+@prefix xapi: <https://w3id.org/xapi/ontology#> .
+@prefix xsd: <http://www.w3.org/2001/XMLSchema#> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi> a profile:Profile ;
+    dct:conformsTo <https://w3id.org/xapi/profiles#1.0> ;
+    schemaorg:author [ a schemaorg:Person ;
+            schemaorg:name "Mark Spivey" ] ;
+    rdfs:seeAlso <https://foxxi-bridge.interego.xwisee.com/xapi/profile> ;
+    skos:definition "xAPI Profile for phone role-play training on Interego and Foxxi: an AI voice agent plays a customer on a live phone call, the participant plays the support rep, the call is scored against a rubric, and performance-consulting interventions follow. Identity is the participant's phone number, recorded only as a keyed pseudonym; consent is taken on the call. Statements go to the Foxxi LRS; authoritative records live in Interego graphs; activities align to the I2IDL Digital Learning Glossary through I2IDL-X. v3 is a generic projection: one criterion-scored template and one turn template, with the attempt's rubric named in context, so the profile can follow any ratified practice-evidence rubric. It does not hard-code a set of criterion keys or a fixed scoring order. Turns live in the LRS under the LMS registration."@en ;
+    skos:prefLabel "Phone Role-Play Training — xAPI Profile"@en ;
+    profile:concepts <http://adlnet.gov/expapi/verbs/asked>,
+        <http://adlnet.gov/expapi/verbs/completed>,
+        <http://adlnet.gov/expapi/verbs/failed>,
+        <http://adlnet.gov/expapi/verbs/initialized>,
+        <http://adlnet.gov/expapi/verbs/passed>,
+        <http://adlnet.gov/expapi/verbs/scored>,
+        <http://adlnet.gov/expapi/verbs/terminated>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/consent-notice>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/intervention>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/job-aid>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-turn>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/rubric-criterion>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/confirmed-choice>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/content-link>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/criterion-key>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/criterion-scores>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/customer-line>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/delivered-text>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/delivery-channel>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/delivery-status>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/i2idlx-concepts>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-descriptor>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/matched-or-tapped-reply>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/pass-bar>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/recognised-text>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/review>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/step-id>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/transcript>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/twilio-message-sid>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/assigned>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/consented>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/declined-consent>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/took-turn> ;
+    profile:patterns <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/consented-call-v3>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/criteria-scored>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/declined-call>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/intervention-chats>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/intervention-followup>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-awaiting-review>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-body>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-failed-close>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-feedback-complete>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-passed-close>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-then-reviewed-completed>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-then-reviewed-fail>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-then-reviewed-pass>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/roleplay-call-v3>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/turns> ;
+    profile:templates <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-completed>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-failed>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-passed>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/consent-declined>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/consent-given>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/criterion-scored>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/intervention-assigned>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/intervention-chatted>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-initialized>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/turn> ;
+    profile:versions <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id> a xapi:ContextExtension ;
+    skos:definition "Identifier of the phone call that carried this role-play, as issued by the calling system."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "call id"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"minLength\": 1}" .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/confirmed-choice> a xapi:ResultExtension ;
+    skos:definition "Which source the trainee confirmed as their reply on this turn, as named by the player (for example recognised, matched or tapped). This profile does not fix a value list."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "confirmed choice"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"minLength\": 1}" ;
+    profile:recommendedVerbs <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/took-turn> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/content-link> a xapi:ContextExtension ;
+    skos:definition "The link sent with the intervention and what kind of link it is: 'cmi5-launch' (an LMS-issued cmi5 launch URL with a fetch token, tracked), 'scorm-player-untracked' (the course's SCORM-projection player opened outside an LMS: the content plays but no LMS records the attempt), 'readable-view' (a read-only rendering), or 'scorm-package' (the package download, for import into an LMS). Added in v2."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2> ;
+    skos:prefLabel "content link"@en ;
+    profile:inlineSchema "{\"type\": \"object\", \"required\": [\"url\", \"kind\"], \"properties\": {\"url\": {\"type\": \"string\", \"format\": \"uri\"}, \"kind\": {\"type\": \"string\", \"enum\": [\"cmi5-launch\", \"scorm-player-untracked\", \"readable-view\", \"scorm-package\"]}, \"course\": {\"type\": \"string\", \"format\": \"iri\"}}}" ;
+    profile:recommendedVerbs <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/assigned> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/criterion-key> a xapi:ActivityExtension ;
+    skos:definition "Short stable key of the rubric criterion as named by the attempt's rubric. The allowed keys are those of that rubric; this profile does not fix a value list."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "criterion key"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"minLength\": 1}" ;
+    profile:recommendedActivityTypes <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/rubric-criterion> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/criterion-scores> a xapi:ResultExtension ;
+    skos:definition "Map of rubric criterion key to raw score for the attempt, repeated on the completed statement for convenience."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "criterion scores"@en ;
+    profile:inlineSchema "{\"type\": \"object\", \"additionalProperties\": {\"type\": \"number\"}}" ;
+    profile:recommendedVerbs <http://adlnet.gov/expapi/verbs/completed> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/customer-line> a xapi:ActivityExtension ;
+    skos:definition "The customer line as spoken on this turn."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "customer line"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"minLength\": 1}" ;
+    profile:recommendedActivityTypes <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-turn> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/delivered-text> a xapi:ResultExtension ;
+    skos:definition "The exact text delivered to the participant (for a text message, the message body as submitted to the provider, without any provider-added prefix). MUST NOT contain the participant's phone number. Added in v2."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2> ;
+    skos:prefLabel "delivered text"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"minLength\": 1, \"maxLength\": 1600}" ;
+    profile:recommendedVerbs <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/assigned> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/delivery-channel> a xapi:ContextExtension ;
+    skos:definition "How an intervention reached the participant: 'sms' (text message), 'mms', 'voice', 'email', 'web', or 'in-call'. Added in v2."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2> ;
+    skos:prefLabel "delivery channel"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"enum\": [\"sms\", \"mms\", \"voice\", \"email\", \"web\", \"in-call\"]}" ;
+    profile:recommendedVerbs <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/assigned> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/delivery-status> a xapi:ResultExtension ;
+    skos:definition "The provider's delivery status for the message when the statement was written (written after polling to a final state where possible): provider, status, error code if any, number of segments, and when it was observed. Added in v2."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2> ;
+    skos:prefLabel "delivery status"@en ;
+    profile:inlineSchema "{\"type\": \"object\", \"required\": [\"provider\", \"status\"], \"properties\": {\"provider\": {\"type\": \"string\"}, \"status\": {\"type\": \"string\", \"enum\": [\"accepted\", \"scheduled\", \"queued\", \"sending\", \"sent\", \"delivered\", \"undelivered\", \"failed\", \"read\", \"canceled\"]}, \"errorCode\": {\"type\": [\"integer\", \"null\"]}, \"segments\": {\"type\": \"integer\", \"minimum\": 1}, \"observedAt\": {\"type\": \"string\", \"format\": \"date-time\"}}}" ;
+    profile:recommendedVerbs <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/assigned> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/i2idlx-concepts> a xapi:ActivityExtension ;
+    skos:definition "I2IDL Digital Learning Glossary concept IRIs (https://id.i2idl.org/concepts/...) this activity is aligned to through the I2IDL-X layer. Alignments are proposals until a human ratifies them."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "I2IDL-X concepts"@en ;
+    profile:inlineSchema "{\"type\": \"array\", \"items\": {\"type\": \"string\", \"format\": \"iri\"}, \"minItems\": 1}" ;
+    profile:recommendedActivityTypes <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/intervention>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/job-aid>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-turn>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/rubric-criterion> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-descriptor> a xapi:ContextExtension ;
+    skos:definition "URL of the Interego context descriptor for that graph version."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "Interego descriptor"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"format\": \"uri\"}" .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph> a xapi:ContextExtension ;
+    skos:definition "IRI of the Interego named graph that holds the authoritative record this statement projects (attempt, scenario or intervention graph)."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "Interego graph"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"format\": \"iri\"}" .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/matched-or-tapped-reply> a xapi:ResultExtension ;
+    skos:definition "The reply the player matched from recognised speech, or the reply the trainee tapped, on this turn."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "matched or tapped reply"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"minLength\": 1}" ;
+    profile:recommendedVerbs <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/took-turn> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym> a xapi:ContextExtension ;
+    skos:definition "A keyed pseudonym of the participant's phone number: 'hmac-sha256:' + lowercase hex HMAC-SHA256 of the E.164 tel URI (e.g. tel:+15555550123), keyed with a secret held privately by the training owner. Lets attempts by the same phone be linked without putting the number in the LRS. Privacy: a raw phone number MUST NOT appear anywhere in a statement following this Profile. Do not use an unkeyed hash: phone numbers are few enough that an unkeyed hash can be reversed by brute force."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "participant phone pseudonym"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"pattern\": \"^hmac-sha256:[0-9a-f]{64}$\"}" ;
+    profile:recommendedVerbs <http://adlnet.gov/expapi/verbs/completed>,
+        <http://adlnet.gov/expapi/verbs/initialized>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/assigned>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/consented>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/declined-consent> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/pass-bar> a xapi:ResultExtension ;
+    skos:definition "The pass rule the attempt was judged against, taken from the named rubric (for example minimum total, maximum total, minimum percent, and any criteria that must reach a given level)."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "pass bar"@en ;
+    profile:inlineSchema "{\"type\": \"object\", \"properties\": {\"minTotal\": {\"type\": \"number\"}, \"maxTotal\": {\"type\": \"number\"}, \"minPercent\": {\"type\": \"number\"}, \"noZeroOn\": {\"type\": \"array\", \"items\": {\"type\": \"string\"}}, \"requiredLevels\": {\"type\": \"object\"}}}" ;
+    profile:recommendedVerbs <http://adlnet.gov/expapi/verbs/completed> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/recognised-text> a xapi:ResultExtension ;
+    skos:definition "The trainee's recognised speech on this turn, when voice was used. Omit when the turn was only a tap or a matched reply with no voice."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "recognised text"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"minLength\": 1}" ;
+    profile:recommendedVerbs <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/took-turn> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/review> a xapi:ContextExtension ;
+    skos:definition "IRI of the practice-evidence review record (countersign or override) that authorized a later passed, failed or completed statement for this registration."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "review"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"format\": \"iri\"}" ;
+    profile:recommendedVerbs <http://adlnet.gov/expapi/verbs/completed>,
+        <http://adlnet.gov/expapi/verbs/failed>,
+        <http://adlnet.gov/expapi/verbs/passed> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric> a xapi:ContextExtension ;
+    skos:definition "The hash or IRI of the ratified practice-evidence rubric this attempt was scored against, so a reader can find the criteria, levels, weights and pass rule. Added in v3. The profile itself does not list a fixed set of criterion keys."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "rubric"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"minLength\": 1, \"description\": \"An IRI, or a hash, of a ratified practice-evidence rubric.\"}" ;
+    profile:recommendedVerbs <http://adlnet.gov/expapi/verbs/completed>,
+        <http://adlnet.gov/expapi/verbs/initialized>,
+        <http://adlnet.gov/expapi/verbs/scored>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/consented> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario> a xapi:ContextExtension ;
+    skos:definition "IRI of the role-play scenario definition (e.g. its Interego graph)."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "scenario"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"format\": \"iri\"}" .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/step-id> a xapi:ActivityExtension ;
+    skos:definition "Stable identifier of the scenario step this turn belongs to, as named by the scenario (not a fixed list in this profile)."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "step id"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"minLength\": 1}" ;
+    profile:recommendedActivityTypes <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-turn> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/transcript> a xapi:ContextExtension ;
+    skos:definition "IRI where the call transcript (or the attempt record holding it) can be read by authorized parties."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "transcript"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"format\": \"iri\"}" .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/twilio-message-sid> a xapi:ContextExtension ;
+    skos:definition "The Twilio Programmable Messaging message SID (SM... or MM... followed by 32 hex characters) of the text that delivered the intervention. Lets the statement be reconciled with the provider's delivery log. Added in v2."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2> ;
+    skos:prefLabel "Twilio message SID"@en ;
+    profile:inlineSchema "{\"type\": \"string\", \"pattern\": \"^(SM|MM)[0-9a-fA-F]{32}$\"}" ;
+    profile:recommendedVerbs <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/assigned> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/intervention-followup> a profile:Pattern ;
+    skos:definition "Statements under one registration for one intervention: it is assigned, then the participant may chat about it any number of times. Uses its own registration, not the call's."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "intervention follow-up"@en ;
+    profile:primary true ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/intervention-assigned> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/intervention-chats> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/roleplay-call-v3> a profile:Pattern ;
+    skos:definition "Every statement with one registration for one role-play call: the call either proceeds with consent through turns and criterion scores to a close, or ends after consent is declined. Close variants cover a feedback-only completed session, a pass-gate practice session that terminates without passed or completed while review is pending, a same-session pass or fail, and a later review session under the same registration."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "role-play call"@en ;
+    profile:alternates <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/consented-call-v3>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/declined-call> ;
+    profile:primary true .
+
+<http://adlnet.gov/expapi/verbs/asked> a xapi:Verb ;
+    skos:definition "Reused ADL verb. The participant asked a question about an intervention's content or process (the intervention chat); result.response carries the question."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "asked"@en .
+
+<http://adlnet.gov/expapi/verbs/terminated> a xapi:Verb ;
+    skos:definition "Reused ADL/cmi5 verb. The role-play session ended. On a pass-gate attempt awaiting review this may close the practice session without passed or completed; a later session under the same registration may then send those verbs after review."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "terminated"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/job-aid> a xapi:ActivityType ;
+    skos:broader <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/intervention> ;
+    skos:definition "A job aid: a short script or checklist used at the moment of need on a live call."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "job aid"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/consented-call-v3> a profile:Pattern ;
+    skos:definition "initialized, consented, one or more turns, one or more criterion scores, then one of the practice or review closes."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "consented call"@en ;
+    profile:alternates <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-awaiting-review>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-failed-close>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-feedback-complete>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-passed-close>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-then-reviewed-completed>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-then-reviewed-fail>,
+        <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-then-reviewed-pass> ;
+    profile:primary false .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/criteria-scored> a profile:Pattern ;
+    skos:definition "One or more statements matching the generic criterion-scored template. Completeness (every rubric criterion scored once) is checked against the named rubric, not by this pattern."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "criterion scores"@en ;
+    profile:oneOrMore <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/criterion-scored> ;
+    profile:primary false .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/declined-call> a profile:Pattern ;
+    skos:definition "initialized, consent declined, terminated. No scores."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "declined call"@en ;
+    profile:primary false ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-initialized> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/consent-declined> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/intervention-chats> a profile:Pattern ;
+    skos:definition "Zero or more intervention chat questions."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "intervention chats"@en ;
+    profile:primary false ;
+    profile:zeroOrMore <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/intervention-chatted> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-failed-close> a profile:Pattern ;
+    skos:definition "After scores the AU sends failed then terminated in the same session, per the AU's moveOn."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "practice failed close"@en ;
+    profile:primary false ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-body> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-failed> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-feedback-complete> a profile:Pattern ;
+    skos:definition "A feedback-only (or completed-without-passed) session: after scores the AU sends completed then terminated in the same session."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "practice feedback complete"@en ;
+    profile:primary false ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-body> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-completed> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-passed-close> a profile:Pattern ;
+    skos:definition "After scores the AU sends passed, completed and terminated in the same session."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "practice passed close"@en ;
+    profile:primary false ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-body> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-passed> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-completed> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-then-reviewed-completed> a profile:Pattern ;
+    skos:definition "A practice session that terminated awaiting review, then a new session under the same registration: initialized, completed (without passed, per moveOn), terminated."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "practice then reviewed completed"@en ;
+    profile:primary false ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-awaiting-review> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-initialized> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-completed> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-then-reviewed-fail> a profile:Pattern ;
+    skos:definition "A practice session that terminated awaiting review, then a new session under the same registration: initialized, failed, terminated."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "practice then reviewed fail"@en ;
+    profile:primary false ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-awaiting-review> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-initialized> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-failed> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-then-reviewed-pass> a profile:Pattern ;
+    skos:definition "A practice session that terminated awaiting review, then a new session under the same registration: initialized, passed, completed, terminated. The passed and completed statements SHOULD name the review record."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "practice then reviewed pass"@en ;
+    profile:primary false ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-awaiting-review> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-initialized> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-passed> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-completed> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/turns> a profile:Pattern ;
+    skos:definition "One or more turn statements, in the order of the exchanges."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "turns"@en ;
+    profile:oneOrMore <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/turn> ;
+    profile:primary false .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/consent-declined> a profile:StatementTemplate ;
+    skos:definition "The participant declined the consent notice; the call ends without scoring."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "consent declined"@en ;
+    profile:contextGroupingActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> ;
+    profile:objectActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/consent-notice> ;
+    profile:rules [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric']" ;
+            profile:presence "recommended" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ] ;
+    profile:verb <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/declined-consent> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/consent-given> a profile:StatementTemplate ;
+    skos:definition "The participant agreed to the consent notice read at the start of the call."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "consent given"@en ;
+    profile:contextGroupingActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> ;
+    profile:objectActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/consent-notice> ;
+    profile:rules [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario']" ;
+            profile:presence "included" ] ;
+    profile:verb <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/consented> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/criterion-scored> a profile:StatementTemplate ;
+    skos:definition "A rubric criterion was scored for the attempt. The object activity type is rubric-criterion. The criterion-key extension names which criterion, with no fixed value list in this profile; the rubric context extension names the ratified rubric that defines the allowed keys, levels and pass rule. result.response SHOULD carry the evidence (what was said or missed)."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "criterion scored"@en ;
+    profile:contextGroupingActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> ;
+    profile:contextParentActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario> ;
+    profile:objectActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/rubric-criterion> ;
+    profile:rules [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric']" ;
+            profile:presence "included" ],
+        [ profile:location "$.object.definition.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/criterion-key']" ;
+            profile:presence "included" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.response" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.result.score.max" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario']" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.score.min" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.score.raw" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ] ;
+    profile:verb <http://adlnet.gov/expapi/verbs/scored> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/intervention-assigned> a profile:StatementTemplate ;
+    skos:definition "An intervention was assigned in response to a scored attempt. context.statement SHOULD reference the attempt-completed statement it responds to; the interego-graph extension SHOULD name the intervention plan graph. v2: when the intervention is delivered by text message or another channel, the statement SHOULD carry delivery-channel, twilio-message-sid (for Twilio texts), content-link, delivered-text, delivery-status and the participant phone pseudonym."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2> ;
+    skos:prefLabel "intervention assigned"@en ;
+    profile:rules [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/delivery-channel']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.result.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/delivery-status']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.result.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/delivered-text']" ;
+            profile:presence "recommended" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/intervention",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/job-aid" ;
+            profile:location "$.object.definition.type" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.statement.id" ;
+            profile:presence "recommended" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/content-link']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/twilio-message-sid']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ] ;
+    profile:verb <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/assigned> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/intervention-chatted> a profile:StatementTemplate ;
+    skos:definition "The participant asked about an intervention's content or process; result.response carries the question."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "intervention chatted"@en ;
+    profile:rules [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.response" ;
+            profile:presence "included" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/intervention",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/job-aid" ;
+            profile:location "$.object.definition.type" ;
+            profile:presence "included" ] ;
+    profile:verb <http://adlnet.gov/expapi/verbs/asked> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/turn> a profile:StatementTemplate ;
+    skos:definition "One exchange of the role-play, in order. The object activity type is roleplay-turn. The statement MUST carry the step id and the customer line as spoken; it SHOULD carry recognised text when voice was used and the matched or tapped reply; result.response MUST be the wording the trainee confirmed; it MUST say which of those the trainee confirmed."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "turn"@en ;
+    profile:contextGroupingActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> ;
+    profile:contextParentActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario> ;
+    profile:objectActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-turn> ;
+    profile:rules [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "included" ],
+        [ profile:location "$.object.definition.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/customer-line']" ;
+            profile:presence "included" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/recognised-text']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.result.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/confirmed-choice']" ;
+            profile:presence "included" ],
+        [ profile:location "$.object.definition.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/step-id']" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/matched-or-tapped-reply']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ],
+        [ profile:location "$.result.response" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ] ;
+    profile:verb <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/took-turn> .
+
+<http://adlnet.gov/expapi/verbs/failed> a xapi:Verb ;
+    skos:definition "Reused ADL/cmi5 verb. The attempt did not meet the pass rule, or a reviewer recorded it as not passed."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "failed"@en .
+
+<http://adlnet.gov/expapi/verbs/passed> a xapi:Verb ;
+    skos:definition "Reused ADL/cmi5 verb. The attempt met the pass rule of the named rubric, or a reviewer countersigned or overrode it as a pass. The review record IRI SHOULD appear in the review context extension when the judgment is a review."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "passed"@en .
+
+<http://adlnet.gov/expapi/verbs/scored> a xapi:Verb ;
+    skos:definition "Reused ADL verb. A rubric criterion of the role-play was scored for this attempt; result.score carries the criterion score. Which criteria apply is named by the attempt's rubric, not by this profile."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "scored"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/consent-notice> a xapi:ActivityType ;
+    skos:definition "The AI-disclosure and recorded-line consent text read to the participant at the start of the call."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "consent notice"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/intervention> a xapi:ActivityType ;
+    skos:definition "A performance-improvement intervention designed from a scored attempt (for example a focused re-run, a scenario variant, or a job aid)."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "intervention"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-failed> a profile:StatementTemplate ;
+    skos:definition "The attempt did not meet the pass rule, or a reviewer recorded it as not passed. When this follows a review, the review context extension SHOULD name that record. cmi5: this is the AU's statement, inside a session."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "attempt failed"@en ;
+    profile:contextGroupingActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> ;
+    profile:objectActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario> ;
+    profile:rules [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/review']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ],
+        [ profile:all false ;
+            profile:location "$.result.success" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.result.score.raw" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ] ;
+    profile:verb <http://adlnet.gov/expapi/verbs/failed> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-passed> a profile:StatementTemplate ;
+    skos:definition "The attempt met the pass rule, or a reviewer recorded it as a pass. When this follows a review, the review context extension SHOULD name that record. cmi5: this is the AU's statement, inside a session."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "attempt passed"@en ;
+    profile:contextGroupingActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> ;
+    profile:objectActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario> ;
+    profile:rules [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.score.raw" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/review']" ;
+            profile:presence "recommended" ],
+        [ profile:all true ;
+            profile:location "$.result.success" ;
+            profile:presence "included" ] ;
+    profile:verb <http://adlnet.gov/expapi/verbs/passed> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/declined-consent> a xapi:Verb ;
+    skos:definition "The participant did not agree to the consent notice read at the start of the call; no scoring may follow."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "declined consent"@en .
+
+<http://adlnet.gov/expapi/verbs/initialized> a xapi:Verb ;
+    skos:definition "Reused ADL/cmi5 verb. The role-play call connected and the scenario was set up; the first statement of every role-play call."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "initialized"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/rubric-criterion> a xapi:ActivityType ;
+    skos:definition "One criterion of a role-play scoring rubric, identified by the attempt's rubric (the rubric context extension) and by the criterion-key extension. Related to the ADL objective activity type."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "rubric criterion"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/consented> a xapi:Verb ;
+    skos:definition "The participant agreed, on the call, to the recorded-line AI role-play and to their results being stored. Object is the consent notice that was read to them."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "consented"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-turn> a xapi:ActivityType ;
+    skos:definition "One ordered exchange in a role-play attempt: a customer line and the participant's confirmed reply at a named step. Added in v3."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "role-play turn"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-awaiting-review> a profile:Pattern ;
+    skos:definition "A pass-gate practice session: after scores the AU sends terminated and does not send passed or completed, leaving the registration unsatisfied so a later session can close it after review."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "practice awaiting review"@en ;
+    profile:primary false ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-body> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/practice-body> a profile:Pattern ;
+    skos:definition "initialized, consented, one or more turns, one or more criterion scores."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> ;
+    skos:prefLabel "practice body"@en ;
+    profile:primary false ;
+    profile:sequence ( <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-initialized> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/consent-given> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/turns> <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/patterns/criteria-scored> ) .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/attempt-completed> a profile:StatementTemplate ;
+    skos:definition "Rubric criteria were scored; result carries the total, success against the pass bar taken from the named rubric, and duration."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "attempt completed"@en ;
+    profile:contextGroupingActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> ;
+    profile:objectActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario> ;
+    profile:rules [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.duration" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.score.raw" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric']" ;
+            profile:presence "included" ],
+        [ profile:all true ;
+            profile:location "$.result.completion" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.score.max" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/criterion-scores']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.result.success" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "included" ],
+        [ profile:location "$.result.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/pass-bar']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ] ;
+    profile:verb <http://adlnet.gov/expapi/verbs/completed> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/took-turn> a xapi:Verb ;
+    skos:definition "The participant completed one exchange of the role-play, in order. The statement carries the step id, the customer line as spoken, the trainee's recognised text when voice was used, the matched or tapped reply, and which of those the trainee confirmed."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "took turn"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-initialized> a profile:StatementTemplate ;
+    skos:definition "The role-play call connected and the scenario started."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "session initialized"@en ;
+    profile:contextGroupingActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> ;
+    profile:objectActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario> ;
+    profile:rules [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id']" ;
+            profile:presence "recommended" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ] ;
+    profile:verb <http://adlnet.gov/expapi/verbs/initialized> .
+
+<http://adlnet.gov/expapi/verbs/completed> a xapi:Verb ;
+    skos:definition "Reused ADL/cmi5 verb. The role-play attempt was scored in full; result carries the total, pass/fail against the pass bar, and the call duration."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "completed"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2> prov:generatedAtTime "2026-11-12T18:15:00+00:00"^^xsd:dateTime ;
+    prov:wasRevisionOf <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/verbs/assigned> a xapi:Verb ;
+    skos:definition "A performance-improvement intervention (for example a job aid or a re-run) was assigned to the participant in response to a scored attempt."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "assigned"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario> a xapi:ActivityType ;
+    skos:definition "A scripted role-play case (customer, situation, policy, rubric). The object of the initialized, completed and terminated statements and the parent of criterion scores. Related to the ADL assessment activity type."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "role-play scenario"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/templates/session-terminated> a profile:StatementTemplate ;
+    skos:definition "The role-play session ended."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "session terminated"@en ;
+    profile:contextGroupingActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> ;
+    profile:objectActivityType <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/roleplay-scenario> ;
+    profile:rules [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/participant-phone-pseudonym']" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/interego-graph']" ;
+            profile:presence "recommended" ],
+        [ profile:any "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2",
+                "https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3" ;
+            profile:location "$.context.contextActivities.category[*].id" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/call-id']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.result.duration" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['urn:interego:training#telephone']" ;
+            profile:presence "excluded" ],
+        [ profile:location "$.context.registration" ;
+            profile:presence "included" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/rubric']" ;
+            profile:presence "recommended" ],
+        [ profile:location "$.context.extensions['https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/extensions/scenario']" ;
+            profile:presence "included" ] ;
+    profile:verb <http://adlnet.gov/expapi/verbs/terminated> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/activity-types/phone-roleplay-simulation> a xapi:ActivityType ;
+    skos:definition "One live phone call in which an AI voice agent plays a scripted customer and the participant plays the support rep. Used as the grouping activity for every statement made about that call. Related to the ADL simulation activity type."@en ;
+    skos:inScheme <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> ;
+    skos:prefLabel "phone role-play simulation"@en .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/3> prov:generatedAtTime "2026-11-13T21:08:30+00:00"^^xsd:dateTime ;
+    prov:wasRevisionOf <https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/2> .
+
+<https://relay.interego.xwisee.com/ns/u-pk-0d4144c0c851/phone-roleplay-xapi/v/1> prov:generatedAtTime "2026-11-12T17:45:00+00:00"^^xsd:dateTime .
