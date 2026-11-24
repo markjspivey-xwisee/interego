@@ -261,9 +261,12 @@ export function corsMiddleware(opts: CorsHeaderOptions = {}): TaggedCorsMiddlewa
     // authenticated is not discovery. The card exposes only what the substrate
     // already publishes as followable affordances, and carries no credentials —
     // the wire routes beneath it remain individually auth-gated.
+    const pathOnly = url.split('?')[0] ?? '';
     if (url.startsWith('/ns/')
       || url.startsWith('/.well-known/agent-card.json')
-      || url.startsWith('/.well-known/interego-agents.json')) {
+      || url.startsWith('/.well-known/interego-agents.json')
+      || pathOnly === '/directory'
+      || pathOnly.startsWith('/directory/')) {
       res.setHeader('Access-Control-Allow-Origin', '*');
       res.setHeader('Access-Control-Allow-Methods', 'GET, OPTIONS');
       res.setHeader('Access-Control-Allow-Headers', DEFAULT_ALLOW_HEADERS);

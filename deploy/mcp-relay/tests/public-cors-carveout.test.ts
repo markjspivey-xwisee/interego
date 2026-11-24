@@ -51,7 +51,7 @@ app.use((_req, res, next) => {
 
 // A route that tries to set the header itself — as the mount used to. It must be
 // demonstrably unable to, so the test proves WHY the header has to be set upstream.
-for (const p of ['/.well-known/agent-card.json', '/.well-known/interego-agents.json', '/ns/maintainer/hmd']) {
+for (const p of ['/.well-known/agent-card.json', '/.well-known/interego-agents.json', '/ns/maintainer/hmd', '/directory', '/directory/agents/u-pk-33d42e6b33dc']) {
   app.get(p, (_req, res) => {
     res.setHeader('Access-Control-Expose-Headers', 'X-Should-Not-Win');
     res.setHeader('Link', '<https://relay.test/ns/x>; rel="describedby"');
@@ -68,7 +68,7 @@ const srv = await listenLoopback(app);
 const B = srv.base;
 
 try {
-  for (const p of ['/.well-known/agent-card.json', '/.well-known/interego-agents.json', '/ns/maintainer/hmd']) {
+  for (const p of ['/.well-known/agent-card.json', '/.well-known/interego-agents.json', '/ns/maintainer/hmd', '/directory', '/directory/agents/u-pk-33d42e6b33dc']) {
     const r = await fetch(`${B}${p}`, { headers: { Origin: 'https://stranger.example' } });
     const acao = r.headers.get('access-control-allow-origin');
     const exposed = (r.headers.get('access-control-expose-headers') ?? '').toLowerCase();
