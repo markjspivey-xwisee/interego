@@ -710,8 +710,8 @@ and dereferenceable at `/ns/foxxi`.
 | `POST /agent/teach` | record an A2A teaching event (composes `ac:TeachingPackage`); transfer outcomes from this endpoint also flow into the calibration profile. **Signature-gated.** | `{ author, signature, signedPayload }` |
 | `POST /content/compose-course` | author an emergent course (the authoring tool) | `{ course }` |
 | `POST /content/personalize` | resolve a course for one performer (restriction + override) | `{ course, performer }` |
-| `GET /knowledge` | self-describing index of the knowledge architecture | — |
-| `POST /knowledge/map` | decompose a competency → what to codify, what to enable as flow | `{ competency }` |
+| `GET /knowledge` | self-describing index of the knowledge architecture, with the input `POST /knowledge/map` takes | — |
+| `POST /knowledge/map` | decompose a competency → what to codify, what to enable as flow. The regime is required and none is assumed: a missing or unrecognised one is answered 400. | `{ competency, regime, components }` |
 
 ### Signature gate on outcome + teach
 

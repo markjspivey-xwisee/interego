@@ -187,6 +187,9 @@ async function tryPublishBounded<T>(label: string, fn: () => Promise<T>, ms: num
   }
 }
 
+/** The regimes POST /knowledge/map takes, as GET /knowledge publishes them. */
+const KNOWLEDGE_MAP_REGIMES: readonly WorkRegime[] = ['Evident', 'Knowable', 'Emergent', 'Turbulent'];
+
 function bad(res: Response, msg: string): void {
   res.status(400).json({ error: msg });
 }
@@ -1228,7 +1231,23 @@ export function attachPerformanceRoutes(app: Express, config: {
       principle: 'Of the knowledge a competent performer draws on, only part can honestly become content. The work regime decides the strategy: codify in Evident/Knowable regimes, connect-and-flow in the Emergent regime.',
       knowledgeComponents: ['recorded', 'trained', 'judged', 'lived', 'innate'],
       _affordances: {
-        mapKnowledge: { method: 'POST', href: `${base}/knowledge/map`, note: 'Decompose a competency into knowledge components, choose a regime-routed strategy, and split it into what to codify (content) and what to enable as a flow.' },
+        mapKnowledge: {
+          method: 'POST', href: `${base}/knowledge/map`,
+          note: 'Decompose a competency into knowledge components, choose a regime-routed strategy, and split it into what to codify (content) and what to enable as a flow.',
+          // The input, published so a caller composes against it and not
+          // against this file. Names and values are exact and case-sensitive.
+          expects: {
+            competency: 'string (required) — the competency whose knowledge is mapped',
+            regime: `${KNOWLEDGE_MAP_REGIMES.map(r => `'${r}'`).join(' | ')} (required, exact case) — the work regime that chooses the strategy. Take it from diagnosis.domain in the answer of POST /performance/plan.`,
+            components: [{
+              component: "'recorded' | 'trained' | 'judged' | 'lived' | 'innate' (required)",
+              description: 'string (required)',
+            }],
+            performer: { id: 'string (required)', kind: "'agent' | 'human' (required)", role: 'string (optional)' },
+          },
+          refuses: 'A missing regime, or one that is not one of the four names exactly, is answered 400 and no map is made. No regime is assumed: an unclassified diagnosis carries no domain, so it has no knowledge map until the situation is classified.',
+          returns: 'body.knowledgeMap carries { competency, regime, strategy, decomposition, toCodify, toConnect, principlesApplied, note }.',
+        },
       },
     });
   });
@@ -1238,8 +1257,20 @@ export function attachPerformanceRoutes(app: Express, config: {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const body = (req.body ?? {}) as Record<string, unknown>;
     if (typeof body.competency !== 'string' || !body.competency) { bad(res, 'competency (string) is required'); return; }
-    const regime: WorkRegime = ['Evident', 'Knowable', 'Emergent', 'Turbulent'].includes(body.regime as string)
-      ? body.regime as WorkRegime : 'Knowable';
+    // The regime chooses the strategy, so one that was not given is not
+    // guessed. This route used to read a missing or misspelt regime as
+    // Knowable and answer with things to codify, which is the gap-first
+    // default POST /performance/plan stopped making (wi-001): a caller
+    // passing on an unclassified diagnosis, which has no domain, was told
+    // to write content for work nobody had classified.
+    if (!(KNOWLEDGE_MAP_REGIMES as readonly unknown[]).includes(body.regime)) {
+      bad(res, `regime is required and must be exactly one of ${KNOWLEDGE_MAP_REGIMES.join(', ')}; ` +
+        `${body.regime === undefined ? 'none was given' : `got ${JSON.stringify(body.regime)}`}. ` +
+        'No regime is assumed. Classify the situation with POST /performance/plan and pass diagnosis.domain; ' +
+        'an unclassified diagnosis has no domain and so no knowledge map.');
+      return;
+    }
+    const regime = body.regime as WorkRegime;
     const valid = ['recorded', 'trained', 'judged', 'lived', 'innate'];
     const components: ComponentInput[] = Array.isArray(body.components)
       ? (body.components as Array<Record<string, unknown>>)
