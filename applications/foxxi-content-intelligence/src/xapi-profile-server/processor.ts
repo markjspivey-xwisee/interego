@@ -344,6 +344,8 @@ export interface FollowsResult {
   pattern?: string;
   /** Why not: a statement no template validates, or how far each primary pattern got. */
   reasons: string[];
+  /** Checks skipped because a referenced statement could not be resolved. */
+  skipped?: string[];
 }
 
 /** Statements in the order patterns are checked in: by timestamp, then by place in the array. */
@@ -361,28 +363,31 @@ export function follows(statements: readonly Json[], templates: readonly Json[],
   const byId = new Map(statements.filter(s => typeof s.id === 'string').map(s => [s.id as string, s]));
   const lookup: ValidatesOptions = { statementById: id => byId.get(id) ?? options.statementById?.(id) };
   const judged: Judged[] = [];
+  const skipped = new Set<string>();
+  const omissions = () => skipped.size ? { skipped: [...skipped] } : {};
   for (const [index, statement] of inOrder(statements).entries()) {
     const result = validates(statement, templates, lookup);
+    for (const reason of result.skipped) skipped.add(reason);
     if (result.outcome !== 'success') {
       const which = typeof statement.id === 'string' ? statement.id : `at position ${index}`;
-      return { follows: false, reasons: [result.outcome === 'unmatched'
+      return { follows: false, ...omissions(), reasons: [result.outcome === 'unmatched'
         ? `statement ${which} matches no statement template of the profile`
         : `statement ${which} does not follow ${result.findings.map(f => `${f.template} (${f.location ? f.location + ': ' : ''}${f.reason})`).join('; ')}`] };
     }
     judged.push({ statement, templates: result.templates });
   }
   const primary = patterns.filter(p => p.primary === true);
-  if (!primary.length) return { follows: false, reasons: ['the profile has no primary pattern, and only primary patterns are checked'] };
+  if (!primary.length) return { follows: false, ...omissions(), reasons: ['the profile has no primary pattern, and only primary patterns are checked'] };
   const of = elementsOf(templates, patterns), reasons: string[] = [];
   for (const pattern of primary) {
     const id = String(pattern.id);
     let outcome: MatchOutcome, remaining: readonly Judged[];
     try { [outcome, remaining] = matches(judged, id, of); } catch (e) { reasons.push(`${id}: ${(e as Error).message}`); continue; }
-    if (outcome === 'success' && remaining.length === 0) return { follows: true, pattern: id, reasons: [] };
+    if (outcome === 'success' && remaining.length === 0) return { follows: true, pattern: id, reasons: [], ...omissions() };
     const at = judged.length - remaining.length;
     reasons.push(outcome === 'success' ? `${id}: matched the first ${at} statement(s), and statement ${at + 1} of ${judged.length} is not part of it`
       : outcome === 'partial' ? `${id}: the statements end before the pattern does`
       : `${id}: does not match from the first statement`);
   }
-  return { follows: false, reasons };
+  return { follows: false, reasons, ...omissions() };
 }

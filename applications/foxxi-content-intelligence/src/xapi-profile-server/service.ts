@@ -570,7 +570,7 @@ export class ProfileServer {
   }
 
   /** The specification's /validate_patterns, with each statement's declared extensions held to their schemas. */
-  async validatePatterns(statements: unknown, profile: unknown): Promise<{ comments: string[]; pattern?: string }> {
+  async validatePatterns(statements: unknown, profile: unknown): Promise<{ comments: string[]; pattern?: string; skipped?: string[] }> {
     await this.ready();
     const { templates, patterns, concepts } = this.parts(profile);
     const many = parsed(statements, 'statements');
@@ -579,10 +579,16 @@ export class ProfileServer {
     let r;
     try { r = follows(many as unknown as PJson[], templates, patterns, { ...(this.options.statementById ? { statementById: this.options.statementById } : {}) }); }
     catch (e) { return { comments: [(e as Error).message] }; }
-    if (!r.follows) return { comments: r.reasons };
-    const values = (many as unknown as PJson[]).flatMap((statement, index) => extensionValues(statement, concepts).findings
-      .map(f => `statement ${typeof statement.id === 'string' ? statement.id : `at position ${index}`}: ${extensionComment(f)}`));
-    return values.length ? { comments: values } : { comments: [], ...(r.pattern ? { pattern: r.pattern } : {}) };
+    if (!r.follows) return { comments: r.reasons, ...(r.skipped ? { skipped: r.skipped } : {}) };
+    const skipped = new Set(r.skipped ?? []);
+    const comments = (many as unknown as PJson[]).flatMap((statement, index) => {
+      const checked = extensionValues(statement, concepts);
+      for (const reason of checked.unchecked) skipped.add(reason);
+      const label = typeof statement.id === 'string' ? statement.id : `at position ${index}`;
+      return checked.findings.map(f => `statement ${label}: ${extensionComment(f)}`);
+    });
+    return { comments, ...(!comments.length && r.pattern ? { pattern: r.pattern } : {}),
+      ...(skipped.size ? { skipped: [...skipped] } : {}) };
   }
 }
 
@@ -817,11 +823,24 @@ export function mountProfileServerReads(app: Express, server: ProfileServer, o: 
   app.get('/xapi/profiles/sparql', sparql);
   app.post('/xapi/profiles/sparql', o.urlencoded, o.text, sparql);
 
+  // Evidence mode keeps the standard 204/400 responses available to existing clients.
+  const selectedVersion = async (body: Obj) => {
+    if (body.report !== true) return undefined;
+    await server.ready();
+    return typeof body.profile === 'string' ? server.dataset.get(body.profile)?.version : undefined;
+  };
+  const report = (res: Response, profileVersion: string, data: { comments: string[]; skipped?: string[]; templates?: string[]; pattern?: string }) => {
+    const { comments, skipped = [], ...basis } = data;
+    const outcome = comments.length ? 'refused' : skipped.length ? 'incomplete' : 'matched';
+    res.status(outcome === 'refused' ? 400 : 200).json({ ...basis, profileVersion, outcome, comments, notChecked: skipped });
+  };
   app.post('/xapi/profiles/validate_templates', o.urlencoded, async (req, res) => {
     open(res);
     try {
       const body = isObj(req.body) ? req.body : {};
-      const r = await server.validateTemplates(body.statement, body.profile);
+      const version = await selectedVersion(body);
+      const r = await server.validateTemplates(body.statement, version ?? body.profile);
+      if (version) { report(res, version, r); return; }
       if (r.comments.length === 0) { res.status(204).end(); return; }
       res.status(400).json({ valid: false, comments: r.comments, ...(r.skipped.length ? { notChecked: r.skipped } : {}) });
     } catch (e) { fail(res, e); }
@@ -831,7 +850,9 @@ export function mountProfileServerReads(app: Express, server: ProfileServer, o: 
     open(res);
     try {
       const body = isObj(req.body) ? req.body : {};
-      const r = await server.validatePatterns(body.statements, body.profile);
+      const version = await selectedVersion(body);
+      const r = await server.validatePatterns(body.statements, version ?? body.profile);
+      if (version) { report(res, version, r); return; }
       if (r.comments.length === 0) { res.status(204).end(); return; }
       res.status(400).json({ valid: false, comments: r.comments });
     } catch (e) { fail(res, e); }

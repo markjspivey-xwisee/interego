@@ -193,6 +193,12 @@ jobs:
       # Iterating the glob rather than listing seven paths means a NEW vertical is
       # covered the day its bridge lands, instead of the day someone remembers to
       # add it here.
+      - name: Build Foxxi’s Profile Workbench and microsite
+        working-directory: applications/foxxi-content-intelligence/microsite-app
+        run: |
+          npm ci
+          npm run build
+
       - name: Typecheck every vertical bridge
         run: |
           set -euo pipefail

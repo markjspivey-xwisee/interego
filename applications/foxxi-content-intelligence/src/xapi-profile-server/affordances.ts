@@ -207,10 +207,14 @@ export const xapiProfileServerAffordances: Affordance[] = [
     inputs: [
       { name: 'statement', type: 'object', required: true, description: 'One xAPI Statement.' },
       { name: 'profile', type: 'string', required: true, description: 'The id of a profile, or of a version, held on the server.' },
+      { name: 'report', type: 'boolean', required: false, description: 'Read the exact profile version, outcome and omitted checks.' },
     ],
     outputs: {
-      description: 'An empty 204 on success. On 400: why.',
+      description: 'An empty 204 on success. With report=true, get JSON with the exact version and checked scope. On 400, get reasons.',
       properties: {
+        profileVersion: { type: 'string' },
+        outcome: { type: 'string', description: 'matched, incomplete or refused when report=true.' },
+        templates: { type: 'array', items: { type: 'string' } },
         valid: { type: 'boolean' },
         comments: { type: 'array', items: { type: 'string' }, description: 'Which template and rule were not followed.' },
         notChecked: { type: 'array', items: { type: 'string' }, description: 'What was not checked: a referenced statement that was not available, and any part of an extension schema this server does not read (it reads type, enum, const, numeric and length bounds, format iri, plain patterns, items, properties and required).' },
@@ -230,10 +234,18 @@ export const xapiProfileServerAffordances: Affordance[] = [
     inputs: [
       { name: 'statements', type: 'array', required: true, description: 'The xAPI Statements of one registration or sub-registration.' },
       { name: 'profile', type: 'string', required: true, description: 'The id of a profile, or of a version, held on the server.' },
+      { name: 'report', type: 'boolean', required: false, description: 'Read the exact profile version, outcome and omitted checks.' },
     ],
     outputs: {
-      description: 'An empty 204 on success. On 400: why.',
-      properties: { valid: { type: 'boolean' }, comments: { type: 'array', items: { type: 'string' } } },
+      description: 'An empty 204 on success. With report=true, get JSON with the exact version and checked scope. On 400, get reasons.',
+      properties: {
+        profileVersion: { type: 'string' },
+        outcome: { type: 'string', description: 'matched, incomplete or refused when report=true.' },
+        pattern: { type: 'string' },
+        valid: { type: 'boolean' },
+        comments: { type: 'array', items: { type: 'string' } },
+        notChecked: { type: 'array', items: { type: 'string' } },
+      },
     },
   },
   {

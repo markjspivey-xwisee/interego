@@ -15,3 +15,8 @@ result and points to the native fixture evidence.
 When a controls request names a profile, Foxxi returns the exact version its
 link uses. Following a historical decision exposes the offers from the profile
 that judged the statement. Each offered action still applies its live access rules.
+
+Profile checks can return the exact published version, the matching template
+or pattern, and any skipped checks. The human workbench uses those same public
+operations to inspect versions and check examples. It shows controls after a
+fully evaluated match. The standard response remains available to xAPI clients.

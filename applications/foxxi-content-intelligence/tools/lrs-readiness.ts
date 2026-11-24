@@ -340,4 +340,5 @@ try {
 } finally {
   proof.finishedAt = new Date().toISOString();
   persist();
+  console.info('FOXXI_LRS_READINESS ' + JSON.stringify(proof));
 }

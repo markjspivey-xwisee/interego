@@ -172,6 +172,47 @@ describe('over HTTP', () => {
     expect((await post('/validate_templates', { statement: [good], profile: P })).status).toBe(400);
   });
 
+  it('reports the version and distinguishes an incomplete check from a match', async () => {
+    const t = '2026-03-01T10:00:00Z';
+    const arrival = statement('arrived', t);
+    const count = counted('2026-03-01T10:00:01Z', 3);
+    const current = await post('/validate_templates', { statement: count, profile: P, report: true });
+    expect(current.status).toBe(200);
+    expect(await current.json()).toMatchObject({
+      profileVersion: P + '/v2', outcome: 'matched', templates: [P + '/templates/count'], notChecked: [],
+    });
+    const run = await post('/validate_patterns', { statements: [arrival, count], profile: P + '/v1', report: true });
+    expect(run.status).toBe(200);
+    expect(await run.json()).toMatchObject({
+      profileVersion: P + '/v1', outcome: 'matched', pattern: P + '/patterns/survey', notChecked: [],
+    });
+    const refused = await post('/validate_templates', { statement: counted(t), profile: P, report: true });
+    expect(refused.status).toBe(400);
+    expect(await refused.json()).toMatchObject({ profileVersion: P + '/v2', outcome: 'refused' });
+
+    const extProfile = 'https://example.org/profiles/schema';
+    const extension = extProfile + '/extensions/tide';
+    const version = extProfile + '/v1';
+    const source = profile(1) as Record<string, Json>;
+    server.dataset.add({ ...source, id: extProfile, versions: [{ id: version, generatedAtTime: t }],
+      concepts: [...source.concepts as Json[], { id: extension, type: 'ContextExtension', inScheme: version,
+        schema: 'https://example.org/schemas/tide.json' }] });
+    try {
+      const sample = { ...count as object, context: { extensions: { [extension]: 'unresolved' } } };
+      const legacy = await post('/validate_templates', { statement: sample, profile: version });
+      expect(legacy.status).toBe(204);
+      const report = await post('/validate_templates', { statement: sample, profile: version, report: true });
+      expect(report.status).toBe(200);
+      expect(await report.json()).toMatchObject({
+        profileVersion: version, outcome: 'incomplete', notChecked: [expect.stringContaining(extension)],
+      });
+      const sequence = await post('/validate_patterns', { statements: [arrival, sample], profile: version, report: true });
+      expect(await sequence.json()).toMatchObject({
+        profileVersion: version, outcome: 'incomplete', notChecked: [expect.stringContaining(extension)],
+      });
+    } finally { server.dataset.remove(extProfile); }
+  });
+
   it('answers /validate_patterns with 204, or 400 and which part', async () => {
     const run = [counted('2026-03-01T10:02:00Z', 2), statement('arrived', '2026-03-01T10:00:00Z'), counted('2026-03-01T10:01:00Z', 7)];
     expect((await post('/validate_patterns', form({ statements: JSON.stringify(run), profile: P }), 'application/x-www-form-urlencoded')).status).toBe(204);
