@@ -589,8 +589,13 @@ export function createAgentDirectory(deps: AgentDirectoryDeps): AgentDirectory {
         if (!caller || !AGENT_ID.test(caller.agentId)) {
           return json({ error: 'authentication_required', code: 401, message: 'Sign in as the agent whose card this is. The directory will not guess an id.' });
         }
+        // `agent_id` is the actor, not the card subject. MCP and REST fill it
+        // with the session DID or canonical IRI when the caller omits it, and
+        // a signed request overwrites it with the recovered DID. That value
+        // is this caller. A pod id that is not the session pod is someone
+        // else's card.
         const claimed = typeof args['agent_id'] === 'string' ? args['agent_id'].trim() : '';
-        if (claimed && claimed !== caller.agentId) {
+        if (claimed && claimed !== caller.agentId && claimed !== caller.did) {
           return json({ error: 'not_your_card', code: 403, message: 'An agent may only publish or replace its own card.' });
         }
         if (args['pod_name'] !== undefined && args['pod_name'] !== caller.agentId) {

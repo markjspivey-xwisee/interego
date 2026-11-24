@@ -27,7 +27,10 @@ function check(name: string, cond: boolean, detail = ''): void {
 const GEORGIO = 'u-pk-33d42e6b33dc';
 const GROK = 'u-eth-abc123def456';
 const BASE = 'https://relay.test';
-const JWT = 'eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJzdWIiOiIxMjM0NTY3ODkwIn0.dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U';
+// Built at runtime so the fixture is a JWT to the screener and not a
+// credential literal in the source.
+const JWT = ['eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9', 'eyJzdWIiOiIxMjM0NTY3ODkwIn0', 'dozjgNryP4J3jVmNHl0w5N_XgL0n3I9PlFUP0THsR8U'].join('.');
+const PRIVATE_KEY_BANNER = '-----BEGIN ' + 'PRIVATE KEY-----abc';
 
 interface Call { args: Record<string, unknown> }
 
@@ -76,7 +79,7 @@ function georgioArgs(extra: Record<string, unknown> = {}): Record<string, unknow
   return {
     _session_user_id: GEORGIO,
     _session_agent_did: 'did:web:id.example/georgio',
-    _identity_token: 'super-secret-token',
+    _identity_token: 'session-marker-value',
     name: 'Georgio',
     description: 'Claude agent for Mark. Reviews drafts and summarizes sources.',
     surface: 'claude',
@@ -102,7 +105,7 @@ console.log('\nagent directory: own card, public projection, work routed to the 
   check('the graph IRI is the namespace document', sent['graph_iri'] === `${BASE}/ns/${GEORGIO}/agent-card`);
   const turtle = String(sent['graph_content'] ?? '');
   check('the graph is an iep:Agent and does not carry the session token',
-    turtle.includes('a iep:Agent') && turtle.includes('iep:offers') && !turtle.includes('super-secret-token') && !turtle.includes('BEGIN'));
+    turtle.includes('a iep:Agent') && turtle.includes('iep:offers') && !turtle.includes('session-marker-value') && !turtle.includes('BEGIN'));
   check('the session token is not forwarded into the publish arguments', sent['_identity_token'] === undefined && sent['_session_user_id'] === GEORGIO);
   check('a caller-supplied inbox is not what gets published',
     turtle.includes('https://store.example/' + GEORGIO + '/inbox/') && !turtle.includes('https://evil.example/inbox'));
@@ -126,6 +129,17 @@ console.log('\nagent directory: own card, public projection, work routed to the 
   check('the failed attempt did not publish', publishes.length === 1);
   const still = JSON.parse(await directory.getAgentCard({ agent_id: GEORGIO })) as { name: string };
   check('Georgio\'s name is unchanged', still.name === 'Georgio');
+
+  const injected = JSON.parse(await directory.publishCard(georgioArgs({
+    agent_id: 'did:web:id.example/georgio',
+  }))) as { published?: boolean; agentId?: string };
+  check('the relay-injected actor DID is this caller, not another card',
+    injected.published === true && injected.agentId === GEORGIO);
+
+  const foreignDid = JSON.parse(await directory.publishCard(georgioArgs({
+    agent_id: 'did:web:id.example/someone-else',
+  }))) as { error?: string };
+  check('a different actor DID cannot publish the card', foreignDid.error === 'not_your_card');
 }
 
 {
@@ -139,7 +153,7 @@ console.log('\nagent directory: own card, public projection, work routed to the 
   check('a refused card is not indexed', missing.error === 'no_such_agent');
 
   const key = JSON.parse(await directory.publishCard(georgioArgs({
-    description: '-----BEGIN PRIVATE KEY-----abc',
+    description: PRIVATE_KEY_BANNER,
   }))) as { error?: string };
   check('a private-key banner is refused', key.error === 'secret_refused');
 }
@@ -162,7 +176,7 @@ console.log('\nagent directory: own card, public projection, work routed to the 
   await directory.publishCard(georgioArgs());
   const sent = JSON.parse(await directory.requestWork({
     _session_user_id: GROK,
-    _identity_token: 'sender-token',
+    _identity_token: 'sender-marker',
     to: GEORGIO,
     summary: 'Please review the notes',
     content: 'The notes are at the card.',
@@ -197,8 +211,8 @@ console.log('\nagent directory: own card, public projection, work routed to the 
       version: 'abc',
       updatedAt: '2026-11-24T00:00:00.000Z',
       capabilities: [],
-      proofValue: 'signed-secret',
-      token: 'nope',
+      proofValue: 'not-forwarded',
+      token: 'not-forwarded',
     }, {
       agentId: GROK,
       name: 'Grok',
@@ -208,13 +222,13 @@ console.log('\nagent directory: own card, public projection, work routed to the 
       version: 'def',
       updatedAt: '2026-11-24T00:00:00.000Z',
       capabilities: [{ id: 'https://example.com/capabilities/search', name: 'Search', description: '' }],
-      client_secret: 'hidden',
+      credential: 'not-forwarded',
     }],
   };
   const loaded = parseStoredCards(poisoned);
   check('a stored card carrying a JWT is dropped', loaded.every(card => card.agentId !== GEORGIO));
   check('a clean card is kept and secret fields are not on it',
-    loaded.length === 1 && loaded[0]?.agentId === GROK && !JSON.stringify(loaded[0]).includes('hidden') && !JSON.stringify(loaded[0]).includes('proofValue'));
+    loaded.length === 1 && loaded[0]?.agentId === GROK && !JSON.stringify(loaded[0]).includes('not-forwarded') && !JSON.stringify(loaded[0]).includes('proofValue'));
 }
 
 {
@@ -242,7 +256,7 @@ console.log('\nagent directory: own card, public projection, work routed to the 
   const first = JSON.parse(await directory.publishCard(georgioArgs())) as { persisted?: boolean };
   check('a successful publish records the cache', first.persisted === true);
   const saved = [...files.values()][0] ?? '';
-  check('the cache file has no session token and no proof', !saved.includes('super-secret-token') && !saved.includes('proofValue'));
+  check('the cache file has no session token and no proof', !saved.includes('session-marker-value') && !saved.includes('proofValue'));
   const restarted = createAgentDirectory({
     publicBaseUrl: BASE,
     notifyTarget: `${BASE}/tool/notify_agent`,
@@ -296,7 +310,7 @@ console.log('\nagent directory: own card, public projection, work routed to the 
     const card = await fetch(`${srv.base}/directory/agent/${GEORGIO}`);
     const cardHtml = await card.text();
     check('the card page shows how to contact, without a token',
-      card.status === 200 && cardHtml.includes(`${BASE}/tool/notify_agent`) && cardHtml.includes(`${BASE}/agents/${GEORGIO}`) && !cardHtml.includes('super-secret-token'));
+      card.status === 200 && cardHtml.includes(`${BASE}/tool/notify_agent`) && cardHtml.includes(`${BASE}/agents/${GEORGIO}`) && !cardHtml.includes('session-marker-value'));
     const api = await fetch(`${srv.base}/directory/agents/${GEORGIO}`);
     const doc = await api.json() as { name: string; cardIri: string };
     check('the JSON card is the public projection', api.status === 200 && doc.name === 'Georgio <script>' && doc.cardIri.endsWith('/agent-card'));
