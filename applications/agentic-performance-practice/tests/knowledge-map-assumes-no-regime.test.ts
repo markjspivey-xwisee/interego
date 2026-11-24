@@ -10,7 +10,7 @@
 import { describe, expect, it } from 'vitest';
 import express from 'express';
 import type { AddressInfo } from 'node:net';
-import { attachPerformanceRoutes } from '../applications/agentic-performance-practice/compatibility/foxxi-performance-routes.js';
+import { attachPerformanceRoutes } from '../compatibility/foxxi-performance-routes.js';
 
 const components = [
   { component: 'lived', description: 'reading a customer who is about to leave' },

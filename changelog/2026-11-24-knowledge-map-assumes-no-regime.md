@@ -33,4 +33,4 @@ panel, sends a regime for every scenario.
 Not changed: a component whose name is not one of the five is still dropped
 without a word, and the request is refused only when none is left.
 
-Tests: `tests/knowledge-map-assumes-no-regime.test.ts`.
+Tests: `applications/agentic-performance-practice/tests/knowledge-map-assumes-no-regime.test.ts`.
