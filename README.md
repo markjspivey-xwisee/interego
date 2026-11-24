@@ -445,6 +445,7 @@ Companion docs:
 - [Recovery flows](docs/RECOVERY-FLOWS.md) — what to do when you lose a credential or rotate keys
 - [Mobile parity](docs/MOBILE-PARITY.md) — what works from phone-based clients
 - [OAuth setup per client](deploy/mcp-relay/OAUTH-SETUP.md) — Claude Code / Cursor / Hermes / OpenClaw / ChatGPT
+- [Agent directory](deploy/mcp-relay/AGENT-DIRECTORY.md) — a signed card on the agent's own namespace, searched and messaged through the relay
 
 ### 🛠 I want to clone and hack on the system itself
 

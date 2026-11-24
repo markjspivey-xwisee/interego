@@ -115,6 +115,7 @@ import {
   type FederationStoreConfig,
   type FederationEntry,
 } from './federation-store.js';
+import { createAgentDirectory, podDirectoryStore } from './agent-directory.js';
 import {
   inboxUrlFor,
   buildNotification,
@@ -799,6 +800,9 @@ const AUTH_REQUIRED_TOOLS = new Set([
   // to the caller's own pod, so it needs the bound identity too.
   // set_reachability mutates the caller's own agent card.
   'notify_agent', 'read_inbox', 'set_reachability',
+  // The directory writes a public card onto the caller's own pod and sends
+  // work into another agent's inbox. Both are the caller's actions.
+  'publish_agent_card', 'request_agent_work',
   // sign_request signs a payload AS the bound caller (session-derived identity)
   // with the relay delegation key — the agent's signing primitive for
   // signed-request affordances. Must be auth-gated so it can never sign for
@@ -2089,6 +2093,8 @@ const READ_SIDE_TOOLS = new Set<string>([
   'discover_context', 'discover_all', 'discover_directory', 'get_descriptor',
   'get_encrypted_graph', 'get_current_head', 'get_pod_status', 'list_known_pods',
   'list_declared_shapes', 'render_hmd', 'resolve_linked_data', 'verify_agent',
+  // Directory reads. The cards are already public; these tools only search the cache.
+  'search_agents', 'get_agent_card',
   // Analysis and routing — answer questions, write nothing.
   'analyze_question', 'interrogative_route', 'check_balance',
   // PGSL reads. `pgsl_ingest` and `pgsl_decide` are absent: they write the lattice.
@@ -11252,6 +11258,32 @@ const nsDereference = createNsDereference({
 // label was wrong.
 const { nsMarkdown, resolveNsGraph, handleResolveLinkedData } = nsDereference;
 
+/**
+ * The shared directory. Cards are published through handlePublishContext onto
+ * the caller's own namespace; work is delivered through handleNotifyAgent.
+ * Both functions are hoisted, so this can be built before the tool table
+ * that calls it. The HTTP pages are mounted later, after CORS.
+ */
+const agentDirectory = createAgentDirectory({
+  publicBaseUrl: PUBLIC_BASE_URL || 'https://relay.interego.xwisee.com',
+  notifyTarget: toolTarget('notify_agent'),
+  log,
+  store: podDirectoryStore({ podUrl: oauthStorePodUrl, fetch: solidFetch, log }),
+  callerOf(args) {
+    const agentId = typeof args._session_user_id === 'string' ? args._session_user_id : '';
+    if (!agentId) return null;
+    const did = typeof args._session_agent_did === 'string' ? args._session_agent_did : undefined;
+    return { agentId, ...(did ? { did } : {}) };
+  },
+  contactFor(agentId) {
+    const pod = `${CSS_URL}${encodeURIComponent(agentId)}/`;
+    const inbox = asPublicPodUrl(inboxUrlFor(pod));
+    return { relayAddress: relayAgentAddress(pod), ...(inbox ? { inbox } : {}) };
+  },
+  publish: (args) => handlePublishContext(args),
+  notify: (args) => handleNotifyAgent(args),
+});
+
 const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   // ── Kernel verbs (first-class substrate access) ──
   // These delegate straight to @interego/core kernel exports. The 27
@@ -11291,6 +11323,10 @@ const TOOLS: Record<string, ToolEntry> = gateRequiredArgs({
   resolve_webfinger: { description: 'Resolve WebFinger to find a pod', handler: handleResolveWebfinger },
   // Agent-to-agent messaging (Linked Data Notifications over Solid inboxes)
   notify_agent: { description: 'Send a notification to another agent (fans out across their declared channels: LDN inbox + any discord/telegram/email/sms/voice)', handler: handleNotifyAgent },
+  publish_agent_card: { description: 'Publish or replace your own agent card as a signed public context descriptor on your namespace', handler: (args) => agentDirectory.publishCard(args) },
+  search_agents: { description: 'Search published agent cards by name or capability', handler: (args) => agentDirectory.searchAgents(args) },
+  get_agent_card: { description: 'Fetch one published agent card', handler: (args) => agentDirectory.getAgentCard(args) },
+  request_agent_work: { description: 'Send work to an agent who published a card; delivered through notify_agent into their LDN inbox', handler: (args) => agentDirectory.requestWork(args) },
   read_inbox: { description: 'Read one page of notifications delivered to your (or a given) pod\'s LDN inbox, newest-first', handler: handleReadInbox },
   sign_request: { description: 'Sign a payload as your bound identity (rev-196 envelope) so you can act on a signed-request affordance', handler: handleSignRequest },
   set_reachability: { description: 'Declare external reachability channels on your own agent card (discord/telegram/email/sms/voice)', handler: handleSetReachability },
@@ -12446,6 +12482,71 @@ const TOOL_SCHEMAS = [
     },
     outputSchema: GENERIC_OUTPUT_SCHEMA,
     annotations: { title: 'Notify an agent', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
+  },
+  {
+    name: 'publish_agent_card',
+    description: 'Compatibility shim — composes publish_context. Publishes or replaces YOUR agent card: a signed public context descriptor at /ns/<your id>/agent-card. The directory indexes that document so other agents can search what you can do and send work to your LDN inbox. The subject is your authenticated session; an agent_id that is not you is refused. Credentials, tokens and private keys in the text are refused and are not stored.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        name: { type: 'string', description: 'Display name, 1–80 characters. For example Georgio.' },
+        description: { type: 'string', description: 'Who you are and how you work, 1–600 characters. Public.' },
+        surface: { type: 'string', description: 'Optional short label for where you run (claude, grok, chatgpt).' },
+        capabilities: {
+          type: 'array',
+          description: 'What you can do. Each item is { name, description?, id? }. id, when present, is an https URL. When absent, the card mints a fragment on its own IRI.',
+          items: { type: 'object', additionalProperties: false, properties: {
+            name: { type: 'string' },
+            description: { type: 'string' },
+            id: { type: 'string', description: 'https URL of the capability. No userinfo.' },
+          }, required: ['name'] },
+        },
+      },
+      required: ['name', 'description'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Publish your agent card', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+  },
+  {
+    name: 'search_agents',
+    description: 'Search the directory of published agent cards by name, description, or capability. Read-only. Returns the public projection and a notify_agent affordance for each match. Agents who have not published a card are absent.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        q: { type: 'string', description: 'Case-insensitive text matched against name, description, and capabilities. Omit to list cards.' },
+      },
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Search agent cards', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'get_agent_card',
+    description: 'Fetch one published agent card by the agent\'s pod id (u-pk-…, u-did-…, u-eth-…, eth-…). Read-only public projection, including how to address notify_agent. The signed document is the card IRI on that agent\'s namespace.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        agent_id: { type: 'string', description: 'The agent\'s pod id, for example u-pk-33d42e6b33dc.' },
+      },
+      required: ['agent_id'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Fetch an agent card', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: false },
+  },
+  {
+    name: 'request_agent_work',
+    description: 'Compatibility shim — composes notify_agent. Resolves a published card (by pod id, card IRI, or relay agent address) and delivers an Offer into that agent\'s LDN inbox. The sender is your authenticated session. A recipient with no published card is refused and nothing is written.',
+    inputSchema: {
+      type: 'object',
+      properties: {
+        to: { type: 'string', description: 'Pod id, card IRI, or the relay address printed on the card (https://<relay>/agents/<id>).' },
+        summary: { type: 'string', description: 'One-line summary, 1–280 characters. Shown in the inbox preview.' },
+        content: { type: 'string', description: 'The work itself. Optional. At most 8000 characters. Do not include credentials.' },
+        about: { type: 'string', description: 'Optional IRI the work is about.' },
+      },
+      required: ['to', 'summary'],
+    },
+    outputSchema: GENERIC_OUTPUT_SCHEMA,
+    annotations: { title: 'Request work from an agent', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
   },
   {
     name: 'sign_request',
@@ -15282,6 +15383,11 @@ app.get(['/.well-known/security.txt', '/security.txt'], (_req, res) => {
 // The line is kept where the routes have always been — identical registration order to the
 // pre-extraction file: security.txt, then these six, then mountAmep, then mountAgentInterop.
 nsDereference.mount(app);
+// The directory pages are public projections of cards agents published on
+// their own namespaces. Mounted after CORS so /directory gets the same
+// cross-origin read carve-out as /ns.
+agentDirectory.mount(app);
+void agentDirectory.hydrate();
 
 // ── /amep/* — AMEP engine (Interego is the reference implementation) ──
 //
