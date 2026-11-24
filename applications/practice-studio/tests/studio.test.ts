@@ -144,7 +144,7 @@ describe('practice studio', () => {
       rubric: { criteria: [{ id: 'greeting', levels: [{ id: 'good', value: 2 }, { id: 'poor', value: 0 }] }] },
       personas: [{ id: 'dana', stages: [{ choices: [{ text: 'Hello' }] }] }],
     };
-    expect(scenarioProblems(bad).join(' ')).toContain('lowest value to the highest');
+    expect(scenarioProblems(bad)).toContain('criterion greeting: level values must strictly increase from lowest to highest');
     const studio = await listen();
     const author = Wallet.createRandom();
     const other = Wallet.createRandom();

@@ -48,13 +48,19 @@ export function scenarioProblems(doc: ScenarioDoc): string[] {
   for (const criterion of doc.rubric?.criteria ?? []) {
     if (!/^[a-z0-9]+(?:-[a-z0-9]+)*$/.test(criterion.id)) problems.push(`criterion id ${JSON.stringify(criterion.id)} must be a lowercase key`);
     if (!Array.isArray(criterion.levels) || criterion.levels.length < 2) problems.push(`criterion ${criterion.id} needs at least two levels`);
-    let previous = Number.NEGATIVE_INFINITY;
-    for (const level of criterion.levels ?? []) {
+    const levels = criterion.levels ?? [];
+    for (const level of levels) {
       if (typeof level.value !== 'number' || !Number.isInteger(level.value)) {
         problems.push(`criterion ${criterion.id} level ${level.id} value must be a whole number`);
-      } else if (level.value <= previous) {
-        problems.push(`criterion ${criterion.id} levels must be listed from the lowest value to the highest`);
-      } else previous = level.value;
+      }
+    }
+    for (let j = 1; j < levels.length; j++) {
+      const prev = levels[j - 1]?.value ?? 0;
+      const cur = levels[j]?.value ?? 0;
+      if (cur <= prev) {
+        problems.push(`criterion ${criterion.id}: level values must strictly increase from lowest to highest`);
+        break;
+      }
     }
   }
   if (!Array.isArray(doc.personas) || doc.personas.length === 0) problems.push('name at least one persona');

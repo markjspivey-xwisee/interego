@@ -35,8 +35,9 @@ package already publishes them.
 
 `GET /` and `GET /affordances` are the discovery documents.
 
-A rubric whose levels are not listed from the lowest value to the highest is
-refused. The player and this check share that order.
+A rubric whose adjacent level values do not strictly increase is refused, with
+Practice Evidence's sentence: level values must strictly increase from lowest
+to highest.
 
 ## Auth
 

@@ -30,7 +30,7 @@ export const studioAffordances: readonly Affordance[] = [
     inputs: [
       { name: '_signed_payload', type: 'string', required: true, description: 'JSON of the request, including scenario, agent_id and timestamp. The signer is the author.' },
       { name: '_signature', type: 'string', required: true, description: 'ECDSA signature over sha256:<hex of the payload>, the same envelope as other Interego acts.' },
-      { name: 'scenario', type: 'object', required: true, description: 'Inside the signed payload. scenarioKey, title, rubric.criteria and personas are required. Levels are listed from the lowest value to the highest. An xapi block is added when the document has none, using phone-roleplay profile v3.' },
+      { name: 'scenario', type: 'object', required: true, description: 'Inside the signed payload. scenarioKey, title, rubric.criteria and personas are required. Level values must strictly increase from lowest to highest. An xapi block is added when the document has none, using phone-roleplay profile v3.' },
     ],
     annotations: { ...write, title: 'Create a practice scenario' },
   },
