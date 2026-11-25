@@ -12,7 +12,9 @@ finishes what was listed as designed for later.
   (`foxxi.assess_agent_disposition`). A directory that cannot be read is said so
   (`assignmentsRead: false`), not passed off as nothing assigned.
 - **`visible_to_peers` on the signed cmi5 launch.** A learner offers to be found
-  by other learners on a course, or withdraws. Peers are listed only to a learner
+  by other learners of the same course on this bridge, or withdraws. Each
+  learner's registrations are kept under their own pod's lens, so this is the
+  one read that crosses that partition, and only for learners who offered. Peers are listed only to a learner
   who offered too; a person's visibility is never their agent's choice or the
   reverse. A peer comes with the Interego inbox as the way to reach them.
 - **`learner_kind` on the credential and LTI routes.** `earned`, `claim`,

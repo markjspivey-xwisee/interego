@@ -11221,7 +11221,7 @@ app.post('/agent/credentials/earned', async (req, res) => {
     const standings = courseStandings(courses.map((c) => ({ courseId: c.courseId, courseTitle: c.title })), evidence, held, (id) => achievementIdFor(tenantProfileDid, id), now);
     res.json({
       kind: 'earned-credentials', learner: learner.did, learnerKind: learner.kind, ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}), learnerPodUrl: learner.podUrl, computedAt: now.toISOString(),
-      standings: standings.map((st) => (st.state === 'claimable' ? { ...st, claim: { affordance: actionUrl('urn:iep:action:foxxi:claim-credential-signed'), target: `${bridgeBaseUrl}/agent/credentials/claim`, payload: { course_id: st.courseId } } } : st)),
+      standings: standings.map((st) => (st.state === 'claimable' ? { ...st, claim: { affordance: actionUrl('urn:iep:action:foxxi:claim-credential-signed'), target: `${bridgeBaseUrl}/agent/credentials/claim`, payload: { course_id: st.courseId, ...(learner.kind === 'agent' ? { learner_kind: 'agent' } : {}) } } } : st)),
       held: held.length,
     });
   } catch (err) { sendServerError(res, err, 'credentials-earned'); }
@@ -11703,7 +11703,7 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       // The person and the agents learning beside them on this course, this launch included.
       companions: companionsOnCourse(tenant, course.id, learner.beside ?? learner.did),
       // Other learners on the course who offered to be found, shown only to a learner who offered too.
-      peers: peersOnCourse(tenant, course.id, learner.did, learner.beside),
+      peers: peersOnCourse(course.id, learner.did, learner.beside),
       note: learner.beside
         ? 'Open launchUrl. The AU fetches its auth-token once. Its statements name this agent as the actor and the person it learns beside in context.team, and are kept on that person\'s pod as the agent\'s own record. When they meet moveOn, the LMS records `satisfied` for the agent, not for the person. They count as experience, not as graded evidence: a cmi5 AU reports its own result.'
         : 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
@@ -11749,7 +11749,7 @@ app.post('/agent/learning/beside', async (req, res) => {
           ...c,
           ...(a ? { requirementType: a.requirementType, directoryStatus: a.status, assignedAt: a.assignedAt } : {}),
           launch: { affordance: launchAction, target: `${bridgeBaseUrl}/agent/cmi5/launch`, payload: { course_id: c.courseId, ...(learner.kind === 'agent' ? { learner_kind: 'agent' } : {}) } },
-          peers: peersOnCourse(tenant, c.courseId, learner.did, learner.beside),
+          peers: peersOnCourse(c.courseId, learner.did, learner.beside),
         };
       }),
       team: {
@@ -11757,7 +11757,7 @@ app.post('/agent/learning/beside', async (req, res) => {
         // The pair is a team of agents to the tools that read one; nothing new reads it.
         ...(agents.length > 0 ? { consult: { tool: 'foxxi.assess_agent_disposition', arguments: { agent_dids: agents }, note: 'A dispositional read of these agents from their recorded trajectories (foxxi.record_agent_trajectory); it answers 404 until one has been recorded.' } } : {}),
       },
-      note: 'satisfied is this bridge\'s cmi5 LMS: a registration of that learner on the course met moveOn here. directoryStatus is the tenant directory\'s. peers lists only learners who launched with visible_to_peers true, and only to a learner who did too; reach one through the Interego inbox.',
+      note: 'satisfied is this bridge\'s cmi5 LMS: a registration of that learner on the course met moveOn here. directoryStatus is the tenant directory\'s. peers lists learners of the same course on this bridge who launched with visible_to_peers true, and only to a learner who did too; reach one through the Interego inbox.',
     });
   } catch (err) { sendServerError(res, err, 'learning-beside-signed'); }
 });

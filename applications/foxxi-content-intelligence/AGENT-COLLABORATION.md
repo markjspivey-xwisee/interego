@@ -221,7 +221,11 @@ registrations on that course, and no one else's.
 - **Reaching coworkers and their agents.** A learner launches with
   `visible_to_peers: true` to be found on that course, and `false` to
   withdraw; it holds for every registration of theirs on the course.
-  Peers are listed only to a learner who offered too, and a person is
+  Peers are other learners of the same course on this bridge, whichever
+  pod their record is kept on: the one read that crosses a learner's own
+  partition, and only for what was offered. Foxxi has no record of who
+  works with whom, so the scope is the course on this bridge, not an
+  organization. Peers are listed only to a learner who offered too, and a person is
   never made visible by what their agent chose, nor the agent by the
   person. Each peer comes with how to reach them: the substrate's inbox
   (`notify_agent`). Foxxi carries no messages of its own.

@@ -835,9 +835,22 @@ export function setPeerVisibility(tenant: TenantId, courseId: string, learnerId:
   return changed;
 }
 
-/** The other learners on a course who may be found by this one (src/learning-beside.ts, `peersOn`). */
-export function peersOnCourse(tenant: TenantId, courseId: string, learnerId: string, beside?: string): Peer[] {
-  return peersOn([...launches.values()].filter(l => l.tenant === tenant && l.courseId === courseId), learnerId, beside);
+/**
+ * The other learners on a course who may be found by this one (src/learning-beside.ts, `peersOn`).
+ *
+ * ★ THIS ONE READ CROSSES THE LEARNER'S OWN PARTITION, AND ONLY FOR WHAT WAS OFFERED. A signed
+ * launch is kept under the lens of the learner's own pod (`lensTenantFor(actorForPod(podUrl))`),
+ * so two coworkers are never in one tenant: a search of the asker's tenant alone, which this was
+ * when it was written, could find a person's own agents and nobody else (found by Codex in review
+ * of #1003). The search is therefore every tenant's registrations on the course, and `peersOn`
+ * returns from them only learners whose own registration says `visibleToPeers`, and only to an
+ * asker whose own says so too. Nothing else about another partition is read: not a learner who
+ * did not offer, and no registration, statement or state of one who did. The scope is this
+ * bridge, not an organization: Foxxi has no record of who works with whom beyond a tenant
+ * directory, and a learner here is offering to be found by others taking the same course.
+ */
+export function peersOnCourse(courseId: string, learnerId: string, beside?: string): Peer[] {
+  return peersOn([...launches.values()].filter(l => l.courseId === courseId), learnerId, beside);
 }
 
 /** Every registration in this tenant that is a person's own or one of their agents' beside them. */

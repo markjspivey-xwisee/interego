@@ -113,38 +113,61 @@ describe('where a person and their agents stand', () => {
 });
 
 describe('on the LMS\'s own records', () => {
-  const tenant = 'lens:together' as TenantId;
+  // ★ A signed launch is kept under the lens of the learner's own pod, so Ana and Bo are in
+  // different tenants, as they are on the deployed bridge. The first version of this put them in
+  // one tenant and so never saw that a search of the asker's tenant finds no coworker at all
+  // (Codex, review of #1003).
+  const anaTenant = 'lens:u-pk-ana' as TenantId;
+  const boTenant = 'lens:u-pk-bo' as TenantId;
   const course = 'https://bridge.example/course/together';
   const base = {
     au: { id: 'https://bridge.example/au/t1', url: 'https://bridge.example/content/au/t/0', moveOn: 'Completed' as const, title: 'Unit' },
     lrsEndpoint: 'https://bridge.example/xapi', fetchBaseUrl: 'https://bridge.example/cmi5/fetch',
-    authoritativeSource: 'did:web:bridge.example', tenant, courseId: course,
+    authoritativeSource: 'did:web:bridge.example', courseId: course,
   };
-  buildCmi5Launch({ ...base, learner: { id: ANA }, visibleToPeers: true });
-  buildCmi5Launch({ ...base, learner: { id: ANA_AGENT }, beside: { id: ANA } });
-  buildCmi5Launch({ ...base, learner: { id: BO }, visibleToPeers: true });
-  buildCmi5Launch({ ...base, learner: { id: BO } });
+  buildCmi5Launch({ ...base, tenant: anaTenant, learner: { id: ANA }, visibleToPeers: true });
+  buildCmi5Launch({ ...base, tenant: anaTenant, learner: { id: ANA_AGENT }, beside: { id: ANA } });
+  buildCmi5Launch({ ...base, tenant: boTenant, learner: { id: BO }, visibleToPeers: true });
+  buildCmi5Launch({ ...base, tenant: boTenant, learner: { id: BO } });
+  buildCmi5Launch({ ...base, tenant: boTenant, learner: { id: BO_AGENT }, beside: { id: BO } });
+  buildCmi5Launch({ ...base, tenant: 'lens:u-pk-cy' as TenantId, learner: { id: CY } });
 
-  it('reads the pair and its agents from one tenant only', () => {
-    expect(launchesOfPair(tenant, ANA).map(l => l.learner.id).sort()).toEqual([ANA, ANA_AGENT].sort());
-    expect(delegatesLearningBeside(tenant, ANA)).toEqual([ANA_AGENT]);
-    expect(launchesOfPair('lens:elsewhere' as TenantId, ANA)).toEqual([]);
-    expect(delegatesLearningBeside('lens:elsewhere' as TenantId, ANA)).toEqual([]);
+  it('reads the pair and its agents from the person\'s own partition only', () => {
+    expect(launchesOfPair(anaTenant, ANA).map(l => l.learner.id).sort()).toEqual([ANA, ANA_AGENT].sort());
+    expect(delegatesLearningBeside(anaTenant, ANA)).toEqual([ANA_AGENT]);
+    expect(launchesOfPair(boTenant, ANA)).toEqual([]);
+    expect(delegatesLearningBeside(boTenant, ANA)).toEqual([]);
   });
 
-  it('finds a peer who offered, on that course only', () => {
-    expect(peersOnCourse(tenant, course, ANA).map(p => p.learner)).toEqual([BO]);
-    expect(peersOnCourse(tenant, 'https://bridge.example/course/other', ANA)).toEqual([]);
-    expect(peersOnCourse(tenant, course, ANA_AGENT, ANA)).toEqual([]);
+  it('finds a coworker who offered, though their record is kept under another pod', () => {
+    expect(peersOnCourse(course, ANA).map(p => p.learner)).toEqual([BO]);
+    expect(peersOnCourse(course, BO).map(p => p.learner)).toEqual([ANA]);
+  });
+
+  it('crosses the partition for nobody who did not offer, and shows nothing to an asker who did not', () => {
+    const found = peersOnCourse(course, ANA).map(p => p.learner);
+    expect(found).not.toContain(BO_AGENT);
+    expect(found).not.toContain(CY);
+    expect(peersOnCourse(course, CY)).toEqual([]);
+    expect(peersOnCourse(course, ANA_AGENT, ANA)).toEqual([]);
+    expect(peersOnCourse('https://bridge.example/course/other', ANA)).toEqual([]);
+  });
+
+  it('says of a peer only who they are, their kind, and whether they are through', () => {
+    for (const peer of peersOnCourse(course, ANA)) {
+      expect(Object.keys(peer).sort()).toEqual(['contact', 'kind', 'learner', 'satisfied']);
+    }
   });
 
   it('withdraws every registration of a learner at once, and offers them all at once', () => {
-    expect(setPeerVisibility(tenant, course, BO, false)).toBe(1);
-    expect(peersOnCourse(tenant, course, ANA)).toEqual([]);
-    expect(setPeerVisibility(tenant, course, BO, true)).toBe(2);
-    expect(peersOnCourse(tenant, course, ANA).map(p => p.learner)).toEqual([BO]);
-    expect(setPeerVisibility(tenant, course, BO, true)).toBe(0);
-    expect(setPeerVisibility('lens:elsewhere' as TenantId, course, BO, false)).toBe(0);
+    expect(setPeerVisibility(boTenant, course, BO, false)).toBe(1);
+    expect(peersOnCourse(course, ANA)).toEqual([]);
+    expect(setPeerVisibility(boTenant, course, BO, true)).toBe(2);
+    expect(peersOnCourse(course, ANA).map(p => p.learner)).toEqual([BO]);
+    expect(setPeerVisibility(boTenant, course, BO, true)).toBe(0);
+    // A learner's say is their own partition's to change: another tenant's call changes nothing.
+    expect(setPeerVisibility(anaTenant, course, BO, false)).toBe(0);
+    expect(peersOnCourse(course, ANA).map(p => p.learner)).toEqual([BO]);
   });
 });
 
@@ -181,6 +204,10 @@ describe('the routes', () => {
     expect(body).toContain('checkAgenticRateLimit(');
     expect(body.indexOf('checkAgenticRateLimit(')).toBeLessThan(body.indexOf('signedLearnerOfKind(auth)'));
     expect(body).toContain('res.status(429)');
+  });
+
+  it('offer an agent the claim that is the agent\'s own', () => {
+    expect(route('/agent/credentials/earned')).toContain("payload: { course_id: st.courseId, ...(learner.kind === 'agent' ? { learner_kind: 'agent' } : {}) }");
   });
 
   it('take visible_to_peers as a boolean and nothing else', () => {
