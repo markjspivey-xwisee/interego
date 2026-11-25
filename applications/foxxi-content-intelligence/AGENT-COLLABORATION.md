@@ -240,7 +240,10 @@ registrations on that course, and no one else's.
   pair read now projects the one into the other: a task for each
   registration, a step for each statement the agent itself made, and a
   step that redoes one that failed marked as superseding it. It is
-  rebuilt from the statements on each read and stored nowhere.
+  rebuilt from the statements on each read and stored nowhere. The
+  steps are plain data in the shape the trajectory builder takes;
+  Foxxi, the standards layer, imports nothing from the performance
+  layer to make them.
   `team.courseExperience` gives, per agent, what was taken, answered,
   retried, passed and failed; `trajectory: true` returns the steps, for
   composing with work the agent did record.

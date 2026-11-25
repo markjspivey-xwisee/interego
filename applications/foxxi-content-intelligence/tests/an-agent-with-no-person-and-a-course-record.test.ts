@@ -16,8 +16,10 @@ import { readFileSync } from 'node:fs';
 import { describe, expect, it } from 'vitest';
 import { companionsOn, kindOfLaunch, learnerFor, pairStandings, peersOn, type BesideLaunch } from '../src/learning-beside.js';
 import { buildCmi5Launch, inspectRegistration, launchesOfPair } from '../src/cmi5-lms.js';
-import { courseRecordRead, courseTrajectory, plainSteps } from '../src/course-trajectory.js';
+import { courseRecordRead, courseSteps, statementsOfRegistration } from '../src/course-trajectory.js';
+// A test may look upward; the shipped module may not (see its header).
 import { assessDisposition } from '../../agentic-performance-practice/src/agent-disposition.js';
+import { buildTrajectory } from '../../agentic-performance-practice/src/agent-trajectory.js';
 import type { TenantId } from '../src/tenant-context.js';
 
 const LONE = 'did:ethr:0xa11ce';
@@ -111,8 +113,7 @@ describe('an agent\'s course record, read as a trajectory', () => {
   }];
 
   it('is a task for the registration and a step for each thing the agent itself did', () => {
-    const t = courseTrajectory(ANA_AGENT, record);
-    expect(t.agentDid).toBe(ANA_AGENT);
+    const t = { steps: courseSteps(ANA_AGENT, record) };
     expect(t.steps.map(s => `${s.granularity}:${s.verb}`)).toEqual(['task:took', 'subtask:initialized', 'subtask:answered', 'subtask:answered', 'subtask:passed']);
     expect(t.steps.every(s => s.modalStatus === 'Asserted')).toBe(true);
     const [task, , wrong, right] = t.steps;
@@ -124,27 +125,27 @@ describe('an agent\'s course record, read as a trajectory', () => {
   });
 
   it('leaves out what the LMS said and what anyone else did', () => {
-    const verbs = courseTrajectory(ANA_AGENT, record).steps.map(s => s.verb);
+    const verbs = courseSteps(ANA_AGENT, record).map(s => s.verb);
     expect(verbs).not.toContain('launched');
     expect(verbs).not.toContain('satisfied');
     // The person's own answer in the same registration is not the agent's step.
     expect(verbs.filter(v => v === 'answered')).toHaveLength(2);
-    expect(courseTrajectory(ANA, record).steps.map(s => s.verb)).toEqual(['took', 'answered']);
+    expect(courseSteps(ANA, record).map(s => s.verb)).toEqual(['took', 'answered']);
   });
 
   it('makes the same steps of the same record, and no task of a registration nothing was done on', () => {
-    expect(courseTrajectory(ANA_AGENT, record).steps.map(s => s.id)).toEqual(courseTrajectory(ANA_AGENT, [...record].reverse()).steps.map(s => s.id));
+    expect(courseSteps(ANA_AGENT, record).map(s => s.id)).toEqual(courseSteps(ANA_AGENT, [...record].reverse()).map(s => s.id));
     const launchedOnly = [{ registration: 'reg-2', auId: AU, statements: [st(ANA_AGENT, 'launched', AU, '2026-11-25T11:00:00Z')] }];
-    expect(courseTrajectory(ANA_AGENT, launchedOnly).steps).toEqual([]);
+    expect(courseSteps(ANA_AGENT, launchedOnly)).toEqual([]);
   });
 
   it('does not call a pass after a pass a retry, and does call a pass after a fail one', () => {
-    const t = courseTrajectory(ANA_AGENT, [{ registration: 'reg-3', auId: AU, statements: [
+    const t = courseSteps(ANA_AGENT, [{ registration: 'reg-3', auId: AU, statements: [
       st(ANA_AGENT, 'failed', AU, '2026-11-25T12:00:00Z', { success: false, score: { scaled: 0.4 } }),
       st(ANA_AGENT, 'passed', AU, '2026-11-25T12:05:00Z', { success: true, score: { scaled: 0.8 } }),
       st(ANA_AGENT, 'passed', AU, '2026-11-25T12:06:00Z', { success: true, score: { scaled: 0.8 } }),
     ] }]);
-    const [task, failed, passed, again] = t.steps;
+    const [task, failed, passed, again] = t;
     expect(passed!.supersedesId).toBe(failed!.id);
     expect(again!.supersedesId).toBeUndefined();
     // The task's outcome is the last one reported.
@@ -152,36 +153,66 @@ describe('an agent\'s course record, read as a trajectory', () => {
   });
 
   it('reads what the record supports and names what it cannot say', () => {
-    const read = courseRecordRead(courseTrajectory(ANA_AGENT, record));
+    const read = courseRecordRead(ANA_AGENT, courseSteps(ANA_AGENT, record));
     expect(read).toMatchObject({ agent: ANA_AGENT, taken: 1, passed: 1, failed: 0, answered: { total: 2, correct: 1 }, retries: 1 });
     expect(read.notReadable.map(x => x.signal)).toEqual(['deliberation', 'exploration']);
     // Nothing was taken: zeros, not a verdict.
-    expect(courseRecordRead(courseTrajectory(ANA_AGENT, []))).toMatchObject({ taken: 0, passed: 0, failed: 0, answered: { total: 0, correct: 0 }, retries: 0 });
+    expect(courseRecordRead(ANA_AGENT, [])).toMatchObject({ taken: 0, passed: 0, failed: 0, answered: { total: 0, correct: 0 }, retries: 0 });
   });
 
   it('is why the read is not the disposition read: that one would call the source a trait', () => {
     // Every step of a course record is Asserted. The disposition read derives deliberation and
     // exploration from the share of Hypothetical and Counterfactual steps, so over a course record
     // alone both are zero whatever the agent is like. This pins the reason courseRecordRead exists.
-    const d = assessDisposition([courseTrajectory(ANA_AGENT, record)]);
+    const d = assessDisposition([buildTrajectory(ANA_AGENT, undefined, courseSteps(ANA_AGENT, record))]);
     const one = JSON.stringify(d);
     expect(one).toMatch(/"deliberationRatio":0[,}]/);
     expect(one).toMatch(/"explorationRatio":0[,}]/);
   });
 
-  it('hands the steps on plainly, for composing with work the agent did record', () => {
-    const steps = plainSteps(courseTrajectory(ANA_AGENT, record));
-    expect(steps).toHaveLength(5);
-    expect(Object.keys(steps[0]!).sort()).toEqual(['granularity', 'id', 'modalStatus', 'objectId', 'objectName', 'recordedAt', 'result', 'verb']);
+  it('makes steps the trajectory builder takes unchanged, with their ids and links kept', () => {
+    // The shipped module imports nothing from the performance layer; this is where the shape is held to it.
+    const steps = courseSteps(ANA_AGENT, record);
+    const built = buildTrajectory(ANA_AGENT, undefined, steps);
+    expect(built.steps.map(s => [s.id, s.parentId, s.supersedesId, s.modalStatus, s.granularity, s.verb, s.recordedAt]))
+      .toEqual(steps.map(s => [s.id, s.parentId, s.supersedesId, s.modalStatus, s.granularity, s.verb, s.recordedAt]));
+  });
+});
+
+describe('reading a registration\'s statements', () => {
+  const pages = (n: number) => {
+    const calls: (string | undefined)[] = [];
+    const query = async (f: { registration: string; limit: number; ascending: boolean; cursor?: string }) => {
+      calls.push(f.cursor);
+      const at = f.cursor ? Number(f.cursor) : 0;
+      // The second page is empty with more to come: a store may scan its limit and match nothing.
+      return { statements: at === 1 ? [] : [{ statement: { page: at } }], more: at + 1 < n ? String(at + 1) : null };
+    };
+    return { calls, query };
+  };
+
+  it('follows the continuation to the end, through a page that matched nothing', async () => {
+    const { calls, query } = pages(4);
+    const r = await statementsOfRegistration(query, 'reg-1');
+    expect(r).toEqual({ statements: [{ page: 0 }, { page: 2 }, { page: 3 }], truncated: false });
+    expect(calls).toEqual([undefined, '1', '2', '3']);
+  });
+
+  it('says so when it stops before the end', async () => {
+    const { query } = pages(10);
+    const r = await statementsOfRegistration(query, 'reg-1', 3);
+    expect(r.truncated).toBe(true);
+    expect(r.statements).toHaveLength(2);
   });
 });
 
 describe('the bridge', () => {
   const server = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
   it('reads the course experience on the pair read and stores none of it', () => {
-    expect(server).toContain('courseExperience.push({ ...courseRecordRead(t)');
+    expect(server).toContain('...courseRecordRead(agent, t), registrationsRead: mine.length,');
+    expect(server).toContain('statementsOfRegistration((f) => statements.query(f), l.registration)');
     // The trajectory store is the tenant directory's and lives in memory; the projection never enters it.
-    expect(server).not.toMatch(/agentTrajectoriesByTenant[^\n]*courseTrajectory|courseTrajectory[^\n]*agentTrajectoriesByTenant/);
+    expect(server).not.toMatch(/agentTrajectoriesByTenant[^\n]*courseSteps|courseSteps[^\n]*agentTrajectoriesByTenant/);
   });
   it('marks a lone agent\'s launch, and only a lone agent\'s', () => {
     expect(server).toContain("...(learner.kind === 'agent' && !learner.beside ? { learnerKind: 'agent' as const } : {})");

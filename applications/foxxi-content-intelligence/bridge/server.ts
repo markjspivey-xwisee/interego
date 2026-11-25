@@ -486,7 +486,7 @@ import { readyStatementStore, residentStatementBudget, residentStatementCount, r
 import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { learnerFor, learnerKindFrom, pairStandings, type DelegationRead } from '../src/learning-beside.js';
-import { courseTrajectory, courseRecordRead, plainSteps, type CourseRegistrationRecord } from '../src/course-trajectory.js';
+import { courseSteps, courseRecordRead, statementsOfRegistration, type CourseRegistrationRecord } from '../src/course-trajectory.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, companionsOnCourse, delegatesLearningBeside, launchesOfPair, peersOnCourse, setPeerVisibility, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
 import { attachLiveCallRoute, liveCallServiceAsk } from '../src/cmi5-live-call.js';
@@ -11751,13 +11751,22 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
     const statements = getStatementStore(tenant);
     const courseExperience = [];
     for (const agent of agents) {
-      const mine = launches.filter((l) => l.learner.id === agent).slice(-COURSE_EXPERIENCE_REGISTRATIONS);
+      const all = launches.filter((l) => l.learner.id === agent);
+      const mine = all.slice(-COURSE_EXPERIENCE_REGISTRATIONS);
       const records: CourseRegistrationRecord[] = [];
       for (const l of mine) {
-        records.push({ registration: l.registration, auId: l.auId, ...(l.auTitle ? { auTitle: l.auTitle } : {}), statements: (await statements.query({ registration: l.registration, limit: 500 })).statements.map((r) => r.statement) });
+        const read = await statementsOfRegistration((f) => statements.query(f), l.registration);
+        records.push({ registration: l.registration, auId: l.auId, ...(l.auTitle ? { auTitle: l.auTitle } : {}), statements: read.statements, ...(read.truncated ? { truncated: true } : {}) });
       }
-      const t = courseTrajectory(agent, records);
-      courseExperience.push({ ...courseRecordRead(t), registrationsRead: mine.length, ...(steps === true ? { steps: plainSteps(t) } : {}) });
+      const t = courseSteps(agent, records);
+      const partly = records.filter((r) => r.truncated).map((r) => r.registration);
+      courseExperience.push({
+        ...courseRecordRead(agent, t), registrationsRead: mine.length,
+        // Registrations this agent has beyond the newest ones read, and ones too long to read whole.
+        ...(all.length > mine.length ? { registrationsNotRead: all.length - mine.length } : {}),
+        ...(partly.length ? { registrationsPartlyRead: partly } : {}),
+        ...(steps === true ? { steps: t } : {}),
+      });
     }
     const launchAction = actionUrl('urn:iep:action:foxxi:cmi5-launch-signed');
     res.json({

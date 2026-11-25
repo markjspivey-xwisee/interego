@@ -4,12 +4,15 @@ The two things left as designed for later when agents were made learners.
 
 - **A course record read as a trajectory** (`src/course-trajectory.ts`).
   `POST /agent/learning/beside` now returns `team.courseExperience`: for each
-  agent, its own statements on its cmi5 registrations projected into an
-  `AgentTrajectory` (a task per registration, a step per statement the agent
-  made, a redo of a failed step marked as superseding it) and read for what was
-  taken, answered, retried, passed and failed. `trajectory: true` returns the
-  steps. It is rebuilt from the statements on each read and stored nowhere, so
-  it adds nothing a restart could lose.
+  agent, its own statements on its cmi5 registrations projected into trajectory
+  steps (a task per registration, a step per statement the agent made, a redo
+  of a failed step marked as superseding it) and read for what was taken,
+  answered, retried, passed and failed. `trajectory: true` returns the steps,
+  in the shape the performance layer's trajectory builder takes; Foxxi imports
+  nothing from that layer to make them. They are rebuilt from the statements on
+  each read and stored nowhere, so this adds nothing a restart could lose. A
+  registration's statements are read through every page the store returns, and
+  one too long to read whole is reported as partly read.
 - **What it does not claim.** A course record holds no intentions and no
   rejected alternatives, so the disposition read run over one alone would call
   any agent execution-biased and exploitative. The read reports only what the
