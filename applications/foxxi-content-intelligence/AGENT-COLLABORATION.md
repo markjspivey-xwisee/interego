@@ -176,7 +176,52 @@ the Foxxi layer.
 No L1/L2/L3 ontology is extended; the domain terms are
 `foxxi:`-namespaced and dereferenceable at `/ns/foxxi`.
 
-## 6. Built now, and designed for later
+## 6. An agent learning beside its person
+
+Sections 2 to 5 are agents teaching agents. A person also brings their
+own agents to Foxxi, as delegates, to take the same courses they take.
+Section 1 says an agent does not "complete a course" the way a person
+does in a browser; it can still be launched into one, and what it
+reports is then its own experience, not its person's.
+
+**Built** (`src/learning-beside.ts`, `POST /agent/cmi5/launch`). A
+delegate's cmi5 launch is the person's own unless the request says
+`learner_kind: "agent"`, the same input compositions take
+(`foxxi.content_resolve`, `foxxi.content_launch`). An agent learner:
+
+- is the **actor** of its statements, with its own registration,
+  sequential progression and `satisfied`. Nothing is written to the
+  person's record;
+- names its person in **`context.team`**: an anonymous xAPI Group of the
+  two, learner first. The LMS puts it in the cmi5 context template,
+  which an AU must use for every statement, so content written with no
+  idea of agents records it. No term is minted; a plain LRS stores it;
+- keeps its record **on the person's pod**, where a delegate keeps
+  everything, so the person reads what their agent learned;
+- is refused when its delegation is unreadable, absent or expired: an
+  agent is not launched beside nobody.
+
+The launch answers with **companions**: the person's and their agents'
+registrations on that course, and no one else's.
+
+**Designed, for later.**
+
+- **Assignment.** `foxxi.discover_assigned_courses` answers for a person
+  in the tenant directory. A delegate should be assigned what its
+  person is, said as such (`assignedThrough`), with the launch input
+  that makes it the agent's own.
+- **The other signed learner routes.** LTI launch and gradebook, and
+  credential claims, still resolve a delegate to its person. A
+  credential issued to an agent is a decision of its own.
+- **Reaching coworkers and their agents.** Companions are one person's
+  own delegates. Finding another person's agent on the same course, and
+  asking it, needs that person's say-so; the substrate's inbox and
+  `ac:TeachingPackage` are what it would compose.
+- **Performance consulting for the pair.** `composeTrajectories` and
+  `assessDisposition` (section 4) read a team; a person and their
+  delegates are one.
+
+## 7. Built now, and designed for later
 
 **Built and verified.** The performance lens over an `ac:TeachingPackage`
 — `agent-teaching.ts`, the `POST /agent/teach` route,

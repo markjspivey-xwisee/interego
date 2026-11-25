@@ -485,7 +485,8 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
 import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { learnerFor, learnerKindFrom, type DelegationRead } from '../src/learning-beside.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, companionsOnCourse, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
 import { attachLiveCallRoute, liveCallServiceAsk } from '../src/cmi5-live-call.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
@@ -11171,6 +11172,35 @@ async function signedLearner(auth: { callerDid: string }): Promise<{ did: string
   return { did: person, podUrl, via: auth.callerDid };
 }
 
+/**
+ * Who a signed caller is learning as when the request may say `learner_kind` (src/learning-beside.ts):
+ * a delegate that says "agent" learns as itself, beside the person its delegation names, and its
+ * record is kept on that same pod. Without it, the answer is `signedLearner`'s, as before.
+ */
+async function signedLearnerOfKind(auth: { callerDid: string; payload: Record<string, unknown> }):
+  Promise<{ ok: true; did: string; podUrl: string; via?: string; beside?: string; kind: 'human' | 'agent' } | { ok: false; status: number; error: string }> {
+  const kind = learnerKindFrom(auth.payload);
+  if (kind && typeof kind === 'object') return kind;
+  if (kind !== 'agent') {
+    const l = await signedLearner(auth);
+    return { ok: true, ...l, kind: 'human' };
+  }
+  const podUrl = selfBoundPod(auth.callerDid);
+  const direct = auth.callerDid.startsWith('did:ethr:');
+  let delegation: DelegationRead | null | 'unreadable' = null;
+  if (!direct) {
+    try {
+      let vc;
+      vc = await readDelegationCredential(resolveSubjectPodUrl(auth.callerDid), auth.callerDid as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never });
+      const person = vc?.credentialSubject?.delegatedBy ?? vc?.issuer;
+      delegation = vc && person ? { person: String(person), ...(vc.expirationDate ? { expiresAt: vc.expirationDate } : {}) } : null;
+    } catch { delegation = 'unreadable'; }
+  }
+  const learner = learnerFor({ callerDid: auth.callerDid, direct, delegation, kind });
+  if (!learner.ok) return learner;
+  return { ok: true, did: learner.did, podUrl, kind: learner.kind, ...(learner.beside ? { beside: learner.beside } : {}) };
+}
+
 /** A course this bridge's engine grades, as the evidence reader needs it. */
 function scormCourseIdentity(c: AgentScormCourse): CourseIdentity {
   return { courseId: c.courseId, courseIris: [...new Set([courseIri(c.courseId), scormCourseIri(c.courseId)])], masteryScore: c.masteryScore };
@@ -11631,7 +11661,8 @@ app.post('/agent/cmi5/launch', async (req, res) => {
     if (!courseId) { res.status(400).json({ error: 'course_id is required: a cmi5 course published on this bridge (POST /content/publish-course)' }); return; }
     const course = await publishedCmi5Course(courseId);
     if (!course) { res.status(404).json({ error: `no cmi5 course ${courseId} is published on this bridge` }); return; }
-    const learner = await signedLearner(auth);
+    const learner = await signedLearnerOfKind(auth);
+    if (!learner.ok) { res.status(learner.status).json({ error: learner.error }); return; }
     const tenant = lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS));
     const choice = chooseAu(course, new Set(learnerSatisfiedAus(tenant, learner.did)), typeof auth.payload.au_id === 'string' ? auth.payload.au_id.trim() : undefined);
     if (!choice.ok) { res.status(choice.status).json({ error: choice.error, ...(choice.missingPrerequisites ? { missingPrerequisites: choice.missingPrerequisites } : {}) }); return; }
@@ -11649,6 +11680,7 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       courseId: course.id,
       ...(returnUrl ? { returnUrl } : {}),
       learnerPod: learner.podUrl,
+      ...(learner.beside ? { beside: { id: learner.beside } } : {}),
     });
     await stageLaunchData(tenant, launch, au.id);
     if (launch.launched) {
@@ -11659,9 +11691,13 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       kind: 'cmi5-launch', courseId: course.id, auId: au.id, auTitle: au.title, moveOn: au.moveOn,
       ...(typeof au.masteryScore === 'number' ? { masteryScore: au.masteryScore } : {}),
       registration: launch.registration, launchUrl: launch.launchUrl, actor: launch.actor, launchDataStaged: true,
-      learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl,
+      learner: learner.did, learnerKind: learner.kind, ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}), learnerPodUrl: learner.podUrl,
       progress: `${bridgeBaseUrl}/cmi5/registration/${launch.registration}`,
-      note: 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
+      // The person and the agents learning beside them on this course, this launch included.
+      companions: companionsOnCourse(tenant, course.id, learner.beside ?? learner.did),
+      note: learner.beside
+        ? 'Open launchUrl. The AU fetches its auth-token once. Its statements name this agent as the actor and the person it learns beside in context.team, and are kept on that person\'s pod as the agent\'s own record. When they meet moveOn, the LMS records `satisfied` for the agent, not for the person. They count as experience, not as graded evidence: a cmi5 AU reports its own result.'
+        : 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
     });
   } catch (err) { sendServerError(res, err, 'cmi5-launch-signed'); }
 });
