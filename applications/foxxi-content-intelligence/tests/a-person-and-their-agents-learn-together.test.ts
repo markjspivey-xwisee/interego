@@ -176,6 +176,13 @@ describe('the routes', () => {
     expect(route('/agent/credentials/claim')).toContain('taken by an AI agent learning beside ${learner.beside}');
   });
 
+  it('limit how often the pair is read, as the other signed routes that fetch for a caller do', () => {
+    const body = route('/agent/learning/beside');
+    expect(body).toContain('checkAgenticRateLimit(');
+    expect(body.indexOf('checkAgenticRateLimit(')).toBeLessThan(body.indexOf('signedLearnerOfKind(auth)'));
+    expect(body).toContain('res.status(429)');
+  });
+
   it('take visible_to_peers as a boolean and nothing else', () => {
     const body = route('/agent/cmi5/launch');
     expect(body).toContain("if (visible !== undefined && typeof visible !== 'boolean')");
