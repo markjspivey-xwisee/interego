@@ -31,7 +31,10 @@ describe('who a signed caller is learning as', () => {
 
   it('is itself for a wallet, which cannot learn beside anyone', () => {
     expect(learnerFor({ callerDid: 'did:ethr:0x1', direct: true, delegation: null })).toEqual({ ok: true, did: 'did:ethr:0x1', kind: 'human' });
-    expect(learnerFor({ callerDid: 'did:ethr:0x1', direct: true, delegation: null, kind: 'agent' })).toMatchObject({ ok: false, status: 400 });
+    // Until 2026-11-25 this was a 400: "agent" was only for a delegate. An agent that holds its own
+    // wallet and works for nobody then had no way to say what it is, and was recorded as a person.
+    // It now learns as an agent beside no one (an-agent-with-no-person-and-a-course-record.test.ts).
+    expect(learnerFor({ callerDid: 'did:ethr:0x1', direct: true, delegation: null, kind: 'agent' })).toEqual({ ok: true, did: 'did:ethr:0x1', kind: 'agent' });
   });
 
   it('is the person for a delegate that does not say, as before', () => {
