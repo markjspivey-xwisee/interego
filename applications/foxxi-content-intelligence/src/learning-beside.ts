@@ -239,14 +239,14 @@ export function peersOn(launches: readonly BesideLaunch[], asker: string, askerB
 export interface PairStanding {
   courseId: string;
   courseTitle?: string;
-  /** Why the course is here: assigned to the person, or only launched by one of them. */
+  /** Assigned to the person in the tenant directory. A person's own assignment to an agent is on that agent's entry. */
   assigned: boolean;
   /** For an agent learner reading its own list: whose assignment this is. */
   assignedThrough?: string;
   dueAt?: string;
   /** Absent when the reader is an agent learning for itself: there is no person. */
   person?: { learner: string; satisfied: boolean; launched: boolean };
-  agents: { learner: string; satisfied: boolean; launched: boolean }[];
+  agents: { learner: string; satisfied: boolean; launched: boolean; assignedByPerson?: { assignedAt: string; dueAt?: string } }[];
 }
 
 /**
@@ -261,6 +261,11 @@ export interface PairStanding {
  * ★ AN AGENT WITH NO PERSON (`alone`). `person` is then the agent itself: the assignments are the
  * ones made to it, it is listed under `agents` and nowhere as a person, and no assignment is said
  * to come through anyone.
+ *
+ * ★ WHAT A PERSON ASSIGNED TO THEIR OWN AGENT (`ownAssignments`, src/own-agent-assignments.ts) is
+ * said on that agent's entry, not on the course: `assigned` stays the directory's word about the
+ * person. A course a person assigned to an agent is listed even when neither has launched it, and
+ * the agent is listed even when it has launched nothing.
  */
 export function pairStandings(input: {
   person: string;
@@ -272,25 +277,32 @@ export function pairStandings(input: {
   reader?: { kind: LearnerKind; id: string };
   /** `person` is an agent learning for itself. */
   alone?: boolean;
+  /** What the person assigned to their own agents. Ignored for an agent alone. */
+  ownAssignments?: readonly { agent: string; courseId: string; courseTitle?: string; assignedAt: string; dueAt?: string }[];
 }): PairStanding[] {
   const { person, launches } = input;
-  const agents = input.alone ? [person] : [...new Set([...(input.agents ?? []), ...delegatesOf(launches, person)])];
+  const own = input.alone ? [] : (input.ownAssignments ?? []);
+  const agents = input.alone ? [person] : [...new Set([...(input.agents ?? []), ...delegatesOf(launches, person), ...own.map(o => o.agent)])];
   const ours = launches.filter(l => (l.learner.id === person && !l.beside) || l.beside?.id === person);
-  const ids = [...new Set([...input.assignments.map(a => a.courseId), ...ours.map(l => l.courseId).filter((c): c is string => !!c)])];
+  const ids = [...new Set([...input.assignments.map(a => a.courseId), ...own.map(o => o.courseId), ...ours.map(l => l.courseId).filter((c): c is string => !!c)])];
   const on = (course: string, learner: string) => {
     const mine = ours.filter(l => l.courseId === course && l.learner.id === learner);
     return { learner, satisfied: mine.some(l => l.satisfied), launched: mine.length > 0 };
   };
   return ids.map(courseId => {
     const a = input.assignments.find(x => x.courseId === courseId);
+    const title = a?.courseTitle ?? own.find(o => o.courseId === courseId && o.courseTitle)?.courseTitle;
     return {
       courseId,
-      ...(a?.courseTitle ? { courseTitle: a.courseTitle } : {}),
+      ...(title ? { courseTitle: title } : {}),
       assigned: !!a,
       ...(a && input.reader?.kind === 'agent' && !input.alone ? { assignedThrough: person } : {}),
       ...(a?.dueAt ? { dueAt: a.dueAt } : {}),
       ...(input.alone ? {} : { person: on(courseId, person) }),
-      agents: agents.map(g => on(courseId, g)),
+      agents: agents.map(g => {
+        const mine = own.find(o => o.agent === g && o.courseId === courseId);
+        return { ...on(courseId, g), ...(mine ? { assignedByPerson: { assignedAt: mine.assignedAt, ...(mine.dueAt ? { dueAt: mine.dueAt } : {}) } } : {}) };
+      }),
     };
   });
 }
