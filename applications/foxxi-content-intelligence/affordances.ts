@@ -385,6 +385,34 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     },
   },
   {
+    action: 'urn:iep:action:foxxi:learning-beside-signed' as IRI,
+    toolName: 'foxxi.learning_beside_signed',
+    title: 'What my agents and I are learning together',
+    description: 'One read for a person and the agents learning beside them, signed by your wallet or by an agent holding your delegation. It reports the courses assigned to the person in the tenant directory (an agent learning beside them is assigned what they are, through them), where the person and each of their agents stand on those and on any course one of them has launched, the launch to make for each, the other learners on a course who offered to be found, and the team of agents the agent-performance tools read. A delegate that is itself the learner says learner_kind "agent": the answer is then the agent\'s, each assignment says whose it is (assignedThrough), and each launch carries learner_kind "agent". It writes nothing. Peers are listed only for learners who launched with visible_to_peers true, and only to a learner who did too.',
+    method: 'POST',
+    targetTemplate: '{base}/agent/learning/beside',
+    mediaType: 'application/json',
+    externallyRouted: true,
+    annotations: { title: 'What my agents and I are learning', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
+    inputs: [
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, learner_kind? }): optionally learner_kind "agent" for a delegate reading as itself beside its person.' },
+      { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
+    ],
+    appliesTo: { collections: ['profiles'] },
+    outputs: {
+      description: 'The pair\'s courses and team. 401 on auth failure, or for an agent with no delegation in force.',
+      properties: {
+        learner: { type: 'string', description: 'Who is reading: the person, or the agent when it said learner_kind "agent".' },
+        learnerKind: { type: 'string', description: 'human or agent.' },
+        person: { type: 'string', description: 'The person the pair is built around.' },
+        beside: { type: 'string', description: 'For an agent reader: the person it learns beside.' },
+        assignmentsRead: { type: 'boolean', description: 'False when the tenant directory could not be read, so no assignment is listed and none should be inferred absent.' },
+        courses: { type: 'array', description: 'Per course: courseId, courseTitle, assigned, assignedThrough, dueAt, requirementType, directoryStatus, person and agents (each learner, satisfied, launched), the launch to make, and peers.', items: { type: 'object', additionalProperties: true } },
+        team: { type: 'object', description: 'person, agents, and when there are agents the consult to make (foxxi.assess_agent_disposition with their DIDs).', additionalProperties: true },
+      },
+    },
+  },
+  {
     action: 'urn:iep:action:foxxi:earned-credentials-signed' as IRI,
     toolName: 'foxxi.earned_credentials_signed',
     title: 'Where my courses stand, signed as myself',
@@ -395,7 +423,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Where my courses stand', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_ids? }).' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_ids?, learner_kind? }): optionally learner_kind "agent" for a delegate read as itself; its standings then come from its own record.' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -421,7 +449,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Claim an earned credential', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id }).' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, learner_kind? }): optionally learner_kind "agent" for a delegate claiming on its own evidence. The credential is then issued to the agent, and its criterion says it was taken by an AI agent learning beside the person named.' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -450,7 +478,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Launch a cmi5 activity', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, launch_parameters?, learner_kind? }): the published course, optionally the AU, optionally where the AU returns you, optionally the launchParameters string that replaces the one in the course structure (cmi5 §10.2.3), optionally learner_kind: "agent" for a delegate that learns as itself beside its person (default: the launch is the person\'s).' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, launch_parameters?, learner_kind? }): the published course, optionally the AU, optionally where the AU returns you, optionally the launchParameters string that replaces the one in the course structure (cmi5 §10.2.3), optionally learner_kind: "agent" for a delegate that learns as itself beside its person (default: the launch is the person\'s), optionally visible_to_peers: true to be found by other learners on this course who offered the same, or false to withdraw.' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -467,6 +495,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
         learner: { type: 'string', description: 'Who the launch is for: your wallet DID, or the person your delegation names.' },
         learnerKind: { type: 'string', description: 'human, or agent when a delegate launched as itself.' },
         beside: { type: 'string', description: 'For an agent learner: the person it learns beside, named in every statement\'s context.team.' },
+        peers: { type: 'array', description: 'Other learners on the course who launched with visible_to_peers true, listed only when you did too: learner, kind, beside, satisfied, and contact (the Interego inbox).', items: { type: 'object', additionalProperties: true } },
         companions: { type: 'array', description: 'The person\'s and their agents\' registrations on this course: learner, kind, registration, auId, satisfied.', items: { type: 'object', additionalProperties: true } },
       },
     },
@@ -588,7 +617,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Launch a course over LTI', readOnlyHint: false, destructiveHint: false, idempotentHint: false, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id }): a course this bridge\'s SCORM engine grades.' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, course_id, learner_kind? }): a course this bridge\'s SCORM engine grades; optionally learner_kind "agent" for a delegate launched as itself.' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -614,7 +643,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Read my LMS grades', readOnlyHint: true, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp }).' },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, learner_kind? }): optionally learner_kind "agent" for a delegate reading its own grades.' },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['profiles'] },

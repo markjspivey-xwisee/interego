@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 99 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 100 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -511,6 +511,21 @@ What a relying party should check before believing an Open Badges 3.0 credential
 | `credential_url` | string | no | A link to the credential in its holder's wallet on this deployment's pod store: its wallet descriptor (the credential's id, as a claim returns it) or the graph beside it. Preferred: nothing is retyped. Give this or credential. |
 | `credential` | object | no | The credential JSON, with its Data Integrity proof, when there is no link to it. Give this or credential_url. |
 
+## `foxxi.learning_beside_signed`
+
+**What my agents and I are learning together**
+
+One read for a person and the agents learning beside them, signed by your wallet or by an agent holding your delegation. It reports the courses assigned to the person in the tenant directory (an agent learning beside them is assigned what they are, through them), where the person and each of their agents stand on those and on any course one of them has launched, the launch to make for each, the other learners on a course who offered to be found, and the team of agents the agent-performance tools read. A delegate that is itself the learner says learner_kind "agent": the answer is then the agent's, each assignment says whose it is (assignedThrough), and each launch carries learner_kind "agent". It writes nothing. Peers are listed only for learners who launched with visible_to_peers true, and only to a learner who did too.
+
+- Action: `urn:iep:action:foxxi:learning-beside-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/learning/beside` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, learner_kind? }): optionally learner_kind "agent" for a delegate reading as itself beside its person. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
 ## `foxxi.earned_credentials_signed`
 
 **Where my courses stand, signed as myself**
@@ -523,7 +538,7 @@ foxxi.earned_credentials for the courses this bridge's SCORM engine grades, sign
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_ids? }). |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_ids?, learner_kind? }): optionally learner_kind "agent" for a delegate read as itself; its standings then come from its own record. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.claim_credential_signed`
@@ -538,7 +553,7 @@ foxxi.claim_credential for a course this bridge's SCORM engine grades, signed by
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id }). |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, learner_kind? }): optionally learner_kind "agent" for a delegate claiming on its own evidence. The credential is then issued to the agent, and its criterion says it was taken by an AI agent learning beside the person named. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.cmi5_launch_signed`
@@ -553,7 +568,7 @@ Launch an Assignable Unit of a cmi5 course published on this bridge, for yoursel
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, launch_parameters?, learner_kind? }): the published course, optionally the AU, optionally where the AU returns you, optionally the launchParameters string that replaces the one in the course structure (cmi5 §10.2.3), optionally learner_kind: "agent" for a delegate that learns as itself beside its person (default: the launch is the person's). |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, au_id?, return_url?, launch_parameters?, learner_kind? }): the published course, optionally the AU, optionally where the AU returns you, optionally the launchParameters string that replaces the one in the course structure (cmi5 §10.2.3), optionally learner_kind: "agent" for a delegate that learns as itself beside its person (default: the launch is the person's), optionally visible_to_peers: true to be found by other learners on this course who offered the same, or false to withdraw. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.cmi5_personal_launch`
@@ -628,7 +643,7 @@ Launch a course this bridge's SCORM engine grades from Foxxi's own LMS, the LTI 
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id }): a course this bridge's SCORM engine grades. |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, course_id, learner_kind? }): a course this bridge's SCORM engine grades; optionally learner_kind "agent" for a delegate launched as itself. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.lti_gradebook_signed`
@@ -643,7 +658,7 @@ Your row of the gradebook in Foxxi's own LMS, signed by your wallet or by an age
 
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
-| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp }). |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, learner_kind? }): optionally learner_kind "agent" for a delegate reading its own grades. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.lti_reconciliation_contract`

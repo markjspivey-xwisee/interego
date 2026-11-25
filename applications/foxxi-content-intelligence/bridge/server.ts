@@ -485,8 +485,8 @@ import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publ
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
 import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
-import { learnerFor, learnerKindFrom, type DelegationRead } from '../src/learning-beside.js';
-import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, companionsOnCourse, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
+import { learnerFor, learnerKindFrom, pairStandings, type DelegationRead } from '../src/learning-beside.js';
+import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, companionsOnCourse, delegatesLearningBeside, launchesOfPair, peersOnCourse, setPeerVisibility, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
 import { attachLiveCallRoute, liveCallServiceAsk } from '../src/cmi5-live-call.js';
 import { attachPersonalLaunchRoutes, PersonalLinkAuthError, PersonalLaunchRegistry } from '../src/cmi5-personal-link.js';
@@ -11210,7 +11210,8 @@ app.post('/agent/credentials/earned', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
-    const learner = await signedLearner(auth);
+    const learner = await signedLearnerOfKind(auth);
+    if (!learner.ok) { res.status(learner.status).json({ error: learner.error }); return; }
     const [held, statements] = await Promise.all([heldCredentialsFor(learner.podUrl, learner.did), learnerStatementsFor(learner.podUrl, learner.did)]);
     const asked = Array.isArray(auth.payload.course_ids) ? (auth.payload.course_ids as unknown[]).filter((x): x is string => typeof x === 'string') : [];
     const ids = [...new Set([...asked, ...courseIdsInRecord(statements, (iri) => courseIdOf(iri))])].slice(0, 25);
@@ -11219,7 +11220,7 @@ app.post('/agent/credentials/earned', async (req, res) => {
     const now = new Date();
     const standings = courseStandings(courses.map((c) => ({ courseId: c.courseId, courseTitle: c.title })), evidence, held, (id) => achievementIdFor(tenantProfileDid, id), now);
     res.json({
-      kind: 'earned-credentials', learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl, computedAt: now.toISOString(),
+      kind: 'earned-credentials', learner: learner.did, learnerKind: learner.kind, ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}), learnerPodUrl: learner.podUrl, computedAt: now.toISOString(),
       standings: standings.map((st) => (st.state === 'claimable' ? { ...st, claim: { affordance: actionUrl('urn:iep:action:foxxi:claim-credential-signed'), target: `${bridgeBaseUrl}/agent/credentials/claim`, payload: { course_id: st.courseId } } } : st)),
       held: held.length,
     });
@@ -11235,7 +11236,8 @@ app.post('/agent/credentials/claim', async (req, res) => {
     if (!courseId) { res.status(400).json({ error: 'course_id is required: a course this bridge\'s SCORM engine grades' }); return; }
     const course = await resolveCourseForRead(courseId);
     if (!course) { res.status(404).json({ error: `no course ${courseId} is played on this bridge's SCORM engine` }); return; }
-    const learner = await signedLearner(auth);
+    const learner = await signedLearnerOfKind(auth);
+    if (!learner.ok) { res.status(learner.status).json({ error: learner.error }); return; }
     const [held, statements] = await Promise.all([heldCredentialsFor(learner.podUrl, learner.did), learnerStatementsFor(learner.podUrl, learner.did)]);
     const evidence = masteryEvidence(scormCourseIdentity(course), statements, undefined, gradedHere);
     const now = new Date();
@@ -11246,7 +11248,7 @@ app.post('/agent/credentials/claim', async (req, res) => {
       return;
     }
     if (decision.decision === 'already-held') {
-      res.json({ ok: true, kind: 'credential-claim', decision: 'already-held', courseId, credential: decision.credential, learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl });
+      res.json({ ok: true, kind: 'credential-claim', decision: 'already-held', courseId, credential: decision.credential, learner: learner.did, learnerKind: learner.kind, ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}), learnerPodUrl: learner.podUrl });
       return;
     }
     const verbs = [...new Set(decision.evidence.map((e) => e.verb.split('/').pop() ?? e.verb))];
@@ -11259,7 +11261,7 @@ app.post('/agent/credentials/claim', async (req, res) => {
         learnerDid: learner.did, courseId, courseTitle: course.title, achievementId,
         // A learner who authored the course knew its answers; the credential says so rather than letting
         // a relying party mistake a self-set test for someone else's.
-        criterionNarrative: `Passed ${course.title}, a SCORM 2004 course authored by ${course.authoredBy}${selfAuthored ? ' (the learner is its author)' : ''}: ${decision.evidence.length} ${decision.evidence.length === 1 ? 'result' : 'results'} (${verbs.join(', ')}) graded by the Foxxi bridge's sequencing engine, in the learner's own record.`,
+        criterionNarrative: `Passed ${course.title}, a SCORM 2004 course authored by ${course.authoredBy}${selfAuthored ? ' (the learner is its author)' : ''}${learner.beside ? `, taken by an AI agent learning beside ${learner.beside}` : ''}: ${decision.evidence.length} ${decision.evidence.length === 1 ? 'result' : 'results'} (${verbs.join(', ')}) graded by the Foxxi bridge's sequencing engine, in the learner's own record.`,
         evidence: decision.evidence.map((e) => ({ type: 'fxa:LearningExperience', id: statementIri(e.id), narrative: `${e.verb} ${e.object}${e.scoreScaled !== undefined ? `, scaled score ${e.scoreScaled}` : ''}${e.timestamp ? `, at ${e.timestamp}` : ''}` })),
         validUntil: decision.validUntil,
       },
@@ -11271,7 +11273,7 @@ app.post('/agent/credentials/claim', async (req, res) => {
     res.json({
       ok: true, kind: 'credential-claim', decision: 'issued', courseId, credentialId, descriptorUrl: result.publishResult.descriptorUrl, graphUrl: result.publishResult.graphUrl,
       issuer: result.vc.issuer, validUntil: decision.validUntil, evidence: decision.evidence, ...(credentialed ? { credentialedStatement: credentialed } : {}),
-      learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl, courseAuthor: course.authoredBy, vc: result.vc,
+      learner: learner.did, learnerKind: learner.kind, ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}), learnerPodUrl: learner.podUrl, courseAuthor: course.authoredBy, vc: result.vc,
     });
   } catch (err) { sendServerError(res, err, 'credentials-claim'); }
 });
@@ -11668,6 +11670,8 @@ app.post('/agent/cmi5/launch', async (req, res) => {
     if (!choice.ok) { res.status(choice.status).json({ error: choice.error, ...(choice.missingPrerequisites ? { missingPrerequisites: choice.missingPrerequisites } : {}) }); return; }
     const au = choice.au;
     const returnUrl = typeof auth.payload.return_url === 'string' && /^https?:\/\//.test(auth.payload.return_url) ? auth.payload.return_url : undefined;
+    const visible = auth.payload.visible_to_peers;
+    if (visible !== undefined && typeof visible !== 'boolean') { res.status(400).json({ error: 'visible_to_peers is true or false' }); return; }
     const parameters = launchParametersFrom(au.launchParameters, auth.payload.launch_parameters);
     if (!parameters.ok) { res.status(400).json({ error: parameters.error }); return; }
     const launch = buildCmi5Launch({
@@ -11681,7 +11685,10 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       ...(returnUrl ? { returnUrl } : {}),
       learnerPod: learner.podUrl,
       ...(learner.beside ? { beside: { id: learner.beside } } : {}),
+      ...(visible !== undefined ? { visibleToPeers: visible } : {}),
     });
+    // What the learner says about being found holds for every registration of theirs on the course.
+    if (visible !== undefined) setPeerVisibility(tenant, course.id, learner.did, visible);
     await stageLaunchData(tenant, launch, au.id);
     if (launch.launched) {
       const id = await recordLaunchedStatement(tenant, launch.launched);
@@ -11695,11 +11702,59 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       progress: `${bridgeBaseUrl}/cmi5/registration/${launch.registration}`,
       // The person and the agents learning beside them on this course, this launch included.
       companions: companionsOnCourse(tenant, course.id, learner.beside ?? learner.did),
+      // Other learners on the course who offered to be found, shown only to a learner who offered too.
+      peers: peersOnCourse(tenant, course.id, learner.did, learner.beside),
       note: learner.beside
         ? 'Open launchUrl. The AU fetches its auth-token once. Its statements name this agent as the actor and the person it learns beside in context.team, and are kept on that person\'s pod as the agent\'s own record. When they meet moveOn, the LMS records `satisfied` for the agent, not for the person. They count as experience, not as graded evidence: a cmi5 AU reports its own result.'
         : 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
     });
   } catch (err) { sendServerError(res, err, 'cmi5-launch-signed'); }
+});
+
+// ── A person and their agents, learning together ─────────────────────────────────────────────
+//
+// One read for the pair (src/learning-beside.ts): what is assigned to the person, and so to an
+// agent learning beside them; where the person and each of their agents stand on those courses and
+// on any they have launched; the other learners who offered to be found; and the team the
+// agent-performance tools read. It writes nothing. An agent asks as itself with learner_kind
+// "agent"; without it the reader is the person, as on every other signed learner route.
+app.post('/agent/learning/beside', async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    const learner = await signedLearnerOfKind(auth);
+    if (!learner.ok) { res.status(learner.status).json({ error: learner.error }); return; }
+    const person = learner.beside ?? learner.did;
+    const tenant = lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS));
+    // The tenant directory says what is assigned. When it cannot be read the answer says so,
+    // rather than passing off "could not look" as "nothing assigned".
+    const admin = await autoFetchAdmin({}).catch(() => null);
+    const assigned = admin ? discoverAssignedCourses({ admin, learnerWebId: person }).enrollments : [];
+    const launches = launchesOfPair(tenant, person);
+    const agents = [...new Set([...(learner.kind === 'agent' ? [learner.did] : []), ...delegatesLearningBeside(tenant, person)])];
+    const standings = pairStandings({ person, agents, assignments: assigned, launches, reader: { kind: learner.kind, id: learner.did } });
+    const launchAction = actionUrl('urn:iep:action:foxxi:cmi5-launch-signed');
+    res.json({
+      kind: 'learning-beside', learner: learner.did, learnerKind: learner.kind, person,
+      ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}),
+      assignmentsRead: admin !== null,
+      courses: standings.map((c) => {
+        const a = assigned.find((e) => e.courseId === c.courseId);
+        return {
+          ...c,
+          ...(a ? { requirementType: a.requirementType, directoryStatus: a.status, assignedAt: a.assignedAt } : {}),
+          launch: { affordance: launchAction, target: `${bridgeBaseUrl}/agent/cmi5/launch`, payload: { course_id: c.courseId, ...(learner.kind === 'agent' ? { learner_kind: 'agent' } : {}) } },
+          peers: peersOnCourse(tenant, c.courseId, learner.did, learner.beside),
+        };
+      }),
+      team: {
+        person, agents,
+        // The pair is a team of agents to the tools that read one; nothing new reads it.
+        ...(agents.length > 0 ? { consult: { tool: 'foxxi.assess_agent_disposition', arguments: { agent_dids: agents }, note: 'A dispositional read of these agents from their recorded trajectories (foxxi.record_agent_trajectory); it answers 404 until one has been recorded.' } } : {}),
+      },
+      note: 'satisfied is this bridge\'s cmi5 LMS: a registration of that learner on the course met moveOn here. directoryStatus is the tenant directory\'s. peers lists only learners who launched with visible_to_peers true, and only to a learner who did too; reach one through the Interego inbox.',
+    });
+  } catch (err) { sendServerError(res, err, 'learning-beside-signed'); }
 });
 
 // ── A reusable personal launch link ───────────────────────────────────────────────────────────
@@ -13330,7 +13385,8 @@ app.post('/agent/lti/launch', async (req, res) => {
     const connection = scopedLti?.course.id === courseId ? scopedLti : undefined;
     const course = connection ? { courseId, title: connection.course.title } : await resolveCourseForRead(courseId);
     if (!course) { res.status(404).json({ error: `no course ${courseId} is played on this bridge's SCORM engine` }); return; }
-    const learner = await signedLearner(auth);
+    const learner = await signedLearnerOfKind(auth);
+    if (!learner.ok) { res.status(learner.status).json({ error: learner.error }); return; }
     if (!await ltiPlatform.ensureReady()) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable', readiness: ltiPlatformReadiness.diagnostics() }); return; }
     const external = connection?.launch(learner.did, courseId);
     if (connection && !external) { res.status(404).json({ error: 'course_not_found' }); return; }
@@ -13342,7 +13398,7 @@ app.post('/agent/lti/launch', async (req, res) => {
       initiationUrl: start.initiationUrl, expiresAt: start.expiresAt,
       platform: { issuer, configuration: `${issuer}/.well-known/openid-configuration` },
       context: start.context, resourceLink: start.resourceLink, lineItem: start.lineItem,
-      learner: learner.did, ...(learner.via ? { via: learner.via } : {}), learnerPodUrl: learner.podUrl,
+      learner: learner.did, learnerKind: learner.kind, ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}), learnerPodUrl: learner.podUrl,
       gradebook: { affordance: actionUrl('urn:iep:action:foxxi:lti-gradebook-signed'), target: `${bridgeBaseUrl}/agent/lti/gradebook` },
       note: external
         ? 'Open initiationUrl once within five minutes to launch the external course. The provider can post a score for this connection to your Foxxi gradebook until the connection expires.'
@@ -13355,12 +13411,13 @@ app.post('/agent/lti/gradebook', async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
-    const learner = await signedLearner(auth);
+    const learner = await signedLearnerOfKind(auth);
+    if (!learner.ok) { res.status(learner.status).json({ error: learner.error }); return; }
     if (!await ltiPlatform.ensureReady()) { res.set('Retry-After', '1').status(503).json({ error: 'lti_gradebook_unavailable', readiness: ltiPlatformReadiness.diagnostics() }); return; }
     res.json({
       kind: 'lti-gradebook', platform: ltiPlatform.issuer, context: ltiPlatform.context,
       readiness: ltiPlatformReadiness.diagnostics(),
-      learner: learner.did, ...(learner.via ? { via: learner.via } : {}),
+      learner: learner.did, learnerKind: learner.kind, ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}),
       rows: [...ltiPlatform.gradebookFor(learner.did), ...(scopedLti?.gradesFor(learner.did) ?? [])],
     });
   } catch (err) { sendServerError(res, err, 'lti-gradebook-signed'); }

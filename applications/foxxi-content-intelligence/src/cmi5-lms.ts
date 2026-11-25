@@ -37,7 +37,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import { DEFAULT_TENANT, TenantPartition, type TenantId } from './tenant-context.js';
 import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { buildCmi5Statement, evaluateMoveOn } from './cmi5.js';
-import { besideTeam, companionsOn, type CompanionProgress } from './learning-beside.js';
+import { besideTeam, companionsOn, delegatesOf, peersOn, type BesideLaunch, type CompanionProgress, type Peer } from './learning-beside.js';
 import {
   parseCmi5Course, auById, precedingAu, flatAus, flatBlocks, blockAuIds, LAUNCH_PARAMETERS_MAX,
   type Cmi5Course, type Cmi5AuNode,
@@ -110,6 +110,11 @@ export interface Cmi5LaunchRequest {
    * statement the AU sends carries it, and into the LMS's own statements for the registration.
    */
   beside?: { id: string };
+  /**
+   * The learner offers to be found by other learners on this course who have offered the same
+   * (src/learning-beside.ts, `peersOn`). Absent leaves what they said before as it is.
+   */
+  visibleToPeers?: boolean;
 }
 
 export interface Cmi5Launch {
@@ -193,6 +198,8 @@ interface LaunchRecord {
   learnerPod?: string;
   /** See Cmi5LaunchRequest.beside. */
   beside?: { id: string };
+  /** See Cmi5LaunchRequest.visibleToPeers. */
+  visibleToPeers?: boolean;
   /** cmi5 session id (§9.6.3.1). Absent on a snapshot from before sessions were kept; those are not resumed. */
   sessionId?: string;
   /** Set once the session has ended. terminated without moveOn keeps this registration and starts a new session. */
@@ -509,6 +516,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
       ...(req.courseId ? { courseId: req.courseId } : {}),
       ...(req.learnerPod ? { learnerPod: req.learnerPod } : {}),
       ...(req.beside ? { beside: { id: req.beside.id } } : {}),
+      ...(req.visibleToPeers !== undefined ? { visibleToPeers: req.visibleToPeers } : {}),
       sessionId,
       launchMode,
       satisfied: false,
@@ -810,6 +818,36 @@ async function observeCmi5StatementUnlocked(
  */
 export function companionsOnCourse(tenant: TenantId, courseId: string, person: string): CompanionProgress[] {
   return companionsOn([...launches.values()].filter(l => l.tenant === tenant && l.courseId === courseId), person);
+}
+
+/**
+ * Say whether a learner may be found by other learners on a course: every registration of theirs
+ * on it in this tenant takes the answer, so withdrawing leaves none behind that still offers.
+ * Returns how many registrations it changed.
+ */
+export function setPeerVisibility(tenant: TenantId, courseId: string, learnerId: string, visible: boolean): number {
+  let changed = 0;
+  for (const l of launches.values()) {
+    if (l.tenant !== tenant || l.courseId !== courseId || l.learner.id !== learnerId) continue;
+    if ((l.visibleToPeers === true) !== visible) { l.visibleToPeers = visible; changed += 1; }
+  }
+  if (changed > 0) cmi5PodDirty();
+  return changed;
+}
+
+/** The other learners on a course who may be found by this one (src/learning-beside.ts, `peersOn`). */
+export function peersOnCourse(tenant: TenantId, courseId: string, learnerId: string, beside?: string): Peer[] {
+  return peersOn([...launches.values()].filter(l => l.tenant === tenant && l.courseId === courseId), learnerId, beside);
+}
+
+/** Every registration in this tenant that is a person's own or one of their agents' beside them. */
+export function launchesOfPair(tenant: TenantId, person: string): BesideLaunch[] {
+  return [...launches.values()].filter(l => l.tenant === tenant && ((l.learner.id === person && !l.beside) || l.beside?.id === person));
+}
+
+/** The agents with a registration in this tenant that says they learn beside this person. */
+export function delegatesLearningBeside(tenant: TenantId, person: string): string[] {
+  return delegatesOf([...launches.values()].filter(l => l.tenant === tenant), person);
 }
 
 /** Inspect a tracked registration's moveOn state — for GET /cmi5/registration/:reg. */
