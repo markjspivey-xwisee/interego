@@ -215,7 +215,11 @@ export function withRuntime(document: Buffer, runtimeUrl: string, opts: { xml?: 
  * is what makes a package a cmi5 package (cmi5 section 14.1) and what its units are read from here.
  */
 export function launchesItself(zip: AdmZip): boolean {
-  const names = new Set(zip.getEntries().filter(e => !e.isDirectory).map(e => e.entryName));
+  // Names are compared as the importer compares them (applications/_shared/scorm, unwrapScormPackage):
+  // whatever their casing, and with the SCORM manifest first. Until 2026-11-25 this compared them
+  // exactly, so a package holding `IMSMANIFEST.XML` beside `cmi5.xml` was imported as SCORM and
+  // served as cmi5, and its SCOs lost their runtime; found in review of #1001.
+  const names = new Set(zip.getEntries().filter(e => !e.isDirectory).map(e => e.entryName.toLowerCase()));
   // A package that also carries a SCORM manifest is played as SCORM, as it was before.
   return names.has('cmi5.xml') && !names.has('imsmanifest.xml');
 }

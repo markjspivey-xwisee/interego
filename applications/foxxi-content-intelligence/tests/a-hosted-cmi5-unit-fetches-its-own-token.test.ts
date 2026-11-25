@@ -32,6 +32,9 @@ describe('which packages launch their own units', () => {
     expect(launchesItself(zipOf({ 'imsmanifest.xml': MANIFEST, 'index.html': PAGE }))).toBe(false);
     // Both: played as SCORM, as before.
     expect(launchesItself(zipOf({ 'imsmanifest.xml': MANIFEST, 'cmi5.xml': STRUCTURE, 'index.html': PAGE }))).toBe(false);
+    // Casing is the importer's: it finds either file whatever its case, the SCORM manifest first.
+    expect(launchesItself(zipOf({ 'IMSMANIFEST.XML': MANIFEST, 'cmi5.xml': STRUCTURE, 'index.html': PAGE }))).toBe(false);
+    expect(launchesItself(zipOf({ 'CMI5.XML': STRUCTURE, 'au/index.html': PAGE }))).toBe(true);
     // A structure that is not at the root is not the package's.
     expect(launchesItself(zipOf({ 'docs/cmi5.xml': STRUCTURE, 'index.html': PAGE }))).toBe(false);
   });
