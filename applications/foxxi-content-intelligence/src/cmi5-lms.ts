@@ -37,7 +37,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import { DEFAULT_TENANT, TenantPartition, type TenantId } from './tenant-context.js';
 import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { buildCmi5Statement, evaluateMoveOn } from './cmi5.js';
-import { besideTeam, companionsOn, delegatesOf, peersOn, type BesideLaunch, type CompanionProgress, type Peer } from './learning-beside.js';
+import { besideTeam, companionsOn, delegatesOf, kindOfLaunch, peersOn, type BesideLaunch, type CompanionProgress, type Peer } from './learning-beside.js';
 import {
   parseCmi5Course, auById, precedingAu, flatAus, flatBlocks, blockAuIds, LAUNCH_PARAMETERS_MAX,
   type Cmi5Course, type Cmi5AuNode,
@@ -110,6 +110,12 @@ export interface Cmi5LaunchRequest {
    * statement the AU sends carries it, and into the LMS's own statements for the registration.
    */
   beside?: { id: string };
+  /**
+   * Set when the learner is an agent learning for itself, with no person (src/learning-beside.ts).
+   * A learner beside a person is an agent by that alone; this is what says so for one beside
+   * nobody, whose statements carry no team.
+   */
+  learnerKind?: 'agent';
   /**
    * The learner offers to be found by other learners on this course who have offered the same
    * (src/learning-beside.ts, `peersOn`). Absent leaves what they said before as it is.
@@ -198,6 +204,8 @@ interface LaunchRecord {
   learnerPod?: string;
   /** See Cmi5LaunchRequest.beside. */
   beside?: { id: string };
+  /** See Cmi5LaunchRequest.learnerKind. */
+  learnerKind?: 'agent';
   /** See Cmi5LaunchRequest.visibleToPeers. */
   visibleToPeers?: boolean;
   /** cmi5 session id (§9.6.3.1). Absent on a snapshot from before sessions were kept; those are not resumed. */
@@ -464,6 +472,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
     && prior.tenant === tenant
     && prior.learner.id === req.learner.id
     && prior.beside?.id === req.beside?.id
+    && prior.learnerKind === req.learnerKind
     && prior.auId === req.au.id
     && (!req.courseId || prior.courseId === req.courseId)
     ? prior : undefined;
@@ -516,6 +525,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
       ...(req.courseId ? { courseId: req.courseId } : {}),
       ...(req.learnerPod ? { learnerPod: req.learnerPod } : {}),
       ...(req.beside ? { beside: { id: req.beside.id } } : {}),
+      ...(req.learnerKind ? { learnerKind: req.learnerKind } : {}),
       ...(req.visibleToPeers !== undefined ? { visibleToPeers: req.visibleToPeers } : {}),
       sessionId,
       launchMode,
@@ -877,7 +887,8 @@ export function inspectRegistration(registration: string): Record<string, unknow
     satisfiedAt: l.satisfiedAt,
     reason: l.reason,
     learner: l.learner.id,
-    ...(l.beside ? { learnerKind: 'agent', beside: l.beside.id } : {}),
+    ...(kindOfLaunch(l) === 'agent' ? { learnerKind: 'agent' } : {}),
+    ...(l.beside ? { beside: l.beside.id } : {}),
     ...(l.sessionClosed ? { sessionClosed: l.sessionClosed } : {}),
   };
 }

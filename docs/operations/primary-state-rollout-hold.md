@@ -4,6 +4,14 @@ Source review dated 2026-10-15. Audit source baseline and observed Foxxi image: 
 
 **Keep the rollout held. Do not restart the old processes that may hold the only copy of primary records before preservation coverage is established.** A new durable backend protects subsequent writes; it cannot recover records erased by the restart that activates it. Attaching storage or changing configuration can itself redeploy a service.
 
+## Status note, 2026-11-25: foxxi-bridge was restarted
+
+This note records what happened. It does not lift the hold, and it is not evidence about any other service.
+
+`foxxi-bridge` was replaced three times on 2026-11-25 by merges to master that the deploy workflow rolled out (#1001, #1002, #1003). The first two were merged before this document had been read by the session that merged them. Before the third, the host's retained HTTP request logs for the service were read: in the window they covered, the only write requests were that session's own tests. That is a statement about requests the host logged in that window. It is not an inventory of the memory-only stores listed below, and records written before the window, or by a path that makes no HTTP request, are not covered by it.
+
+Nothing about the stores has changed: the gaps below are still gaps, and every later restart of this service needs the same check made again, or preservation in place, before it happens.
+
 ## Exact affected service scope
 
 For the earlier candidate, the existing deployment-scope tool and observed live image pins reported these **12** affected services. Identity and acme-id were outside that measured candidate. Changes to shared native storage require a fresh scope calculation; this historical list is not a deployment allowlist for the replacement.

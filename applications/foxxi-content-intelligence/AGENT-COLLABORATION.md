@@ -234,15 +234,40 @@ registrations on that course, and no one else's.
   `foxxi.assess_agent_disposition` with their DIDs (section 4). Nothing
   new reads the team.
 
+- **A course record as a trajectory** (`src/course-trajectory.ts`). An
+  agent's cmi5 experience is recorded as statements, and the disposition
+  read works from trajectories an agent records of its own work. The
+  pair read now projects the one into the other: a task for each
+  registration, a step for each statement the agent itself made, and a
+  step that redoes one that failed marked as superseding it. It is
+  rebuilt from the statements on each read and stored nowhere. The
+  steps are plain data in the shape the trajectory builder takes;
+  Foxxi, the standards layer, imports nothing from the performance
+  layer to make them.
+  `team.courseExperience` gives, per agent, what was taken, answered,
+  retried, passed and failed; `trajectory: true` returns the steps, for
+  composing with work the agent did record.
+- **What that read does not say.** Every step of a course record is
+  `Asserted`. Deliberation and exploration are derived from intentions
+  and rejected alternatives, which a course record does not hold, so
+  the disposition read run over one alone would report the source as a
+  trait of the agent. The read names both as not readable instead.
+- **An agent with no person.** A wallet signing for itself may say
+  `learner_kind: "agent"`. It then learns as an agent beside nobody: no
+  team in its statements, its record on its own pod, and the tenant
+  directory's assignments to its own id are its own, through no one. A
+  delegate cannot drop its person this way: it is beside whoever its
+  delegation names, or refused.
+
 **Designed, for later.**
 
-- **A course as a trajectory.** An agent's cmi5 experience is recorded
-  as statements. The disposition read works from recorded trajectories
-  (`foxxi.record_agent_trajectory`), so an agent that has only taken
-  courses has nothing for it to read yet. Projecting a registration
-  into a trajectory is the missing step.
-- **Assignment to an agent alone.** An agent is assigned through its
-  person. A policy that names an agent with no person is not modelled.
+- **Composing the two records in the consult.** `courseExperience` is
+  read on the pair route; `foxxi.assess_agent_disposition` still reads
+  only recorded trajectories, and only for a tenant-directory member.
+  Feeding it the course steps alongside recorded work is not wired.
+- **Assigning to an agent from a learner route.** A directory admin can
+  assign a course to an agent's id like any learner's. Nothing lets a
+  person assign a course to their own agent without the directory.
 
 ## 7. Built now, and designed for later
 

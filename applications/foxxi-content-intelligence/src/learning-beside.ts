@@ -11,7 +11,8 @@
  * Compositions already tell the two apart (`learner_kind`, src/compositions.ts): a wallet signing
  * for itself is a person, a delegated agent is an agent, and either may say otherwise. This module
  * carries the same distinction to the cmi5 LMS, and adds the one thing a delegate has that a
- * stand-alone agent does not: the person it learns beside.
+ * stand-alone agent does not: the person it learns beside. An agent that holds its own wallet and
+ * works for nobody says `learner_kind: "agent"` too, and learns as itself beside no one.
  *
  * ★ NOTHING IS MINTED. Who a statement's actor learns beside is said with what xAPI already has:
  * `context.team`, "the team this statement relates to", an anonymous Group whose members are the
@@ -41,7 +42,7 @@ export interface SignedLearner {
   kind: LearnerKind;
   /** The agent carrying a person's own learning. */
   via?: string;
-  /** The person an agent learner learns beside. */
+  /** The person an agent learner learns beside. Absent for an agent that learns for itself. */
   beside?: string;
 }
 
@@ -58,8 +59,11 @@ export function learnerKindFrom(payload: Record<string, unknown>): LearnerKind |
 /**
  * Who a signed caller is learning as.
  *
- * - A wallet signing for itself is itself. It cannot learn as an agent beside someone: there is no
- *   delegation to say who.
+ * - A wallet signing for itself is itself: a person, unless it says `learner_kind: "agent"`. Then
+ *   it is an agent learning for itself, beside nobody (there is no delegation to say who): its
+ *   record is its own, on its own pod, and what a tenant directory assigns to it is assigned to
+ *   it. Until 2026-11-25 this was refused, which left an agent with no person no way to be told
+ *   apart from one; compositions have always let a wallet say it.
  * - A delegate with no `learner_kind`, or `human`, carries its person's learning, as before.
  * - A delegate with `learner_kind: "agent"` learns as itself, beside the person its delegation
  *   names. The delegation has to be readable and in force: an agent whose delegation cannot be
@@ -78,8 +82,7 @@ export function learnerFor(input: {
 }): ({ ok: true } & SignedLearner) | LearnerRefusal {
   const { callerDid, direct, delegation, kind } = input;
   if (direct) {
-    if (kind === 'agent') return { ok: false, status: 400, error: 'learner_kind "agent" is for a delegate, which learns beside the person its delegation names; a wallet signing for itself learns as itself' };
-    return { ok: true, did: callerDid, kind: 'human' };
+    return { ok: true, did: callerDid, kind: kind === 'agent' ? 'agent' : 'human' };
   }
   if (kind !== 'agent') {
     // As before: the person the delegation names, or the caller when none could be read.
@@ -142,12 +145,12 @@ export interface CompanionProgress {
  * whose launch says they learn beside that person. Nobody else's are returned, whoever asks: this
  * is a person and their own delegates, not a class list.
  */
-export function companionsOn(launches: readonly { registration: string; auId: string; auTitle?: string; learner: { id: string }; beside?: { id: string }; satisfied: boolean; satisfiedAt?: string; sessionClosed?: string }[], person: string): CompanionProgress[] {
+export function companionsOn(launches: readonly { registration: string; auId: string; auTitle?: string; learner: { id: string }; learnerKind?: LearnerKind; beside?: { id: string }; satisfied: boolean; satisfiedAt?: string; sessionClosed?: string }[], person: string): CompanionProgress[] {
   return launches
     .filter(l => l.learner.id === person ? !l.beside : l.beside?.id === person)
     .map(l => ({
       learner: l.learner.id,
-      kind: (l.beside ? 'agent' : 'human') as LearnerKind,
+      kind: kindOfLaunch(l),
       registration: l.registration,
       auId: l.auId,
       ...(l.auTitle ? { auTitle: l.auTitle } : {}),
@@ -157,6 +160,15 @@ export function companionsOn(launches: readonly { registration: string; auId: st
     }));
 }
 
+/**
+ * Whether a launch is an agent's. One beside a person always is; one beside nobody is when the
+ * launch says so (an agent learning for itself). A record from before launches said their kind
+ * has only `beside` to go by, which reads it as it was written.
+ */
+export function kindOfLaunch(l: { learnerKind?: LearnerKind; beside?: { id: string } }): LearnerKind {
+  return l.beside || l.learnerKind === 'agent' ? 'agent' : 'human';
+}
+
 /** A launch record as far as the reads below need one. */
 export interface BesideLaunch {
   registration: string;
@@ -164,6 +176,8 @@ export interface BesideLaunch {
   auTitle?: string;
   courseId?: string;
   learner: { id: string };
+  /** Set to "agent" on a launch an agent made for itself with no person. */
+  learnerKind?: LearnerKind;
   beside?: { id: string };
   satisfied: boolean;
   satisfiedAt?: string;
@@ -212,7 +226,7 @@ export function peersOn(launches: readonly BesideLaunch[], asker: string, askerB
     const prior = out.get(id);
     out.set(id, {
       learner: id,
-      kind: l.beside ? 'agent' : 'human',
+      kind: kindOfLaunch(l),
       ...(l.beside ? { beside: l.beside.id } : {}),
       satisfied: (prior?.satisfied ?? false) || l.satisfied,
       contact: { via: 'interego-inbox', tool: 'notify_agent', to: id },
@@ -230,7 +244,8 @@ export interface PairStanding {
   /** For an agent learner reading its own list: whose assignment this is. */
   assignedThrough?: string;
   dueAt?: string;
-  person: { learner: string; satisfied: boolean; launched: boolean };
+  /** Absent when the reader is an agent learning for itself: there is no person. */
+  person?: { learner: string; satisfied: boolean; launched: boolean };
   agents: { learner: string; satisfied: boolean; launched: boolean }[];
 }
 
@@ -242,6 +257,10 @@ export interface PairStanding {
  * ★ `satisfied` HERE IS THE cmi5 LMS'S OWN. It is true when a registration of that learner on the
  * course met moveOn on this bridge. It is not the tenant directory's completion status, which the
  * assignment carries separately, and it says nothing of a learner who took the course elsewhere.
+ *
+ * ★ AN AGENT WITH NO PERSON (`alone`). `person` is then the agent itself: the assignments are the
+ * ones made to it, it is listed under `agents` and nowhere as a person, and no assignment is said
+ * to come through anyone.
  */
 export function pairStandings(input: {
   person: string;
@@ -251,9 +270,11 @@ export function pairStandings(input: {
   launches: readonly BesideLaunch[];
   /** Set when an agent is the reader. */
   reader?: { kind: LearnerKind; id: string };
+  /** `person` is an agent learning for itself. */
+  alone?: boolean;
 }): PairStanding[] {
   const { person, launches } = input;
-  const agents = [...new Set([...(input.agents ?? []), ...delegatesOf(launches, person)])];
+  const agents = input.alone ? [person] : [...new Set([...(input.agents ?? []), ...delegatesOf(launches, person)])];
   const ours = launches.filter(l => (l.learner.id === person && !l.beside) || l.beside?.id === person);
   const ids = [...new Set([...input.assignments.map(a => a.courseId), ...ours.map(l => l.courseId).filter((c): c is string => !!c)])];
   const on = (course: string, learner: string) => {
@@ -266,9 +287,9 @@ export function pairStandings(input: {
       courseId,
       ...(a?.courseTitle ? { courseTitle: a.courseTitle } : {}),
       assigned: !!a,
-      ...(a && input.reader?.kind === 'agent' ? { assignedThrough: person } : {}),
+      ...(a && input.reader?.kind === 'agent' && !input.alone ? { assignedThrough: person } : {}),
       ...(a?.dueAt ? { dueAt: a.dueAt } : {}),
-      person: on(courseId, person),
+      ...(input.alone ? {} : { person: on(courseId, person) }),
       agents: agents.map(g => on(courseId, g)),
     };
   });

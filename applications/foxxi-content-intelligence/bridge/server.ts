@@ -486,6 +486,7 @@ import { readyStatementStore, residentStatementBudget, residentStatementCount, r
 import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { learnerFor, learnerKindFrom, pairStandings, type DelegationRead } from '../src/learning-beside.js';
+import { courseSteps, courseRecordRead, statementsOfRegistration, type CourseRegistrationRecord } from '../src/course-trajectory.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, companionsOnCourse, delegatesLearningBeside, launchesOfPair, peersOnCourse, setPeerVisibility, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
 import { attachLiveCallRoute, liveCallServiceAsk } from '../src/cmi5-live-call.js';
@@ -11261,7 +11262,7 @@ app.post('/agent/credentials/claim', async (req, res) => {
         learnerDid: learner.did, courseId, courseTitle: course.title, achievementId,
         // A learner who authored the course knew its answers; the credential says so rather than letting
         // a relying party mistake a self-set test for someone else's.
-        criterionNarrative: `Passed ${course.title}, a SCORM 2004 course authored by ${course.authoredBy}${selfAuthored ? ' (the learner is its author)' : ''}${learner.beside ? `, taken by an AI agent learning beside ${learner.beside}` : ''}: ${decision.evidence.length} ${decision.evidence.length === 1 ? 'result' : 'results'} (${verbs.join(', ')}) graded by the Foxxi bridge's sequencing engine, in the learner's own record.`,
+        criterionNarrative: `Passed ${course.title}, a SCORM 2004 course authored by ${course.authoredBy}${selfAuthored ? ' (the learner is its author)' : ''}${learner.beside ? `, taken by an AI agent learning beside ${learner.beside}` : learner.kind === 'agent' ? ', taken by an AI agent learning for itself' : ''}: ${decision.evidence.length} ${decision.evidence.length === 1 ? 'result' : 'results'} (${verbs.join(', ')}) graded by the Foxxi bridge's sequencing engine, in the learner's own record.`,
         evidence: decision.evidence.map((e) => ({ type: 'fxa:LearningExperience', id: statementIri(e.id), narrative: `${e.verb} ${e.object}${e.scoreScaled !== undefined ? `, scaled score ${e.scoreScaled}` : ''}${e.timestamp ? `, at ${e.timestamp}` : ''}` })),
         validUntil: decision.validUntil,
       },
@@ -11685,6 +11686,7 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       ...(returnUrl ? { returnUrl } : {}),
       learnerPod: learner.podUrl,
       ...(learner.beside ? { beside: { id: learner.beside } } : {}),
+      ...(learner.kind === 'agent' && !learner.beside ? { learnerKind: 'agent' as const } : {}),
       ...(visible !== undefined ? { visibleToPeers: visible } : {}),
     });
     // What the learner says about being found holds for every registration of theirs on the course.
@@ -11704,7 +11706,9 @@ app.post('/agent/cmi5/launch', async (req, res) => {
       companions: companionsOnCourse(tenant, course.id, learner.beside ?? learner.did),
       // Other learners on the course who offered to be found, shown only to a learner who offered too.
       peers: peersOnCourse(course.id, learner.did, learner.beside),
-      note: learner.beside
+      note: learner.kind === 'agent' && !learner.beside
+        ? 'Open launchUrl. The AU fetches its auth-token once. Its statements name this agent as the actor, with no team: it learns for itself. They land in its own record, and when they meet moveOn the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.'
+        : learner.beside
         ? 'Open launchUrl. The AU fetches its auth-token once. Its statements name this agent as the actor and the person it learns beside in context.team, and are kept on that person\'s pod as the agent\'s own record. When they meet moveOn, the LMS records `satisfied` for the agent, not for the person. They count as experience, not as graded evidence: a cmi5 AU reports its own result.'
         : 'Open launchUrl. The AU fetches its auth-token once, and its statements land in your own record. When they meet moveOn, the LMS records `satisfied` there too. They count as experience, not as graded evidence: a cmi5 AU reports its own result.',
     });
@@ -11720,6 +11724,8 @@ app.post('/agent/cmi5/launch', async (req, res) => {
 // "agent"; without it the reader is the person, as on every other signed learner route.
 // Each read verifies a signature, fetches the tenant directory and, for an agent, its delegation,
 // so it is limited per client before any of that runs.
+/** How many of an agent's registrations one read goes through for its course experience: the newest. */
+const COURSE_EXPERIENCE_REGISTRATIONS = 25;
 const learningBesideRateLimit = forwardedRateLimit({ windowMs: 60_000, limit: 30, identifier: 'learning-beside' });
 app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => {
   try {
@@ -11728,17 +11734,43 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
     const learner = await signedLearnerOfKind(auth);
     if (!learner.ok) { res.status(learner.status).json({ error: learner.error }); return; }
     const person = learner.beside ?? learner.did;
+    // An agent that signed for itself and has no person: the read is of it alone.
+    const alone = learner.kind === 'agent' && !learner.beside;
+    const steps = auth.payload.trajectory;
+    if (steps !== undefined && typeof steps !== 'boolean') { res.status(400).json({ error: 'trajectory is true or false' }); return; }
     const tenant = lensTenantFor(actorForPod(learner.podUrl, MESH_ACTOR_LABELS));
     // The tenant directory says what is assigned. When it cannot be read the answer says so,
     // rather than passing off "could not look" as "nothing assigned".
     const admin = await autoFetchAdmin({}).catch(() => null);
     const assigned = admin ? discoverAssignedCourses({ admin, learnerWebId: person }).enrollments : [];
     const launches = launchesOfPair(tenant, person);
-    const agents = [...new Set([...(learner.kind === 'agent' ? [learner.did] : []), ...delegatesLearningBeside(tenant, person)])];
-    const standings = pairStandings({ person, agents, assignments: assigned, launches, reader: { kind: learner.kind, id: learner.did } });
+    const agents = alone ? [learner.did] : [...new Set([...(learner.kind === 'agent' ? [learner.did] : []), ...delegatesLearningBeside(tenant, person)])];
+    const standings = pairStandings({ person, agents, assignments: assigned, launches, reader: { kind: learner.kind, id: learner.did }, alone });
+    // What each agent's course record says of it (src/course-trajectory.ts): rebuilt from the
+    // statements on each read, the newest registrations first, and stored nowhere.
+    const statements = getStatementStore(tenant);
+    const courseExperience = [];
+    for (const agent of agents) {
+      const all = launches.filter((l) => l.learner.id === agent);
+      const mine = all.slice(-COURSE_EXPERIENCE_REGISTRATIONS);
+      const records: CourseRegistrationRecord[] = [];
+      for (const l of mine) {
+        const read = await statementsOfRegistration((f) => statements.query(f), l.registration);
+        records.push({ registration: l.registration, auId: l.auId, ...(l.auTitle ? { auTitle: l.auTitle } : {}), statements: read.statements, ...(read.truncated ? { truncated: true } : {}) });
+      }
+      const t = courseSteps(agent, records);
+      const partly = records.filter((r) => r.truncated).map((r) => r.registration);
+      courseExperience.push({
+        ...courseRecordRead(agent, t), registrationsRead: mine.length,
+        // Registrations this agent has beyond the newest ones read, and ones too long to read whole.
+        ...(all.length > mine.length ? { registrationsNotRead: all.length - mine.length } : {}),
+        ...(partly.length ? { registrationsPartlyRead: partly } : {}),
+        ...(steps === true ? { steps: t } : {}),
+      });
+    }
     const launchAction = actionUrl('urn:iep:action:foxxi:cmi5-launch-signed');
     res.json({
-      kind: 'learning-beside', learner: learner.did, learnerKind: learner.kind, person,
+      kind: 'learning-beside', learner: learner.did, learnerKind: learner.kind, ...(alone ? {} : { person }),
       ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}),
       assignmentsRead: admin !== null,
       courses: standings.map((c) => {
@@ -11751,11 +11783,13 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
         };
       }),
       team: {
-        person, agents,
+        ...(alone ? {} : { person }), agents,
+        // What the agents' own course records say, read here for whoever can read this.
+        ...(agents.length > 0 ? { courseExperience } : {}),
         // The pair is a team of agents to the tools that read one; nothing new reads it.
-        ...(agents.length > 0 ? { consult: { tool: 'foxxi.assess_agent_disposition', arguments: { agent_dids: agents }, note: 'A dispositional read of these agents from their recorded trajectories (foxxi.record_agent_trajectory); it answers 404 until one has been recorded.' } } : {}),
+        ...(agents.length > 0 ? { consult: { tool: 'foxxi.assess_agent_disposition', arguments: { agent_dids: agents }, note: 'A dispositional read of these agents from trajectories they recorded of their own work (foxxi.record_agent_trajectory). It is a tenant-directory tool: it answers a member of the directory, and 404 until a trajectory has been recorded. courseExperience above needs neither.' } } : {}),
       },
-      note: 'satisfied is this bridge\'s cmi5 LMS: a registration of that learner on the course met moveOn here. directoryStatus is the tenant directory\'s. peers lists learners of the same course on this bridge who launched with visible_to_peers true, and only to a learner who did too; reach one through the Interego inbox.',
+      note: 'satisfied is this bridge\'s cmi5 LMS: a registration of that learner on the course met moveOn here. directoryStatus is the tenant directory\'s. courseExperience is each agent\'s own statements on its registrations here read as a trajectory (trajectory: true returns the steps): what it took, answered, retried, passed and failed. It does not say how the agent deliberates or explores, which a course record cannot show. peers lists learners of the same course on this bridge who launched with visible_to_peers true, and only to a learner who did too; reach one through the Interego inbox.',
     });
   } catch (err) { sendServerError(res, err, 'learning-beside-signed'); }
 });
