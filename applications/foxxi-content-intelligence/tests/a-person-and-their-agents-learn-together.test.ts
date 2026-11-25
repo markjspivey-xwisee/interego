@@ -174,7 +174,7 @@ describe('on the LMS\'s own records', () => {
 describe('the routes', () => {
   const src = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
   const route = (path: string): string => {
-    const at = src.indexOf(`app.post('${path}'`);
+    const at = src.indexOf(`app.post('${path}',`);
     expect(at, path).toBeGreaterThan(-1);
     return src.slice(at, src.indexOf('\n});\n', at));
   };
@@ -199,11 +199,9 @@ describe('the routes', () => {
     expect(route('/agent/credentials/claim')).toContain('taken by an AI agent learning beside ${learner.beside}');
   });
 
-  it('limit how often the pair is read, as the other signed routes that fetch for a caller do', () => {
-    const body = route('/agent/learning/beside');
-    expect(body).toContain('checkAgenticRateLimit(');
-    expect(body.indexOf('checkAgenticRateLimit(')).toBeLessThan(body.indexOf('signedLearnerOfKind(auth)'));
-    expect(body).toContain('res.status(429)');
+  it('limit how often the pair is read, per client, before the signature is even verified', () => {
+    expect(src).toContain("const learningBesideRateLimit = forwardedRateLimit({ windowMs: 60_000, limit: 30, identifier: 'learning-beside' });");
+    expect(src).toContain("app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => {");
   });
 
   it('offer an agent the claim that is the agent\'s own', () => {

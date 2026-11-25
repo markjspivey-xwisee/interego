@@ -11718,15 +11718,13 @@ app.post('/agent/cmi5/launch', async (req, res) => {
 // on any they have launched; the other learners who offered to be found; and the team the
 // agent-performance tools read. It writes nothing. An agent asks as itself with learner_kind
 // "agent"; without it the reader is the person, as on every other signed learner route.
-app.post('/agent/learning/beside', async (req, res) => {
+// Each read verifies a signature, fetches the tenant directory and, for an agent, its delegation,
+// so it is limited per client before any of that runs.
+const learningBesideRateLimit = forwardedRateLimit({ windowMs: 60_000, limit: 30, identifier: 'learning-beside' });
+app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
-    // Rate-limit: each read fetches the tenant directory and, for an agent, its delegation.
-    const xffB = req.headers['x-forwarded-for'];
-    const ipB = typeof xffB === 'string' ? xffB.split(',').at(-1)!.trim() : Array.isArray(xffB) ? xffB.at(-1)!.trim() : req.ip ?? 'unknown';
-    const rlB = checkAgenticRateLimit(ipB);
-    if (!rlB.ok) { res.status(429).json({ error: `rate limit — retry in ${rlB.retryAfterSeconds}s` }); return; }
     const learner = await signedLearnerOfKind(auth);
     if (!learner.ok) { res.status(learner.status).json({ error: learner.error }); return; }
     const person = learner.beside ?? learner.did;
