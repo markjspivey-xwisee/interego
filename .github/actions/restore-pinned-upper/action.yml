@@ -1,0 +1,62 @@
+name: Restore pinned upper ontology sources
+description: Reuse the Foxxi build's preserved source bytes after checking the selected checkout's pins.
+inputs:
+  root:
+    description: The I2IDL-X directory containing the pin manifest.
+    required: true
+runs:
+  using: composite
+  steps:
+    - name: Verify and restore the source bytes
+      shell: bash
+      env:
+        I2IDLX_PIN_ROOT: ${{ inputs.root }}
+        GHCR_READ_TOKEN: ${{ github.token }}
+        # Foxxi verified this seed in run 44577506202, job 135767354755.
+        UPPER_SEED_IMAGE: ghcr.io/markjspivey-xwisee/interego-foxxi-bridge@sha256:f23f9495f960829e90c6ff2ab3513ead01c29c8ab6ba167df479fe5b49e67bdd
+      run: |
+        set -euo pipefail
+        work="$(mktemp -d)"
+        container=""
+        cleanup() {
+          if [ -n "$container" ]; then docker rm "$container" >/dev/null; fi
+          rm -rf -- "$work"
+        }
+        trap cleanup EXIT
+        export DOCKER_CONFIG="$work/docker"
+        mkdir -p "$DOCKER_CONFIG" "$work/source"
+        printf '%s' "$GHCR_READ_TOKEN" | docker login ghcr.io -u "$GITHUB_ACTOR" --password-stdin
+        unset GHCR_READ_TOKEN
+        docker pull --platform linux/amd64 "$UPPER_SEED_IMAGE"
+        # docker create and cp access the filesystem without starting the image.
+        container="$(docker create --platform linux/amd64 "$UPPER_SEED_IMAGE" /unused)"
+        docker cp "$container:/." "$work/source/"
+
+        node --input-type=module - "$I2IDLX_PIN_ROOT" "$work/source" <<'JS'
+        import { createHash } from 'node:crypto';
+        import { existsSync, mkdirSync, readFileSync, renameSync, writeFileSync } from 'node:fs';
+        import { join } from 'node:path';
+
+        const [root, source] = process.argv.slice(2);
+        const manifest = JSON.parse(readFileSync(join(root, 'evidence', 'upper', 'manifest.json'), 'utf8'));
+        const cache = join(root, '.cache', 'upper');
+        mkdirSync(cache, { recursive: true });
+        const restored = [], missing = [];
+        for (const { key, sha256 } of manifest.sources) {
+          if (!/^[a-z][a-z0-9-]{0,63}$/.test(key) || !/^[a-f0-9]{64}$/.test(sha256)) throw new Error('Invalid upper source pin');
+          const verified = path => {
+            if (!existsSync(path)) return undefined;
+            const bytes = readFileSync(path);
+            return createHash('sha256').update(bytes).digest('hex') === sha256 ? bytes : undefined;
+          };
+          const path = join(cache, key + '.source');
+          if (verified(path)) continue;
+          const bytes = verified(join(source, key + '.source'));
+          if (!bytes) { missing.push(key); continue; }
+          writeFileSync(path + '.download', bytes);
+          renameSync(path + '.download', path);
+          restored.push(key);
+        }
+        console.log('Verified source bytes restored:', restored.join(', ') || 'none needed');
+        if (missing.length) console.log('Source preparation will handle unmatched pins:', missing.join(', '));
+        JS
