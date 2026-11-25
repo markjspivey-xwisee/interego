@@ -67,7 +67,8 @@ describe('the bridge wires its own LMS, and other LMSs, to its own Tool', () => 
   it('launches for the learner the signature names, never one the caller names', () => {
     const route = src.slice(src.indexOf("app.post('/agent/lti/launch'"), src.indexOf("app.post('/agent/lti/gradebook'"));
     expect(route).toMatch(/verifyDelegatedCaller\(req\.body\)/);
-    expect(route).toMatch(/const learner = await signedLearner\(auth\)/);
+    // Still from the signature: the person, or the delegate itself when it says it is the learner (src/learning-beside.ts).
+    expect(route).toMatch(/const learner = await signedLearnerOfKind\(auth\)/);
     expect(route).toMatch(/ltiPlatform\.beginLaunch\(\{ sub: learner\.did, podUrl: learner\.podUrl \}/);
     const gradebook = src.slice(src.indexOf("app.post('/agent/lti/gradebook'"));
     expect(gradebook).toMatch(/ltiPlatform\.gradebookFor\(learner\.did\)/);

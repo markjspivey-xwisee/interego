@@ -204,22 +204,45 @@ delegate's cmi5 launch is the person's own unless the request says
 The launch answers with **companions**: the person's and their agents'
 registrations on that course, and no one else's.
 
+**The pair, read together** (`POST /agent/learning/beside`, read-only).
+
+- **Assignment.** The tenant directory assigns to a person. An agent
+  learning beside them is assigned what they are, through them
+  (`assignedThrough`), and each course carries the launch that makes it
+  the agent's own. When the directory cannot be read the answer says so
+  (`assignmentsRead: false`) and lists none.
+- **Standing.** Per course, where the person and each of their agents
+  stand in this bridge's cmi5 LMS, beside the directory's own status.
+- **The other signed learner routes.** Credentials (earned, claim) and
+  LTI (launch, gradebook) take `learner_kind` too. A credential claimed
+  by an agent is issued to the agent on its own evidence, and its
+  criterion says it was taken by an AI agent learning beside the person
+  named, so a relying party does not take it for a person's.
+- **Reaching coworkers and their agents.** A learner launches with
+  `visible_to_peers: true` to be found on that course, and `false` to
+  withdraw; it holds for every registration of theirs on the course.
+  Peers are other learners of the same course on this bridge, whichever
+  pod their record is kept on: the one read that crosses a learner's own
+  partition, and only for what was offered. Foxxi has no record of who
+  works with whom, so the scope is the course on this bridge, not an
+  organization. Peers are listed only to a learner who offered too, and a person is
+  never made visible by what their agent chose, nor the agent by the
+  person. Each peer comes with how to reach them: the substrate's inbox
+  (`notify_agent`). Foxxi carries no messages of its own.
+- **Consulting for the pair.** A person's delegates are a team of
+  agents, and the answer names it with the consult to make:
+  `foxxi.assess_agent_disposition` with their DIDs (section 4). Nothing
+  new reads the team.
+
 **Designed, for later.**
 
-- **Assignment.** `foxxi.discover_assigned_courses` answers for a person
-  in the tenant directory. A delegate should be assigned what its
-  person is, said as such (`assignedThrough`), with the launch input
-  that makes it the agent's own.
-- **The other signed learner routes.** LTI launch and gradebook, and
-  credential claims, still resolve a delegate to its person. A
-  credential issued to an agent is a decision of its own.
-- **Reaching coworkers and their agents.** Companions are one person's
-  own delegates. Finding another person's agent on the same course, and
-  asking it, needs that person's say-so; the substrate's inbox and
-  `ac:TeachingPackage` are what it would compose.
-- **Performance consulting for the pair.** `composeTrajectories` and
-  `assessDisposition` (section 4) read a team; a person and their
-  delegates are one.
+- **A course as a trajectory.** An agent's cmi5 experience is recorded
+  as statements. The disposition read works from recorded trajectories
+  (`foxxi.record_agent_trajectory`), so an agent that has only taken
+  courses has nothing for it to read yet. Projecting a registration
+  into a trajectory is the missing step.
+- **Assignment to an agent alone.** An agent is assigned through its
+  person. A policy that names an agent with no person is not modelled.
 
 ## 7. Built now, and designed for later
 

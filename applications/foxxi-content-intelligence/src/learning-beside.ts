@@ -156,3 +156,120 @@ export function companionsOn(launches: readonly { registration: string; auId: st
       ...(l.sessionClosed ? { sessionClosed: l.sessionClosed } : {}),
     }));
 }
+
+/** A launch record as far as the reads below need one. */
+export interface BesideLaunch {
+  registration: string;
+  auId: string;
+  auTitle?: string;
+  courseId?: string;
+  learner: { id: string };
+  beside?: { id: string };
+  satisfied: boolean;
+  satisfiedAt?: string;
+  sessionClosed?: string;
+  /** The learner said other learners on this course may find them (see `peersOn`). */
+  visibleToPeers?: boolean;
+}
+
+/** The agents whose launches say they learn beside this person, each once. */
+export function delegatesOf(launches: readonly BesideLaunch[], person: string): string[] {
+  return [...new Set(launches.filter(l => l.beside?.id === person).map(l => l.learner.id))];
+}
+
+/** Another learner on a course who has said they may be found, and how to reach them. */
+export interface Peer {
+  learner: string;
+  kind: LearnerKind;
+  /** For an agent: the person it learns beside. */
+  beside?: string;
+  /** Whether any of their registrations on the course is satisfied. */
+  satisfied: boolean;
+  /** How to reach them: the substrate's own inbox. Foxxi carries no messages of its own. */
+  contact: { via: 'interego-inbox'; tool: 'notify_agent'; to: string };
+}
+
+/**
+ * The other learners on one course who may be found by this one.
+ *
+ * ★ BOTH SIDES HAVE TO HAVE SAID SO. A learner is listed only if a launch of theirs on the course
+ * carries `visibleToPeers`, and the asker sees anyone only if one of the asker's own does. Someone
+ * who has not offered to be found does not get a class list, and a person is never listed by what
+ * their agent chose or the other way round: each learner's visibility is that learner's own
+ * launches'. The asker's own household (their person, their agents) is left out: those are
+ * companions, read without any of this.
+ *
+ * `launches` are the LMS's records for the course in one tenant.
+ */
+export function peersOn(launches: readonly BesideLaunch[], asker: string, askerBeside?: string): Peer[] {
+  const visible = (id: string): boolean => launches.some(l => l.learner.id === id && l.visibleToPeers === true);
+  if (!visible(asker)) return [];
+  const household = new Set([asker, ...(askerBeside ? [askerBeside, ...delegatesOf(launches, askerBeside)] : delegatesOf(launches, asker))]);
+  const out = new Map<string, Peer>();
+  for (const l of launches) {
+    const id = l.learner.id;
+    if (household.has(id) || !visible(id)) continue;
+    const prior = out.get(id);
+    out.set(id, {
+      learner: id,
+      kind: l.beside ? 'agent' : 'human',
+      ...(l.beside ? { beside: l.beside.id } : {}),
+      satisfied: (prior?.satisfied ?? false) || l.satisfied,
+      contact: { via: 'interego-inbox', tool: 'notify_agent', to: id },
+    });
+  }
+  return [...out.values()];
+}
+
+/** A course as a person and their agents stand on it together. */
+export interface PairStanding {
+  courseId: string;
+  courseTitle?: string;
+  /** Why the course is here: assigned to the person, or only launched by one of them. */
+  assigned: boolean;
+  /** For an agent learner reading its own list: whose assignment this is. */
+  assignedThrough?: string;
+  dueAt?: string;
+  person: { learner: string; satisfied: boolean; launched: boolean };
+  agents: { learner: string; satisfied: boolean; launched: boolean }[];
+}
+
+/**
+ * A person's courses with where they and each of their agents stand: the courses assigned to the
+ * person (an agent learning beside them is assigned what they are, through them) and any course
+ * one of them has launched.
+ *
+ * ★ `satisfied` HERE IS THE cmi5 LMS'S OWN. It is true when a registration of that learner on the
+ * course met moveOn on this bridge. It is not the tenant directory's completion status, which the
+ * assignment carries separately, and it says nothing of a learner who took the course elsewhere.
+ */
+export function pairStandings(input: {
+  person: string;
+  /** Extra agents to list even with no launch yet (the asking agent). */
+  agents?: readonly string[];
+  assignments: readonly { courseId: string; courseTitle?: string; dueAt?: string }[];
+  launches: readonly BesideLaunch[];
+  /** Set when an agent is the reader. */
+  reader?: { kind: LearnerKind; id: string };
+}): PairStanding[] {
+  const { person, launches } = input;
+  const agents = [...new Set([...(input.agents ?? []), ...delegatesOf(launches, person)])];
+  const ours = launches.filter(l => (l.learner.id === person && !l.beside) || l.beside?.id === person);
+  const ids = [...new Set([...input.assignments.map(a => a.courseId), ...ours.map(l => l.courseId).filter((c): c is string => !!c)])];
+  const on = (course: string, learner: string) => {
+    const mine = ours.filter(l => l.courseId === course && l.learner.id === learner);
+    return { learner, satisfied: mine.some(l => l.satisfied), launched: mine.length > 0 };
+  };
+  return ids.map(courseId => {
+    const a = input.assignments.find(x => x.courseId === courseId);
+    return {
+      courseId,
+      ...(a?.courseTitle ? { courseTitle: a.courseTitle } : {}),
+      assigned: !!a,
+      ...(a && input.reader?.kind === 'agent' ? { assignedThrough: person } : {}),
+      ...(a?.dueAt ? { dueAt: a.dueAt } : {}),
+      person: on(courseId, person),
+      agents: agents.map(g => on(courseId, g)),
+    };
+  });
+}
