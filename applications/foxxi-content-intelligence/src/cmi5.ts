@@ -113,6 +113,8 @@ export interface Cmi5StatementInput {
     moveOn: string;
     masteryScore?: number;
   };
+  /** The team the statement relates to (xAPI `context.team`): a learner and the person it learns beside (src/learning-beside.ts). */
+  team?: { objectType: 'Group'; member: Array<{ objectType: 'Agent'; account: { homePage: string; name: string } }> };
 }
 
 export interface Cmi5Statement {
@@ -130,6 +132,7 @@ export interface Cmi5Statement {
       parent?: Array<{ id: string; objectType: 'Activity' }>;
     };
     extensions?: Record<string, unknown>;
+    team?: { objectType: 'Group'; member: Array<{ objectType: 'Agent'; account: { homePage: string; name: string } }> };
   };
   result?: {
     score?: { scaled?: number; raw?: number; min?: number; max?: number };
@@ -175,6 +178,8 @@ export function buildCmi5Statement(input: Cmi5StatementInput): Cmi5Statement {
     },
     timestamp: now,
   };
+
+  if (input.team) stmt.context.team = input.team;
 
   if (input.session.courseActivityId) {
     stmt.context.contextActivities.parent = [

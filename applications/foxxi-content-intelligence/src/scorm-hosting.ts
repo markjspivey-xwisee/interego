@@ -118,6 +118,29 @@ export function packageEntry(zip: AdmZip, path: string): AdmZip.IZipEntry | null
 }
 
 /**
+ * The part of the bootstrap every sandboxed document needs: a stand-in, in memory, for the web
+ * storage a sandboxed page may not use. It reads no launch and fetches nothing.
+ */
+export const SANDBOX_STORAGE_SHIM = String.raw`(function () {
+  function memoryStorage() {
+    var items = new Map();
+    return {
+      getItem: function (k) { k = String(k); return items.has(k) ? items.get(k) : null; },
+      setItem: function (k, v) { items.set(String(k), String(v)); },
+      removeItem: function (k) { items.delete(String(k)); },
+      clear: function () { items.clear(); },
+      key: function (i) { var keys = Array.from(items.keys()); return i < keys.length ? keys[i] : null; },
+      get length() { return items.size; }
+    };
+  }
+  ['localStorage', 'sessionStorage'].forEach(function (name) {
+    var usable = false;
+    try { var s = window[name]; s.setItem('foxxi-probe', '1'); s.removeItem('foxxi-probe'); usable = true; } catch (e) {}
+    if (!usable) { try { Object.defineProperty(window, name, { value: memoryStorage(), configurable: true }); } catch (e) {} }
+  });
+})();`;
+
+/**
  * Put in front of the runtime, in every document served from a package. No backslashes, template
  * syntax or closing tags in it: it is sent as it is written.
  */
@@ -162,19 +185,39 @@ export const SANDBOX_BOOTSTRAP = String.raw`(function () {
 const attr = (s: string): string => s.replace(/&/g, '&amp;').replace(/"/g, '&quot;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
 
 /**
+ * ★ A UNIT THAT LAUNCHES ITSELF GETS NO RUNTIME. A cmi5 package's units are cmi5 content: each
+ * reads the launch it was opened with and fetches its own auth-token, and cmi5 (section 8.2) lets
+ * that fetch URL be used once. Until 2026-11-25 every document got the whole bootstrap, which
+ * fetched the token first, so a cmi5 unit's own fetch was refused (401, "fetch token already used")
+ * and the unit never started: found by hosting a cmi5 package on the deployed bridge and opening
+ * its launch in a browser. A document of a package that has a cmi5 course structure (`ownLaunch`)
+ * now gets the storage stand-in alone: no launch is read for it, nothing is fetched, and no SCORM
+ * runtime is offered to content that does not speak SCORM.
+ *
  * A document with the runtime put into it, as bytes: after `<head>`, or else after `<html>` or the
  * doctype, or at the very start. The document is handled as latin-1, one character a byte, so
  * whatever its own encoding, every byte of it goes out as it came in. A document parsed as XML
  * (XHTML) gets the bootstrap in a CDATA section, since its `<` and `&&` are not text an XML parser
  * takes bare (Codex, on #548).
  */
-export function withRuntime(document: Buffer, runtimeUrl: string, opts: { xml?: boolean } = {}): Buffer {
+export function withRuntime(document: Buffer, runtimeUrl: string, opts: { xml?: boolean; ownLaunch?: boolean } = {}): Buffer {
   const text = document.toString('latin1');
-  const bootstrap = opts.xml ? `<![CDATA[${SANDBOX_BOOTSTRAP}]]>` : SANDBOX_BOOTSTRAP;
-  const tags = `<script>${bootstrap}</script><script src="${attr(runtimeUrl)}"></script>`;
+  const script = opts.ownLaunch ? SANDBOX_STORAGE_SHIM : SANDBOX_BOOTSTRAP;
+  const bootstrap = opts.xml ? `<![CDATA[${script}]]>` : script;
+  const tags = opts.ownLaunch ? `<script>${bootstrap}</script>` : `<script>${bootstrap}</script><script src="${attr(runtimeUrl)}"></script>`;
   const at = /<head\b[^>]*>/i.exec(text) ?? /<html\b[^>]*>/i.exec(text) ?? /^\s*<!doctype[^>]*>/i.exec(text);
   const cut = at ? at.index + at[0].length : 0;
   return Buffer.from(text.slice(0, cut) + tags + text.slice(cut), 'latin1');
+}
+
+/**
+ * Whether a package's units launch themselves: it has a cmi5 course structure at its root, which
+ * is what makes a package a cmi5 package (cmi5 section 14.1) and what its units are read from here.
+ */
+export function launchesItself(zip: AdmZip): boolean {
+  const names = new Set(zip.getEntries().filter(e => !e.isDirectory).map(e => e.entryName));
+  // A package that also carries a SCORM manifest is played as SCORM, as it was before.
+  return names.has('cmi5.xml') && !names.has('imsmanifest.xml');
 }
 
 let runtimeSource: string | undefined;
@@ -831,7 +874,7 @@ export function attachHostedPackageRoutes(app: Express, deps: {
         .set('Referrer-Policy', 'no-referrer')
         .set('Content-Type', contentTypeOf(entry.entryName));
       if (isHtmlDocument(entry.entryName)) {
-        res.set('Cache-Control', 'no-store').send(withRuntime(entry.getData(), runtimeUrl, { xml: contentTypeOf(entry.entryName) === 'application/xhtml+xml' }));
+        res.set('Cache-Control', 'no-store').send(withRuntime(entry.getData(), runtimeUrl, { xml: contentTypeOf(entry.entryName) === 'application/xhtml+xml', ownLaunch: launchesItself(zip) }));
         return;
       }
       res.set('Cache-Control', 'public, max-age=31536000, immutable').send(entry.getData());

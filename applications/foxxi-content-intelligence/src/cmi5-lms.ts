@@ -37,6 +37,7 @@ import express, { type Express, type Request, type Response } from 'express';
 import { DEFAULT_TENANT, TenantPartition, type TenantId } from './tenant-context.js';
 import { callerIsOperator, trustedTenantOf, type OperatorAuthConfig } from './operator-auth.js';
 import { buildCmi5Statement, evaluateMoveOn } from './cmi5.js';
+import { besideTeam, companionsOn, type CompanionProgress } from './learning-beside.js';
 import {
   parseCmi5Course, auById, precedingAu, flatAus, flatBlocks, blockAuIds, LAUNCH_PARAMETERS_MAX,
   type Cmi5Course, type Cmi5AuNode,
@@ -103,6 +104,12 @@ export interface Cmi5LaunchRequest {
    * registration after `terminated` left moveOn unmet, and mints a new session id (cmi5 §9.3).
    */
   resume?: { registration: string; sessionId?: string; newSession?: boolean };
+  /**
+   * The person this learner learns beside, when the learner is that person's delegate learning as
+   * itself (src/learning-beside.ts). It goes into the context template as `team`, so every
+   * statement the AU sends carries it, and into the LMS's own statements for the registration.
+   */
+  beside?: { id: string };
 }
 
 export interface Cmi5Launch {
@@ -184,6 +191,8 @@ interface LaunchRecord {
   courseId?: string;
   /** See Cmi5LaunchRequest.learnerPod. */
   learnerPod?: string;
+  /** See Cmi5LaunchRequest.beside. */
+  beside?: { id: string };
   /** cmi5 session id (§9.6.3.1). Absent on a snapshot from before sessions were kept; those are not resumed. */
   sessionId?: string;
   /** Set once the session has ended. terminated without moveOn keeps this registration and starts a new session. */
@@ -447,6 +456,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
   const same = prior
     && prior.tenant === tenant
     && prior.learner.id === req.learner.id
+    && prior.beside?.id === req.beside?.id
     && prior.auId === req.au.id
     && (!req.courseId || prior.courseId === req.courseId)
     ? prior : undefined;
@@ -498,6 +508,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
       authoritativeSource: req.authoritativeSource,
       ...(req.courseId ? { courseId: req.courseId } : {}),
       ...(req.learnerPod ? { learnerPod: req.learnerPod } : {}),
+      ...(req.beside ? { beside: { id: req.beside.id } } : {}),
       sessionId,
       launchMode,
       satisfied: false,
@@ -522,9 +533,12 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
   // the publisher ID activity — the AU's id from the course structure, unaltered — in its grouping
   // list (§10.2.1, §9.6.2.3). An entitlement key is passed on only when the course structure gives
   // the AU one, as its value there (§10.2.7): this had sent the registration in its place.
+  const team = req.beside ? besideTeam(req.authoritativeSource, req.learner.id, req.beside.id) : undefined;
   const launchData: Record<string, unknown> = {
     contextTemplate: {
       registration,
+      // An agent learning beside a person: the two of them, as the team its statements relate to.
+      ...(team ? { team } : {}),
       contextActivities: { category: [{ id: CMI5_CATEGORY }], grouping: [{ id: req.au.id }] },
       extensions: {
         'https://w3id.org/xapi/cmi5/context/extensions/sessionid': sessionId,
@@ -549,6 +563,7 @@ export function buildCmi5Launch(req: Cmi5LaunchRequest): Cmi5Launch {
       auActivityId: req.au.id,
       ...(req.courseId ? { courseActivityId: req.courseId } : {}),
     },
+    ...(team ? { team } : {}),
     launched: {
       launchMode,
       launchUrl: req.au.url,
@@ -776,6 +791,7 @@ async function observeCmi5StatementUnlocked(
       auActivityId: launch.auId,
       ...(launch.courseId ? { courseActivityId: launch.courseId } : {}),
     },
+    ...(launch.beside ? { team: besideTeam(launch.authoritativeSource, launch.learner.id, launch.beside.id) } : {}),
   });
   await deps.emit(satisfied as unknown as Record<string, unknown>);
   launch.satisfied = true;
@@ -786,6 +802,14 @@ async function observeCmi5StatementUnlocked(
   // block now fully satisfied, and for the course once every AU is.
   await rollupCourse(tenant, launch.learner, launch.authoritativeSource, deps.emit, launch.auId);
   return { registration, satisfied: true, reason: decision.reason, emittedSatisfied: true };
+}
+
+/**
+ * A person and the agents learning beside them on one course: each one's registrations in this
+ * tenant (src/learning-beside.ts). Only that person's own and their delegates' are returned.
+ */
+export function companionsOnCourse(tenant: TenantId, courseId: string, person: string): CompanionProgress[] {
+  return companionsOn([...launches.values()].filter(l => l.tenant === tenant && l.courseId === courseId), person);
 }
 
 /** Inspect a tracked registration's moveOn state — for GET /cmi5/registration/:reg. */
@@ -802,6 +826,7 @@ export function inspectRegistration(registration: string): Record<string, unknow
     satisfiedAt: l.satisfiedAt,
     reason: l.reason,
     learner: l.learner.id,
+    ...(l.beside ? { learnerKind: 'agent', beside: l.beside.id } : {}),
     ...(l.sessionClosed ? { sessionClosed: l.sessionClosed } : {}),
   };
 }

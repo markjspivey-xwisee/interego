@@ -381,8 +381,9 @@ describe('every call of the pod resolver in bridge/server.ts is one somebody dec
     ['const pod = namedSubjectPodUrl(did);', 'named', 2],
     // The fallback is a signed launch's caller: this bridge's own LMS hands the play the learner's pod (`play.learnerPod`).
     ['const learnerPod = play.learnerPod ?? resolveSubjectPodUrl(play.learnerDid);', 'caller'],
-    ['const podUrl = selfBoundPod(auth.callerDid);', 'caller', 2],
-    ['vc = await readDelegationCredential(resolveSubjectPodUrl(auth.callerDid), auth.callerDid as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never });', 'caller'],
+    // The third and the second: a delegate learning as itself (signedLearnerOfKind), whose record is kept on the signer's own pod.
+    ['const podUrl = selfBoundPod(auth.callerDid);', 'caller', 3],
+    ['vc = await readDelegationCredential(resolveSubjectPodUrl(auth.callerDid), auth.callerDid as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never });', 'caller', 2],
     ['const vc = await readDelegationCredential(resolveSubjectPodUrl(auth.callerDid), auth.callerDid as IRI,', 'caller'],
     ['samePodPrincipal(resolveSubjectPodUrl(String(course.authoredBy)), learner.podUrl);', 'refuses'],
     // A STORED signed author, and only when the pod it was written to was not recorded.
@@ -406,7 +407,8 @@ describe('every call of the pod resolver in bridge/server.ts is one somebody dec
     }
     // No call is counted under two entries, so the list accounts for every call exactly once.
     expect(DECIDED.reduce((sum, [, , times = 1]) => sum + times, 0)).toBe(calls.length);
-    expect(calls.length).toBe(54);
+    // 56 since 2026-11-25: a delegate learning as itself reads its delegation and keeps its record on the signer's pod (signedLearnerOfKind).
+    expect(calls.length).toBe(56);
   });
 
   it('the places a guest\'s own statements reach ask the named resolver, and the statement\'s owner is decided in src', () => {

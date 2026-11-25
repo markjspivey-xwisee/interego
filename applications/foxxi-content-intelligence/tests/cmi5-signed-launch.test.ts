@@ -178,7 +178,11 @@ describe('the bridge wires the learner\'s own launch', () => {
     const src = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
     const route = src.slice(src.indexOf("app.post('/agent/cmi5/launch'"), src.indexOf("app.post('/agent/scorm/author'"));
     expect(route).toMatch(/verifyDelegatedCaller\(req\.body\)/);
-    expect(route).toMatch(/const learner = await signedLearner\(auth\)/);
+    // The learner is still derived from the signature: the person, or the delegate itself when it says it is the learner (src/learning-beside.ts).
+    expect(route).toMatch(/const learner = await signedLearnerOfKind\(auth\)/);
+    const ofKindAt = src.indexOf('async function signedLearnerOfKind(');
+    const ofKind = src.slice(ofKindAt, src.indexOf('\n}\n', ofKindAt));
+    expect(ofKind).toContain('const l = await signedLearner(auth);');
     expect(route).toMatch(/const tenant = lensTenantFor\(actorForPod\(learner\.podUrl, MESH_ACTOR_LABELS\)\)/);
     expect(route).toMatch(/stageLaunchData\(tenant, launch, au\.id\)/);
     expect(route).toMatch(/recordLaunchedStatement\(tenant, launch\.launched\)/);
