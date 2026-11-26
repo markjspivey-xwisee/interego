@@ -49,6 +49,20 @@ export interface AffordanceInput {
   readonly maximum?: number;
   /** For arrays — minimum length. */
   readonly minItems?: number;
+  /**
+   * For a string that carries JSON (a signed-request payload is the case this was added for,
+   * 2026-11-26): what that JSON holds. Without it the fields a signed affordance takes were
+   * written only in the description's prose, so a client had to be told them or parse a sentence,
+   * which is the out-of-band knowledge a descriptor exists to remove. Emitted with JSON Schema's
+   * own keywords for string-encoded content, `contentMediaType` and `contentSchema`.
+   */
+  readonly content?: AffordanceInputContent;
+}
+
+/** The JSON a string input carries: its fields, and which of them are required. */
+export interface AffordanceInputContent {
+  readonly properties: Readonly<Record<string, { readonly type: JsonType; readonly description: string; readonly enum?: readonly string[] }>>;
+  readonly required?: readonly string[];
 }
 
 /**
@@ -325,6 +339,8 @@ interface JsonSchemaProperty {
   minimum?: number;
   maximum?: number;
   minItems?: number;
+  contentMediaType?: 'application/json';
+  contentSchema?: { type: 'object'; properties: Record<string, { type: JsonType; description: string; enum?: readonly string[] }>; required: string[] };
 }
 
 /**
@@ -397,6 +413,14 @@ export function affordanceToMcpToolSchema(affordance: Affordance): McpToolSchema
     if (input.minimum !== undefined) prop.minimum = input.minimum;
     if (input.maximum !== undefined) prop.maximum = input.maximum;
     if (input.minItems !== undefined) prop.minItems = input.minItems;
+    if (input.content && input.type === 'string') {
+      prop.contentMediaType = 'application/json';
+      prop.contentSchema = {
+        type: 'object',
+        properties: Object.fromEntries(Object.entries(input.content.properties).map(([k, v]) => [k, { type: v.type, description: v.description, ...(v.enum ? { enum: v.enum } : {}) }])),
+        required: [...(input.content.required ?? [])],
+      };
+    }
 
     properties[input.name] = prop;
     if (input.required) required.push(input.name);

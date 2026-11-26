@@ -17,3 +17,10 @@
   (`tests/a-write-route-is-an-affordance.test.ts`). A ratchet: every write
   route `bridge/server.ts` mounts is offered in `affordances.ts`, or is on a
   list of 17 that were not on this date, which may only shrink.
+- **A signed affordance says what its payload holds.** The fields inside
+  `_signed_payload` were written only in the description's prose, so a client
+  had to be told them. An input may now declare `content`
+  (`applications/_shared/affordance-mcp`), emitted as JSON Schema
+  `contentMediaType` and `contentSchema`. Four Foxxi affordances declare it
+  (the pair read, assigning to an agent, taking a package down, the cmi5
+  launch); 54 still say it only in prose, a number a test lets only fall.
