@@ -600,7 +600,7 @@ import { publicAuthoredIntervention, publicPackageIntervention } from '../src/i2
 import { attachOneRosterRoutes } from '../src/oneroster.js';
 import {
   attachScormSequencingRoutes, parseManifest, createSession, processNavigation,
-  commitTracking, sessionView, type SeqSession, type TrackingUpdate,
+  commitTracking, sessionView, type SeqSession, type TrackingUpdate, sessionToJson, sessionFromJson, type KeptSession,
 } from '../src/scorm-sequencing.js';
 import { resolveAgentEncryptionKey } from '@interego/solid';
 import { makePrivatePerformanceVerifier } from '../src/private-performance-auth.js';
@@ -10291,7 +10291,36 @@ function seatScormCourse(course: AgentScormCourse): void {
   }
   agentScormCourses.set(course.courseId, course);
 }
-const agentScormPlays = new Map<string, ScormPlay>();   // in-process per the SN engine's own session model
+const agentScormPlays = new Map<string, ScormPlay>();   // a cache: an attempt in progress is kept on the pod, sealed (keptScormPlays)
+/**
+ * An attempt in progress, as it is kept. Until 2026-11-26 an attempt lived only in the Map above:
+ * a learner part-way through a course lost it at a restart and was told to launch again. It is
+ * written to the pod, sealed, when it is launched and after each submit, read back when this
+ * process does not hold it, and removed when its outcome is in the learner's record. The course is
+ * kept with it, as the attempt holds it (its answers included, which is one reason it is sealed).
+ */
+type KeptScormPlay = Omit<ScormPlay, 'seq'> & { seq: KeptSession };
+const SCORM_ATTEMPTS = 'scorm-attempts';
+const keptScormPlays = new SealedPodMap<KeptScormPlay>({
+  base: keptBase(SCORM_ATTEMPTS), key: bridgeEncryptionKeypair(), fetch: keptFetch,
+  valid: (v): v is KeptScormPlay => !!v && typeof (v as KeptScormPlay).learnerDid === 'string' && typeof (v as KeptScormPlay).courseId === 'string' && !!(v as KeptScormPlay).seq && !!(v as KeptScormPlay).course,
+});
+const playToKeep = (play: ScormPlay): KeptScormPlay => ({ ...play, seq: sessionToJson(play.seq) });
+/** The attempt with this session id: in hand, or read from what is kept. `unreadable` when it is kept and cannot be read or rebuilt. */
+async function scormPlayFor(sessionId: string): Promise<ScormPlay | 'none' | 'unreadable'> {
+  const held = agentScormPlays.get(sessionId);
+  if (held) return held;
+  if (!sessionId) return 'none';
+  const got = await keptScormPlays.get(SCORM_ATTEMPTS, sessionId);
+  if (got.state === 'absent' || got.state === 'unconfigured') return 'none';
+  if (got.state === 'unreadable') return 'unreadable';
+  const seq = sessionFromJson(got.value.seq);
+  if (!seq || seq.id !== sessionId) return 'unreadable';
+  const play: ScormPlay = { ...got.value, seq };
+  if (agentScormPlays.size >= SCORM_PLAYS_MAX) { const oldest = agentScormPlays.keys().next().value; if (oldest !== undefined) agentScormPlays.delete(oldest); }
+  agentScormPlays.set(sessionId, play);
+  return play;
+}
 /** Bound the in-process SCORM-play map — a signed/delegated caller can /agent/scorm/launch
  *  repeatedly without /submit (a play is deleted only on done:true), growing it unbounded
  *  (each entry holds a full course + SN tree) into an OOM (round-36). Evict oldest past the cap. */
@@ -13390,8 +13419,12 @@ app.post('/agent/scorm/launch', async (req, res) => {
     const nav = processNavigation(seq, 'start');
     if (!nav.ok || !nav.delivered) { res.status(409).json({ error: `SCORM start failed: ${nav.exception ?? nav.message ?? 'no SCO delivered'}` }); return; }
     if (agentScormPlays.size >= SCORM_PLAYS_MAX) { const oldest = agentScormPlays.keys().next().value; if (oldest !== undefined) agentScormPlays.delete(oldest); }
-    agentScormPlays.set(seq.id, { seq, courseId, learnerDid: callerDid, lens, masteryScore: course.masteryScore, course });
-    sendActionResult(req, res, { ok: true, sessionId: seq.id, launchedBy: callerDid, course: { id: courseId, title: course.title }, sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)), sequencingEnded: !!nav.sequencingEnded, instruction: 'Read the SCO; for an assessment SCO answer the questions; then POST /agent/scorm/submit { session_id, answers? }. Repeat until done:true.' }, bridgeBaseUrl, 'SCORM attempt launched', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
+    const launchedPlay: ScormPlay = { seq, courseId, learnerDid: callerDid, lens, masteryScore: course.masteryScore, course };
+    agentScormPlays.set(seq.id, launchedPlay);
+    // Kept before the session id is handed out: an attempt the pod did not take is not started.
+    const attemptKept = await keptScormPlays.put(SCORM_ATTEMPTS, seq.id, playToKeep(launchedPlay));
+    if (attemptKept === 'failed') { agentScormPlays.delete(seq.id); res.status(503).json({ error: 'the attempt could not be kept on the pod, so it was not started; try again.' }); return; }
+    sendActionResult(req, res, { ok: true, sessionId: seq.id, attemptDurable: attemptKept === 'kept', launchedBy: callerDid, course: { id: courseId, title: course.title }, sco: scoViewForLearner(scoForActivity(course, nav.delivered.activityId)), sequencingEnded: !!nav.sequencingEnded, instruction: 'Read the SCO; for an assessment SCO answer the questions; then POST /agent/scorm/submit { session_id, answers? }. Repeat until done:true.' }, bridgeBaseUrl, 'SCORM attempt launched', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
@@ -13401,23 +13434,37 @@ app.post('/agent/scorm/submit', async (req, res) => {
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     const callerDid = auth.callerDid; const p = auth.payload;
     const sessionId = typeof p.session_id === 'string' ? p.session_id : '';
-    const play = agentScormPlays.get(sessionId);
-    if (!play) { res.status(404).json({ error: 'no SCORM play session — launch first' }); return; }
+    const play = await scormPlayFor(sessionId);
+    if (play === 'unreadable') { res.status(503).json({ error: 'your attempt is kept but could not be read just now; try again.' }); return; }
+    if (play === 'none') { res.status(404).json({ error: 'no SCORM play session — launch first' }); return; }
     if (play.learnerDid !== callerDid) { res.status(403).json({ error: 'not your SCORM session' }); return; }
     const step = await advanceScormPlay(play, p.answers);
-    if (!step.ok) { res.status(step.status).json(step.body); return; }
+    // Where the attempt now stands is kept before it is answered, whatever the step was: a refused
+    // answer can still have counted as a try. A step is not undone when the pod does not take it:
+    // it was graded, may have been recorded, and taking it again would grade and record it again.
+    // This process goes on holding it and the answer says the pod does not, so what a restart
+    // before the next kept step would cost (this one step) is known to whoever took it.
+    let stepNotKept: string | undefined;
+    if (!(step.ok && step.done && step.recorded)) {
+      const stepKept = await keptScormPlays.put(SCORM_ATTEMPTS, sessionId, playToKeep(play));
+      if (stepKept === 'failed') stepNotKept = 'this step is held by this bridge process only: the pod did not take it. A restart before your next step is kept would return you to the step before this one.';
+    }
+    if (!step.ok) { res.status(step.status).json({ ...step.body, ...(stepNotKept ? { stepNotKept } : {}) }); return; }
     if (!step.done) {
-      sendActionResult(req, res, { ok: true, sessionId, done: false, ...(step.graded ? { graded: step.graded } : {}), sco: step.sco }, bridgeBaseUrl, 'Next SCO', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
+      sendActionResult(req, res, { ok: true, sessionId, done: false, ...(stepNotKept ? { stepNotKept } : {}), ...(step.graded ? { graded: step.graded } : {}), sco: step.sco }, bridgeBaseUrl, 'Next SCO', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_submit'));
       return;
     }
     const outcome = { ...(step.graded ? { graded: step.graded } : {}), course: { id: play.courseId, title: play.course.title }, completed: step.completed, passed: step.passed, score: Number(step.score.toFixed(3)), recordedStatements: step.statementIds.length, recorded: step.recorded };
     if (!step.recorded) {
       // Graded, and not in the learner's record. The session keeps the outcome, and a submit to it
       // keeps the same statements again: the attempt is not lost, and not recorded twice.
-      res.status(503).json({ error: `the attempt ended and was graded, but your record does not hold its outcome: ${step.unrecorded ?? 'the store did not keep it'}. Submit to this session again to record it.`, sessionId, done: true, ...outcome });
+      res.status(503).json({ error: `the attempt ended and was graded, but your record does not hold its outcome: ${step.unrecorded ?? 'the store did not keep it'}. Submit to this session again to record it.`, sessionId, done: true, ...(stepNotKept ? { stepNotKept } : {}), ...outcome });
       return;
     }
     agentScormPlays.delete(sessionId);
+    // Its outcome is in the learner's record: the attempt itself is no longer needed. A removal the
+    // pod refuses leaves an ended attempt there, which a later submit answers with the same outcome.
+    void keptScormPlays.remove(SCORM_ATTEMPTS, sessionId);
     sendActionResult(req, res, { ok: true, sessionId, done: true, ...outcome, lens: play.lens, note: 'The SCORM 2004 SN runtime rolled up this outcome from your committed SCO tracking — recorded to your ELR.' }, bridgeBaseUrl, 'SCORM attempt outcome', activeAffordances.filter(a => a.toolName === 'foxxi.review_record'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });

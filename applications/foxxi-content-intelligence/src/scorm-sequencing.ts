@@ -1048,29 +1048,86 @@ function retainSession(id: string, s: SeqSession): void {
 import {
   registerSnapshot, dirty as markScormDirty, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
 } from './pod-snapshot-publisher.js';
+/**
+ * A session as it is kept: the activity tree without its parent links, the two Maps as entries,
+ * and the current and suspended activities by id.
+ *
+ * ★ WHY. A session was never kept. Its snapshot was collected with `JSON.stringify(session)`, and
+ * a session's tree is cyclic (every activity names its parent), so the collect threw and nothing
+ * was published; and had one been published, the restore discarded each entry ("until a
+ * rehydrator is wired in"). A learner part-way through a course lost their place at every restart
+ * (docs/operations/primary-state-rollout-hold.md: scorm-sequencing-sessions, agent-scorm-attempts).
+ * These two functions are that rehydrator.
+ */
+export interface KeptSession {
+  id: string; tenant: string; courseId: string; courseTitle: string; root: KeptActivity;
+  states: Array<[string, ActivityState]>;
+  globalObjectives: Array<[string, { satisfied?: boolean; measure?: number }]>;
+  current?: string; suspended?: string; ended: boolean; createdAt: string;
+}
+interface KeptActivity { id: string; title: string; resourceId?: string; href?: string; sequencing: SequencingDef; children: KeptActivity[] }
+
+export function sessionToJson(s: SeqSession): KeptSession {
+  const act = (a: Activity): KeptActivity => ({
+    id: a.id, title: a.title, ...(a.resourceId !== undefined ? { resourceId: a.resourceId } : {}), ...(a.href !== undefined ? { href: a.href } : {}),
+    sequencing: a.sequencing, children: a.children.map(act),
+  });
+  return {
+    id: s.id, tenant: String(s.tenant), courseId: s.tree.courseId, courseTitle: s.tree.courseTitle, root: act(s.tree.root),
+    states: [...s.states.entries()], globalObjectives: [...s.globalObjectives.entries()],
+    ...(s.current ? { current: s.current.id } : {}), ...(s.suspended ? { suspended: s.suspended.id } : {}),
+    ended: s.ended, createdAt: s.createdAt,
+  };
+}
+
+/**
+ * The session a kept one was, with its tree rewired: parents, preorder, each activity's place and
+ * the size of its subtree are rebuilt the way parseManifest builds them, not trusted from what was
+ * kept. Null when what was kept is not a session, names a current activity its tree does not hold,
+ * or is deeper or larger than a manifest may be.
+ */
+export function sessionFromJson(j: unknown): SeqSession | null {
+  const k = j as Partial<KeptSession> | null;
+  if (!k || typeof k.id !== 'string' || typeof k.tenant !== 'string' || typeof k.courseId !== 'string' || !k.root || !Array.isArray(k.states) || !Array.isArray(k.globalObjectives) || typeof k.ended !== 'boolean' || typeof k.createdAt !== 'string') return null;
+  const preorder: Activity[] = [];
+  const byId = new Map<string, Activity>();
+  const build = (n: KeptActivity, parent: Activity | undefined, depth: number): Activity | null => {
+    if (!n || typeof n.id !== 'string' || typeof n.title !== 'string' || !n.sequencing || !Array.isArray(n.children) || depth > 64 || preorder.length >= 10_000 || byId.has(n.id)) return null;
+    const a: Activity = { id: n.id, title: n.title, ...(n.resourceId !== undefined ? { resourceId: n.resourceId } : {}), ...(n.href !== undefined ? { href: n.href } : {}), children: [], ...(parent ? { parent } : {}), sequencing: n.sequencing, order: preorder.length, subtreeSize: 1 };
+    preorder.push(a); byId.set(a.id, a);
+    for (const c of n.children) { const child = build(c, a, depth + 1); if (!child) return null; a.children.push(child); a.subtreeSize += child.subtreeSize; }
+    return a;
+  };
+  const root = build(k.root as KeptActivity, undefined, 0);
+  if (!root) return null;
+  const states = new Map<string, ActivityState>();
+  for (const e of k.states) { if (!Array.isArray(e) || typeof e[0] !== 'string' || !e[1] || typeof e[1] !== 'object' || !byId.has(e[0])) return null; states.set(e[0], e[1] as ActivityState); }
+  // An activity the kept states do not mention starts fresh, as it would in a new session.
+  for (const a of preorder) if (!states.has(a.id)) states.set(a.id, freshState());
+  const globalObjectives = new Map<string, { satisfied?: boolean; measure?: number }>();
+  for (const e of k.globalObjectives) { if (!Array.isArray(e) || typeof e[0] !== 'string' || !e[1] || typeof e[1] !== 'object') return null; globalObjectives.set(e[0], e[1]); }
+  const named = (id: string | undefined): Activity | undefined | null => (id === undefined ? undefined : byId.get(id) ?? null);
+  const current = named(k.current), suspended = named(k.suspended);
+  if (current === null || suspended === null) return null;
+  return {
+    id: k.id, tenant: k.tenant as TenantId,
+    tree: { courseId: k.courseId, courseTitle: typeof k.courseTitle === 'string' ? k.courseTitle : '', root, preorder },
+    states, globalObjectives, ...(current ? { current } : {}), ...(suspended ? { suspended } : {}), ended: k.ended, createdAt: k.createdAt,
+  };
+}
+
 interface ScormSnapshot { sessions: Array<[string, unknown]>; }
 function collectScormSnapshot(): ScormSnapshot {
-  // The SeqSession graph has Map<,> internals that don't JSON-serialize
-  // cleanly; serialize via a structured-clone-aware replacer.
-  const out: Array<[string, unknown]> = [];
-  for (const [id, s] of sessions) {
-    out.push([id, JSON.parse(JSON.stringify(s, (_k, v) => {
-      if (v instanceof Map) return { __map: true, entries: [...v.entries()] };
-      return v;
-    }))]);
-  }
-  return { sessions: out };
+  return { sessions: [...sessions].map(([id, s]) => [id, sessionToJson(s)]) };
 }
 async function hydrateScormFromPod(): Promise<void> {
   const snap = await loadLatestSnapshot<ScormSnapshot>('scorm');
   if (!snap?.sessions) return;
-  // Best-effort restore — SeqSession has Maps + activity tree refs that
-  // need rewiring. For now we restore the JSON shape; full recompute
-  // happens on first navigate when needed. (See follow-up work.)
-  for (const [id, sJson] of snap.sessions) {
-    // Skip until a SCORM-session rehydrator is wired in; the pod
-    // descriptor is still the durable record.
-    void id; void sJson;
+  for (const [id, kept] of snap.sessions) {
+    // A session this process already holds is the newer one. One that cannot be rebuilt is left out.
+    if (typeof id !== 'string' || sessions.has(id)) continue;
+    const s = sessionFromJson(kept);
+    if (s && s.id === id) retainSession(id, s);
   }
 }
 registerSnapshot({ surface: 'scorm', typeIri: FOXXI_SNAPSHOT_TYPES.ScormSessions, collect: collectScormSnapshot });
