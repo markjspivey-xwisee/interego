@@ -52,6 +52,8 @@ function route(compose: () => Promise<Receipt | null>) {
     seatScormCourse: () => undefined,
     selfBoundPod: () => 'https://pod.example/author/',
     recordCourseAuthor: () => undefined,
+    // The ownership index is written before the answer since 2026-11-26; here it is taken.
+    writeCourseAuthors: async () => true,
     courseIri: (id: string) => 'https://bridge.example/agent/scorm/course/' + id,
     emitAgentActivity: async () => 'fixture-authored-statement',
     AUTHORED_VERB: 'urn:test:authored',

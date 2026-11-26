@@ -459,6 +459,23 @@ const keepEvaluation = async (tenant: TenantId, evaluationId: string) => {
   return keepOrRefuse(keptEvaluations, tenant, evaluationId, state, () => reg.forget(evaluationId), 'the evaluation');
 };
 
+/**
+ * Move a registry that was first kept in the clear to its sealed resource, at start, and keep
+ * trying until the clear copy is gone: nobody has to change a record for it to stop being public.
+ */
+function settleSealed(file: SealedRegistryFile, name: string): void {
+  let wait = 5_000;
+  const attempt = (): void => {
+    void file.settle().catch(() => false).then((done) => {
+      if (done) return;
+      bridgeWarn(`[foxxi-bridge] ${name}: its clear copy on the pod is not sealed and removed yet; trying again in ${Math.round(wait / 1000)}s`);
+      const t = setTimeout(attempt, wait); (t as { unref?: () => void }).unref?.();
+      wait = Math.min(wait * 2, 10 * 60_000);
+    });
+  };
+  attempt();
+}
+
 /** Resolve the tenant of an affordance call from its `tenant_pod_url`
  *  argument (falling back to the bridge's configured default tenant). */
 function callTenant(args: Record<string, unknown>): TenantId {
@@ -10756,22 +10773,41 @@ const courseAuthors = new Map<string, string>();   // courseId → authoredBy DI
 const COURSE_AUTHORS_MAX = 200_000;
 const COURSE_AUTHORS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/course-authors.json` : '';
 let courseAuthorsDirty = false;
-async function persistCourseAuthors(): Promise<void> {
-  if (!COURSE_AUTHORS_RESOURCE || !courseAuthorsDirty) return;
+/** What the pod's copy held when it was last read: it wins any conflict, and is always written back. */
+let courseAuthorsDurable: Record<string, string> = {};
+/**
+ * Write the ownership index. True when the pod holds what this process holds.
+ *
+ * MONOTONIC durable ownership (round-42): the pod's copy is merged in, EXISTING-WINS, so a
+ * courseId's owner that was evicted from the in-memory map is never clobbered by a full overwrite
+ * (which would let a later re-author re-establish attacker ownership durably).
+ *
+ * Until 2026-11-26 this read with "anything but ok is none yet", so a pod answering 500 was read as
+ * an empty index and then overwritten with this process's own, and it did not look at whether the
+ * PUT succeeded. It now writes only after a read that succeeded or found nothing, and says whether
+ * the pod took it.
+ */
+async function writeCourseAuthors(): Promise<boolean> {
+  if (!COURSE_AUTHORS_RESOURCE) return false;
+  if (!courseAuthorsDirty) return true;
   courseAuthorsDirty = false;
-  const f = globalThis.fetch as typeof fetch;
-  const container = COURSE_AUTHORS_RESOURCE.replace(/[^/]+$/, '');
   try {
-    // MONOTONIC durable ownership (round-42): merge with the existing file, EXISTING-WINS, so a
-    // courseId owner that was evicted from the in-memory map is never clobbered by a full
-    // overwrite (which would let a later re-author re-establish attacker ownership durably).
-    let durable: Record<string, string> = {};
-    try { const r = await f(COURSE_AUTHORS_RESOURCE, { headers: { Accept: 'application/json' } }); if (r.ok) durable = (await r.json()) as Record<string, string>; } catch { /* none yet */ }
-    const merged: Record<string, string> = { ...Object.fromEntries(courseAuthors), ...durable }; // durable (first-writer) wins any conflict
-    await f(container, { method: 'PUT', headers: { 'Content-Type': 'text/turtle', Link: '<http://www.w3.org/ns/ldp#BasicContainer>; rel="type"' }, body: '' }).catch(() => undefined);
-    await f(COURSE_AUTHORS_RESOURCE, { method: 'PUT', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(merged) });
-  } catch { courseAuthorsDirty = true; /* retry on the next record */ }
+    const ok = await commitDurableRegistry({
+      resource: COURSE_AUTHORS_RESOURCE,
+      fetch: globalThis.fetch as typeof fetch,
+      load: (json) => {
+        courseAuthorsDurable = {};
+        for (const [k, v] of Object.entries((json ?? {}) as Record<string, unknown>)) if (typeof v === 'string') { courseAuthorsDurable[k] = v; courseAuthors.set(k, v); }
+      },
+      body: () => JSON.stringify({ ...Object.fromEntries(courseAuthors), ...courseAuthorsDurable }), // durable (first-writer) wins any conflict
+    });
+    if (ok) return true;
+  } catch { /* tried again below */ }
+  courseAuthorsDirty = true;
+  return false;
 }
+/** Write soon, and again with backoff until the pod takes it: an owner recorded on a read is not lost to one failed write. */
+const persistCourseAuthors = registryWriter(writeCourseAuthors);
 async function loadCourseAuthors(): Promise<void> {
   if (!COURSE_AUTHORS_RESOURCE) return;
   try {
@@ -10790,7 +10826,7 @@ function recordCourseAuthor(courseId: string, authorDid: string): void {
   if (courseAuthors.size >= COURSE_AUTHORS_MAX) { const oldest = courseAuthors.keys().next().value; if (oldest !== undefined) courseAuthors.delete(oldest); }
   courseAuthors.set(courseId, authorDid);
   courseAuthorsDirty = true;
-  void persistCourseAuthors();
+  persistCourseAuthors();
 }
 
 /** Resolve one course for a READ: cache → author_did → registry → MESH hydration. The
@@ -11426,6 +11462,7 @@ const packageBringersFile = new SealedRegistryFile({
   key: bridgeEncryptionKeypair(), fetch: keptFetch, registry: packageBringers,
   pending: () => packageBringers.pendingForgotten(), committed: (covered) => packageBringers.committed(covered),
 });
+settleSealed(packageBringersFile, 'package-bringers');
 const reloadPackageBringers = (fresh = false) => packageBringersFile.reload(fresh);
 /** One write at a time. True when the pod holds, sealed, what this process holds. */
 const writePackageBringers = (): Promise<boolean> => packageBringersFile.write();
@@ -12044,6 +12081,7 @@ const ownAssignmentsFile = new SealedRegistryFile({
   key: bridgeEncryptionKeypair(), fetch: keptFetch, registry: ownAgentAssignments,
   pending: () => ownAgentAssignments.pendingWithdrawals(), committed: (covered) => ownAgentAssignments.committed(covered),
 });
+settleSealed(ownAssignmentsFile, 'own-agent-assignments');
 const reloadOwnAssignments = (fresh = false) => ownAssignmentsFile.reload(fresh);
 /** True when the pod holds, sealed, what this process holds. One write at a time; a failed read is not followed by a write. */
 const writeOwnAssignments = (): Promise<boolean> => ownAssignmentsFile.write();
@@ -12117,38 +12155,28 @@ app.post('/agent/learning/assign', assignToAgentRateLimit, async (req, res) => {
 // kept on the tenant pod beside the dispatches, so a withdrawal survives a restart.
 const PERSONAL_LINKS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/cmi5-personal-links.json` : '';
 const personalLaunchLinks = new PersonalLaunchRegistry();
-let personalLinksReadAt = 0;
+// Sealed since 2026-11-26. The registry names each link's learner, their pod and the course, and the
+// pod's resources are readable by anyone with the address; the tokens were always stored hashed,
+// which kept a reader from opening a link and not from seeing who was learning what. The clear
+// copy an earlier bridge wrote is read once and removed when the sealed one is written. A bridge
+// with no key keeps the links in the process only, as it keeps its snapshots.
+const personalLinksFile = new SealedRegistryFile({
+  resource: PERSONAL_LINKS_RESOURCE ? PERSONAL_LINKS_RESOURCE.replace(/\.json$/, '.envelope.json') : '',
+  legacyResource: PERSONAL_LINKS_RESOURCE || undefined,
+  key: bridgeEncryptionKeypair(), fetch: keptFetch, registry: personalLaunchLinks,
+});
 async function readPersonalLinks(): Promise<'loaded' | 'absent' | 'failed'> {
-  if (!PERSONAL_LINKS_RESOURCE) { personalLinksReadAt = Date.now(); return 'absent'; }
-  const read = await readDurableRegistry(
-    () => (globalThis.fetch as typeof fetch)(PERSONAL_LINKS_RESOURCE, { headers: { Accept: 'application/json' } }),
-    (json) => { personalLaunchLinks.load(json); },
-  );
-  if (read !== 'failed') personalLinksReadAt = Date.now();
-  return read;
+  const read = await personalLinksFile.reload(true);
+  return read === 'unconfigured' ? 'absent' : read;
 }
 /**
- * Write the registry to the pod. True when the pod holds what this process holds. A read that
- * failed is not followed by a write: this process has not seen the links already there, and
+ * Write the registry to the pod, sealed. True when the pod holds what this process holds. A read
+ * that failed is not followed by a write: this process has not seen the links already there, and
  * replacing the resource with its own copy would drop them. The write is tried again later.
  */
-async function writePersonalLinks(): Promise<boolean> {
-  if (!PERSONAL_LINKS_RESOURCE || !personalLaunchLinks.dirty) return true;
-  personalLaunchLinks.dirty = false;
-  try {
-    const ok = await commitDurableRegistry({
-      resource: PERSONAL_LINKS_RESOURCE,
-      fetch: globalThis.fetch as typeof fetch,
-      load: (json) => { personalLaunchLinks.load(json); },
-      body: () => JSON.stringify(personalLaunchLinks),
-    });
-    if (ok) { personalLinksReadAt = Date.now(); return true; }
-  } catch { /* tried again below */ }
-  personalLaunchLinks.dirty = true;
-  return false;
-}
+const writePersonalLinks = (): Promise<boolean> => (personalLinksFile.configured ? personalLinksFile.write() : Promise.resolve(true));
 const persistPersonalLinks = registryWriter(writePersonalLinks);
-void readPersonalLinks();
+settleSealed(personalLinksFile, 'cmi5-personal-links');
 
 function positiveLimit(raw: string | undefined, fallback: number): number {
   if (!raw) return fallback;
@@ -12236,8 +12264,8 @@ attachPersonalLaunchRoutes(app, {
   opensPerTokenPerMinute: positiveLimit(process.env.FOXXI_CMI5_GO_PER_TOKEN, 12),
   persist: persistPersonalLinks,
   reload: async () => {
-    if (personalLinksReadAt && Date.now() - personalLinksReadAt <= 30_000) return 'loaded' as const;
-    return readPersonalLinks();
+    const read = await personalLinksFile.reload();
+    return read === 'unconfigured' ? 'absent' as const : read;
   },
   serverError: (res, err, where) => sendServerError(res, err, where),
 });
@@ -13275,6 +13303,8 @@ app.post('/agent/scorm/author', async (req, res) => {
     // Register the course's author so its dereferenceable id (courseIri) resolves by URL
     // alone on any later process — even for a non-catalog author (see resolveCourseForRead).
     recordCourseAuthor(course.courseId, auth.callerDid);
+    // Authoring is where ownership begins, so here the index is written before the answer, not soon after.
+    const authorIndexKept = await writeCourseAuthors();
     const courseIriUrl = courseIri(course.courseId);
     // Record the AUTHOR's own work as first-class activity (expressive verb).
     const authoredStatementId = await emitAgentActivity({
@@ -13300,7 +13330,7 @@ app.post('/agent/scorm/author', async (req, res) => {
       });
       return;
     }
-    sendActionResult(req, res, { ok: true, authoredBy: auth.callerDid, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, courseIri: courseIriUrl, ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) }, bridgeBaseUrl, 'Course authored', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_launch'));
+    sendActionResult(req, res, { ok: true, authoredBy: auth.callerDid, authorIndexKept, courseId: course.courseId, title: course.title, scoCount: course.scos.length, assessmentScos: course.scos.filter(s => s.assessment?.length).length, masteryScore: course.masteryScore, manifestValid: true, durable: authorPod, courseIri: courseIriUrl, ...(authoredStatementId ? { authoredStatementId } : {}), ...(sharedLattice ? { sharedLattice } : {}) }, bridgeBaseUrl, 'Course authored', activeAffordances.filter(a => a.toolName === 'foxxi.scorm_launch'));
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 

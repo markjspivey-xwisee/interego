@@ -75,13 +75,23 @@ export type SealedRead = 'loaded' | 'absent' | 'failed' | 'unconfigured';
  *
  * Each write reads the pod's copy first and merges it (`registry.load`), so what another start of
  * the bridge wrote is not dropped; a read that failed is not followed by a write. Writes run one at
- * a time. `legacyResource` is the same registry as it was first kept, in the clear: it is read once
- * when no sealed copy exists, and removed after the sealed copy is written.
+ * a time.
+ *
+ * `legacyResource` is the same registry as it was first kept, in the clear. Until the pod has said
+ * it is not there, every read looks for it, whether or not a sealed copy exists: what it holds is
+ * merged in, the registry is marked changed so it is written sealed, and the clear copy is removed
+ * after that write. Looking only when no sealed copy existed left a clear copy in place for good
+ * if the process stopped between the sealed write and the removal, or the removal failed once
+ * (Codex, in review of #1007). `settle()` does all of this without waiting for a change: a
+ * registry nobody touches would otherwise stay in the clear until somebody did.
  */
 export class SealedRegistryFile {
   private readAt = 0;
   private chain: Promise<boolean> = Promise.resolve(true);
+  /** A clear copy was read and is still to be removed. */
   private legacySeen = false;
+  /** The pod has answered that there is no clear copy. Only then is it no longer looked for. */
+  private legacyGone = false;
 
   constructor(private readonly o: {
     resource: string; legacyResource?: string; key: EncryptionKeyPair | null; fetch: SealedFetch; registry: KeptRegistry;
@@ -102,15 +112,18 @@ export class SealedRegistryFile {
       const opened = openSealed(await r.text(), this.o.key!);
       if (!opened.ok) return 'failed';
       this.o.registry.load(opened.value);
+      // A clear copy can outlive the sealed one's first write. The sealed copy is what counts, so a
+      // clear one that cannot be read now does not fail this read; it is looked for again next time.
+      await this.readLegacy();
       return 'loaded';
     } catch { return 'failed'; }
   }
 
   private async readLegacy(): Promise<SealedRead> {
-    if (!this.o.legacyResource) return 'absent';
+    if (!this.o.legacyResource || this.legacyGone) return 'absent';
     try {
       const r = await this.o.fetch(this.o.legacyResource, { headers: { Accept: 'application/json' } });
-      if (r.status === 404 || r.status === 410) return 'absent';
+      if (r.status === 404 || r.status === 410) { this.legacyGone = true; this.legacySeen = false; return 'absent'; }
       if (!r.ok) return 'failed';
       this.o.registry.load(JSON.parse(await r.text()));
       // It has to be written sealed, and the clear copy removed, even if nothing else changes.
@@ -118,6 +131,18 @@ export class SealedRegistryFile {
       this.o.registry.dirty = true;
       return 'loaded';
     } catch { return 'failed'; }
+  }
+
+  /**
+   * Read what the pod holds and, if a clear copy was found, write it sealed and remove it. True
+   * when no clear copy is left (or there is nothing configured to settle). Called at start and
+   * again until true, so a registry nobody changes is still moved out of the clear.
+   */
+  async settle(): Promise<boolean> {
+    if (!this.configured || !this.o.legacyResource) return true;
+    if ((await this.reload(true)) === 'failed') return false;
+    if (this.o.registry.dirty && !(await this.write())) return false;
+    return this.legacyGone || !this.legacySeen;
   }
 
   /** Bring this process up to what the pod holds. A read within `staleMs` is not repeated unless `fresh`. */
@@ -146,7 +171,7 @@ export class SealedRegistryFile {
           // The clear copy goes once the sealed one is there. If the pod does not remove it now, the
           // next write tries again: it stays marked.
           const gone = await this.o.fetch(this.o.legacyResource, { method: 'DELETE' }).then(d => d.ok || d.status === 404 || d.status === 410, () => false);
-          if (gone) this.legacySeen = false;
+          if (gone) { this.legacySeen = false; this.legacyGone = true; }
         }
         return true;
       }

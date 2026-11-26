@@ -12,15 +12,17 @@ This note records what happened. It does not lift the hold, and it is not eviden
 
 Nothing about the stores has changed: the gaps below are still gaps, and every later restart of this service needs the same check made again, or preservation in place, before it happens.
 
-## Status note, 2026-11-26: three of Foxxi's ten gaps are kept, and two clear registries are sealed
+## Status note, 2026-11-26: five of Foxxi's ten gaps are addressed, and three clear registries are sealed
 
 Source change, not a statement about records in any running process.
 
 - `native-trajectories`, `performance-probes` and `evaluation-workflow` are written to the tenant pod, sealed, before the call that made them is answered, and read back when the process does not hold them (`applications/foxxi-content-intelligence/src/sealed-store.ts`). A write the pod does not take is a refusal. Their old snapshot collectors are still registered and still never marked dirty; they are not what keeps these records.
 - This is the pod's ordinary resource store with a sealed body, the mechanism `admissions` and the forwarding config already use. It is not the native commit path of [native-learning-storage.md](native-learning-storage.md): one writer, last write wins, no revision check. It survives a restart of one bridge process and is not safe for two.
 - Records made before this change were only in a process's memory and are not recovered by it.
-- The seven other gaps are unchanged: `xapi-attachments`, `scorm-sequencing-sessions`, `agent-scorm-attempts`, `cmi5-rollup-dedup`, `course-author-index`, `forwarding-config`, `forwarding-queue`.
-- Separately, two registries added on 2026-11-25 and 26 (a person's assignments to their own agents; who brought which package) were written to the pod as plain JSON, readable by anyone with the address. They are now sealed, and the clear copies are removed after the first sealed write. `cmi5-personal-links.json`, `course-authors.json` and `content-locations.json` in the same folder are still plain and were not changed here.
+- `cmi5-rollup-dedup`: what the rollup has said, and the registration it says it under, are in the cmi5 snapshot and restored from it. That snapshot is sealed and debounced (two seconds), not awaited, so this gap moves to the audit's "conditional" class, not to "durable".
+- `course-author-index`: written only after a read that succeeded or found nothing, the PUT is checked, a failed write is retried with backoff, and authoring awaits it and reports `authorIndexKept`. It stays plain JSON: it says who authored which course, which the course pages say too.
+- The five other gaps are unchanged: `xapi-attachments`, `scorm-sequencing-sessions`, `agent-scorm-attempts`, `forwarding-config`, `forwarding-queue`.
+- Separately, three registries were plain JSON on the pod, readable by anyone with the address: a person's assignments to their own agents and who brought which package (added 2026-11-25 and 26), and the personal launch links (which name each link's learner, pod and course). All three are now sealed. At start the bridge reads each clear copy, writes it sealed, removes the clear one, and keeps trying until it is gone. `course-authors.json` and `content-locations.json` in the same folder are still plain and were not changed.
 
 ## Exact affected service scope
 

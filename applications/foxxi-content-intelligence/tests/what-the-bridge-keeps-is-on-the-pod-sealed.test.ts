@@ -186,6 +186,49 @@ describe('a small registry kept whole in one sealed resource', () => {
     expect(p.bodies.has(LEGACY)).toBe(false);
   });
 
+  it('settles at start, without anyone changing a record', async () => {
+    const p = pod(), old = new OwnAgentAssignments();
+    old.assign(ONE, 1_000);
+    p.bodies.set(LEGACY, JSON.stringify(old));
+    expect(await file(p, new OwnAgentAssignments()).settle()).toBe(true);
+    expect(p.bodies.has(LEGACY)).toBe(false);
+    expect(openSealed(p.bodies.get(R)!, KEY).ok).toBe(true);
+  });
+
+  it('finds and removes a clear copy left beside a sealed one by a process that stopped in between', async () => {
+    // The sealed write happened; the removal did not, and that process is gone.
+    const p = pod(), old = new OwnAgentAssignments();
+    old.assign(ONE, 1_000);
+    p.bodies.set(LEGACY, JSON.stringify(old));
+    p.bodies.set(R, sealJson(old, KEY));
+    const next = new OwnAgentAssignments(), f = file(p, next);
+    expect(await f.settle()).toBe(true);
+    expect(p.bodies.has(LEGACY)).toBe(false);
+    expect(next.forPerson(ONE.person)).toHaveLength(1);
+  });
+
+  it('says it is not settled while the clear copy cannot be removed, and settles when it can', async () => {
+    const p = pod(), old = new OwnAgentAssignments();
+    old.assign(ONE, 1_000);
+    p.bodies.set(LEGACY, JSON.stringify(old));
+    const f = file(p, new OwnAgentAssignments());
+    p.fail.add(`DELETE ${LEGACY}`);
+    expect(await f.settle()).toBe(false);
+    expect(p.bodies.has(LEGACY)).toBe(true);
+    p.fail.clear();
+    expect(await f.settle()).toBe(true);
+    expect(p.bodies.has(LEGACY)).toBe(false);
+  });
+
+  it('stops looking for a clear copy once the pod has said there is none', async () => {
+    const p = pod(), reg = new OwnAgentAssignments(), f = file(p, reg);
+    await f.settle();
+    p.log.length = 0;
+    reg.assign(ONE, 1_000);
+    await f.write();
+    expect(p.log.filter(l => l.endsWith(LEGACY))).toEqual([]);
+  });
+
   it('does not write over a copy it could not read', async () => {
     const p = pod(), other = new OwnAgentAssignments();
     other.assign({ ...ONE, courseId: 'kept-by-another-key' }, 1_000);
@@ -316,6 +359,39 @@ describe('the bridge', () => {
     const fill = src.slice(src.indexOf('async function fillFromKept'), src.indexOf('async function keepOrRefuse'));
     expect(fill).toContain("else if (got.state === 'unreadable') unreadable = true;");
     expect(fill).toContain("return unreadable ? storageRefusal(what, 'unreadable') : null;");
+  });
+
+  it('writes the course ownership index only after reading it, and before authoring is acknowledged', () => {
+    const w = src.slice(src.indexOf('async function writeCourseAuthors'), src.indexOf('const persistCourseAuthors'));
+    // The read-then-write helper: a pod answering 500 is not read as an empty index and overwritten.
+    expect(w).toContain('await commitDurableRegistry({');
+    expect(w).toContain('if (ok) return true;');
+    expect(w).toContain('...courseAuthorsDurable }');
+    const author = src.slice(src.indexOf("app.post('/agent/scorm/author',"), src.indexOf("app.post('/agent/scorm/launch',"));
+    expect(author.indexOf('const authorIndexKept = await writeCourseAuthors();')).toBeGreaterThan(author.indexOf('recordCourseAuthor(course.courseId, auth.callerDid);'));
+    expect(author).toContain('authoredBy: auth.callerDid, authorIndexKept,');
+    expect(src).not.toContain('void persistCourseAuthors();');
+  });
+
+  it('keeps what the cmi5 rollup has said, so a restart does not say it twice', () => {
+    const lms = readFileSync(new URL('../src/cmi5-lms.ts', import.meta.url), 'utf8');
+    const collect = lms.slice(lms.indexOf('function collectCmi5Snapshot'), lms.indexOf('async function hydrateCmi5FromPod'));
+    expect(collect).toContain('rollupEmitted: [...rollupEmitted].map(([k, set]) => [k, [...set]]),');
+    expect(collect).toContain('courseEnrollmentReg: [...courseEnrollmentReg],');
+    const hydrate = lms.slice(lms.indexOf('async function hydrateCmi5FromPod'), lms.indexOf("registerSnapshot({ surface: 'cmi5'"));
+    expect(hydrate).toContain('snap.rollupEmitted ?? []');
+    // A registration already minted in this process is in statements: the kept one does not replace it.
+    expect(hydrate).toContain('!courseEnrollmentReg.has(key)');
+    // The rollup waits for the snapshot, and marks it when it says something new.
+    expect(lms).toMatch(/await whenCmi5Ready\(\);\n  const key = `\$\{tenant\}\|\$\{course\.id\}\|\$\{learner\.id\}`;/);
+    expect(lms).toContain('emitted.add(course.id); cmi5PodDirty();');
+    expect(lms).toContain('courseEnrollmentReg.set(key, reg); cmi5PodDirty(); }');
+  });
+
+  it('settles each registry that was once in the clear at start, and retries', () => {
+    for (const name of ['own-agent-assignments', 'package-bringers', 'cmi5-personal-links']) expect(src).toMatch(new RegExp(`settleSealed\\(\\w+, '${name}'\\);`));
+    const settle = src.slice(src.indexOf('function settleSealed'), src.indexOf('/** Resolve the tenant of an affordance call'));
+    expect(settle).toContain('setTimeout(attempt, wait)');
   });
 
   it('keeps the two registries it once wrote in the clear sealed, and removes the clear copies', () => {
