@@ -123,13 +123,30 @@ describe('the bridge', () => {
   });
   it('says whether the pod took a change, and no longer answers ok over a failed write', () => {
     expect(src.match(/const durable = mutated \? await persistOwnerForwarding\(ownerTenant, ownerPod\) : true;/g)).toHaveLength(2);
-    const persist = src.slice(src.indexOf('async function persistOwnerForwarding'), src.indexOf('function ownerPodOfLens'));
+    const persist = src.slice(src.indexOf('function persistOwnerForwarding'), src.indexOf('const forwardingQueuesToKeep'));
     expect(persist).toContain('if (!kp) return false;');
     expect(persist).toContain('return true; }');
   });
+  // ★ Review of #1008. Two writes of one config could overlap (the debounced writer starts the
+  // next while one is in flight), and the older one landing last put back a queue already sent.
+  it('writes one owner\'s config one write at a time, each taking the config at its turn', () => {
+    const persist = src.slice(src.indexOf('function persistOwnerForwarding'), src.indexOf('const forwardingQueuesToKeep'));
+    expect(persist).toContain("const turn = (forwardingWrites.get(key) ?? Promise.resolve(true)).then(async () => {");
+    expect(persist.indexOf('exportForwardingConfig(tenant)')).toBeGreaterThan(persist.indexOf('.then(async () => {'));
+  });
+  // ★ Review of #1008. A lens name does not always say the pod (an actor label, another origin):
+  // the queue was written to the pod the name said, not the one the owner's config is on.
+  it('writes the queue to the pod the owner was resolved to, and the name only says it otherwise', () => {
+    const hydrate = src.slice(src.indexOf('async function hydrateOwnerForwarding'), src.indexOf('const forwardingOwnerPods'));
+    expect(hydrate).toContain('rememberForwardingOwnerPod(tenant, ownerPod);');
+    const of = src.slice(src.indexOf('function ownerPodOfLens'), src.indexOf('const forwardingWrites'));
+    expect(of.indexOf('forwardingOwnerPods.get(String(tenant))')).toBeLessThan(of.indexOf("startsWith('lens:')"));
+    expect(of.indexOf('forwardingOwnerPods.get(String(tenant))')).toBeGreaterThan(-1);
+  });
   it('writes the config again when the queue changes, with retries', () => {
-    const wire = src.slice(src.indexOf('onForwardingQueueChange((tenant) => {'), src.indexOf("app.get('/agent/forwarding/targets/affordance'"));
-    expect(wire).toContain('writer = registryWriter(() => persistOwnerForwarding(tenant, ownerPod));');
-    expect(wire).toContain('const ownerPod = ownerPodOfLens(tenant);');
+    const wire = src.slice(src.indexOf('const forwardingQueuesToKeep'), src.indexOf("app.get('/agent/forwarding/targets/affordance'"));
+    expect(wire).toContain('const keepForwardingQueues = registryWriter(async () => {');
+    expect(wire).toContain('if (ownerPod && !(await persistOwnerForwarding(tenant, ownerPod))) forwardingQueuesToKeep.add(tenant);');
+    expect(wire).toContain('keepForwardingQueues();');
   });
 });

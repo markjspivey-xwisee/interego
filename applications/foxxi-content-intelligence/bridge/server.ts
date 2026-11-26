@@ -9828,6 +9828,7 @@ app.post('/agent/record-course-completion', async (req, res) => {
  * credentials it never saw. Until 2026-11-26 an unreadable config was read as none.
  */
 async function hydrateOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<'ok' | 'unreadable'> {
+  rememberForwardingOwnerPod(tenant, ownerPod);
   const kp = bridgeEncryptionKeypair();
   if (kp) {
     const read = await readForwardingConfig({ ownerPod, bridgeKp: kp });
@@ -9837,32 +9838,63 @@ async function hydrateOwnerForwarding(tenant: TenantId, ownerPod: string): Promi
   markForwardingHydrated(tenant); // don't let the cold-start hydrator re-load + clobber
   return 'ok';
 }
-/** True when the owner's pod holds, sealed, the config and queue this process holds. False with no bridge key: nothing was kept. */
-async function persistOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<boolean> {
-  const kp = bridgeEncryptionKeypair();
-  if (!kp) return false;
-  try { await persistForwardingConfig({ ownerPod, blob: exportForwardingConfig(tenant), bridgeKp: kp }); return true; }
-  catch (e) { bridgeWarn('[foxxi-forward][persist]', (e as Error).message); return false; }
+/**
+ * The pod each lens tenant's owner was resolved to by a signed request in this process. A lens name
+ * does not always say the pod: an actor label renames it, and a WebID can resolve to another
+ * origin. So the pod a management route resolved is kept and used; the name is only the fallback.
+ */
+const forwardingOwnerPods = new Map<string, string>();
+function rememberForwardingOwnerPod(tenant: TenantId, ownerPod: string): void {
+  if (!forwardingOwnerPods.has(String(tenant)) && forwardingOwnerPods.size >= 10_000) forwardingOwnerPods.clear();
+  forwardingOwnerPods.set(String(tenant), ownerPod);
 }
-/** The pod a lens tenant's owner keeps their config on, as the cold-start hydrator below derives it. */
+/**
+ * The pod a lens tenant's owner keeps their config on: the one resolved for them in this process,
+ * else the one their lens name says. After a restart, an owner whose pod the name does not say
+ * (a label, another origin) is not found until they next sign a forwarding request.
+ */
 function ownerPodOfLens(tenant: TenantId): string | undefined {
+  const known = forwardingOwnerPods.get(String(tenant));
+  if (known) return known;
   if (!String(tenant).startsWith('lens:')) return undefined;
   try { return `${new URL(tenantPodUrl).origin}/${String(tenant).slice('lens:'.length)}/`; } catch { return undefined; }
+}
+/**
+ * True when the owner's pod holds, sealed, the config and queue this process holds. False with no
+ * bridge key: nothing was kept. Writes of one owner's config go one at a time, each taking the
+ * config as it stands when its turn comes, so an older write cannot land after a newer one.
+ */
+const forwardingWrites = new Map<string, Promise<boolean>>();
+function persistOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<boolean> {
+  const key = String(tenant);
+  const turn = (forwardingWrites.get(key) ?? Promise.resolve(true)).then(async () => {
+    const kp = bridgeEncryptionKeypair();
+    if (!kp) return false;
+    try { await persistForwardingConfig({ ownerPod, blob: exportForwardingConfig(tenant), bridgeKp: kp }); return true; }
+    catch (e) { bridgeWarn('[foxxi-forward][persist]', (e as Error).message); return false; }
+  });
+  forwardingWrites.set(key, turn);
+  void turn.then(() => { if (forwardingWrites.get(key) === turn) forwardingWrites.delete(key); });
+  return turn;
 }
 // The queue of statements a target did not take is kept with the config: when it changes, the
 // owner's config is written again soon (changes within two seconds share a write), and a write the
 // pod does not take is tried again with backoff.
-const forwardingQueueWriters = new Map<string, () => void>();
-onForwardingQueueChange((tenant) => {
-  const ownerPod = ownerPodOfLens(tenant);
-  if (!ownerPod || !bridgeEncryptionKeypair()) return;
-  let writer = forwardingQueueWriters.get(String(tenant));
-  if (!writer) {
-    if (forwardingQueueWriters.size >= 10_000) forwardingQueueWriters.clear();
-    writer = registryWriter(() => persistOwnerForwarding(tenant, ownerPod));
-    forwardingQueueWriters.set(String(tenant), writer);
+const forwardingQueuesToKeep = new Set<TenantId>();
+const keepForwardingQueues = registryWriter(async () => {
+  const due = [...forwardingQueuesToKeep];
+  forwardingQueuesToKeep.clear();
+  for (const tenant of due) {
+    const ownerPod = ownerPodOfLens(tenant);
+    if (ownerPod && !(await persistOwnerForwarding(tenant, ownerPod))) forwardingQueuesToKeep.add(tenant);
   }
-  writer();
+  return forwardingQueuesToKeep.size === 0;
+});
+onForwardingQueueChange((tenant) => {
+  if (!ownerPodOfLens(tenant) || !bridgeEncryptionKeypair()) return;
+  if (forwardingQueuesToKeep.size >= 10_000) return;
+  forwardingQueuesToKeep.add(tenant);
+  keepForwardingQueues();
 });
 // Cold-start hydrator for the forward path (no affordance call yet this boot):
 // reverse-derive the owner pod from the lens tenant and load their persisted
@@ -9870,8 +9902,7 @@ onForwardingQueueChange((tenant) => {
 registerForwardingHydrator(async (tenant) => {
   if (!tenant.startsWith('lens:')) return;
   const kp = bridgeEncryptionKeypair(); if (!kp) return;
-  let origin = ''; try { origin = new URL(tenantPodUrl).origin; } catch { return; }
-  const ownerPod = `${origin}/${tenant.slice('lens:'.length)}/`;
+  const ownerPod = ownerPodOfLens(tenant); if (!ownerPod) return;
   const blob = await loadForwardingConfig({ ownerPod, bridgeKp: kp });
   if (blob) importForwardingConfig(tenant, blob);
 });
