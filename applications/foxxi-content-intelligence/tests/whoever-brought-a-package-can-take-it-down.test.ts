@@ -139,7 +139,7 @@ describe('the bridge', () => {
   it('does one thing at a time for a package: a bring and a takedown of the same bytes never interleave', () => {
     // A takedown decided on "mine alone" must not remove bytes someone brought in between.
     expect(src).toContain('=> withPackageLock(sha256Of(bytes), async () => {');
-    expect(route).toContain('const done = await withPackageLock(sha, async ()');
+    expect(route).toContain('await withPackageLock(sha, async () => {');
     const locked = route.slice(route.indexOf('withPackageLock(sha'));
     for (const step of ['reloadPackageBringers(true)', 'packageBringers.mayTakeDown(sha, auth.callerDid)', 'hostedPackages.remove(sha)', 'packageBringers.forget(sha)']) expect(locked).toContain(step);
     const op = src.slice(src.indexOf('function operatorKeeps('), src.indexOf('function operatorKeeps(') + 600);

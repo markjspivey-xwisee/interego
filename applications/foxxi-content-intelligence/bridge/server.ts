@@ -11705,20 +11705,19 @@ app.post('/agent/scorm/host/remove', takeDownOwnRateLimit, async (req, res) => {
     if (!PACKAGE_SHA.test(sha)) { res.status(400).json({ error: 'package_sha256 is required: the sha-256 the package is listed under at /scorm/packages' }); return; }
     // The decision, the removal and forgetting the record are one step for this package: a bring of
     // the same bytes waits for it, or it waits for the bring and then sees who else brought them.
-    const done = await withPackageLock(sha, async (): Promise<{ status: number; body: Record<string, unknown> }> => {
-      if ((await reloadPackageBringers(true)) === 'failed') return { status: 503, body: { error: 'the record of who brought which package could not be read just now, so nothing was taken down; try again' } };
+    await withPackageLock(sha, async () => {
+      if ((await reloadPackageBringers(true)) === 'failed') { res.status(503).json({ error: 'the record of who brought which package could not be read just now, so nothing was taken down; try again' }); return; }
       const may = packageBringers.mayTakeDown(sha, auth.callerDid);
-      if (!may.ok) return { status: may.status, body: { error: may.error, ...(may.status === 403 ? { admin: { tool: 'foxxi.remove_hosted_package' } } : {}) } };
+      if (!may.ok) { res.status(may.status).json({ error: may.error, ...(may.status === 403 ? { admin: { tool: 'foxxi.remove_hosted_package' } } : {}) }); return; }
       const taken = await hostedPackages.remove(sha);
       // Its course goes whether or not the pod took the delete: nothing should launch a package being taken down.
       const courseForgotten = unregisterCmi5Course(DEFAULT_TENANT, `${bridgeBaseUrl}/scorm/packages/${sha}`);
-      if (!taken.removed) return { status: 502, body: { error: taken.why ?? 'the pod did not remove the package', packageSha256: sha, courseForgotten } };
+      if (!taken.removed) { res.status(502).json({ error: taken.why ?? 'the pod did not remove the package', packageSha256: sha, courseForgotten }); return; }
       packageBringers.forget(sha);
       const recorded = await writePackageBringers();
       if (!recorded) persistPackageBringers();
-      return { status: 200, body: { kind: 'own-package-taken-down', removed: true, packageSha256: sha, courseForgotten, removedBy: auth.callerDid, note: 'The package and what described it are gone from the pod and from this bridge: it is no longer listed, launched or served. What learners already recorded of it stays in their own records.' } };
+      res.json({ kind: 'own-package-taken-down', removed: true, packageSha256: sha, courseForgotten, removedBy: auth.callerDid, note: 'The package and what described it are gone from the pod and from this bridge: it is no longer listed, launched or served. What learners already recorded of it stays in their own records.' });
     });
-    res.status(done.status).json(done.body);
   } catch (err) { sendServerError(res, err, 'take-down-own-package-signed'); }
 });
 
