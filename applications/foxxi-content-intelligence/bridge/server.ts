@@ -295,13 +295,13 @@ import {
 import { ingestExternalRun, type ExternalRunInput, type ToolCallInput, type HarnessMeta } from '../src/agent-run-ingest.js';
 import { projectMeshEntry, actorForPod, type MeshDiscoverEntry, type ProjectedMeshEvent } from '../src/mesh-event-projector.js';
 import {
-  forwardStatement as forwardToTargets,
+  forwardStatement as forwardToTargets, onForwardingQueueChange,
   addForwardingTarget, listForwardingTargets,
   deleteForwardingTarget, inboundCredentials,
   exportForwardingConfig, importForwardingConfig,
   registerForwardingHydrator, markForwardingHydrated,
 } from '../src/lrs-forwarding.js';
-import { persistForwardingConfig, loadForwardingConfig } from '../src/forwarding-persist.js';
+import { persistForwardingConfig, loadForwardingConfig, readForwardingConfig } from '../src/forwarding-persist.js';
 import { bridgeEncryptionKeypair } from '../src/foundation-holon-altitude.js';
 import { EvaluationRegistry, isEvaluationState, type CandidateRun, type EvaluationCandidate, type EvaluationState } from '../src/agent-evaluation.js';
 import { SealedPodMap, SealedRegistryFile, type SealedFetch } from '../src/sealed-store.js';
@@ -9822,28 +9822,87 @@ app.post('/agent/record-course-completion', async (req, res) => {
 // forwarding survives a bridge restart. The envelope is wrapped to the bridge
 // (so it can hydrate) + the owner (so it's theirs); secrets never hit the pod
 // in clear.
-async function hydrateOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<void> {
+/**
+ * Bring an owner's kept config into this process. `unreadable` when one is there and cannot be
+ * read: the caller must not go on to change and write the config, which would replace targets and
+ * credentials it never saw. Until 2026-11-26 an unreadable config was read as none.
+ */
+async function hydrateOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<'ok' | 'unreadable'> {
+  rememberForwardingOwnerPod(tenant, ownerPod);
   const kp = bridgeEncryptionKeypair();
   if (kp) {
-    try { const blob = await loadForwardingConfig({ ownerPod, bridgeKp: kp }); if (blob) importForwardingConfig(tenant, blob); }
-    catch (e) { bridgeWarn('[foxxi-forward][hydrate]', (e as Error).message); }
+    const read = await readForwardingConfig({ ownerPod, bridgeKp: kp });
+    if (read.state === 'unreadable') { bridgeWarn('[foxxi-forward][hydrate]', read.why); return 'unreadable'; }
+    if (read.state === 'held') importForwardingConfig(tenant, read.blob);
   }
   markForwardingHydrated(tenant); // don't let the cold-start hydrator re-load + clobber
+  return 'ok';
 }
-async function persistOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<void> {
-  const kp = bridgeEncryptionKeypair();
-  if (!kp) return;
-  try { await persistForwardingConfig({ ownerPod, blob: exportForwardingConfig(tenant), bridgeKp: kp }); }
-  catch (e) { bridgeWarn('[foxxi-forward][persist]', (e as Error).message); }
+/**
+ * The pod each lens tenant's owner was resolved to by a signed request in this process. A lens name
+ * does not always say the pod: an actor label renames it, and a WebID can resolve to another
+ * origin. So the pod a management route resolved is kept and used; the name is only the fallback.
+ */
+const forwardingOwnerPods = new Map<string, string>();
+function rememberForwardingOwnerPod(tenant: TenantId, ownerPod: string): void {
+  if (!forwardingOwnerPods.has(String(tenant)) && forwardingOwnerPods.size >= 10_000) forwardingOwnerPods.clear();
+  forwardingOwnerPods.set(String(tenant), ownerPod);
 }
+/**
+ * The pod a lens tenant's owner keeps their config on: the one resolved for them in this process,
+ * else the one their lens name says. After a restart, an owner whose pod the name does not say
+ * (a label, another origin) is not found until they next sign a forwarding request.
+ */
+function ownerPodOfLens(tenant: TenantId): string | undefined {
+  const known = forwardingOwnerPods.get(String(tenant));
+  if (known) return known;
+  if (!String(tenant).startsWith('lens:')) return undefined;
+  try { return `${new URL(tenantPodUrl).origin}/${String(tenant).slice('lens:'.length)}/`; } catch { return undefined; }
+}
+/**
+ * True when the owner's pod holds, sealed, the config and queue this process holds. False with no
+ * bridge key: nothing was kept. Writes of one owner's config go one at a time, each taking the
+ * config as it stands when its turn comes, so an older write cannot land after a newer one.
+ */
+const forwardingWrites = new Map<string, Promise<boolean>>();
+function persistOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<boolean> {
+  const key = String(tenant);
+  const turn = (forwardingWrites.get(key) ?? Promise.resolve(true)).then(async () => {
+    const kp = bridgeEncryptionKeypair();
+    if (!kp) return false;
+    try { await persistForwardingConfig({ ownerPod, blob: exportForwardingConfig(tenant), bridgeKp: kp }); return true; }
+    catch (e) { bridgeWarn('[foxxi-forward][persist]', (e as Error).message); return false; }
+  });
+  forwardingWrites.set(key, turn);
+  void turn.then(() => { if (forwardingWrites.get(key) === turn) forwardingWrites.delete(key); });
+  return turn;
+}
+// The queue of statements a target did not take is kept with the config: when it changes, the
+// owner's config is written again soon (changes within two seconds share a write), and a write the
+// pod does not take is tried again with backoff.
+const forwardingQueuesToKeep = new Set<TenantId>();
+const keepForwardingQueues = registryWriter(async () => {
+  const due = [...forwardingQueuesToKeep];
+  forwardingQueuesToKeep.clear();
+  for (const tenant of due) {
+    const ownerPod = ownerPodOfLens(tenant);
+    if (ownerPod && !(await persistOwnerForwarding(tenant, ownerPod))) forwardingQueuesToKeep.add(tenant);
+  }
+  return forwardingQueuesToKeep.size === 0;
+});
+onForwardingQueueChange((tenant) => {
+  if (!ownerPodOfLens(tenant) || !bridgeEncryptionKeypair()) return;
+  if (forwardingQueuesToKeep.size >= 10_000) return;
+  forwardingQueuesToKeep.add(tenant);
+  keepForwardingQueues();
+});
 // Cold-start hydrator for the forward path (no affordance call yet this boot):
 // reverse-derive the owner pod from the lens tenant and load their persisted
 // config BEFORE the first forward, so a post-restart statement isn't dropped.
 registerForwardingHydrator(async (tenant) => {
   if (!tenant.startsWith('lens:')) return;
   const kp = bridgeEncryptionKeypair(); if (!kp) return;
-  let origin = ''; try { origin = new URL(tenantPodUrl).origin; } catch { return; }
-  const ownerPod = `${origin}/${tenant.slice('lens:'.length)}/`;
+  const ownerPod = ownerPodOfLens(tenant); if (!ownerPod) return;
   const blob = await loadForwardingConfig({ ownerPod, bridgeKp: kp });
   if (blob) importForwardingConfig(tenant, blob);
 });
@@ -9874,8 +9933,9 @@ app.post('/agent/forwarding/targets', async (req, res) => {
     // you can only manage your OWN forwarding.
     const ownerPod = resolveSubjectPodUrl(callerDid);
     const ownerTenant = lensTenantFor(actorForPod(ownerPod, MESH_ACTOR_LABELS));
-    // Load any persisted config FIRST so an add/delete doesn't clobber the rest.
-    await hydrateOwnerForwarding(ownerTenant, ownerPod);
+    // Load any persisted config FIRST so an add/delete doesn't clobber the rest. One that is there
+    // and cannot be read stops here: changing and writing would replace what was never seen.
+    if ((await hydrateOwnerForwarding(ownerTenant, ownerPod)) === 'unreadable') { res.status(503).json({ error: 'your forwarding config is kept but could not be read just now, so nothing was changed; try again.' }); return; }
     let mutated = false;
     if (Array.isArray(p.targets)) {
       // Per-request cap: bound how many targets one POST can add (round-36 DoS).
@@ -9893,8 +9953,11 @@ app.post('/agent/forwarding/targets', async (req, res) => {
     if (Array.isArray(p.delete)) {
       for (const id of p.delete as unknown[]) if (typeof id === 'string') { deleteForwardingTarget(ownerTenant, id); mutated = true; }
     }
-    if (mutated) await persistOwnerForwarding(ownerTenant, ownerPod);
-    res.json({ ok: true, owner: callerDid, ownerTenant, targets: listForwardingTargets(ownerTenant) });
+    const durable = mutated ? await persistOwnerForwarding(ownerTenant, ownerPod) : true;
+    res.json({
+      ok: true, owner: callerDid, ownerTenant, targets: listForwardingTargets(ownerTenant), durable,
+      ...(durable ? {} : { note: 'These targets are held by this bridge process only: your pod did not take the config. They forward until the bridge restarts. Send the same request again to keep them.' }),
+    });
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
@@ -9922,7 +9985,7 @@ app.post('/agent/credentials', async (req, res) => {
     const p = auth.payload as { credentials?: unknown; revoke?: unknown };
     const ownerPod = resolveSubjectPodUrl(callerDid);
     const ownerTenant = lensTenantFor(actorForPod(ownerPod, MESH_ACTOR_LABELS));
-    await hydrateOwnerForwarding(ownerTenant, ownerPod);
+    if ((await hydrateOwnerForwarding(ownerTenant, ownerPod)) === 'unreadable') { res.status(503).json({ error: 'your forwarding config is kept but could not be read just now, so nothing was changed; try again.' }); return; }
     let mutated = false;
     if (Array.isArray(p.credentials)) {
       // Per-request cap (round-38): bound how many inbound credentials one POST can add.
@@ -9937,9 +10000,12 @@ app.post('/agent/credentials', async (req, res) => {
     if (Array.isArray(p.revoke)) {
       for (const id of p.revoke as unknown[]) if (typeof id === 'string' && mineIds.has(id)) { inboundCredentials.remove(id); mutated = true; }
     }
-    if (mutated) await persistOwnerForwarding(ownerTenant, ownerPod);
+    const durable = mutated ? await persistOwnerForwarding(ownerTenant, ownerPod) : true;
     const mine = inboundCredentials.list().filter(c => c.tenant === String(ownerTenant));
-    res.json({ ok: true, owner: callerDid, ownerTenant, credentials: mine });
+    res.json({
+      ok: true, owner: callerDid, ownerTenant, credentials: mine, durable,
+      ...(durable ? {} : { note: 'This change is held by this bridge process only: your pod did not take the config. Send the same request again to keep it.' }),
+    });
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 

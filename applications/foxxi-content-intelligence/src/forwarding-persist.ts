@@ -30,9 +30,18 @@ export interface RawForwardingTarget {
 export interface RawInboundCredential {
   id: string; principal: string; secret: string; tenant: string; label: string; createdAt: string;
 }
+/** A statement a target did not take, waiting to be sent again. */
+export interface RawDeadLetter { targetId: string; statementId: string; statement: Record<string, unknown>; error: string; at: string }
 export interface ForwardingConfigBlob {
   targets: RawForwardingTarget[];
   credentials: RawInboundCredential[];
+  /**
+   * What is waiting to be sent again, per target. Kept since 2026-11-26: the queue was only in the
+   * process, so a restart dropped every statement a target had refused and nothing would ever send
+   * it (docs/operations/primary-state-rollout-hold.md, forwarding-queue). A blob from before has
+   * none.
+   */
+  deadLetters?: RawDeadLetter[];
   updatedAt: string;
 }
 
@@ -68,6 +77,30 @@ export async function persistForwardingConfig(args: {
     body: envelopeToJson(envelope),
   });
   if (!r.ok && r.status !== 412) throw new Error(`forwarding-config PUT <${url}> -> ${r.status} ${r.statusText}`);
+}
+
+/**
+ * An owner's forwarding config, with a config that is there and cannot be read told apart from
+ * none. `loadForwardingConfig` below answers null for both, and a caller that then writes its own
+ * copy replaces targets and credentials it never saw: the read the audit called "conflates
+ * absence, unreadable and decrypt failure".
+ */
+export async function readForwardingConfig(args: {
+  ownerPod: string;
+  bridgeKp: EncryptionKeyPair;
+  fetch?: FetchFn;
+}): Promise<{ state: 'held'; blob: ForwardingConfigBlob } | { state: 'absent' } | { state: 'unreadable'; why: string }> {
+  const fetchFn = guardedFetchFn(args.fetch ?? (globalThis.fetch as unknown as FetchFn)) as FetchFn;
+  try {
+    const r = await fetchFn(configUrl(args.ownerPod), { headers: { Accept: 'application/json' } });
+    if (r.status === 404 || r.status === 410) return { state: 'absent' };
+    if (!r.ok) return { state: 'unreadable', why: `the pod answered ${r.status}` };
+    const plain = openEncryptedEnvelope(envelopeFromJson(await r.text()), args.bridgeKp);
+    if (!plain) return { state: 'unreadable', why: 'this bridge\'s key does not open it' };
+    const blob = JSON.parse(plain) as ForwardingConfigBlob;
+    if (!blob || !Array.isArray(blob.targets) || !Array.isArray(blob.credentials)) return { state: 'unreadable', why: 'it is not a forwarding config' };
+    return { state: 'held', blob };
+  } catch (e) { return { state: 'unreadable', why: (e as Error).message }; }
 }
 
 /** Fetch + decrypt an owner's forwarding config from their pod. null if absent / unreadable. */

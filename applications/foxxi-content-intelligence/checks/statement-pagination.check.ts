@@ -161,7 +161,10 @@ check('…and carries metrics across by id rather than resetting them',
   /metrics: was \? was\.metrics : freshMetrics\(\)/.test(importFn),
   'freshMetrics() on every import is what made reading the panel erase it');
 check('…and carries the dead-letter queue across too',
-  /deadLetter: was \? was\.deadLetter : \[\]/.test(importFn));
+  // 2026-11-26: a target this process did not hold used to start with an empty queue. It now
+  // starts with the queue kept in the config. What this check is for is unchanged: a target the
+  // process DOES hold keeps its own queue across an import.
+  /deadLetter: was \? was\.deadLetter : keptDeadLetters\(blob, t\.id\)/.test(importFn));
 
 if (failures > 0) { console.error(`\n${failures} assertion(s) failed\n`); process.exit(1); }
 console.log('\nA continuation is the same query, one page further along.\n');
