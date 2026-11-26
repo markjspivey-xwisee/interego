@@ -253,9 +253,22 @@ const satisfiedAus = new Map<TenantId, Map<string, Set<string>>>();
 import {
   registerSnapshot, dirty as markCmi5Dirty, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
 } from './pod-snapshot-publisher.js';
+/** Per tenant|course|learner — the block/course ids already emitted `satisfied`. */
+const rollupEmitted = new Map<string, Set<string>>();
+/** Per tenant|course|learner — the (stable) registration for course-level statements. */
+const courseEnrollmentReg = new Map<string, string>();
 interface Cmi5Snapshot {
   launches: Array<[string, LaunchRecord]>;
   satisfied: Array<[string, Array<[string, string[]]>]>; // [tenant, [[learner, [auIds]]]]
+  /**
+   * What the rollup has already said, and the registration it says it under. Kept since
+   * 2026-11-26: both were only in the process, so after a restart a learner's next satisfied AU
+   * emitted the block's and the course's `satisfied` a second time, under a registration newly
+   * minted for the same enrolment (docs/operations/primary-state-rollout-hold.md, cmi5-rollup-dedup).
+   * A snapshot from before has neither field and restores neither, as it always did.
+   */
+  rollupEmitted?: Array<[string, string[]]>;
+  courseEnrollmentReg?: Array<[string, string]>;
 }
 function collectCmi5Snapshot(): Cmi5Snapshot {
   const sat: Array<[string, Array<[string, string[]]>]> = [];
@@ -264,7 +277,11 @@ function collectCmi5Snapshot(): Cmi5Snapshot {
     for (const [learnerId, set] of byLearner) learners.push([learnerId, [...set]]);
     sat.push([String(tenant), learners]);
   }
-  return { launches: [...launches.entries()], satisfied: sat };
+  return {
+    launches: [...launches.entries()], satisfied: sat,
+    rollupEmitted: [...rollupEmitted].map(([k, set]) => [k, [...set]]),
+    courseEnrollmentReg: [...courseEnrollmentReg],
+  };
 }
 async function hydrateCmi5FromPod(): Promise<void> {
   const snap = await loadLatestSnapshot<Cmi5Snapshot>('cmi5');
@@ -277,6 +294,15 @@ async function hydrateCmi5FromPod(): Promise<void> {
       satisfiedAus.set(tenant as TenantId, byLearner);
     }
   }
+  // What this process has said since it started stands beside what was kept: neither replaces the other.
+  for (const [key, ids] of snap.rollupEmitted ?? []) {
+    if (typeof key !== 'string' || !Array.isArray(ids)) continue;
+    const set = rollupEmitted.get(key) ?? new Set<string>();
+    for (const id of ids) if (typeof id === 'string') set.add(id);
+    rollupEmitted.set(key, set);
+  }
+  // A registration this process already minted for an enrolment is in statements by now, so it stays.
+  for (const [key, reg] of snap.courseEnrollmentReg ?? []) if (typeof key === 'string' && typeof reg === 'string' && !courseEnrollmentReg.has(key)) courseEnrollmentReg.set(key, reg);
   reindexOpenLaunches();
 }
 registerSnapshot({ surface: 'cmi5', typeIri: FOXXI_SNAPSHOT_TYPES.Cmi5Launches, collect: collectCmi5Snapshot });
@@ -305,10 +331,6 @@ export function learnerSatisfiedAus(tenant: TenantId, learnerId: string): string
 
 /** Registered cmi5 course structures, per tenant, keyed by course id. */
 const courseRegistry = new TenantPartition<Map<string, Cmi5Course>>(() => new Map());
-/** Per tenant|course|learner — the block/course ids already emitted `satisfied`. */
-const rollupEmitted = new Map<string, Set<string>>();
-/** Per tenant|course|learner — the (stable) registration for course-level statements. */
-const courseEnrollmentReg = new Map<string, string>();
 
 /** Cap the per-tenant cmi5 course registry — an unauth POST /content/publish-course loop with a
  *  fresh course id each time would otherwise grow it without limit into an OOM (round-42). Evict
@@ -385,12 +407,15 @@ async function rollupCourseUnlocked(
 ): Promise<void> {
   const course = courseContainingAu(tenant, auId);
   if (!course) return;
+  // What was already said before a restart is in the snapshot: wait for it to be read, or the
+  // first rollup after a start would say it again.
+  await whenCmi5Ready();
   const key = `${tenant}|${course.id}|${learner.id}`;
   const satisfied = new Set(learnerSatisfiedAus(tenant, learner.id));
   let emitted = rollupEmitted.get(key);
   if (!emitted) { emitted = new Set(); rollupEmitted.set(key, emitted); }
   let reg = courseEnrollmentReg.get(key);
-  if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); }
+  if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); cmi5PodDirty(); }
 
   const emitSatisfied = async (activityId: string): Promise<void> => {
     await emit(buildCmi5Statement({
@@ -408,14 +433,14 @@ async function rollupCourseUnlocked(
     const ids = blockAuIds(block);
     if (ids.length > 0 && ids.every(id => satisfied.has(id)) && !emitted.has(block.id)) {
       await emitSatisfied(block.id);
-      emitted.add(block.id);
+      emitted.add(block.id); cmi5PodDirty();
     }
   }
   // The course is satisfied once every AU is.
   const allAus = flatAus(course).map(a => a.id);
   if (allAus.length > 0 && allAus.every(id => satisfied.has(id)) && !emitted.has(course.id)) {
     await emitSatisfied(course.id);
-    emitted.add(course.id);
+    emitted.add(course.id); cmi5PodDirty();
   }
 }
 

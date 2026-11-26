@@ -548,8 +548,13 @@ describe('the bridge wires the personal link the way it wires a signed launch', 
     expect(block).toContain('stageLaunch: stageLaunchData');
     expect(block).toContain('persist: persistPersonalLinks');
     expect(block).toContain('registryWriter(writePersonalLinks)');
-    expect(block).toContain('commitDurableRegistry');
-    expect(block).toContain("if (read !== 'failed') personalLinksReadAt = Date.now()");
+    // Kept sealed since 2026-11-26 (the registry names each link's learner, pod and course, and
+    // the pod's resources are public): the same read-before-write rule, now the sealed file's,
+    // with the clear copy read once and removed (tests/what-the-bridge-keeps-is-on-the-pod-sealed).
+    expect(block).toContain('new SealedRegistryFile({');
+    expect(block).toContain("resource: PERSONAL_LINKS_RESOURCE ? PERSONAL_LINKS_RESOURCE.replace(/\\.json$/, '.envelope.json') : '',");
+    expect(block).toContain('legacyResource: PERSONAL_LINKS_RESOURCE || undefined,');
+    expect(block).not.toContain('JSON.stringify(personalLaunchLinks)');
     const auth = src.slice(src.indexOf('async function signedLearnerForLink'), src.indexOf('/** Who a signed caller is learning as'));
     expect(auth).toContain('throw new PersonalLinkAuthError(503');
     expect(auth).toContain("throw new PersonalLinkAuthError(401, 'this agent has no delegation to act as a person')");

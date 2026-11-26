@@ -786,6 +786,12 @@ export function attachHostedPackageRoutes(app: Express, deps: {
   courseFor: (sha256: string) => Promise<Cmi5Course | undefined>;
   /** Where the operator lets a unit be served from outside a package; none when absent. */
   outsidePrefixes?: readonly string[];
+  /**
+   * How many packages the operator's take-down list names. The list is one setting of the service,
+   * so whoever adds to it needs to know whether it already holds something; the count says that
+   * without printing the setting. It is no secret: a listed package is simply not served.
+   */
+  takenDownByOperator?: number;
   onError: (res: ExpressResponse, err: unknown, where: string) => void;
 }): void {
   const base = deps.bridgeBaseUrl.replace(/\/+$/, '');
@@ -831,7 +837,7 @@ export function attachHostedPackageRoutes(app: Express, deps: {
         });
       });
       res.json({
-        kind: 'hosted-scorm-packages', packages, exports,
+        kind: 'hosted-scorm-packages', packages, exports, takenDownByOperator: deps.takenDownByOperator ?? 0,
         ...(unlisted ? {
           unlisted,
           unlistedWhy: 'kept here with nothing yet describing them: each is read once, in the background, and listed when it has been. One that is neither a package with anything to launch nor a tool\'s own export stays unlisted.',

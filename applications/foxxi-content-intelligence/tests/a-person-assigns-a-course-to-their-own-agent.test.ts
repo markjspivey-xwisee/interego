@@ -189,8 +189,8 @@ describe('the bridge', () => {
     // Only a trajectory that names the agent: the pod's own mesh trajectory is its owner's.
     expect(src).toContain('trajectoriesRecordedApart(a, learner.podUrl).filter((t) => t.agentDid === a)');
     // One registry write at a time, and a write forgets only the withdrawals its body covered.
-    expect(src).toContain('ownAssignmentsWrite = ownAssignmentsWrite.then(writeOwnAssignmentsOnce, writeOwnAssignmentsOnce);');
-    expect(src).toContain('ownAgentAssignments.committed(covered)');
+    // (Both are the sealed registry file's since 2026-11-26: tests/what-the-bridge-keeps-is-on-the-pod-sealed.)
+    expect(src).toContain('pending: () => ownAgentAssignments.pendingWithdrawals(), committed: (covered) => ownAgentAssignments.committed(covered),');
     expect(src).not.toContain('assessDisposition(courseSteps');
   });
 });

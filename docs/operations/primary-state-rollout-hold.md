@@ -12,6 +12,20 @@ This note records what happened. It does not lift the hold, and it is not eviden
 
 Nothing about the stores has changed: the gaps below are still gaps, and every later restart of this service needs the same check made again, or preservation in place, before it happens.
 
+## Status note, 2026-11-26: seven of Foxxi's ten gaps are addressed, and three clear registries are sealed
+
+Source change, not a statement about records in any running process.
+
+- `native-trajectories`, `performance-probes` and `evaluation-workflow` are written to the tenant pod, sealed, before the call that made them is answered, and read back when the process does not hold them (`applications/foxxi-content-intelligence/src/sealed-store.ts`). A write the pod does not take is a refusal. Their old snapshot collectors are still registered and still never marked dirty; they are not what keeps these records.
+- This is the pod's ordinary resource store with a sealed body, the mechanism `admissions` and the forwarding config already use. It is not the native commit path of [native-learning-storage.md](native-learning-storage.md): one writer, last write wins, no revision check. It survives a restart of one bridge process and is not safe for two.
+- Records made before this change were only in a process's memory and are not recovered by it.
+- `cmi5-rollup-dedup`: what the rollup has said, and the registration it says it under, are in the cmi5 snapshot and restored from it. That snapshot is sealed and debounced (two seconds), not awaited, so this gap moves to the audit's "conditional" class, not to "durable".
+- `course-author-index`: written only after a read that succeeded or found nothing, the PUT is checked, a failed write is retried with backoff, and authoring awaits it and reports `authorIndexKept`. It stays plain JSON: it says who authored which course, which the course pages say too.
+- `agent-scorm-attempts`: an attempt is written sealed when it is launched and after each step, before the answer, read back when the process does not hold it, and removed once its outcome is in the learner's record. Same mechanism and limits as the three stores above.
+- `scorm-sequencing-sessions`: the snapshot's collect threw on every call (a session's tree is cyclic) and its restore discarded every entry. Sessions are now written and rebuilt (`sessionToJson`, `sessionFromJson`). That snapshot is sealed and debounced, not awaited: "conditional", not "durable".
+- The three other gaps are unchanged: `xapi-attachments`, `forwarding-config`, `forwarding-queue`.
+- Separately, three registries were plain JSON on the pod, readable by anyone with the address: a person's assignments to their own agents and who brought which package (added 2026-11-25 and 26), and the personal launch links (which name each link's learner, pod and course). All three are now sealed. At start the bridge reads each clear copy, writes it sealed, removes the clear one, and keeps trying until it is gone. `course-authors.json` and `content-locations.json` in the same folder are still plain and were not changed.
+
 ## Exact affected service scope
 
 For the earlier candidate, the existing deployment-scope tool and observed live image pins reported these **12** affected services. Identity and acme-id were outside that measured candidate. Changes to shared native storage require a fresh scope calculation; this historical list is not a deployment allowlist for the replacement.

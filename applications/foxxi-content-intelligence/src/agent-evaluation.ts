@@ -247,4 +247,31 @@ export class EvaluationRegistry {
   list(): AgentEvaluation[] {
     return [...this.evaluations.values()].map(s => s.evaluation);
   }
+
+  /**
+   * Take back an evaluation that was kept outside this process (bridge/server.ts keeps each one
+   * sealed on the pod and fills this registry from there). One this registry already holds is left
+   * as it is: what is in hand is at least as new as what was kept.
+   */
+  restore(state: EvaluationState): boolean {
+    if (!isEvaluationState(state) || this.evaluations.has(state.evaluation.id)) return false;
+    if (this.evaluations.size >= EvaluationRegistry.EVALUATIONS_MAX) {
+      const oldest = this.evaluations.keys().next().value;
+      if (oldest !== undefined) this.evaluations.delete(oldest);
+    }
+    this.evaluations.set(state.evaluation.id, state);
+    return true;
+  }
+
+  /** Drop this process's copy, so the next read takes what is kept. Used when a change was not kept. */
+  forget(evaluationId: string): void { this.evaluations.delete(evaluationId); }
+}
+
+/** Whether a value read back from storage is an evaluation with its candidates. */
+export function isEvaluationState(v: unknown): v is EvaluationState {
+  const s = v as Partial<EvaluationState> | null;
+  const e = s?.evaluation as Partial<AgentEvaluation> | undefined;
+  return !!s && !!e && typeof e.id === 'string' && typeof e.name === 'string' && typeof e.openedBy === 'string'
+    && Array.isArray(e.taskSet) && Array.isArray(s.candidates)
+    && s.candidates.every(c => !!c && typeof c.candidateId === 'string' && typeof c.agentDid === 'string' && typeof c.status === 'string' && Array.isArray(c.runs));
 }
