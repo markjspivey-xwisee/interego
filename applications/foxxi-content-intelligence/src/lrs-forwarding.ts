@@ -32,7 +32,7 @@
 import { withTransientRetry } from '@interego/solid';
 import { assertSafeFetchTarget, safeFetch } from './ssrf-guard.js';
 import { TenantPartition, DEFAULT_TENANT, tenantIdOf, type TenantId } from './tenant-context.js';
-import type { ForwardingConfigBlob, RawForwardingTarget, RawInboundCredential } from './forwarding-persist.js';
+import type { ForwardingConfigBlob, RawDeadLetter, RawForwardingTarget, RawInboundCredential } from './forwarding-persist.js';
 
 // ── Outbound forwarding targets ─────────────────────────────────────
 
@@ -286,10 +286,12 @@ export async function forwardStatement(tenant: TenantId, stmt: Record<string, un
   await ensureForwardingHydrated(tenant);
   const map = targetsByTenant.for(tenant);
   if (map.size === 0) return;
+  let queued = false;
   for (const st of map.values()) {
     if (!st.target.enabled) continue;
-    await deliver(st, stmt);
+    if (!(await deliver(st, stmt))) queued = true;
   }
+  if (queued) queueChanged(tenant);
 }
 
 /**
@@ -310,6 +312,7 @@ export async function retryDeadLetter(tenant: TenantId, id?: string): Promise<Ar
       if (ok) delivered++;
     }
     out.push({ id: st.target.id, retried: pending.length, delivered, remaining: st.deadLetter.length });
+    if (pending.length) queueChanged(tenant);
   }
   return out;
 }
@@ -327,8 +330,17 @@ export function exportForwardingConfig(tenant: TenantId): ForwardingConfigBlob {
     credentials: st.target.credentials, version: st.target.version,
     enabled: st.target.enabled, createdAt: st.target.createdAt,
   }));
-  return { targets, credentials: inboundCredentials.exportForTenant(tenant), updatedAt: new Date().toISOString() };
+  const deadLetters: RawDeadLetter[] = [...targetsByTenant.for(tenant).values()].flatMap(st => st.deadLetter.map(d => ({ targetId: st.target.id, ...d })));
+  return { targets, credentials: inboundCredentials.exportForTenant(tenant), ...(deadLetters.length ? { deadLetters } : {}), updatedAt: new Date().toISOString() };
 }
+
+/**
+ * Told when a tenant's queue of undelivered statements changes, so whoever keeps the config can
+ * keep the queue with it. One listener; the bridge sets it.
+ */
+let _queueChanged: ((tenant: TenantId) => void) | undefined;
+export function onForwardingQueueChange(fn: (tenant: TenantId) => void): void { _queueChanged = fn; }
+const queueChanged = (tenant: TenantId): void => { try { _queueChanged?.(tenant); } catch { /* keeping is the listener's to report */ } };
 
 /**
  * Replace a tenant's in-memory targets + inbound credentials from a decrypted blob
@@ -351,6 +363,15 @@ export function exportForwardingConfig(tenant: TenantId): ForwardingConfigBlob {
  * Carry the observations across by id. A target the blob no longer lists still goes
  * away — this is a replace, not a merge — but one that persists keeps its history.
  */
+function keptDeadLetters(blob: ForwardingConfigBlob, targetId: string): DeadLetter[] {
+  const out: DeadLetter[] = [];
+  for (const d of Array.isArray(blob.deadLetters) ? blob.deadLetters : []) {
+    if (!d || d.targetId !== targetId || typeof d.statementId !== 'string' || !d.statement || typeof d.statement !== 'object') continue;
+    out.push({ statementId: d.statementId, statement: d.statement, error: typeof d.error === 'string' ? d.error : '', at: typeof d.at === 'string' ? d.at : new Date(0).toISOString() });
+  }
+  return out.slice(-MAX_DEAD_LETTER);
+}
+
 export function importForwardingConfig(tenant: TenantId, blob: ForwardingConfigBlob): void {
   const map = targetsByTenant.for(tenant);
   const prior = new Map([...map.entries()].map(([id, st]) => [id, st]));
@@ -360,9 +381,12 @@ export function importForwardingConfig(tenant: TenantId, blob: ForwardingConfigB
     map.set(t.id, {
       target: { id: t.id, label: t.label, endpoint: t.endpoint, credentials: t.credentials, version: t.version, enabled: t.enabled, createdAt: t.createdAt },
       metrics: was ? was.metrics : freshMetrics(),
-      deadLetter: was ? was.deadLetter : [],
+      // What this process already holds for the target is the newer queue. A target it did not hold
+      // (a start after a restart) takes what was kept.
+      deadLetter: was ? was.deadLetter : keptDeadLetters(blob, t.id),
     });
   }
+  for (const st of map.values()) st.metrics.deadLetterDepth = st.deadLetter.length;
   for (const c of blob.credentials ?? []) inboundCredentials.importRaw(c);
 }
 
