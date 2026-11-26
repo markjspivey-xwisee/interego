@@ -306,3 +306,30 @@ export function pairStandings(input: {
     };
   });
 }
+
+/** How a course on this bridge is played, as far as the launch to offer for it goes. */
+export type CourseKind = 'cmi5' | 'scorm-engine' | 'unknown';
+
+/**
+ * The launch to offer for a course, by what plays it.
+ *
+ * ★ WHY. The pair read offered the cmi5 launch for every course it listed. A course the SCORM
+ * engine plays is launched by another affordance, so for such a course the offered link led to a
+ * 404 (found live on 2026-11-26, the day a person could first assign one to their agent). A reader
+ * follows the link it is given: the link has to be the one that works, or absent with the reason.
+ *
+ * - cmi5: the signed cmi5 launch, which takes `learner_kind`.
+ * - the SCORM engine: its own signed launch. The attempt is the signer's, so an agent that signs
+ *   is the learner without saying so; `author_did` says whose pod holds the course.
+ * - unknown: nothing to launch here now, said as that.
+ */
+export function launchOffer(input: { courseId: string; kind: CourseKind; learnerKind: LearnerKind; authoredBy?: string }):
+  { action: string; path: string; payload: Record<string, unknown> } | { none: string } {
+  if (input.kind === 'cmi5') {
+    return { action: 'urn:iep:action:foxxi:cmi5-launch-signed', path: '/agent/cmi5/launch', payload: { course_id: input.courseId, ...(input.learnerKind === 'agent' ? { learner_kind: 'agent' } : {}) } };
+  }
+  if (input.kind === 'scorm-engine') {
+    return { action: 'urn:iep:action:foxxi:scorm-launch-signed', path: '/agent/scorm/launch', payload: { course_id: input.courseId, ...(input.authoredBy ? { author_did: input.authoredBy } : {}) } };
+  }
+  return { none: 'no course with this id is published or played on this bridge now, so there is nothing to launch' };
+}

@@ -194,3 +194,26 @@ describe('the bridge', () => {
     expect(src).not.toContain('assessDisposition(courseSteps');
   });
 });
+
+describe('the launch the pair read offers for a course', () => {
+  it('is the one that plays it', async () => {
+    const { launchOffer } = await import('../src/learning-beside.js');
+    expect(launchOffer({ courseId: 'c1', kind: 'cmi5', learnerKind: 'agent' }))
+      .toEqual({ action: 'urn:iep:action:foxxi:cmi5-launch-signed', path: '/agent/cmi5/launch', payload: { course_id: 'c1', learner_kind: 'agent' } });
+    expect(launchOffer({ courseId: 'c1', kind: 'cmi5', learnerKind: 'human' })).toMatchObject({ payload: { course_id: 'c1' } });
+    // The SCORM engine's launch is another affordance, and the signer is its learner.
+    expect(launchOffer({ courseId: 'AUTH-101', kind: 'scorm-engine', learnerKind: 'agent', authoredBy: 'did:ethr:0x8f' }))
+      .toEqual({ action: 'urn:iep:action:foxxi:scorm-launch-signed', path: '/agent/scorm/launch', payload: { course_id: 'AUTH-101', author_did: 'did:ethr:0x8f' } });
+  });
+
+  it('is absent, with the reason, for a course nothing here plays now', async () => {
+    const { launchOffer } = await import('../src/learning-beside.js');
+    expect(launchOffer({ courseId: 'gone', kind: 'unknown', learnerKind: 'human' })).toHaveProperty('none');
+  });
+
+  it('is what the bridge puts on each course', () => {
+    const src = readFileSync(new URL('../bridge/server.ts', import.meta.url), 'utf8');
+    expect(src).toContain("? { playedBy: kind, launchWhy: offer.none }");
+    expect(src).not.toContain('launch: { affordance: launchAction');
+  });
+});

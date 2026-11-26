@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 101 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 102 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -524,6 +524,21 @@ One read for a person and the agents learning beside them, signed by your wallet
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, learner_kind?, trajectory? }): optionally learner_kind "agent" for a delegate reading as itself beside its person, or for a wallet that is an agent with no person; optionally trajectory: true to return each agent's course record as trajectory steps. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.take_down_own_package_signed`
+
+**Take down a package I brought**
+
+Take down a package you brought to this bridge with foxxi.host_package_signed, signed by the same key that brought it. Allowed only when the record shows the package is yours alone: no other signer brought the same bytes, no operator keeps it, and it was not already hosted here before you brought it (a package is kept under the sha-256 of its bytes, so the same bytes are the same package for everyone). Otherwise it is refused with 403 and is an admin's to remove (foxxi.remove_hosted_package). A package brought before this record was kept has no recorded bringer and answers 404. Taken down, it is no longer listed, launched or served; what learners recorded of it stays in their own records.
+
+- Action: `urn:iep:action:foxxi:take-down-own-package-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/host/remove` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, package_sha256 }): the sha-256 the package is listed under at /scorm/packages. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.assign_to_own_agent_signed`

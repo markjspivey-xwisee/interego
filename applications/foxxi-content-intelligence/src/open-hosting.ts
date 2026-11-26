@@ -19,8 +19,10 @@
  * What is brought can be taken down: an admin removes a package by its sha-256 with
  * foxxi.remove_hosted_package (HostedPackages.remove).
  *
- * Not here: a cumulative storage budget that survives a restart, and a takedown by whoever brought
- * the package.
+ * Whoever brought a package may also take it down, when it is theirs alone
+ * (src/package-bringers.ts, POST /agent/scorm/host/remove).
+ *
+ * Not here: a cumulative storage budget that survives a restart.
  */
 
 /** What the open hosting route is allowed to take, read once from the environment. */
