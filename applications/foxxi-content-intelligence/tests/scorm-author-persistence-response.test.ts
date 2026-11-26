@@ -54,6 +54,7 @@ function route(compose: () => Promise<Receipt | null>) {
     recordCourseAuthor: () => undefined,
     // The ownership index is written before the answer since 2026-11-26; here it is taken.
     writeCourseAuthors: async () => true,
+    scormAuthorRateLimit: (_req: unknown, _res: unknown, next: () => void) => next(),
     courseIri: (id: string) => 'https://bridge.example/agent/scorm/course/' + id,
     emitAgentActivity: async () => 'fixture-authored-statement',
     AUTHORED_VERB: 'urn:test:authored',
@@ -67,9 +68,10 @@ function route(compose: () => Promise<Receipt | null>) {
   };
   const bindings = Object.keys(dependencies).join(',');
   new Function('app', 'dependencies', 'const {' + bindings + '} = dependencies;\n' + javascript)(
-    { post(path: string, value: Handler) {
+    // The route is mounted with a rate limit before its handler since 2026-11-26; the handler is the last argument.
+    { post(path: string, ...mounted: unknown[]) {
       if (path !== '/agent/scorm/author') throw new Error('Unexpected route: ' + path);
-      handler = value;
+      handler = mounted[mounted.length - 1] as Handler;
     } }, dependencies);
   return {
     replies,
