@@ -223,7 +223,7 @@ describe('the bridge keeps an upload that is an export, and folds it as any host
     const upload = server.slice(server.indexOf("'foxxi.upload_scorm_package': async (args) => {"), server.indexOf("'foxxi.derive_adaptive_policy': async (args) => {"));
     // Each is wrapped since 2026-11-26 so an operator's package is recorded as the operator's
     // (src/package-bringers.ts); what hosts and what keeps an export are unchanged.
-    expect(upload).toContain('      host: async (bytes, parsed) => operatorKeeps(bytes, await hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable)),\n      keepExport: async (bytes, exported) => operatorKeeps(bytes, await hostProjectExport(bytes, exported)),\n    });');
+    expect(upload).toContain('      host: (bytes, parsed) => operatorKeeps(bytes, () => hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable)),\n      keepExport: (bytes, exported) => operatorKeeps(bytes, () => hostProjectExport(bytes, exported)),\n    });');
   });
 
   it('keeps an export described as one, and says how to fold it', () => {

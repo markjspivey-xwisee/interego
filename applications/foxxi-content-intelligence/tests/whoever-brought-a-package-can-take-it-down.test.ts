@@ -123,7 +123,8 @@ describe('the bridge', () => {
   const route = src.slice(start, src.indexOf('\n});', start));
 
   it('asks the pod whether the package was there before it keeps it, and treats no plain answer as there', () => {
-    const bring = src.slice(src.indexOf('const bringing = async'), src.indexOf('const result = await uploadScormPackage({', src.indexOf('const bringing = async')));
+    const bring = src.slice(src.indexOf('const bringing = ('), src.indexOf('const result = await uploadScormPackage({', src.indexOf('const bringing = (')));
+    expect(bring.length).toBeGreaterThan(200);
     expect(bring.indexOf('await hostedPackages.isKept(sha)')).toBeLessThan(bring.indexOf('await keep()'));
     expect(bring).toContain("packageBringers.signerBrought(sha, auth.callerDid, before !== 'absent', Date.now())");
     // Nothing is recorded for a package that was not kept.
@@ -131,8 +132,18 @@ describe('the bridge', () => {
   });
 
   it('records an operator\'s upload as the operator\'s', () => {
-    expect(src).toContain('host: async (bytes, parsed) => operatorKeeps(bytes, await hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable)),');
+    expect(src).toContain('host: (bytes, parsed) => operatorKeeps(bytes, () => hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable)),');
     expect(src).toContain('packageBringers.operatorKept(sha256Of(bytes), Date.now());');
+  });
+
+  it('does one thing at a time for a package: a bring and a takedown of the same bytes never interleave', () => {
+    // A takedown decided on "mine alone" must not remove bytes someone brought in between.
+    expect(src).toContain('=> withPackageLock(sha256Of(bytes), async () => {');
+    expect(route).toContain('const done = await withPackageLock(sha, async ()');
+    const locked = route.slice(route.indexOf('withPackageLock(sha'));
+    for (const step of ['reloadPackageBringers(true)', 'packageBringers.mayTakeDown(sha, auth.callerDid)', 'hostedPackages.remove(sha)', 'packageBringers.forget(sha)']) expect(locked).toContain(step);
+    const op = src.slice(src.indexOf('function operatorKeeps('), src.indexOf('function operatorKeeps(') + 600);
+    expect(op.indexOf('withPackageLock(')).toBeLessThan(op.indexOf('await keep()'));
   });
 
   it('takes a package down only after a fresh read of the record says the signer may', () => {

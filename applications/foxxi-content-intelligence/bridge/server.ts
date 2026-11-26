@@ -5201,8 +5201,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       hintedTitle: args.hinted_title as string | undefined,
       uploaderDid: ctx.webId,
       // An operator's package is the operator's to take down, whoever else brings the same bytes.
-      host: async (bytes, parsed) => operatorKeeps(bytes, await hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable)),
-      keepExport: async (bytes, exported) => operatorKeeps(bytes, await hostProjectExport(bytes, exported)),
+      host: (bytes, parsed) => operatorKeeps(bytes, () => hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable)),
+      keepExport: (bytes, exported) => operatorKeeps(bytes, () => hostProjectExport(bytes, exported)),
     });
   },
 
@@ -11332,13 +11332,29 @@ function writePackageBringers(): Promise<boolean> {
   return packageBringersWrite;
 }
 const persistPackageBringers = registryWriter(writePackageBringers);
-/** Record that an operator keeps these bytes, when they were kept. Returns what was kept, unchanged. */
-async function operatorKeeps(bytes: Buffer, kept: Record<string, unknown>): Promise<Record<string, unknown>> {
-  if (kept.hosted !== true) return kept;
-  await reloadPackageBringers();
-  packageBringers.operatorKept(sha256Of(bytes), Date.now());
-  if (!(await writePackageBringers())) persistPackageBringers();
-  return kept;
+/**
+ * One thing at a time for each package: keeping its bytes and recording who brought them, or
+ * deciding a takedown and removing them. Without it a takedown decided on "these are mine alone"
+ * could remove bytes someone else brought in between, and forget that they had (Codex, #1006).
+ */
+const packageLocks = new Map<string, Promise<unknown>>();
+function withPackageLock<T>(sha: string, fn: () => Promise<T>): Promise<T> {
+  const next = (packageLocks.get(sha) ?? Promise.resolve()).then(fn, fn);
+  const settled = next.then(() => undefined, () => undefined);
+  packageLocks.set(sha, settled);
+  void settled.then(() => { if (packageLocks.get(sha) === settled) packageLocks.delete(sha); });
+  return next;
+}
+/** An operator keeps these bytes: kept and recorded as the operator's, as one step for the package. */
+function operatorKeeps(bytes: Buffer, keep: () => Promise<Record<string, unknown>>): Promise<Record<string, unknown>> {
+  return withPackageLock(sha256Of(bytes), async () => {
+    const kept = await keep();
+    if (kept.hosted !== true) return kept;
+    await reloadPackageBringers();
+    packageBringers.operatorKept(sha256Of(bytes), Date.now());
+    if (!(await writePackageBringers())) persistPackageBringers();
+    return kept;
+  });
 }
 // Where a cmi5 package's unit may be served from outside the package (FOXXI_CMI5_OUTSIDE_AU_PREFIXES:
 // https addresses ending in "/", comma or space separated). Unset, every unit is a file of its
@@ -11652,7 +11668,7 @@ app.post('/agent/scorm/host', openHostingRateLimit, async (req, res) => {
     }
     // Who brought it is recorded with the package, so they can take it down when it is theirs alone
     // (src/package-bringers.ts). Whether it was here already is asked of the pod before it is kept.
-    const bringing = async (bytes: Buffer, keep: () => Promise<Record<string, unknown>>): Promise<Record<string, unknown>> => {
+    const bringing = (bytes: Buffer, keep: () => Promise<Record<string, unknown>>): Promise<Record<string, unknown>> => withPackageLock(sha256Of(bytes), async () => {
       const sha = sha256Of(bytes);
       await reloadPackageBringers();
       const before = await hostedPackages.isKept(sha);
@@ -11663,7 +11679,7 @@ app.post('/agent/scorm/host', openHostingRateLimit, async (req, res) => {
       if (!recorded) persistPackageBringers();
       const mine = packageBringers.mayTakeDown(sha, auth.callerDid).ok;
       return { ...kept, ...(mine ? { takeDown: { affordance: actionUrl('urn:iep:action:foxxi:take-down-own-package-signed'), target: `${bridgeBaseUrl}/agent/scorm/host/remove`, payload: { package_sha256: sha } } } : {}) };
-    };
+    });
     const result = await uploadScormPackage({
       tenantPodUrl: tenantPodUrl,
       zipBase64: asked.zipBase64,
@@ -11687,17 +11703,22 @@ app.post('/agent/scorm/host/remove', takeDownOwnRateLimit, async (req, res) => {
     if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
     const sha = typeof auth.payload.package_sha256 === 'string' ? auth.payload.package_sha256.trim().toLowerCase() : '';
     if (!PACKAGE_SHA.test(sha)) { res.status(400).json({ error: 'package_sha256 is required: the sha-256 the package is listed under at /scorm/packages' }); return; }
-    if ((await reloadPackageBringers(true)) === 'failed') { res.status(503).json({ error: 'the record of who brought which package could not be read just now, so nothing was taken down; try again' }); return; }
-    const may = packageBringers.mayTakeDown(sha, auth.callerDid);
-    if (!may.ok) { res.status(may.status).json({ error: may.error, ...(may.status === 403 ? { admin: { tool: 'foxxi.remove_hosted_package' } } : {}) }); return; }
-    const taken = await hostedPackages.remove(sha);
-    // Its course goes whether or not the pod took the delete: nothing should launch a package being taken down.
-    const courseForgotten = unregisterCmi5Course(DEFAULT_TENANT, `${bridgeBaseUrl}/scorm/packages/${sha}`);
-    if (!taken.removed) { res.status(502).json({ error: taken.why ?? 'the pod did not remove the package', packageSha256: sha, courseForgotten }); return; }
-    packageBringers.forget(sha);
-    const recorded = await writePackageBringers();
-    if (!recorded) persistPackageBringers();
-    res.json({ kind: 'own-package-taken-down', removed: true, packageSha256: sha, courseForgotten, removedBy: auth.callerDid, note: 'The package and what described it are gone from the pod and from this bridge: it is no longer listed, launched or served. What learners already recorded of it stays in their own records.' });
+    // The decision, the removal and forgetting the record are one step for this package: a bring of
+    // the same bytes waits for it, or it waits for the bring and then sees who else brought them.
+    const done = await withPackageLock(sha, async (): Promise<{ status: number; body: Record<string, unknown> }> => {
+      if ((await reloadPackageBringers(true)) === 'failed') return { status: 503, body: { error: 'the record of who brought which package could not be read just now, so nothing was taken down; try again' } };
+      const may = packageBringers.mayTakeDown(sha, auth.callerDid);
+      if (!may.ok) return { status: may.status, body: { error: may.error, ...(may.status === 403 ? { admin: { tool: 'foxxi.remove_hosted_package' } } : {}) } };
+      const taken = await hostedPackages.remove(sha);
+      // Its course goes whether or not the pod took the delete: nothing should launch a package being taken down.
+      const courseForgotten = unregisterCmi5Course(DEFAULT_TENANT, `${bridgeBaseUrl}/scorm/packages/${sha}`);
+      if (!taken.removed) return { status: 502, body: { error: taken.why ?? 'the pod did not remove the package', packageSha256: sha, courseForgotten } };
+      packageBringers.forget(sha);
+      const recorded = await writePackageBringers();
+      if (!recorded) persistPackageBringers();
+      return { status: 200, body: { kind: 'own-package-taken-down', removed: true, packageSha256: sha, courseForgotten, removedBy: auth.callerDid, note: 'The package and what described it are gone from the pod and from this bridge: it is no longer listed, launched or served. What learners already recorded of it stays in their own records.' } };
+    });
+    res.status(done.status).json(done.body);
   } catch (err) { sendServerError(res, err, 'take-down-own-package-signed'); }
 });
 
@@ -11871,7 +11892,7 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
       let kind: CourseKind = 'unknown'; let authoredBy: string | undefined;
       if (await publishedCmi5Course(c.courseId).catch(() => null)) kind = 'cmi5';
       else { const sc = await resolveCourseForRead(c.courseId).catch(() => null); if (sc) { kind = 'scorm-engine'; authoredBy = sc.authoredBy || undefined; } }
-      const offer = launchOffer({ courseId: c.courseId, kind, learnerKind: learner.kind, ...(authoredBy ? { authoredBy } : {}) });
+      const offer = launchOffer({ courseId: c.courseId, kind, learnerKind: learner.kind, ...(authoredBy ? { authoredBy } : {}), ...(learner.via ? { carriedBy: learner.via } : {}) });
       launchLinks.set(c.courseId, 'none' in offer
         ? { playedBy: kind, launchWhy: offer.none }
         : { playedBy: kind, launch: { affordance: actionUrl(offer.action), target: `${bridgeBaseUrl}${offer.path}`, payload: offer.payload } });

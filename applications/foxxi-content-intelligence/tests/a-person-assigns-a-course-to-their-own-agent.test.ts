@@ -206,6 +206,18 @@ describe('the launch the pair read offers for a course', () => {
       .toEqual({ action: 'urn:iep:action:foxxi:scorm-launch-signed', path: '/agent/scorm/launch', payload: { course_id: 'AUTH-101', author_did: 'did:ethr:0x8f' } });
   });
 
+  it('is not the SCORM engine\'s launch for a person whose request an agent carries', async () => {
+    // That launch's learner is whoever signs. Offered here it would start the agent's attempt
+    // under an answer about the person.
+    const { launchOffer } = await import('../src/learning-beside.js');
+    expect(launchOffer({ courseId: 'AUTH-101', kind: 'scorm-engine', learnerKind: 'human', carriedBy: 'did:web:x:agents:a' })).toHaveProperty('none');
+    // The person's own wallet, and an agent reading as itself, are each their launch's signer.
+    expect(launchOffer({ courseId: 'AUTH-101', kind: 'scorm-engine', learnerKind: 'human' })).toHaveProperty('action');
+    expect(launchOffer({ courseId: 'AUTH-101', kind: 'scorm-engine', learnerKind: 'agent', carriedBy: 'did:web:x:agents:a' })).toHaveProperty('action');
+    // cmi5 takes the person as its learner from the delegation, so it is offered either way.
+    expect(launchOffer({ courseId: 'c1', kind: 'cmi5', learnerKind: 'human', carriedBy: 'did:web:x:agents:a' })).toHaveProperty('action');
+  });
+
   it('is absent, with the reason, for a course nothing here plays now', async () => {
     const { launchOffer } = await import('../src/learning-beside.js');
     expect(launchOffer({ courseId: 'gone', kind: 'unknown', learnerKind: 'human' })).toHaveProperty('none');
