@@ -1,11 +1,11 @@
 ---
 name: interego-foxxi
-description: "Foxxi content intelligence, learner surface as Interego affordances: 101 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
+description: "Foxxi content intelligence, learner surface as Interego affordances: 102 tools (i2idlx-classify, i2idlx-validate, i2idlx-peer-term, i2idlx-source-version, i2idlx-authored-catalog, i2idlx-authored-rdf, and more). Use when a learner or an agent acting for one needs their assigned courses, a course's concept map or context, an answer grounded in course content, a credential, a learner record, a SCORM or cmi5 session, or private performance feedback on an Interego pod."
 license: MIT
 metadata:
   vertical: foxxi-content-intelligence
   source: applications/foxxi-content-intelligence/affordances.ts
-  affordances: 101
+  affordances: 102
   manifest: "https://foxxi-bridge.interego.xwisee.com/affordances"
   generator: tools/build-skills.ts
 ---
@@ -65,6 +65,7 @@ Every answer is a JSON object; a refusal is typed `iep:Refusal` with `iep:refusa
 | `foxxi.claim_credential` | The tenant issues an Open Badges 3.0 completion credential for a catalog course only from the learner's own record: a passed, mastered, satisfied or waived xAP… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/claim_credential` |
 | `foxxi.verify_credential` | What a relying party should check before believing an Open Badges 3.0 credential: the Data Integrity proof verifies against the issuer's key and the proof's ke… | `POST https://foxxi-bridge.interego.xwisee.com/foxxi/verify_credential` |
 | `foxxi.learning_beside_signed` | One read for a person and the agents learning beside them, signed by your wallet or by an agent holding your delegation. | `POST https://foxxi-bridge.interego.xwisee.com/agent/learning/beside` *(HTTP only)* |
+| `foxxi.take_down_own_package_signed` | Take down a package you brought to this bridge with foxxi.host_package_signed, signed by the same key that brought it. | `POST https://foxxi-bridge.interego.xwisee.com/agent/scorm/host/remove` *(HTTP only)* |
 | `foxxi.assign_to_own_agent_signed` | A person assigns a course on this bridge to an agent that holds their delegation, or takes the assignment back, signed by their wallet or by an agent carrying… | `POST https://foxxi-bridge.interego.xwisee.com/agent/learning/assign` *(HTTP only)* |
 | `foxxi.earned_credentials_signed` | foxxi.earned_credentials for the courses this bridge's SCORM engine grades, signed the way the engine's own routes are: by your wallet, or by an agent holding… | `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/earned` *(HTTP only)* |
 | `foxxi.claim_credential_signed` | foxxi.claim_credential for a course this bridge's SCORM engine grades, signed by your wallet or by an agent holding your delegation (a relay connection, such a… | `POST https://foxxi-bridge.interego.xwisee.com/agent/credentials/claim` *(HTTP only)* |

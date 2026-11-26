@@ -309,7 +309,10 @@ const UNLINTED_FRONTIER = {
   //    Master then re-pinned to 1205 on its own; with these 2 the measured count is 1207.
   //    1207 -> 1270, errors unchanged: the root grew past its slack as the xAPI profile and xapi-x
   //    work landed; the last 2 are src/xapi-profile-server/built-in.ts and its test, both lint-clean.
-  applications: { errors: 1452, files: 1270 },
+  //    1270 -> 1338, the pin on errors left as it was: the root grew past its slack again. The files that took it
+  //    over are Foxxi's agent-learner work (src/course-trajectory.ts, own-agent-assignments.ts,
+  //    package-bringers.ts and their tests), which lint clean (`npx eslint` on each: 0 problems).
+  applications: { errors: 1452, files: 1338 },
   // The controller comparison adds two lint-clean audit modules; the census is 46.
   // Re-pin the file floor to that measured count without raising the error ceiling.
   benchmarks: { errors: 193, files: 46 },

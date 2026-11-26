@@ -687,6 +687,20 @@ export class HostedPackages {
    * keeps the package (it took the delete, or never had it); when the pod refused, the package is
    * still dropped from memory and `why` says what the pod answered, so the caller can try again.
    */
+  /**
+   * Whether a package is kept on the pod now: asked of the pod, not of memory. `unknown` when the
+   * pod did not give a plain answer, so a caller deciding something on "it was not here before"
+   * can refuse to decide on an outage (src/package-bringers.ts).
+   */
+  async isKept(sha256: string): Promise<'held' | 'absent' | 'unknown'> {
+    if (!PACKAGE_SHA.test(sha256)) return 'absent';
+    try {
+      const r = await (this.opts.fetch ?? globalThis.fetch)(this.urlOf(sha256), { method: 'HEAD' });
+      if (r.ok) return 'held';
+      return r.status === 404 || r.status === 410 ? 'absent' : 'unknown';
+    } catch { return 'unknown'; }
+  }
+
   async remove(sha256: string): Promise<{ removed: boolean; why?: string }> {
     if (!PACKAGE_SHA.test(sha256)) return { removed: false, why: 'not a package id: a sha-256, in lowercase hex' };
     const had = this.held.get(sha256);

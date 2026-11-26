@@ -190,7 +190,9 @@ describe('the routes', () => {
 
   it('read the pair without writing, and never name a learner from the request body', () => {
     const body = route('/agent/learning/beside');
-    expect(body).not.toMatch(/setPeerVisibility|buildCmi5Launch|publish|recordLaunchedStatement/);
+    // `publishedCmi5Course` is a read (which course plays under this id), used since 2026-11-26 to
+    // offer the launch that works; the ban is on publishing.
+    expect(body).not.toMatch(/setPeerVisibility|buildCmi5Launch|publish(?!edCmi5Course\()|recordLaunchedStatement/);
     expect(body).not.toMatch(/auth\.payload\.(learner|person|beside|learner_did)\b/);
     expect(body).toContain('assignmentsRead: admin !== null');
   });

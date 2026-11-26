@@ -281,7 +281,17 @@ registrations on that course, and no one else's.
   only as durable as the store it reads, which a restart empties
   (docs/operations/primary-state-rollout-hold.md).
 - **Telling the agent.** An assignment waits for the agent's next read.
-  Nothing sends it to the agent's inbox.
+  The bridge sends nothing: the answer names the Interego inbox
+  (`tell`), for whoever holds the person's session to follow.
+
+**How this is offered.** Everything in this section is reached by
+following the descriptor at `GET /affordances`, and each answer names
+what to follow next: the pair read gives each course the launch that
+plays it (`playedBy`, and `launch` or `launchWhy`), an assignment
+names the read that shows it, bringing a package names its takedown.
+A client needs the descriptor's address and nothing else;
+`tests/a-write-route-is-an-affordance.test.ts` holds new write routes
+to being offered there.
 
 ## 7. Built now, and designed for later
 

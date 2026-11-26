@@ -620,7 +620,7 @@ describe('the bridge hosts what is uploaded, and restores it after a restart', (
     const upload = server.slice(server.indexOf("'foxxi.upload_scorm_package': async"), server.indexOf("'foxxi.derive_adaptive_policy'"));
     // The upload's answer is the handler's, returned as a tail call: the census of handler
     // answers follows it into uploadScormPackage and reads its declines (tests/handler-delegation-reach.ts).
-    expect(upload).toMatch(/\n {4}return uploadScormPackage\(\{\n[\s\S]*\n {6}host: \(bytes, parsed\) => hostUploadedPackage\(bytes, parsed\.packageTitle, parsed\.launchable\),\n {6}keepExport: \(bytes, exported\) => hostProjectExport\(bytes, exported\),\n {4}\}\);\n {2}\},/);
+    expect(upload).toMatch(/\n {4}return uploadScormPackage\(\{\n[\s\S]*\n {6}host: \(bytes, parsed\) => operatorKeeps\(bytes, \(\) => hostUploadedPackage\(bytes, parsed\.packageTitle, parsed\.launchable\)\),\n {6}keepExport: \(bytes, exported\) => operatorKeeps\(bytes, \(\) => hostProjectExport\(bytes, exported\)\),\n {4}\}\);\n {2}\},/);
     const launch = server.slice(server.indexOf("app.post('/agent/cmi5/launch'"), server.indexOf("app.post('/agent/cmi5/launch'") + 1500);
     expect(launch).toMatch(/const course = await publishedCmi5Course\(courseId\)/);
     const lookup = server.slice(server.indexOf('async function publishedCmi5Course'), server.indexOf("app.post('/agent/cmi5/launch'"));

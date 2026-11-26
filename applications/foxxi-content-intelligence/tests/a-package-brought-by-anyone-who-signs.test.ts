@@ -102,8 +102,10 @@ describe('the route and what it advertises', () => {
   it('names the signer as the uploader, never a name the payload offers, and hosts as the operator upload does', () => {
     expect(route).toContain('uploaderDid: auth.callerDid,');
     expect(route).not.toContain('auth.payload.uploader');
-    expect(route).toContain('host: (bytes, parsed) => hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable),');
-    expect(route).toContain('keepExport: (bytes, exported) => hostProjectExport(bytes, exported),');
+    // Hosted by the same two functions as the operator's upload. Since 2026-11-26 each is wrapped
+    // so who brought the package is recorded with it (tests/whoever-brought-a-package-can-take-it-down).
+    expect(route).toContain('host: (bytes, parsed) => bringing(bytes, () => hostUploadedPackage(bytes, parsed.packageTitle, parsed.launchable)),');
+    expect(route).toContain('keepExport: (bytes, exported) => bringing(bytes, () => hostProjectExport(bytes, exported)),');
   });
 
   it('answers a refused upload with its own status, not 200', () => {
