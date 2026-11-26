@@ -13270,6 +13270,8 @@ app.post('/ns/foxxi/composition/:hash/au/next', async (req, res) => {
 // A limit the route is mounted with, beside the per-address one it has always checked inside: the
 // inner check is this bridge's own function, which a code scanner does not read as a limit.
 const scormAuthorRateLimit = forwardedRateLimit({ windowMs: 60_000, limit: 30, identifier: 'scorm-author' });
+// And for the two routes an attempt is played through, further down.
+const scormPlayRateLimit = forwardedRateLimit({ windowMs: 60_000, limit: 240, identifier: 'scorm-play' });
 app.post('/agent/scorm/author', scormAuthorRateLimit, async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
@@ -13366,8 +13368,6 @@ app.post('/agent/scorm/author', scormAuthorRateLimit, async (req, res) => {
   } catch (err) { sendServerError(res, err, 'route-handler'); }
 });
 
-// Mounted limits for the two routes an attempt is played through (see scormAuthorRateLimit).
-const scormPlayRateLimit = forwardedRateLimit({ windowMs: 60_000, limit: 240, identifier: 'scorm-play' });
 app.post('/agent/scorm/launch', scormPlayRateLimit, async (req, res) => {
   try {
     const auth = await verifyDelegatedCaller(req.body);
