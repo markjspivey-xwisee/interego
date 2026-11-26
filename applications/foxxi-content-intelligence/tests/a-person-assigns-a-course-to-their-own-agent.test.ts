@@ -83,10 +83,27 @@ describe('the record of what a person assigned to their own agents', () => {
     r.load(stale);
     expect(r.size).toBe(0);
     // Once the pod holds the withdrawal, and the person assigns it again, it is an assignment again.
-    r.committed();
+    r.committed(r.pendingWithdrawals());
     expect(r.assign({ person: ANA, agent: AGENT, courseId: 'c1' }, T0)).toMatchObject({ created: true });
     r.load(stale);
     expect(r.forPair(ANA, AGENT)[0]!.assignedAt).toBe('2026-11-25T12:00:00.000Z');
+  });
+
+  it('keeps a withdrawal made while a write was in flight', () => {
+    const r = new OwnAgentAssignments();
+    r.assign({ person: ANA, agent: AGENT, courseId: 'c1' }, T0);
+    r.assign({ person: ANA, agent: AGENT, courseId: 'c2' }, T0);
+    r.withdraw({ person: ANA, agent: AGENT, courseId: 'c2' });
+    // A write begins: its body, and the withdrawals that body covers, are taken now.
+    const body = JSON.parse(JSON.stringify(r));
+    const covered = r.pendingWithdrawals();
+    // While it is in flight, c1 is withdrawn.
+    r.withdraw({ person: ANA, agent: AGENT, courseId: 'c1' });
+    r.committed(covered);
+    // The next write reads the pod, which holds the body that was written: c1 is in it.
+    r.load(body);
+    expect(r.size).toBe(0);
+    expect(r.pendingWithdrawals()).toHaveLength(1);
   });
 
   it('lets what this process holds win over the copy for the same assignment', () => {
@@ -169,7 +186,11 @@ describe('the bridge', () => {
 
   it('reads the disposition from recorded work alone, never from course steps', () => {
     expect(src).toContain('read: assessDisposition(recorded),');
-    expect(src).toContain('const recorded = [...new Set(agents.flatMap((a) => trajectoriesRecordedApart(a, learner.podUrl)))];');
+    // Only a trajectory that names the agent: the pod's own mesh trajectory is its owner's.
+    expect(src).toContain('trajectoriesRecordedApart(a, learner.podUrl).filter((t) => t.agentDid === a)');
+    // One registry write at a time, and a write forgets only the withdrawals its body covered.
+    expect(src).toContain('ownAssignmentsWrite = ownAssignmentsWrite.then(writeOwnAssignmentsOnce, writeOwnAssignmentsOnce);');
+    expect(src).toContain('ownAgentAssignments.committed(covered)');
     expect(src).not.toContain('assessDisposition(courseSteps');
   });
 });

@@ -11753,7 +11753,10 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
     for (const o of own) if (!agents.includes(o.agent)) agents.push(o.agent);
     const standings = pairStandings({ person, agents, assignments: assigned, launches, reader: { kind: learner.kind, id: learner.did }, alone, ownAssignments: own });
     // The agents' own recorded work, where there is any: the disposition read's proper source.
-    const recorded = [...new Set(agents.flatMap((a) => trajectoriesRecordedApart(a, learner.podUrl)))];
+    // Only trajectories that name that agent: the lookup also returns the mesh trajectory of the pod
+    // it is given, which is the pod owner's activity under the pod's label, not the agent's (found by
+    // Codex in review of #1005, where a person's own mesh activity was read as their agents').
+    const recorded = [...new Set(agents.flatMap((a) => trajectoriesRecordedApart(a, learner.podUrl).filter((t) => t.agentDid === a)))];
     // What each agent's course record says of it (src/course-trajectory.ts): rebuilt from the
     // statements on each read, the newest registrations first, and stored nowhere.
     const statements = getStatementStore(tenant);
@@ -11829,21 +11832,30 @@ async function reloadOwnAssignments(): Promise<'loaded' | 'absent' | 'failed'> {
   return read;
 }
 /** True when the pod holds what this process holds. A failed read is not followed by a write. */
-async function writeOwnAssignments(): Promise<boolean> {
+async function writeOwnAssignmentsOnce(): Promise<boolean> {
   if (!OWN_ASSIGNMENTS_RESOURCE) return false;
   if (!ownAgentAssignments.dirty) return true;
   ownAgentAssignments.dirty = false;
   try {
+    // The withdrawals the written body covers are the ones pending when the body is made.
+    let covered: string[] = [];
     const ok = await commitDurableRegistry({
       resource: OWN_ASSIGNMENTS_RESOURCE,
       fetch: globalThis.fetch as typeof fetch,
       load: (json) => { ownAgentAssignments.load(json); },
-      body: () => JSON.stringify(ownAgentAssignments),
+      body: () => { covered = ownAgentAssignments.pendingWithdrawals(); return JSON.stringify(ownAgentAssignments); },
     });
-    if (ok) { ownAgentAssignments.committed(); ownAssignmentsReadAt = Date.now(); return true; }
+    if (ok) { ownAgentAssignments.committed(covered); ownAssignmentsReadAt = Date.now(); return true; }
   } catch { /* tried again below */ }
   ownAgentAssignments.dirty = true;
   return false;
+}
+// One write at a time: each reads the pod's copy, merges and puts, and two interleaved would have
+// the later put carry a body made before the earlier one's change.
+let ownAssignmentsWrite: Promise<boolean> = Promise.resolve(true);
+function writeOwnAssignments(): Promise<boolean> {
+  ownAssignmentsWrite = ownAssignmentsWrite.then(writeOwnAssignmentsOnce, writeOwnAssignmentsOnce);
+  return ownAssignmentsWrite;
 }
 const persistOwnAssignments = registryWriter(writeOwnAssignments);
 

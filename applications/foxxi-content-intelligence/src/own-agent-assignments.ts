@@ -119,6 +119,15 @@ export class OwnAgentAssignments {
     }
     return n;
   }
-  /** The durable copy now holds what this process holds: withdrawals need not be remembered. */
-  committed(): void { this.withdrawn.clear(); }
+  /** The withdrawals not yet known to be on the durable copy, as a snapshot to hand back to `committed`. */
+  pendingWithdrawals(): string[] { return [...this.withdrawn]; }
+  /**
+   * The durable copy now holds a body made when `covered` was taken: those withdrawals need not be
+   * remembered. Only those. One made while that write was in flight is not in the body that was
+   * written, so forgetting it would let the next merge of the copy bring its assignment back
+   * (found by Codex in review of #1005, where this cleared them all).
+   */
+  committed(covered: readonly string[]): void {
+    for (const k of covered) if (!this.byKey.has(k)) this.withdrawn.delete(k);
+  }
 }
