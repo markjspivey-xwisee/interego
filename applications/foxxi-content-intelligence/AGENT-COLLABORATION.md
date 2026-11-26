@@ -277,9 +277,11 @@ registrations on that course, and no one else's.
 
 **Designed, for later.**
 
-- **Recorded trajectories are held in memory.** The disposition read is
-  only as durable as the store it reads, which a restart empties
-  (docs/operations/primary-state-rollout-hold.md).
+- **Recorded work is kept.** A recorded trajectory, a team's probes and
+  an evaluation are written to the pod, sealed, before they are
+  acknowledged (`src/sealed-store.ts`), so the disposition read
+  survives a restart. What was recorded before 2026-11-26 was only in
+  memory and is not recovered.
 - **Telling the agent.** An assignment waits for the agent's next read.
   The bridge sends nothing: the answer names the Interego inbox
   (`tell`), for whoever holds the person's session to follow.

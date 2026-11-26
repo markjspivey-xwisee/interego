@@ -12,6 +12,16 @@ This note records what happened. It does not lift the hold, and it is not eviden
 
 Nothing about the stores has changed: the gaps below are still gaps, and every later restart of this service needs the same check made again, or preservation in place, before it happens.
 
+## Status note, 2026-11-26: three of Foxxi's ten gaps are kept, and two clear registries are sealed
+
+Source change, not a statement about records in any running process.
+
+- `native-trajectories`, `performance-probes` and `evaluation-workflow` are written to the tenant pod, sealed, before the call that made them is answered, and read back when the process does not hold them (`applications/foxxi-content-intelligence/src/sealed-store.ts`). A write the pod does not take is a refusal. Their old snapshot collectors are still registered and still never marked dirty; they are not what keeps these records.
+- This is the pod's ordinary resource store with a sealed body, the mechanism `admissions` and the forwarding config already use. It is not the native commit path of [native-learning-storage.md](native-learning-storage.md): one writer, last write wins, no revision check. It survives a restart of one bridge process and is not safe for two.
+- Records made before this change were only in a process's memory and are not recovered by it.
+- The seven other gaps are unchanged: `xapi-attachments`, `scorm-sequencing-sessions`, `agent-scorm-attempts`, `cmi5-rollup-dedup`, `course-author-index`, `forwarding-config`, `forwarding-queue`.
+- Separately, two registries added on 2026-11-25 and 26 (a person's assignments to their own agents; who brought which package) were written to the pod as plain JSON, readable by anyone with the address. They are now sealed, and the clear copies are removed after the first sealed write. `cmi5-personal-links.json`, `course-authors.json` and `content-locations.json` in the same folder are still plain and were not changed here.
+
 ## Exact affected service scope
 
 For the earlier candidate, the existing deployment-scope tool and observed live image pins reported these **12** affected services. Identity and acme-id were outside that measured candidate. Changes to shared native storage require a fresh scope calculation; this historical list is not a deployment allowlist for the replacement.

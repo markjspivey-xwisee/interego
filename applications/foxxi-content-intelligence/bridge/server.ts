@@ -303,7 +303,8 @@ import {
 } from '../src/lrs-forwarding.js';
 import { persistForwardingConfig, loadForwardingConfig } from '../src/forwarding-persist.js';
 import { bridgeEncryptionKeypair } from '../src/foundation-holon-altitude.js';
-import { EvaluationRegistry, type CandidateRun, type EvaluationCandidate } from '../src/agent-evaluation.js';
+import { EvaluationRegistry, isEvaluationState, type CandidateRun, type EvaluationCandidate, type EvaluationState } from '../src/agent-evaluation.js';
+import { SealedPodMap, SealedRegistryFile, type SealedFetch } from '../src/sealed-store.js';
 import { comparePortfolio, type CandidateEvidence } from '../src/agent-portfolio.js';
 import { DEFAULT_TENANT, TenantPartition, tenantIdOf, type TenantId } from '../src/tenant-context.js';
 
@@ -388,6 +389,75 @@ void hydrateBridgeStateFromPod();
 // the agent-facing routes. Snapshots now fire only when real state
 // changes (the surface modules call dirty() themselves on update),
 // keeping the pod write-rate proportional to real activity.
+
+// ── What these three stores hold is kept on the pod, sealed (src/sealed-store.ts) ──────────────
+//
+// The Maps above are a cache. A trajectory, a team's probes and an evaluation are each written to
+// the pod, sealed, before the call that made them is answered, and read back from there when the
+// cache does not have them (after a restart it has none). A write the pod did not take is a refusal
+// and the cache drops its entry, so the next read shows what is actually kept.
+//
+// With no pod or no bridge key (a development start) nothing can be kept: the stores answer
+// `unconfigured`, and the bridge runs from memory as it did, saying `durable: false`.
+const keptFetch: SealedFetch = (url, init) => (globalThis.fetch as unknown as SealedFetch)(url, init);
+const keptBase = (surface: string): string => (process.env.FOXXI_TENANT_POD_URL ? `${process.env.FOXXI_TENANT_POD_URL.replace(/\/$/, '')}/foxxi-lattice/kept/${surface}/` : '');
+const isTrajectory = (v: unknown): v is AgentTrajectory => !!v && typeof (v as AgentTrajectory).agentDid === 'string' && Array.isArray((v as AgentTrajectory).steps);
+const keptTrajectories = new SealedPodMap<AgentTrajectory>({ base: keptBase('trajectories'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isTrajectory });
+const keptProbes = new SealedPodMap<PerformanceProbe[]>({ base: keptBase('probes'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: (v): v is PerformanceProbe[] => Array.isArray(v) });
+const keptEvaluations = new SealedPodMap<EvaluationState>({ base: keptBase('evaluations'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isEvaluationState });
+
+/** A record that could not be kept, or could not be read: the caller supplied nothing wrong. */
+function storageRefusal(what: string, why: 'not-kept' | 'unreadable') {
+  return {
+    kind: 'refusal' as const,
+    'iep:refusalStatus': 503,
+    'iep:refusalReason': why === 'not-kept' ? 'the record could not be kept, so the change was not made' : 'what is kept could not be read, so nothing was decided on its absence',
+    error: why === 'not-kept' ? `${what} was not kept on the pod, so it was not recorded; try again.` : `${what} is kept but could not be read just now; try again.`,
+  };
+}
+// Keys the pod was asked for and did not hold, and until when not to ask again: a team read asks
+// for every member, and most have recorded nothing.
+const keptAbsentUntil = new Map<string, number>();
+const KEPT_ABSENT_MS = 60_000;
+/**
+ * Fill the cache, for the keys it lacks, from what the pod keeps. Answers a refusal when a record
+ * is there and cannot be read: treating it as absent would let a later write replace it.
+ */
+async function fillFromKept<V>(store: SealedPodMap<V>, tenant: TenantId, keys: readonly string[], has: (k: string) => boolean, set: (k: string, v: V) => void, what: string): Promise<ReturnType<typeof storageRefusal> | null> {
+  if (!store.configured) return null;
+  const now = Date.now();
+  let unreadable = false;
+  await Promise.all([...new Set(keys)].filter(k => !has(k)).map(async (k) => {
+    const mark = store.urlOf(String(tenant), k);
+    if ((keptAbsentUntil.get(mark) ?? 0) > now) return;
+    const got = await store.get(String(tenant), k);
+    if (got.state === 'held') { if (!has(k)) set(k, got.value); }
+    else if (got.state === 'absent') { if (keptAbsentUntil.size > 50_000) keptAbsentUntil.clear(); keptAbsentUntil.set(mark, now + KEPT_ABSENT_MS); }
+    else if (got.state === 'unreadable') unreadable = true;
+  }));
+  return unreadable ? storageRefusal(what, 'unreadable') : null;
+}
+/** Keep a record before it is acknowledged. A refusal when the pod did not take it; `evict` drops the cache's copy then. */
+async function keepOrRefuse<V>(store: SealedPodMap<V>, tenant: TenantId, key: string, value: V, evict: () => void, what: string): Promise<{ refusal: ReturnType<typeof storageRefusal> } | { durable: boolean }> {
+  const put = await store.put(String(tenant), key, value);
+  if (put === 'failed') { evict(); return { refusal: storageRefusal(what, 'not-kept') }; }
+  keptAbsentUntil.delete(store.urlOf(String(tenant), key));
+  return { durable: put === 'kept' };
+}
+const fillTrajectories = (tenant: TenantId, dids: readonly string[]) => {
+  const m = agentTrajectoriesByTenant.for(tenant);
+  return fillFromKept(keptTrajectories, tenant, dids, (k) => m.has(k), (k, v) => { m.set(k, v); }, 'a recorded trajectory');
+};
+const fillEvaluation = (tenant: TenantId, evaluationId: string) => {
+  const reg = evaluationRegistryByTenant.for(tenant);
+  return fillFromKept(keptEvaluations, tenant, [evaluationId], (k) => !!reg.get(k), (_k, v) => { reg.restore(v); }, 'the evaluation');
+};
+const keepEvaluation = async (tenant: TenantId, evaluationId: string) => {
+  const reg = evaluationRegistryByTenant.for(tenant);
+  const state = reg.get(evaluationId);
+  if (!state) return { durable: false };
+  return keepOrRefuse(keptEvaluations, tenant, evaluationId, state, () => reg.forget(evaluationId), 'the evaluation');
+};
 
 /** Resolve the tenant of an affordance call from its `tenant_pod_url`
  *  argument (falling back to the bridge's configured default tenant). */
@@ -3917,10 +3987,13 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       if (oldest) agentTrajectories.delete(oldest);
     }
     agentTrajectories.set(agentDid, trajectory);
+    const keptTrajectory = await keepOrRefuse(keptTrajectories, callTenant(args), agentDid, trajectory, () => agentTrajectories.delete(agentDid), 'the trajectory');
+    if ('refusal' in keptTrajectory) return keptTrajectory.refusal;
     const shape = trajectoryShape(trajectory);
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.record_agent_trajectory', decision: 'allow', appliedPolicies: ['agent-trajectory-public'] });
     return {
       recorded: true,
+      durable: keptTrajectory.durable,
       agentDid,
       stepCount: trajectory.steps.length,
       byModalStatus: shape.byModalStatus,
@@ -3940,6 +4013,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const agentTrajectories = agentTrajectoriesByTenant.for(callTenant(args));
     const agentDid = args.agent_did as string;
     if (!agentDid) return invalidArguments('agent_did is required');
+    const unread = await fillTrajectories(callTenant(args), [agentDid]);
+    if (unread) return unread;
     const trajectory = agentTrajectories.get(agentDid);
     if (!trajectory) return notFound(`no trajectory recorded for ${agentDid}`);
     const projection = projectTrajectoryToXapi(trajectory, { authoritativeSource });
@@ -3983,6 +4058,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!Array.isArray(agentDids) || agentDids.length === 0) {
       return invalidArguments('agent_dids (non-empty array) is required');
     }
+    const unread = await fillTrajectories(callTenant(args), agentDids)
+      ?? await fillFromKept(keptProbes, callTenant(args), [teamKey(agentDids)], (k) => performanceProbes.has(k), (k, v) => { performanceProbes.set(k, v); }, 'the team\'s probes');
+    if (unread) return unread;
     const trajectories = agentDids
       .map(d => agentTrajectories.get(d))
       .filter((t): t is AgentTrajectory => !!t);
@@ -4020,6 +4098,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (!['coherent', 'oblique', 'contradictory'].includes(coherence)) {
       return invalidArguments('coherence must be one of: coherent | oblique | contradictory');
     }
+    const unread = await fillTrajectories(callTenant(args), agentDids)
+      ?? await fillFromKept(keptProbes, callTenant(args), [teamKey(agentDids)], (k) => performanceProbes.has(k), (k, v) => { performanceProbes.set(k, v); }, 'the team\'s probes');
+    if (unread) return unread;
     const trajectories = agentDids
       .map(d => agentTrajectories.get(d))
       .filter((t): t is AgentTrajectory => !!t);
@@ -4046,9 +4127,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     if (list.length > 1000) list.shift();
     if (performanceProbes.size >= 5000 && !performanceProbes.has(key)) { const oldest = performanceProbes.keys().next().value; if (oldest !== undefined) performanceProbes.delete(oldest); }
     performanceProbes.set(key, list);
+    const keptProbe = await keepOrRefuse(keptProbes, callTenant(args), key, list, () => performanceProbes.delete(key), 'the probe');
+    if ('refusal' in keptProbe) return keptProbe.refusal;
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.run_performance_probe', decision: 'allow', appliedPolicies: ['agent-performance-consultant'] });
     return {
       recorded: true,
+      durable: keptProbe.durable,
       probe,
       note: 'Safe-to-fail probe recorded as a deliberate, reversible change to a constraint; the team disposition was snapshotted as the causal baseline. Re-assess the team to read the interventional + counterfactual causal effect. A safe-to-fail probe is allowed — expected, even — to fail cheaply.',
       accessDecision: trace,
@@ -4153,6 +4237,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
      */
     let candidate: EvaluationCandidate | undefined;
     if (runInput.evaluationId) {
+      const unreadEvaluation = await fillEvaluation(tenant, runInput.evaluationId);
+      if (unreadEvaluation) return unreadEvaluation;
       candidate = runInput.candidateId
         ? evaluationRegistry.get(runInput.evaluationId)?.candidates.find(c => c.candidateId === runInput.candidateId)
         : evaluationRegistry.findCandidateByAgent(runInput.evaluationId, agentDid);
@@ -4232,6 +4318,9 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       if (oldest) agentTrajectories.delete(oldest);
     }
     agentTrajectories.set(agentDid, ingested.trajectory);
+    // The run's statements are kept by now (above), so a trajectory or a binding the pod did not
+    // take is said in the answer, as a refused binding already is: it is not a refusal of the run.
+    const keptRun = await keepOrRefuse(keptTrajectories, tenant, agentDid, ingested.trajectory, () => agentTrajectories.delete(agentDid), 'the trajectory');
     let boundTo: string | null = null;
     let bindingRefused: string | undefined;
     if (candidate) {
@@ -4247,11 +4336,17 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       // accepted) refuses it here. The run is recorded by then, so that is said, not a refusal.
       const added = evaluationRegistry.addRun(runInput.evaluationId!, candidate.candidateId, run);
       if ('error' in added) bindingRefused = added.error;
-      else boundTo = `${runInput.evaluationId} / ${candidate.candidateId}`;
+      else {
+        const keptBinding = await keepEvaluation(tenant, runInput.evaluationId!);
+        if ('refusal' in keptBinding) bindingRefused = keptBinding.refusal.error;
+        else boundTo = `${runInput.evaluationId} / ${candidate.candidateId}`;
+      }
     }
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.record_external_agent_run', decision: 'allow', appliedPolicies: ['external-agent-run-ingest'] });
     return {
       recorded: true,
+      trajectoryDurable: 'durable' in keptRun && keptRun.durable,
+      ...('refusal' in keptRun ? { trajectoryNotKept: keptRun.refusal.error } : {}),
       agentDid,
       ...ingested.summary,
       statementIds: keptIds,
@@ -4292,8 +4387,10 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
         : { name: (t.name as string) ?? 'task', id: t.id as string | undefined, description: t.description as string | undefined })
       : undefined;
     const ev = evaluationRegistry.open({ name, decisionQuestion, taskSet, openedBy: ctx.webId });
+    const keptOpen = await keepEvaluation(callTenant(args), ev.id);
+    if ('refusal' in keptOpen) return keptOpen.refusal;
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.open_agent_evaluation', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
-    return { opened: true, evaluationId: ev.id, evaluation: ev, accessDecision: trace };
+    return { opened: true, durable: keptOpen.durable, evaluationId: ev.id, evaluation: ev, accessDecision: trace };
   },
 
   'foxxi.request_evaluation_enrollment': async (args) => {
@@ -4305,6 +4402,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const agentDid = args.agent_did as string;
     const team = args.team as string;
     if (!evaluationId || !agentDid || !team) return invalidArguments('evaluation_id, agent_did and team are required');
+    const unreadEvaluation = await fillEvaluation(callTenant(args), evaluationId);
+    if (unreadEvaluation) return unreadEvaluation;
     const c = evaluationRegistry.requestEnrollment(evaluationId, {
       agentDid,
       agentName: (args.agent_name as string) || agentDid,
@@ -4314,6 +4413,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
       requestedBy: ctx.webId,
     });
     if ('error' in c) return propagateRefusal(c, 'the evaluation registry declined this request');
+    const keptRequest = await keepEvaluation(callTenant(args), evaluationId);
+    if ('refusal' in keptRequest) return keptRequest.refusal;
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.request_evaluation_enrollment', decision: 'allow', appliedPolicies: ['cross-pod-delegation-request'] });
     return {
       requested: true, candidateId: c.candidateId, status: c.status,
@@ -4332,8 +4433,12 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const decision = args.decision as string;
     if (!evaluationId || !candidateId) return invalidArguments('evaluation_id and candidate_id are required');
     if (decision !== 'accept' && decision !== 'decline') return invalidArguments('decision must be accept | decline');
+    const unreadEvaluation = await fillEvaluation(callTenant(args), evaluationId);
+    if (unreadEvaluation) return unreadEvaluation;
     const c = evaluationRegistry.decide(evaluationId, candidateId, decision, ctx.webId);
     if ('error' in c) return propagateRefusal(c, 'the evaluation registry declined this request');
+    const keptDecision = await keepEvaluation(callTenant(args), evaluationId);
+    if ('refusal' in keptDecision) return keptDecision.refusal;
     const trace = emitAccessDecision({ ctx, tool: 'foxxi.decide_evaluation_candidate', decision: 'allow', appliedPolicies: ['agent-evaluation-owner'] });
     return {
       decided: true, candidateId: c.candidateId, status: c.status, agentDid: c.agentDid,
@@ -4351,6 +4456,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
     if (!evaluationId) return invalidArguments('evaluation_id is required');
+    const unreadEvaluation = await fillEvaluation(callTenant(args), evaluationId);
+    if (unreadEvaluation) return unreadEvaluation;
     const state = evaluationRegistry.get(evaluationId);
     if (!state) return notFound(`no evaluation ${evaluationId}`);
     // OWNER LOCK (round-47): read sibling of the round-42 decide() lock. A cohort's
@@ -4378,6 +4485,8 @@ const handlers: Record<string, (args: Record<string, unknown>) => Promise<unknow
     const evaluationRegistry = evaluationRegistryByTenant.for(callTenant(args));
     const evaluationId = args.evaluation_id as string;
     if (!evaluationId) return invalidArguments('evaluation_id is required');
+    const unreadEvaluation = await fillEvaluation(callTenant(args), evaluationId);
+    if (unreadEvaluation) return unreadEvaluation;
     const state = evaluationRegistry.get(evaluationId);
     if (!state) return notFound(`no evaluation ${evaluationId}`);
     // OWNER LOCK (round-47): compare returns full run evidence (trajectories, cost,
@@ -10375,6 +10484,19 @@ function appliedVoidsOf(label: string): Set<string> {
  * own pod, as the mesh sweep keeps them (under their lens, keyed by their label). Each partition is
  * looked in only if it exists, so reading makes none.
  */
+/** Bring what the pod keeps of a performer's recorded trajectories into the cache, before the read below. An unreadable one is left out. */
+async function fillRecordedApart(did: string, pod: string): Promise<void> {
+  if (!keptTrajectories.configured) return;
+  await Promise.all([...new Set([tenantIdOf(tenantPodUrl), tenantIdOf(pod)])].map(async (tenant) => {
+    // A partition is made only for a record that is kept: reading makes none (see below).
+    if (agentTrajectoriesByTenant.has(tenant) && agentTrajectoriesByTenant.for(tenant).has(did)) return;
+    const mark = keptTrajectories.urlOf(String(tenant), did);
+    if ((keptAbsentUntil.get(mark) ?? 0) > Date.now()) return;
+    const got = await keptTrajectories.get(String(tenant), did);
+    if (got.state === 'held') agentTrajectoriesByTenant.for(tenant).set(did, got.value);
+    else if (got.state === 'absent') keptAbsentUntil.set(mark, Date.now() + KEPT_ABSENT_MS);
+  }));
+}
 function trajectoriesRecordedApart(did: string, pod: string): AgentTrajectory[] {
   const label = actorForPod(pod, MESH_ACTOR_LABELS);
   const where: Array<[TenantId, string]> = [[tenantIdOf(tenantPodUrl), did], [tenantIdOf(pod), did], [lensTenantFor(label), label]];
@@ -10405,6 +10527,7 @@ async function workOfferFor(performer: { id: string; kind: 'human' | 'agent' }, 
     ...(w.record.observedBy ? { observedBy: w.record.observedBy } : {}),
     ...(w.steps ? { steps: w.steps } : {}),
   }));
+  await fillRecordedApart(performer.id, subjectPod);
   const elsewhere = trajectoriesRecordedApart(performer.id, subjectPod)
     .map(t => trajectoryAt(t, named.key))
     .filter((t): t is AgentTrajectory => t !== null);
@@ -11295,42 +11418,17 @@ const hostedPackagesTakenDown = takenDownPackages(process.env.FOXXI_HOSTED_PACKA
 for (const entry of hostedPackagesTakenDown.ignored) bridgeWarn(`[foxxi-bridge] FOXXI_HOSTED_PACKAGES_TAKEN_DOWN: "${entry}" is not a sha-256 (64 hex characters); it takes nothing down`);
 const hostedPackages = new HostedPackages({ podUrl: tenantPodUrl, describePackage: describeHostedPackage, takenDown: hostedPackagesTakenDown.shas });
 // Who brought each package (src/package-bringers.ts), kept on the tenant pod beside the packages.
-const PACKAGE_BRINGERS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/package-bringers.json` : '';
 const packageBringers = new PackageBringers();
-let packageBringersReadAt = 0;
-async function reloadPackageBringers(fresh = false): Promise<'loaded' | 'absent' | 'failed'> {
-  if (!PACKAGE_BRINGERS_RESOURCE) return 'absent';
-  if (!fresh && packageBringersReadAt && Date.now() - packageBringersReadAt <= 30_000) return 'loaded';
-  const read = await readDurableRegistry(
-    () => (globalThis.fetch as typeof fetch)(PACKAGE_BRINGERS_RESOURCE, { headers: { Accept: 'application/json' } }),
-    (json) => { packageBringers.load(json); },
-  );
-  if (read !== 'failed') packageBringersReadAt = Date.now();
-  return read;
-}
-async function writePackageBringersOnce(): Promise<boolean> {
-  if (!PACKAGE_BRINGERS_RESOURCE) return false;
-  if (!packageBringers.dirty) return true;
-  packageBringers.dirty = false;
-  try {
-    let covered: string[] = [];
-    const ok = await commitDurableRegistry({
-      resource: PACKAGE_BRINGERS_RESOURCE,
-      fetch: globalThis.fetch as typeof fetch,
-      load: (json) => { packageBringers.load(json); },
-      body: () => { covered = packageBringers.pendingForgotten(); return JSON.stringify(packageBringers); },
-    });
-    if (ok) { packageBringers.committed(covered); packageBringersReadAt = Date.now(); return true; }
-  } catch { /* tried again by the caller */ }
-  packageBringers.dirty = true;
-  return false;
-}
-let packageBringersWrite: Promise<boolean> = Promise.resolve(true);
-/** One write at a time (see writeOwnAssignments). True when the pod holds what this process holds. */
-function writePackageBringers(): Promise<boolean> {
-  packageBringersWrite = packageBringersWrite.then(writePackageBringersOnce, writePackageBringersOnce);
-  return packageBringersWrite;
-}
+// Sealed, as the assignments are: it names signers. Its first, clear copy (#1006) is read once and removed.
+const packageBringersFile = new SealedRegistryFile({
+  resource: tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/package-bringers.envelope.json` : '',
+  legacyResource: tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/package-bringers.json` : undefined,
+  key: bridgeEncryptionKeypair(), fetch: keptFetch, registry: packageBringers,
+  pending: () => packageBringers.pendingForgotten(), committed: (covered) => packageBringers.committed(covered),
+});
+const reloadPackageBringers = (fresh = false) => packageBringersFile.reload(fresh);
+/** One write at a time. True when the pod holds, sealed, what this process holds. */
+const writePackageBringers = (): Promise<boolean> => packageBringersFile.write();
 const persistPackageBringers = registryWriter(writePackageBringers);
 /**
  * One thing at a time for each package: keeping its bytes and recording who brought them, or
@@ -11462,6 +11560,7 @@ attachHostedPackageRoutes(app, {
   packages: hostedPackages,
   bridgeBaseUrl,
   outsidePrefixes: outsideAuPrefixes.prefixes,
+  takenDownByOperator: hostedPackagesTakenDown.shas.size,
   courseFor: async (sha) => {
     const courseId = `${bridgeBaseUrl}/scorm/packages/${sha}`;
     if (!getCmi5Course(DEFAULT_TENANT, courseId)) await restoreHostedPackage(courseId);
@@ -11862,6 +11961,7 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
     // Only trajectories that name that agent: the lookup also returns the mesh trajectory of the pod
     // it is given, which is the pod owner's activity under the pod's label, not the agent's (found by
     // Codex in review of #1005, where a person's own mesh activity was read as their agents').
+    await Promise.all(agents.map((a) => fillRecordedApart(a, learner.podUrl)));
     const recorded = [...new Set(agents.flatMap((a) => trajectoriesRecordedApart(a, learner.podUrl).filter((t) => t.agentDid === a)))];
     // What each agent's course record says of it (src/course-trajectory.ts): rebuilt from the
     // statements on each read, the newest registrations first, and stored nowhere.
@@ -11934,45 +12034,19 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
 // src/own-agent-assignments.ts. The registry is kept on the tenant pod beside the personal launch
 // links, read before each use that is more than 30 seconds stale, and written before the request is
 // answered, so an assignment that was acknowledged is one the pod holds (or the answer says not).
-const OWN_ASSIGNMENTS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/own-agent-assignments.json` : '';
 const ownAgentAssignments = new OwnAgentAssignments();
-let ownAssignmentsReadAt = 0;
-async function reloadOwnAssignments(): Promise<'loaded' | 'absent' | 'failed'> {
-  if (!OWN_ASSIGNMENTS_RESOURCE) return 'absent';
-  if (ownAssignmentsReadAt && Date.now() - ownAssignmentsReadAt <= 30_000) return 'loaded';
-  const read = await readDurableRegistry(
-    () => (globalThis.fetch as typeof fetch)(OWN_ASSIGNMENTS_RESOURCE, { headers: { Accept: 'application/json' } }),
-    (json) => { ownAgentAssignments.load(json); },
-  );
-  if (read !== 'failed') ownAssignmentsReadAt = Date.now();
-  return read;
-}
-/** True when the pod holds what this process holds. A failed read is not followed by a write. */
-async function writeOwnAssignmentsOnce(): Promise<boolean> {
-  if (!OWN_ASSIGNMENTS_RESOURCE) return false;
-  if (!ownAgentAssignments.dirty) return true;
-  ownAgentAssignments.dirty = false;
-  try {
-    // The withdrawals the written body covers are the ones pending when the body is made.
-    let covered: string[] = [];
-    const ok = await commitDurableRegistry({
-      resource: OWN_ASSIGNMENTS_RESOURCE,
-      fetch: globalThis.fetch as typeof fetch,
-      load: (json) => { ownAgentAssignments.load(json); },
-      body: () => { covered = ownAgentAssignments.pendingWithdrawals(); return JSON.stringify(ownAgentAssignments); },
-    });
-    if (ok) { ownAgentAssignments.committed(covered); ownAssignmentsReadAt = Date.now(); return true; }
-  } catch { /* tried again below */ }
-  ownAgentAssignments.dirty = true;
-  return false;
-}
-// One write at a time: each reads the pod's copy, merges and puts, and two interleaved would have
-// the later put carry a body made before the earlier one's change.
-let ownAssignmentsWrite: Promise<boolean> = Promise.resolve(true);
-function writeOwnAssignments(): Promise<boolean> {
-  ownAssignmentsWrite = ownAssignmentsWrite.then(writeOwnAssignmentsOnce, writeOwnAssignmentsOnce);
-  return ownAssignmentsWrite;
-}
+// Sealed: who assigned what to which agent is the person's, and the pod's resources are readable
+// by anyone with the address. It was first written in the clear (#1005); that copy is read once
+// and removed when the sealed one is written.
+const ownAssignmentsFile = new SealedRegistryFile({
+  resource: tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/own-agent-assignments.envelope.json` : '',
+  legacyResource: tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/own-agent-assignments.json` : undefined,
+  key: bridgeEncryptionKeypair(), fetch: keptFetch, registry: ownAgentAssignments,
+  pending: () => ownAgentAssignments.pendingWithdrawals(), committed: (covered) => ownAgentAssignments.committed(covered),
+});
+const reloadOwnAssignments = (fresh = false) => ownAssignmentsFile.reload(fresh);
+/** True when the pod holds, sealed, what this process holds. One write at a time; a failed read is not followed by a write. */
+const writeOwnAssignments = (): Promise<boolean> => ownAssignmentsFile.write();
 const persistOwnAssignments = registryWriter(writeOwnAssignments);
 
 // Signed by the person's wallet, or by an agent carrying the person's request (not one that says
