@@ -487,6 +487,7 @@ import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keep
 import type { StoredStatement } from '../src/statement-store.js';
 import { learnerFor, learnerKindFrom, pairStandings, type DelegationRead } from '../src/learning-beside.js';
 import { courseSteps, courseRecordRead, statementsOfRegistration, type CourseRegistrationRecord } from '../src/course-trajectory.js';
+import { OwnAgentAssignments, dueAtFrom } from '../src/own-agent-assignments.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, companionsOnCourse, delegatesLearningBeside, launchesOfPair, peersOnCourse, setPeerVisibility, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
 import { attachLiveCallRoute, liveCallServiceAsk } from '../src/cmi5-live-call.js';
@@ -11745,7 +11746,17 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
     const assigned = admin ? discoverAssignedCourses({ admin, learnerWebId: person }).enrollments : [];
     const launches = launchesOfPair(tenant, person);
     const agents = alone ? [learner.did] : [...new Set([...(learner.kind === 'agent' ? [learner.did] : []), ...delegatesLearningBeside(tenant, person)])];
-    const standings = pairStandings({ person, agents, assignments: assigned, launches, reader: { kind: learner.kind, id: learner.did }, alone });
+    // What the person assigned to their own agents (src/own-agent-assignments.ts). An agent reading
+    // as itself sees only its own; a failed read of the durable copy is said, not passed off as none.
+    const ownRead = alone ? 'loaded' as const : await reloadOwnAssignments();
+    const own = alone ? [] : (learner.kind === 'agent' ? ownAgentAssignments.forPair(person, learner.did) : ownAgentAssignments.forPerson(person));
+    for (const o of own) if (!agents.includes(o.agent)) agents.push(o.agent);
+    const standings = pairStandings({ person, agents, assignments: assigned, launches, reader: { kind: learner.kind, id: learner.did }, alone, ownAssignments: own });
+    // The agents' own recorded work, where there is any: the disposition read's proper source.
+    // Only trajectories that name that agent: the lookup also returns the mesh trajectory of the pod
+    // it is given, which is the pod owner's activity under the pod's label, not the agent's (found by
+    // Codex in review of #1005, where a person's own mesh activity was read as their agents').
+    const recorded = [...new Set(agents.flatMap((a) => trajectoriesRecordedApart(a, learner.podUrl).filter((t) => t.agentDid === a)))];
     // What each agent's course record says of it (src/course-trajectory.ts): rebuilt from the
     // statements on each read, the newest registrations first, and stored nowhere.
     const statements = getStatementStore(tenant);
@@ -11773,6 +11784,7 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
       kind: 'learning-beside', learner: learner.did, learnerKind: learner.kind, ...(alone ? {} : { person }),
       ...(learner.via ? { via: learner.via } : {}), ...(learner.beside ? { beside: learner.beside } : {}),
       assignmentsRead: admin !== null,
+      ...(alone ? {} : { ownAssignmentsRead: ownRead !== 'failed' }),
       courses: standings.map((c) => {
         const a = assigned.find((e) => e.courseId === c.courseId);
         return {
@@ -11786,12 +11798,122 @@ app.post('/agent/learning/beside', learningBesideRateLimit, async (req, res) => 
         ...(alone ? {} : { person }), agents,
         // What the agents' own course records say, read here for whoever can read this.
         ...(agents.length > 0 ? { courseExperience } : {}),
+        // The disposition of these agents from work they recorded themselves, read here so a pair in
+        // no tenant directory can have it. Course steps are left out of it on purpose (see the note).
+        ...(recorded.length > 0 ? { disposition: {
+          read: assessDisposition(recorded),
+          agentsWithRecordedWork: [...new Set(recorded.map((t) => t.agentDid))],
+          note: 'From trajectories these agents recorded of their own work. Their course steps are not counted in it: every one is Asserted, so adding them would lower the deliberation and exploration ratios by what a course record cannot hold. courseExperience is the read of those; the two are to be read side by side.',
+        } } : {}),
         // The pair is a team of agents to the tools that read one; nothing new reads it.
-        ...(agents.length > 0 ? { consult: { tool: 'foxxi.assess_agent_disposition', arguments: { agent_dids: agents }, note: 'A dispositional read of these agents from trajectories they recorded of their own work (foxxi.record_agent_trajectory). It is a tenant-directory tool: it answers a member of the directory, and 404 until a trajectory has been recorded. courseExperience above needs neither.' } } : {}),
+        ...(agents.length > 0 ? { consult: { tool: 'foxxi.assess_agent_disposition', arguments: { agent_dids: agents }, note: 'The same dispositional read with a team\'s probe portfolio folded in. It is a tenant-directory tool: it answers a member of the directory, and 404 until a trajectory has been recorded (foxxi.record_agent_trajectory). courseExperience, and disposition when any of these agents has recorded work, are read here and need neither.' } } : {}),
       },
       note: 'satisfied is this bridge\'s cmi5 LMS: a registration of that learner on the course met moveOn here. directoryStatus is the tenant directory\'s. courseExperience is each agent\'s own statements on its registrations here read as a trajectory (trajectory: true returns the steps): what it took, answered, retried, passed and failed. It does not say how the agent deliberates or explores, which a course record cannot show. peers lists learners of the same course on this bridge who launched with visible_to_peers true, and only to a learner who did too; reach one through the Interego inbox.',
     });
   } catch (err) { sendServerError(res, err, 'learning-beside-signed'); }
+});
+
+// ── A person assigns a course to their own agent ──────────────────────────────────────────────
+//
+// src/own-agent-assignments.ts. The registry is kept on the tenant pod beside the personal launch
+// links, read before each use that is more than 30 seconds stale, and written before the request is
+// answered, so an assignment that was acknowledged is one the pod holds (or the answer says not).
+const OWN_ASSIGNMENTS_RESOURCE = tenantPodUrl ? `${tenantPodUrl.replace(/\/$/, '')}/foxxi-lattice/own-agent-assignments.json` : '';
+const ownAgentAssignments = new OwnAgentAssignments();
+let ownAssignmentsReadAt = 0;
+async function reloadOwnAssignments(): Promise<'loaded' | 'absent' | 'failed'> {
+  if (!OWN_ASSIGNMENTS_RESOURCE) return 'absent';
+  if (ownAssignmentsReadAt && Date.now() - ownAssignmentsReadAt <= 30_000) return 'loaded';
+  const read = await readDurableRegistry(
+    () => (globalThis.fetch as typeof fetch)(OWN_ASSIGNMENTS_RESOURCE, { headers: { Accept: 'application/json' } }),
+    (json) => { ownAgentAssignments.load(json); },
+  );
+  if (read !== 'failed') ownAssignmentsReadAt = Date.now();
+  return read;
+}
+/** True when the pod holds what this process holds. A failed read is not followed by a write. */
+async function writeOwnAssignmentsOnce(): Promise<boolean> {
+  if (!OWN_ASSIGNMENTS_RESOURCE) return false;
+  if (!ownAgentAssignments.dirty) return true;
+  ownAgentAssignments.dirty = false;
+  try {
+    // The withdrawals the written body covers are the ones pending when the body is made.
+    let covered: string[] = [];
+    const ok = await commitDurableRegistry({
+      resource: OWN_ASSIGNMENTS_RESOURCE,
+      fetch: globalThis.fetch as typeof fetch,
+      load: (json) => { ownAgentAssignments.load(json); },
+      body: () => { covered = ownAgentAssignments.pendingWithdrawals(); return JSON.stringify(ownAgentAssignments); },
+    });
+    if (ok) { ownAgentAssignments.committed(covered); ownAssignmentsReadAt = Date.now(); return true; }
+  } catch { /* tried again below */ }
+  ownAgentAssignments.dirty = true;
+  return false;
+}
+// One write at a time: each reads the pod's copy, merges and puts, and two interleaved would have
+// the later put carry a body made before the earlier one's change.
+let ownAssignmentsWrite: Promise<boolean> = Promise.resolve(true);
+function writeOwnAssignments(): Promise<boolean> {
+  ownAssignmentsWrite = ownAssignmentsWrite.then(writeOwnAssignmentsOnce, writeOwnAssignmentsOnce);
+  return ownAssignmentsWrite;
+}
+const persistOwnAssignments = registryWriter(writeOwnAssignments);
+
+// Signed by the person's wallet, or by an agent carrying the person's request (not one that says
+// learner_kind "agent": an agent does not assign to itself). `to_agent` must be an agent whose
+// delegation names the person; `withdraw: true` takes the assignment back.
+const assignToAgentRateLimit = forwardedRateLimit({ windowMs: 60_000, limit: 20, identifier: 'assign-to-own-agent' });
+app.post('/agent/learning/assign', assignToAgentRateLimit, async (req, res) => {
+  try {
+    const auth = await verifyDelegatedCaller(req.body);
+    if (!auth.ok) { res.status(auth.status).json({ error: auth.error }); return; }
+    if (auth.payload.learner_kind !== undefined && auth.payload.learner_kind !== 'human') { res.status(400).json({ error: 'an assignment is made by the person, or by an agent carrying their request; leave learner_kind out' }); return; }
+    const person = await signedLearner(auth);
+    const toAgent = typeof auth.payload.to_agent === 'string' ? auth.payload.to_agent.trim() : '';
+    if (!toAgent) { res.status(400).json({ error: 'to_agent is required: the DID of an agent holding your delegation' }); return; }
+    const courseId = typeof auth.payload.course_id === 'string' ? auth.payload.course_id.trim() : '';
+    if (!courseId) { res.status(400).json({ error: 'course_id is required' }); return; }
+    const withdraw = auth.payload.withdraw;
+    if (withdraw !== undefined && typeof withdraw !== 'boolean') { res.status(400).json({ error: 'withdraw is true or false' }); return; }
+    const due = dueAtFrom(auth.payload.due_at);
+    if (!due.ok) { res.status(400).json({ error: due.error }); return; }
+    if (toAgent === person.did) { res.status(400).json({ error: 'an assignment is to an agent of yours, not to yourself' }); return; }
+    // Whose agent: its own delegation has to name this person, and be in force.
+    // `to_agent` is an identity the request names, not its signer, so its pod is asked for the way
+    // any named identity's is: one with no pod on this store has no delegation here to read.
+    const agentPod = namedSubjectPodUrl(toAgent);
+    if (!agentPod) { res.status(403).json({ error: 'that agent holds no delegation naming you; a person assigns only to their own agents' }); return; }
+    let named: string | undefined; let expires: string | undefined;
+    try {
+      const vc = await readDelegationCredential(agentPod, toAgent as IRI, { fetch: guardedFetchFn(globalThis.fetch) as never });
+      const by = vc?.credentialSubject?.delegatedBy ?? vc?.issuer;
+      named = by ? String(by) : undefined; expires = vc?.expirationDate;
+    } catch { res.status(503).json({ error: 'that agent\'s delegation could not be read just now, so nothing was assigned; try again' }); return; }
+    if (!named || named.toLowerCase() !== person.did.toLowerCase()) { res.status(403).json({ error: 'that agent holds no delegation naming you; a person assigns only to their own agents' }); return; }
+    if (expires && Date.parse(expires) <= Date.now()) { res.status(403).json({ error: 'that agent\'s delegation from you has expired' }); return; }
+    if ((await reloadOwnAssignments()) === 'failed') { res.status(503).json({ error: 'the assignments already kept could not be read just now, so nothing was changed; try again' }); return; }
+    const pair = { person: person.did, agent: toAgent, courseId };
+    if (withdraw === true) {
+      const had = ownAgentAssignments.withdraw(pair);
+      const durable = had ? await writeOwnAssignments() : true;
+      if (!durable) persistOwnAssignments();
+      res.json({ kind: 'own-agent-assignment', decision: had ? 'withdrawn' : 'none-to-withdraw', ...pair, durable, ...(durable ? {} : { note: 'Withdrawn here, and not yet on the pod: it is being written again. Until it is, a restart would bring the assignment back.' }) });
+      return;
+    }
+    const cmi5 = await publishedCmi5Course(courseId);
+    const scorm = cmi5 ? null : await resolveCourseForRead(courseId);
+    if (!cmi5 && !scorm) { res.status(404).json({ error: `no course ${courseId} is published or played on this bridge` }); return; }
+    const title = (cmi5 as { title?: unknown } | null)?.title ?? scorm?.title;
+    const made = ownAgentAssignments.assign({ ...pair, ...(typeof title === 'string' && title ? { courseTitle: title } : {}), ...(due.dueAt ? { dueAt: due.dueAt } : {}), ...(person.via ? { via: person.via } : {}) }, Date.now());
+    if ('refused' in made) { res.status(429).json({ error: made.refused }); return; }
+    const durable = await writeOwnAssignments();
+    if (!durable) persistOwnAssignments();
+    res.json({
+      kind: 'own-agent-assignment', decision: made.created ? 'assigned' : 'updated', assignment: made.assignment, durable,
+      read: { affordance: actionUrl('urn:iep:action:foxxi:learning-beside-signed'), target: `${bridgeBaseUrl}/agent/learning/beside` },
+      note: `${durable ? 'Kept on the pod.' : 'Kept here, and not yet on the pod: it is being written again, and until it is a restart would lose it.'} The agent sees it on its own read (learner_kind "agent") as assignedByPerson. It is your instruction to your own agent: it enrols nobody in a directory and gives the agent no access it lacked.`,
+    });
+  } catch (err) { sendServerError(res, err, 'assign-to-own-agent-signed'); }
 });
 
 // ── A reusable personal launch link ───────────────────────────────────────────────────────────

@@ -390,6 +390,8 @@ describe('every call of the pod resolver in bridge/server.ts is one somebody dec
     ['const pod = written || resolveSubjectPodUrl(did);', 'caller'],
     ['const authorPod = selfBoundPod(authorDid, typeof subjectPodUrl === \'string\' ? subjectPodUrl : undefined);', 'caller', 2],
     ['const pod = namedSubjectPodUrl(learnerDid);', 'named', 2],
+    // The agent a person assigns a course to (POST /agent/learning/assign): named by the request, and one with no pod here has no delegation to read, so the assignment is refused.
+    ['const agentPod = namedSubjectPodUrl(toAgent);', 'named'],
     ['const pod = resolveSubjectPodUrl(auth.callerDid);', 'caller'],
     ['const statements = await learnerStatementsFor(resolveSubjectPodUrl(auth.callerDid), auth.callerDid);', 'caller'],
     ['const pod = resolveSubjectPodUrl(learnerDid);', 'caller'],
@@ -408,7 +410,8 @@ describe('every call of the pod resolver in bridge/server.ts is one somebody dec
     // No call is counted under two entries, so the list accounts for every call exactly once.
     expect(DECIDED.reduce((sum, [, , times = 1]) => sum + times, 0)).toBe(calls.length);
     // 56 since 2026-11-25: a delegate learning as itself reads its delegation and keeps its record on the signer's pod (signedLearnerOfKind).
-    expect(calls.length).toBe(56);
+    // 57 since the same day: the agent a person assigns a course to is a named identity (POST /agent/learning/assign).
+    expect(calls.length).toBe(57);
   });
 
   it('the places a guest\'s own statements reach ask the named resolver, and the statement\'s owner is decided in src', () => {

@@ -259,15 +259,29 @@ registrations on that course, and no one else's.
   delegate cannot drop its person this way: it is beside whoever its
   delegation names, or refused.
 
+- **The two records, side by side.** When any of the pair's agents has
+  recorded work of its own, the pair read gives `team.disposition`: the
+  dispositional read of that work, for a pair in no tenant directory
+  (the `foxxi.assess_agent_disposition` tool answers directory members
+  only). Course steps are deliberately not counted in it. They are all
+  `Asserted`, so adding them would lower the deliberation and
+  exploration ratios by what a course record cannot hold; they are read
+  as `courseExperience` beside it.
+- **A person assigns to their own agent**
+  (`POST /agent/learning/assign`, `src/own-agent-assignments.ts`). The
+  agent named must hold a delegation in force naming the signer. The
+  assignment is written to the pod before the answer is given, and
+  shows on the pair read on that agent's entry as `assignedByPerson`.
+  It is the person's instruction to their delegate: it enrols nobody
+  in a directory and grants no access. `withdraw: true` takes it back.
+
 **Designed, for later.**
 
-- **Composing the two records in the consult.** `courseExperience` is
-  read on the pair route; `foxxi.assess_agent_disposition` still reads
-  only recorded trajectories, and only for a tenant-directory member.
-  Feeding it the course steps alongside recorded work is not wired.
-- **Assigning to an agent from a learner route.** A directory admin can
-  assign a course to an agent's id like any learner's. Nothing lets a
-  person assign a course to their own agent without the directory.
+- **Recorded trajectories are held in memory.** The disposition read is
+  only as durable as the store it reads, which a restart empties
+  (docs/operations/primary-state-rollout-hold.md).
+- **Telling the agent.** An assignment waits for the agent's next read.
+  Nothing sends it to the agent's inbox.
 
 ## 7. Built now, and designed for later
 

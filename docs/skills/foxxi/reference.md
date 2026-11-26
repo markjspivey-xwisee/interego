@@ -1,6 +1,6 @@
 # Foxxi content intelligence, learner surface: every affordance
 
-Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 100 affordances.
+Derived from `applications/foxxi-content-intelligence/affordances.ts` by `tools/build-skills.ts`; the skill is [SKILL.md](SKILL.md). 101 affordances.
 
 ## `foxxi.i2idlx_classify`
 
@@ -524,6 +524,21 @@ One read for a person and the agents learning beside them, signed by your wallet
 | Input | Type | Required | Description |
 | --- | --- | --- | --- |
 | `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, learner_kind?, trajectory? }): optionally learner_kind "agent" for a delegate reading as itself beside its person, or for a wallet that is an agent with no person; optionally trajectory: true to return each agent's course record as trajectory steps. |
+| `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
+
+## `foxxi.assign_to_own_agent_signed`
+
+**Assign a course to one of my own agents**
+
+A person assigns a course on this bridge to an agent that holds their delegation, or takes the assignment back, signed by their wallet or by an agent carrying their request. The agent named must hold a delegation in force that names the signer as its person; anyone else's agent is refused (403). The course is a cmi5 course published here or one the SCORM engine plays. The assignment is kept on the pod before the answer is given (durable says whether it was), and shows on the pair read (foxxi.learning_beside_signed) on that agent's entry as assignedByPerson, to the person and to the agent reading as itself. It is the person's instruction to their own agent: it enrols nobody in a tenant directory and gives the agent no access it lacked. Assigning again changes the due date and keeps when it was first assigned.
+
+- Action: `urn:iep:action:foxxi:assign-to-own-agent-signed`
+- HTTP: `POST https://foxxi-bridge.interego.xwisee.com/agent/learning/assign` (served by a bespoke route; not through the bridge's MCP endpoint)
+- Media type: `application/json`
+
+| Input | Type | Required | Description |
+| --- | --- | --- | --- |
+| `_signed_payload` | string | yes | JSON.stringify({ agent_id, timestamp, to_agent, course_id, due_at?, withdraw? }): to_agent is the DID of an agent holding your delegation; due_at an ISO 8601 instant; withdraw: true takes the assignment back. |
 | `_signature` | string | yes | sign_request signature (secp256k1 over sha256 of _signed_payload). |
 
 ## `foxxi.earned_credentials_signed`
