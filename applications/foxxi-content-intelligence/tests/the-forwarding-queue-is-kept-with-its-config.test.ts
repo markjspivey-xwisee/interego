@@ -131,8 +131,11 @@ describe('the bridge', () => {
   // next while one is in flight), and the older one landing last put back a queue already sent.
   it('writes one owner\'s config one write at a time, each taking the config at its turn', () => {
     const persist = src.slice(src.indexOf('function persistOwnerForwarding'), src.indexOf('const forwardingQueuesToKeep'));
-    expect(persist).toContain("const turn = (forwardingWrites.get(key) ?? Promise.resolve(true)).then(async () => {");
-    expect(persist.indexOf('exportForwardingConfig(tenant)')).toBeGreaterThan(persist.indexOf('.then(async () => {'));
+    // 2026-11-27: the chain became "one running, at most one waiting", so a burst of failed
+    // deliveries shares a write. Still one at a time, and still taking the config at its turn.
+    expect(persist).toContain('const waiting: Promise<boolean> = state.running.then(() => { state.running = waiting; state.waiting = undefined; return write(); });');
+    expect(persist).toContain('if (state.waiting) return state.waiting;');
+    expect(persist.indexOf('exportForwardingConfig(tenant)')).toBeGreaterThan(persist.indexOf('const write = async (): Promise<boolean> => {'));
   });
   // ★ Review of #1008. A lens name does not always say the pod (an actor label, another origin):
   // the queue was written to the pod the name said, not the one the owner's config is on.
@@ -148,5 +151,7 @@ describe('the bridge', () => {
     expect(wire).toContain('const keepForwardingQueues = registryWriter(async () => {');
     expect(wire).toContain('if (ownerPod && !(await persistOwnerForwarding(tenant, ownerPod))) forwardingQueuesToKeep.add(tenant);');
     expect(wire).toContain('keepForwardingQueues();');
+    // 2026-11-27: written at once and waited for; the debounced writer is only the retry.
+    expect(wire).toContain('if (await persistOwnerForwarding(tenant, ownerPod)) return;');
   });
 });

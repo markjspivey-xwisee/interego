@@ -384,8 +384,10 @@ describe('the bridge', () => {
     expect(hydrate).toContain('!courseEnrollmentReg.has(key)');
     // The rollup waits for the snapshot, and marks it when it says something new.
     expect(lms).toMatch(/await whenCmi5Ready\(\);\n  const key = `\$\{tenant\}\|\$\{course\.id\}\|\$\{learner\.id\}`;/);
-    expect(lms).toContain('emitted.add(course.id); cmi5PodDirty();');
-    expect(lms).toContain('courseEnrollmentReg.set(key, reg); cmi5PodDirty(); }');
+    // 2026-11-27: these were `cmi5PodDirty()`, a write two seconds later that nothing waited for.
+    // The rollup now waits for the write (tests/a-change-is-written-before-it-is-answered.test.ts).
+    expect(lms).toContain("emitted.add(course.id); await keepSnapshot('cmi5');");
+    expect(lms).toContain("courseEnrollmentReg.set(key, reg); await keepSnapshot('cmi5'); }");
   });
 
   it('settles each registry that was once in the clear at start, and retries', () => {

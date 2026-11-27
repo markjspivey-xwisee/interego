@@ -288,20 +288,19 @@ function snapshotGraph(args: {
   return lines.join('\n');
 }
 
-async function doPublish(reg: SnapshotRegistration): Promise<void> {
+async function publishOnce(reg: SnapshotRegistration): Promise<SnapshotKept> {
   const config = reg.config === undefined ? podConfig() : reg.config;
-  if (!config) return;
+  if (!config) return 'unconfigured';
   let payload: unknown;
   try { payload = reg.collect(); } catch (err) {
     console.error(`[pod-snapshot/${reg.surface}] collect failed:`, (err as Error).message);
-    return;
+    return 'not-kept';
   }
   // Skip empty payloads. (e.g. surface has no live state yet.)
-  if (payload === null || payload === undefined) return;
+  if (payload === null || payload === undefined) return 'kept';
   if (reg.immutableLatest) {
-    try { await publishImmutableLatest(reg, payload, config); }
-    catch (err) { console.error(`[pod-snapshot/${reg.surface}] publish failed:`, (err as Error).message); }
-    return;
+    try { await publishImmutableLatest(reg, payload, config); return 'kept'; }
+    catch (err) { console.error(`[pod-snapshot/${reg.surface}] publish failed:`, (err as Error).message); return 'not-kept'; }
   }
   // A snapshot is state about people. It goes to the pod sealed, or not at all.
   const sealKey = config.sealKey;
@@ -310,7 +309,7 @@ async function doPublish(reg: SnapshotRegistration): Promise<void> {
       unsealedWarned.add(reg.surface);
       process.stderr.write(`[pod-snapshot/${reg.surface}] not written: this bridge has no key to seal it with, so its state will not survive a restart\n`);
     }
-    return;
+    return 'unconfigured';
   }
   const slug = `${reg.surface}-snapshot`;
   const graphIri = `urn:foxxi:${reg.surface}-snapshot:v${reg.version}` as IRI;
@@ -350,10 +349,49 @@ async function doPublish(reg: SnapshotRegistration): Promise<void> {
     reg.lastPublishedAt = Date.now();
     reg.lastPublishedDescriptorIri = descriptorIri;
     reg.version += 1;
+    return 'kept';
   } catch (err) {
     console.error(`[pod-snapshot/${reg.surface}] publish failed:`, (err as Error).message);
+    return 'not-kept';
   }
 }
+
+/**
+ * Whether the pod holds a surface's state as it stood when its write began. `unconfigured` is a
+ * bridge with no pod or no key to seal with: nothing is kept there, by design, and it is not a
+ * failure of this write.
+ */
+export type SnapshotKept = 'kept' | 'not-kept' | 'unconfigured';
+
+/**
+ * One write of a surface at a time, each collecting the state when its turn comes. The debounce
+ * timer and a caller that waits (`keepSnapshot`) used to be able to publish the same surface at
+ * once, both under one version number, and the older one could land last.
+ *
+ * A caller that arrives while a write is waiting for its turn shares that write: it has not
+ * collected yet, so it will carry the caller's change.
+ */
+const writing = new WeakMap<SnapshotRegistration, { running: Promise<SnapshotKept>; waiting?: Promise<SnapshotKept> }>();
+function doPublish(reg: SnapshotRegistration): Promise<SnapshotKept> {
+  const state = writing.get(reg);
+  if (!state) {
+    const running = publishOnce(reg).catch((): SnapshotKept => 'not-kept');
+    const mine = { running } as { running: Promise<SnapshotKept>; waiting?: Promise<SnapshotKept> };
+    writing.set(reg, mine);
+    void running.then(() => { if (writing.get(reg) === mine && !mine.waiting) writing.delete(reg); });
+    return running;
+  }
+  if (state.waiting) return state.waiting;
+  const waiting: Promise<SnapshotKept> = state.running.then(() => {
+    state.running = waiting; state.waiting = undefined;
+    return publishOnce(reg).catch((): SnapshotKept => 'not-kept');
+  });
+  state.waiting = waiting;
+  void waiting.then(() => { if (writing.get(reg) === state && state.running === waiting && !state.waiting) writing.delete(reg); });
+  return waiting;
+}
+
+
 
 /**
  * Register a snapshot collector for a surface. The collector should be
@@ -414,12 +452,26 @@ export function dirty(surface: string): void {
  * and for graceful shutdown.
  */
 export async function flushAll(): Promise<void> {
-  const promises: Array<Promise<void>> = [];
+  const promises: Array<Promise<unknown>> = [];
   for (const reg of registry.values()) {
     if (reg.scheduled) { clearTimeout(reg.scheduled); reg.scheduled = null; }
     promises.push(doPublish(reg));
   }
   await Promise.all(promises);
+}
+
+/**
+ * Write a surface now and say whether the pod took it. For a caller about to answer for a change:
+ * `dirty` writes two seconds later and tells nobody. A write the pod does not take is tried again
+ * on the debounce, so the caller's `not-kept` is true now and may stop being true.
+ */
+export async function keepSnapshot(surface: string): Promise<SnapshotKept> {
+  const reg = registry.get(surface);
+  if (!reg) return 'unconfigured';
+  if (reg.scheduled) { clearTimeout(reg.scheduled); reg.scheduled = null; }
+  const kept = await doPublish(reg);
+  if (kept === 'not-kept') dirty(surface);
+  return kept;
 }
 
 /** Flush one surface without touching another subsystem's registered collectors. */
