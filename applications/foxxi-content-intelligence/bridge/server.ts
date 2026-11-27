@@ -9873,22 +9873,33 @@ function ownerPodOfLens(tenant: TenantId): string | undefined {
  * bridge key: nothing was kept. Writes of one owner's config go one at a time, each taking the
  * config as it stands when its turn comes, so an older write cannot land after a newer one.
  */
-const forwardingWrites = new Map<string, Promise<boolean>>();
+const forwardingWrites = new Map<string, { running: Promise<boolean>; waiting?: Promise<boolean> }>();
 function persistOwnerForwarding(tenant: TenantId, ownerPod: string): Promise<boolean> {
   const key = String(tenant);
-  const turn = (forwardingWrites.get(key) ?? Promise.resolve(true)).then(async () => {
+  const write = async (): Promise<boolean> => {
     const kp = bridgeEncryptionKeypair();
     if (!kp) return false;
     try { await persistForwardingConfig({ ownerPod, blob: exportForwardingConfig(tenant), bridgeKp: kp }); return true; }
     catch (e) { bridgeWarn('[foxxi-forward][persist]', (e as Error).message); return false; }
-  });
-  forwardingWrites.set(key, turn);
-  void turn.then(() => { if (forwardingWrites.get(key) === turn) forwardingWrites.delete(key); });
-  return turn;
+  };
+  const state = forwardingWrites.get(key);
+  if (!state) {
+    const mine: { running: Promise<boolean>; waiting?: Promise<boolean> } = { running: write() };
+    forwardingWrites.set(key, mine);
+    void mine.running.then(() => { if (forwardingWrites.get(key) === mine && !mine.waiting) forwardingWrites.delete(key); });
+    return mine.running;
+  }
+  // A write waiting for its turn has not taken the config yet: it will carry this change too.
+  if (state.waiting) return state.waiting;
+  const waiting: Promise<boolean> = state.running.then(() => { state.running = waiting; state.waiting = undefined; return write(); });
+  state.waiting = waiting;
+  void waiting.then(() => { if (forwardingWrites.get(key) === state && state.running === waiting && !state.waiting) forwardingWrites.delete(key); });
+  return waiting;
 }
-// The queue of statements a target did not take is kept with the config: when it changes, the
-// owner's config is written again soon (changes within two seconds share a write), and a write the
-// pod does not take is tried again with backoff.
+// The queue of statements a target did not take is kept with the config. When it changes the
+// owner's config is written at once and the delivery that changed it waits for that write
+// (2026-11-27; it was written two seconds later, unwaited). A write the pod does not take is tried
+// again with backoff.
 const forwardingQueuesToKeep = new Set<TenantId>();
 const keepForwardingQueues = registryWriter(async () => {
   const due = [...forwardingQueuesToKeep];
@@ -9899,8 +9910,10 @@ const keepForwardingQueues = registryWriter(async () => {
   }
   return forwardingQueuesToKeep.size === 0;
 });
-onForwardingQueueChange((tenant) => {
-  if (!ownerPodOfLens(tenant) || !bridgeEncryptionKeypair()) return;
+onForwardingQueueChange(async (tenant) => {
+  const ownerPod = ownerPodOfLens(tenant);
+  if (!ownerPod || !bridgeEncryptionKeypair()) return;
+  if (await persistOwnerForwarding(tenant, ownerPod)) return;
   if (forwardingQueuesToKeep.size >= 10_000) return;
   forwardingQueuesToKeep.add(tenant);
   keepForwardingQueues();

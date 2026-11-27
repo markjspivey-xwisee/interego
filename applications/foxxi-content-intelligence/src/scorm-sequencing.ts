@@ -1046,7 +1046,7 @@ function retainSession(id: string, s: SeqSession): void {
 // The pod becomes the durable record; hydration restores all sessions
 // on bridge startup.
 import {
-  registerSnapshot, dirty as markScormDirty, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
+  registerSnapshot, keepSnapshot, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
 } from './pod-snapshot-publisher.js';
 /**
  * A session as it is kept: the activity tree without its parent links, the two Maps as entries,
@@ -1131,8 +1131,18 @@ async function hydrateScormFromPod(): Promise<void> {
   }
 }
 registerSnapshot({ surface: 'scorm', typeIri: FOXXI_SNAPSHOT_TYPES.ScormSessions, collect: collectScormSnapshot });
-void hydrateScormFromPod();
-const scormPodDirty = (): void => markScormDirty('scorm');
+/** Settles once the sessions kept before this process started have been read. It never rejects. */
+const scormReady: Promise<void> = hydrateScormFromPod().catch(() => undefined);
+/**
+ * ★ A SESSION'S STEP IS WRITTEN BEFORE IT IS ANSWERED (2026-11-27).
+ *
+ * The three routes below marked the surface dirty and answered: the write came two seconds later,
+ * if the process was still there, and its failure was told to nobody. They now wait for the write
+ * and say `sessionKept`. A step the pod does not take is not undone (the engine has processed
+ * it); the answer says the pod does not hold it. `unconfigured` (no pod, or no key to seal with)
+ * is reported as not kept as well: nothing outside this process holds the session.
+ */
+const keepScormSessions = async (): Promise<boolean> => (await keepSnapshot('scorm')) === 'kept';
 
 /** Attach the SCORM 2004 sequencing runtime routes. */
 export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl: string }): void {
@@ -1142,7 +1152,7 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
   });
 
   // Create a sequencing session from an imsmanifest.xml.
-  app.post('/scorm/sequencing/session', xmlBody, (req: Request, res: Response) => {
+  app.post('/scorm/sequencing/session', xmlBody, async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
     const xml = typeof req.body === 'string' ? req.body
@@ -1156,19 +1166,23 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
     let tree: ScormActivityTree;
     try { tree = parseManifest(xml); }
     catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
+    // The write below is of every session this process holds. Before the kept ones have been read
+    // that is not all of them, and the write would replace them on the pod (review of #1009).
+    await scormReady;
     const session = createSession(tenant, tree);
     retainSession(session.id, session);
-    scormPodDirty();
+    const sessionKept = await keepScormSessions();
     res.status(200).json({
-      created: true,
+      created: true, sessionKept,
       ...sessionView(session),
       note: 'POST /scorm/sequencing/{id}/navigate with { "request": "start" } to begin. The engine enforces control modes, sequencing rules, limit conditions and rollup.',
     });
   });
 
   // Process a navigation request.
-  app.post('/scorm/sequencing/:session/navigate', (req: Request, res: Response) => {
+  app.post('/scorm/sequencing/:session/navigate', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    await scormReady; // a session kept before a restart is not "no session" while it is being read
     const session = sessions.get(String(req.params.session ?? ''));
     if (!session) { res.status(404).json({ error: 'no sequencing session with that id' }); return; }
     const body = (req.body ?? {}) as { request?: string; target?: string };
@@ -1179,23 +1193,25 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
       return;
     }
     const result = processNavigation(session, request, body.target);
-    scormPodDirty();
-    res.status(result.ok ? 200 : 409).json({ ...result, currentActivity: session.current?.id ?? null });
+    const sessionKept = await keepScormSessions();
+    res.status(result.ok ? 200 : 409).json({ ...result, currentActivity: session.current?.id ?? null, sessionKept });
   });
 
   // Commit SCO run-time tracking into the sequencing session.
-  app.post('/scorm/sequencing/:session/commit', (req: Request, res: Response) => {
+  app.post('/scorm/sequencing/:session/commit', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    await scormReady;
     const session = sessions.get(String(req.params.session ?? ''));
     if (!session) { res.status(404).json({ error: 'no sequencing session with that id' }); return; }
     const result = commitTracking(session, (req.body ?? {}) as TrackingUpdate);
-    scormPodDirty();
-    res.status(result.ok ? 200 : 409).json(result);
+    const sessionKept = await keepScormSessions();
+    res.status(result.ok ? 200 : 409).json({ ...result, sessionKept });
   });
 
   // Inspect a sequencing session.
-  app.get('/scorm/sequencing/:session', (req: Request, res: Response) => {
+  app.get('/scorm/sequencing/:session', async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
+    await scormReady;
     const session = sessions.get(String(req.params.session ?? ''));
     if (!session) { res.status(404).json({ error: 'no sequencing session with that id' }); return; }
     res.status(200).json(sessionView(session));
