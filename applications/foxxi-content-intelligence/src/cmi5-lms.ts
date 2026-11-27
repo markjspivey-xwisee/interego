@@ -251,7 +251,7 @@ const satisfiedAus = new Map<TenantId, Map<string, Set<string>>>();
 // Hydration on startup restores both maps so cmi5 launches survive
 // container restarts.
 import {
-  registerSnapshot, dirty as markCmi5Dirty, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
+  registerSnapshot, dirty as markCmi5Dirty, keepSnapshot, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
 } from './pod-snapshot-publisher.js';
 /** Per tenant|course|learner — the block/course ids already emitted `satisfied`. */
 const rollupEmitted = new Map<string, Set<string>>();
@@ -415,7 +415,12 @@ async function rollupCourseUnlocked(
   let emitted = rollupEmitted.get(key);
   if (!emitted) { emitted = new Set(); rollupEmitted.set(key, emitted); }
   let reg = courseEnrollmentReg.get(key);
-  if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); cmi5PodDirty(); }
+  // ★ WHAT THE ROLLUP SAYS IS WRITTEN BEFORE IT RETURNS (2026-11-27). The registration it speaks
+  // under is written before the first statement carries it, and each "already said" as soon as it
+  // is said: these were marked dirty and written two seconds later, so a process that stopped in
+  // between said `satisfied` again after its restart, under another registration. A write the pod
+  // does not take is tried again on the debounce (keepSnapshot); the statement is not withheld.
+  if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); await keepSnapshot('cmi5'); }
 
   const emitSatisfied = async (activityId: string): Promise<void> => {
     await emit(buildCmi5Statement({
@@ -433,14 +438,14 @@ async function rollupCourseUnlocked(
     const ids = blockAuIds(block);
     if (ids.length > 0 && ids.every(id => satisfied.has(id)) && !emitted.has(block.id)) {
       await emitSatisfied(block.id);
-      emitted.add(block.id); cmi5PodDirty();
+      emitted.add(block.id); await keepSnapshot('cmi5');
     }
   }
   // The course is satisfied once every AU is.
   const allAus = flatAus(course).map(a => a.id);
   if (allAus.length > 0 && allAus.every(id => satisfied.has(id)) && !emitted.has(course.id)) {
     await emitSatisfied(course.id);
-    emitted.add(course.id); cmi5PodDirty();
+    emitted.add(course.id); await keepSnapshot('cmi5');
   }
 }
 
