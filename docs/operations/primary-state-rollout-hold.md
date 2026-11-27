@@ -27,6 +27,14 @@ Source change, not a statement about records in any running process.
 - `xapi-attachments`: when the statement store is the native Interego store, attachment bytes commit with their statement through `NativeInteregoLrsStore.putWithAttachments` and are read back from it; the per-process map is used only when the store is not native (`putStatementWithAttachments` in `src/xapi-lrs.ts`). Whether a given deployment runs native is a fact about that deployment's configuration, not about this source.
 - Separately, three registries were plain JSON on the pod, readable by anyone with the address: a person's assignments to their own agents and who brought which package (added 2026-11-25 and 26), and the personal launch links (which name each link's learner, pod and course). All three are now sealed. At start the bridge reads each clear copy, writes it sealed, removes the clear one, and keeps trying until it is gone. `course-authors.json` and `content-locations.json` in the same folder are still plain and were not changed.
 
+## Status note, 2026-11-27: four stores move to the native commit path
+
+Source change, not a statement about records in any running process.
+
+- `native-trajectories`, `performance-probes`, `evaluation-workflow` and `agent-scorm-attempts` are committed through the native record store where the tenant's store is native (`applications/foxxi-content-intelligence/src/kept-records.ts`): an encrypted artifact under the tenant, published by the conditional head commit a statement uses. Their sealed pod records of 2026-11-26 are read once, committed natively and removed.
+- Evidence: the routing against a stand-in; the real native client, encryption and resource CAS over a local engine with two database instances; and one case in `native-lrs-store.test.ts` over the actual CSS and PostgreSQL engine across a storage process restart, which CI requires.
+- Not moved: `scorm-sequencing-sessions` and `cmi5-rollup-dedup` (whole-surface sealed snapshots), `forwarding-config` and `forwarding-queue` (on the owner's own pod), `course-author-index`, and the three sealed registries.
+
 ## Exact affected service scope
 
 For the earlier candidate, the existing deployment-scope tool and observed live image pins reported these **12** affected services. Identity and acme-id were outside that measured candidate. Changes to shared native storage require a fresh scope calculation; this historical list is not a deployment allowlist for the replacement.

@@ -305,6 +305,7 @@ import { persistForwardingConfig, loadForwardingConfig, readForwardingConfig } f
 import { bridgeEncryptionKeypair } from '../src/foundation-holon-altitude.js';
 import { EvaluationRegistry, isEvaluationState, type CandidateRun, type EvaluationCandidate, type EvaluationState } from '../src/agent-evaluation.js';
 import { SealedPodMap, SealedRegistryFile, type SealedFetch } from '../src/sealed-store.js';
+import { KeptRecords } from '../src/kept-records.js';
 import { comparePortfolio, type CandidateEvidence } from '../src/agent-portfolio.js';
 import { DEFAULT_TENANT, TenantPartition, tenantIdOf, type TenantId } from '../src/tenant-context.js';
 
@@ -402,9 +403,17 @@ void hydrateBridgeStateFromPod();
 const keptFetch: SealedFetch = (url, init) => (globalThis.fetch as unknown as SealedFetch)(url, init);
 const keptBase = (surface: string): string => (process.env.FOXXI_TENANT_POD_URL ? `${process.env.FOXXI_TENANT_POD_URL.replace(/\/$/, '')}/foxxi-lattice/kept/${surface}/` : '');
 const isTrajectory = (v: unknown): v is AgentTrajectory => !!v && typeof (v as AgentTrajectory).agentDid === 'string' && Array.isArray((v as AgentTrajectory).steps);
-const keptTrajectories = new SealedPodMap<AgentTrajectory>({ base: keptBase('trajectories'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isTrajectory });
-const keptProbes = new SealedPodMap<PerformanceProbe[]>({ base: keptBase('probes'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: (v): v is PerformanceProbe[] => Array.isArray(v) });
-const keptEvaluations = new SealedPodMap<EvaluationState>({ base: keptBase('evaluations'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isEvaluationState });
+// Where a tenant's record store is native these are committed natively, by the same atomic head
+// commit a statement is (src/kept-records.ts); the sealed pod record is what a tenant without a
+// native store gets, and where a record kept before 2026-11-27 is read from once and moved.
+const nativeOfTenant = (ns: string) => nativeResourcesFor(ns as TenantId);
+const isProbes = (v: unknown): v is PerformanceProbe[] => Array.isArray(v);
+const keptTrajectories = new KeptRecords<AgentTrajectory>({ kind: 'foxxi-trajectory', native: nativeOfTenant, valid: isTrajectory,
+  sealed: new SealedPodMap<AgentTrajectory>({ base: keptBase('trajectories'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isTrajectory }) });
+const keptProbes = new KeptRecords<PerformanceProbe[]>({ kind: 'foxxi-probes', native: nativeOfTenant, valid: isProbes,
+  sealed: new SealedPodMap<PerformanceProbe[]>({ base: keptBase('probes'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isProbes }) });
+const keptEvaluations = new KeptRecords<EvaluationState>({ kind: 'foxxi-evaluation', native: nativeOfTenant, valid: isEvaluationState,
+  sealed: new SealedPodMap<EvaluationState>({ base: keptBase('evaluations'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isEvaluationState }) });
 
 /** A record that could not be kept, or could not be read: the caller supplied nothing wrong. */
 function storageRefusal(what: string, why: 'not-kept' | 'unreadable') {
@@ -423,12 +432,12 @@ const KEPT_ABSENT_MS = 60_000;
  * Fill the cache, for the keys it lacks, from what the pod keeps. Answers a refusal when a record
  * is there and cannot be read: treating it as absent would let a later write replace it.
  */
-async function fillFromKept<V>(store: SealedPodMap<V>, tenant: TenantId, keys: readonly string[], has: (k: string) => boolean, set: (k: string, v: V) => void, what: string): Promise<ReturnType<typeof storageRefusal> | null> {
-  if (!store.configured) return null;
+async function fillFromKept<V>(store: KeptRecords<V>, tenant: TenantId, keys: readonly string[], has: (k: string) => boolean, set: (k: string, v: V) => void, what: string): Promise<ReturnType<typeof storageRefusal> | null> {
+  if (!store.configuredFor(String(tenant))) return null;
   const now = Date.now();
   let unreadable = false;
   await Promise.all([...new Set(keys)].filter(k => !has(k)).map(async (k) => {
-    const mark = store.urlOf(String(tenant), k);
+    const mark = store.markOf(String(tenant), k);
     if ((keptAbsentUntil.get(mark) ?? 0) > now) return;
     const got = await store.get(String(tenant), k);
     if (got.state === 'held') { if (!has(k)) set(k, got.value); }
@@ -438,10 +447,10 @@ async function fillFromKept<V>(store: SealedPodMap<V>, tenant: TenantId, keys: r
   return unreadable ? storageRefusal(what, 'unreadable') : null;
 }
 /** Keep a record before it is acknowledged. A refusal when the pod did not take it; `evict` drops the cache's copy then. */
-async function keepOrRefuse<V>(store: SealedPodMap<V>, tenant: TenantId, key: string, value: V, evict: () => void, what: string): Promise<{ refusal: ReturnType<typeof storageRefusal> } | { durable: boolean }> {
+async function keepOrRefuse<V>(store: KeptRecords<V>, tenant: TenantId, key: string, value: V, evict: () => void, what: string): Promise<{ refusal: ReturnType<typeof storageRefusal> } | { durable: boolean }> {
   const put = await store.put(String(tenant), key, value);
   if (put === 'failed') { evict(); return { refusal: storageRefusal(what, 'not-kept') }; }
-  keptAbsentUntil.delete(store.urlOf(String(tenant), key));
+  keptAbsentUntil.delete(store.markOf(String(tenant), key));
   return { durable: put === 'kept' };
 }
 const fillTrajectories = (tenant: TenantId, dids: readonly string[]) => {
@@ -570,7 +579,7 @@ import {
 import { abacMode, mayAdministerTenant } from '../src/tenant-admin-policy.js';
 import { deriveAdminKeyPair, publishTenantMembership, publishCourseCatalog, publishTenantAssignments, publishCoursePackage, publishMeshEnrolmentRegister, TENANT_TYPES, type TenantPublishConfig } from '../src/tenant-publisher.js';
 import { readyStatementStore, residentStatementBudget, residentStatementCount, residentStatementMetricLines } from '../src/statement-store.js';
-import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, storeStatementDurably, getStatementStore, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
+import { attachXapiLrsRoutes, claimsLmsAuthority, clearActorStateDocuments, keepStatementsWhole, listStoredStatements, nativeResourcesFor, storeStatementDurably, getStatementStore, withoutLmsAuthorityClaim } from '../src/xapi-lrs.js';
 import type { StoredStatement } from '../src/statement-store.js';
 import { launchOffer, learnerFor, learnerKindFrom, pairStandings, type CourseKind, type DelegationRead } from '../src/learning-beside.js';
 import { courseSteps, courseRecordRead, statementsOfRegistration, type CourseRegistrationRecord } from '../src/course-trajectory.js';
@@ -10367,10 +10376,10 @@ const agentScormPlays = new Map<string, ScormPlay>();   // a cache: an attempt i
  */
 type KeptScormPlay = Omit<ScormPlay, 'seq'> & { seq: KeptSession };
 const SCORM_ATTEMPTS = 'scorm-attempts';
-const keptScormPlays = new SealedPodMap<KeptScormPlay>({
-  base: keptBase(SCORM_ATTEMPTS), key: bridgeEncryptionKeypair(), fetch: keptFetch,
-  valid: (v): v is KeptScormPlay => !!v && typeof (v as KeptScormPlay).learnerDid === 'string' && typeof (v as KeptScormPlay).courseId === 'string' && !!(v as KeptScormPlay).seq && !!(v as KeptScormPlay).course,
-});
+const isKeptScormPlay = (v: unknown): v is KeptScormPlay => !!v && typeof (v as KeptScormPlay).learnerDid === 'string' && typeof (v as KeptScormPlay).courseId === 'string' && !!(v as KeptScormPlay).seq && !!(v as KeptScormPlay).course;
+// Attempts are the bridge's, not a tenant's: they commit under the bridge's own tenant.
+const keptScormPlays = new KeptRecords<KeptScormPlay>({ kind: 'foxxi-scorm-attempt', native: () => nativeResourcesFor(DEFAULT_TENANT), valid: isKeptScormPlay,
+  sealed: new SealedPodMap<KeptScormPlay>({ base: keptBase(SCORM_ATTEMPTS), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isKeptScormPlay }) });
 const playToKeep = (play: ScormPlay): KeptScormPlay => ({ ...play, seq: sessionToJson(play.seq) });
 /** The attempt with this session id: in hand, or read from what is kept. `unreadable` when it is kept and cannot be read or rebuilt. */
 async function scormPlayFor(sessionId: string): Promise<ScormPlay | 'none' | 'unreadable'> {
@@ -10598,11 +10607,11 @@ function appliedVoidsOf(label: string): Set<string> {
  */
 /** Bring what the pod keeps of a performer's recorded trajectories into the cache, before the read below. An unreadable one is left out. */
 async function fillRecordedApart(did: string, pod: string): Promise<void> {
-  if (!keptTrajectories.configured) return;
   await Promise.all([...new Set([tenantIdOf(tenantPodUrl), tenantIdOf(pod)])].map(async (tenant) => {
+    if (!keptTrajectories.configuredFor(String(tenant))) return;
     // A partition is made only for a record that is kept: reading makes none (see below).
     if (agentTrajectoriesByTenant.has(tenant) && agentTrajectoriesByTenant.for(tenant).has(did)) return;
-    const mark = keptTrajectories.urlOf(String(tenant), did);
+    const mark = keptTrajectories.markOf(String(tenant), did);
     if ((keptAbsentUntil.get(mark) ?? 0) > Date.now()) return;
     const got = await keptTrajectories.get(String(tenant), did);
     if (got.state === 'held') agentTrajectoriesByTenant.for(tenant).set(did, got.value);
