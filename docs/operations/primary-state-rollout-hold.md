@@ -27,6 +27,14 @@ Source change, not a statement about records in any running process.
 - `xapi-attachments`: when the statement store is the native Interego store, attachment bytes commit with their statement through `NativeInteregoLrsStore.putWithAttachments` and are read back from it; the per-process map is used only when the store is not native (`putStatementWithAttachments` in `src/xapi-lrs.ts`). Whether a given deployment runs native is a fact about that deployment's configuration, not about this source.
 - Separately, three registries were plain JSON on the pod, readable by anyone with the address: a person's assignments to their own agents and who brought which package (added 2026-11-25 and 26), and the personal launch links (which name each link's learner, pod and course). All three are now sealed. At start the bridge reads each clear copy, writes it sealed, removes the clear one, and keeps trying until it is gone. `course-authors.json` and `content-locations.json` in the same folder are still plain and were not changed.
 
+## Status note, 2026-11-27: the three debounced stores are written before the answer
+
+Source change, not a statement about records in any running process.
+
+- `scorm-sequencing-sessions`, `cmi5-rollup-dedup` and `forwarding-queue` were "conditional": written by a two-second timer nothing waited for. Each is now written before the call that changed it returns (`keepSnapshot`, and the awaited queue listener), and the SCORM session routes say `sessionKept`.
+- A write the pod refuses is still not a refusal of the step: the engine has processed it, or the statement has been said. It is reported where there is an answer to carry it, and tried again.
+- Still the pod's ordinary resource store with a sealed body, one writer, last write wins. Not the native commit path.
+
 ## Exact affected service scope
 
 For the earlier candidate, the existing deployment-scope tool and observed live image pins reported these **12** affected services. Identity and acme-id were outside that measured candidate. Changes to shared native storage require a fresh scope calculation; this historical list is not a deployment allowlist for the replacement.

@@ -291,7 +291,7 @@ export async function forwardStatement(tenant: TenantId, stmt: Record<string, un
     if (!st.target.enabled) continue;
     if (!(await deliver(st, stmt))) queued = true;
   }
-  if (queued) queueChanged(tenant);
+  if (queued) await queueChanged(tenant);
 }
 
 /**
@@ -312,7 +312,7 @@ export async function retryDeadLetter(tenant: TenantId, id?: string): Promise<Ar
       if (ok) delivered++;
     }
     out.push({ id: st.target.id, retried: pending.length, delivered, remaining: st.deadLetter.length });
-    if (pending.length) queueChanged(tenant);
+    if (pending.length) await queueChanged(tenant);
   }
   return out;
 }
@@ -338,9 +338,14 @@ export function exportForwardingConfig(tenant: TenantId): ForwardingConfigBlob {
  * Told when a tenant's queue of undelivered statements changes, so whoever keeps the config can
  * keep the queue with it. One listener; the bridge sets it.
  */
-let _queueChanged: ((tenant: TenantId) => void) | undefined;
-export function onForwardingQueueChange(fn: (tenant: TenantId) => void): void { _queueChanged = fn; }
-const queueChanged = (tenant: TenantId): void => { try { _queueChanged?.(tenant); } catch { /* keeping is the listener's to report */ } };
+let _queueChanged: ((tenant: TenantId) => void | Promise<void>) | undefined;
+export function onForwardingQueueChange(fn: (tenant: TenantId) => void | Promise<void>): void { _queueChanged = fn; }
+/**
+ * Waited for (2026-11-27): the delivery that queued a statement, and the retry that emptied the
+ * queue, return once the listener has kept the queue, or failed to. Until then it was told and not
+ * waited for, and wrote two seconds later.
+ */
+const queueChanged = async (tenant: TenantId): Promise<void> => { try { await _queueChanged?.(tenant); } catch { /* keeping is the listener's to report */ } };
 
 /**
  * Replace a tenant's in-memory targets + inbound credentials from a decrypted blob
