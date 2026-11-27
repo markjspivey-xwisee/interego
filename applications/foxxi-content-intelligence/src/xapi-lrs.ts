@@ -89,6 +89,15 @@ const statementStores = new TenantPartition<StatementStore>(
   (store) => { (store as { dispose?: () => void }).dispose?.(); },
 );
 
+/**
+ * A tenant's native record store, for records that are not statements (src/kept-records.ts), or
+ * null when the tenant's store is not native. The same store, head and commit a statement uses.
+ */
+export function nativeResourcesFor(tenant: TenantId): NativeInteregoLrsStore | null {
+  const store = statementStores.for(tenant);
+  return store instanceof NativeInteregoLrsStore ? store : null;
+}
+
 // ── Config ──────────────────────────────────────────────────────────
 
 export interface XapiLrsConfig {
