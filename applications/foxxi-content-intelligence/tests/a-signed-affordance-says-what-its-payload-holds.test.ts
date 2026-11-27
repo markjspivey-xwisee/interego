@@ -29,7 +29,7 @@ describe('a signed affordance\'s payload', () => {
 
   it('is emitted as string-encoded JSON, with the envelope fields the signer fills', () => {
     for (const a of withContent) {
-      const prop = (affordanceToMcpToolSchema(a).inputSchema.properties as Record<string, { type: string; contentMediaType?: string; contentSchema?: { type: string; properties: Record<string, { type: string; description: string }>; required: string[] } }>)._signed_payload!;
+      const prop = (affordanceToMcpToolSchema(a).inputSchema.properties as Record<string, { type: string; contentMediaType?: string; contentSchema?: { type: string; properties: Record<string, { type: string | string[]; description: string }>; required: string[] } }>)._signed_payload!;
       expect(prop.type, a.toolName).toBe('string');
       expect(prop.contentMediaType, a.toolName).toBe('application/json');
       expect(Object.keys(prop.contentSchema!.properties), a.toolName).toEqual(expect.arrayContaining(['agent_id', 'timestamp']));
@@ -94,6 +94,19 @@ describe('a signed affordance\'s payload', () => {
     expect(unnamed).toEqual([]);
     // Enough handlers were found and read for this to mean something.
     expect(checked).toBeGreaterThanOrEqual(30);
+  });
+
+  // ★ Review of #1010. Three fields take null and mean something by it; typed `object` or
+  // `integer` alone, a client that validates against the schema could not send it.
+  it('says so where a field takes null', () => {
+    const typeOf = (tool: string, field: string) => {
+      const a = foxxiAffordances.find(x => x.toolName === tool)!;
+      return (affordanceToMcpToolSchema(a).inputSchema.properties as Record<string, { contentSchema?: { properties: Record<string, { type: unknown }> } }>)._signed_payload!.contentSchema!.properties[field]!.type;
+    };
+    expect(typeOf('foxxi.content_admit', 'admission')).toEqual(['object', 'null']);
+    expect(typeOf('foxxi.cmi5_personal_launch', 'expires_in_days')).toEqual(['integer', 'null']);
+    expect(typeOf('foxxi.cmi5_personal_launch', 'launch_parameters')).toEqual(['string', 'null']);
+    expect(typeOf('foxxi.content_admit', 'competency')).toBe('string');
   });
 
   it('leaves an input without content exactly as it was', () => {

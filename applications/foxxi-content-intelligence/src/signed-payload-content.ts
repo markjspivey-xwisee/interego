@@ -14,6 +14,8 @@
  * holds.test.ts holds each entry to the fields its description names, and to the fields the route
  * reads.
  *
+ * A field that takes JSON null as a value (clear it, withdraw it) says `nullable`.
+ *
  * A property here is flat: a nested value is `object` or `array`, with its shape in the
  * description. That is the limit of `AffordanceInputContent` today, not a choice about these
  * payloads.
@@ -99,8 +101,8 @@ export const SIGNED_PAYLOAD_CONTENT: Readonly<Record<string, AffordanceInputCont
     course_id: { type: 'string', description: 'A cmi5 course published on this bridge.' },
     au_id: { type: 'string', description: 'One assignable unit of the course to open. Left out, the course decides.' },
     return_url: { type: 'string', description: 'Where the unit sends the learner when it ends (cmi5 returnURL).' },
-    expires_in_days: { type: 'integer', description: 'A whole number of days, 1 to 3650, or null for no expiry. Left out: 90 days.' },
-    launch_parameters: { type: 'string', description: 'Replaces the course structure\'s launchParameters on every open (cmi5 10.2.3). Null clears it.' },
+    expires_in_days: { type: 'integer', nullable: true, description: 'A whole number of days, 1 to 3650, or null for no expiry. Left out: 90 days.' },
+    launch_parameters: { type: 'string', nullable: true, description: 'Replaces the course structure\'s launchParameters on every open (cmi5 10.2.3). Null clears it.' },
   }, ['course_id']),
   'foxxi.cmi5_personal_launch_revoke': signed({
     token: { type: 'string', description: 'The link\'s token, or its full URL.' },
@@ -298,7 +300,7 @@ export const SIGNED_PAYLOAD_CONTENT: Readonly<Record<string, AffordanceInputCont
   }, ['composition']),
   'foxxi.content_admit': signed({
     competency: { type: 'string', description: 'A competency IRI, another authority\'s term IRI, or a slug.' },
-    admission: { type: 'object', description: '{ kinds: [fragment kinds], because } to keep as standing for this competency, or null to withdraw it.' },
+    admission: { type: 'object', nullable: true, description: '{ kinds: [fragment kinds], because } to keep as standing for this competency, or null to withdraw it.' },
     source: { type: 'string', description: 'The IRI of the plan or situation the admission came from.' },
     regime: { type: 'string', enum: ['Evident', 'Knowable', 'Emergent', 'Turbulent'], description: 'The regime of the situation it came from.' },
   }, ['competency', 'admission']),

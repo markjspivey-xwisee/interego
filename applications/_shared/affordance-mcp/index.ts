@@ -61,7 +61,8 @@ export interface AffordanceInput {
 
 /** The JSON a string input carries: its fields, and which of them are required. */
 export interface AffordanceInputContent {
-  readonly properties: Readonly<Record<string, { readonly type: JsonType; readonly description: string; readonly enum?: readonly string[] }>>;
+  /** `nullable`: JSON null is a value the field takes, and means something (clear it, withdraw it). Emitted as `type: [<type>, "null"]`. */
+  readonly properties: Readonly<Record<string, { readonly type: JsonType; readonly description: string; readonly enum?: readonly string[]; readonly nullable?: boolean }>>;
   readonly required?: readonly string[];
 }
 
@@ -340,7 +341,7 @@ interface JsonSchemaProperty {
   maximum?: number;
   minItems?: number;
   contentMediaType?: 'application/json';
-  contentSchema?: { type: 'object'; properties: Record<string, { type: JsonType; description: string; enum?: readonly string[] }>; required: string[] };
+  contentSchema?: { type: 'object'; properties: Record<string, { type: JsonType | [JsonType, 'null']; description: string; enum?: readonly string[] }>; required: string[] };
 }
 
 /**
@@ -417,7 +418,7 @@ export function affordanceToMcpToolSchema(affordance: Affordance): McpToolSchema
       prop.contentMediaType = 'application/json';
       prop.contentSchema = {
         type: 'object',
-        properties: Object.fromEntries(Object.entries(input.content.properties).map(([k, v]) => [k, { type: v.type, description: v.description, ...(v.enum ? { enum: v.enum } : {}) }])),
+        properties: Object.fromEntries(Object.entries(input.content.properties).map(([k, v]) => [k, { type: v.nullable ? [v.type, 'null'] as [JsonType, 'null'] : v.type, description: v.description, ...(v.enum ? { enum: v.enum } : {}) }])),
         required: [...(input.content.required ?? [])],
       };
     }
