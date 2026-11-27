@@ -21,9 +21,10 @@
  *    answer. A record that cannot be read in either place is `unreadable`, never `absent`.
  *  - Any other tenant: the sealed pod record, as before.
  *
- * WHAT A WRITE AND A REMOVAL TOUCH. A native write also removes the sealed copy, and a removal
- * removes both: a sealed copy left behind would be read back as the record after the native one
- * was removed. A removal is `gone` only when neither place holds it.
+ * WHAT A WRITE AND A REMOVAL TOUCH. A native write also removes the sealed copy. A removal removes
+ * the sealed copy first and the native record only once that is gone: a sealed copy left behind
+ * would be read back as the record after the native one was removed. A removal is `gone` only
+ * when neither place holds it.
  */
 import type { KeptValue, SealedPodMap } from './sealed-store.js';
 
@@ -32,6 +33,8 @@ export interface NativeResources {
   getResource<T>(kind: string, id: string): Promise<T | null>;
   putResource<T>(kind: string, id: string, value: T): Promise<void>;
   deleteResource(kind: string, id: string): Promise<void>;
+  /** One conditional commit: `mutate` sees the record as the commit's own head has it, and is run again on a head conflict. */
+  updateResource<T, R>(kind: string, id: string, mutate: (current: T | null) => { value: T | null; result: R }): Promise<R>;
 }
 
 export class KeptRecords<V> {
@@ -63,10 +66,14 @@ export class KeptRecords<V> {
     // No native record. One an earlier bridge kept sealed is brought across, once.
     const before = await this.o.sealed.get(ns, key);
     if (before.state !== 'held') return before.state === 'unreadable' ? before : { state: 'absent' };
-    try { await native.putResource<V>(this.o.kind, key, before.value); }
-    catch { return before; }            // still only sealed; the next read tries again
-    await this.o.sealed.remove(ns, key); // if this fails the next native write removes it
-    return before;
+    // Committed only if there is still no native record when the commit lands. Another bridge
+    // may have written one since the read above; an unconditional write here would put the older
+    // sealed value back over it (review of #1011). Whatever the commit finds is the answer.
+    let won: unknown;
+    try { won = await native.updateResource<unknown, unknown>(this.o.kind, key, (current) => (current === null || current === undefined ? { value: before.value, result: before.value } : { value: current, result: current })); }
+    catch { return before; }             // still only sealed; the next read tries again
+    await this.o.sealed.remove(ns, key); // if this fails, a removal takes it first (below)
+    return this.o.valid(won) ? { state: 'held', value: won } : { state: 'unreadable' };
   }
 
   async put(ns: string, key: string, value: V): Promise<'kept' | 'failed' | 'unconfigured'> {
@@ -82,9 +89,11 @@ export class KeptRecords<V> {
   async remove(ns: string, key: string): Promise<'gone' | 'failed' | 'unconfigured'> {
     const native = this.o.native(ns);
     if (!native) return this.o.sealed.remove(ns, key);
-    let nativeGone = true;
-    try { await native.deleteResource(this.o.kind, key); } catch { nativeGone = false; }
-    const sealed = this.o.sealed.configured ? await this.o.sealed.remove(ns, key) : 'gone';
-    return nativeGone && sealed !== 'failed' ? 'gone' : 'failed';
+    // The sealed copy goes first, and the native record stays until it has. Removing the native
+    // one while a sealed copy an earlier cleanup left is still there would have the next read
+    // bring that older copy back as the record (review of #1011).
+    if (this.o.sealed.configured && (await this.o.sealed.remove(ns, key)) === 'failed') return 'failed';
+    try { await native.deleteResource(this.o.kind, key); } catch { return 'failed'; }
+    return 'gone';
   }
 }

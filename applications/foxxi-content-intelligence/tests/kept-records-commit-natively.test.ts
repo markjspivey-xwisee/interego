@@ -47,8 +47,16 @@ function fakeNative() {
     async getResource<T>(kind: string, id: string) { if (fail.get) throw new Error('native head unreadable'); return (held.get(`${kind}/${id}`) ?? null) as T | null; },
     async putResource<T>(kind: string, id: string, value: T) { if (fail.put) throw new Error('commit refused'); held.set(`${kind}/${id}`, structuredClone(value)); },
     async deleteResource(kind: string, id: string) { if (fail.del) throw new Error('commit refused'); held.delete(`${kind}/${id}`); },
+    async updateResource<T, R>(kind: string, id: string, mutate: (current: T | null) => { value: T | null; result: R }) {
+      if (fail.put) throw new Error('commit refused');
+      await hooks.beforeUpdate?.();
+      const next = mutate((held.get(`${kind}/${id}`) ?? null) as T | null);
+      if (next.value === null) held.delete(`${kind}/${id}`); else held.set(`${kind}/${id}`, structuredClone(next.value));
+      return next.result;
+    },
   };
-  return { held, fail, store };
+  const hooks: { beforeUpdate?: () => Promise<void> | void } = {};
+  return { held, fail, store, hooks };
 }
 function kept(p: ReturnType<typeof pod>, native: (ns: string) => NativeResources | null, sealedConfigured = true) {
   const sealed = new SealedPodMap<Rec>({ base: sealedConfigured ? BASE : '', key: KEY, fetch: p.fetch, valid: isRec });
@@ -123,6 +131,33 @@ describe('a tenant whose store is native', () => {
     await k.sealed.put('t1', 'b', A);
     p.failDeletes(true);
     expect(await k.records.remove('t1', 'b')).toBe('failed');
+  });
+
+  // ★ Review of #1011. The move was an unconditional write of the sealed value: a record another
+  // bridge committed between this one's native read and its write was put back to the older value.
+  it('does not put the sealed value over a native record written while it was being brought across', async () => {
+    const p = pod(), n = fakeNative(), k = kept(p, () => n.store);
+    await k.sealed.put('t1', 'a', { who: 'old', steps: ['sealed'] });
+    const newer: Rec = { who: 'new', steps: ['committed by another bridge'] };
+    n.hooks.beforeUpdate = () => { n.held.set('foxxi-thing/a', newer); };
+    expect(await k.records.get('t1', 'a')).toEqual({ state: 'held', value: newer });
+    expect(n.held.get('foxxi-thing/a')).toEqual(newer);
+  });
+
+  // ★ Review of #1011. The native record was removed first: with the sealed removal failing, the
+  // next read brought the older sealed copy back as the record.
+  it('keeps the native record until a sealed copy left behind has gone', async () => {
+    const p = pod(), n = fakeNative(), k = kept(p, () => n.store);
+    await k.sealed.put('t1', 'a', { who: 'old', steps: ['stale'] });
+    p.failDeletes(true);
+    expect(await k.records.put('t1', 'a', A)).toBe('kept');     // the cleanup after this write fails
+    expect(p.records()).toHaveLength(1);
+    expect(await k.records.remove('t1', 'a')).toBe('failed');
+    expect(n.held.get('foxxi-thing/a')).toEqual(A);             // still the record
+    expect(await k.records.get('t1', 'a')).toEqual({ state: 'held', value: A });
+    p.failDeletes(false);
+    expect(await k.records.remove('t1', 'a')).toBe('gone');
+    expect(await k.records.get('t1', 'a')).toEqual({ state: 'absent' });
   });
 
   it('does not read an unreadable sealed copy as absent', async () => {
