@@ -136,16 +136,22 @@ describe('the forwarding queue', () => {
   });
 });
 
+// ★ MEASURED ON THE DEPLOYED BRIDGE, 2026-11-27. These two waited for `keepSnapshot` for a few
+// hours. That write is a publish of the whole surface, and it took about sixteen seconds: every
+// SCORM navigation step took sixteen seconds, and a cmi5 completion up to three times that. They
+// now start the write at once and do not wait. What this holds: no timer before the write, no
+// wait for it, and no claim in the answer about a write whose end is not known.
 describe('the SCORM sequencing routes and the cmi5 rollup', () => {
   const seq = readFileSync(new URL('../src/scorm-sequencing.ts', import.meta.url), 'utf8');
   const lms = readFileSync(new URL('../src/cmi5-lms.ts', import.meta.url), 'utf8');
-  it('write a session before answering for it, and say whether the pod holds it', () => {
+  it('start a session\'s write when the step is processed, and do not hold the answer for it', () => {
     expect(seq).not.toContain('scormPodDirty');
-    expect(seq.match(/const sessionKept = await keepScormSessions\(\);/g)).toHaveLength(3);
-    expect(seq).toContain('created: true, sessionKept,');
-    expect(seq).toContain('currentActivity: session.current?.id ?? null, sessionKept });');
-    expect(seq).toContain('.json({ ...result, sessionKept });');
-    expect(seq).toContain("const keepScormSessions = async (): Promise<boolean> => (await keepSnapshot('scorm')) === 'kept';");
+    expect(seq).toContain("const keepScormSessions = (): void => { void keepSnapshot('scorm'); };");
+    expect(seq.match(/\n    keepScormSessions\(\);\n/g)).toHaveLength(3);
+    expect(seq).not.toContain('await keepScormSessions');
+    // No answer carries it (the comment that says why still names it).
+    expect(seq).not.toMatch(/sessionKept\s*[,}=]/);
+    expect(seq).not.toContain('const sessionKept');
   });
   it('do not answer "no session" while the kept sessions are still being read', () => {
     // Four: the three routes that look a session up, and the one that makes one. Review of #1009:
@@ -156,9 +162,10 @@ describe('the SCORM sequencing routes and the cmi5 rollup', () => {
     expect(create.indexOf('await scormReady;')).toBeLessThan(create.indexOf('createSession(tenant, tree)'));
     expect(seq).toContain('const scormReady: Promise<void> = hydrateScormFromPod().catch(() => undefined);');
   });
-  it('write what the rollup says as it says it', () => {
+  it('start the write of what the rollup says as it says it, without waiting', () => {
     const rollup = lms.slice(lms.indexOf('async function rollupCourseUnlocked'), lms.indexOf('function sweepExpired'));
     expect(rollup).not.toContain('cmi5PodDirty');
-    expect(rollup.match(/await keepSnapshot\('cmi5'\);/g)).toHaveLength(3);
+    expect(rollup.match(/void keepSnapshot\('cmi5'\);/g)).toHaveLength(3);
+    expect(rollup).not.toContain("await keepSnapshot('cmi5')");
   });
 });

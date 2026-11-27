@@ -415,12 +415,13 @@ async function rollupCourseUnlocked(
   let emitted = rollupEmitted.get(key);
   if (!emitted) { emitted = new Set(); rollupEmitted.set(key, emitted); }
   let reg = courseEnrollmentReg.get(key);
-  // ★ WHAT THE ROLLUP SAYS IS WRITTEN BEFORE IT RETURNS (2026-11-27). The registration it speaks
-  // under is written before the first statement carries it, and each "already said" as soon as it
-  // is said: these were marked dirty and written two seconds later, so a process that stopped in
-  // between said `satisfied` again after its restart, under another registration. A write the pod
-  // does not take is tried again on the debounce (keepSnapshot); the statement is not withheld.
-  if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); await keepSnapshot('cmi5'); }
+  // ★ WHAT THE ROLLUP SAYS STARTS ITS WRITE AT ONCE; THE STATEMENT DOES NOT WAIT FOR IT
+  // (2026-11-27). Earlier the same day the rollup waited for each write. That write is a publish
+  // of the whole surface and was measured at about sixteen seconds on the deployed bridge, and the
+  // rollup runs inside the request that stores a learner's completion, up to three times. So the
+  // write begins here with no two-second timer, is retried if the pod refuses it, and is not
+  // waited for. A process that stops during it says `satisfied` again after its restart.
+  if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); void keepSnapshot('cmi5'); }
 
   const emitSatisfied = async (activityId: string): Promise<void> => {
     await emit(buildCmi5Statement({
@@ -438,14 +439,14 @@ async function rollupCourseUnlocked(
     const ids = blockAuIds(block);
     if (ids.length > 0 && ids.every(id => satisfied.has(id)) && !emitted.has(block.id)) {
       await emitSatisfied(block.id);
-      emitted.add(block.id); await keepSnapshot('cmi5');
+      emitted.add(block.id); void keepSnapshot('cmi5');
     }
   }
   // The course is satisfied once every AU is.
   const allAus = flatAus(course).map(a => a.id);
   if (allAus.length > 0 && allAus.every(id => satisfied.has(id)) && !emitted.has(course.id)) {
     await emitSatisfied(course.id);
-    emitted.add(course.id); await keepSnapshot('cmi5');
+    emitted.add(course.id); void keepSnapshot('cmi5');
   }
 }
 

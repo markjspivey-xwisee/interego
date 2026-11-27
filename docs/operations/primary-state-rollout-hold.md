@@ -32,6 +32,7 @@ Source change, not a statement about records in any running process.
 Source change, not a statement about records in any running process.
 
 - `scorm-sequencing-sessions`, `cmi5-rollup-dedup` and `forwarding-queue` were "conditional": written by a two-second timer nothing waited for. Each is now written before the call that changed it returns (`keepSnapshot`, and the awaited queue listener), and the SCORM session routes say `sessionKept`.
+- **Corrected the same day.** For `scorm-sequencing-sessions` and `cmi5-rollup-dedup` the wait was withdrawn: the write is a publish of the whole surface, measured at about sixteen seconds on the deployed bridge, and held every learner step for that long. They start the write at once and do not wait, so they are "conditional" again, with the window being the length of that write. Only `forwarding-queue` is written before its call returns.
 - A write the pod refuses is still not a refusal of the step: the engine has processed it, or the statement has been said. It is reported where there is an answer to carry it, and tried again.
 - Still the pod's ordinary resource store with a sealed body, one writer, last write wins. Not the native commit path.
 

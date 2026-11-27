@@ -1134,15 +1134,21 @@ registerSnapshot({ surface: 'scorm', typeIri: FOXXI_SNAPSHOT_TYPES.ScormSessions
 /** Settles once the sessions kept before this process started have been read. It never rejects. */
 const scormReady: Promise<void> = hydrateScormFromPod().catch(() => undefined);
 /**
- * ★ A SESSION'S STEP IS WRITTEN BEFORE IT IS ANSWERED (2026-11-27).
+ * ★ A SESSION'S STEP STARTS ITS WRITE AT ONCE, AND THE ANSWER DOES NOT WAIT FOR IT (2026-11-27).
  *
- * The three routes below marked the surface dirty and answered: the write came two seconds later,
- * if the process was still there, and its failure was told to nobody. They now wait for the write
- * and say `sessionKept`. A step the pod does not take is not undone (the engine has processed
- * it); the answer says the pod does not hold it. `unconfigured` (no pod, or no key to seal with)
- * is reported as not kept as well: nothing outside this process holds the session.
+ * Earlier the same day these routes waited for the write and answered `sessionKept`. Measured on
+ * the deployed bridge, that write (a publish of the whole surface: graph, descriptor and the pod's
+ * manifest) takes about sixteen seconds, so every navigation step took sixteen seconds. A learner
+ * in a course cannot wait that for each step.
+ *
+ * So the write begins when the step is processed (no two-second timer first), writes of the
+ * surface go one at a time, and one the pod refuses is tried again. The answer does not say the
+ * session is kept, because when it is sent that is not known. A process that stops during the
+ * write loses the step. The store that can keep a step before answering for it is the native one,
+ * a commit of one record in well under a second; moving sessions to it is the change that closes
+ * this, not waiting here.
  */
-const keepScormSessions = async (): Promise<boolean> => (await keepSnapshot('scorm')) === 'kept';
+const keepScormSessions = (): void => { void keepSnapshot('scorm'); };
 
 /** Attach the SCORM 2004 sequencing runtime routes. */
 export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl: string }): void {
@@ -1171,9 +1177,9 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
     await scormReady;
     const session = createSession(tenant, tree);
     retainSession(session.id, session);
-    const sessionKept = await keepScormSessions();
+    keepScormSessions();
     res.status(200).json({
-      created: true, sessionKept,
+      created: true,
       ...sessionView(session),
       note: 'POST /scorm/sequencing/{id}/navigate with { "request": "start" } to begin. The engine enforces control modes, sequencing rules, limit conditions and rollup.',
     });
@@ -1193,8 +1199,8 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
       return;
     }
     const result = processNavigation(session, request, body.target);
-    const sessionKept = await keepScormSessions();
-    res.status(result.ok ? 200 : 409).json({ ...result, currentActivity: session.current?.id ?? null, sessionKept });
+    keepScormSessions();
+    res.status(result.ok ? 200 : 409).json({ ...result, currentActivity: session.current?.id ?? null });
   });
 
   // Commit SCO run-time tracking into the sequencing session.
@@ -1204,8 +1210,8 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
     const session = sessions.get(String(req.params.session ?? ''));
     if (!session) { res.status(404).json({ error: 'no sequencing session with that id' }); return; }
     const result = commitTracking(session, (req.body ?? {}) as TrackingUpdate);
-    const sessionKept = await keepScormSessions();
-    res.status(result.ok ? 200 : 409).json({ ...result, sessionKept });
+    keepScormSessions();
+    res.status(result.ok ? 200 : 409).json(result);
   });
 
   // Inspect a sequencing session.
