@@ -12,6 +12,8 @@ import { deriveEncryptionKeyPair, type IRI } from '@interego/core';
 import { openStore, InMemoryFdb, CodecRegistry, LdpStore } from '../../../packages/pgsl-store/src/index.js';
 import { NATIVE_CSS_FIXTURE_CAPABILITY, startNativeCssFixture, type NativeCssFixture } from './support/native-css-fixture.js';
 import { NativeInteregoLrsDatabase, InvalidLrsQueryError, type NativeLrsQueryDiagnostic } from '../src/native-lrs-store.js';
+import { KeptRecords } from '../src/kept-records.js';
+import { SealedPodMap } from '../src/sealed-store.js';
 import { ConflictError, assertLrsPrimaryConfiguration, configuredLrsBackend, createConfiguredNativeLrsDatabase, type StoredStatement } from '../src/statement-store.js';
 
 const owner = 'did:web:native-lrs.test:service' as IRI;
@@ -1173,6 +1175,27 @@ describe.skipIf(!fixtureInputs && !optionalPod)('LRS adapter over actual native 
       expect(await store.getAttachment(sha)).toEqual({ data: bytes, contentType: 'application/octet-stream' });
       expect(await store.getResource('state', 'binary')).toEqual({ content: bytes, contentType: 'application/octet-stream', etag: '"native-binary-v1"' });
       expect(await recovered.listTenants()).toEqual(['synthetic-alice']);
+    } finally { await recovered.close(); }
+  }, 120000);
+  // src/kept-records.ts routes the bridge's other records (trajectories, probes, evaluations,
+  // SCORM attempts) to this store. Its routing is tested in kept-records-commit-natively.test.ts;
+  // this is the same layer over the actual CSS and engine, across a storage process restart.
+  it('keeps a bridge record through the kept-records layer across a storage restart, and a second writer reads it', async () => {
+    type Kept = { agentDid: string; steps: string[] };
+    const isKept = (v: unknown): v is Kept => !!v && typeof (v as Kept).agentDid === 'string' && Array.isArray((v as Kept).steps);
+    const layer = (db: NativeInteregoLrsDatabase) => new KeptRecords<Kept>({ kind: 'foxxi-trajectory', valid: isKept, native: tenant => db.forTenant(tenant),
+      sealed: new SealedPodMap<Kept>({ base: '', key: null, fetch: async () => new Response('', { status: 500 }), valid: isKept }) });
+    const id = 'did:ethr:0x' + randomUUID().replace(/-/g, ''), value: Kept = { agentDid: id, steps: ['observed', 'planned'] };
+    expect(await layer(left).put('synthetic-kept', id, value)).toBe('kept');
+    expect(await layer(right).get('synthetic-kept', id)).toEqual({ state: 'held', value });
+    expect(await layer(right).get('synthetic-other', id)).toEqual({ state: 'absent' });
+    if (fixture) await fixture.restart();
+    const recovered = createConfiguredNativeLrsDatabase(config);
+    try {
+      await recovered.ready();
+      expect(await layer(recovered).get('synthetic-kept', id)).toEqual({ state: 'held', value });
+      expect(await layer(recovered).remove('synthetic-kept', id)).toBe('gone');
+      expect(await layer(recovered).get('synthetic-kept', id)).toEqual({ state: 'absent' });
     } finally { await recovered.close(); }
   }, 120000);
   it('stages a whole commit in one receipted request on the actual server, and the published state reads back exactly', async () => {

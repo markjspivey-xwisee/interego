@@ -35,6 +35,13 @@ Source change, not a statement about records in any running process.
 - **Corrected the same day.** For `scorm-sequencing-sessions` and `cmi5-rollup-dedup` the wait was withdrawn: the write is a publish of the whole surface, measured at about sixteen seconds on the deployed bridge, and held every learner step for that long. They start the write at once and do not wait, so they are "conditional" again, with the window being the length of that write. Only `forwarding-queue` is written before its call returns.
 - A write the pod refuses is still not a refusal of the step: the engine has processed it, or the statement has been said. It is reported where there is an answer to carry it, and tried again.
 - Still the pod's ordinary resource store with a sealed body, one writer, last write wins. Not the native commit path.
+## Status note, 2026-11-27: four stores move to the native commit path
+
+Source change, not a statement about records in any running process.
+
+- `native-trajectories`, `performance-probes`, `evaluation-workflow` and `agent-scorm-attempts` are committed through the native record store where the tenant's store is native (`applications/foxxi-content-intelligence/src/kept-records.ts`): an encrypted artifact under the tenant, published by the conditional head commit a statement uses. Their sealed pod records of 2026-11-26 are read once, committed natively and removed.
+- Evidence: the routing against a stand-in; the real native client, encryption and resource CAS over a local engine with two database instances; and one case in `native-lrs-store.test.ts` over the actual CSS and PostgreSQL engine across a storage process restart, which CI requires.
+- Not moved: `scorm-sequencing-sessions` and `cmi5-rollup-dedup` (whole-surface sealed snapshots), `forwarding-config` and `forwarding-queue` (on the owner's own pod), `course-author-index`, and the three sealed registries.
 
 ## Exact affected service scope
 
