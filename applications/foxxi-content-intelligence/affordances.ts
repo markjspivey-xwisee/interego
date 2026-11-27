@@ -14,6 +14,7 @@
 
 import type { Affordance } from '../_shared/affordance-mcp/index.js';
 import { FOXXI_NS } from './src/foxxi-vocab.js';
+import { withSignedPayloadContent } from './src/signed-payload-content.js';
 import { foxxiInterventionMethodAffordances } from '../agentic-performance-practice/method-affordances.js';
 import { privatePerformanceAffordances } from '../agentic-performance-practice/compatibility/private-performance-affordances.js';
 import { telemetryAffordances } from '../llm-telemetry/affordances.js';
@@ -28,7 +29,11 @@ import type {
 //  Learner-side affordances
 // ─────────────────────────────────────────────────────────────────────
 
-export const foxxiAffordances: ReadonlyArray<Affordance> = [
+/**
+ * The learner-side affordances as declared. What is published is `foxxiAffordances` below: these,
+ * each with its signed payload described in schema (src/signed-payload-content.ts).
+ */
+const declaredFoxxiAffordances: ReadonlyArray<Affordance> = [
   ...semanticAffordances,
   ...authoredGlossaryAffordances,
   ...xapiProfileServerAffordances,
@@ -448,7 +453,7 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     externallyRouted: true,
     annotations: { title: 'Assign a course to my agent', readOnlyHint: false, destructiveHint: false, idempotentHint: true, openWorldHint: true },
     inputs: [
-      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, to_agent, course_id, due_at?, withdraw? }): to_agent is the DID of an agent holding your delegation; due_at an ISO 8601 instant; withdraw: true takes the assignment back.', content: { properties: { agent_id: { type: 'string', description: 'The signer: a wallet DID, or the agent carrying a person\'s request. sign_request fills it.' }, timestamp: { type: 'string', description: 'When it was signed, ISO 8601. sign_request fills it.' }, to_agent: { type: 'string', description: 'The DID of an agent holding your delegation.' }, course_id: { type: 'string', description: 'A cmi5 course published on this bridge, or one its SCORM engine plays.' }, due_at: { type: 'string', description: 'When it is due, an ISO 8601 instant.' }, withdraw: { type: 'boolean', description: 'True to take the assignment back.' } }, required: ['agent_id', 'timestamp', 'to_agent', 'course_id'] } },
+      { name: '_signed_payload', type: 'string', required: true, description: 'JSON.stringify({ agent_id, timestamp, to_agent, course_id, due_at?, withdraw? }): to_agent is the DID of an agent holding your delegation; due_at an ISO 8601 instant; withdraw: true takes the assignment back.', content: { properties: { agent_id: { type: 'string', description: 'The signer: a wallet DID, or the agent carrying a person\'s request. sign_request fills it.' }, timestamp: { type: 'string', description: 'When it was signed, ISO 8601. sign_request fills it.' }, to_agent: { type: 'string', description: 'The DID of an agent holding your delegation.' }, course_id: { type: 'string', description: 'A cmi5 course published on this bridge, or one its SCORM engine plays.' }, due_at: { type: 'string', description: 'When it is due, an ISO 8601 instant.' }, withdraw: { type: 'boolean', description: 'True to take the assignment back.' }, learner_kind: { type: 'string', description: 'Leave it out. An assignment is made by the person or an agent carrying their request, so only "human" is accepted.', enum: ['human'] } }, required: ['agent_id', 'timestamp', 'to_agent', 'course_id'] } },
       { name: '_signature', type: 'string', required: true, description: 'sign_request signature (secp256k1 over sha256 of _signed_payload).' },
     ],
     appliesTo: { collections: ['profiles'] },
@@ -2238,6 +2243,8 @@ export const foxxiAffordances: ReadonlyArray<Affordance> = [
     },
   },
 ];
+
+export const foxxiAffordances: ReadonlyArray<Affordance> = declaredFoxxiAffordances.map(withSignedPayloadContent);
 
 // ─────────────────────────────────────────────────────────────────────
 //  L&D-administrator (institutional) affordances
