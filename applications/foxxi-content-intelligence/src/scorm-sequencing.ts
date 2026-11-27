@@ -1166,6 +1166,9 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
     let tree: ScormActivityTree;
     try { tree = parseManifest(xml); }
     catch (e) { res.status(400).json({ error: (e as Error).message }); return; }
+    // The write below is of every session this process holds. Before the kept ones have been read
+    // that is not all of them, and the write would replace them on the pod (review of #1009).
+    await scormReady;
     const session = createSession(tenant, tree);
     retainSession(session.id, session);
     const sessionKept = await keepScormSessions();

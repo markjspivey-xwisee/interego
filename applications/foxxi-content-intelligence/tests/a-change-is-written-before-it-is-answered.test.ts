@@ -148,7 +148,12 @@ describe('the SCORM sequencing routes and the cmi5 rollup', () => {
     expect(seq).toContain("const keepScormSessions = async (): Promise<boolean> => (await keepSnapshot('scorm')) === 'kept';");
   });
   it('do not answer "no session" while the kept sessions are still being read', () => {
-    expect(seq.match(/await scormReady;/g)).toHaveLength(3);
+    // Four: the three routes that look a session up, and the one that makes one. Review of #1009:
+    // a session made before the kept ones were read was written alone, over them.
+    expect(seq.match(/await scormReady;/g)).toHaveLength(4);
+    const create = seq.slice(seq.indexOf("app.post('/scorm/sequencing/session'"), seq.indexOf("app.post('/scorm/sequencing/:session/navigate'"));
+    expect(create.indexOf('await scormReady;')).toBeGreaterThan(-1);
+    expect(create.indexOf('await scormReady;')).toBeLessThan(create.indexOf('createSession(tenant, tree)'));
     expect(seq).toContain('const scormReady: Promise<void> = hydrateScormFromPod().catch(() => undefined);');
   });
   it('write what the rollup says as it says it', () => {
