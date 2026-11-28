@@ -377,3 +377,31 @@ the hosted reference.
   identity host; resolves `acct:user@host` to WebID / DID / pod URL
 - `https://datatracker.ietf.org/doc/html/rfc7591` — OAuth Dynamic
   Client Registration (the spec the relay implements)
+
+### Workbench: read the signed-in account’s Foxxi statements
+
+This optional route is disabled unless Relay is configured with all of
+`INTEREGO_SELF_RECORDS_CALLBACK` (the exact HTTPS Workbench callback),
+`PUBLIC_BASE_URL`, `INTEREGO_SELF_RECORDS_UPSTREAM` (the fixed Foxxi
+`/internal/learning-records/statements` HTTPS URL), and
+`INTEREGO_SELF_RECORDS_SECRET`.
+Foxxi must have the identical trust secret configured as `INTEREGO_SELF_RECORDS_SECRET` and recognize the account pod’s
+origin as a configured spelling of its own store. Keep the secret on the two
+servers, never in the Workbench.
+
+The Workbench uses the existing authorization-code and S256 PKCE flow, with
+only `account:self-records:read` and the exact `/learning-records/statements`
+resource. The short in-memory grant cannot refresh, use MCP, or authenticate
+to a pod. The relay attests the account's authenticated home pod to Foxxi;
+neither the browser nor the client-specific agent selects the lens. The only
+operation is a bounded Statements Resource read. Foxxi scopes the
+continuation to the account. No bearer crosses from Relay to Foxxi.
+
+Release order: deploy the Foxxi implementation and Relay first, leaving the
+Workbench admission off. On approved staging, use two separate fictional
+Interego identities with distinct existing xAPI records. Confirm that each
+reads its own statement and the other's exact ID yields 404, and verify
+sign-out and session expiry in the Workbench. Only then enable the exact
+production callback and publish. Roll back admission by removing the
+Workbench callback setting. Never replace an existing Foxxi deployment
+without following its state-preservation procedure.

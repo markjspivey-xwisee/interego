@@ -246,6 +246,17 @@ export type TaggedCorsMiddleware =
 export function corsMiddleware(opts: CorsHeaderOptions = {}): TaggedCorsMiddleware {
   const ownOrigin = normalizeOrigin(opts.ownOrigin ?? '') ?? 'https://relay.interego.xwisee.com';
   const allowlist = buildCorsAllowlist(opts);
+  // This optional Workbench origin needs only the three routes involved in
+  // authorization and its self read, not the relay's other browser surfaces.
+  let workbenchOrigin: string | undefined;
+  try {
+    if (process.env['PUBLIC_BASE_URL'] && normalizeOrigin(process.env['PUBLIC_BASE_URL']) === ownOrigin &&
+        process.env['INTEREGO_SELF_RECORDS_CALLBACK']) {
+      const url = new URL(process.env['INTEREGO_SELF_RECORDS_CALLBACK']);
+      if (url.protocol === 'https:' && !url.username && !url.password) workbenchOrigin = url.origin;
+    }
+  } catch { /* absent or invalid opt-in leaves the current policy unchanged */ }
+  const workbenchPaths = new Set(['/register', '/token', '/learning-records/statements']);
   const middleware = (req: MinimalReq, res: MinimalRes, next: NextFn): void => {
     // Public linked-data surface: the /ns/* RDF-projection dereference resolver
     // serves world-readable, no-credential, content-negotiated RDF (a holon
@@ -294,7 +305,8 @@ export function corsMiddleware(opts: CorsHeaderOptions = {}): TaggedCorsMiddlewa
     }
     const originHeader = req.headers['origin'];
     const origin = Array.isArray(originHeader) ? originHeader[0] : originHeader;
-    const headers = computeCorsHeaders(origin, allowlist, ownOrigin, {
+    const matchesWorkbench = workbenchOrigin && origin === workbenchOrigin && workbenchPaths.has(pathOnly);
+    const headers = computeCorsHeaders(origin, matchesWorkbench ? new Set([...allowlist, workbenchOrigin!]) : allowlist, ownOrigin, {
       allowMethods: opts.allowMethods,
       allowHeaders: opts.allowHeaders,
       exposeHeaders: opts.exposeHeaders,
