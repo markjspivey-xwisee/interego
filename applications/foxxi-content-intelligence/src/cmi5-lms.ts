@@ -388,6 +388,51 @@ export function serializeKeyed<T>(gate: Map<string, Promise<unknown>>, key: stri
 function serializeSatisfaction<T>(key: string, work: () => Promise<T>): Promise<T> {
   return serializeKeyed(satisfactionCommits, key, work);
 }
+/**
+ * ★ WHAT THE ROLLUP HAS SAID, ONE RECORD A LEARNER, KEPT BEFORE THE ROLLUP RETURNS (2026-11-27).
+ *
+ * The registration a course's `satisfied` statements are said under, and which have been said,
+ * lived in the cmi5 snapshot: every launch, token and enrolment of the tenant published whole,
+ * about sixteen seconds on the deployed bridge, too slow to wait for inside the request that
+ * stores a learner's completion. Where the bridge sets a store here, they are one record a
+ * learner under the tenant (a native commit where the tenant's record store is native), read
+ * before the rollup decides and written before it returns.
+ *
+ * One record a learner, not one a course, so that forgetting a learner removes one record whose
+ * name is known. Two of a learner's courses can roll up at once, so a course's entry is merged in
+ * by a conditional change, not written over the record.
+ *
+ * A record that is kept and cannot be read: the rollup says nothing this time. Saying `satisfied`
+ * again under another registration is what the record exists to prevent, and the next statement
+ * for the course tries again.
+ */
+export interface Cmi5RollupKept { courses: Record<string, { reg: string; emitted: string[] }> }
+export const isCmi5RollupKept = (v: unknown): v is Cmi5RollupKept => {
+  const courses = (v as Cmi5RollupKept | null)?.courses;
+  return !!courses && typeof courses === 'object' && !Array.isArray(courses)
+    && Object.values(courses).every(c => !!c && typeof c.reg === 'string' && Array.isArray(c.emitted) && c.emitted.every(e => typeof e === 'string'));
+};
+export interface Cmi5RollupStore {
+  configuredFor(tenant: TenantId): boolean;
+  load(tenant: TenantId, learnerId: string): Promise<{ state: 'held'; value: Cmi5RollupKept } | { state: 'absent' | 'unreadable' | 'unconfigured' }>;
+  /** Merge one course's entry into the learner's record. True once it is kept. */
+  merge(tenant: TenantId, learnerId: string, courseId: string, entry: { reg: string; emitted: string[] }): Promise<boolean>;
+  forget(tenant: TenantId, learnerId: string): Promise<boolean>;
+}
+let rollupStore: Cmi5RollupStore | undefined;
+export function setCmi5RollupStore(store: Cmi5RollupStore | undefined): void { rollupStore = store; rollupRead.clear(); }
+/** `tenant|learner` whose kept record this process has read into the maps below. */
+const rollupRead = new Set<string>();
+/**
+ * Remove what the rollup kept for a learner. For the caller that forgets a learner
+ * (`forgetCmi5Learner` clears this process; this clears the record). False if it is still there.
+ */
+export async function forgetCmi5RollupKept(tenant: TenantId, learnerId: string): Promise<boolean> {
+  rollupRead.delete(`${String(tenant)}|${learnerId}`);
+  if (!rollupStore?.configuredFor(tenant)) return true;
+  return rollupStore.forget(tenant, learnerId);
+}
+
 async function rollupCourse(
   tenant: TenantId, learner: { id: string; name?: string }, authoritativeSource: string,
   emit: (statement: Record<string, unknown>) => void | Promise<void>, auId: string,
@@ -411,17 +456,39 @@ async function rollupCourseUnlocked(
   // first rollup after a start would say it again.
   await whenCmi5Ready();
   const key = `${tenant}|${course.id}|${learner.id}`;
+  const store = rollupStore?.configuredFor(tenant) ? rollupStore : undefined;
+  if (store && !rollupRead.has(`${String(tenant)}|${learner.id}`)) {
+    const kept = await store.load(tenant, learner.id);
+    if (kept.state === 'unreadable') {
+      process.stderr.write(`[cmi5-rollup] what was already said for a learner of ${course.id} is kept and could not be read; nothing is said this time\n`);
+      return;
+    }
+    if (kept.state === 'held') {
+      for (const [courseId, entry] of Object.entries(kept.value.courses)) {
+        const k = `${tenant}|${courseId}|${learner.id}`;
+        if (!courseEnrollmentReg.has(k)) courseEnrollmentReg.set(k, entry.reg);
+        const set = rollupEmitted.get(k) ?? new Set<string>();
+        for (const id of entry.emitted) set.add(id);
+        rollupEmitted.set(k, set);
+      }
+    }
+    if (rollupRead.size >= 50_000) rollupRead.clear();
+    rollupRead.add(`${String(tenant)}|${learner.id}`);
+  }
+  /** Write this course's entry. With a store it is waited for; without, the snapshot's write starts and is not. */
+  const keepSaid = async (): Promise<void> => {
+    if (!store) { void keepSnapshot('cmi5'); return; }
+    const ok = await store.merge(tenant, learner.id, course.id, { reg: reg!, emitted: [...emitted!] });
+    if (!ok) process.stderr.write(`[cmi5-rollup] what was said for ${course.id} could not be kept; a restart may say it again\n`);
+  };
   const satisfied = new Set(learnerSatisfiedAus(tenant, learner.id));
   let emitted = rollupEmitted.get(key);
   if (!emitted) { emitted = new Set(); rollupEmitted.set(key, emitted); }
   let reg = courseEnrollmentReg.get(key);
-  // ★ WHAT THE ROLLUP SAYS STARTS ITS WRITE AT ONCE; THE STATEMENT DOES NOT WAIT FOR IT
-  // (2026-11-27). Earlier the same day the rollup waited for each write. That write is a publish
-  // of the whole surface and was measured at about sixteen seconds on the deployed bridge, and the
-  // rollup runs inside the request that stores a learner's completion, up to three times. So the
-  // write begins here with no two-second timer, is retried if the pod refuses it, and is not
-  // waited for. A process that stops during it says `satisfied` again after its restart.
-  if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); void keepSnapshot('cmi5'); }
+  // The registration is kept before the first statement carries it (see `Cmi5RollupStore` above).
+  // Without a store the whole-surface snapshot starts its write and is not waited for: it takes
+  // about sixteen seconds on the deployed bridge, inside the request that stores a completion.
+  if (!reg) { reg = randomUUID(); courseEnrollmentReg.set(key, reg); await keepSaid(); }
 
   const emitSatisfied = async (activityId: string): Promise<void> => {
     await emit(buildCmi5Statement({
@@ -439,14 +506,14 @@ async function rollupCourseUnlocked(
     const ids = blockAuIds(block);
     if (ids.length > 0 && ids.every(id => satisfied.has(id)) && !emitted.has(block.id)) {
       await emitSatisfied(block.id);
-      emitted.add(block.id); void keepSnapshot('cmi5');
+      emitted.add(block.id); await keepSaid();
     }
   }
   // The course is satisfied once every AU is.
   const allAus = flatAus(course).map(a => a.id);
   if (allAus.length > 0 && allAus.every(id => satisfied.has(id)) && !emitted.has(course.id)) {
     await emitSatisfied(course.id);
-    emitted.add(course.id); void keepSnapshot('cmi5');
+    emitted.add(course.id); await keepSaid();
   }
 }
 

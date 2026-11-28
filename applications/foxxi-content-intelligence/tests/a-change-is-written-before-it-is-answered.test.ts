@@ -138,34 +138,40 @@ describe('the forwarding queue', () => {
 
 // ★ MEASURED ON THE DEPLOYED BRIDGE, 2026-11-27. These two waited for `keepSnapshot` for a few
 // hours. That write is a publish of the whole surface, and it took about sixteen seconds: every
-// SCORM navigation step took sixteen seconds, and a cmi5 completion up to three times that. They
-// now start the write at once and do not wait. What this holds: no timer before the write, no
-// wait for it, and no claim in the answer about a write whose end is not known.
-describe('the SCORM sequencing routes and the cmi5 rollup', () => {
+// SCORM navigation step took sixteen seconds, and a cmi5 completion up to three times that. So the
+// snapshot write is never waited for. Later the same day both were given a record of their own
+// (tests/sessions-and-rollup-commit-natively.test.ts), which IS waited for; the snapshot is what
+// runs where there is no such store. What this holds is that fallback: no timer before the write,
+// no wait for it, and no claim in the answer about a write whose end is not known.
+describe('the SCORM sequencing routes and the cmi5 rollup, where they have no record store', () => {
   const seq = readFileSync(new URL('../src/scorm-sequencing.ts', import.meta.url), 'utf8');
   const lms = readFileSync(new URL('../src/cmi5-lms.ts', import.meta.url), 'utf8');
-  it('start a session\'s write when the step is processed, and do not hold the answer for it', () => {
+  it('start the snapshot write when the step is processed, and do not hold the answer for it', () => {
     expect(seq).not.toContain('scormPodDirty');
     expect(seq).toContain("const keepScormSessions = (): void => { void keepSnapshot('scorm'); };");
-    expect(seq.match(/\n    keepScormSessions\(\);\n/g)).toHaveLength(3);
+    expect(seq).toContain('if (!store) { keepScormSessions(); return {}; }');
     expect(seq).not.toContain('await keepScormSessions');
-    // No answer carries it (the comment that says why still names it).
-    expect(seq).not.toMatch(/sessionKept\s*[,}=]/);
-    expect(seq).not.toContain('const sessionKept');
+    expect(seq).not.toContain("await keepSnapshot('scorm')");
   });
   it('do not answer "no session" while the kept sessions are still being read', () => {
-    // Four: the three routes that look a session up, and the one that makes one. Review of #1009:
-    // a session made before the kept ones were read was written alone, over them.
-    expect(seq.match(/await scormReady;/g)).toHaveLength(4);
+    // Every route that looks a session up goes through `sessionOf`, which waits; the one that
+    // makes a session waits itself. Review of #1009: a session made before the kept ones were
+    // read was written alone, over them.
+    const of = seq.slice(seq.indexOf('const sessionOf = async'), seq.indexOf("app.post('/scorm/sequencing/session'"));
+    expect(of).toContain('await scormReady;');
+    expect(seq.match(/const found = await sessionOf\(String\(req\.params\.session \?\? ''\)\);/g)).toHaveLength(3);
+    expect(seq).not.toMatch(/= sessions\.get\(String\(req\.params/);
     const create = seq.slice(seq.indexOf("app.post('/scorm/sequencing/session'"), seq.indexOf("app.post('/scorm/sequencing/:session/navigate'"));
     expect(create.indexOf('await scormReady;')).toBeGreaterThan(-1);
     expect(create.indexOf('await scormReady;')).toBeLessThan(create.indexOf('createSession(tenant, tree)'));
     expect(seq).toContain('const scormReady: Promise<void> = hydrateScormFromPod().catch(() => undefined);');
   });
-  it('start the write of what the rollup says as it says it, without waiting', () => {
+  it('start the snapshot write of what the rollup says, without waiting', () => {
     const rollup = lms.slice(lms.indexOf('async function rollupCourseUnlocked'), lms.indexOf('function sweepExpired'));
     expect(rollup).not.toContain('cmi5PodDirty');
-    expect(rollup.match(/void keepSnapshot\('cmi5'\);/g)).toHaveLength(3);
+    expect(rollup).toContain("if (!store) { void keepSnapshot('cmi5'); return; }");
     expect(rollup).not.toContain("await keepSnapshot('cmi5')");
+    // Said three times: the registration, each block, the course.
+    expect(rollup.match(/await keepSaid\(\);/g)).toHaveLength(3);
   });
 });

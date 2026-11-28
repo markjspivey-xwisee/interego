@@ -13,6 +13,7 @@ import { openStore, InMemoryFdb, CodecRegistry, LdpStore } from '../../../packag
 import { NATIVE_CSS_FIXTURE_CAPABILITY, startNativeCssFixture, type NativeCssFixture } from './support/native-css-fixture.js';
 import { NativeInteregoLrsDatabase, InvalidLrsQueryError, type NativeLrsQueryDiagnostic } from '../src/native-lrs-store.js';
 import { KeptRecords } from '../src/kept-records.js';
+import { KeptScormSessions, isKeptSessionIndex, type KeptSessionIndex } from '../src/kept-scorm-sessions.js';
 import { SealedPodMap } from '../src/sealed-store.js';
 import { ConflictError, assertLrsPrimaryConfiguration, configuredLrsBackend, createConfiguredNativeLrsDatabase, type StoredStatement } from '../src/statement-store.js';
 
@@ -1196,6 +1197,34 @@ describe.skipIf(!fixtureInputs && !optionalPod)('LRS adapter over actual native 
       expect(await layer(recovered).get('synthetic-kept', id)).toEqual({ state: 'held', value });
       expect(await layer(recovered).remove('synthetic-kept', id)).toBe('gone');
       expect(await layer(recovered).get('synthetic-kept', id)).toEqual({ state: 'absent' });
+    } finally { await recovered.close(); }
+  }, 120000);
+  // src/kept-scorm-sessions.ts: one record a session and an index that bounds them, changed by a
+  // conditional commit. Its rules are tested in sessions-and-rollup-commit-natively.test.ts; this
+  // is the index and the records over the actual CSS and engine, across a storage restart.
+  it('bounds kept sequencing sessions with a conditionally committed index across a storage restart', async () => {
+    type S = { id: string; step: number };
+    const isS = (v: unknown): v is S => !!v && typeof (v as S).id === 'string' && typeof (v as S).step === 'number';
+    const none = <V>(valid: (v: unknown) => v is V) => new SealedPodMap<V>({ base: '', key: null, fetch: async () => new Response('', { status: 500 }), valid });
+    const tenant = 'synthetic-sessions-' + randomUUID();
+    const over = (db: NativeInteregoLrsDatabase) => new KeptScormSessions<S>({ max: 2,
+      records: new KeptRecords<S>({ kind: 'foxxi-scorm-session', valid: isS, native: () => db.forTenant(tenant), sealed: none(isS) }),
+      index: new KeptRecords<KeptSessionIndex>({ kind: 'foxxi-scorm-session-index', valid: isKeptSessionIndex, native: () => db.forTenant(tenant), sealed: none(isKeptSessionIndex) }) });
+    expect(await over(left).keep('one', { id: 'one', step: 1 })).toBe(true);
+    expect(await over(right).keep('two', { id: 'two', step: 1 })).toBe(true);
+    expect(await over(right).keep('one', { id: 'one', step: 2 })).toBe(true);
+    if (fixture) await fixture.restart();
+    const recovered = createConfiguredNativeLrsDatabase(config);
+    try {
+      await recovered.ready();
+      const sessions = over(recovered);
+      expect(await sessions.load('one')).toEqual({ state: 'held', value: { id: 'one', step: 2 } });
+      expect(await sessions.keep('three', { id: 'three', step: 1 })).toBe(true);
+      // The oldest goes; removing it is not waited for by `keep`.
+      for (let i = 0; i < 40 && (await sessions.load('one')).state !== 'absent'; i++) await new Promise(r => setTimeout(r, 250));
+      expect((await sessions.load('one')).state).toBe('absent');
+      expect((await sessions.load('two')).state).toBe('held');
+      expect(await recovered.forTenant(tenant).getResource<KeptSessionIndex>('foxxi-scorm-session-index', 'index')).toEqual({ order: ['two', 'three'], evicting: [] });
     } finally { await recovered.close(); }
   }, 120000);
   it('stages a whole commit in one receipted request on the actual server, and the published state reads back exactly', async () => {

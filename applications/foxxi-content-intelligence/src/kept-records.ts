@@ -45,7 +45,15 @@ export class KeptRecords<V> {
     /** The native store of the tenant a namespace belongs to, or null when that tenant's store is not native. */
     native: (ns: string) => NativeResources | null;
     valid: (v: unknown) => v is V;
+    /**
+     * False for a kind that was never kept sealed on a deployment whose store is native: there is
+     * then no earlier copy to bring across or to clear, and a native read, write or removal does
+     * not touch the pod's sealed records at all. Each of those is a request to the pod, on every
+     * step. Left out (true) for the kinds of 2026-11-26, which were kept sealed first.
+     */
+    sealedBefore?: boolean;
   }) {}
+  private get legacy(): boolean { return this.o.sealedBefore !== false; }
 
   /** Whether anything outside this process can hold a record of this namespace. */
   configuredFor(ns: string): boolean { return !!this.o.native(ns) || this.o.sealed.configured; }
@@ -63,6 +71,7 @@ export class KeptRecords<V> {
     try { held = await native.getResource<unknown>(this.o.kind, key); }
     catch { return { state: 'unreadable' }; }
     if (held !== null && held !== undefined) return this.o.valid(held) ? { state: 'held', value: held } : { state: 'unreadable' };
+    if (!this.legacy) return { state: 'absent' };
     // No native record. One an earlier bridge kept sealed is brought across, once.
     const before = await this.o.sealed.get(ns, key);
     if (before.state !== 'held') return before.state === 'unreadable' ? before : { state: 'absent' };
@@ -82,9 +91,48 @@ export class KeptRecords<V> {
     try { await native.putResource<V>(this.o.kind, key, value); }
     catch { return 'failed'; }
     // The native record is the record now. A sealed copy must not outlive it.
-    if (this.o.sealed.configured) await this.o.sealed.remove(ns, key);
+    if (this.legacy && this.o.sealed.configured) await this.o.sealed.remove(ns, key);
     return 'kept';
   }
+
+  /**
+   * Change one record by what it holds now. Native: one conditional commit, `mutate` run again on
+   * a head conflict, so two bridges changing the same record both land. Sealed: read, then write,
+   * one at a time in this process (it is the one writer that store has). `mutate` returning
+   * `value: null` removes the record. A record that cannot be read is `failed`: it is not changed
+   * as though it were empty.
+   */
+  async update<R>(ns: string, key: string, mutate: (current: V | null) => { value: V | null; result: R }): Promise<{ state: 'kept'; result: R } | { state: 'failed' | 'unconfigured' }> {
+    const native = this.o.native(ns);
+    if (native) {
+      // A sealed copy an earlier bridge kept is brought across first, so the change is made to it.
+      if (this.legacy && (await this.get(ns, key)).state === 'unreadable') return { state: 'failed' };
+      const unreadable = Symbol('unreadable');
+      try {
+        const result = await native.updateResource<unknown, R | typeof unreadable>(this.o.kind, key, (current) => {
+          const held = current === null || current === undefined ? null : current;
+          if (held !== null && !this.o.valid(held)) return { value: held, result: unreadable };
+          const next = mutate(held as V | null);
+          return { value: next.value, result: next.result };
+        });
+        return result === unreadable ? { state: 'failed' } : { state: 'kept', result: result as R };
+      } catch { return { state: 'failed' }; }
+    }
+    if (!this.o.sealed.configured) return { state: 'unconfigured' };
+    const mark = this.markOf(ns, key);
+    const turn = (this.sealedTurns.get(mark) ?? Promise.resolve()).then(async (): Promise<{ state: 'kept'; result: R } | { state: 'failed' }> => {
+      const current = await this.o.sealed.get(ns, key);
+      if (current.state === 'unreadable' || current.state === 'unconfigured') return { state: 'failed' };
+      const next = mutate(current.state === 'held' ? current.value : null);
+      const done = next.value === null ? await this.o.sealed.remove(ns, key) : await this.o.sealed.put(ns, key, next.value);
+      return done === 'kept' || done === 'gone' ? { state: 'kept', result: next.result } : { state: 'failed' };
+    });
+    const settled = turn.then(() => undefined, () => undefined);
+    this.sealedTurns.set(mark, settled);
+    void settled.then(() => { if (this.sealedTurns.get(mark) === settled) this.sealedTurns.delete(mark); });
+    return turn.catch(() => ({ state: 'failed' as const }));
+  }
+  private readonly sealedTurns = new Map<string, Promise<void>>();
 
   async remove(ns: string, key: string): Promise<'gone' | 'failed' | 'unconfigured'> {
     const native = this.o.native(ns);
@@ -92,7 +140,7 @@ export class KeptRecords<V> {
     // The sealed copy goes first, and the native record stays until it has. Removing the native
     // one while a sealed copy an earlier cleanup left is still there would have the next read
     // bring that older copy back as the record (review of #1011).
-    if (this.o.sealed.configured && (await this.o.sealed.remove(ns, key)) === 'failed') return 'failed';
+    if (this.legacy && this.o.sealed.configured && (await this.o.sealed.remove(ns, key)) === 'failed') return 'failed';
     try { await native.deleteResource(this.o.kind, key); } catch { return 'failed'; }
     return 'gone';
   }
