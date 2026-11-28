@@ -12,7 +12,7 @@ const config = learningRecordsConfig({
   PUBLIC_BASE_URL: issuer.href,
   INTEREGO_SELF_RECORDS_CALLBACK: 'https://workbench.example/',
   INTEREGO_SELF_RECORDS_UPSTREAM: 'https://vertical.example/internal/learning-records/statements',
-  INTEREGO_SELF_RECORDS_SECRET: 'fictional-local-key-do-not-use-in-service',
+  INTEREGO_SELF_RECORDS_SECRET: randomBytes(32).toString('hex'),
 })!;
 const provider = new InteregoOAuthProvider({identityUrl:'https://identity.example',resourceIdentifier:issuer.href});
 process.env.PUBLIC_BASE_URL = issuer.href;
@@ -64,7 +64,7 @@ try {
     assert.ok(pending);
     const auth = provider.completePendingAuthorization(pending,{
       userId,agentId:'urn:test:do-not-use-agent-as-learner',ownerWebId:'https://identity.example/users/'+userId+'/profile#me',
-      podUrl:'https://gate.example/'+userId+'/',identityToken:'fictional-identity-credential',
+      podUrl:'https://gate.example/'+userId+'/',identityToken:randomBytes(32).toString('hex'),
     });
     assert.ok(auth);
     const token=await fetch(server.base+'/token',{

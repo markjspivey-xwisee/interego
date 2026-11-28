@@ -616,6 +616,19 @@ export const SHARED_ONLY_THROUGH_IMPORTED_CODE: readonly {
   readonly why: string;
 }[] = [
   {
+    name: 'PUBLIC_BASE_URL',
+    readIn: 'deploy/mcp-relay/cors-allowlist.ts',
+    why: 'Colleagues importing the CORS helper share the relay origin spelling. '
+      + 'The check only compares origins to choose response headers; it never sends a request.',
+  },
+  {
+    name: 'INTEREGO_SELF_RECORDS_CALLBACK',
+    readIn: 'deploy/mcp-relay/cors-allowlist.ts',
+    why: 'The CORS helper reads the optional Workbench callback only to match its origin on '
+      + 'the three account routes. The collected suites do not navigate or fetch that address.',
+  },
+
+  {
     name: 'INTEREGO_POD_DIAGNOSTICS',
     readIn: 'applications/pod-desktop/src/agent-client.ts',
     why: 'an opt-in local diagnostic switch read by the installed pod companion client. '
