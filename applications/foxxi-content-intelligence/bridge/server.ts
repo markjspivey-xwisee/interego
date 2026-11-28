@@ -306,6 +306,7 @@ import { bridgeEncryptionKeypair } from '../src/foundation-holon-altitude.js';
 import { EvaluationRegistry, isEvaluationState, type CandidateRun, type EvaluationCandidate, type EvaluationState } from '../src/agent-evaluation.js';
 import { SealedPodMap, SealedRegistryFile, type SealedFetch } from '../src/sealed-store.js';
 import { KeptRecords } from '../src/kept-records.js';
+import { KeptScormSessions, isKeptSessionIndex, type KeptSessionIndex } from '../src/kept-scorm-sessions.js';
 import { comparePortfolio, type CandidateEvidence } from '../src/agent-portfolio.js';
 import { DEFAULT_TENANT, TenantPartition, tenantIdOf, type TenantId } from '../src/tenant-context.js';
 
@@ -412,6 +413,38 @@ const keptTrajectories = new KeptRecords<AgentTrajectory>({ kind: 'foxxi-traject
   sealed: new SealedPodMap<AgentTrajectory>({ base: keptBase('trajectories'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isTrajectory }) });
 const keptProbes = new KeptRecords<PerformanceProbe[]>({ kind: 'foxxi-probes', native: nativeOfTenant, valid: isProbes,
   sealed: new SealedPodMap<PerformanceProbe[]>({ base: keptBase('probes'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isProbes }) });
+// SCORM sequencing sessions: one record each, with an index that bounds how many are kept, because
+// the route that makes one is public (src/kept-scorm-sessions.ts). They are the bridge's, not a
+// tenant's, so they commit under the bridge's own tenant.
+const nativeOfBridge = () => nativeResourcesFor(DEFAULT_TENANT);
+const isKeptSequencingSession = (v: unknown): v is KeptSession => !!v && typeof (v as KeptSession).id === 'string' && !!(v as KeptSession).root && Array.isArray((v as KeptSession).states);
+const keptSequencingSessions = new KeptScormSessions<KeptSession>({
+  max: 5000,
+  records: new KeptRecords<KeptSession>({ kind: 'foxxi-scorm-session', native: nativeOfBridge, valid: isKeptSequencingSession, sealedBefore: false,
+    sealed: new SealedPodMap<KeptSession>({ base: keptBase('scorm-sequencing-sessions'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isKeptSequencingSession }) }),
+  index: new KeptRecords<KeptSessionIndex>({ kind: 'foxxi-scorm-session-index', native: nativeOfBridge, valid: isKeptSessionIndex, sealedBefore: false,
+    sealed: new SealedPodMap<KeptSessionIndex>({ base: keptBase('scorm-sequencing-session-index'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isKeptSessionIndex }) }),
+});
+// What the cmi5 rollup has said: one record a learner, under the learner's tenant.
+const keptCmi5Rollup = new KeptRecords<Cmi5RollupKept>({ kind: 'foxxi-cmi5-rollup', native: nativeOfTenant, valid: isCmi5RollupKept, sealedBefore: false,
+  sealed: new SealedPodMap<Cmi5RollupKept>({ base: keptBase('cmi5-rollup'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isCmi5RollupKept }) });
+setCmi5RollupStore({
+  configuredFor: (tenant) => keptCmi5Rollup.configuredFor(String(tenant)),
+  load: (tenant, learnerId) => keptCmi5Rollup.get(String(tenant), learnerId),
+  merge: async (tenant, learnerId, courseId, entry) => (await keptCmi5Rollup.update<void>(String(tenant), learnerId, (current) => {
+    const before = current?.courses[courseId];
+    // What another bridge said for this course is kept: the registration first kept stands, and
+    // what has been said is only ever added to.
+    const merged = { reg: before?.reg ?? entry.reg, emitted: [...new Set([...(before?.emitted ?? []), ...entry.emitted])] };
+    return { value: { courses: { ...(current?.courses ?? {}), [courseId]: merged } }, result: undefined };
+  })).state === 'kept',
+  forget: async (tenant, learnerId) => {
+    // Most learners have no such record: nothing to remove is not a commit, and not a failure.
+    const held = await keptCmi5Rollup.get(String(tenant), learnerId);
+    if (held.state === 'absent' || held.state === 'unconfigured') return true;
+    return (await keptCmi5Rollup.remove(String(tenant), learnerId)) !== 'failed';
+  },
+});
 const keptEvaluations = new KeptRecords<EvaluationState>({ kind: 'foxxi-evaluation', native: nativeOfTenant, valid: isEvaluationState,
   sealed: new SealedPodMap<EvaluationState>({ base: keptBase('evaluations'), key: bridgeEncryptionKeypair(), fetch: keptFetch, valid: isEvaluationState }) });
 
@@ -585,6 +618,7 @@ import { launchOffer, learnerFor, learnerKindFrom, pairStandings, type CourseKin
 import { courseSteps, courseRecordRead, statementsOfRegistration, type CourseRegistrationRecord } from '../src/course-trajectory.js';
 import { OwnAgentAssignments, dueAtFrom } from '../src/own-agent-assignments.js';
 import { PackageBringers } from '../src/package-bringers.js';
+import { forgetCmi5RollupKept, isCmi5RollupKept, setCmi5RollupStore, type Cmi5RollupKept } from '../src/cmi5-lms.js';
 import { attachCmi5LmsRoutes, buildCmi5Launch, chooseAu, companionsOnCourse, delegatesLearningBeside, launchesOfPair, peersOnCourse, setPeerVisibility, cmi5BearerActor, cmi5BearerRegistration, cmi5BearerSession, cmi5BearerTenant, configureCmi5AuthTokenSecret, dropLearnerSatisfaction, forgetCmi5Learner, getCmi5Course, launchParametersFrom, learnerSatisfiedAus, observeCmi5Statement, recordLaunchedStatement, registerCmi5Course, signedLaunchLearner, stageLaunchData, unregisterCmi5Course } from '../src/cmi5-lms.js';
 import { attachReviewedStatementsRoute, reviewServiceAsk } from '../src/cmi5-reviewed.js';
 import { attachLiveCallRoute, liveCallServiceAsk } from '../src/cmi5-live-call.js';
@@ -6293,6 +6327,7 @@ const app = createVerticalBridge({
     // POST /scorm/sequencing/session, .../navigate, .../commit; GET .../:id.
     attachScormSequencingRoutes(a, {
       selfBaseUrl: process.env.BRIDGE_DEPLOYMENT_URL ?? 'http://localhost:6080',
+      sessions: keptSequencingSessions,
     });
 
     // Foxxi Performance Architecture — the diagnosis → intervention
@@ -11818,6 +11853,10 @@ attachCoursePlayerRoutes(app, {
       mark: (targetId, voidingId) => getStatementStore(tenant).markVoided(targetId, voidingId),
     });
     const launches = forgetCmi5Learner(tenant, did);
+    // What the rollup kept for them is a record of its own now, not part of what that cleared.
+    if (!(await forgetCmi5RollupKept(tenant, did)) && !(await forgetCmi5RollupKept(tenant, did))) {
+      throw new Error('what the course rollup kept for this learner could not be removed; nothing else was left undone, and asking again removes it');
+    }
     await clearActorStateDocuments(tenant, { homePage: String(authoritativeSource), name: did });
     // The caller's pod, not only a launch still held in memory. A restart has no launch record,
     // and the voids are still this learner's to keep.

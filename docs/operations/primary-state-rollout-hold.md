@@ -43,6 +43,15 @@ Source change, not a statement about records in any running process.
 - Evidence: the routing against a stand-in; the real native client, encryption and resource CAS over a local engine with two database instances; and one case in `native-lrs-store.test.ts` over the actual CSS and PostgreSQL engine across a storage process restart, which CI requires.
 - Not moved: `scorm-sequencing-sessions` and `cmi5-rollup-dedup` (whole-surface sealed snapshots), `forwarding-config` and `forwarding-queue` (on the owner's own pod), `course-author-index`, and the three sealed registries.
 
+## Status note, 2026-11-27 (later): sequencing sessions and the cmi5 rollup record commit natively
+
+Source change, not a statement about records in any running process.
+
+- `scorm-sequencing-sessions`: one record a session through `KeptRecords`, with an index record that bounds how many are kept (`applications/foxxi-content-intelligence/src/kept-scorm-sessions.ts`). Written before the step is answered; read back when the process does not hold the session. The whole-surface snapshot is no longer written where this store is configured, and is still read once at start for sessions kept before this change.
+- `cmi5-rollup-dedup`: one record a learner under the tenant, merged by a conditional commit, written before the rollup returns. The rest of the cmi5 snapshot (launches, tokens, enrolments) is unchanged and still debounced.
+- Both use the native record store where the tenant's store is native, and a sealed pod record otherwise.
+- Still not moved: `forwarding-config` and `forwarding-queue` (owner's pod), `course-author-index`, the three sealed registries, and the remainder of the cmi5 snapshot.
+
 ## Exact affected service scope
 
 For the earlier candidate, the existing deployment-scope tool and observed live image pins reported these **12** affected services. Identity and acme-id were outside that measured candidate. Changes to shared native storage require a fresh scope calculation; this historical list is not a deployment allowlist for the replacement.

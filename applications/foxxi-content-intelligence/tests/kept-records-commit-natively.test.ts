@@ -248,6 +248,8 @@ describe('over the real native client and a local resource engine', () => {
     const e = engine(), one = over(e.bridge()), two = over(e.bridge());
     await one.put('tenant-a', 'gone', A);
     expect(await two.remove('tenant-a', 'gone')).toBe('gone');
+    // Removing what is not there is not a failure.
+    expect(await two.remove('tenant-a', 'never-was')).toBe('gone');
     expect(await one.get('tenant-a', 'gone')).toEqual({ state: 'absent' });
   }, 60_000);
 });
@@ -259,8 +261,9 @@ describe('the bridge', () => {
       expect(src).toMatch(new RegExp(`const ${name} = new KeptRecords<[^>]+>\\(\\{ kind: '${kind}', native: `));
     }
     // Nothing reaches a sealed map of these kinds except through the layer.
-    expect(src.match(/new SealedPodMap</g)).toHaveLength(4);
-    expect(src.match(/sealed: new SealedPodMap</g)).toHaveLength(4);
+    // Seven since the sequencing sessions, their index and the cmi5 rollup joined them.
+    expect(src.match(/new SealedPodMap</g)).toHaveLength(7);
+    expect(src.match(/sealed: new SealedPodMap</g)).toHaveLength(7);
   });
   it('asks the tenant\'s own record store whether it is native', () => {
     expect(src).toContain('const nativeOfTenant = (ns: string) => nativeResourcesFor(ns as TenantId);');

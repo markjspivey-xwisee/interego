@@ -1045,6 +1045,7 @@ function retainSession(id: string, s: SeqSession): void {
 // snapshot the whole session map after each state-changing operation.
 // The pod becomes the durable record; hydration restores all sessions
 // on bridge startup.
+import { forwardedRateLimit } from './revocable-registry.js';
 import {
   registerSnapshot, keepSnapshot, loadLatestSnapshot, FOXXI_SNAPSHOT_TYPES,
 } from './pod-snapshot-publisher.js';
@@ -1127,11 +1128,17 @@ async function hydrateScormFromPod(): Promise<void> {
     // A session this process already holds is the newer one. One that cannot be rebuilt is left out.
     if (typeof id !== 'string' || sessions.has(id)) continue;
     const s = sessionFromJson(kept);
-    if (s && s.id === id) retainSession(id, s);
+    if (s && s.id === id) { retainSession(id, s); fromSnapshot.add(id); }
   }
 }
 registerSnapshot({ surface: 'scorm', typeIri: FOXXI_SNAPSHOT_TYPES.ScormSessions, collect: collectScormSnapshot });
 /** Settles once the sessions kept before this process started have been read. It never rejects. */
+/**
+ * Sessions this process holds only because the old whole-surface snapshot had them. Where there
+ * is a session store the snapshot is no longer written, so after a restart it can be older than
+ * the session's own record: the record is asked for before one of these is used (review of #1013).
+ */
+const fromSnapshot = new Set<string>();
 const scormReady: Promise<void> = hydrateScormFromPod().catch(() => undefined);
 /**
  * ★ A SESSION'S STEP STARTS ITS WRITE AT ONCE, AND THE ANSWER DOES NOT WAIT FOR IT (2026-11-27).
@@ -1150,15 +1157,76 @@ const scormReady: Promise<void> = hydrateScormFromPod().catch(() => undefined);
  */
 const keepScormSessions = (): void => { void keepSnapshot('scorm'); };
 
+/**
+ * ★ ONE RECORD A SESSION, KEPT BEFORE THE STEP IS ANSWERED (2026-11-27, later).
+ *
+ * Where the bridge gives these routes a session store (src/kept-scorm-sessions.ts), a session is
+ * one record: a native commit where the bridge's record store is native, a few hundred
+ * milliseconds. The routes then wait for it and answer `sessionKept`, and the whole-surface
+ * snapshot is not written at all. A session this process does not hold is read from the store, so
+ * a session outlives the process and the 5000 this process keeps in memory. A session that is
+ * kept and cannot be read is a 503, never "no session".
+ *
+ * Without a store, or where the store can keep nothing, the snapshot path above is what runs.
+ */
+export interface ScormSessionStore {
+  readonly configured: boolean;
+  load(id: string): Promise<{ state: 'held'; value: KeptSession } | { state: 'absent' | 'unreadable' | 'unconfigured' }>;
+  keep(id: string, session: KeptSession): Promise<boolean>;
+}
+
 /** Attach the SCORM 2004 sequencing runtime routes. */
-export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl: string }): void {
+export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl: string; sessions?: ScormSessionStore }): void {
+  const store = _config.sessions?.configured ? _config.sessions : undefined;
+  // These routes are public and unsigned, and with a store each one is a commit to the pod. A
+  // course a learner is in makes a session once and steps it a few times a minute; the limits
+  // leave room for a class behind one address.
+  const createLimit = forwardedRateLimit({ windowMs: 60_000, limit: 120, identifier: 'scorm-sequencing-session' });
+  const stepLimit = forwardedRateLimit({ windowMs: 60_000, limit: 1200, identifier: 'scorm-sequencing-step' });
+  /** Keep a session after a change. `sessionKept` is in the answer only where the write was waited for. */
+  // One write of a session at a time, each taking the session as it stands at its turn: two steps
+  // close together would otherwise each write what they saw, and the older could land last.
+  const keepTurns = new Map<string, Promise<boolean>>();
+  const keep = async (session: SeqSession): Promise<{ sessionKept?: boolean }> => {
+    if (!store) { keepScormSessions(); return {}; }
+    const turn = (keepTurns.get(session.id) ?? Promise.resolve(true)).then(() => store.keep(session.id, sessionToJson(session))).catch(() => false);
+    keepTurns.set(session.id, turn);
+    void turn.then(() => { if (keepTurns.get(session.id) === turn) keepTurns.delete(session.id); });
+    return { sessionKept: await turn };
+  };
+  /** The session, from this process or from the store. */
+  const sessionOf = async (id: string): Promise<{ session: SeqSession } | { status: 404 | 503; error: string }> => {
+    await scormReady; // a session kept before a restart is not "no session" while it is being read
+    const here = sessions.get(id);
+    // One the snapshot gave is used only once the store has said it holds nothing newer.
+    const stale = !!store && fromSnapshot.has(id);
+    if (here && !stale) return { session: here };
+    if (store && id) {
+      const kept = await store.load(id);
+      if (kept.state === 'unreadable') return { status: 503, error: 'that sequencing session is kept but could not be read just now; try again' };
+      const session = kept.state === 'held' ? sessionFromJson(kept.value) : null;
+      if (kept.state === 'held' && !session) return { status: 503, error: 'that sequencing session is kept but is not in a form this bridge reads' };
+      if (session && session.id === id) {
+        // Another request may have read it while this one waited: there is one session object a process.
+        const raced = sessions.get(id);
+        if (raced && !fromSnapshot.has(id)) return { session: raced };
+        fromSnapshot.delete(id);
+        retainSession(id, session);
+        return { session };
+      }
+      // The store holds none: the snapshot's is the session, and its next step makes it a record.
+      fromSnapshot.delete(id);
+      if (here) return { session: here };
+    }
+    return { status: 404, error: 'no sequencing session with that id' };
+  };
   const xmlBody = express.text({
     type: (req) => !(((req.headers['content-type'] as string | undefined) ?? '').toLowerCase().includes('application/json')),
     limit: '8mb',
   });
 
   // Create a sequencing session from an imsmanifest.xml.
-  app.post('/scorm/sequencing/session', xmlBody, async (req: Request, res: Response) => {
+  app.post('/scorm/sequencing/session', createLimit, xmlBody, async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
     const tenant = tenantIdOf(req.query.tenant_pod_url as string | undefined);
     const xml = typeof req.body === 'string' ? req.body
@@ -1177,20 +1245,20 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
     await scormReady;
     const session = createSession(tenant, tree);
     retainSession(session.id, session);
-    keepScormSessions();
+    const kept = await keep(session);
     res.status(200).json({
-      created: true,
+      created: true, ...kept,
       ...sessionView(session),
       note: 'POST /scorm/sequencing/{id}/navigate with { "request": "start" } to begin. The engine enforces control modes, sequencing rules, limit conditions and rollup.',
     });
   });
 
   // Process a navigation request.
-  app.post('/scorm/sequencing/:session/navigate', async (req: Request, res: Response) => {
+  app.post('/scorm/sequencing/:session/navigate', stepLimit, async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    await scormReady; // a session kept before a restart is not "no session" while it is being read
-    const session = sessions.get(String(req.params.session ?? ''));
-    if (!session) { res.status(404).json({ error: 'no sequencing session with that id' }); return; }
+    const found = await sessionOf(String(req.params.session ?? ''));
+    if (!('session' in found)) { res.status(found.status).json({ error: found.error }); return; }
+    const session = found.session;
     const body = (req.body ?? {}) as { request?: string; target?: string };
     const request = body.request as NavRequest | undefined;
     const valid: NavRequest[] = ['start', 'resumeAll', 'continue', 'previous', 'choice', 'exit', 'exitAll', 'suspendAll', 'abandon', 'abandonAll'];
@@ -1199,30 +1267,32 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
       return;
     }
     const result = processNavigation(session, request, body.target);
-    keepScormSessions();
-    res.status(result.ok ? 200 : 409).json({ ...result, currentActivity: session.current?.id ?? null });
+    const kept = await keep(session);
+    res.status(result.ok ? 200 : 409).json({ ...result, currentActivity: session.current?.id ?? null, ...kept });
   });
 
   // Commit SCO run-time tracking into the sequencing session.
-  app.post('/scorm/sequencing/:session/commit', async (req: Request, res: Response) => {
+  app.post('/scorm/sequencing/:session/commit', stepLimit, async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    await scormReady;
-    const session = sessions.get(String(req.params.session ?? ''));
-    if (!session) { res.status(404).json({ error: 'no sequencing session with that id' }); return; }
+    const found = await sessionOf(String(req.params.session ?? ''));
+    if (!('session' in found)) { res.status(found.status).json({ error: found.error }); return; }
+    const session = found.session;
     const result = commitTracking(session, (req.body ?? {}) as TrackingUpdate);
-    keepScormSessions();
-    res.status(result.ok ? 200 : 409).json(result);
+    const kept = await keep(session);
+    res.status(result.ok ? 200 : 409).json({ ...result, ...kept });
   });
 
   // Inspect a sequencing session.
-  app.get('/scorm/sequencing/:session', async (req: Request, res: Response) => {
+  app.get('/scorm/sequencing/:session', stepLimit, async (req: Request, res: Response) => {
     res.setHeader('Access-Control-Allow-Origin', '*');
-    await scormReady;
-    const session = sessions.get(String(req.params.session ?? ''));
-    if (!session) { res.status(404).json({ error: 'no sequencing session with that id' }); return; }
-    res.status(200).json(sessionView(session));
+    const found = await sessionOf(String(req.params.session ?? ''));
+    if (!('session' in found)) { res.status(found.status).json({ error: found.error }); return; }
+    res.status(200).json(sessionView(found.session));
   });
 }
+
+/** Test helper: hold a session as though the old snapshot had given it at start. */
+export function _heldFromSnapshot(session: SeqSession): void { retainSession(session.id, session); fromSnapshot.add(session.id); }
 
 /** Test/inspection helper — the live session registry. */
 export function _sequencingSessions(): Map<string, SeqSession> { return sessions; }
