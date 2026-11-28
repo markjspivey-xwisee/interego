@@ -267,7 +267,7 @@ async function serve(store: ScormSessionStore | undefined) {
   const app = express();
   app.use(express.json());
   attachScormSequencingRoutes(app, { selfBaseUrl: 'http://x', ...(store ? { sessions: store } : {}) });
-  const server = app.listen(0);
+  const server = app.listen(0, '127.0.0.1');
   await once(server, 'listening');
   const base = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
   const post = async (path: string, body: unknown, xml = false) => {
