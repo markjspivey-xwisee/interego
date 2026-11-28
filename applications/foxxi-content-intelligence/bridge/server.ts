@@ -7072,7 +7072,7 @@ const app = createVerticalBridge({
     // dedicated service-to-service channel. Browser tokens never reach Foxxi.
     a.post('/internal/learning-records/statements', async (req, res) => {
       res.setHeader('Cache-Control', 'no-store');
-      const secret = process.env.FOXXI_RELAY_TRUST_SECRET;
+      const secret = process.env.INTEREGO_SELF_RECORDS_SECRET;
       const session = verifySessionRead(req.body, req.get('X-Interego-Learning-Read'), {
         ...(secret ? { secret } : {}), ownStore: pod => sameStore(pod, tenantPodUrl), tenantPod: tenantPodUrl,
       });

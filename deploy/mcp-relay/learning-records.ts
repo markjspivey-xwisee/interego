@@ -2,9 +2,8 @@
 import { createHmac } from 'node:crypto';
 import type { RequestHandler } from 'express';
 
-export const LEARNING_RECORDS_SCOPE = 'foxxi:xapi:self:read';
+export const LEARNING_RECORDS_SCOPE = 'account:self-records:read';
 export const LEARNING_RECORDS_PATH = '/learning-records/statements';
-export const FOXXI_SESSION_READ_PATH = '/internal/learning-records/statements';
 
 export interface LearningRecordsConfig {
   redirect: URL;
@@ -14,13 +13,13 @@ export interface LearningRecordsConfig {
 }
 export function learningRecordsConfig(env: NodeJS.ProcessEnv): LearningRecordsConfig | undefined {
   try {
-    const { INTEREGO_LEARNING_RECORDS_REDIRECT, PUBLIC_BASE_URL, FOXXI_BRIDGE_URL, FOXXI_RELAY_TRUST_SECRET } = env;
-    if (!INTEREGO_LEARNING_RECORDS_REDIRECT || !PUBLIC_BASE_URL || !FOXXI_BRIDGE_URL || !FOXXI_RELAY_TRUST_SECRET || FOXXI_RELAY_TRUST_SECRET.length < 32) return;
-    const redirect = new URL(INTEREGO_LEARNING_RECORDS_REDIRECT);
+    const { INTEREGO_SELF_RECORDS_CALLBACK, PUBLIC_BASE_URL, INTEREGO_SELF_RECORDS_UPSTREAM, INTEREGO_SELF_RECORDS_SECRET } = env;
+    if (!INTEREGO_SELF_RECORDS_CALLBACK || !PUBLIC_BASE_URL || !INTEREGO_SELF_RECORDS_UPSTREAM || !INTEREGO_SELF_RECORDS_SECRET || INTEREGO_SELF_RECORDS_SECRET.length < 32) return;
+    const redirect = new URL(INTEREGO_SELF_RECORDS_CALLBACK);
     const resource = new URL(LEARNING_RECORDS_PATH, PUBLIC_BASE_URL);
-    const bridge = new URL(FOXXI_SESSION_READ_PATH, FOXXI_BRIDGE_URL);
-    if (redirect.hash || redirect.search || [redirect, resource, bridge].some(u => u.protocol !== 'https:' || u.username || u.password)) return;
-    return { redirect, resource, bridge, secret: FOXXI_RELAY_TRUST_SECRET };
+    const bridge = new URL(INTEREGO_SELF_RECORDS_UPSTREAM);
+    if (redirect.hash || redirect.search || bridge.hash || bridge.search || [redirect, resource, bridge].some(u => u.protocol !== 'https:' || u.username || u.password)) return;
+    return { redirect, resource, bridge, secret: INTEREGO_SELF_RECORDS_SECRET };
   } catch { return; }
 }
 
@@ -50,7 +49,7 @@ export function learningRecordsReader(
     }
     const body = JSON.stringify({ time: Date.now(), user: extra.userId, pod: extra.podUrl, query: req.body.query });
     if (Buffer.byteLength(body) > 8192) { refuse(413, 'query_too_large'); return; }
-    const proof = createHmac('sha256', config.secret).update('foxxi-xapi-self-read-v1\n').update(body).digest('hex');
+    const proof = createHmac('sha256', config.secret).update('interego-account-self-records-v1\n').update(body).digest('hex');
     try {
       const upstream = await send(config.bridge, {
         method: 'POST', redirect: 'error', signal: AbortSignal.timeout(30_000), body,

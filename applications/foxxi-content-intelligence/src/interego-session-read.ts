@@ -14,7 +14,7 @@ export function verifySessionRead(body: unknown, proof: unknown, config: {
   const { secret } = config;
   if (!secret || secret.length < 32 || !body || typeof body !== 'object' || Array.isArray(body)) return null;
   const raw = JSON.stringify(body);
-  if (Buffer.byteLength(raw) > 8192 || !exactProof(proof, mac(secret, 'foxxi-xapi-self-read-v1', raw))) return null;
+  if (Buffer.byteLength(raw) > 8192 || !exactProof(proof, mac(secret, 'interego-account-self-records-v1', raw))) return null;
   const { time, user, pod, query } = body as Record<string, unknown>;
   if (Object.keys(body).length !== 4 || typeof time !== 'number' || !Number.isSafeInteger(time) || Math.abs((config.now ?? Date.now()) - time) > 30_000 ||
     typeof user !== 'string' || !/^u-(?:pk|eth|did)-[a-z0-9-]{1,100}$/.test(user) ||
@@ -27,7 +27,7 @@ export function verifySessionRead(body: unknown, proof: unknown, config: {
   } catch { return null; }
 }
 
-const cursorProof = (secret: string, user: string, cursor: string) => mac(secret, 'foxxi-xapi-self-cursor-v1', user + '\n' + cursor);
+const cursorProof = (secret: string, user: string, cursor: string) => mac(secret, 'interego-account-self-records-cursor-v1', user + '\n' + cursor);
 export function scopedCursor(secret: string, user: string, raw: string): string {
   return raw + '.' + cursorProof(secret, user, raw);
 }

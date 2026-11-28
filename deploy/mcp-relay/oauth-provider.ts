@@ -753,7 +753,7 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     const identityOrigin = new URL(this.cfg.identityUrl).origin;
     const identityHost = escapeHtml(new URL(this.cfg.identityUrl).host);
     const learningRecordsConsent = special
-      ? '<div class="client" role="note"><strong>Read your own Foxxi learning records</strong><p>This permission lasts 10 minutes. It cannot read someone else\'s records, write statements or access your pod.</p></div>'
+      ? '<div class="client" role="note"><strong>Read your own learning records</strong><p>This permission lasts 10 minutes. It cannot read someone else\'s records, write statements or access your pod.</p></div>'
       : '';
     const federationConsent = params.scopes?.includes('federation:manage')
       ? '<div class="client" id="federation-consent" role="note"><strong>Manage pod sharing</strong><p>This app can turn on pod sharing, approve or disconnect other pods, and send selected copies from your pod. A recipient can keep copies already received. Authorize this only if you trust the app to manage your pod connections.</p></div>'

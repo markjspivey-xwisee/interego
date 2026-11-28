@@ -25,7 +25,7 @@ const child=spawn(process.execPath,['--import','tsx','--input-type=module','--ev
   FOXXI_LRS_BACKEND:'memory',FOXXI_TENANT_POD_URL:'http://127.0.0.1:9/foxxi/',
   FOXXI_AUTHORITATIVE_SOURCE:'did:web:container-smoke.test',FOXXI_BRIDGE_PRIVATE_KEY:'0x'+'11'.repeat(32),
   FOXXI_ADMIN_KEY_SEED:'synthetic-local-foxxi-proof',BRIDGE_DEPLOYMENT_URL:base,FOXXI_AUDIENCE:'both',
-  INTEREGO_BUILD_SHA:'workbench-fictional-proof',FOXXI_RELAY_TRUST_SECRET:secret}
+  INTEREGO_BUILD_SHA:'workbench-fictional-proof',INTEREGO_SELF_RECORDS_SECRET:secret}
 });
 let log='',exited=false;
 const cap=c=>{log=(log+c).slice(-16000)};
@@ -41,7 +41,7 @@ try {
  assert.equal(health?.build,'workbench-fictional-proof','Actual Foxxi failed to start: '+log);
  function read(user,query={},pod='http://127.0.0.1:9/'+user+'/',valid=true){
   const body=JSON.stringify({time:Date.now(),user,pod,query});
-  const proof=createHmac('sha256',secret).update('foxxi-xapi-self-read-v1\n').update(body).digest('hex');
+  const proof=createHmac('sha256',secret).update('interego-account-self-records-v1\n').update(body).digest('hex');
   return fetch(base+'/internal/learning-records/statements',{method:'POST',body,
    headers:{'Content-Type':'application/json',...(valid?{'X-Interego-Learning-Read':proof}:{})},signal:AbortSignal.timeout(5000)});
  }

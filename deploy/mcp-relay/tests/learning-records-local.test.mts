@@ -4,17 +4,17 @@ import { learningRecordsConfig, learningRecordsReader, LEARNING_RECORDS_SCOPE } 
 import { scopedCursor, verifyScopedCursor, verifySessionRead } from '../../../applications/foxxi-content-intelligence/src/interego-session-read.ts';
 
 const cfg = learningRecordsConfig({
-  INTEREGO_LEARNING_RECORDS_REDIRECT: 'https://workbench.example/',
+  INTEREGO_SELF_RECORDS_CALLBACK: 'https://workbench.example/',
   PUBLIC_BASE_URL: 'https://relay.example',
-  FOXXI_BRIDGE_URL: 'https://foxxi.example',
-  FOXXI_RELAY_TRUST_SECRET: 'only-a-fictional-transport-key-for-local-tests',
+  INTEREGO_SELF_RECORDS_UPSTREAM: 'https://vertical.example/internal/learning-records/statements',
+  INTEREGO_SELF_RECORDS_SECRET: 'only-a-fictional-transport-key-for-local-tests',
 })!;
 const alice = { userId: 'u-pk-alice123', podUrl: 'https://gate.example/u-pk-alice123/' };
 const grant = { scopes: [LEARNING_RECORDS_SCOPE], resource: cfg.resource, extra: alice };
 function transport(verified: () => Promise<typeof grant>, opts: { origin?: string; body?: unknown; token?: string } = {}) {
   const calls: Array<ReturnType<typeof verifySessionRead>> = [];
   const reader = learningRecordsReader(cfg, verified, async (url, init) => {
-    assert.equal(String(url), 'https://foxxi.example/internal/learning-records/statements');
+    assert.equal(String(url), 'https://vertical.example/internal/learning-records/statements');
     assert.equal(init?.redirect, 'error');
     const headers = new Headers(init?.headers);
     assert.equal(headers.has('authorization'), false);

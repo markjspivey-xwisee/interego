@@ -381,14 +381,16 @@ the hosted reference.
 ### Workbench: read the signed-in account’s Foxxi statements
 
 This optional route is disabled unless Relay is configured with all of
-`INTEREGO_LEARNING_RECORDS_REDIRECT` (the exact HTTPS Workbench callback),
-`PUBLIC_BASE_URL`, `FOXXI_BRIDGE_URL`, and `FOXXI_RELAY_TRUST_SECRET`.
-Foxxi must have the identical trust secret and recognize the account pod’s
+`INTEREGO_SELF_RECORDS_CALLBACK` (the exact HTTPS Workbench callback),
+`PUBLIC_BASE_URL`, `INTEREGO_SELF_RECORDS_UPSTREAM` (the fixed Foxxi
+`/internal/learning-records/statements` HTTPS URL), and
+`INTEREGO_SELF_RECORDS_SECRET`.
+Foxxi must have the identical trust secret configured as `INTEREGO_SELF_RECORDS_SECRET` and recognize the account pod’s
 origin as a configured spelling of its own store. Keep the secret on the two
 servers, never in the Workbench.
 
 The Workbench uses the existing authorization-code and S256 PKCE flow, with
-only `foxxi:xapi:self:read` and the exact `/learning-records/statements`
+only `account:self-records:read` and the exact `/learning-records/statements`
 resource. The short in-memory grant cannot refresh, use MCP, or authenticate
 to a pod. The relay attests the account's authenticated home pod to Foxxi;
 neither the browser nor the client-specific agent selects the lens. The only

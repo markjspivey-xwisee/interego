@@ -10,13 +10,13 @@ import { learningRecordsConfig, LEARNING_RECORDS_PATH, LEARNING_RECORDS_SCOPE } 
 const issuer = new URL('https://relay.example/');
 const config = learningRecordsConfig({
   PUBLIC_BASE_URL: issuer.href,
-  INTEREGO_LEARNING_RECORDS_REDIRECT: 'https://workbench.example/',
-  FOXXI_BRIDGE_URL: 'https://foxxi.example',
-  FOXXI_RELAY_TRUST_SECRET: 'fictional-local-key-do-not-use-in-service',
+  INTEREGO_SELF_RECORDS_CALLBACK: 'https://workbench.example/',
+  INTEREGO_SELF_RECORDS_UPSTREAM: 'https://vertical.example/internal/learning-records/statements',
+  INTEREGO_SELF_RECORDS_SECRET: 'fictional-local-key-do-not-use-in-service',
 })!;
 const provider = new InteregoOAuthProvider({identityUrl:'https://identity.example',resourceIdentifier:issuer.href});
 process.env.PUBLIC_BASE_URL = issuer.href;
-process.env.INTEREGO_LEARNING_RECORDS_REDIRECT = config.redirect.href;
+process.env.INTEREGO_SELF_RECORDS_CALLBACK = config.redirect.href;
 const app = express();
 app.use(corsMiddleware({ownOrigin:issuer.origin}));
 app.use(express.json());
@@ -59,7 +59,7 @@ try {
     const authorize = await getAuthorize(LEARNING_RECORDS_SCOPE);
     assert.equal(authorize.status,200);
     const html = await authorize.text();
-    assert.match(html,/Read your own Foxxi learning records/);
+    assert.match(html,/Read your own learning records/);
     const pending=/const PENDING_ID = "([0-9a-f]+)"/.exec(html)?.[1];
     assert.ok(pending);
     const auth = provider.completePendingAuthorization(pending,{

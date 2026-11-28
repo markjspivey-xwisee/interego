@@ -251,8 +251,8 @@ export function corsMiddleware(opts: CorsHeaderOptions = {}): TaggedCorsMiddlewa
   let workbenchOrigin: string | undefined;
   try {
     if (process.env['PUBLIC_BASE_URL'] && normalizeOrigin(process.env['PUBLIC_BASE_URL']) === ownOrigin &&
-        process.env['INTEREGO_LEARNING_RECORDS_REDIRECT']) {
-      const url = new URL(process.env['INTEREGO_LEARNING_RECORDS_REDIRECT']);
+        process.env['INTEREGO_SELF_RECORDS_CALLBACK']) {
+      const url = new URL(process.env['INTEREGO_SELF_RECORDS_CALLBACK']);
       if (url.protocol === 'https:' && !url.username && !url.password) workbenchOrigin = url.origin;
     }
   } catch { /* absent or invalid opt-in leaves the current policy unchanged */ }
