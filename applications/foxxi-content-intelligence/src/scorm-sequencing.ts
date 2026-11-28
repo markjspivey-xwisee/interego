@@ -1128,11 +1128,17 @@ async function hydrateScormFromPod(): Promise<void> {
     // A session this process already holds is the newer one. One that cannot be rebuilt is left out.
     if (typeof id !== 'string' || sessions.has(id)) continue;
     const s = sessionFromJson(kept);
-    if (s && s.id === id) retainSession(id, s);
+    if (s && s.id === id) { retainSession(id, s); fromSnapshot.add(id); }
   }
 }
 registerSnapshot({ surface: 'scorm', typeIri: FOXXI_SNAPSHOT_TYPES.ScormSessions, collect: collectScormSnapshot });
 /** Settles once the sessions kept before this process started have been read. It never rejects. */
+/**
+ * Sessions this process holds only because the old whole-surface snapshot had them. Where there
+ * is a session store the snapshot is no longer written, so after a restart it can be older than
+ * the session's own record: the record is asked for before one of these is used (review of #1013).
+ */
+const fromSnapshot = new Set<string>();
 const scormReady: Promise<void> = hydrateScormFromPod().catch(() => undefined);
 /**
  * ★ A SESSION'S STEP STARTS ITS WRITE AT ONCE, AND THE ANSWER DOES NOT WAIT FOR IT (2026-11-27).
@@ -1192,14 +1198,25 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
   const sessionOf = async (id: string): Promise<{ session: SeqSession } | { status: 404 | 503; error: string }> => {
     await scormReady; // a session kept before a restart is not "no session" while it is being read
     const here = sessions.get(id);
-    if (here) return { session: here };
+    // One the snapshot gave is used only once the store has said it holds nothing newer.
+    const stale = !!store && fromSnapshot.has(id);
+    if (here && !stale) return { session: here };
     if (store && id) {
       const kept = await store.load(id);
       if (kept.state === 'unreadable') return { status: 503, error: 'that sequencing session is kept but could not be read just now; try again' };
       const session = kept.state === 'held' ? sessionFromJson(kept.value) : null;
       if (kept.state === 'held' && !session) return { status: 503, error: 'that sequencing session is kept but is not in a form this bridge reads' };
-      // Another request may have read it while this one waited: there is one session object a process.
-      if (session && session.id === id) { const raced = sessions.get(id); if (raced) return { session: raced }; retainSession(id, session); return { session }; }
+      if (session && session.id === id) {
+        // Another request may have read it while this one waited: there is one session object a process.
+        const raced = sessions.get(id);
+        if (raced && !fromSnapshot.has(id)) return { session: raced };
+        fromSnapshot.delete(id);
+        retainSession(id, session);
+        return { session };
+      }
+      // The store holds none: the snapshot's is the session, and its next step makes it a record.
+      fromSnapshot.delete(id);
+      if (here) return { session: here };
     }
     return { status: 404, error: 'no sequencing session with that id' };
   };
@@ -1273,6 +1290,9 @@ export function attachScormSequencingRoutes(app: Express, _config: { selfBaseUrl
     res.status(200).json(sessionView(found.session));
   });
 }
+
+/** Test helper: hold a session as though the old snapshot had given it at start. */
+export function _heldFromSnapshot(session: SeqSession): void { retainSession(session.id, session); fromSnapshot.add(session.id); }
 
 /** Test/inspection helper — the live session registry. */
 export function _sequencingSessions(): Map<string, SeqSession> { return sessions; }

@@ -1224,7 +1224,10 @@ describe.skipIf(!fixtureInputs && !optionalPod)('LRS adapter over actual native 
       for (let i = 0; i < 40 && (await sessions.load('one')).state !== 'absent'; i++) await new Promise(r => setTimeout(r, 250));
       expect((await sessions.load('one')).state).toBe('absent');
       expect((await sessions.load('two')).state).toBe('held');
-      expect(await recovered.forTenant(tenant).getResource<KeptSessionIndex>('foxxi-scorm-session-index', 'index')).toEqual({ order: ['two', 'three'], evicting: [] });
+      // The index is told the record has gone by a second commit, after the removal.
+      const index = () => recovered.forTenant(tenant).getResource<KeptSessionIndex>('foxxi-scorm-session-index', 'index');
+      for (let i = 0; i < 40 && (await index())?.evicting.length !== 0; i++) await new Promise(r => setTimeout(r, 250));
+      expect(await index()).toEqual({ order: ['two', 'three'], evicting: [] });
     } finally { await recovered.close(); }
   }, 120000);
   it('stages a whole commit in one receipted request on the actual server, and the published state reads back exactly', async () => {

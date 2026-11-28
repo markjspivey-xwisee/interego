@@ -23,7 +23,7 @@ import { NativeInteregoLrsDatabase } from '../src/native-lrs-store.js';
 import { KeptRecords, type NativeResources } from '../src/kept-records.js';
 import { KeptScormSessions, isKeptSessionIndex, type KeptSessionIndex } from '../src/kept-scorm-sessions.js';
 import { SealedPodMap, type SealedFetch } from '../src/sealed-store.js';
-import { attachScormSequencingRoutes, _sequencingSessions, type KeptSession, type ScormSessionStore } from '../src/scorm-sequencing.js';
+import { attachScormSequencingRoutes, sessionFromJson, _heldFromSnapshot, _sequencingSessions, type KeptSession, type ScormSessionStore } from '../src/scorm-sequencing.js';
 import { buildCmi5Launch, forgetCmi5Learner, forgetCmi5RollupKept, isCmi5RollupKept, observeCmi5Statement, registerCmi5Course, setCmi5RollupStore, type Cmi5RollupKept, type Cmi5RollupStore } from '../src/cmi5-lms.js';
 import type { Cmi5Course } from '../src/cmi5-course.js';
 import type { TenantId } from '../src/tenant-context.js';
@@ -184,6 +184,26 @@ describe('the bound on kept sessions', () => {
     expect(n.held.get('foxxi-scorm-session-index/index')).toEqual({ order: ['c', 'd'], evicting: [] });
     expect(n.of('foxxi-scorm-session').sort()).toEqual(['c', 'd']);
   });
+  // ★ Review of #1013. Each process remembered which sessions it had counted. After another
+  // bridge let one go, the first still "knew" it was counted and wrote its record back: a record
+  // the index did not hold, that nothing would ever remove.
+  it('does not put back a session another bridge has let go without counting it again', async () => {
+    const n = fakeNative();
+    const one = sessionsOver(() => n.store, 1), two = sessionsOver(() => n.store, 1);
+    await one.keep('old', { id: 'old', n: 1 });
+    expect((await two.load('old')).state).toBe('held');          // the second bridge now believes it counted
+    await one.keep('new', { id: 'new', n: 1 });                   // the first lets 'old' go
+    await settle();
+    expect(n.of('foxxi-scorm-session')).toEqual(['new']);
+    expect(await two.keep('old', { id: 'old', n: 2 })).toBe(true); // stepped through the second
+    await settle();
+    // It was counted again, so the bound still holds: one record, and the index names it.
+    const index = n.held.get('foxxi-scorm-session-index/index') as KeptSessionIndex;
+    expect(index.evicting).toEqual([]);
+    expect(n.of('foxxi-scorm-session')).toEqual(index.order);
+    expect(index.order).toHaveLength(1);
+  });
+
   it('is bounded the same way where records are sealed on the pod', async () => {
     const p = pod(), s = sessionsOver(() => null, 2, p, true);
     for (const id of ['a', 'b', 'c', 'd']) expect(await s.keep(id, { id, n: 1 })).toBe(true);
@@ -297,6 +317,39 @@ describe('the sequencing routes with a session store', () => {
       _sequencingSessions().delete(id);
       const next = await s.post(`/scorm/sequencing/${id}/navigate`, { request: 'choice', target: 'i1' });
       expect(next.body).toMatchObject({ ok: true, currentActivity: 'i1', sessionKept: true });
+    } finally { await s.close(); }
+  });
+
+  // ★ Review of #1013. The old snapshot is still read at start and is no longer written, so after
+  // a restart it can be older than the session's own record, and it was used first.
+  it('use the session\'s record, not an older copy the old snapshot gave at start', async () => {
+    const m = memoryStore(), s = await serve(m.store);
+    try {
+      const id = String((await s.post('/scorm/sequencing/session', MANIFEST, true)).body.sessionId);
+      const before = sessionFromJson(structuredClone(m.held.get(id)))!;      // as the snapshot had it: nothing chosen
+      await s.post(`/scorm/sequencing/${id}/navigate`, { request: 'choice', target: 'i2' });
+      // A restart: memory holds only what the snapshot gave.
+      _sequencingSessions().delete(id);
+      _heldFromSnapshot(before);
+      expect((await s.get(`/scorm/sequencing/${id}`)).body).toMatchObject({ currentActivity: 'i2' });
+      // And one the store has no record of is used as the snapshot gave it, then kept.
+      const only = sessionFromJson({ ...structuredClone(m.held.get(id)!), id: 'scorm-seq-only-in-snapshot' })!;
+      _heldFromSnapshot(only);
+      const step = await s.post('/scorm/sequencing/scorm-seq-only-in-snapshot/navigate', { request: 'choice', target: 'i1' });
+      expect(step.body).toMatchObject({ ok: true, currentActivity: 'i1', sessionKept: true });
+      expect(m.held.has('scorm-seq-only-in-snapshot')).toBe(true);
+    } finally { await s.close(); }
+  });
+
+  it('do not use a snapshot copy while the record cannot be read', async () => {
+    const m = memoryStore(), s = await serve(m.store);
+    try {
+      const id = String((await s.post('/scorm/sequencing/session', MANIFEST, true)).body.sessionId);
+      const before = sessionFromJson(structuredClone(m.held.get(id)))!;
+      _sequencingSessions().delete(id);
+      _heldFromSnapshot(before);
+      m.state.unreadable = true;
+      expect((await s.post(`/scorm/sequencing/${id}/navigate`, { request: 'choice', target: 'i1' })).status).toBe(503);
     } finally { await s.close(); }
   });
 

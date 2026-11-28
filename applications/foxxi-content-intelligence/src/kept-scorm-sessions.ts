@@ -17,6 +17,9 @@
  *    leaves `evicting` only once its record has gone. A removal that fails is tried again by the
  *    next session that is added.
  * So at most `max` + the few still being removed are held, across restarts and across bridges.
+ *
+ * What this does not promise: a session that is stepped at the very moment another bridge is
+ * removing it as the oldest of more than `max` can be lost. It was the oldest of 5000.
  */
 import type { KeptRecords } from './kept-records.js';
 import type { KeptValue } from './sealed-store.js';
@@ -46,9 +49,21 @@ export class KeptScormSessions<S> {
 
   /** True once the pod holds the session as given. */
   async keep(id: string, session: S): Promise<boolean> {
-    if (!this.indexed.has(id)) {
+    if (this.indexed.has(id)) {
+      // Believed counted. That belief is this process's: another bridge may have let the session
+      // go since. So the record is written only if it is still there. Writing it regardless would
+      // put back a record the index no longer knows, and nothing would ever remove it (review of
+      // #1013). If it has gone, the session is counted again below, as a new one.
+      const written = await this.o.records.update<boolean>(NS, id, (current) => (current === null ? { value: null, result: false } : { value: session, result: true }));
+      if (written.state !== 'kept') return false;
+      if (written.result) return true;
+      this.indexed.delete(id);
+    }
+    {
       const added = await this.o.index.update<string[]>(NS, INDEX, (current) => {
-        const order = [...(current?.order ?? [])], evicting = [...(current?.evicting ?? [])];
+        const order = [...(current?.order ?? [])];
+        // Counted again while its removal was still owed: it is no longer owed.
+        const evicting = (current?.evicting ?? []).filter(x => x !== id);
         if (!order.includes(id)) order.push(id);
         while (order.length > this.o.max) evicting.push(order.shift()!);
         return { value: { order, evicting }, result: evicting };
