@@ -34,6 +34,7 @@ import { readSelfXapi, writeSelfXapi } from '../src/self-xapi.js';
 import { persistStatementWithUsage } from '../src/i2idlx-usage-record.js';
 import { loadPublicTaskData } from '../src/i2idlx-client-tasks.js';
 import { resolveConceptIndex } from '../i2idlx/typescript/authored-concepts.js';
+import { scopedCursor, verifyScopedCursor, verifySessionRead } from '../src/interego-session-read.js';
 import { configuredSelfXapiTimeout, createSelfXapiRequest } from '../src/self-xapi-request.js';
 import { composeOwnSubjectXapiVerifier } from '../src/own-subject-xapi-auth.js';
 import { OwnSubjectXapiWriteBudget, OwnSubjectXapiRequestBudget } from '../src/own-subject-xapi.js';
@@ -10251,6 +10252,56 @@ const signedXapiHandler = (operation: 'read' | 'write' | 'telemetry-ingest' | 't
       } finally { inboundCredentials.remove(credential.id); }
     } catch (err) { if (err instanceof CaptureError) { res.status(err.status).json({ ok: false, error: err.message }); return; } sendServerError(res, err, 'signed-xapi'); }
 };
+// Interego's authenticated relay asserts its account's HOME pod over a
+// dedicated service-to-service channel. Browser tokens never reach Foxxi.
+app.post('/internal/learning-records/statements', async (req, res) => {
+  res.setHeader('Cache-Control', 'no-store');
+  const secret = process.env.FOXXI_RELAY_TRUST_SECRET;
+  const session = verifySessionRead(req.body, req.get('X-Interego-Learning-Read'), {
+    ...(secret ? { secret } : {}), ownStore: pod => sameStore(pod, tenantPodUrl), tenantPod: tenantPodUrl,
+  });
+  if (!session || !secret) { res.status(403).json({ error: 'own_learning_records_session_required' }); return; }
+  const rl = checkAgenticRateLimit('interego-learning:' + session.user);
+  if (!rl.ok) { res.setHeader('Retry-After', String(rl.retryAfterSeconds)); res.status(429).json({ error: 'learning_records_rate_limit' }); return; }
+  // Keep existing per-pod LRS labels, but refuse an ambiguous alias rather than
+  // reading a label shared with a different configured or default pod.
+  const label = actorForPod(session.pod, MESH_ACTOR_LABELS);
+  if ((label !== session.user && /^u-(?:pk|eth|did)-/.test(label)) ||
+      Object.entries(MESH_ACTOR_LABELS).some(([pod, mapped]) => pod !== session.user && (mapped === label || pod === label))) {
+    res.status(403).json({ error: 'ambiguous_learning_records_lens' }); return;
+  }
+  const query = { ...session.query };
+  if (query.cursor !== undefined) {
+    const cursor = verifyScopedCursor(secret, session.user, query.cursor);
+    if (!cursor || Object.keys(query).some(key => !['cursor', 'limit'].includes(key))) {
+      res.status(400).json({ error: 'invalid_learning_records_continuation' }); return;
+    }
+    query.cursor = cursor;
+  }
+  if (query.statementId === undefined) query.limit = 20;
+  const principal = randomUUID();
+  const ephemeral = randomBytes(32).toString('base64url');
+  const credential = inboundCredentials.add({ principal, secret: ephemeral, tenant: String(lensTenantFor(label)), label: 'temporary account xAPI read' });
+  if (!credential) { res.status(503).json({ error: 'learning_records_unavailable' }); return; }
+  try {
+    const request = createSelfXapiRequest({ port: PORT, principal, secret: ephemeral, timeoutMs: 30_000 });
+    const result = await readSelfXapi(query, {
+      request: (_method, params) => request('GET', params),
+      persist: async () => { throw new Error('learning records session is read-only'); },
+    });
+    let body = result.body;
+    if (result.status === 200 && body && typeof body === 'object' && 'more' in body && typeof body.more === 'string' && body.more) {
+      const url = new URL(body.more, 'http://127.0.0.1');
+      const cursor = url.searchParams.get('continuationToken');
+      if (url.origin !== 'http://127.0.0.1' || url.pathname !== '/xapi/statements' || !cursor) {
+        res.status(503).json({ error: 'learning_records_unavailable' }); return;
+      }
+      body = { ...body, more: '/xapi/statements?continuationToken=' + encodeURIComponent(scopedCursor(secret, session.user, cursor)) };
+    }
+    res.status(result.status).json(body);
+  } catch { res.status(503).json({ error: 'learning_records_unavailable' }); }
+  finally { inboundCredentials.remove(credential.id); }
+});
 app.post('/agent/xapi-statements/read', signedXapiHandler('read'));
 app.post('/agent/xapi-statements/write', signedXapiHandler('write'));
 // A separate advertised action preserves the existing independent-agent semantics.

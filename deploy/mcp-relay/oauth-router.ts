@@ -151,10 +151,15 @@ function errorRedirect(redirectUri: string, error: unknown, state: string | unde
 
 const asString = (v: unknown): string | undefined => (typeof v === 'string' ? v : undefined);
 
+// This route deliberately lives beside the authorization server, not under /mcp.
+import { learningRecordsConfig, learningRecordsReader, LEARNING_RECORDS_PATH, LEARNING_RECORDS_SCOPE, type LearningRecordsConfig } from './learning-records.js';
+
 export interface OAuthRouterOptions {
   provider: InteregoOAuthProvider;
   issuerUrl: URL;
   scopesSupported?: string[];
+  learningRecords?: LearningRecordsConfig;
+  learningRecordsTransport?: typeof fetch;
 }
 
 /**
@@ -187,6 +192,24 @@ export function interegoOAuthRouter(options: OAuthRouterOptions): Router {
   const { provider, issuerUrl } = options;
   const issuer = issuerUrl.href;
   const router = express.Router();
+
+  const learningRecords = options.learningRecords ?? learningRecordsConfig(process.env);
+  if (learningRecords) {
+    provider.learningRecordsGrant = { redirect: learningRecords.redirect.href, resource: learningRecords.resource.href };
+    // The relay's scoped CORS middleware already set all response headers.
+    // Answer before the OAuth routers' 405 guards on /register and /token.
+    router.options(['/register', '/token', LEARNING_RECORDS_PATH], (req, res, next) => {
+      if (req.get('origin') === learningRecords.redirect.origin) res.sendStatus(204);
+      else next();
+    });
+    router.get(LEARNING_RECORDS_PATH, (_req, res) => {
+      res.setHeader('Cache-Control', 'no-store');
+      res.json({ scope: LEARNING_RECORDS_SCOPE });
+    });
+    router.post(LEARNING_RECORDS_PATH, limiter(60_000, 40, 'Too many learning records requests'),
+      express.json({ limit: '8kb' }),
+      learningRecordsReader(learningRecords, token => provider.verifyAccessToken(token, true), options.learningRecordsTransport));
+  }
 
   // ── /authorize ─────────────────────────────────────────────────────────
   // No cors() — matching the SDK. This endpoint is reached by top-level browser
@@ -411,6 +434,7 @@ export function interegoOAuthRouter(options: OAuthRouterOptions): Router {
     }
   });
   router.use('/register', registerRouter);
+
 
   return router;
 }

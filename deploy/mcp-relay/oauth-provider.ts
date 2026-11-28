@@ -80,6 +80,8 @@ import type {
   OAuthTokens,
 } from '@modelcontextprotocol/server';
 
+import { LEARNING_RECORDS_SCOPE } from './learning-records.js';
+
 function escapeHtml(s: string): string {
   return s
     .replace(/&/g, '&amp;')
@@ -490,6 +492,7 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
       this.accessTokensBySha.delete(InteregoOAuthProvider.sha256Hex(token));
       return null;
     }
+    if (info.scopes.includes(LEARNING_RECORDS_SCOPE)) return null; // never a pod or cross-service general bearer
     const extra = info.extra;
     if (!extra?.userId) return null;
     if (extra.provisionalPlay && extra.provisionalPlay.expiresAt * 1000 <= Date.now()) return null;
@@ -718,11 +721,19 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     };
   }
 
+  learningRecordsGrant?: { redirect: string; resource: string };
+
   async authorize(
     client: OAuthClientInformationFull,
     params: AuthorizationParams,
     res: Response,
   ): Promise<void> {
+    const special = params.scopes?.includes(LEARNING_RECORDS_SCOPE);
+    if (special && (params.scopes!.length !== 1 || params.redirectUri !== this.learningRecordsGrant?.redirect ||
+      params.resource?.href !== this.learningRecordsGrant?.resource || client.redirect_uris?.length !== 1 ||
+      client.redirect_uris[0] !== params.redirectUri)) {
+      throw new OAuthError(OAuthErrorCode.InvalidScope, 'This learning records permission requires the registered Workbench callback and resource.');
+    }
     // Stash the request so the signature-proof submission can resume it
     const pendingId = randomBytes(16).toString('hex');
     this.pendingAuthorizations.set(pendingId, {
@@ -741,6 +752,9 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
     } catch { /* Other sign-in methods remain available when a local handoff cannot be issued. */ }
     const identityOrigin = new URL(this.cfg.identityUrl).origin;
     const identityHost = escapeHtml(new URL(this.cfg.identityUrl).host);
+    const learningRecordsConsent = special
+      ? '<div class="client" role="note"><strong>Read your own Foxxi learning records</strong><p>This permission lasts 10 minutes. It cannot read someone else\'s records, write statements or access your pod.</p></div>'
+      : '';
     const federationConsent = params.scopes?.includes('federation:manage')
       ? '<div class="client" id="federation-consent" role="note"><strong>Manage pod sharing</strong><p>This app can turn on pod sharing, approve or disconnect other pods, and send selected copies from your pod. A recipient can keep copies already received. Authorize this only if you trust the app to manage your pod connections.</p></div>'
       : '';
@@ -804,6 +818,7 @@ export class InteregoOAuthProvider implements OAuthServerProvider {
   </div>
 
   ${federationConsent}
+${learningRecordsConsent}
 
   <h2>Choose a sign-in method</h2>
 
@@ -1194,7 +1209,8 @@ async function didSubmit() {
 
     const token = randomBytes(32).toString('hex');
     const refresh = randomBytes(32).toString('hex');
-    const expiresIn = this.cfg.tokenTtlSec ?? 3600;
+    const learningRecordsOnly = c.scopes.includes(LEARNING_RECORDS_SCOPE);
+    const expiresIn = learningRecordsOnly ? 600 : (this.cfg.tokenTtlSec ?? 3600);
     const refreshTtlSec = 14 * 24 * 3600; // 14 days
     const accessInfo: InteregoAuthInfo = {
       token,
@@ -1223,6 +1239,10 @@ async function didSubmit() {
     };
     this.accessTokens.set(token, accessInfo);
     this.accessTokensBySha.set(InteregoOAuthProvider.sha256Hex(token), accessInfo);
+    if (learningRecordsOnly) {
+      // In-memory, short, purpose-bound and non-refreshable. A restart asks the person to sign in again.
+      return { access_token: token, token_type: jkt ? 'DPoP' : 'Bearer', expires_in: expiresIn, scope: LEARNING_RECORDS_SCOPE };
+    }
     const refreshRec = {
       clientId: client.client_id,
       scopes: c.scopes,
@@ -1503,7 +1523,7 @@ async function didSubmit() {
     return resourceUrlFromServerUrl(requested);
   }
 
-  async verifyAccessToken(token: string): Promise<AuthInfo> {
+  async verifyAccessToken(token: string, learningRecordsOnly = false): Promise<AuthInfo> {
     // ★ THROW THE BRANDED OAuthError FROM '@modelcontextprotocol/server'.
     //
     // requireBearerAuth turns this into a clean RFC 6750 `401 invalid_token` with a
@@ -1575,6 +1595,9 @@ async function didSubmit() {
         });
       }
       throw new OAuthError(OAuthErrorCode.InvalidToken, 'Token expired');
+    }
+    if (info.scopes.includes(LEARNING_RECORDS_SCOPE) !== learningRecordsOnly) {
+      throw new OAuthError(OAuthErrorCode.InvalidToken, 'Token is not valid on this resource.');
     }
     // ★ RFC 8707 AUDIENCE ENFORCEMENT — the check that made binding worth doing.
     //
